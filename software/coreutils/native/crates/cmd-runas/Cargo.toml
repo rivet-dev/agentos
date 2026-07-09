@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-runas"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "xfstests-compatible numeric credential runner for AgentOS VMs"
+
+[[bin]]
+name = "runas"
+path = "src/main.rs"
+
+[dependencies]
+wasi-ext = { path = "../../../../../toolchain/crates/wasi-ext" }

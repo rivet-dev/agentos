@@ -187,6 +187,8 @@ type MountPluginDescriptor struct {
 
 type MountDescriptor struct {
   guestPath: str
+  guestSource: str
+  guestFstype: str
   readOnly: bool
   plugin: MountPluginDescriptor
 }

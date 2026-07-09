@@ -1,7 +1,20 @@
 --- a/src/dd.rs
 +++ b/src/dd.rs
-@@ -358,7 +358,7 @@
- impl<'a> Input<'a> {
+@@ -113,11 +113,13 @@ impl Alarm {
+     pub fn with_interval(interval: Duration) -> Self {
+         let trigger = Arc::new(AtomicU8::default());
+ 
++        #[cfg(not(target_os = "wasi"))]
+         let weak_trigger = Arc::downgrade(&trigger);
++        #[cfg(not(target_os = "wasi"))]
+         thread::spawn(move || {
+             while let Some(trigger) = weak_trigger.upgrade() {
+                 thread::sleep(interval);
+                 trigger.store(ALARM_TRIGGER_TIMER, Relaxed);
+             }
+         });
+ 
+@@ -358,6 +360,6 @@ impl<'a> Input<'a> {
      /// Instantiate this struct with stdin as a source.
      fn new_stdin(settings: &'a Settings) -> UResult<Self> {
 -        #[cfg(not(unix))]
@@ -9,7 +22,7 @@
          let mut src = {
              let f = File::from(io::stdin().as_handle().try_clone_to_owned()?);
              let is_file = if let Ok(metadata) = f.metadata() {
-@@ -379,6 +379,8 @@
+@@ -379,6 +381,8 @@ impl<'a> Input<'a> {
          };
          #[cfg(unix)]
          let mut src = Source::stdin_as_file();
@@ -18,3 +31,123 @@
          #[cfg(unix)]
          if let Source::StdinFile(f) = &src {
              if settings.iflags.directory && !f.metadata()?.is_dir() {
+@@ -597,6 +601,9 @@ enum Dest {
+ enum Dest {
+     /// Output to stdout.
++    #[cfg(not(target_os = "wasi"))]
+     Stdout(File),
++    #[cfg(target_os = "wasi")]
++    Stdout(io::Stdout),
+ 
+     /// Output to a file.
+     ///
+@@ -826,7 +833,11 @@ impl<'a> Output<'a> {
+     /// Instantiate this struct with stdout as a destination.
+     fn new_stdout(settings: &'a Settings) -> UResult<Self> {
++        #[cfg(not(target_os = "wasi"))]
+         let fx = OwnedFileDescriptorOrHandle::from(io::stdout())?;
++        #[cfg(not(target_os = "wasi"))]
+         let mut dst = Dest::Stdout(fx.into_file());
++        #[cfg(target_os = "wasi")]
++        let mut dst = Dest::Stdout(io::stdout());
+         dst.seek(settings.seek, settings.obs)
+             .map_err_context(|| translate!("dd-error-write-error"))?;
+         Ok(Self { dst, settings })
+@@ -1143,6 +1147,12 @@ fn dd_copy(mut i: Input, o: Output) -> io::Result<()> {
+     // information.
+     let (prog_tx, rx) = mpsc::channel();
+-    let output_thread = thread::spawn(gen_prog_updater(rx, i.settings.status));
++    #[cfg(not(target_os = "wasi"))]
++    let output_thread = Some(thread::spawn(gen_prog_updater(rx, i.settings.status)));
++    #[cfg(target_os = "wasi")]
++    let output_thread = {
++        drop(rx);
++        None
++    };
+ 
+     // Whether to truncate the output file after all blocks have been written.
+     let truncate = !o.settings.oconv.notrunc;
+@@ -1164,6 +1174,7 @@ fn dd_copy(mut i: Input, o: Output) -> io::Result<()> {
+             start,
+             &prog_tx,
+             output_thread,
++            i.settings.status,
+             truncate,
+         );
+     }
+@@ -1278,17 +1289,27 @@ fn dd_copy(mut i: Input, o: Output) -> io::Result<()> {
+         }
+     }
+ 
+-    finalize(o, rstat, wstat, start, &prog_tx, output_thread, truncate)
++    finalize(
++        o,
++        rstat,
++        wstat,
++        start,
++        &prog_tx,
++        output_thread,
++        i.settings.status,
++        truncate,
++    )
+ }
+ 
+ /// Flush output, print final stats, and join with the progress thread.
+-fn finalize<T>(
++fn finalize(
+     mut output: BlockWriter,
+     rstat: ReadStat,
+     wstat: WriteStat,
+     start: Instant,
+     prog_tx: &mpsc::Sender<ProgUpdate>,
+-    output_thread: thread::JoinHandle<T>,
++    output_thread: Option<thread::JoinHandle<()>>,
++    print_level: Option<StatusLevel>,
+     truncate: bool,
+ ) -> io::Result<()> {
+     // Flush output in case a partial write has been buffered but
+@@ -1306,11 +1328,15 @@ fn finalize<T>(
+     // Print the final read/write statistics.
+     let wstat = wstat + wstat_update;
+     let prog_update = ProgUpdate::new(rstat, wstat, start.elapsed(), ProgUpdateType::Final);
+-    prog_tx.send(prog_update).unwrap_or(());
+-    // Wait for the output thread to finish
+-    output_thread
+-        .join()
+-        .expect("Failed to join with the output thread.");
++    if let Some(output_thread) = output_thread {
++        prog_tx.send(prog_update).unwrap_or(());
++        // Wait for the output thread to finish
++        output_thread
++            .join()
++            .expect("Failed to join with the output thread.");
++    } else {
++        prog_update.print_final_stats(print_level, false);
++    }
+ 
+     Ok(())
+ }
+@@ -1495,10 +1502,23 @@ fn stdout_canonicalized() -> OsString {
++#[cfg(not(target_os = "wasi"))]
+ fn is_stdout_redirected_to_seekable_file() -> bool {
+     let s = stdout_canonicalized();
+     let p = Path::new(&s);
+     match File::open(p) {
+         Ok(mut f) => {
+             f.stream_position().is_ok() && f.seek(SeekFrom::End(0)).is_ok() && f.rewind().is_ok()
+         }
+         Err(_) => false,
+     }
+ }
++
++#[cfg(target_os = "wasi")]
++fn is_stdout_redirected_to_seekable_file() -> bool {
++    let Ok(handle) = OwnedFileDescriptorOrHandle::from(io::stdout()) else {
++        return false;
++    };
++    let mut file = handle.into_file();
++    file.metadata().is_ok_and(|metadata| metadata.is_file())
++        && file.stream_position().is_ok()
++        && file.seek(SeekFrom::End(0)).is_ok()
++        && file.rewind().is_ok()
++}

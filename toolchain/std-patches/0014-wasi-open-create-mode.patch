@@ -1,0 +1,18 @@
+Propagate the requested POSIX creation mode through the AgentOS host_fs ABI.
+
+--- a/library/std/src/sys/fs/unix.rs
++++ b/library/std/src/sys/fs/unix.rs
+@@ -1366,3 +1366,13 @@ impl File {
+             | opts.get_creation_mode()?
+             | (opts.custom_flags as c_int & !libc::O_ACCMODE);
++        #[cfg(target_os = "wasi")]
++        if flags & libc::O_CREAT != 0 {
++            let error = unsafe { host_fs::set_open_mode(opts.mode as u32) };
++            if error != 0 {
++                return Err(io::Error::from_raw_os_error(
++                    error.try_into().unwrap_or(libc::EIO),
++                ));
++            }
++        }
++
+         // The third argument of `open64` is documented to have type `mode_t`. On

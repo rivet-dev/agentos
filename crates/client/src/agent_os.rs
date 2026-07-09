@@ -1034,6 +1034,7 @@ fn serialize_create_vm_config_for_sidecar(
         database: config.database.clone(),
         cwd: None,
         env: BTreeMap::new(),
+        user: config.user.clone(),
         root_filesystem,
         permissions: Some(permissions_policy_config(config)),
         limits: serialize_limits_config_for_sidecar(config.limits.as_ref())?,
@@ -3533,6 +3534,8 @@ pub(crate) fn serialize_mounts(
             MountConfig::Native {
                 path,
                 plugin,
+                guest_source,
+                guest_fstype,
                 read_only,
             } => {
                 let plugin_config = plugin
@@ -3541,6 +3544,8 @@ pub(crate) fn serialize_mounts(
                     .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
                 Ok(wire::MountDescriptor {
                     guest_path: path.clone(),
+                    guest_source: guest_source.clone().unwrap_or_else(|| plugin.id.clone()),
+                    guest_fstype: guest_fstype.clone().unwrap_or_else(|| plugin.id.clone()),
                     read_only: *read_only,
                     plugin: wire::MountPluginDescriptor {
                         id: plugin.id.clone(),
@@ -4036,6 +4041,7 @@ mod tests {
                 wasm: Some(WasmLimits {
                     prewarm_timeout_ms: Some(30_000),
                     runner_heap_limit_mb: Some(2_048),
+                    runner_cpu_time_limit_ms: Some(60_000),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -4087,5 +4093,6 @@ mod tests {
         let wasm = limits.wasm.expect("wasm limits");
         assert_eq!(wasm.prewarm_timeout_ms, Some(30_000));
         assert_eq!(wasm.runner_heap_limit_mb, Some(2_048));
+        assert_eq!(wasm.runner_cpu_time_limit_ms, Some(60_000));
     }
 }

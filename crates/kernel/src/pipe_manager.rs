@@ -1,6 +1,6 @@
 use crate::fd_table::{
     allocate_file_description_id, FdResult, FileDescription, ProcessFdTable, SharedFileDescription,
-    FILETYPE_PIPE, O_RDONLY, O_WRONLY,
+    FILETYPE_PIPE, O_NONBLOCK, O_RDONLY, O_RDWR, O_WRONLY,
 };
 use crate::poll::{PollEvents, PollNotifier, POLLERR, POLLHUP, POLLIN, POLLOUT};
 use std::collections::{BTreeMap, VecDeque};
@@ -46,6 +46,13 @@ impl PipeError {
             message: message.into(),
         }
     }
+
+    fn no_reader(message: impl Into<String>) -> Self {
+        Self {
+            code: "ENXIO",
+            message: message.into(),
+        }
+    }
 }
 
 impl fmt::Display for PipeError {
@@ -78,6 +85,7 @@ struct PipeRef {
 enum PipeSide {
     Read,
     Write,
+    ReadWrite,
 }
 
 #[derive(Debug, Default)]
@@ -89,24 +97,26 @@ struct PendingRead {
 #[derive(Debug)]
 struct PipeState {
     buffer: VecDeque<Vec<u8>>,
-    closed_read: bool,
-    closed_write: bool,
+    readers: usize,
+    writers: usize,
     waiting_reads: VecDeque<u64>,
     mode: u32,
     uid: u32,
     gid: u32,
+    named_key: Option<(u64, u64)>,
 }
 
 impl Default for PipeState {
     fn default() -> Self {
         Self {
             buffer: VecDeque::new(),
-            closed_read: false,
-            closed_write: false,
+            readers: 0,
+            writers: 0,
             waiting_reads: VecDeque::new(),
             mode: 0o600,
             uid: 0,
             gid: 0,
+            named_key: None,
         }
     }
 }
@@ -122,6 +132,7 @@ pub struct PipeMetadata {
 struct PipeManagerState {
     pipes: BTreeMap<u64, PipeState>,
     desc_to_pipe: BTreeMap<u64, PipeRef>,
+    named_pipes: BTreeMap<(u64, u64), u64>,
     waiters: BTreeMap<u64, PendingRead>,
     next_pipe_id: u64,
     next_waiter_id: u64,
@@ -132,6 +143,7 @@ impl Default for PipeManagerState {
         Self {
             pipes: BTreeMap::new(),
             desc_to_pipe: BTreeMap::new(),
+            named_pipes: BTreeMap::new(),
             waiters: BTreeMap::new(),
             next_pipe_id: 1,
             next_waiter_id: 1,
@@ -183,7 +195,14 @@ impl PipeManager {
         let read_id = allocate_file_description_id();
         let write_id = allocate_file_description_id();
 
-        state.pipes.insert(pipe_id, PipeState::default());
+        state.pipes.insert(
+            pipe_id,
+            PipeState {
+                readers: 1,
+                writers: 1,
+                ..PipeState::default()
+            },
+        );
         state.desc_to_pipe.insert(
             read_id,
             PipeRef {
@@ -222,6 +241,114 @@ impl PipeManager {
         }
     }
 
+    pub fn open_named_pipe(
+        &self,
+        key: (u64, u64),
+        path: &str,
+        flags: u32,
+        timeout: Option<Duration>,
+    ) -> PipeResult<PipeEnd> {
+        let access_mode = flags & 0b11;
+        if !matches!(access_mode, O_RDONLY | O_WRONLY | O_RDWR) {
+            return Err(PipeError::bad_file_descriptor("invalid FIFO access mode"));
+        }
+
+        let mut state = lock_or_recover(&self.inner.state);
+        let pipe_id = match state.named_pipes.get(&key).copied() {
+            Some(pipe_id) => pipe_id,
+            None => {
+                let pipe_id = state.next_pipe_id;
+                state.next_pipe_id += 1;
+                state.named_pipes.insert(key, pipe_id);
+                state.pipes.insert(
+                    pipe_id,
+                    PipeState {
+                        named_key: Some(key),
+                        ..PipeState::default()
+                    },
+                );
+                pipe_id
+            }
+        };
+
+        if access_mode == O_WRONLY
+            && flags & O_NONBLOCK != 0
+            && state
+                .pipes
+                .get(&pipe_id)
+                .is_none_or(|pipe| pipe.readers == 0)
+        {
+            return Err(PipeError::no_reader(format!("FIFO has no reader: {path}")));
+        }
+
+        let description_id = allocate_file_description_id();
+        let side = match access_mode {
+            O_RDONLY => PipeSide::Read,
+            O_WRONLY => PipeSide::Write,
+            O_RDWR => PipeSide::ReadWrite,
+            _ => unreachable!(),
+        };
+        state
+            .desc_to_pipe
+            .insert(description_id, PipeRef { pipe_id, end: side });
+        let pipe = state
+            .pipes
+            .get_mut(&pipe_id)
+            .expect("named pipe must exist after allocation");
+        match side {
+            PipeSide::Read => pipe.readers += 1,
+            PipeSide::Write => pipe.writers += 1,
+            PipeSide::ReadWrite => {
+                pipe.readers += 1;
+                pipe.writers += 1;
+            }
+        }
+        self.notify_waiters_and_pollers();
+
+        let should_wait = flags & O_NONBLOCK == 0 && access_mode != O_RDWR;
+        if should_wait {
+            let ready = |state: &PipeManagerState| {
+                state.pipes.get(&pipe_id).is_some_and(|pipe| match side {
+                    PipeSide::Read => pipe.writers > 0,
+                    PipeSide::Write => pipe.readers > 0,
+                    PipeSide::ReadWrite => true,
+                })
+            };
+            if let Some(timeout) = timeout {
+                let (next, result) = self
+                    .inner
+                    .waiters
+                    .wait_timeout_while(state, timeout, |state| !ready(state))
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                state = next;
+                if result.timed_out() && !ready(&state) {
+                    drop(state);
+                    self.close(description_id);
+                    return Err(PipeError::would_block(format!(
+                        "FIFO open timed out: {path}"
+                    )));
+                }
+            } else {
+                state = self
+                    .inner
+                    .waiters
+                    .wait_while(state, |state| !ready(state))
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+            }
+        }
+        drop(state);
+
+        Ok(PipeEnd {
+            description: Arc::new(FileDescription::with_ref_count(
+                description_id,
+                path,
+                flags,
+                0,
+            )),
+            filetype: FILETYPE_PIPE,
+        })
+    }
+
     pub fn poll(&self, description_id: u64, requested: PollEvents) -> PipeResult<PollEvents> {
         let state = lock_or_recover(&self.inner.state);
         let pipe_ref = state
@@ -240,14 +367,24 @@ impl PipeManager {
                 if requested.intersects(POLLIN) && !pipe.buffer.is_empty() {
                     events |= POLLIN;
                 }
-                if pipe.closed_write {
+                if pipe.writers == 0 {
                     events |= POLLHUP;
                 }
             }
             PipeSide::Write => {
-                if pipe.closed_read {
+                if pipe.readers == 0 {
                     events |= POLLERR;
                 } else if requested.intersects(POLLOUT)
+                    && (available_capacity(pipe) > 0 || !pipe.waiting_reads.is_empty())
+                {
+                    events |= POLLOUT;
+                }
+            }
+            PipeSide::ReadWrite => {
+                if requested.intersects(POLLIN) && !pipe.buffer.is_empty() {
+                    events |= POLLIN;
+                }
+                if requested.intersects(POLLOUT)
                     && (available_capacity(pipe) > 0 || !pipe.waiting_reads.is_empty())
                 {
                     events |= POLLOUT;
@@ -279,7 +416,7 @@ impl PipeManager {
             .get(&description_id)
             .copied()
             .ok_or_else(|| PipeError::bad_file_descriptor("not a pipe write end"))?;
-        if pipe_ref.end != PipeSide::Write {
+        if !matches!(pipe_ref.end, PipeSide::Write | PipeSide::ReadWrite) {
             return Err(PipeError::bad_file_descriptor("not a pipe write end"));
         }
 
@@ -289,10 +426,7 @@ impl PipeManager {
                     .pipes
                     .get_mut(&pipe_ref.pipe_id)
                     .ok_or_else(|| PipeError::bad_file_descriptor("pipe not found"))?;
-                if pipe.closed_write {
-                    return Err(PipeError::broken_pipe("write end closed"));
-                }
-                if pipe.closed_read {
+                if pipe.readers == 0 {
                     return Err(PipeError::broken_pipe("read end closed"));
                 }
                 pipe.waiting_reads.pop_front()
@@ -377,7 +511,7 @@ impl PipeManager {
             .get(&description_id)
             .copied()
             .ok_or_else(|| PipeError::bad_file_descriptor("not a pipe read end"))?;
-        if pipe_ref.end != PipeSide::Read {
+        if !matches!(pipe_ref.end, PipeSide::Read | PipeSide::ReadWrite) {
             return Err(PipeError::bad_file_descriptor("not a pipe read end"));
         }
 
@@ -406,7 +540,7 @@ impl PipeManager {
                     return Ok(Some(result));
                 }
 
-                if pipe.closed_write {
+                if pipe.writers == 0 {
                     if let Some(id) = waiter_id {
                         state.waiters.remove(&id);
                     }
@@ -494,13 +628,27 @@ impl PipeManager {
             if let Some(pipe) = state.pipes.get_mut(&pipe_ref.pipe_id) {
                 match pipe_ref.end {
                     PipeSide::Read => {
-                        pipe.closed_read = true;
-                        (Vec::new(), pipe.closed_read && pipe.closed_write, true)
+                        pipe.readers = pipe.readers.saturating_sub(1);
+                        (Vec::new(), pipe.readers == 0 && pipe.writers == 0, true)
                     }
                     PipeSide::Write => {
-                        pipe.closed_write = true;
-                        let waiter_ids = pipe.waiting_reads.drain(..).collect::<Vec<_>>();
-                        (waiter_ids, pipe.closed_read && pipe.closed_write, true)
+                        pipe.writers = pipe.writers.saturating_sub(1);
+                        let waiter_ids = if pipe.writers == 0 {
+                            pipe.waiting_reads.drain(..).collect::<Vec<_>>()
+                        } else {
+                            Vec::new()
+                        };
+                        (waiter_ids, pipe.readers == 0 && pipe.writers == 0, true)
+                    }
+                    PipeSide::ReadWrite => {
+                        pipe.readers = pipe.readers.saturating_sub(1);
+                        pipe.writers = pipe.writers.saturating_sub(1);
+                        let waiter_ids = if pipe.writers == 0 {
+                            pipe.waiting_reads.drain(..).collect::<Vec<_>>()
+                        } else {
+                            Vec::new()
+                        };
+                        (waiter_ids, pipe.readers == 0 && pipe.writers == 0, true)
                     }
                 }
             } else {
@@ -514,7 +662,11 @@ impl PipeManager {
         }
 
         if remove_pipe {
-            state.pipes.remove(&pipe_ref.pipe_id);
+            if let Some(pipe) = state.pipes.remove(&pipe_ref.pipe_id) {
+                if let Some(key) = pipe.named_key {
+                    state.named_pipes.remove(&key);
+                }
+            }
         }
         if should_notify {
             self.notify_waiters_and_pollers();
@@ -578,6 +730,33 @@ impl PipeManager {
 
     pub fn pipe_count(&self) -> usize {
         lock_or_recover(&self.inner.state).pipes.len()
+    }
+
+    pub fn has_named_pipe(&self, key: (u64, u64)) -> bool {
+        lock_or_recover(&self.inner.state)
+            .named_pipes
+            .contains_key(&key)
+    }
+
+    pub fn named_pipe_peer_ready(&self, description_id: u64) -> PipeResult<Option<bool>> {
+        let state = lock_or_recover(&self.inner.state);
+        let pipe_ref = state
+            .desc_to_pipe
+            .get(&description_id)
+            .copied()
+            .ok_or_else(|| PipeError::bad_file_descriptor("not a pipe end"))?;
+        let pipe = state
+            .pipes
+            .get(&pipe_ref.pipe_id)
+            .ok_or_else(|| PipeError::bad_file_descriptor("pipe not found"))?;
+        if pipe.named_key.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(match pipe_ref.end {
+            PipeSide::Read => pipe.writers > 0,
+            PipeSide::Write => pipe.readers > 0,
+            PipeSide::ReadWrite => true,
+        }))
     }
 
     pub fn buffered_bytes(&self) -> usize {

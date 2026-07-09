@@ -115,6 +115,7 @@ PCRE_LIBS="" \
 gl_cv_func_select_supports0=yes \
 gl_cv_func_select_detects_ebadf=yes \
 gl_cv_func_pselect_detects_ebadf=yes \
+gl_cv_func_lseek_pipe=no \
 ac_cv_func_sigaction=yes \
 ac_cv_func_sigprocmask=yes \
 ac_cv_func_clock_getres=no \

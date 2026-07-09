@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Retained while user-facing registration is intentionally disabled in mod.rs.
+
 use crate::bridge::MountPluginContext;
 use crate::plugins::s3_common::{
     create_s3_client, normalize_prefix, S3MountCredentials, DEFAULT_REGION,
@@ -68,6 +70,7 @@ impl<B> FileSystemPluginFactory<MountPluginContext<B>> for ObjectS3MountPlugin {
                 gid: config.gid.unwrap_or(0),
                 file_mode: config.file_mode.unwrap_or(0o644),
                 dir_mode: config.dir_mode.unwrap_or(0o755),
+                ..ObjectFsOptions::default()
             },
         );
         Ok(Box::new(MountedEngineFileSystem::with_runtime_context(

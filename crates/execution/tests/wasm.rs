@@ -222,6 +222,7 @@ fn wasm_limits_from_env(env: &BTreeMap<String, String>) -> WasmExecutionLimits {
         max_sockets: None,
         max_blocking_read_ms: None,
         runner_heap_limit_mb: None,
+        runner_cpu_time_limit_ms: None,
         reactor_work_quantum: None,
         bridge_call_timeout_ms: None,
     }

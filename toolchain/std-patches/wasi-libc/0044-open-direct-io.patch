@@ -1,0 +1,79 @@
+Carry POSIX O_DIRECT intent across WASI path_open.
+
+WASI Preview 1 has no direct-I/O open flag. Publish the intent through a
+one-shot AgentOS host import immediately before wasi-libc performs path_open;
+the managed runner consumes it when opening the kernel-backed descriptor.
+
+diff --git a/libc-bottom-half/headers/public/__header_fcntl.h b/libc-bottom-half/headers/public/__header_fcntl.h
+index 8c28e2d..18f45a1 100644
+--- a/libc-bottom-half/headers/public/__header_fcntl.h
++++ b/libc-bottom-half/headers/public/__header_fcntl.h
+@@ -14,6 +14,7 @@
+ #define O_EXCL (__WASI_OFLAGS_EXCL << 12)
+ #define O_TRUNC (__WASI_OFLAGS_TRUNC << 12)
+ 
++#define O_DIRECT   (0x20000000)
+ #define O_NOFOLLOW (0x01000000)
+ #define O_EXEC     (0x02000000)
+ #define O_RDONLY   (0x04000000)
+diff --git a/libc-bottom-half/sources/at_fdcwd.c b/libc-bottom-half/sources/at_fdcwd.c
+index 0ee09bb..fb55e7c 100644
+--- a/libc-bottom-half/sources/at_fdcwd.c
++++ b/libc-bottom-half/sources/at_fdcwd.c
+@@ -27,6 +27,11 @@ uint32_t __agentos_host_set_open_mode(uint32_t mode) __attribute__((
+     __import_name__("set_open_mode")
+ ));
+ 
++uint32_t __agentos_host_set_open_direct(uint32_t enabled) __attribute__((
++    __import_module__("host_fs"),
++    __import_name__("set_open_direct")
++));
++
+ int openat(int dirfd, const char *pathname, int flags, ...) {
+     mode_t mode = 0;
+     if ((flags & (O_CREAT | O_TMPFILE)) != 0) {
+@@ -40,6 +45,13 @@ int openat(int dirfd, const char *pathname, int flags, ...) {
+         return open(pathname, flags, mode);
+     }
+ 
++    if ((flags & O_DIRECT) != 0) {
++        uint32_t error = __agentos_host_set_open_direct(1);
++        if (error != 0) {
++            errno = (int)error;
++            return -1;
++        }
++    }
+     if ((flags & (O_CREAT | O_TMPFILE)) != 0) {
+         uint32_t error = __agentos_host_set_open_mode((uint32_t)mode);
+         if (error != 0) {
+diff --git a/libc-bottom-half/sources/posix.c b/libc-bottom-half/sources/posix.c
+index 27045a7..b950daf 100644
+--- a/libc-bottom-half/sources/posix.c
++++ b/libc-bottom-half/sources/posix.c
+@@ -48,7 +48,12 @@ uint32_t __agentos_host_set_open_mode(uint32_t mode) __attribute__((
+     __import_name__("set_open_mode")
+ ));
+ 
++uint32_t __agentos_host_set_open_direct(uint32_t enabled) __attribute__((
++    __import_module__("host_fs"),
++    __import_name__("set_open_direct")
++));
++
+ static int chmod_errno_from_host_result(uint32_t result) {
+     if (result == 0) return 0;
+     errno = (int)result;
+     return -1;
+@@ -55,6 +60,13 @@ static int find_relpath_alt(const char *path, char **relative) {
+ }
+ 
+ int open(const char *path, int oflag, ...) {
++    if ((oflag & O_DIRECT) != 0) {
++        uint32_t error = __agentos_host_set_open_direct(1);
++        if (error != 0) {
++            errno = (int)error;
++            return -1;
++        }
++    }
+     if ((oflag & O_CREAT) != 0) {
+         va_list args;
+         va_start(args, oflag);

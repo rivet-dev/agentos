@@ -69,10 +69,16 @@ COMMANDS_DIR ?= ../target/wasm32-wasip1/release/commands
 
 # Fast real commands installed by the default software gate. Slow/heavy commands
 # (duckdb, vim) remain available through explicit parent `make cmd/<name>`.
-COMMANDS := zip unzip envsubst sqlite3 curl wget grep git git-remote-http tree ssh ssh-keysign ssh-sk-helper
+COMMANDS := zip unzip envsubst sqlite3 curl wget grep git git-remote-http tree ssh ssh-keysign ssh-sk-helper \
+	acl_tools xattr_tools xfs_io mknod
+
+# Public command names emitted by multi-call filesystem helper binaries.
+COMMAND_ALIASES := chacl:acl_tools getfacl:acl_tools setfacl:acl_tools \
+	attr:xattr_tools getfattr:xattr_tools setfattr:xattr_tools \
+	mkfifo:mknod
 
 # Programs requiring patched sysroot (Tier 2+ custom host imports)
-PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test closefrom_test spawn_child spawn_contract spawn_exit_code exec_edge exec_variants pipeline itimer_contract kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test libc_compat_contract libc_bounds_contract chown_contract signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge select_edge socket_flags socketpair_rights ssh_proxy_helper ssh_sk_helper_contract tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler dns_lookup getaddrinfo_connect getnameinfo_contract ppoll_contract open_flags record_lock mlock_contract sqlite3 sqlite3_mem curl wget grep tree zip unzip fs_probe
+PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test closefrom_test spawn_child spawn_contract spawn_exit_code exec_edge exec_variants pipeline itimer_contract kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test libc_compat_contract libc_bounds_contract chown_contract signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge select_edge socket_flags socketpair_rights ssh_proxy_helper ssh_sk_helper_contract tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler dns_lookup getaddrinfo_connect getnameinfo_contract ppoll_contract open_flags record_lock mlock_contract sqlite3 sqlite3_mem curl wget grep tree zip unzip fs_probe acl_tools xattr_tools xfs_io mknod credentials_test fifo_test flock_test mmap_test openat_test pwritev_test self_stop_status sync_test waitpid_status xattr_test
 
 # Discover all package command and test-program C source files.
 ALL_SOURCES := $(foreach dir,$(C_SOURCE_DIRS),$(wildcard $(dir)/*.c))
@@ -940,6 +946,13 @@ install:
 		fi; \
 	done; \
 	echo "Installed $$INSTALLED C command(s) to $(COMMANDS_DIR)"
+	@cd $(COMMANDS_DIR) && \
+	for pair in $(COMMAND_ALIASES); do \
+		link=$${pair%%:*}; target=$${pair##*:}; \
+		if [ -f "$$target" ]; then \
+			ln -sf "$$target" "$$link" 2>/dev/null || cp "$$target" "$$link"; \
+		fi; \
+	done
 	@# Git helper entry points. upload-pack/receive-pack/upload-archive ARE git
 	@# builtins, so they alias the git binary. The HTTPS transport lives in the
 	@# real git-remote-http binary (libcurl in-process); git-remote-https is an
@@ -951,6 +964,19 @@ install:
 	fi
 	@if [ -f "$(COMMANDS_DIR)/git-remote-http" ]; then \
 		ln -sf git-remote-http "$(COMMANDS_DIR)/git-remote-https"; \
+	fi
+	@if [ -f "$(COMMANDS_DIR)/mknod" ]; then \
+		ln -sf mknod "$(COMMANDS_DIR)/mkfifo"; \
+	fi
+	@if [ -f "$(COMMANDS_DIR)/acl_tools" ]; then \
+		for alias in chacl getfacl setfacl; do \
+			ln -sf acl_tools "$(COMMANDS_DIR)/$$alias"; \
+		done; \
+	fi
+	@if [ -f "$(COMMANDS_DIR)/xattr_tools" ]; then \
+		for alias in attr getfattr setfattr; do \
+			ln -sf xattr_tools "$(COMMANDS_DIR)/$$alias"; \
+		done; \
 	fi
 
 # --- Clean ---

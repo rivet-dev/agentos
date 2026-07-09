@@ -54,6 +54,14 @@ impl<V: VirtualFileSystem> VirtualFileSystem for DeviceLayer<V> {
             return bytes;
         }
 
+        if self
+            .inner
+            .stat(path)
+            .is_ok_and(|stat| is_null_character_device(&stat))
+        {
+            return Ok(Vec::new());
+        }
+
         self.inner.read_file(path)
     }
 
@@ -110,7 +118,12 @@ impl<V: VirtualFileSystem> VirtualFileSystem for DeviceLayer<V> {
     }
 
     fn write_file(&mut self, path: &str, content: impl Into<Vec<u8>>) -> VfsResult<()> {
-        if is_sink_device_path(path) {
+        if is_sink_device_path(path)
+            || self
+                .inner
+                .stat(path)
+                .is_ok_and(|stat| is_null_character_device(&stat))
+        {
             let _ = content.into();
             return Ok(());
         }
@@ -129,7 +142,12 @@ impl<V: VirtualFileSystem> VirtualFileSystem for DeviceLayer<V> {
     }
 
     fn append_file(&mut self, path: &str, content: impl Into<Vec<u8>>) -> VfsResult<u64> {
-        if is_sink_device_path(path) {
+        if is_sink_device_path(path)
+            || self
+                .inner
+                .stat(path)
+                .is_ok_and(|stat| is_null_character_device(&stat))
+        {
             return Ok(content.into().len() as u64);
         }
         self.inner.append_file(path, content)
@@ -147,6 +165,16 @@ impl<V: VirtualFileSystem> VirtualFileSystem for DeviceLayer<V> {
             return Ok(());
         }
         self.inner.mkdir(path, recursive)
+    }
+
+    fn mknod(&mut self, path: &str, mode: u32, rdev: u64) -> VfsResult<()> {
+        if is_device_path(path) || is_device_dir(path) {
+            return Err(VfsError::new(
+                "EEXIST",
+                format!("device already exists: {path}"),
+            ));
+        }
+        self.inner.mknod(path, mode, rdev)
     }
 
     fn exists(&self, path: &str) -> bool {
@@ -246,6 +274,54 @@ impl<V: VirtualFileSystem> VirtualFileSystem for DeviceLayer<V> {
         self.inner.chown_spec(path, uid, gid, follow_symlinks)
     }
 
+    fn get_xattr(&mut self, path: &str, name: &str, follow_symlinks: bool) -> VfsResult<Vec<u8>> {
+        if is_device_path(path) || is_device_dir(path) {
+            return Err(VfsError::new(
+                "EOPNOTSUPP",
+                format!("extended attributes are not supported for device {path}"),
+            ));
+        }
+        self.inner.get_xattr(path, name, follow_symlinks)
+    }
+
+    fn list_xattrs(&mut self, path: &str, follow_symlinks: bool) -> VfsResult<Vec<String>> {
+        if is_device_path(path) || is_device_dir(path) {
+            return Err(VfsError::new(
+                "EOPNOTSUPP",
+                format!("extended attributes are not supported for device {path}"),
+            ));
+        }
+        self.inner.list_xattrs(path, follow_symlinks)
+    }
+
+    fn set_xattr(
+        &mut self,
+        path: &str,
+        name: &str,
+        value: Vec<u8>,
+        flags: u32,
+        follow_symlinks: bool,
+    ) -> VfsResult<()> {
+        if is_device_path(path) || is_device_dir(path) {
+            return Err(VfsError::new(
+                "EOPNOTSUPP",
+                format!("extended attributes are not supported for device {path}"),
+            ));
+        }
+        self.inner
+            .set_xattr(path, name, value, flags, follow_symlinks)
+    }
+
+    fn remove_xattr(&mut self, path: &str, name: &str, follow_symlinks: bool) -> VfsResult<()> {
+        if is_device_path(path) || is_device_dir(path) {
+            return Err(VfsError::new(
+                "EOPNOTSUPP",
+                format!("extended attributes are not supported for device {path}"),
+            ));
+        }
+        self.inner.remove_xattr(path, name, follow_symlinks)
+    }
+
     fn utimes(&mut self, path: &str, atime_ms: u64, mtime_ms: u64) -> VfsResult<()> {
         if is_device_path(path) {
             return Ok(());
@@ -267,11 +343,102 @@ impl<V: VirtualFileSystem> VirtualFileSystem for DeviceLayer<V> {
     }
 
     fn truncate(&mut self, path: &str, length: u64) -> VfsResult<()> {
-        if is_sink_device_path(path) {
+        if is_sink_device_path(path)
+            || self
+                .inner
+                .stat(path)
+                .is_ok_and(|stat| is_null_character_device(&stat))
+        {
             let _ = length;
             return Ok(());
         }
         self.inner.truncate(path, length)
+    }
+
+    fn sync(&mut self, path: &str) -> VfsResult<()> {
+        if is_device_path(path) || is_device_dir(path) {
+            return Err(VfsError::new(
+                "EINVAL",
+                format!("device does not support sync: {path}"),
+            ));
+        }
+        self.inner.sync(path)
+    }
+
+    fn allocate(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        if is_device_path(path) || is_device_dir(path) {
+            return Err(VfsError::new(
+                "EINVAL",
+                format!("device does not support allocation: {path}"),
+            ));
+        }
+        self.inner.allocate(path, offset, length)
+    }
+
+    fn insert_range(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        if is_device_path(path) || is_device_dir(path) {
+            return Err(VfsError::new(
+                "EINVAL",
+                format!("device does not support insert range: {path}"),
+            ));
+        }
+        self.inner.insert_range(path, offset, length)
+    }
+
+    fn collapse_range(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        if is_device_path(path) || is_device_dir(path) {
+            return Err(VfsError::new(
+                "EINVAL",
+                format!("device does not support collapse range: {path}"),
+            ));
+        }
+        self.inner.collapse_range(path, offset, length)
+    }
+
+    fn zero_range(
+        &mut self,
+        path: &str,
+        offset: u64,
+        length: u64,
+        keep_size: bool,
+    ) -> VfsResult<()> {
+        if is_device_path(path) || is_device_dir(path) {
+            return Err(VfsError::new(
+                "EINVAL",
+                format!("device does not support zero range: {path}"),
+            ));
+        }
+        self.inner.zero_range(path, offset, length, keep_size)
+    }
+
+    fn punch_hole(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        if is_device_path(path) || is_device_dir(path) {
+            return Err(VfsError::new(
+                "EINVAL",
+                format!("device does not support hole punching: {path}"),
+            ));
+        }
+        self.inner.punch_hole(path, offset, length)
+    }
+
+    fn allocated_ranges(&mut self, path: &str) -> VfsResult<Vec<(u64, u64)>> {
+        if is_device_path(path) || is_device_dir(path) {
+            return Err(VfsError::new(
+                "EINVAL",
+                format!("device does not support extent mapping: {path}"),
+            ));
+        }
+        self.inner.allocated_ranges(path)
+    }
+
+    fn unwritten_ranges(&mut self, path: &str) -> VfsResult<Vec<(u64, u64)>> {
+        if is_device_path(path) || is_device_dir(path) {
+            return Err(VfsError::new(
+                "EINVAL",
+                format!("device does not support extent mapping: {path}"),
+            ));
+        }
+        self.inner.unwritten_ranges(path)
     }
 
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
@@ -279,7 +446,28 @@ impl<V: VirtualFileSystem> VirtualFileSystem for DeviceLayer<V> {
             return bytes;
         }
 
+        if self
+            .inner
+            .stat(path)
+            .is_ok_and(|stat| is_null_character_device(&stat))
+        {
+            return Ok(Vec::new());
+        }
+
         self.inner.pread(path, offset, length)
+    }
+
+    fn pwrite(&mut self, path: &str, content: impl Into<Vec<u8>>, offset: u64) -> VfsResult<()> {
+        if is_sink_device_path(path)
+            || self
+                .inner
+                .stat(path)
+                .is_ok_and(|stat| is_null_character_device(&stat))
+        {
+            let _ = (content.into(), offset);
+            return Ok(());
+        }
+        self.inner.pwrite(path, content, offset)
     }
 }
 
@@ -313,7 +501,7 @@ fn is_device_dir(path: &str) -> bool {
 fn device_stat(path: &str) -> VirtualStat {
     let now = now_ms();
     VirtualStat {
-        mode: 0o666,
+        mode: 0o020666,
         size: 0,
         blocks: 0,
         dev: 2,
@@ -337,7 +525,7 @@ fn device_stat(path: &str) -> VirtualStat {
 fn device_dir_stat(path: &str) -> VirtualStat {
     let now = now_ms();
     VirtualStat {
-        mode: 0o755,
+        mode: 0o040755,
         size: 0,
         blocks: 0,
         dev: 2,
@@ -384,6 +572,10 @@ fn device_rdev(path: &str) -> u64 {
 
 fn encode_device_id(major: u64, minor: u64) -> u64 {
     (major << 8) | minor
+}
+
+fn is_null_character_device(stat: &VirtualStat) -> bool {
+    stat.mode & 0o170000 == 0o020000 && stat.rdev == encode_device_id(1, 3)
 }
 
 fn random_bytes(length: usize) -> VfsResult<Vec<u8>> {

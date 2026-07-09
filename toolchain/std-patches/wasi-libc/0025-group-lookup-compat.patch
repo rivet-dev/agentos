@@ -18,11 +18,13 @@ index 8d91a2f..aa78a47 100644
  #include <string.h>
  #include <sys/resource.h>
  #include <unistd.h>
-@@ -48,5 +50,37 @@ int getgroups(int size, gid_t list[]) {
+@@ -68,6 +70,40 @@ int getgroups(int size, gid_t list[]) {
      list[0] = getgid();
      return 1;
  }
+ #endif
  
++#ifdef AGENTOS_WASI_LIBC_LEGACY_USER_SHIMS
 +int __agentos_group_lookup(const char *, gid_t, int, struct group *, char *,
 +                           size_t, struct group **);
 +
@@ -54,5 +56,6 @@ index 8d91a2f..aa78a47 100644
 +               struct group **result) {
 +    return __agentos_group_lookup(name, 0, 1, grp, buf, buflen, result);
 +}
++#endif
 +
  int getrlimit(int resource, struct rlimit *rlim) {

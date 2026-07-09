@@ -538,10 +538,13 @@ impl MetadataStore for ActorSqliteMetadataStore {
         ino: u64,
         edits: Vec<ChunkEdit>,
         new_size: u64,
+        allocated_extents: Vec<(u64, u64)>,
     ) -> VfsResult<Vec<BlockKey>> {
         let _guard = self.mutation.lock().await;
         let inner = self.inner().await?;
-        let result = inner.commit_write(ino, edits, new_size).await?;
+        let result = inner
+            .commit_write(ino, edits, new_size, allocated_extents)
+            .await?;
         self.persist(inner).await?;
         Ok(result)
     }

@@ -1,0 +1,31 @@
+Expose the Linux renameat2 API and flags through the AgentOS WASI sysroot.
+
+The implementation lives in the AgentOS libc override archive and delegates
+the flag-aware operation to the managed host_fs import.
+
+diff --git a/libc-bottom-half/headers/public/__header_fcntl.h b/libc-bottom-half/headers/public/__header_fcntl.h
+index 48ea3df..6f9d87a 100644
+--- a/libc-bottom-half/headers/public/__header_fcntl.h
++++ b/libc-bottom-half/headers/public/__header_fcntl.h
+@@ -57,6 +57,10 @@
+ #define AT_SYMLINK_FOLLOW   (0x2)
+ #define AT_REMOVEDIR        (0x4)
+ #define AT_EMPTY_PATH       (0x1000)
++
++#define RENAME_NOREPLACE    (0x1)
++#define RENAME_EXCHANGE     (0x2)
++#define RENAME_WHITEOUT     (0x4)
+ 
+ #define AT_FDCWD (-2)
+ 
+diff --git a/libc-top-half/musl/include/stdio.h b/libc-top-half/musl/include/stdio.h
+index 9388d44..c1fe5bb 100644
+--- a/libc-top-half/musl/include/stdio.h
++++ b/libc-top-half/musl/include/stdio.h
+@@ -180,5 +180,6 @@ ssize_t getdelim(char **__restrict, size_t *__restrict, int, FILE *__restrict);
+ ssize_t getline(char **__restrict, size_t *__restrict, FILE *__restrict);
+ int renameat(int, const char *, int, const char *);
++int renameat2(int, const char *, int, const char *, unsigned int);
+ char *ctermid(char *);
+ #define L_ctermid 20
+ #endif

@@ -41,6 +41,8 @@ async fn create_vm_with_host_mount(host_root: &Path) -> AgentOs {
                     "readOnly": true,
                 })),
             },
+            guest_source: Some("host_dir".to_string()),
+            guest_fstype: Some("host_dir".to_string()),
             read_only: true,
         }],
         ..Default::default()

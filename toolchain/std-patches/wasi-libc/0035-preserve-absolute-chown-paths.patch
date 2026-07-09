@@ -1,0 +1,30 @@
+Preserve absolute guest paths for chown and lchown host imports.
+
+The host_fs ownership ABI accepts UINT32_MAX as the cwd/absolute-path sentinel.
+Resolving through wasi-libc preopens before the import lost the mount prefix in
+the V8 runner, turning /mnt/test/link into /link.
+
+diff --git a/libc-bottom-half/sources/posix.c b/libc-bottom-half/sources/posix.c
+index 168e1d3..d0e78df 100644
+--- a/libc-bottom-half/sources/posix.c
++++ b/libc-bottom-half/sources/posix.c
+@@ -424,17 +424,11 @@ static int host_path_chown(int fd, const char *path, uid_t uid, gid_t gid,
+ }
+ 
+ int chown(const char *path, uid_t uid, gid_t gid) {
+-    char *relative_path;
+-    int dirfd = find_relpath(path, &relative_path);
+-    if (dirfd == -1) { errno = ENOENT; return -1; }
+-    return host_path_chown(dirfd, relative_path, uid, gid, 1);
++    return host_path_chown(-1, path, uid, gid, 1);
+ }
+ 
+ int lchown(const char *path, uid_t uid, gid_t gid) {
+-    char *relative_path;
+-    int dirfd = find_relpath(path, &relative_path);
+-    if (dirfd == -1) { errno = ENOENT; return -1; }
+-    return host_path_chown(dirfd, relative_path, uid, gid, 0);
++    return host_path_chown(-1, path, uid, gid, 0);
+ }
+ 
+ int fchown(int fd, uid_t uid, gid_t gid) {

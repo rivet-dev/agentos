@@ -1,0 +1,10 @@
+--- a/src/commands.rs
++++ b/src/commands.rs
+@@ -441,6 +441,7 @@ async fn spawn_command(
+                     *process_group_id = Some(*pid);
+                 }
+             } else {
++                #[cfg(not(target_os = "wasi"))]
+                 tracing::warn!("could not retrieve pid for child process");
+             }
+ 

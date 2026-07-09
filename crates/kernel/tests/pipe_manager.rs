@@ -1,4 +1,6 @@
-use agentos_kernel::fd_table::{FdResult, FdTableManager, FILETYPE_PIPE};
+use agentos_kernel::fd_table::{
+    FdResult, FdTableManager, FILETYPE_PIPE, O_NONBLOCK, O_RDONLY, O_RDWR, O_WRONLY,
+};
 use agentos_kernel::pipe_manager::{
     PipeManager, PipeResult, MAX_PIPE_BUFFER_BYTES, PIPE_BUF_BYTES,
 };
@@ -47,6 +49,118 @@ fn create_pipe_returns_distinct_read_and_write_descriptions() {
     assert_ne!(pipe.read.description.id(), pipe.write.description.id());
     assert!(manager.is_pipe(pipe.read.description.id()));
     assert!(manager.is_pipe(pipe.write.description.id()));
+}
+
+#[test]
+fn named_pipe_blocking_open_rendezvous_and_transfers_bytes() {
+    let manager = PipeManager::new();
+    let reader_manager = manager.clone();
+    let reader = thread::spawn(move || {
+        reader_manager
+            .open_named_pipe((7, 42), "/tmp/fifo", O_RDONLY, Some(Duration::from_secs(1)))
+            .expect("reader should rendezvous with writer")
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !manager.has_named_pipe((7, 42)) {
+        assert!(
+            Instant::now() < deadline,
+            "reader did not register named pipe"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+    let writer = manager
+        .open_named_pipe((7, 42), "/tmp/fifo", O_WRONLY, Some(Duration::from_secs(1)))
+        .expect("writer should observe waiting reader");
+    let reader = reader.join().expect("reader thread should finish");
+
+    manager
+        .write(writer.description.id(), b"named")
+        .expect("write named pipe");
+    assert_eq!(
+        manager
+            .read(reader.description.id(), 16)
+            .expect("read named pipe")
+            .expect("named pipe should contain bytes"),
+        b"named"
+    );
+}
+
+#[test]
+fn named_pipe_nonblocking_open_matches_linux_peer_rules() {
+    let manager = PipeManager::new();
+    assert_pipe_error(
+        manager.open_named_pipe(
+            (7, 43),
+            "/tmp/fifo",
+            O_WRONLY | O_NONBLOCK,
+            Some(Duration::ZERO),
+        ),
+        "ENXIO",
+    );
+
+    let reader = manager
+        .open_named_pipe(
+            (7, 43),
+            "/tmp/fifo",
+            O_RDONLY | O_NONBLOCK,
+            Some(Duration::ZERO),
+        )
+        .expect("nonblocking reader opens without a writer");
+    let writer = manager
+        .open_named_pipe(
+            (7, 43),
+            "/tmp/fifo",
+            O_WRONLY | O_NONBLOCK,
+            Some(Duration::ZERO),
+        )
+        .expect("nonblocking writer opens when reader exists");
+    let duplex = manager
+        .open_named_pipe((7, 43), "/tmp/fifo", O_RDWR, Some(Duration::ZERO))
+        .expect("read-write FIFO open never waits for a peer");
+    assert!(manager.is_pipe(reader.description.id()));
+    assert!(manager.is_pipe(writer.description.id()));
+    assert!(manager.is_pipe(duplex.description.id()));
+}
+
+#[test]
+fn named_pipe_peer_readiness_tracks_opposite_endpoints() {
+    let manager = PipeManager::new();
+    let reader = manager
+        .open_named_pipe(
+            (7, 44),
+            "/tmp/fifo-ready",
+            O_RDONLY | O_NONBLOCK,
+            Some(Duration::ZERO),
+        )
+        .expect("nonblocking reader opens without a writer");
+    assert_eq!(
+        manager
+            .named_pipe_peer_ready(reader.description.id())
+            .expect("reader readiness"),
+        Some(false)
+    );
+
+    let writer = manager
+        .open_named_pipe(
+            (7, 44),
+            "/tmp/fifo-ready",
+            O_WRONLY | O_NONBLOCK,
+            Some(Duration::ZERO),
+        )
+        .expect("writer opens after reader");
+    assert_eq!(
+        manager
+            .named_pipe_peer_ready(reader.description.id())
+            .expect("reader readiness after writer"),
+        Some(true)
+    );
+    assert_eq!(
+        manager
+            .named_pipe_peer_ready(writer.description.id())
+            .expect("writer readiness"),
+        Some(true)
+    );
 }
 
 #[test]

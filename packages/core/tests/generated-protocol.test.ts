@@ -79,6 +79,8 @@ describe("generated sidecar protocol", () => {
 						mounts: [
 							{
 								guestPath: "/node_modules",
+								guestSource: "host_dir",
+								guestFstype: "host_dir",
 								readOnly: true,
 								plugin: {
 									id: "host_dir",
@@ -307,6 +309,8 @@ describe("generated sidecar protocol", () => {
 						mounts: [
 							{
 								guestPath: "/workspace",
+								guestSource: "s3",
+								guestFstype: "s3",
 								readOnly: true,
 								plugin: { id: "s3", config },
 							},

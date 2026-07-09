@@ -1,0 +1,11 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-cmp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "cmp standalone binary for AgentOS VMs"
+
+[[bin]]
+name = "cmp"
+path = "src/main.rs"

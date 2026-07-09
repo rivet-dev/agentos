@@ -1,0 +1,11 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-df"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "df-compatible mount reporting command for AgentOS VMs"
+
+[[bin]]
+name = "df"
+path = "src/main.rs"

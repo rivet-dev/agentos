@@ -8,6 +8,12 @@ use web_time::{SystemTime, UNIX_EPOCH};
 pub const S_IFREG: u32 = 0o100000;
 pub const S_IFDIR: u32 = 0o040000;
 pub const S_IFLNK: u32 = 0o120000;
+pub const S_IFCHR: u32 = 0o020000;
+pub const S_IFBLK: u32 = 0o060000;
+pub const S_IFIFO: u32 = 0o010000;
+pub const RENAME_NOREPLACE: u32 = 1;
+pub const RENAME_EXCHANGE: u32 = 2;
+pub const RENAME_WHITEOUT: u32 = 4;
 
 // Each MemoryFileSystem instance gets its own device id, like a Linux
 // superblock. Inode numbers are only unique within one instance, so layered
@@ -15,6 +21,7 @@ pub const S_IFLNK: u32 = 0o120000;
 // identity comparisons to be meaningful. The counter starts above the small
 // constants reserved for synthetic device and pipe stats.
 static NEXT_MEMORY_FILESYSTEM_DEVICE_ID: AtomicU64 = AtomicU64::new(256);
+static NEXT_RENAME_EXCHANGE_ID: AtomicU64 = AtomicU64::new(1);
 
 fn allocate_memory_filesystem_device_id() -> u64 {
     NEXT_MEMORY_FILESYSTEM_DEVICE_ID.fetch_add(1, Ordering::Relaxed)
@@ -25,6 +32,11 @@ const DEFAULT_GID: u32 = 1000;
 const DIRECTORY_SIZE: u64 = 4096;
 pub const MAX_PATH_LENGTH: usize = 4096;
 const MAX_SYMLINK_DEPTH: usize = 40;
+pub const XATTR_CREATE: u32 = 1;
+pub const XATTR_REPLACE: u32 = 2;
+pub const XATTR_NAME_MAX: usize = 255;
+pub const XATTR_SIZE_MAX: usize = 64 * 1024;
+pub const XATTR_LIST_MAX: usize = 64 * 1024;
 
 pub type VfsResult<T> = Result<T, VfsError>;
 
@@ -124,6 +136,72 @@ impl fmt::Display for VfsError {
 }
 
 impl Error for VfsError {}
+
+pub fn validate_xattr_name(name: &str) -> VfsResult<()> {
+    if name.is_empty() || name.len() > XATTR_NAME_MAX || !name.contains('.') || name.contains('\0')
+    {
+        return Err(VfsError::new(
+            "ERANGE",
+            format!("invalid extended attribute name: {name:?}"),
+        ));
+    }
+    Ok(())
+}
+
+pub fn set_xattr_value(
+    xattrs: &mut BTreeMap<String, Vec<u8>>,
+    name: &str,
+    value: &[u8],
+    flags: u32,
+) -> VfsResult<()> {
+    validate_xattr_name(name)?;
+    if flags & !(XATTR_CREATE | XATTR_REPLACE) != 0 || flags == (XATTR_CREATE | XATTR_REPLACE) {
+        return Err(VfsError::new(
+            "EINVAL",
+            format!("invalid xattr flags: {flags}"),
+        ));
+    }
+    if value.len() > XATTR_SIZE_MAX {
+        return Err(VfsError::new(
+            "E2BIG",
+            format!(
+                "extended attribute value is {} bytes; Linux-compatible limit is {XATTR_SIZE_MAX} bytes",
+                value.len()
+            ),
+        ));
+    }
+    let exists = xattrs.contains_key(name);
+    if flags == XATTR_CREATE && exists {
+        return Err(VfsError::new(
+            "EEXIST",
+            format!("extended attribute already exists: {name}"),
+        ));
+    }
+    if flags == XATTR_REPLACE && !exists {
+        return Err(VfsError::new(
+            "ENODATA",
+            format!("extended attribute does not exist: {name}"),
+        ));
+    }
+    let old_len = xattrs.get(name).map_or(0, Vec::len);
+    let list_bytes = xattrs.keys().map(|key| key.len() + 1).sum::<usize>();
+    let value_bytes = xattrs.values().map(Vec::len).sum::<usize>();
+    let new_total = list_bytes
+        .saturating_add(value_bytes)
+        .saturating_sub(old_len)
+        .saturating_add(if exists { 0 } else { name.len() + 1 })
+        .saturating_add(value.len());
+    if new_total > XATTR_LIST_MAX {
+        return Err(VfsError::new(
+            "ENOSPC",
+            format!(
+                "inode extended attributes require {new_total} bytes; Linux-compatible limit is {XATTR_LIST_MAX} bytes"
+            ),
+        ));
+    }
+    xattrs.insert(name.to_string(), value.to_vec());
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileType {
@@ -275,6 +353,13 @@ pub trait VirtualFileSystem {
         self.create_dir(path)
     }
     fn mkdir(&mut self, path: &str, recursive: bool) -> VfsResult<()>;
+    fn mknod(&mut self, path: &str, mode: u32, rdev: u64) -> VfsResult<()> {
+        let _ = (mode, rdev);
+        Err(VfsError::new(
+            "EOPNOTSUPP",
+            format!("special inode creation is not supported for {path}"),
+        ))
+    }
     fn mkdir_with_mode(&mut self, path: &str, recursive: bool, mode: Option<u32>) -> VfsResult<()> {
         let _ = mode;
         self.mkdir(path, recursive)
@@ -284,6 +369,83 @@ pub trait VirtualFileSystem {
     fn remove_file(&mut self, path: &str) -> VfsResult<()>;
     fn remove_dir(&mut self, path: &str) -> VfsResult<()>;
     fn rename(&mut self, old_path: &str, new_path: &str) -> VfsResult<()>;
+    fn rename_at2(&mut self, old_path: &str, new_path: &str, flags: u32) -> VfsResult<()> {
+        match flags {
+            0 => self.rename(old_path, new_path),
+            RENAME_NOREPLACE => {
+                self.lstat(old_path)?;
+                match self.lstat(new_path) {
+                    Ok(_) => Err(VfsError::new(
+                        "EEXIST",
+                        format!("file exists, rename '{old_path}' -> '{new_path}'"),
+                    )),
+                    Err(error) if error.code() == "ENOENT" => self.rename(old_path, new_path),
+                    Err(error) => Err(error),
+                }
+            }
+            RENAME_EXCHANGE => {
+                self.lstat(old_path)?;
+                self.lstat(new_path)?;
+                if normalize_path(old_path) == normalize_path(new_path) {
+                    return Ok(());
+                }
+
+                let parent = dirname(old_path);
+                let temporary = (0..128)
+                    .find_map(|_| {
+                        let id = NEXT_RENAME_EXCHANGE_ID.fetch_add(1, Ordering::Relaxed);
+                        let candidate = if parent == "/" {
+                            format!("/.agentos-rename-exchange-{id}")
+                        } else {
+                            format!("{parent}/.agentos-rename-exchange-{id}")
+                        };
+                        if self
+                            .lstat(&candidate)
+                            .is_err_and(|error| error.code() == "ENOENT")
+                        {
+                            Some(candidate)
+                        } else {
+                            None
+                        }
+                    })
+                    .ok_or_else(|| {
+                        VfsError::new(
+                            "EEXIST",
+                            "could not allocate a bounded temporary rename-exchange path",
+                        )
+                    })?;
+
+                self.rename(old_path, &temporary)?;
+                if let Err(error) = self.rename(new_path, old_path) {
+                    return match self.rename(&temporary, old_path) {
+                        Ok(()) => Err(error),
+                        Err(rollback) => Err(VfsError::new(
+                            "EIO",
+                            format!("rename exchange failed: {error}; rollback failed: {rollback}"),
+                        )),
+                    };
+                }
+                if let Err(error) = self.rename(&temporary, new_path) {
+                    let rollback_destination = self.rename(old_path, new_path);
+                    let rollback_source = self.rename(&temporary, old_path);
+                    return match (rollback_destination, rollback_source) {
+                        (Ok(()), Ok(())) => Err(error),
+                        (destination, source) => Err(VfsError::new(
+                            "EIO",
+                            format!(
+                                "rename exchange failed: {error}; rollback destination: {destination:?}; rollback source: {source:?}"
+                            ),
+                        )),
+                    };
+                }
+                Ok(())
+            }
+            _ => Err(VfsError::new(
+                "EINVAL",
+                format!("invalid renameat2 flags: {flags:#x}"),
+            )),
+        }
+    }
     fn realpath(&self, path: &str) -> VfsResult<String>;
     fn symlink(&mut self, target: &str, link_path: &str) -> VfsResult<()>;
     fn read_link(&self, path: &str) -> VfsResult<String>;
@@ -304,6 +466,45 @@ pub trait VirtualFileSystem {
             )));
         }
         self.chown(path, uid, gid)
+    }
+
+    fn lchown(&mut self, path: &str, uid: u32, gid: u32) -> VfsResult<()> {
+        self.chown(path, uid, gid)
+    }
+    fn get_xattr(&mut self, path: &str, name: &str, follow_symlinks: bool) -> VfsResult<Vec<u8>> {
+        let _ = (name, follow_symlinks);
+        Err(VfsError::new(
+            "EOPNOTSUPP",
+            format!("extended attributes are not supported for {path}"),
+        ))
+    }
+    fn list_xattrs(&mut self, path: &str, follow_symlinks: bool) -> VfsResult<Vec<String>> {
+        let _ = follow_symlinks;
+        Err(VfsError::new(
+            "EOPNOTSUPP",
+            format!("extended attributes are not supported for {path}"),
+        ))
+    }
+    fn set_xattr(
+        &mut self,
+        path: &str,
+        name: &str,
+        value: Vec<u8>,
+        flags: u32,
+        follow_symlinks: bool,
+    ) -> VfsResult<()> {
+        let _ = (name, value, flags, follow_symlinks);
+        Err(VfsError::new(
+            "EOPNOTSUPP",
+            format!("extended attributes are not supported for {path}"),
+        ))
+    }
+    fn remove_xattr(&mut self, path: &str, name: &str, follow_symlinks: bool) -> VfsResult<()> {
+        let _ = (name, follow_symlinks);
+        Err(VfsError::new(
+            "EOPNOTSUPP",
+            format!("extended attributes are not supported for {path}"),
+        ))
     }
     fn utimes(&mut self, path: &str, atime_ms: u64, mtime_ms: u64) -> VfsResult<()>;
     fn utimes_spec(
@@ -343,6 +544,132 @@ pub trait VirtualFileSystem {
     }
     /// Resizes a file. VM resource policy must be enforced by the caller.
     fn truncate(&mut self, path: &str, length: u64) -> VfsResult<()>;
+    fn sync(&mut self, _path: &str) -> VfsResult<()> {
+        Ok(())
+    }
+    /// Allocates storage for a range without changing existing bytes.
+    /// VM resource policy must be enforced by the caller.
+    fn allocate(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        const ALLOCATION_CHUNK_BYTES: u64 = 64 * 1024;
+
+        let end = offset
+            .checked_add(length)
+            .ok_or_else(|| VfsError::new("EINVAL", "allocation range overflows"))?;
+        if length == 0 {
+            return Ok(());
+        }
+        let stat = self.stat(path)?;
+        if end > stat.size {
+            self.truncate(path, end)?;
+        }
+        let mut cursor = offset;
+        while cursor < end {
+            let chunk_len = (end - cursor).min(ALLOCATION_CHUNK_BYTES) as usize;
+            let mut bytes = self.pread(path, cursor, chunk_len)?;
+            bytes.resize(chunk_len, 0);
+            self.pwrite(path, bytes, cursor)?;
+            cursor += chunk_len as u64;
+        }
+        Ok(())
+    }
+    fn insert_range(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        validate_shift_range(offset, length)?;
+        let size = self.stat(path)?.size;
+        if offset >= size {
+            return Err(VfsError::new(
+                "EINVAL",
+                "insert range offset must be before EOF",
+            ));
+        }
+        let tail_len = usize::try_from(size - offset)
+            .map_err(|_| VfsError::new("EINVAL", "insert range tail is too large"))?;
+        let tail = self.pread(path, offset, tail_len)?;
+        self.truncate(
+            path,
+            size.checked_add(length)
+                .ok_or_else(|| VfsError::new("EINVAL", "insert range size overflows"))?,
+        )?;
+        self.pwrite(path, tail, offset + length)?;
+        self.punch_hole(path, offset, length)
+    }
+    fn collapse_range(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        validate_shift_range(offset, length)?;
+        let size = self.stat(path)?.size;
+        let end = offset
+            .checked_add(length)
+            .ok_or_else(|| VfsError::new("EINVAL", "collapse range overflows"))?;
+        if end >= size {
+            return Err(VfsError::new(
+                "EINVAL",
+                "collapse range must end before EOF",
+            ));
+        }
+        let tail_len = usize::try_from(size - end)
+            .map_err(|_| VfsError::new("EINVAL", "collapse range tail is too large"))?;
+        let tail = self.pread(path, end, tail_len)?;
+        self.pwrite(path, tail, offset)?;
+        self.truncate(path, size - length)
+    }
+    /// Zeroes and allocates a byte range, optionally preserving the file size.
+    fn zero_range(
+        &mut self,
+        path: &str,
+        offset: u64,
+        length: u64,
+        keep_size: bool,
+    ) -> VfsResult<()> {
+        let end = offset
+            .checked_add(length)
+            .ok_or_else(|| VfsError::new("EINVAL", "zero range overflows"))?;
+        if length == 0 {
+            return Err(VfsError::new("EINVAL", "zero range length must be nonzero"));
+        }
+        let original_size = self.stat(path)?.size;
+        self.allocate(path, offset, length)?;
+        let zero_end = if keep_size {
+            end.min(original_size)
+        } else {
+            end
+        };
+        let mut cursor = offset.min(zero_end);
+        while cursor < zero_end {
+            let chunk_len = (zero_end - cursor).min(64 * 1024) as usize;
+            self.pwrite(path, vec![0; chunk_len], cursor)?;
+            cursor += chunk_len as u64;
+        }
+        if keep_size && self.stat(path)?.size != original_size {
+            self.truncate(path, original_size)?;
+        }
+        Ok(())
+    }
+    /// Deallocates a byte range while preserving the file size. Bytes in the
+    /// intersecting range read back as zeroes.
+    fn punch_hole(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        let requested_end = offset
+            .checked_add(length)
+            .ok_or_else(|| VfsError::new("EINVAL", "hole-punch range overflows"))?;
+        let size = self.stat(path)?.size;
+        let end = requested_end.min(size);
+        let mut cursor = offset.min(size);
+        while cursor < end {
+            let chunk_len = (end - cursor).min(64 * 1024) as usize;
+            self.pwrite(path, vec![0; chunk_len], cursor)?;
+            cursor += chunk_len as u64;
+        }
+        Ok(())
+    }
+    /// Returns allocated byte ranges as half-open `(start, end)` intervals.
+    fn allocated_ranges(&mut self, path: &str) -> VfsResult<Vec<(u64, u64)>> {
+        Err(VfsError::new(
+            "EOPNOTSUPP",
+            format!("extent mapping is not supported for {path}"),
+        ))
+    }
+    /// Returns allocated byte ranges whose contents are logically zero until
+    /// first written, as half-open `(start, end)` intervals.
+    fn unwritten_ranges(&mut self, _path: &str) -> VfsResult<Vec<(u64, u64)>> {
+        Ok(Vec::new())
+    }
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>>;
     /// Writes caller-owned bytes at an offset after checking that the in-memory
     /// file can grow without overflowing addressable memory.
@@ -384,6 +711,9 @@ struct Metadata {
     ctime_ms: u64,
     ctime_nsec: u32,
     birthtime_ms: u64,
+    allocated_extents: Vec<(u64, u64)>,
+    unwritten_extents: Vec<(u64, u64)>,
+    xattrs: BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -403,6 +733,12 @@ pub struct MemoryFileSystemSnapshotMetadata {
     #[serde(default)]
     pub ctime_nsec: u32,
     pub birthtime_ms: u64,
+    #[serde(default)]
+    pub allocated_extents: Vec<(u64, u64)>,
+    #[serde(default)]
+    pub unwritten_extents: Vec<(u64, u64)>,
+    #[serde(default)]
+    pub xattrs: BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]
@@ -410,6 +746,9 @@ enum InodeKind {
     File { data: Vec<u8> },
     Directory,
     SymbolicLink { target: String },
+    CharacterDevice { rdev: u64 },
+    BlockDevice { rdev: u64 },
+    Fifo,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -417,6 +756,9 @@ pub enum MemoryFileSystemSnapshotInodeKind {
     File { data: Vec<u8> },
     Directory,
     SymbolicLink { target: String },
+    CharacterDevice { rdev: u64 },
+    BlockDevice { rdev: u64 },
+    Fifo,
 }
 
 #[derive(Debug, Clone)]
@@ -532,6 +874,14 @@ impl MemoryFileSystem {
         } else {
             1
         };
+        let allocated_extents = match &kind {
+            InodeKind::File { data } => dense_allocation(data.len() as u64),
+            InodeKind::Directory
+            | InodeKind::SymbolicLink { .. }
+            | InodeKind::CharacterDevice { .. }
+            | InodeKind::BlockDevice { .. }
+            | InodeKind::Fifo => Vec::new(),
+        };
         self.inodes.insert(
             ino,
             Inode {
@@ -548,6 +898,9 @@ impl MemoryFileSystem {
                     ctime_ms: now,
                     ctime_nsec: 0,
                     birthtime_ms: now,
+                    allocated_extents,
+                    unwritten_extents: Vec::new(),
+                    xattrs: BTreeMap::new(),
                 },
                 kind,
             },
@@ -797,14 +1150,21 @@ impl MemoryFileSystem {
             InodeKind::File { data } => data.len() as u64,
             InodeKind::Directory => DIRECTORY_SIZE,
             InodeKind::SymbolicLink { target } => target.len() as u64,
+            InodeKind::CharacterDevice { .. } | InodeKind::BlockDevice { .. } | InodeKind::Fifo => {
+                0
+            }
         };
 
         VirtualStat {
             mode: inode.metadata.mode,
             size,
-            blocks: block_count_for_size(size),
+            blocks: allocated_block_count(&inode.metadata.allocated_extents),
             dev: self.device_id,
-            rdev: 0,
+            rdev: match inode.kind {
+                InodeKind::CharacterDevice { rdev } => rdev,
+                InodeKind::BlockDevice { rdev } => rdev,
+                _ => 0,
+            },
             is_directory: matches!(inode.kind, InodeKind::Directory),
             is_symbolic_link: matches!(inode.kind, InodeKind::SymbolicLink { .. }),
             atime_ms: inode.metadata.atime_ms,
@@ -848,6 +1208,9 @@ impl MemoryFileSystem {
                                 ctime_ms: inode.metadata.ctime_ms,
                                 ctime_nsec: inode.metadata.ctime_nsec,
                                 birthtime_ms: inode.metadata.birthtime_ms,
+                                allocated_extents: inode.metadata.allocated_extents.clone(),
+                                unwritten_extents: inode.metadata.unwritten_extents.clone(),
+                                xattrs: inode.metadata.xattrs.clone(),
                             },
                             kind: match &inode.kind {
                                 InodeKind::File { data } => {
@@ -861,6 +1224,15 @@ impl MemoryFileSystem {
                                         target: target.clone(),
                                     }
                                 }
+                                InodeKind::CharacterDevice { rdev } => {
+                                    MemoryFileSystemSnapshotInodeKind::CharacterDevice {
+                                        rdev: *rdev,
+                                    }
+                                }
+                                InodeKind::BlockDevice { rdev } => {
+                                    MemoryFileSystemSnapshotInodeKind::BlockDevice { rdev: *rdev }
+                                }
+                                InodeKind::Fifo => MemoryFileSystemSnapshotInodeKind::Fifo,
                             },
                         },
                     )
@@ -894,6 +1266,9 @@ impl MemoryFileSystem {
                                 ctime_ms: inode.metadata.ctime_ms,
                                 ctime_nsec: inode.metadata.ctime_nsec,
                                 birthtime_ms: inode.metadata.birthtime_ms,
+                                allocated_extents: inode.metadata.allocated_extents,
+                                unwritten_extents: inode.metadata.unwritten_extents,
+                                xattrs: inode.metadata.xattrs,
                             },
                             kind: match inode.kind {
                                 MemoryFileSystemSnapshotInodeKind::File { data } => {
@@ -905,6 +1280,13 @@ impl MemoryFileSystem {
                                 MemoryFileSystemSnapshotInodeKind::SymbolicLink { target } => {
                                     InodeKind::SymbolicLink { target }
                                 }
+                                MemoryFileSystemSnapshotInodeKind::CharacterDevice { rdev } => {
+                                    InodeKind::CharacterDevice { rdev }
+                                }
+                                MemoryFileSystemSnapshotInodeKind::BlockDevice { rdev } => {
+                                    InodeKind::BlockDevice { rdev }
+                                }
+                                MemoryFileSystemSnapshotInodeKind::Fifo => InodeKind::Fifo,
                             },
                         },
                     )
@@ -925,6 +1307,12 @@ impl VirtualFileSystem for MemoryFileSystem {
             }
             InodeKind::Directory => Err(VfsError::is_directory("open", path)),
             InodeKind::SymbolicLink { .. } => Err(VfsError::not_found("open", path)),
+            InodeKind::CharacterDevice { .. } | InodeKind::BlockDevice { .. } | InodeKind::Fifo => {
+                Err(VfsError::new(
+                    "ENXIO",
+                    format!("device I/O requires kernel dispatch: {path}"),
+                ))
+            }
         }
     }
 
@@ -991,12 +1379,22 @@ impl VirtualFileSystem for MemoryFileSystem {
             match &mut inode.kind {
                 InodeKind::File { data: existing } => {
                     *existing = data;
+                    inode.metadata.allocated_extents = dense_allocation(existing.len() as u64);
+                    inode.metadata.unwritten_extents.clear();
                     inode.metadata.mtime_ms = now;
                     inode.metadata.ctime_ms = now;
                     return Ok(());
                 }
                 InodeKind::Directory => return Err(VfsError::is_directory("open", path)),
                 InodeKind::SymbolicLink { .. } => return Err(VfsError::not_found("open", path)),
+                InodeKind::CharacterDevice { .. }
+                | InodeKind::BlockDevice { .. }
+                | InodeKind::Fifo => {
+                    return Err(VfsError::new(
+                        "ENXIO",
+                        format!("device write requires kernel dispatch: {path}"),
+                    ))
+                }
             }
         }
 
@@ -1029,14 +1427,31 @@ impl VirtualFileSystem for MemoryFileSystem {
         let now = now_ms();
         match &mut inode.kind {
             InodeKind::File { data: existing } => {
+                let offset = existing.len() as u64;
                 reserve_file_growth(existing, data.len())?;
                 existing.extend_from_slice(&data);
+                allocate_range(
+                    &mut inode.metadata.allocated_extents,
+                    offset,
+                    data.len() as u64,
+                );
+                remove_extent_range(
+                    &mut inode.metadata.unwritten_extents,
+                    offset,
+                    data.len() as u64,
+                );
                 inode.metadata.mtime_ms = now;
                 inode.metadata.ctime_ms = now;
                 Ok(existing.len() as u64)
             }
             InodeKind::Directory => Err(VfsError::is_directory("open", path)),
             InodeKind::SymbolicLink { .. } => Err(VfsError::not_found("open", path)),
+            InodeKind::CharacterDevice { .. } | InodeKind::BlockDevice { .. } | InodeKind::Fifo => {
+                Err(VfsError::new(
+                    "ENXIO",
+                    format!("device I/O requires kernel dispatch: {path}"),
+                ))
+            }
         }
     }
 
@@ -1107,6 +1522,23 @@ impl VirtualFileSystem for MemoryFileSystem {
             current = resolved;
         }
 
+        Ok(())
+    }
+
+    fn mknod(&mut self, path: &str, mode: u32, rdev: u64) -> VfsResult<()> {
+        let normalized = self.resolve_path(path, 0)?;
+        self.mkdir(&dirname(&normalized), true)?;
+        if self.path_index.contains_key(&normalized) {
+            return Err(VfsError::already_exists("mknod", path));
+        }
+        let (kind, type_mode) = match mode & 0o170000 {
+            S_IFCHR => (InodeKind::CharacterDevice { rdev }, S_IFCHR),
+            S_IFBLK => (InodeKind::BlockDevice { rdev }, S_IFBLK),
+            S_IFIFO => (InodeKind::Fifo, S_IFIFO),
+            _ => return Err(VfsError::invalid_input("unsupported special inode type")),
+        };
+        let ino = self.allocate_inode(kind, type_mode | (mode & 0o7777));
+        self.path_index.insert(normalized, ino);
         Ok(())
     }
 
@@ -1191,6 +1623,21 @@ impl VirtualFileSystem for MemoryFileSystem {
                 .kind,
             InodeKind::Directory
         );
+
+        if let Some(destination_ino) = self.path_index.get(&new_normalized).copied() {
+            let destination_is_directory = matches!(
+                self.inodes
+                    .get(&destination_ino)
+                    .expect("destination path should point at a valid inode")
+                    .kind,
+                InodeKind::Directory
+            );
+            match (is_directory, destination_is_directory) {
+                (false, true) => return Err(VfsError::is_directory("rename", new_path)),
+                (true, false) => return Err(VfsError::not_directory("rename", new_path)),
+                _ => {}
+            }
+        }
 
         self.remove_existing_destination(new_path)?;
 
@@ -1322,6 +1769,66 @@ impl VirtualFileSystem for MemoryFileSystem {
         Ok(())
     }
 
+    fn lchown(&mut self, path: &str, uid: u32, gid: u32) -> VfsResult<()> {
+        let inode = self.inode_mut_for_existing_path(path, "lchown", false)?;
+        inode.metadata.uid = uid;
+        inode.metadata.gid = gid;
+        inode.metadata.ctime_ms = now_ms();
+        Ok(())
+    }
+
+    fn get_xattr(&mut self, path: &str, name: &str, follow_symlinks: bool) -> VfsResult<Vec<u8>> {
+        validate_xattr_name(name)?;
+        self.inode_for_existing_path(path, "getxattr", follow_symlinks)?
+            .metadata
+            .xattrs
+            .get(name)
+            .cloned()
+            .ok_or_else(|| {
+                VfsError::new(
+                    "ENODATA",
+                    format!("extended attribute does not exist: {name}"),
+                )
+            })
+    }
+
+    fn list_xattrs(&mut self, path: &str, follow_symlinks: bool) -> VfsResult<Vec<String>> {
+        Ok(self
+            .inode_for_existing_path(path, "listxattr", follow_symlinks)?
+            .metadata
+            .xattrs
+            .keys()
+            .cloned()
+            .collect())
+    }
+
+    fn set_xattr(
+        &mut self,
+        path: &str,
+        name: &str,
+        value: Vec<u8>,
+        flags: u32,
+        follow_symlinks: bool,
+    ) -> VfsResult<()> {
+        let inode = self.inode_mut_for_existing_path(path, "setxattr", follow_symlinks)?;
+        set_xattr_value(&mut inode.metadata.xattrs, name, &value, flags)?;
+        inode.metadata.ctime_ms = now_ms();
+        Ok(())
+    }
+
+    fn remove_xattr(&mut self, path: &str, name: &str, follow_symlinks: bool) -> VfsResult<()> {
+        validate_xattr_name(name)?;
+        let inode = self.inode_mut_for_existing_path(path, "removexattr", follow_symlinks)?;
+        if inode.metadata.xattrs.remove(name).is_none() {
+            return Err(VfsError::new(
+                "ENODATA",
+                format!("extended attribute does not exist: {name}"),
+            ));
+        }
+        inode.metadata.ctime_ms = now_ms();
+        Ok(())
+    }
+
     fn utimes(&mut self, path: &str, atime_ms: u64, mtime_ms: u64) -> VfsResult<()> {
         let inode = self.inode_mut_for_existing_path(path, "utimes", true)?;
         inode.metadata.atime_ms = atime_ms;
@@ -1379,12 +1886,234 @@ impl VirtualFileSystem for MemoryFileSystem {
         match &mut inode.kind {
             InodeKind::File { data } => {
                 resize_file_data(data, checked_file_len(length, "truncate length")?)?;
+                truncate_allocation(&mut inode.metadata.allocated_extents, length);
+                truncate_allocation(&mut inode.metadata.unwritten_extents, length);
                 inode.metadata.mtime_ms = now;
                 inode.metadata.ctime_ms = now;
                 Ok(())
             }
             InodeKind::Directory => Err(VfsError::is_directory("truncate", path)),
             InodeKind::SymbolicLink { .. } => Err(VfsError::not_found("truncate", path)),
+            InodeKind::CharacterDevice { .. } | InodeKind::BlockDevice { .. } | InodeKind::Fifo => {
+                Err(VfsError::new(
+                    "ENXIO",
+                    format!("cannot truncate character device: {path}"),
+                ))
+            }
+        }
+    }
+
+    fn allocate(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        let end = offset
+            .checked_add(length)
+            .ok_or_else(|| VfsError::new("EINVAL", "allocation range overflows"))?;
+        if length == 0 {
+            return Ok(());
+        }
+        let inode = self.inode_mut_for_existing_path(path, "fallocate", true)?;
+        match &mut inode.kind {
+            InodeKind::File { data } => {
+                let end_len = checked_file_len(end, "allocation range end")?;
+                if end_len > data.len() {
+                    resize_file_data(data, end_len)?;
+                }
+                allocate_unwritten_holes(
+                    &mut inode.metadata.unwritten_extents,
+                    &inode.metadata.allocated_extents,
+                    offset,
+                    length,
+                );
+                allocate_range(&mut inode.metadata.allocated_extents, offset, length);
+                let now = now_ms();
+                inode.metadata.mtime_ms = now;
+                inode.metadata.ctime_ms = now;
+                Ok(())
+            }
+            InodeKind::Directory => Err(VfsError::is_directory("fallocate", path)),
+            InodeKind::SymbolicLink { .. } => Err(VfsError::not_found("fallocate", path)),
+            InodeKind::CharacterDevice { .. } | InodeKind::BlockDevice { .. } | InodeKind::Fifo => {
+                Err(VfsError::new(
+                    "ENXIO",
+                    format!("cannot allocate character device: {path}"),
+                ))
+            }
+        }
+    }
+
+    fn insert_range(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        validate_shift_range(offset, length)?;
+        let inode = self.inode_mut_for_existing_path(path, "fallocate", true)?;
+        match &mut inode.kind {
+            InodeKind::File { data } => {
+                let start = checked_file_len(offset, "insert range offset")?;
+                let insert_len = checked_file_len(length, "insert range length")?;
+                if start >= data.len() {
+                    return Err(VfsError::new(
+                        "EINVAL",
+                        "insert range offset must be before EOF",
+                    ));
+                }
+                data.splice(start..start, std::iter::repeat_n(0, insert_len));
+                inode.metadata.allocated_extents =
+                    allocation_after_insert(&inode.metadata.allocated_extents, offset, length);
+                inode.metadata.unwritten_extents =
+                    allocation_after_insert(&inode.metadata.unwritten_extents, offset, length);
+                let now = now_ms();
+                inode.metadata.mtime_ms = now;
+                inode.metadata.ctime_ms = now;
+                Ok(())
+            }
+            InodeKind::Directory => Err(VfsError::is_directory("fallocate", path)),
+            InodeKind::SymbolicLink { .. } => Err(VfsError::not_found("fallocate", path)),
+            _ => Err(VfsError::new(
+                "ENXIO",
+                "cannot insert range on special inode",
+            )),
+        }
+    }
+
+    fn collapse_range(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        validate_shift_range(offset, length)?;
+        let end = offset
+            .checked_add(length)
+            .ok_or_else(|| VfsError::new("EINVAL", "collapse range overflows"))?;
+        let inode = self.inode_mut_for_existing_path(path, "fallocate", true)?;
+        match &mut inode.kind {
+            InodeKind::File { data } => {
+                if end >= data.len() as u64 {
+                    return Err(VfsError::new(
+                        "EINVAL",
+                        "collapse range must end before EOF",
+                    ));
+                }
+                let start = checked_file_len(offset, "collapse range offset")?;
+                let end = checked_file_len(end, "collapse range end")?;
+                data.drain(start..end);
+                inode.metadata.allocated_extents =
+                    allocation_after_collapse(&inode.metadata.allocated_extents, offset, length);
+                inode.metadata.unwritten_extents =
+                    allocation_after_collapse(&inode.metadata.unwritten_extents, offset, length);
+                let now = now_ms();
+                inode.metadata.mtime_ms = now;
+                inode.metadata.ctime_ms = now;
+                Ok(())
+            }
+            InodeKind::Directory => Err(VfsError::is_directory("fallocate", path)),
+            InodeKind::SymbolicLink { .. } => Err(VfsError::not_found("fallocate", path)),
+            _ => Err(VfsError::new(
+                "ENXIO",
+                "cannot collapse range on special inode",
+            )),
+        }
+    }
+
+    fn zero_range(
+        &mut self,
+        path: &str,
+        offset: u64,
+        length: u64,
+        keep_size: bool,
+    ) -> VfsResult<()> {
+        let end = offset
+            .checked_add(length)
+            .ok_or_else(|| VfsError::new("EINVAL", "zero range overflows"))?;
+        if length == 0 {
+            return Err(VfsError::new("EINVAL", "zero range length must be nonzero"));
+        }
+        let inode = self.inode_mut_for_existing_path(path, "fallocate", true)?;
+        match &mut inode.kind {
+            InodeKind::File { data } => {
+                let original_size = data.len() as u64;
+                let zero_end = if keep_size {
+                    end.min(original_size)
+                } else {
+                    end
+                };
+                if !keep_size {
+                    let end_len = checked_file_len(end, "zero range end")?;
+                    if end_len > data.len() {
+                        resize_file_data(data, end_len)?;
+                    }
+                }
+                let start = checked_file_len(offset.min(zero_end), "zero range offset")?;
+                let zero_end = checked_file_len(zero_end, "zero range end")?;
+                data[start..zero_end].fill(0);
+                mark_zero_unwritten(
+                    &mut inode.metadata.unwritten_extents,
+                    &inode.metadata.allocated_extents,
+                    offset,
+                    length,
+                );
+                allocate_range(&mut inode.metadata.allocated_extents, offset, length);
+                let now = now_ms();
+                inode.metadata.mtime_ms = now;
+                inode.metadata.ctime_ms = now;
+                Ok(())
+            }
+            InodeKind::Directory => Err(VfsError::is_directory("fallocate", path)),
+            InodeKind::SymbolicLink { .. } => Err(VfsError::not_found("fallocate", path)),
+            InodeKind::CharacterDevice { .. } | InodeKind::BlockDevice { .. } | InodeKind::Fifo => {
+                Err(VfsError::new("ENXIO", format!("cannot zero range: {path}")))
+            }
+        }
+    }
+
+    fn punch_hole(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        let requested_end = offset
+            .checked_add(length)
+            .ok_or_else(|| VfsError::new("EINVAL", "hole-punch range overflows"))?;
+        let inode = self.inode_mut_for_existing_path(path, "fallocate", true)?;
+        match &mut inode.kind {
+            InodeKind::File { data } => {
+                let start = checked_file_len(offset.min(data.len() as u64), "hole-punch offset")?;
+                let end =
+                    checked_file_len(requested_end.min(data.len() as u64), "hole-punch range end")?;
+                data[start..end].fill(0);
+                punch_allocation(&mut inode.metadata.allocated_extents, offset, length);
+                remove_extent_range(&mut inode.metadata.unwritten_extents, offset, length);
+                let now = now_ms();
+                inode.metadata.mtime_ms = now;
+                inode.metadata.ctime_ms = now;
+                Ok(())
+            }
+            InodeKind::Directory => Err(VfsError::is_directory("fallocate", path)),
+            InodeKind::SymbolicLink { .. } => Err(VfsError::not_found("fallocate", path)),
+            InodeKind::CharacterDevice { .. } | InodeKind::BlockDevice { .. } | InodeKind::Fifo => {
+                Err(VfsError::new(
+                    "ENXIO",
+                    format!("cannot punch character device: {path}"),
+                ))
+            }
+        }
+    }
+
+    fn allocated_ranges(&mut self, path: &str) -> VfsResult<Vec<(u64, u64)>> {
+        let inode = self.inode_mut_for_existing_path(path, "fiemap", true)?;
+        match &inode.kind {
+            InodeKind::File { data } => Ok(allocation_byte_ranges(
+                &inode.metadata.allocated_extents,
+                data.len() as u64,
+            )),
+            InodeKind::Directory => Err(VfsError::is_directory("fiemap", path)),
+            InodeKind::SymbolicLink { .. } => Err(VfsError::not_found("fiemap", path)),
+            InodeKind::CharacterDevice { .. } | InodeKind::BlockDevice { .. } | InodeKind::Fifo => {
+                Ok(Vec::new())
+            }
+        }
+    }
+
+    fn unwritten_ranges(&mut self, path: &str) -> VfsResult<Vec<(u64, u64)>> {
+        let inode = self.inode_mut_for_existing_path(path, "fiemap", true)?;
+        match &inode.kind {
+            InodeKind::File { data } => Ok(allocation_byte_ranges(
+                &inode.metadata.unwritten_extents,
+                data.len() as u64,
+            )),
+            InodeKind::Directory => Err(VfsError::is_directory("fiemap", path)),
+            InodeKind::SymbolicLink { .. } => Err(VfsError::not_found("fiemap", path)),
+            InodeKind::CharacterDevice { .. } | InodeKind::BlockDevice { .. } | InodeKind::Fifo => {
+                Ok(Vec::new())
+            }
         }
     }
 
@@ -1402,7 +2131,59 @@ impl VirtualFileSystem for MemoryFileSystem {
             }
             InodeKind::Directory => Err(VfsError::is_directory("open", path)),
             InodeKind::SymbolicLink { .. } => Err(VfsError::not_found("open", path)),
+            InodeKind::CharacterDevice { .. } | InodeKind::BlockDevice { .. } | InodeKind::Fifo => {
+                Err(VfsError::new(
+                    "ENXIO",
+                    format!("device I/O requires kernel dispatch: {path}"),
+                ))
+            }
         }
+    }
+
+    fn pwrite(&mut self, path: &str, content: impl Into<Vec<u8>>, offset: u64) -> VfsResult<()> {
+        let content = content.into();
+        let inode = self.inode_mut_for_existing_path(path, "open", true)?;
+        let data = match &mut inode.kind {
+            InodeKind::File { data } => data,
+            InodeKind::Directory => return Err(VfsError::is_directory("open", path)),
+            InodeKind::SymbolicLink { .. } => {
+                return Err(VfsError::not_found("open", path));
+            }
+            InodeKind::CharacterDevice { .. } | InodeKind::BlockDevice { .. } | InodeKind::Fifo => {
+                return Err(VfsError::new(
+                    "ENXIO",
+                    format!("device I/O requires kernel dispatch: {path}"),
+                ));
+            }
+        };
+        let start = checked_file_len(offset, "pwrite offset")?;
+        let end = start.checked_add(content.len()).ok_or_else(|| {
+            VfsError::new(
+                "ENOMEM",
+                format!(
+                    "pwrite result length overflows addressable memory: offset {offset}, content length {}",
+                    content.len()
+                ),
+            )
+        })?;
+        if end > data.len() {
+            resize_file_data(data, end)?;
+        }
+        data[start..end].copy_from_slice(&content);
+        allocate_range(
+            &mut inode.metadata.allocated_extents,
+            offset,
+            content.len() as u64,
+        );
+        remove_extent_range(
+            &mut inode.metadata.unwritten_extents,
+            offset,
+            content.len() as u64,
+        );
+        let now = now_ms();
+        inode.metadata.mtime_ms = now;
+        inode.metadata.ctime_ms = now;
+        Ok(())
     }
 }
 
@@ -1478,12 +2259,208 @@ pub fn normalize_path(path: &str) -> String {
     }
 }
 
-fn block_count_for_size(size: u64) -> u64 {
+fn dense_allocation(size: u64) -> Vec<(u64, u64)> {
     if size == 0 {
-        0
+        Vec::new()
     } else {
-        size.div_ceil(512)
+        vec![(0, size.div_ceil(512))]
     }
+}
+
+fn allocate_range(extents: &mut Vec<(u64, u64)>, offset: u64, length: u64) {
+    if length == 0 {
+        return;
+    }
+    let start = offset / 512;
+    let end = offset.saturating_add(length).div_ceil(512);
+    let mut merged = Vec::with_capacity(extents.len() + 1);
+    let mut pending = (start, end);
+    for &(extent_start, extent_end) in extents.iter() {
+        if extent_end < pending.0 {
+            merged.push((extent_start, extent_end));
+        } else if pending.1 < extent_start {
+            merged.push(pending);
+            pending = (extent_start, extent_end);
+        } else {
+            pending.0 = pending.0.min(extent_start);
+            pending.1 = pending.1.max(extent_end);
+        }
+    }
+    merged.push(pending);
+    *extents = merged;
+}
+
+fn remove_extent_range(extents: &mut Vec<(u64, u64)>, offset: u64, length: u64) {
+    if length == 0 {
+        return;
+    }
+    let start = offset / 512;
+    let end = offset.saturating_add(length).div_ceil(512);
+    *extents = extents
+        .iter()
+        .flat_map(|&(extent_start, extent_end)| {
+            [
+                (extent_start, extent_end.min(start)),
+                (extent_start.max(end), extent_end),
+            ]
+            .into_iter()
+            .filter(|(part_start, part_end)| part_start < part_end)
+        })
+        .collect();
+}
+
+fn allocate_unwritten_holes(
+    unwritten: &mut Vec<(u64, u64)>,
+    allocated: &[(u64, u64)],
+    offset: u64,
+    length: u64,
+) {
+    if length == 0 {
+        return;
+    }
+    let start = offset / 512;
+    let end = offset.saturating_add(length).div_ceil(512);
+    let mut cursor = start;
+    for &(allocated_start, allocated_end) in allocated {
+        if allocated_end <= cursor || allocated_start >= end {
+            continue;
+        }
+        if cursor < allocated_start {
+            allocate_range(
+                unwritten,
+                cursor.saturating_mul(512),
+                (allocated_start.min(end) - cursor).saturating_mul(512),
+            );
+        }
+        cursor = cursor.max(allocated_end).min(end);
+        if cursor == end {
+            return;
+        }
+    }
+    if cursor < end {
+        allocate_range(
+            unwritten,
+            cursor.saturating_mul(512),
+            (end - cursor).saturating_mul(512),
+        );
+    }
+}
+
+fn mark_zero_unwritten(
+    unwritten: &mut Vec<(u64, u64)>,
+    allocated: &[(u64, u64)],
+    offset: u64,
+    length: u64,
+) {
+    allocate_unwritten_holes(unwritten, allocated, offset, length);
+    let end = offset.saturating_add(length);
+    let first_full_block = offset.div_ceil(4096);
+    let past_full_block = end / 4096;
+    if first_full_block < past_full_block {
+        allocate_range(
+            unwritten,
+            first_full_block * 4096,
+            (past_full_block - first_full_block) * 4096,
+        );
+    }
+}
+
+fn truncate_allocation(extents: &mut Vec<(u64, u64)>, size: u64) {
+    let end = size.div_ceil(512);
+    extents.retain_mut(|(start, extent_end)| {
+        *extent_end = (*extent_end).min(end);
+        *start < *extent_end
+    });
+}
+
+fn punch_allocation(extents: &mut Vec<(u64, u64)>, offset: u64, length: u64) {
+    let start = offset.div_ceil(512);
+    let end = offset.saturating_add(length) / 512;
+    if start >= end {
+        return;
+    }
+    *extents = extents
+        .iter()
+        .flat_map(|&(extent_start, extent_end)| {
+            let left = (extent_start, extent_end.min(start));
+            let right = (extent_start.max(end), extent_end);
+            [left, right]
+                .into_iter()
+                .filter(|(part_start, part_end)| part_start < part_end)
+        })
+        .collect();
+}
+
+fn validate_shift_range(offset: u64, length: u64) -> VfsResult<()> {
+    if length == 0 || !offset.is_multiple_of(512) || !length.is_multiple_of(512) {
+        return Err(VfsError::new(
+            "EINVAL",
+            "insert/collapse range requires a nonzero 512-byte-aligned range",
+        ));
+    }
+    Ok(())
+}
+
+fn allocation_after_insert(existing: &[(u64, u64)], offset: u64, length: u64) -> Vec<(u64, u64)> {
+    let start = offset / 512;
+    let shift = length / 512;
+    normalize_extents(existing.iter().flat_map(|&(extent_start, extent_end)| {
+        if extent_end <= start {
+            vec![(extent_start, extent_end)]
+        } else if extent_start >= start {
+            vec![(extent_start + shift, extent_end + shift)]
+        } else {
+            vec![(extent_start, start), (start + shift, extent_end + shift)]
+        }
+    }))
+}
+
+fn allocation_after_collapse(existing: &[(u64, u64)], offset: u64, length: u64) -> Vec<(u64, u64)> {
+    let start = offset / 512;
+    let end = start + length / 512;
+    normalize_extents(existing.iter().flat_map(|&(extent_start, extent_end)| {
+        let mut parts = Vec::with_capacity(2);
+        if extent_start < start {
+            parts.push((extent_start, extent_end.min(start)));
+        }
+        if extent_end > end {
+            parts.push((
+                extent_start.max(end) - (end - start),
+                extent_end - (end - start),
+            ));
+        }
+        parts
+    }))
+}
+
+fn normalize_extents(extents: impl IntoIterator<Item = (u64, u64)>) -> Vec<(u64, u64)> {
+    let mut merged = Vec::<(u64, u64)>::new();
+    for (start, end) in extents.into_iter().filter(|(start, end)| start < end) {
+        if let Some(last) = merged.last_mut().filter(|last| start <= last.1) {
+            last.1 = last.1.max(end);
+        } else {
+            merged.push((start, end));
+        }
+    }
+    merged
+}
+
+fn allocated_block_count(extents: &[(u64, u64)]) -> u64 {
+    extents
+        .iter()
+        .map(|(start, end)| end.saturating_sub(*start))
+        .sum()
+}
+
+fn allocation_byte_ranges(extents: &[(u64, u64)], size: u64) -> Vec<(u64, u64)> {
+    extents
+        .iter()
+        .filter_map(|&(start, end)| {
+            let start = start.saturating_mul(512).min(size);
+            let end = end.saturating_mul(512).min(size);
+            (start < end).then_some((start, end))
+        })
+        .collect()
 }
 
 fn checked_file_len(value: u64, description: &'static str) -> VfsResult<usize> {

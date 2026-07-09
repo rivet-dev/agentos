@@ -71,6 +71,8 @@ fn run_awk(args: &[String]) -> Result<i32, String> {
             // Skip unknown options gracefully
         } else if program_source.is_none() {
             program_source = Some(arg.clone());
+        } else if let Some((name, value)) = variable_assignment(arg) {
+            variables.push((name.to_string(), value.to_string()));
         } else {
             input_files.push(arg.clone());
         }
@@ -135,4 +137,31 @@ fn run_awk(args: &[String]) -> Result<i32, String> {
     };
 
     Ok(exit_code)
+}
+
+fn variable_assignment(value: &str) -> Option<(&str, &str)> {
+    let (name, value) = value.split_once('=')?;
+    let mut chars = name.chars();
+    let first = chars.next()?;
+    (first == '_' || first.is_ascii_alphabetic())
+        .then_some(())
+        .filter(|_| chars.all(|character| character == '_' || character.is_ascii_alphanumeric()))
+        .map(|_| (name, value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::variable_assignment;
+
+    #[test]
+    fn recognizes_operand_variable_assignments() {
+        assert_eq!(variable_assignment("RS="), Some(("RS", "")));
+        assert_eq!(variable_assignment("name=value"), Some(("name", "value")));
+        assert_eq!(
+            variable_assignment("input=file.txt"),
+            Some(("input", "file.txt"))
+        );
+        assert_eq!(variable_assignment("not-a-name=value"), None);
+        assert_eq!(variable_assignment("/tmp/a=b"), None);
+    }
 }

@@ -846,11 +846,14 @@ impl AgentOs {
             .plugin
             .config
             .unwrap_or_else(|| serde_json::json!({}));
+        let plugin_id = descriptor.plugin.id;
         let mount = wire::MountDescriptor {
             guest_path: descriptor.path,
+            guest_source: plugin_id.clone(),
+            guest_fstype: plugin_id.clone(),
             read_only: descriptor.read_only,
             plugin: wire::MountPluginDescriptor {
-                id: descriptor.plugin.id,
+                id: plugin_id,
                 config: serde_json::to_string(&config)
                     .context("serializing dynamic mount config")?,
             },

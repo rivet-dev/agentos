@@ -1,5 +1,7 @@
 use super::*;
 
+const SYNTHETIC_V8_TERMINATION_STDERR: &[u8] = b"Error: Execution terminated\n";
+
 #[derive(Debug)]
 pub(super) enum TransferredHostNetSocket {
     Tcp {
@@ -2379,24 +2381,17 @@ where
                     &child_process_id,
                 )?;
 
-                // The standalone WASM runner already pulls descendant output
-                // through child_process.poll while implementing waitpid. Do not
-                // also steal those events and enqueue child_* StreamEvents into
-                // its V8 session: the runner has no node:child_process instance
-                // registered for that nested child, and a chatty child can fill
-                // the ordinary 256-entry session lane while the runner is in a
-                // synchronous poll call. Leaving the events on the child makes
-                // the existing bounded poll RPC the single owner of delivery.
+                // The standalone WASM runner pulls descendant output through
+                // child_process.poll while implementing waitpid. The global
+                // pump may still service one internal RPC per child turn so a
+                // foreground child cannot starve a background sibling, but it
+                // must leave stream and exit events for that pull owner.
                 let parent_is_pull_driven_wasm = self
                     .vms
                     .get(vm_id)
                     .and_then(|vm| vm.active_processes.get(process_id))
                     .and_then(|root| Self::active_process_by_path(root, &parent_path))
                     .is_some_and(|parent| parent.runtime == GuestRuntimeKind::WebAssembly);
-                if parent_is_pull_driven_wasm {
-                    continue;
-                }
-
                 self.expire_child_process_sync_if_needed(
                     vm_id,
                     process_id,
@@ -2411,6 +2406,7 @@ where
                         &parent_path,
                         &child_process_id,
                         0,
+                        parent_is_pull_driven_wasm,
                     )
                     .await
                 {
@@ -2900,6 +2896,7 @@ where
                         &parent_path,
                         child_process_id,
                         0,
+                        false,
                     )
                     .await
                 {
@@ -3743,6 +3740,7 @@ where
             .vms
             .get_mut(vm_id)
             .ok_or_else(|| missing_vm_error(vm_id))?;
+        enforce_resolved_wasm_execute_dac(vm, parent_kernel_pid, &resolved)?;
         let vm_pending_stdin_bytes_budget = Arc::clone(&vm.pending_stdin_bytes_budget);
         let vm_pending_event_bytes_budget = Arc::clone(&vm.pending_event_bytes_budget);
         let phase_start = Instant::now();
@@ -4185,6 +4183,7 @@ where
             .getpgid(EXECUTION_DRIVER_NAME, kernel_pid)
             .map_err(kernel_error)?;
         let process_event_limits = vm.limits.process.clone();
+        let shadow_root = normalize_host_path(&vm.cwd);
         let process = vm
             .active_processes
             .get_mut(process_id)
@@ -4217,6 +4216,7 @@ where
             .with_detached(request.options.detached)
             .with_guest_cwd(resolved.guest_cwd.clone())
             .with_env(resolved.env.clone())
+            .with_shadow_root(shadow_root)
             .with_host_cwd(resolved.host_cwd.clone()),
         );
         {
@@ -5220,6 +5220,7 @@ where
             .vms
             .get_mut(vm_id)
             .ok_or_else(|| missing_vm_error(vm_id))?;
+        enforce_resolved_wasm_execute_dac(vm, parent_kernel_pid, &resolved)?;
         let vm_pending_stdin_bytes_budget = Arc::clone(&vm.pending_stdin_bytes_budget);
         let vm_pending_event_bytes_budget = Arc::clone(&vm.pending_event_bytes_budget);
         let phase_start = Instant::now();
@@ -5719,6 +5720,7 @@ where
             }
         };
         let process_event_limits = vm.limits.process.clone();
+        let shadow_root = normalize_host_path(&vm.cwd);
         let root = match vm.active_processes.get_mut(process_id) {
             Some(root) => root,
             None => {
@@ -5780,6 +5782,7 @@ where
             .with_detached(request.options.detached)
             .with_guest_cwd(resolved.guest_cwd.clone())
             .with_env(resolved.env.clone())
+            .with_shadow_root(shadow_root)
             .with_host_cwd(resolved.host_cwd.clone()),
         );
         {
@@ -6004,6 +6007,7 @@ where
                     current_process_path,
                     child_process_id,
                     wait_ms,
+                    false,
                 ))
                 .await
                 .map(Into::into)
@@ -6456,6 +6460,7 @@ where
         current_process_path: &[&str],
         child_process_id: &str,
         wait_ms: u64,
+        preserve_pull_owned_events: bool,
     ) -> Result<Value, SidecarError> {
         let mut child_path = current_process_path.to_vec();
         child_path.push(child_process_id);
@@ -6532,6 +6537,47 @@ where
             };
 
             let PolledExecutionEvent { event, reservation } = event;
+            let synthetic_signal_termination = matches!(
+                &event,
+                ActiveExecutionEvent::Stderr(chunk)
+                    if chunk.as_slice() == SYNTHETIC_V8_TERMINATION_STDERR
+            ) && self
+                .vms
+                .get(vm_id)
+                .and_then(|vm| vm.active_processes.get(process_id))
+                .and_then(|root| Self::active_process_by_path(root, current_process_path))
+                .and_then(|parent| parent.child_processes.get(child_process_id))
+                .is_some_and(|child| child.exit_signal.is_some());
+            if synthetic_signal_termination {
+                // The following exit event carries the authoritative signal status.
+                drop(reservation);
+                continue;
+            }
+            if preserve_pull_owned_events
+                && matches!(
+                    &event,
+                    ActiveExecutionEvent::Stdout(_)
+                        | ActiveExecutionEvent::Stderr(_)
+                        | ActiveExecutionEvent::Exited(_)
+                )
+            {
+                let Some(vm) = self.vms.get_mut(vm_id) else {
+                    return Ok(Value::Null);
+                };
+                let Some(parent) =
+                    Self::descendant_parent_process_mut(vm, process_id, current_process_path)
+                else {
+                    return Ok(Value::Null);
+                };
+                let Some(child) = parent.child_processes.get_mut(child_process_id) else {
+                    return Ok(Value::Null);
+                };
+                child.queue_pending_polled_execution_event(PolledExecutionEvent {
+                    event,
+                    reservation,
+                })?;
+                return Ok(Value::Null);
+            }
             match event {
                 ActiveExecutionEvent::Stdout(chunk) => {
                     return Ok(json!({
@@ -7099,6 +7145,13 @@ where
                             )
                             .or_else(ignore_stale_javascript_sync_rpc_response)?,
                     }
+                    if preserve_pull_owned_events {
+                        // The WASM parent owns stream delivery, but the global
+                        // process pump may service one child RPC per turn so a
+                        // blocked foreground child cannot starve a background
+                        // sibling that supplies its readiness transition.
+                        return Ok(Value::Null);
+                    }
                     if let Some(event) = parent_signal_event {
                         return Ok(event);
                     }
@@ -7646,6 +7699,7 @@ where
             &[],
             child_process_id,
             wait_ms,
+            false,
         )
         .await
     }

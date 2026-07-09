@@ -7,6 +7,7 @@ use std::process::Command;
 const ENV_NODE: &str = "AGENTOS_NODE";
 const ENV_BUILD_SCRIPT: &str = "AGENTOS_V8_BRIDGE_BUILD_SCRIPT";
 const ENV_DEBUG: &str = "AGENTOS_GENERATED_ASSET_DEBUG";
+const ENV_PREBUILT_DIR: &str = "AGENTOS_V8_BRIDGE_PREBUILT_DIR";
 const DEFAULT_BUILD_SCRIPTS: &[&str] = &[
     "packages/build-tools/scripts/build-v8-bridge.mjs",
     "packages/runtime-core/scripts/build-v8-bridge.mjs",
@@ -21,8 +22,16 @@ pub fn build_v8_bridge(crate_manifest_dir: &Path, out_dir: &Path) {
     println!("cargo:rerun-if-env-changed={ENV_NODE}");
     println!("cargo:rerun-if-env-changed={ENV_BUILD_SCRIPT}");
     println!("cargo:rerun-if-env-changed={ENV_DEBUG}");
+    println!("cargo:rerun-if-env-changed={ENV_PREBUILT_DIR}");
 
-    if let Some(repo_root) = monorepo_root(crate_manifest_dir) {
+    if let Some(prebuilt_dir) = env::var_os(ENV_PREBUILT_DIR) {
+        copy_bundle(
+            &PathBuf::from(prebuilt_dir),
+            &bridge_output,
+            &zlib_output,
+            "prebuilt",
+        );
+    } else if let Some(repo_root) = monorepo_root(crate_manifest_dir) {
         build_from_monorepo(&repo_root, out_dir);
     } else {
         copy_vendored_bundle(crate_manifest_dir, &bridge_output, &zlib_output);
@@ -62,13 +71,9 @@ fn monorepo_root(crate_manifest_dir: &Path) -> Option<PathBuf> {
 
 fn copy_vendored_bundle(crate_manifest_dir: &Path, bridge_output: &Path, zlib_output: &Path) {
     let vendored_dir = crate_manifest_dir.join("assets/generated");
-    let vendored_bridge = vendored_dir.join("v8-bridge.js");
-    let vendored_zlib = vendored_dir.join("v8-bridge-zlib.js");
-
-    println!("cargo:rerun-if-changed={}", vendored_bridge.display());
-    println!("cargo:rerun-if-changed={}", vendored_zlib.display());
-
-    if !vendored_bridge.exists() || !vendored_zlib.exists() {
+    if !vendored_dir.join("v8-bridge.js").exists()
+        || !vendored_dir.join("v8-bridge-zlib.js").exists()
+    {
         panic!(
             "the V8 bridge build toolchain ({BUILD_SCRIPT_CANDIDATES}) was not \
              found and no vendored bundle exists at {}. Published crates must ship the prebuilt \
@@ -76,19 +81,35 @@ fn copy_vendored_bundle(crate_manifest_dir: &Path, bridge_output: &Path, zlib_ou
             vendored_dir.display()
         );
     }
+    copy_bundle(&vendored_dir, bridge_output, zlib_output, "vendored");
+}
 
-    fs::copy(&vendored_bridge, bridge_output).unwrap_or_else(|error| {
+fn copy_bundle(source_dir: &Path, bridge_output: &Path, zlib_output: &Path, kind: &str) {
+    let source_bridge = source_dir.join("v8-bridge.js");
+    let source_zlib = source_dir.join("v8-bridge-zlib.js");
+
+    println!("cargo:rerun-if-changed={}", source_bridge.display());
+    println!("cargo:rerun-if-changed={}", source_zlib.display());
+
+    if !source_bridge.is_file() || !source_zlib.is_file() {
         panic!(
-            "failed to copy vendored V8 bridge bundle from {} to {}: {}",
-            vendored_bridge.display(),
+            "{kind} V8 bridge directory {} must contain v8-bridge.js and v8-bridge-zlib.js",
+            source_dir.display()
+        );
+    }
+
+    fs::copy(&source_bridge, bridge_output).unwrap_or_else(|error| {
+        panic!(
+            "failed to copy {kind} V8 bridge bundle from {} to {}: {}",
+            source_bridge.display(),
             bridge_output.display(),
             error
         )
     });
-    fs::copy(&vendored_zlib, zlib_output).unwrap_or_else(|error| {
+    fs::copy(&source_zlib, zlib_output).unwrap_or_else(|error| {
         panic!(
-            "failed to copy vendored V8 bridge zlib bundle from {} to {}: {}",
-            vendored_zlib.display(),
+            "failed to copy {kind} V8 bridge zlib bundle from {} to {}: {}",
+            source_zlib.display(),
             zlib_output.display(),
             error
         )

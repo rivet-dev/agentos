@@ -624,6 +624,71 @@ fn open_file_descriptions_survive_unlink_and_follow_rename() {
 }
 
 #[test]
+fn overwritten_open_destinations_report_zero_links() {
+    let mut config = KernelVmConfig::new("vm-api-open-rename-overwrite");
+    config.permissions = Permissions::allow_all();
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .register_driver(CommandDriver::new("shell", ["sh"]))
+        .expect("register shell");
+    kernel
+        .write_file("/tmp/source.txt", b"source".to_vec())
+        .expect("seed rename source");
+    kernel
+        .write_file("/tmp/destination.txt", b"destination".to_vec())
+        .expect("seed rename destination");
+    kernel.mkdir("/tmp/source-dir", false).expect("source dir");
+    kernel
+        .mkdir("/tmp/destination-dir", false)
+        .expect("destination dir");
+
+    let process = spawn_shell(&mut kernel);
+    let file_fd = kernel
+        .fd_open(
+            "shell",
+            process.pid(),
+            "/tmp/destination.txt",
+            O_RDONLY,
+            None,
+        )
+        .expect("open file destination");
+    let directory_fd = kernel
+        .fd_open(
+            "shell",
+            process.pid(),
+            "/tmp/destination-dir",
+            O_RDONLY | O_DIRECTORY,
+            None,
+        )
+        .expect("open directory destination");
+
+    kernel
+        .rename("/tmp/source.txt", "/tmp/destination.txt")
+        .expect("overwrite file destination");
+    kernel
+        .rename("/tmp/source-dir", "/tmp/destination-dir")
+        .expect("overwrite directory destination");
+
+    assert_eq!(
+        kernel
+            .dev_fd_stat("shell", process.pid(), file_fd)
+            .expect("fstat overwritten file")
+            .nlink,
+        0
+    );
+    assert_eq!(
+        kernel
+            .dev_fd_stat("shell", process.pid(), directory_fd)
+            .expect("fstat overwritten directory")
+            .nlink,
+        0
+    );
+
+    process.finish(0);
+    kernel.waitpid(process.pid()).expect("wait for shell");
+}
+
+#[test]
 fn kernel_process_umask_applies_to_created_files_and_directories() {
     let mut config = KernelVmConfig::new("vm-api-umask");
     config.permissions = Permissions::allow_all();
@@ -1797,8 +1862,8 @@ fn proc_mounts_lists_root_and_active_mounts() {
 
     let mounts = String::from_utf8(kernel.read_file("/proc/mounts").expect("read proc mounts"))
         .expect("proc mounts should be utf8");
-    assert!(mounts.contains("root / root rw 0 0"));
-    assert!(mounts.contains("memory /data memory ro 0 0"));
+    assert!(mounts.contains("root / root rw,relatime 0 0"));
+    assert!(mounts.contains("memory /data memory ro,relatime 0 0"));
 }
 
 #[test]

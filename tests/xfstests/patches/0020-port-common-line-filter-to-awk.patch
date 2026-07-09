@@ -1,0 +1,44 @@
+From: AgentOS xfstests port
+Subject: [PATCH] fstests: implement common line filter with awk
+
+The AgentOS guest ships awk but not a Perl runtime. Preserve the filter's
+deduplication semantics with POSIX awk so verbose xfs_io output remains checked
+against the upstream golden files instead of being skipped.
+
+diff --git a/common/filter b/common/filter
+index 9cd9b31..891c148 100644
+--- a/common/filter
++++ b/common/filter
+@@ -156,14 +156,24 @@ _filter_dd()
+ 
+ common_line_filter()
+ {
+-    perl -ne 'if (/.*:(.*)/) {
+-        if ( "$last_line" ne "$1" ) { print "$_"; $first_match=1; }
+-        elsif ( $first_match==1 ) { print "*\n"; $first_match=0; }
+-        $last_line="$1";
+-    }
+-    else {
+-        print $_; $last_line=$_;
+-    }'
++    $AWK_PROG '
++    {
++        separator = index($0, ":")
++        if (separator != 0) {
++            suffix = substr($0, separator + 1)
++            if (last_line != suffix) {
++                print
++                first_match = 1
++            } else if (first_match == 1) {
++                print "*"
++                first_match = 0
++            }
++            last_line = suffix
++        } else {
++            print
++            last_line = $0
++        }
++    }'
+ }
+ 
+ _filter_xfs_io()

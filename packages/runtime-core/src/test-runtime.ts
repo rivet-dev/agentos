@@ -22,6 +22,7 @@ import { resolvePublishedSidecarBinary } from "./binary.js";
 import { findCargoBinary, resolveCargoBinary } from "./cargo.js";
 import type { PermissionsPolicy } from "./generated/PermissionsPolicy.js";
 import type { JsRuntimeConfig } from "./generated/JsRuntimeConfig.js";
+import type { VmUserConfig } from "./generated/VmUserConfig.js";
 
 export const AF_INET = 2;
 export const AF_UNIX = 1;
@@ -2664,6 +2665,7 @@ class NativeKernel implements Kernel {
 			permissions?: Permissions;
 			env?: Record<string, string>;
 			cwd?: string;
+			user?: VmUserConfig;
 			sidecar?: SidecarProcess;
 			onBootTiming?: (timing: KernelBootTiming) => void;
 			hostNetworkAdapter?: unknown;
@@ -3198,6 +3200,7 @@ class NativeKernel implements Kernel {
 				runtime: "java_script",
 				config: {
 					env: createVmEnv,
+					...(this.options.user ? { user: this.options.user } : {}),
 					rootFilesystem,
 					...(bootstrapPermissions
 						? { permissions: bootstrapPermissions }
@@ -3322,6 +3325,7 @@ export function createKernel(options: {
 	permissions?: Permissions;
 	env?: Record<string, string>;
 	cwd?: string;
+	user?: VmUserConfig;
 	sidecar?: SidecarProcess;
 	onBootTiming?: (timing: KernelBootTiming) => void;
 	maxProcesses?: number;

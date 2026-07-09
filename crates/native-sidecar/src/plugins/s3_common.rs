@@ -100,10 +100,16 @@ pub(crate) mod test_support {
         pub path: String,
     }
 
+    #[derive(Clone, Debug, Default)]
+    struct StoredObject {
+        body: Vec<u8>,
+        metadata: BTreeMap<String, String>,
+    }
+
     pub(crate) struct MockS3Server {
         base_url: String,
         shutdown: Arc<AtomicBool>,
-        objects: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+        objects: Arc<Mutex<BTreeMap<String, StoredObject>>>,
         requests: Arc<Mutex<Vec<LoggedRequest>>>,
         handle: Option<JoinHandle<()>>,
     }
@@ -129,7 +135,7 @@ pub(crate) mod test_support {
                             handle_stream(stream, &objects_for_thread, &requests_for_thread);
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                            thread::sleep(Duration::from_millis(10));
+                            thread::sleep(Duration::from_millis(1));
                         }
                         Err(_) => break,
                     }
@@ -158,11 +164,23 @@ pub(crate) mod test_support {
                 .collect()
         }
 
-        pub(crate) fn put_object(&self, key: &str, bytes: Vec<u8>) {
+        pub(crate) fn object_metadata(&self) -> Vec<(String, BTreeMap<String, String>)> {
             self.objects
                 .lock()
                 .expect("lock mock s3 objects")
-                .insert(key.to_owned(), bytes);
+                .iter()
+                .map(|(key, object)| (key.clone(), object.metadata.clone()))
+                .collect()
+        }
+
+        pub(crate) fn put_object(&self, key: &str, bytes: Vec<u8>) {
+            self.objects.lock().expect("lock mock s3 objects").insert(
+                key.to_owned(),
+                StoredObject {
+                    body: bytes,
+                    metadata: BTreeMap::new(),
+                },
+            );
         }
 
         pub(crate) fn requests(&self) -> Vec<LoggedRequest> {
@@ -185,7 +203,7 @@ pub(crate) mod test_support {
 
     fn handle_stream(
         mut stream: TcpStream,
-        objects: &Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+        objects: &Arc<Mutex<BTreeMap<String, StoredObject>>>,
         requests: &Arc<Mutex<Vec<LoggedRequest>>>,
     ) {
         stream
@@ -270,7 +288,7 @@ pub(crate) mod test_support {
                     .lock()
                     .expect("lock mock s3 objects")
                     .get(key)
-                    .cloned()
+                    .map(|object| object.body.clone())
                 {
                     let bytes = apply_range(&bytes, headers.get("range").map(String::as_str));
                     send_response(&mut stream, 200, "OK", "application/octet-stream", &bytes);
@@ -280,19 +298,21 @@ pub(crate) mod test_support {
             }
             "HEAD" => {
                 let key = path.trim_start_matches('/');
-                let len = objects
+                let object = objects
                     .lock()
                     .expect("lock mock s3 objects")
                     .get(key)
-                    .map(Vec::len);
-                match len {
-                    Some(len) => send_head_response(&mut stream, 200, "OK", len),
-                    None => send_head_response(&mut stream, 404, "Not Found", 0),
+                    .cloned();
+                match object {
+                    Some(object) => send_head_response(&mut stream, 200, "OK", &object),
+                    None => {
+                        send_head_response(&mut stream, 404, "Not Found", &StoredObject::default())
+                    }
                 }
             }
             "PUT" => {
                 let key = path.trim_start_matches('/').to_owned();
-                let data = if let Some(source) = headers.get("x-amz-copy-source") {
+                let object = if let Some(source) = headers.get("x-amz-copy-source") {
                     let source = decode_url_component(source)
                         .trim_start_matches('/')
                         .to_owned();
@@ -303,12 +323,21 @@ pub(crate) mod test_support {
                         .cloned()
                         .unwrap_or_default()
                 } else {
-                    body
+                    StoredObject {
+                        body,
+                        metadata: headers
+                            .iter()
+                            .filter_map(|(name, value)| {
+                                name.strip_prefix("x-amz-meta-")
+                                    .map(|name| (name.to_owned(), value.clone()))
+                            })
+                            .collect(),
+                    }
                 };
                 objects
                     .lock()
                     .expect("lock mock s3 objects")
-                    .insert(key, data);
+                    .insert(key, object);
                 send_response(&mut stream, 200, "OK", "application/xml", b"");
             }
             "DELETE" => {
@@ -352,7 +381,7 @@ pub(crate) mod test_support {
         path: &str,
         prefix: &str,
         delimiter: Option<&str>,
-        objects: &Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+        objects: &Arc<Mutex<BTreeMap<String, StoredObject>>>,
     ) -> String {
         let bucket = path
             .trim_start_matches('/')
@@ -364,7 +393,7 @@ pub(crate) mod test_support {
         let mut contents = Vec::new();
         let mut common_prefixes = BTreeSet::new();
 
-        for (key, bytes) in objects.lock().expect("lock mock s3 objects").iter() {
+        for (key, object) in objects.lock().expect("lock mock s3 objects").iter() {
             let Some(relative) = key.strip_prefix(&full_prefix) else {
                 continue;
             };
@@ -378,7 +407,7 @@ pub(crate) mod test_support {
                 key.strip_prefix(&format!("{bucket}/"))
                     .unwrap_or(key)
                     .to_owned(),
-                bytes.len(),
+                object.body.len(),
             ));
         }
 
@@ -430,10 +459,20 @@ pub(crate) mod test_support {
         );
     }
 
-    fn send_head_response(stream: &mut TcpStream, status: u16, reason: &str, len: usize) {
-        let response = format!(
-            "HTTP/1.1 {status} {reason}\r\nContent-Length: {len}\r\nConnection: close\r\nx-amz-request-id: test\r\n\r\n"
+    fn send_head_response(
+        stream: &mut TcpStream,
+        status: u16,
+        reason: &str,
+        object: &StoredObject,
+    ) {
+        let mut response = format!(
+            "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\nx-amz-request-id: test\r\n",
+            object.body.len()
         );
+        for (name, value) in &object.metadata {
+            response.push_str(&format!("x-amz-meta-{name}: {value}\r\n"));
+        }
+        response.push_str("\r\n");
         stream
             .write_all(response.as_bytes())
             .expect("write mock s3 head response");

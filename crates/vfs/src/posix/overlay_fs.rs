@@ -326,6 +326,13 @@ impl OverlayFileSystem {
         false
     }
 
+    fn entry_touches_internal_metadata(&self, path: &str) -> bool {
+        Self::is_internal_metadata_path(path)
+            || self
+                .resolved_destination_path(path)
+                .is_ok_and(|resolved| Self::is_internal_metadata_path(&resolved))
+    }
+
     fn hidden_root_entry_name() -> &'static str {
         ".secure-exec-overlay"
     }
@@ -437,7 +444,7 @@ impl OverlayFileSystem {
         let mut pending = vec![Self::normalized(path)];
         while let Some(current_path) = pending.pop() {
             let stat = filesystem.lstat(&current_path)?;
-            if visited.insert(stat.ino) {
+            if visited.insert((stat.dev, stat.ino)) {
                 let bytes = if stat.is_directory && !stat.is_symbolic_link {
                     0
                 } else {
@@ -477,7 +484,7 @@ impl OverlayFileSystem {
         let mut pending = vec![Self::normalized(path)];
         while let Some(current_path) = pending.pop() {
             let stat = filesystem.lstat(&current_path)?;
-            if visited.insert(stat.ino) {
+            if visited.insert((stat.dev, stat.ino)) {
                 let subtree_links = filesystem.link_count_in_subtree(stat.ino, path) as u64;
                 if stat.is_directory || stat.nlink <= subtree_links {
                     let bytes = if stat.is_directory && !stat.is_symbolic_link {
@@ -902,11 +909,26 @@ impl OverlayFileSystem {
         let (lower_index, stat) = self
             .find_lower_by_entry(path)
             .ok_or_else(|| Self::entry_not_found(path))?;
+        let xattrs = match self.lowers[lower_index].list_xattrs(path, false) {
+            Ok(names) => names
+                .into_iter()
+                .map(|name| {
+                    self.lowers[lower_index]
+                        .get_xattr(path, &name, false)
+                        .map(|value| (name, value))
+                })
+                .collect::<VfsResult<Vec<_>>>()?,
+            Err(error) if error.code() == "EOPNOTSUPP" => Vec::new(),
+            Err(error) => return Err(error),
+        };
 
         if stat.is_symbolic_link {
             let target = self.lowers[lower_index].read_link(path)?;
             let upper = self.writable_upper(path)?;
             upper.symlink(&target, path)?;
+            for (name, value) in xattrs {
+                upper.set_xattr(path, &name, value, 0, false)?;
+            }
             return Ok(());
         }
 
@@ -915,6 +937,9 @@ impl OverlayFileSystem {
             upper.mkdir(path, false)?;
             upper.chmod(path, stat.mode)?;
             upper.chown(path, stat.uid, stat.gid)?;
+            for (name, value) in xattrs {
+                upper.set_xattr(path, &name, value, 0, false)?;
+            }
             self.mark_opaque_directory(path)?;
             return Ok(());
         }
@@ -924,6 +949,9 @@ impl OverlayFileSystem {
         upper.write_file(path, data)?;
         upper.chmod(path, stat.mode)?;
         upper.chown(path, stat.uid, stat.gid)?;
+        for (name, value) in xattrs {
+            upper.set_xattr(path, &name, value, 0, false)?;
+        }
         Ok(())
     }
 
@@ -1529,6 +1557,18 @@ impl VirtualFileSystem for OverlayFileSystem {
         self.writable_upper(path)?.mkdir(path, recursive)
     }
 
+    fn mknod(&mut self, path: &str, mode: u32, rdev: u64) -> VfsResult<()> {
+        if self.touches_internal_metadata(path) {
+            return Err(VfsError::permission_denied("mknod", path));
+        }
+        self.clear_path_metadata(path)?;
+        if self.path_exists_in_merged_view(path) {
+            return Err(Self::already_exists(path));
+        }
+        self.ensure_ancestor_directories_in_upper(path)?;
+        self.writable_upper(path)?.mknod(path, mode, rdev)
+    }
+
     fn exists(&self, path: &str) -> bool {
         if self.touches_internal_metadata(path) {
             return false;
@@ -1557,7 +1597,7 @@ impl VirtualFileSystem for OverlayFileSystem {
     }
 
     fn remove_file(&mut self, path: &str) -> VfsResult<()> {
-        if self.touches_internal_metadata(path) {
+        if self.entry_touches_internal_metadata(path) {
             return Err(VfsError::permission_denied("unlink", path));
         }
         if self.is_whited_out(path) {
@@ -1809,6 +1849,114 @@ impl VirtualFileSystem for OverlayFileSystem {
             .chown_spec(path, uid, gid, follow_symlinks)
     }
 
+    fn lchown(&mut self, path: &str, uid: u32, gid: u32) -> VfsResult<()> {
+        if self.touches_internal_metadata(path) {
+            return Err(VfsError::permission_denied("lchown", path));
+        }
+        if self.is_whited_out(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        if !self.has_entry_in_upper(path) {
+            self.copy_up_path(path)?;
+        }
+        self.writable_upper(path)?.lchown(path, uid, gid)
+    }
+
+    fn get_xattr(&mut self, path: &str, name: &str, follow_symlinks: bool) -> VfsResult<Vec<u8>> {
+        if self.touches_internal_metadata(path) || self.is_whited_out(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        let upper_exists = if follow_symlinks {
+            self.exists_in_upper(path)
+        } else {
+            self.has_entry_in_upper(path)
+        };
+        if upper_exists {
+            return self
+                .upper
+                .as_mut()
+                .expect("upper must exist when path exists")
+                .get_xattr(path, name, follow_symlinks);
+        }
+        let lower_index = if follow_symlinks {
+            self.find_lower_by_exists(path)
+        } else {
+            self.find_lower_by_entry(path).map(|(index, _)| index)
+        }
+        .ok_or_else(|| Self::entry_not_found(path))?;
+        self.lowers[lower_index].get_xattr(path, name, follow_symlinks)
+    }
+
+    fn list_xattrs(&mut self, path: &str, follow_symlinks: bool) -> VfsResult<Vec<String>> {
+        if self.touches_internal_metadata(path) || self.is_whited_out(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        let upper_exists = if follow_symlinks {
+            self.exists_in_upper(path)
+        } else {
+            self.has_entry_in_upper(path)
+        };
+        if upper_exists {
+            return self
+                .upper
+                .as_mut()
+                .expect("upper must exist when path exists")
+                .list_xattrs(path, follow_symlinks);
+        }
+        let lower_index = if follow_symlinks {
+            self.find_lower_by_exists(path)
+        } else {
+            self.find_lower_by_entry(path).map(|(index, _)| index)
+        }
+        .ok_or_else(|| Self::entry_not_found(path))?;
+        self.lowers[lower_index].list_xattrs(path, follow_symlinks)
+    }
+
+    fn set_xattr(
+        &mut self,
+        path: &str,
+        name: &str,
+        value: Vec<u8>,
+        flags: u32,
+        follow_symlinks: bool,
+    ) -> VfsResult<()> {
+        if self.touches_internal_metadata(path) {
+            return Err(VfsError::permission_denied("setxattr", path));
+        }
+        if self.is_whited_out(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        let upper_exists = if follow_symlinks {
+            self.exists_in_upper(path)
+        } else {
+            self.has_entry_in_upper(path)
+        };
+        if !upper_exists {
+            self.copy_up_path(path)?;
+        }
+        self.writable_upper(path)?
+            .set_xattr(path, name, value, flags, follow_symlinks)
+    }
+
+    fn remove_xattr(&mut self, path: &str, name: &str, follow_symlinks: bool) -> VfsResult<()> {
+        if self.touches_internal_metadata(path) {
+            return Err(VfsError::permission_denied("removexattr", path));
+        }
+        if self.is_whited_out(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        let upper_exists = if follow_symlinks {
+            self.exists_in_upper(path)
+        } else {
+            self.has_entry_in_upper(path)
+        };
+        if !upper_exists {
+            self.copy_up_path(path)?;
+        }
+        self.writable_upper(path)?
+            .remove_xattr(path, name, follow_symlinks)
+    }
+
     fn utimes(&mut self, path: &str, atime_ms: u64, mtime_ms: u64) -> VfsResult<()> {
         if self.touches_internal_metadata(path) {
             return Err(VfsError::permission_denied("utime", path));
@@ -1855,6 +2003,108 @@ impl VirtualFileSystem for OverlayFileSystem {
         self.writable_upper(path)?.truncate(path, length)
     }
 
+    fn allocate(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        if self.touches_internal_metadata(path) {
+            return Err(VfsError::permission_denied("fallocate", path));
+        }
+        if self.is_whited_out(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        if !self.exists_in_upper(path) {
+            self.copy_up_path(path)?;
+        }
+        self.writable_upper(path)?.allocate(path, offset, length)
+    }
+
+    fn insert_range(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        if self.touches_internal_metadata(path) {
+            return Err(VfsError::permission_denied("fallocate", path));
+        }
+        if self.is_whited_out(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        if !self.exists_in_upper(path) {
+            self.copy_up_path(path)?;
+        }
+        self.writable_upper(path)?
+            .insert_range(path, offset, length)
+    }
+
+    fn collapse_range(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        if self.touches_internal_metadata(path) {
+            return Err(VfsError::permission_denied("fallocate", path));
+        }
+        if self.is_whited_out(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        if !self.exists_in_upper(path) {
+            self.copy_up_path(path)?;
+        }
+        self.writable_upper(path)?
+            .collapse_range(path, offset, length)
+    }
+
+    fn zero_range(
+        &mut self,
+        path: &str,
+        offset: u64,
+        length: u64,
+        keep_size: bool,
+    ) -> VfsResult<()> {
+        if self.touches_internal_metadata(path) {
+            return Err(VfsError::permission_denied("fallocate", path));
+        }
+        if self.is_whited_out(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        if !self.exists_in_upper(path) {
+            self.copy_up_path(path)?;
+        }
+        self.writable_upper(path)?
+            .zero_range(path, offset, length, keep_size)
+    }
+
+    fn punch_hole(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        if self.touches_internal_metadata(path) {
+            return Err(VfsError::permission_denied("fallocate", path));
+        }
+        if self.is_whited_out(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        if !self.exists_in_upper(path) {
+            self.copy_up_path(path)?;
+        }
+        self.writable_upper(path)?.punch_hole(path, offset, length)
+    }
+
+    fn allocated_ranges(&mut self, path: &str) -> VfsResult<Vec<(u64, u64)>> {
+        if self.touches_internal_metadata(path) || self.is_whited_out(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        if self.exists_in_upper(path) {
+            self.writable_upper(path)?.allocated_ranges(path)
+        } else {
+            let Some(index) = self.find_lower_by_exists(path) else {
+                return Err(Self::entry_not_found(path));
+            };
+            self.lowers[index].allocated_ranges(path)
+        }
+    }
+
+    fn unwritten_ranges(&mut self, path: &str) -> VfsResult<Vec<(u64, u64)>> {
+        if self.touches_internal_metadata(path) || self.is_whited_out(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        if self.exists_in_upper(path) {
+            self.writable_upper(path)?.unwritten_ranges(path)
+        } else {
+            let Some(index) = self.find_lower_by_exists(path) else {
+                return Err(Self::entry_not_found(path));
+            };
+            self.lowers[index].unwritten_ranges(path)
+        }
+    }
+
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
         if self.touches_internal_metadata(path) {
             return Err(Self::entry_not_found(path));
@@ -1873,6 +2123,20 @@ impl VirtualFileSystem for OverlayFileSystem {
             return Err(Self::entry_not_found(path));
         };
         self.lowers[index].pread(path, offset, length)
+    }
+
+    fn pwrite(&mut self, path: &str, content: impl Into<Vec<u8>>, offset: u64) -> VfsResult<()> {
+        if self.touches_internal_metadata(path) {
+            return Err(VfsError::permission_denied("pwrite", path));
+        }
+        if self.is_whited_out(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        if !self.exists_in_upper(path) {
+            self.copy_up_path(path)?;
+        }
+        self.writable_upper(path)?
+            .pwrite(path, content.into(), offset)
     }
 }
 
@@ -1959,6 +2223,20 @@ mod tests {
             restored.read_dir("/data").expect("read merged directory"),
             Vec::<String>::new()
         );
+    }
+
+    #[test]
+    fn remove_file_does_not_follow_a_self_referential_symlink() {
+        let mut overlay = OverlayFileSystem::new(Vec::new(), OverlayMode::Ephemeral);
+        overlay
+            .symlink("self", "/self")
+            .expect("create self-referential symlink");
+
+        overlay
+            .remove_file("/self")
+            .expect("unlink the symlink entry without following it");
+
+        assert_error_code(overlay.lstat("/self"), "ENOENT");
     }
 
     #[test]

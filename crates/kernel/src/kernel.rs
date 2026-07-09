@@ -11,8 +11,8 @@ use crate::fd_table::{
     FileDescription, FileLockManager, FileLockTarget, FlockOperation, ProcessFdTable, RecordLock,
     RecordLockType, SharedAnonymousFile, TransferredFd, FD_CLOEXEC, FILETYPE_CHARACTER_DEVICE,
     FILETYPE_DIRECTORY, FILETYPE_PIPE, FILETYPE_REGULAR_FILE, FILETYPE_SOCKET_DGRAM,
-    FILETYPE_SOCKET_STREAM, FILETYPE_SYMBOLIC_LINK, F_DUPFD, O_APPEND, O_CREAT, O_DIRECTORY,
-    O_EXCL, O_NOFOLLOW, O_NONBLOCK, O_RDONLY, O_TRUNC, O_WRONLY,
+    FILETYPE_SOCKET_STREAM, FILETYPE_SYMBOLIC_LINK, F_DUPFD, O_APPEND, O_CREAT, O_DIRECT,
+    O_DIRECTORY, O_EXCL, O_NOFOLLOW, O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY,
 };
 use crate::mount_table::{MountEntry, MountOptions, MountTable, MountedFileSystem};
 use crate::network_policy::format_tcp_resource;
@@ -34,8 +34,8 @@ use crate::pty::{
     LineDisciplineConfig, PartialTermios, PtyError, PtyManager, PtyWindowSize, Termios,
 };
 use crate::resource_accounting::{
-    measure_filesystem_usage, FileSystemUsage, ResourceAccountant, ResourceError, ResourceLimits,
-    ResourceSnapshot, DEFAULT_MAX_OPEN_FDS,
+    measure_filesystem_usage, FileSystemStats, FileSystemUsage, ResourceAccountant, ResourceError,
+    ResourceLimits, ResourceSnapshot, DEFAULT_MAX_OPEN_FDS,
 };
 use crate::root_fs::{
     encode_snapshot, RootFileSystem, RootFilesystemError, RootFilesystemSnapshot,
@@ -48,7 +48,7 @@ use crate::socket_table::{
 use crate::user::{ProcessIdentity, UserConfig, UserManager};
 use crate::vfs::{
     normalize_path, VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat,
-    VirtualTimeSpec, VirtualUtimeSpec, MAX_PATH_LENGTH,
+    VirtualTimeSpec, VirtualUtimeSpec, MAX_PATH_LENGTH, RENAME_EXCHANGE, S_IFDIR, S_IFLNK, S_IFREG,
 };
 use hickory_proto::rr::RecordType;
 use std::any::Any;
@@ -461,8 +461,22 @@ pub struct KernelVm<F> {
     filesystem_usage_cache: Option<FileSystemUsage>,
     anonymous_file_usage: Arc<AnonymousFileUsage>,
     file_locks: FileLockManager,
+    unnamed_files: BTreeMap<u64, UnnamedFile>,
+    next_unnamed_file_id: u64,
     driver_pids: Arc<Mutex<BTreeMap<String, BTreeSet<u32>>>>,
     terminated: bool,
+}
+
+const UNNAMED_FILE_PREFIX: &str = ".agentos-tmpfile-";
+
+#[derive(Debug, Clone)]
+struct UnnamedFile {
+    path: String,
+    linkable: bool,
+}
+
+pub fn is_internal_unnamed_file_name(name: &str) -> bool {
+    name.starts_with(UNNAMED_FILE_PREFIX)
 }
 
 // Cleanup spans every independently owned kernel resource table. Keeping the
@@ -732,6 +746,8 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             filesystem_usage_cache,
             anonymous_file_usage,
             file_locks,
+            unnamed_files: BTreeMap::new(),
+            next_unnamed_file_id: 0,
             driver_pids,
             terminated: false,
         }
@@ -810,16 +826,245 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .supplementary_gids)
     }
 
+    pub fn getresuid(&self, requester_driver: &str, pid: u32) -> KernelResult<(u32, u32, u32)> {
+        let identity = self.process_identity(requester_driver, pid)?;
+        Ok((identity.uid, identity.euid, identity.suid))
+    }
+
+    pub fn getresgid(&self, requester_driver: &str, pid: u32) -> KernelResult<(u32, u32, u32)> {
+        let identity = self.process_identity(requester_driver, pid)?;
+        Ok((identity.gid, identity.egid, identity.sgid))
+    }
+
+    pub fn setuid(&self, requester_driver: &str, pid: u32, uid: u32) -> KernelResult<()> {
+        let current = self.process_identity(requester_driver, pid)?;
+        if current.euid == 0 {
+            self.setresuid(requester_driver, pid, Some(uid), Some(uid), Some(uid))
+        } else if uid == current.uid || uid == current.suid {
+            self.setresuid(requester_driver, pid, None, Some(uid), None)
+        } else {
+            Err(credential_transition_denied("setuid", uid))
+        }
+    }
+
+    pub fn seteuid(&self, requester_driver: &str, pid: u32, euid: u32) -> KernelResult<()> {
+        self.setresuid(requester_driver, pid, None, Some(euid), None)
+    }
+
+    pub fn setreuid(
+        &self,
+        requester_driver: &str,
+        pid: u32,
+        uid: Option<u32>,
+        euid: Option<u32>,
+    ) -> KernelResult<()> {
+        let current = self.process_identity(requester_driver, pid)?;
+        let next_uid = uid.unwrap_or(current.uid);
+        let next_euid = euid.unwrap_or(current.euid);
+        let update_saved = uid.is_some() || (euid.is_some() && next_euid != current.uid);
+        self.setresuid(
+            requester_driver,
+            pid,
+            uid,
+            euid,
+            update_saved.then_some(next_euid),
+        )?;
+        debug_assert_eq!(self.process_identity(requester_driver, pid)?.uid, next_uid);
+        Ok(())
+    }
+
+    pub fn setresuid(
+        &self,
+        requester_driver: &str,
+        pid: u32,
+        uid: Option<u32>,
+        euid: Option<u32>,
+        suid: Option<u32>,
+    ) -> KernelResult<()> {
+        let mut identity = self.process_identity(requester_driver, pid)?;
+        if identity.euid != 0 {
+            let allowed = [identity.uid, identity.euid, identity.suid];
+            for requested in [uid, euid, suid].into_iter().flatten() {
+                if !allowed.contains(&requested) {
+                    return Err(credential_transition_denied("setresuid", requested));
+                }
+            }
+        }
+        if let Some(uid) = uid {
+            identity.uid = uid;
+        }
+        if let Some(euid) = euid {
+            identity.euid = euid;
+        }
+        if let Some(suid) = suid {
+            identity.suid = suid;
+        }
+        self.processes.set_identity(pid, identity)?;
+        Ok(())
+    }
+
+    pub fn setgid(&self, requester_driver: &str, pid: u32, gid: u32) -> KernelResult<()> {
+        let current = self.process_identity(requester_driver, pid)?;
+        if current.euid == 0 {
+            self.setresgid(requester_driver, pid, Some(gid), Some(gid), Some(gid))
+        } else if gid == current.gid || gid == current.sgid {
+            self.setresgid(requester_driver, pid, None, Some(gid), None)
+        } else {
+            Err(credential_transition_denied("setgid", gid))
+        }
+    }
+
+    pub fn setegid(&self, requester_driver: &str, pid: u32, egid: u32) -> KernelResult<()> {
+        self.setresgid(requester_driver, pid, None, Some(egid), None)
+    }
+
+    pub fn setregid(
+        &self,
+        requester_driver: &str,
+        pid: u32,
+        gid: Option<u32>,
+        egid: Option<u32>,
+    ) -> KernelResult<()> {
+        let current = self.process_identity(requester_driver, pid)?;
+        let next_egid = egid.unwrap_or(current.egid);
+        let update_saved = gid.is_some() || (egid.is_some() && next_egid != current.gid);
+        self.setresgid(
+            requester_driver,
+            pid,
+            gid,
+            egid,
+            update_saved.then_some(next_egid),
+        )
+    }
+
+    pub fn setresgid(
+        &self,
+        requester_driver: &str,
+        pid: u32,
+        gid: Option<u32>,
+        egid: Option<u32>,
+        sgid: Option<u32>,
+    ) -> KernelResult<()> {
+        let mut identity = self.process_identity(requester_driver, pid)?;
+        if identity.euid != 0 {
+            let allowed = [identity.gid, identity.egid, identity.sgid];
+            for requested in [gid, egid, sgid].into_iter().flatten() {
+                if !allowed.contains(&requested) {
+                    return Err(credential_transition_denied("setresgid", requested));
+                }
+            }
+        }
+        if let Some(gid) = gid {
+            identity.gid = gid;
+        }
+        if let Some(egid) = egid {
+            identity.egid = egid;
+        }
+        if let Some(sgid) = sgid {
+            identity.sgid = sgid;
+        }
+        self.processes.set_identity(pid, identity)?;
+        Ok(())
+    }
+
+    pub fn setgroups(
+        &self,
+        requester_driver: &str,
+        pid: u32,
+        groups: Vec<u32>,
+    ) -> KernelResult<()> {
+        const MAX_SUPPLEMENTARY_GROUPS: usize = 64;
+        let mut identity = self.process_identity(requester_driver, pid)?;
+        if identity.euid != 0 {
+            return Err(KernelError::new(
+                "EPERM",
+                "setgroups requires effective uid 0",
+            ));
+        }
+        if groups.len() > MAX_SUPPLEMENTARY_GROUPS {
+            return Err(KernelError::new(
+                "EINVAL",
+                format!(
+                    "setgroups count {} exceeds limit {MAX_SUPPLEMENTARY_GROUPS}",
+                    groups.len()
+                ),
+            ));
+        }
+        let mut normalized = Vec::with_capacity(groups.len());
+        for gid in groups {
+            if !normalized.contains(&gid) {
+                normalized.push(gid);
+            }
+        }
+        identity.supplementary_gids = normalized;
+        self.processes.set_identity(pid, identity)?;
+        Ok(())
+    }
+
+    pub fn switch_user(&self, requester_driver: &str, pid: u32, uid: u32) -> KernelResult<()> {
+        let current = self.process_identity(requester_driver, pid)?;
+        if current.euid != 0 {
+            return Err(KernelError::new(
+                "EPERM",
+                "switch_user requires effective uid 0",
+            ));
+        }
+        let account = self
+            .users
+            .account(uid)
+            .cloned()
+            .ok_or_else(|| KernelError::new("ENOENT", format!("unknown uid {uid}")))?;
+        let identity = ProcessIdentity {
+            uid: account.uid,
+            gid: account.gid,
+            euid: account.uid,
+            egid: account.gid,
+            suid: account.uid,
+            sgid: account.gid,
+            supplementary_gids: account.supplementary_gids,
+        };
+        self.processes.set_identity(pid, identity)?;
+        Ok(())
+    }
+
     pub fn getpwuid(&self, uid: u32) -> KernelResult<String> {
         self.users
             .getpwuid(uid)
             .ok_or_else(|| KernelError::new("ENOENT", format!("unknown uid {uid}")))
     }
 
+    pub fn getpwnam(&self, username: &str) -> KernelResult<String> {
+        self.users
+            .getpwnam(username)
+            .ok_or_else(|| KernelError::new("ENOENT", format!("unknown user {username}")))
+    }
+
+    pub fn getpwent(&self, index: usize) -> KernelResult<String> {
+        self.users
+            .passwd_entries()
+            .get(index)
+            .cloned()
+            .ok_or_else(|| KernelError::new("ENOENT", "end of passwd database"))
+    }
+
     pub fn getgrgid(&self, gid: u32) -> KernelResult<String> {
         self.users
             .getgrgid(gid)
             .ok_or_else(|| KernelError::new("ENOENT", format!("unknown gid {gid}")))
+    }
+
+    pub fn getgrnam(&self, name: &str) -> KernelResult<String> {
+        self.users
+            .getgrnam(name)
+            .ok_or_else(|| KernelError::new("ENOENT", format!("unknown group {name}")))
+    }
+
+    pub fn getgrent(&self, index: usize) -> KernelResult<String> {
+        self.users
+            .group_entries()
+            .get(index)
+            .cloned()
+            .ok_or_else(|| KernelError::new("ENOENT", "end of group database"))
     }
 
     pub fn resource_snapshot(&self) -> ResourceSnapshot {
@@ -970,6 +1215,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     ) -> KernelResult<Vec<u8>> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
+        self.check_dac_access(pid, path, DAC_READ)?;
         self.read_file_internal(Some(pid), path)
     }
 
@@ -982,7 +1228,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         let existing = self.storage_stat(path)?;
         self.check_write_file_limits_with_existing(path, existing.as_ref(), new_size)?;
         self.filesystem.write_file(path, content)?;
-        self.update_filesystem_usage_cache_for_write(existing.as_ref(), new_size);
+        self.update_filesystem_usage_cache_for_write(path, existing.as_ref(), new_size);
         Ok(())
     }
 
@@ -1134,7 +1380,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             }
         };
 
-        self.update_filesystem_usage_cache_for_inode_create(0);
+        self.update_filesystem_usage_cache_for_inode_create(&canonical_path, 0);
         Ok(UnixSocketPathNode {
             canonical_path,
             stat,
@@ -1211,7 +1457,11 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             existing_size.max(end),
         )?;
         self.filesystem.pwrite(path, content, offset)?;
-        self.update_filesystem_usage_cache_for_write(existing.as_ref(), existing_size.max(end));
+        self.update_filesystem_usage_cache_for_write(
+            path,
+            existing.as_ref(),
+            existing_size.max(end),
+        );
         Ok(())
     }
 
@@ -1226,17 +1476,36 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
         let existed = self.exists_internal(Some(pid), path)?;
+        if existed {
+            self.check_dac_access(pid, path, DAC_WRITE)?;
+        } else {
+            self.check_dac_parent_access(pid, path, DAC_WRITE | DAC_EXECUTE)?;
+        }
         let content = content.into();
         let new_size = content.len() as u64;
         self.reject_read_only_resolved_write_path(path)?;
         self.reject_unix_socket_data_path(path, "ENXIO")?;
         let existing = self.storage_stat(path)?;
         self.check_write_file_limits_with_existing(path, existing.as_ref(), new_size)?;
-        VirtualFileSystem::write_file_with_mode(&mut self.filesystem, path, content, mode)?;
-        self.update_filesystem_usage_cache_for_write(existing.as_ref(), new_size);
+        VirtualFileSystem::write_file_with_mode(&mut self.filesystem, path, content, mode)
+            .map_err(|error| {
+                KernelError::new(
+                    error.code(),
+                    format!("create storage write for '{path}' failed: {error}"),
+                )
+            })?;
+        self.update_filesystem_usage_cache_for_write(path, existing.as_ref(), new_size);
         if !existed {
             let umask = self.processes.get_umask(pid)?;
-            self.apply_creation_mode(path, mode.unwrap_or(0o666), umask)?;
+            self.apply_process_creation_metadata(pid, path, mode.unwrap_or(0o666), umask, false)
+                .map_err(|error| {
+                    KernelError::new(
+                        error.code(),
+                        format!("create metadata for '{path}' failed: {error}"),
+                    )
+                })?;
+        } else {
+            self.clear_setid_after_write(pid, path)?;
         }
         Ok(())
     }
@@ -1246,7 +1515,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.reject_read_only_entry_write_path(path)?;
         self.check_create_dir_limits(path)?;
         self.filesystem.create_dir(path)?;
-        self.update_filesystem_usage_cache_for_inode_create(0);
+        self.update_filesystem_usage_cache_for_inode_create(path, 0);
         Ok(())
     }
 
@@ -1260,13 +1529,16 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
         let existed = self.exists_internal(Some(pid), path)?;
+        if !existed {
+            self.check_dac_parent_access(pid, path, DAC_WRITE | DAC_EXECUTE)?;
+        }
         self.reject_read_only_entry_write_path(path)?;
         self.check_create_dir_limits(path)?;
         VirtualFileSystem::create_dir_with_mode(&mut self.filesystem, path, mode)?;
-        self.update_filesystem_usage_cache_for_inode_create(0);
+        self.update_filesystem_usage_cache_for_inode_create(path, 0);
         if !existed {
             let umask = self.processes.get_umask(pid)?;
-            self.apply_creation_mode(path, mode.unwrap_or(0o777), umask)?;
+            self.apply_process_creation_metadata(pid, path, mode.unwrap_or(0o777), umask, true)?;
         }
         Ok(())
     }
@@ -1277,7 +1549,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         let created_paths = self.missing_directory_paths(path, recursive)?;
         self.check_mkdir_limits(path, recursive)?;
         self.filesystem.mkdir(path, recursive)?;
-        self.update_filesystem_usage_cache_for_inode_creates(created_paths.len());
+        self.update_filesystem_usage_cache_for_inode_creates(path, created_paths.len());
         Ok(())
     }
 
@@ -1292,6 +1564,11 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
         let created_paths = self.missing_directory_paths(path, recursive)?;
+        if let Some(first_created) = created_paths.first() {
+            self.check_dac_parent_access(pid, first_created, DAC_WRITE | DAC_EXECUTE)?;
+        } else {
+            self.check_dac_access(pid, path, DAC_EXECUTE)?;
+        }
         self.reject_read_only_entry_write_path(path)?;
         self.check_mkdir_limits(path, recursive)?;
         VirtualFileSystem::mkdir_with_mode(&mut self.filesystem, path, recursive, mode)?;
@@ -1299,10 +1576,36 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             let umask = self.processes.get_umask(pid)?;
             let mode = mode.unwrap_or(0o777);
             for created_path in &created_paths {
-                self.apply_creation_mode(created_path, mode, umask)?;
+                self.apply_process_creation_metadata(pid, created_path, mode, umask, true)?;
             }
         }
-        self.update_filesystem_usage_cache_for_inode_creates(created_paths.len());
+        self.update_filesystem_usage_cache_for_inode_creates(path, created_paths.len());
+        Ok(())
+    }
+
+    pub fn mknod_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        path: &str,
+        mode: u32,
+        rdev: u64,
+    ) -> KernelResult<()> {
+        self.assert_not_terminated()?;
+        self.assert_driver_owns(requester_driver, pid)?;
+        if !matches!(mode & 0o170000, 0o010000 | 0o020000 | 0o060000) {
+            return Err(KernelError::new(
+                "EOPNOTSUPP",
+                format!("unsupported special inode type for {path}"),
+            ));
+        }
+        self.check_dac_parent_access(pid, path, DAC_WRITE | DAC_EXECUTE)?;
+        self.reject_read_only_entry_write_path(path)?;
+        self.check_create_dir_limits(path)?;
+        self.filesystem.mknod(path, mode, rdev)?;
+        self.update_filesystem_usage_cache_for_inode_create(path, 0);
+        let umask = self.processes.get_umask(pid)?;
+        self.apply_process_creation_metadata(pid, path, mode & 0o7777, umask, false)?;
         Ok(())
     }
 
@@ -1325,13 +1628,19 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     }
 
     pub fn exists_for_process(
-        &self,
+        &mut self,
         requester_driver: &str,
         pid: u32,
         path: &str,
     ) -> KernelResult<bool> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
+        if let Err(error) = self.check_dac_traversal(pid, path) {
+            if matches!(error.code(), "EACCES" | "ENOENT" | "ENOTDIR" | "ELOOP") {
+                return Ok(false);
+            }
+            return Err(error);
+        }
         self.exists_internal(Some(pid), path)
     }
 
@@ -1348,7 +1657,65 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     ) -> KernelResult<VirtualStat> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
+        self.check_dac_traversal(pid, path)?;
         self.stat_internal(Some(pid), path)
+    }
+
+    pub fn filesystem_stats_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        path: &str,
+    ) -> KernelResult<FileSystemStats> {
+        self.assert_not_terminated()?;
+        self.assert_driver_owns(requester_driver, pid)?;
+        self.check_dac_traversal(pid, path)?;
+        self.stat_internal(Some(pid), path)?;
+
+        let max_bytes = self.resource_limits().max_filesystem_bytes;
+        let max_inodes = self.resource_limits().max_inode_count;
+        let filesystem = self.raw_filesystem_mut();
+        let filesystem_any = filesystem as &mut dyn Any;
+        if let Some(mount_table) = filesystem_any.downcast_mut::<MountTable>() {
+            return mount_table
+                .path_stats(path, max_bytes, max_inodes)
+                .map_err(KernelError::from);
+        }
+
+        let usage = measure_filesystem_usage(filesystem)?;
+        let total_bytes = max_bytes
+            .unwrap_or(usage.total_bytes)
+            .max(usage.total_bytes);
+        let total_inodes = max_inodes
+            .map(|value| value as u64)
+            .unwrap_or(usage.inode_count as u64)
+            .max(usage.inode_count as u64);
+        Ok(FileSystemStats {
+            total_bytes,
+            used_bytes: usage.total_bytes,
+            available_bytes: total_bytes.saturating_sub(usage.total_bytes),
+            total_inodes,
+            free_inodes: total_inodes.saturating_sub(usage.inode_count as u64),
+        })
+    }
+
+    pub fn access_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        path: &str,
+        access: u32,
+        effective_ids: bool,
+    ) -> KernelResult<()> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        self.check_dac_traversal(pid, path)?;
+        let mut identity = self.process_identity(requester_driver, pid)?;
+        if !effective_ids {
+            identity.euid = identity.uid;
+            identity.egid = identity.gid;
+        }
+        let stat = self.filesystem.stat(path)?;
+        self.check_dac_mode_with_acl(&identity, &stat, access & 0o7, path)
     }
 
     pub fn lstat(&self, path: &str) -> KernelResult<VirtualStat> {
@@ -1357,13 +1724,14 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     }
 
     pub fn lstat_for_process(
-        &self,
+        &mut self,
         requester_driver: &str,
         pid: u32,
         path: &str,
     ) -> KernelResult<VirtualStat> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
+        self.check_dac_traversal(pid, path)?;
         self.lstat_internal(Some(pid), path)
     }
 
@@ -1373,13 +1741,14 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     }
 
     pub fn read_link_for_process(
-        &self,
+        &mut self,
         requester_driver: &str,
         pid: u32,
         path: &str,
     ) -> KernelResult<String> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
+        self.check_dac_traversal(pid, path)?;
         self.read_link_internal(Some(pid), path)
     }
 
@@ -1398,7 +1767,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     ) -> KernelResult<Vec<String>> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
-        let entries = self.read_dir_internal(Some(pid), path)?;
+        self.check_dac_access(pid, path, DAC_READ | DAC_EXECUTE)?;
+        let mut entries = self.read_dir_internal(Some(pid), path)?;
+        entries.retain(|entry| !is_internal_unnamed_file_name(entry));
         self.resources.check_readdir_entries(entries.len())?;
         Ok(entries)
     }
@@ -1411,7 +1782,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     ) -> KernelResult<Vec<VirtualDirEntry>> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
-        let entries = self.read_dir_with_types_internal(Some(pid), path)?;
+        self.check_dac_access(pid, path, DAC_READ | DAC_EXECUTE)?;
+        let mut entries = self.read_dir_with_types_internal(Some(pid), path)?;
+        entries.retain(|entry| !is_internal_unnamed_file_name(&entry.name));
         self.resources.check_readdir_entries(entries.len())?;
         Ok(entries)
     }
@@ -1534,8 +1907,20 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             }
             None => {}
         }
-        self.update_filesystem_usage_cache_for_remove(removed.as_ref());
+        self.update_filesystem_usage_cache_for_remove(path, removed.as_ref());
         Ok(())
+    }
+
+    pub fn remove_file_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        path: &str,
+    ) -> KernelResult<()> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        self.check_dac_parent_access(pid, path, DAC_WRITE | DAC_EXECUTE)?;
+        self.check_sticky_directory_removal(pid, path)?;
+        self.remove_file(path)
     }
 
     pub fn remove_dir(&mut self, path: &str) -> KernelResult<()> {
@@ -1550,12 +1935,28 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             }
         }
         if removed.as_ref().is_some_and(|stat| stat.is_directory) {
-            self.update_filesystem_usage_cache_for_inode_delete(0);
+            self.update_filesystem_usage_cache_for_inode_delete(path, 0);
         }
         Ok(())
     }
 
+    pub fn remove_dir_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        path: &str,
+    ) -> KernelResult<()> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        self.check_dac_parent_access(pid, path, DAC_WRITE | DAC_EXECUTE)?;
+        self.check_sticky_directory_removal(pid, path)?;
+        self.remove_dir(path)
+    }
+
     pub fn rename(&mut self, old_path: &str, new_path: &str) -> KernelResult<()> {
+        self.rename_at2(old_path, new_path, 0)
+    }
+
+    pub fn rename_at2(&mut self, old_path: &str, new_path: &str, flags: u32) -> KernelResult<()> {
         self.assert_not_terminated()?;
         self.reject_read_only_entry_write_path(old_path)?;
         self.reject_read_only_entry_write_path(new_path)?;
@@ -1565,7 +1966,19 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             self.prepare_anonymous_file_backing(new_path, replaced.as_ref())?;
         let detached_directory_destination =
             self.prepare_detached_directory_backing(new_path, replaced.as_ref());
-        self.filesystem.rename(old_path, new_path)?;
+        self.filesystem.rename_at2(old_path, new_path, flags)?;
+        if flags == RENAME_EXCHANGE {
+            let temporary = format!(
+                "/.agentos-open-rename-exchange-{}",
+                self.next_unnamed_file_id
+            );
+            self.next_unnamed_file_id = self.next_unnamed_file_id.saturating_add(1);
+            self.rename_open_file_descriptions(old_path, &temporary);
+            self.rename_open_file_descriptions(new_path, old_path);
+            self.rename_open_file_descriptions(&temporary, new_path);
+            self.invalidate_filesystem_usage_cache();
+            return Ok(());
+        }
         match detached_destination {
             Some(OpenFileRemovalBacking::Anonymous {
                 descriptions,
@@ -1598,19 +2011,48 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         Ok(())
     }
 
+    pub fn rename_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        old_path: &str,
+        new_path: &str,
+    ) -> KernelResult<()> {
+        self.rename_at2_for_process(requester_driver, pid, old_path, new_path, 0)
+    }
+
+    pub fn rename_at2_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        old_path: &str,
+        new_path: &str,
+        flags: u32,
+    ) -> KernelResult<()> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        self.check_dac_parent_access(pid, old_path, DAC_WRITE | DAC_EXECUTE)?;
+        self.check_dac_parent_access(pid, new_path, DAC_WRITE | DAC_EXECUTE)?;
+        self.check_sticky_directory_removal(pid, old_path)?;
+        if self.exists_internal(Some(pid), new_path)? {
+            self.check_sticky_directory_removal(pid, new_path)?;
+        }
+        self.rename_at2(old_path, new_path, flags)
+    }
+
     pub fn realpath(&self, path: &str) -> KernelResult<String> {
         self.assert_not_terminated()?;
         self.realpath_internal(None, path)
     }
 
     pub fn realpath_for_process(
-        &self,
+        &mut self,
         requester_driver: &str,
         pid: u32,
         path: &str,
     ) -> KernelResult<String> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
+        self.check_dac_traversal(pid, path)?;
         self.realpath_internal(Some(pid), path)
     }
 
@@ -1625,14 +2067,52 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.reject_read_only_entry_write_path(link_path)?;
         self.check_symlink_limits(target, link_path)?;
         self.filesystem.symlink(target, link_path)?;
-        self.update_filesystem_usage_cache_for_inode_create(target.len() as u64);
+        self.update_filesystem_usage_cache_for_inode_create(link_path, target.len() as u64);
         Ok(())
+    }
+
+    pub fn symlink_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        target: &str,
+        link_path: &str,
+    ) -> KernelResult<()> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        self.check_dac_parent_access(pid, link_path, DAC_WRITE | DAC_EXECUTE)?;
+        self.symlink(target, link_path)
     }
 
     pub fn chmod(&mut self, path: &str, mode: u32) -> KernelResult<()> {
         self.assert_not_terminated()?;
         self.reject_read_only_resolved_write_path(path)?;
-        Ok(self.filesystem.chmod(path, mode)?)
+        self.filesystem.chmod(path, mode)?;
+        self.sync_access_acl_mode(path, mode)
+    }
+
+    pub fn chmod_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        path: &str,
+        mut mode: u32,
+    ) -> KernelResult<()> {
+        let identity = self.process_identity(requester_driver, pid)?;
+        self.check_dac_traversal(pid, path)?;
+        let stat = self.filesystem.stat(path)?;
+        if identity.euid != 0 && identity.euid != stat.uid {
+            return Err(KernelError::new(
+                "EPERM",
+                format!("chmod requires ownership of {path}"),
+            ));
+        }
+        if identity.euid != 0
+            && identity.egid != stat.gid
+            && !identity.supplementary_gids.contains(&stat.gid)
+        {
+            mode &= !0o2000;
+        }
+        self.chmod(path, mode)
     }
 
     pub fn link(&mut self, old_path: &str, new_path: &str) -> KernelResult<()> {
@@ -1649,6 +2129,19 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         // Hard-link creation makes another directory entry for an already
         // reachable inode, so measured root usage is unchanged.
         Ok(())
+    }
+
+    pub fn link_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        old_path: &str,
+        new_path: &str,
+    ) -> KernelResult<()> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        self.check_dac_traversal(pid, old_path)?;
+        self.check_dac_parent_access(pid, new_path, DAC_WRITE | DAC_EXECUTE)?;
+        self.link(old_path, new_path)
     }
 
     pub fn chown(&mut self, path: &str, uid: u32, gid: u32) -> KernelResult<()> {
@@ -1688,6 +2181,203 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         Ok(())
     }
 
+    pub fn lchown_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        path: &str,
+        uid: u32,
+        gid: u32,
+    ) -> KernelResult<()> {
+        let identity = self.process_identity(requester_driver, pid)?;
+        self.check_dac_traversal(pid, path)?;
+        let stat = self.filesystem.lstat(path)?;
+        if identity.euid != 0 {
+            let owns_file = identity.euid == stat.uid;
+            let keeps_owner = uid == stat.uid;
+            let allowed_group = gid == identity.egid || identity.supplementary_gids.contains(&gid);
+            if !owns_file || !keeps_owner || !allowed_group {
+                return Err(KernelError::new(
+                    "EPERM",
+                    format!("lchown is not permitted for {path}"),
+                ));
+            }
+        }
+        self.reject_read_only_entry_write_path(path)?;
+        self.filesystem.lchown(path, uid, gid)?;
+        Ok(())
+    }
+
+    pub fn get_xattr(
+        &mut self,
+        path: &str,
+        name: &str,
+        follow_symlinks: bool,
+    ) -> KernelResult<Vec<u8>> {
+        self.assert_not_terminated()?;
+        Ok(self.filesystem.get_xattr(path, name, follow_symlinks)?)
+    }
+
+    pub fn get_xattr_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        path: &str,
+        name: &str,
+        follow_symlinks: bool,
+    ) -> KernelResult<Vec<u8>> {
+        let identity = self.process_identity(requester_driver, pid)?;
+        self.check_dac_traversal(pid, path)?;
+        check_xattr_namespace(&identity, name, false, path)?;
+        let stat = if follow_symlinks {
+            self.filesystem.stat(path)?
+        } else {
+            self.filesystem.lstat(path)?
+        };
+        self.check_dac_mode_with_acl(&identity, &stat, DAC_READ, path)?;
+        self.get_xattr(path, name, follow_symlinks)
+    }
+
+    pub fn list_xattrs(&mut self, path: &str, follow_symlinks: bool) -> KernelResult<Vec<String>> {
+        self.assert_not_terminated()?;
+        Ok(self.filesystem.list_xattrs(path, follow_symlinks)?)
+    }
+
+    pub fn list_xattrs_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        path: &str,
+        follow_symlinks: bool,
+    ) -> KernelResult<Vec<String>> {
+        let identity = self.process_identity(requester_driver, pid)?;
+        self.check_dac_traversal(pid, path)?;
+        let stat = if follow_symlinks {
+            self.filesystem.stat(path)?
+        } else {
+            self.filesystem.lstat(path)?
+        };
+        self.check_dac_mode_with_acl(&identity, &stat, DAC_READ, path)?;
+        let mut names = self.list_xattrs(path, follow_symlinks)?;
+        if identity.euid != 0 {
+            names.retain(|name| !name.starts_with("trusted.") && !name.starts_with("security."));
+        }
+        Ok(names)
+    }
+
+    pub fn set_xattr(
+        &mut self,
+        path: &str,
+        name: &str,
+        value: Vec<u8>,
+        flags: u32,
+        follow_symlinks: bool,
+    ) -> KernelResult<()> {
+        self.assert_not_terminated()?;
+        if follow_symlinks {
+            self.reject_read_only_resolved_write_path(path)?;
+        } else {
+            self.reject_read_only_entry_write_path(path)?;
+        }
+        Ok(self
+            .filesystem
+            .set_xattr(path, name, value, flags, follow_symlinks)?)
+    }
+
+    pub fn set_xattr_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        path: &str,
+        name: &str,
+        value: Vec<u8>,
+        flags: u32,
+        follow_symlinks: bool,
+    ) -> KernelResult<()> {
+        let identity = self.process_identity(requester_driver, pid)?;
+        self.check_dac_traversal(pid, path)?;
+        check_xattr_namespace(&identity, name, true, path)?;
+        let stat = if follow_symlinks {
+            self.filesystem.stat(path)?
+        } else {
+            self.filesystem.lstat(path)?
+        };
+        check_xattr_inode_write_policy(&stat, name, path)?;
+        if name.starts_with("system.posix_acl_") {
+            if identity.euid != 0 && identity.euid != stat.uid {
+                return Err(KernelError::new(
+                    "EPERM",
+                    format!("setting {name} requires ownership of {path}"),
+                ));
+            }
+        } else {
+            self.check_dac_mode_with_acl(&identity, &stat, DAC_WRITE, path)?;
+        }
+        let acl = if name == POSIX_ACL_ACCESS || name == POSIX_ACL_DEFAULT {
+            let acl = PosixAcl::parse(&value, path)?;
+            if name == POSIX_ACL_DEFAULT && !stat.is_directory {
+                return Err(KernelError::new(
+                    "EACCES",
+                    format!("default ACL requires a directory: {path}"),
+                ));
+            }
+            Some(acl)
+        } else {
+            None
+        };
+        self.set_xattr(path, name, value, flags, follow_symlinks)?;
+        if name == POSIX_ACL_ACCESS {
+            let mode = acl.expect("access ACL was parsed").mode(stat.mode);
+            self.filesystem.chmod(path, mode)?;
+        }
+        Ok(())
+    }
+
+    pub fn remove_xattr(
+        &mut self,
+        path: &str,
+        name: &str,
+        follow_symlinks: bool,
+    ) -> KernelResult<()> {
+        self.assert_not_terminated()?;
+        if follow_symlinks {
+            self.reject_read_only_resolved_write_path(path)?;
+        } else {
+            self.reject_read_only_entry_write_path(path)?;
+        }
+        Ok(self.filesystem.remove_xattr(path, name, follow_symlinks)?)
+    }
+
+    pub fn remove_xattr_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        path: &str,
+        name: &str,
+        follow_symlinks: bool,
+    ) -> KernelResult<()> {
+        let identity = self.process_identity(requester_driver, pid)?;
+        self.check_dac_traversal(pid, path)?;
+        check_xattr_namespace(&identity, name, true, path)?;
+        let stat = if follow_symlinks {
+            self.filesystem.stat(path)?
+        } else {
+            self.filesystem.lstat(path)?
+        };
+        check_xattr_inode_write_policy(&stat, name, path)?;
+        if name.starts_with("system.posix_acl_") {
+            if identity.euid != 0 && identity.euid != stat.uid {
+                return Err(KernelError::new(
+                    "EPERM",
+                    format!("removing {name} requires ownership of {path}"),
+                ));
+            }
+        } else {
+            self.check_dac_mode_with_acl(&identity, &stat, DAC_WRITE, path)?;
+        }
+        self.remove_xattr(path, name, follow_symlinks)
+    }
+
     pub fn utimes(&mut self, path: &str, atime_ms: u64, mtime_ms: u64) -> KernelResult<()> {
         self.utimes_spec(
             path,
@@ -1705,6 +2395,42 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.assert_not_terminated()?;
         self.reject_read_only_resolved_write_path(path)?;
         Ok(self.filesystem.utimes_spec(path, atime, mtime, true)?)
+    }
+
+    pub fn utimes_spec_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        path: &str,
+        atime: VirtualUtimeSpec,
+        mtime: VirtualUtimeSpec,
+        follow_symlinks: bool,
+    ) -> KernelResult<()> {
+        let identity = self.process_identity(requester_driver, pid)?;
+        self.check_dac_traversal(pid, path)?;
+        let stat = if follow_symlinks {
+            self.filesystem.stat(path)?
+        } else {
+            self.filesystem.lstat(path)?
+        };
+        let owns_file = identity.euid == 0 || identity.euid == stat.uid;
+        let sets_both_to_now =
+            matches!(atime, VirtualUtimeSpec::Now) && matches!(mtime, VirtualUtimeSpec::Now);
+        let omits_both =
+            matches!(atime, VirtualUtimeSpec::Omit) && matches!(mtime, VirtualUtimeSpec::Omit);
+        if !owns_file && sets_both_to_now {
+            self.check_dac_mode_with_acl(&identity, &stat, DAC_WRITE, path)?;
+        } else if !owns_file && !omits_both {
+            return Err(KernelError::new(
+                "EPERM",
+                format!("changing timestamps requires ownership of {path}"),
+            ));
+        }
+        if follow_symlinks {
+            self.utimes_spec(path, atime, mtime)
+        } else {
+            self.lutimes(path, atime, mtime)
+        }
     }
 
     pub fn lutimes(
@@ -1742,8 +2468,283 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         let existing = self.storage_stat(path)?;
         self.check_truncate_limits_with_existing(path, existing.as_ref(), length)?;
         self.filesystem.truncate(path, length)?;
-        self.update_filesystem_usage_cache_for_write(existing.as_ref(), length);
+        self.update_filesystem_usage_cache_for_write(path, existing.as_ref(), length);
         Ok(())
+    }
+
+    pub fn truncate_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        path: &str,
+        length: u64,
+    ) -> KernelResult<()> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        self.check_dac_access(pid, path, DAC_WRITE)?;
+        self.truncate(path, length)?;
+        self.clear_setid_after_write(pid, path)
+    }
+
+    pub fn fd_truncate(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        fd: u32,
+        length: u64,
+    ) -> KernelResult<()> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        let entry = {
+            let tables = lock_or_recover(&self.fd_tables);
+            tables
+                .get(pid)
+                .and_then(|table| table.get(fd))
+                .cloned()
+                .ok_or_else(|| KernelError::bad_file_descriptor(fd))?
+        };
+        if let Some(stat) = entry.description.anonymous_stat() {
+            self.check_path_resize_limits_with_existing(stat.size, length)?;
+            entry
+                .description
+                .anonymous_truncate(length)
+                .expect("anonymous stat and backing must agree")?;
+            return Ok(());
+        }
+        if entry.description.flags() & 0b11 == crate::fd_table::O_RDONLY {
+            return Err(KernelError::bad_file_descriptor(fd));
+        }
+        let path = entry.description.path().to_owned();
+        self.truncate(&path, length)?;
+        self.clear_setid_after_write(pid, &path)
+    }
+
+    pub fn fd_allocate(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        fd: u32,
+        offset: u64,
+        length: u64,
+    ) -> KernelResult<()> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        let entry = {
+            let tables = lock_or_recover(&self.fd_tables);
+            tables
+                .get(pid)
+                .and_then(|table| table.get(fd))
+                .cloned()
+                .ok_or_else(|| KernelError::bad_file_descriptor(fd))?
+        };
+        if entry.description.flags() & 0b11 == crate::fd_table::O_RDONLY {
+            return Err(KernelError::bad_file_descriptor(fd));
+        }
+        let end = offset
+            .checked_add(length)
+            .ok_or_else(|| KernelError::new("EINVAL", "allocation range overflows"))?;
+        let path = entry.description.path().to_owned();
+        self.reject_read_only_resolved_write_path(&path)?;
+        if length == 0 {
+            return Ok(());
+        }
+        let existing = self.storage_stat(&path)?;
+        let new_size = existing.as_ref().map_or(end, |stat| stat.size.max(end));
+        self.check_truncate_limits_with_existing(&path, existing.as_ref(), new_size)?;
+        self.filesystem.allocate(&path, offset, length)?;
+        self.update_filesystem_usage_cache_for_write(&path, existing.as_ref(), new_size);
+        self.clear_setid_after_write(pid, &path)
+    }
+
+    pub fn fd_punch_hole(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        fd: u32,
+        offset: u64,
+        length: u64,
+    ) -> KernelResult<()> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        let entry = {
+            let tables = lock_or_recover(&self.fd_tables);
+            tables
+                .get(pid)
+                .and_then(|table| table.get(fd))
+                .cloned()
+                .ok_or_else(|| KernelError::bad_file_descriptor(fd))?
+        };
+        if entry.description.flags() & 0b11 == crate::fd_table::O_RDONLY {
+            return Err(KernelError::bad_file_descriptor(fd));
+        }
+        offset
+            .checked_add(length)
+            .ok_or_else(|| KernelError::new("EINVAL", "hole-punch range overflows"))?;
+        let path = entry.description.path().to_owned();
+        self.reject_read_only_resolved_write_path(&path)?;
+        self.filesystem.punch_hole(&path, offset, length)?;
+        self.clear_setid_after_write(pid, &path)
+    }
+
+    pub fn fd_zero_range(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        fd: u32,
+        offset: u64,
+        length: u64,
+        keep_size: bool,
+    ) -> KernelResult<()> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        let entry = {
+            let tables = lock_or_recover(&self.fd_tables);
+            tables
+                .get(pid)
+                .and_then(|table| table.get(fd))
+                .cloned()
+                .ok_or_else(|| KernelError::bad_file_descriptor(fd))?
+        };
+        if entry.description.flags() & 0b11 == crate::fd_table::O_RDONLY {
+            return Err(KernelError::bad_file_descriptor(fd));
+        }
+        let end = offset
+            .checked_add(length)
+            .ok_or_else(|| KernelError::new("EINVAL", "zero range overflows"))?;
+        let path = entry.description.path().to_owned();
+        self.reject_read_only_resolved_write_path(&path)?;
+        let existing = self.storage_stat(&path)?;
+        let old_size = existing
+            .as_ref()
+            .ok_or_else(|| KernelError::new("ENOENT", format!("no such file: {path}")))?
+            .size;
+        let new_size = if keep_size {
+            old_size
+        } else {
+            old_size.max(end)
+        };
+        self.check_truncate_limits_with_existing(&path, existing.as_ref(), new_size)?;
+        self.filesystem
+            .zero_range(&path, offset, length, keep_size)?;
+        self.update_filesystem_usage_cache_for_write(&path, existing.as_ref(), new_size);
+        self.clear_setid_after_write(pid, &path)
+    }
+
+    pub fn fd_insert_range(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        fd: u32,
+        offset: u64,
+        length: u64,
+    ) -> KernelResult<()> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        let entry = {
+            let tables = lock_or_recover(&self.fd_tables);
+            tables
+                .get(pid)
+                .and_then(|table| table.get(fd))
+                .cloned()
+                .ok_or_else(|| KernelError::bad_file_descriptor(fd))?
+        };
+        if entry.description.flags() & 0b11 == crate::fd_table::O_RDONLY {
+            return Err(KernelError::bad_file_descriptor(fd));
+        }
+        let path = entry.description.path().to_owned();
+        self.reject_read_only_resolved_write_path(&path)?;
+        let existing = self.storage_stat(&path)?;
+        let old_size = existing
+            .as_ref()
+            .ok_or_else(|| KernelError::new("ENOENT", format!("no such file: {path}")))?
+            .size;
+        let new_size = old_size
+            .checked_add(length)
+            .ok_or_else(|| KernelError::new("EINVAL", "insert range size overflows"))?;
+        self.check_truncate_limits_with_existing(&path, existing.as_ref(), new_size)?;
+        self.filesystem.insert_range(&path, offset, length)?;
+        self.update_filesystem_usage_cache_for_write(&path, existing.as_ref(), new_size);
+        self.clear_setid_after_write(pid, &path)
+    }
+
+    pub fn fd_collapse_range(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        fd: u32,
+        offset: u64,
+        length: u64,
+    ) -> KernelResult<()> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        let entry = {
+            let tables = lock_or_recover(&self.fd_tables);
+            tables
+                .get(pid)
+                .and_then(|table| table.get(fd))
+                .cloned()
+                .ok_or_else(|| KernelError::bad_file_descriptor(fd))?
+        };
+        if entry.description.flags() & 0b11 == crate::fd_table::O_RDONLY {
+            return Err(KernelError::bad_file_descriptor(fd));
+        }
+        let path = entry.description.path().to_owned();
+        self.reject_read_only_resolved_write_path(&path)?;
+        let existing = self.storage_stat(&path)?;
+        let old_size = existing
+            .as_ref()
+            .ok_or_else(|| KernelError::new("ENOENT", format!("no such file: {path}")))?
+            .size;
+        self.filesystem.collapse_range(&path, offset, length)?;
+        let new_size = old_size.saturating_sub(length);
+        self.update_filesystem_usage_cache_for_write(&path, existing.as_ref(), new_size);
+        self.clear_setid_after_write(pid, &path)
+    }
+
+    pub fn fd_allocated_ranges(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        fd: u32,
+    ) -> KernelResult<Vec<(u64, u64)>> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        let path = {
+            let tables = lock_or_recover(&self.fd_tables);
+            tables
+                .get(pid)
+                .and_then(|table| table.get(fd))
+                .map(|entry| entry.description.path().to_owned())
+                .ok_or_else(|| KernelError::bad_file_descriptor(fd))?
+        };
+        Ok(self.filesystem.allocated_ranges(&path)?)
+    }
+
+    pub fn fd_unwritten_ranges(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        fd: u32,
+    ) -> KernelResult<Vec<(u64, u64)>> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        let path = {
+            let tables = lock_or_recover(&self.fd_tables);
+            tables
+                .get(pid)
+                .and_then(|table| table.get(fd))
+                .map(|entry| entry.description.path().to_owned())
+                .ok_or_else(|| KernelError::bad_file_descriptor(fd))?
+        };
+        Ok(self.filesystem.unwritten_ranges(&path)?)
+    }
+
+    pub fn check_execute_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        path: &str,
+    ) -> KernelResult<()> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        let stat = self.filesystem.stat(path)?;
+        if stat.is_directory {
+            return Err(KernelError::new(
+                "EACCES",
+                format!("permission denied, execute '{path}'"),
+            ));
+        }
+        self.check_dac_access(pid, path, DAC_EXECUTE)
     }
 
     pub fn list_processes(&self) -> BTreeMap<u32, ProcessInfo> {
@@ -1824,15 +2825,27 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             self.assert_driver_owns(requester, parent_pid)?;
         }
 
-        let cwd = options.cwd.clone().unwrap_or_else(|| self.cwd.clone());
-        let resolved = self.resolve_spawn_command(command, &args, &cwd)?;
+        let parent_context = options
+            .parent_pid
+            .map(|pid| self.processes.inherited_context(pid))
+            .transpose()?;
+        let cwd = options.cwd.clone().unwrap_or_else(|| {
+            parent_context
+                .as_ref()
+                .map(|context| context.cwd.clone())
+                .unwrap_or_else(|| self.cwd.clone())
+        });
+        let resolved = self.resolve_spawn_command(command, &args, &cwd, options.parent_pid)?;
 
         self.resources
             .check_process_argv_bytes(&resolved.command, &resolved.args)?;
         self.resources
             .check_process_env_bytes(&self.env, &options.env)?;
 
-        let mut env = self.env.clone();
+        let mut env = parent_context
+            .as_ref()
+            .map(|context| context.env.clone())
+            .unwrap_or_else(|| self.env.clone());
         env.extend(options.env.clone());
         check_command_execution(
             &self.vm_id,
@@ -1847,7 +2860,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             let tables = lock_or_recover(&self.fd_tables);
             options
                 .parent_pid
-                .and_then(|pid| tables.get(pid).map(ProcessFdTable::len))
+                .and_then(|pid| tables.get(pid).map(ProcessFdTable::len_for_exec))
                 .unwrap_or(3)
         };
         self.resources
@@ -1857,21 +2870,20 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             None => DEFAULT_PROCESS_UMASK,
         };
 
+        let mut context = parent_context.unwrap_or_else(|| ProcessContext {
+            identity: self.users.identity(),
+            ..ProcessContext::default()
+        });
+        context.ppid = options.parent_pid.unwrap_or(0);
+        context.env = env;
+        context.cwd = cwd;
+        context.umask = process_umask;
+
         self.register_process(
             resolved.driver.name().to_owned(),
             resolved.command,
             resolved.args,
-            ProcessContext {
-                pid: 0,
-                ppid: options.parent_pid.unwrap_or(0),
-                env,
-                cwd,
-                umask: process_umask,
-                fds: Default::default(),
-                identity: self.users.identity(),
-                blocked_signals: SignalSet::empty(),
-                pending_signals: SignalSet::empty(),
-            },
+            context,
             options.requester_driver.as_deref(),
             requested_pgid,
             preserve_cloexec,
@@ -1910,7 +2922,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     /// language-runtime driver.
     pub fn validate_executable_path(&mut self, path: &str, cwd: &str) -> KernelResult<String> {
         self.assert_not_terminated()?;
-        self.resolve_executable_path(path, cwd)?
+        self.resolve_executable_path(path, cwd, None)?
             .ok_or_else(|| KernelError::command_not_found(path))
     }
 
@@ -1959,7 +2971,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             // checks) before the commit point.
             self.validate_executable_path(image_command, &cwd)?;
         }
-        let resolved = self.resolve_spawn_command(command, &args, &cwd)?;
+        let resolved = self.resolve_spawn_command(command, &args, &cwd, Some(pid))?;
         let image_command = image_command.unwrap_or(&resolved.command);
         let (committed_argv0, committed_args) = resolved
             .args
@@ -2068,12 +3080,24 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             self.assert_driver_owns(requester_driver, parent_pid)?;
         }
 
-        let cwd = options.cwd.clone().unwrap_or_else(|| self.cwd.clone());
+        let parent_context = options
+            .parent_pid
+            .map(|pid| self.processes.inherited_context(pid))
+            .transpose()?;
+        let cwd = options.cwd.clone().unwrap_or_else(|| {
+            parent_context
+                .as_ref()
+                .map(|context| context.cwd.clone())
+                .unwrap_or_else(|| self.cwd.clone())
+        });
         self.resources.check_process_argv_bytes(command, &args)?;
         self.resources
             .check_process_env_bytes(&self.env, &options.env)?;
 
-        let mut env = self.env.clone();
+        let mut env = parent_context
+            .as_ref()
+            .map(|context| context.env.clone())
+            .unwrap_or_else(|| self.env.clone());
         env.extend(options.env.clone());
         check_command_execution(
             &self.vm_id,
@@ -2098,21 +3122,20 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             None => DEFAULT_PROCESS_UMASK,
         };
 
+        let mut context = parent_context.unwrap_or_else(|| ProcessContext {
+            identity: self.users.identity(),
+            ..ProcessContext::default()
+        });
+        context.ppid = options.parent_pid.unwrap_or(0);
+        context.env = env;
+        context.cwd = cwd;
+        context.umask = process_umask;
+
         self.register_process(
             String::from(driver),
             String::from(command),
             args,
-            ProcessContext {
-                pid: 0,
-                ppid: options.parent_pid.unwrap_or(0),
-                env,
-                cwd,
-                umask: process_umask,
-                fds: Default::default(),
-                identity: self.users.identity(),
-                blocked_signals: SignalSet::empty(),
-                pending_signals: SignalSet::empty(),
-            },
+            context,
             Some(requester_driver),
             requested_pgid,
             false,
@@ -3668,11 +4691,50 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         if open_requires_write_access(flags) {
             self.reject_read_only_resolved_write_path(path)?;
         }
-        let existed = if flags & O_CREAT != 0 {
-            self.exists_internal(Some(pid), path)?
-        } else {
-            false
-        };
+        let existed = self.exists_internal(Some(pid), path)?;
+        if existed {
+            let mut access = 0;
+            if flags & (O_WRONLY | O_RDWR) != O_WRONLY {
+                access |= DAC_READ;
+            }
+            if flags & (O_WRONLY | O_RDWR) != 0 || flags & O_TRUNC != 0 {
+                access |= DAC_WRITE;
+            }
+            self.check_dac_access(pid, path, access)?;
+        } else if flags & O_CREAT != 0 {
+            self.check_dac_parent_access(pid, path, DAC_WRITE | DAC_EXECUTE)?;
+        }
+        if existed {
+            let stat = VirtualFileSystem::stat(&mut self.filesystem, path)?;
+            if stat.mode & 0o170000 == 0o010000 {
+                if flags & O_CREAT != 0 && flags & O_EXCL != 0 {
+                    return Err(KernelError::new(
+                        "EEXIST",
+                        format!("file already exists, open '{path}'"),
+                    ));
+                }
+                let key = (stat.dev, stat.ino);
+                if !self.pipes.has_named_pipe(key) {
+                    self.resources
+                        .check_pipe_allocation(&self.resource_snapshot())?;
+                }
+                self.resources
+                    .check_fd_allocation(&self.resource_snapshot(), 1)?;
+                let timeout = self.blocking_read_timeout();
+                let pipe = self.pipes.open_named_pipe(key, path, flags, timeout)?;
+                let mut tables = lock_or_recover(&self.fd_tables);
+                let table = tables
+                    .get_mut(pid)
+                    .ok_or_else(|| KernelError::no_such_process(pid))?;
+                return match table.open_with(Arc::clone(&pipe.description), FILETYPE_PIPE, None) {
+                    Ok(fd) => Ok(fd),
+                    Err(error) => {
+                        self.pipes.close(pipe.description.id());
+                        Err(error.into())
+                    }
+                };
+            }
+        }
         let (filetype, lock_target) = self.prepare_fd_open(path, flags, mode)?;
         let description_path = if filetype == FILETYPE_DIRECTORY {
             self.realpath_internal(Some(pid), path)?
@@ -3681,7 +4743,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         };
         if flags & O_CREAT != 0 && !existed {
             let umask = self.processes.get_umask(pid)?;
-            self.apply_creation_mode(path, mode.unwrap_or(0o666), umask)?;
+            self.apply_process_creation_metadata(pid, path, mode.unwrap_or(0o666), umask, false)?;
+        } else if flags & O_TRUNC != 0 {
+            self.clear_setid_after_write(pid, path)?;
         }
         self.resources
             .check_fd_allocation(&self.resource_snapshot(), 1)?;
@@ -3690,6 +4754,88 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .get_mut(pid)
             .ok_or_else(|| KernelError::no_such_process(pid))?;
         Ok(table.open_with_details(&description_path, flags, filetype, lock_target)?)
+    }
+
+    pub fn fd_open_tmpfile(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        directory: &str,
+        flags: u32,
+        mode: u32,
+        linkable: bool,
+    ) -> KernelResult<u32> {
+        self.assert_not_terminated()?;
+        self.assert_driver_owns(requester_driver, pid)?;
+        if flags & 0b11 == crate::fd_table::O_RDONLY {
+            return Err(KernelError::new(
+                "EINVAL",
+                "O_TMPFILE requires write access",
+            ));
+        }
+        let directory_stat = self.stat_for_process(requester_driver, pid, directory)?;
+        if !directory_stat.is_directory {
+            return Err(KernelError::new(
+                "ENOTDIR",
+                format!("O_TMPFILE target is not a directory: {directory}"),
+            ));
+        }
+        self.check_dac_access(pid, directory, DAC_WRITE | DAC_EXECUTE)?;
+        self.reject_read_only_resolved_write_path(directory)?;
+
+        let hidden_path = loop {
+            let id = self.next_unnamed_file_id;
+            self.next_unnamed_file_id =
+                self.next_unnamed_file_id.checked_add(1).ok_or_else(|| {
+                    KernelError::new("EMFILE", "unnamed-file identifier space exhausted")
+                })?;
+            let candidate = normalize_path(&format!("{directory}/{UNNAMED_FILE_PREFIX}{pid}-{id}"));
+            if !self.exists_internal(Some(pid), &candidate)? {
+                break candidate;
+            }
+        };
+
+        let fd = self.fd_open(
+            requester_driver,
+            pid,
+            &hidden_path,
+            (flags & !O_TRUNC) | O_CREAT | O_EXCL,
+            Some(mode),
+        )?;
+        let description_id = self.description_for_fd(requester_driver, pid, fd)?.id();
+        self.unnamed_files.insert(
+            description_id,
+            UnnamedFile {
+                path: hidden_path,
+                linkable,
+            },
+        );
+        Ok(fd)
+    }
+
+    pub fn fd_link_tmpfile_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        fd: u32,
+        destination: &str,
+    ) -> KernelResult<()> {
+        self.assert_not_terminated()?;
+        self.assert_driver_owns(requester_driver, pid)?;
+        let description = self.description_for_fd(requester_driver, pid, fd)?;
+        let source = if let Some(unnamed) = self.unnamed_files.get(&description.id()) {
+            if !unnamed.linkable {
+                return Err(KernelError::new(
+                    "ENOENT",
+                    "O_EXCL unnamed files cannot be linked",
+                ));
+            }
+            unnamed.path.clone()
+        } else {
+            description.path().to_string()
+        };
+        self.check_dac_parent_access(pid, destination, DAC_WRITE | DAC_EXECUTE)?;
+        self.link(&source, destination)
     }
 
     pub fn fd_read(
@@ -3721,6 +4867,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 .cloned()
                 .ok_or_else(|| KernelError::bad_file_descriptor(fd))?
         };
+        if entry.description.flags() & 0b11 == O_WRONLY {
+            return Err(KernelError::bad_file_descriptor(fd));
+        }
 
         if let Some(socket_id) = self.fd_socket_id(&entry.description) {
             self.resources.check_pread_length(length)?;
@@ -3858,7 +5007,6 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 .cloned()
                 .ok_or_else(|| KernelError::bad_file_descriptor(fd))?
         };
-
         if let Some(socket_id) = self.fd_socket_id(&entry.description) {
             let socket = self
                 .sockets
@@ -3903,6 +5051,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
 
         let path = entry.description.path();
         if let Some(stat) = entry.description.anonymous_stat() {
+            if entry.description.flags() & 0b11 == O_RDONLY {
+                return Err(KernelError::bad_file_descriptor(fd));
+            }
             let cursor = if entry.description.flags() & O_APPEND != 0 {
                 stat.size
             } else {
@@ -3921,6 +5072,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             return Ok(data.len());
         }
         self.reject_read_only_resolved_write_path(&path)?;
+        if entry.description.flags() & 0b11 == O_RDONLY {
+            return Err(KernelError::bad_file_descriptor(fd));
+        }
         if is_virtual_device_storage_path(&path) {
             VirtualFileSystem::write_file(&mut self.filesystem, &path, data.to_vec())?;
             let cursor = entry.description.cursor();
@@ -3932,18 +5086,22 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         let current_size = self.current_storage_file_size(&path)?;
         let cursor = entry.description.cursor();
         if entry.description.flags() & O_APPEND != 0 {
+            check_direct_io_alignment(entry.description.flags(), current_size, data.len())?;
             let required_size = current_size.max(checked_write_end(current_size, data.len())?);
-            self.check_path_resize_limits(&path, required_size)?;
+            self.check_path_resize_limits_with_existing(current_size, required_size)?;
             let new_len = VirtualFileSystem::append_file(&mut self.filesystem, &path, data)?;
-            self.update_filesystem_usage_cache_for_resize(current_size, new_len);
+            self.update_filesystem_usage_cache_for_resize(&path, current_size, new_len);
+            self.clear_setid_after_write(pid, &path)?;
             entry.description.set_cursor(new_len);
             return Ok(data.len());
         }
 
+        check_direct_io_alignment(entry.description.flags(), cursor, data.len())?;
         let required_size = current_size.max(checked_write_end(cursor, data.len())?);
-        self.check_path_resize_limits(&path, required_size)?;
+        self.check_path_resize_limits_with_existing(current_size, required_size)?;
         VirtualFileSystem::pwrite(&mut self.filesystem, &path, data, cursor)?;
-        self.update_filesystem_usage_cache_for_resize(current_size, required_size);
+        self.update_filesystem_usage_cache_for_resize(&path, current_size, required_size);
+        self.clear_setid_after_write(pid, &path)?;
         entry
             .description
             .set_cursor(cursor.saturating_add(data.len() as u64));
@@ -4112,6 +5270,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 .cloned()
                 .ok_or_else(|| KernelError::bad_file_descriptor(fd))?
         };
+        if entry.description.flags() & 0b11 == O_WRONLY {
+            return Err(KernelError::bad_file_descriptor(fd));
+        }
 
         if self.pipes.is_pipe(entry.description.id())
             || self.ptys.is_pty(entry.description.id())
@@ -4162,7 +5323,6 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 .cloned()
                 .ok_or_else(|| KernelError::bad_file_descriptor(fd))?
         };
-
         if self.pipes.is_pipe(entry.description.id())
             || self.ptys.is_pty(entry.description.id())
             || self.fd_socket_id(&entry.description).is_some()
@@ -4174,6 +5334,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         if let Some(stat) = entry.description.anonymous_stat() {
             let required_size = stat.size.max(checked_write_end(offset, data.len())?);
             self.check_path_resize_limits_with_existing(stat.size, required_size)?;
+            if entry.description.flags() & 0b11 == O_RDONLY {
+                return Err(KernelError::bad_file_descriptor(fd));
+            }
             let new_size = entry
                 .description
                 .anonymous_pwrite(offset, data)
@@ -4185,28 +5348,13 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
 
         let current_size = self.current_storage_file_size(&path)?;
         let required_size = current_size.max(checked_write_end(offset, data.len())?);
-        self.check_path_resize_limits(&path, required_size)?;
-        VirtualFileSystem::pwrite(&mut self.filesystem, &path, data.to_vec(), offset)?;
-        self.update_filesystem_usage_cache_for_resize(current_size, required_size);
-        Ok(data.len())
-    }
-
-    pub fn fd_truncate(
-        &mut self,
-        requester_driver: &str,
-        pid: u32,
-        fd: u32,
-        length: u64,
-    ) -> KernelResult<()> {
-        let description = self.description_for_fd(requester_driver, pid, fd)?;
-        if let Some(stat) = description.anonymous_stat() {
-            self.check_path_resize_limits_with_existing(stat.size, length)?;
-            return Ok(description
-                .anonymous_truncate(length)
-                .expect("anonymous stat and backing must agree")?);
+        self.check_path_resize_limits_with_existing(current_size, required_size)?;
+        if entry.description.flags() & 0b11 == O_RDONLY {
+            return Err(KernelError::bad_file_descriptor(fd));
         }
-        let path = description.path();
-        self.truncate(&path, length)
+        VirtualFileSystem::pwrite(&mut self.filesystem, &path, data.to_vec(), offset)?;
+        self.update_filesystem_usage_cache_for_resize(&path, current_size, required_size);
+        Ok(data.len())
     }
 
     pub fn fd_chmod(
@@ -4363,7 +5511,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
 
     pub fn fd_close(&mut self, requester_driver: &str, pid: u32, fd: u32) -> KernelResult<()> {
         self.assert_driver_owns(requester_driver, pid)?;
-        let (description, filetype) = {
+        let (description, filetype, lock_target) = {
             let mut tables = lock_or_recover(&self.fd_tables);
             let table = tables
                 .get_mut(pid)
@@ -4373,12 +5521,14 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 .cloned()
                 .ok_or_else(|| KernelError::bad_file_descriptor(fd))?;
             table.close(fd);
-            (entry.description, entry.filetype)
+            let lock_target = entry.description.lock_target();
+            (entry.description, entry.filetype, lock_target)
         };
-        if let Some(target) = description.lock_target() {
+        if let Some(target) = lock_target {
             self.file_locks.release_process_target(pid, target);
         }
         self.close_special_resource_if_needed(&description, filetype);
+        self.cleanup_unnamed_file_if_closed(&description)?;
         Ok(())
     }
 
@@ -4454,6 +5604,29 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             self.poll_notifier.notify();
         }
         Ok(result)
+    }
+
+    pub fn fd_named_pipe_peer_ready(
+        &self,
+        requester_driver: &str,
+        pid: u32,
+        fd: u32,
+    ) -> KernelResult<bool> {
+        self.assert_driver_owns(requester_driver, pid)?;
+        let entry = lock_or_recover(&self.fd_tables)
+            .get(pid)
+            .and_then(|table| table.get(fd))
+            .cloned()
+            .ok_or_else(|| KernelError::bad_file_descriptor(fd))?;
+        if entry.filetype != FILETYPE_PIPE {
+            return Err(KernelError::new(
+                "EINVAL",
+                format!("fd {fd} is not a named pipe"),
+            ));
+        }
+        self.pipes
+            .named_pipe_peer_ready(entry.description.id())?
+            .ok_or_else(|| KernelError::new("EINVAL", format!("fd {fd} is an anonymous pipe")))
     }
 
     pub fn fd_flock(
@@ -5020,10 +6193,6 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         flags: u32,
         mode: Option<u32>,
     ) -> KernelResult<(u8, Option<FileLockTarget>)> {
-        if open_requires_write_access(flags) {
-            self.reject_read_only_resolved_write_path(path)?;
-        }
-
         if flags & O_CREAT != 0 && flags & O_EXCL != 0 {
             self.check_write_file_limits(path, 0)?;
             VirtualFileSystem::create_file_exclusive_with_mode(
@@ -5032,7 +6201,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 Vec::new(),
                 mode,
             )?;
-            self.update_filesystem_usage_cache_for_inode_create(0);
+            self.update_filesystem_usage_cache_for_inode_create(path, 0);
             let stat = VirtualFileSystem::stat(&mut self.filesystem, path)?;
             return Ok((
                 filetype_for_path(path, &stat),
@@ -5053,12 +6222,12 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 let existing_size = self.current_storage_file_size(path)?;
                 self.check_path_resize_limits_with_existing(existing_size, 0)?;
                 VirtualFileSystem::truncate(&mut self.filesystem, path, 0)?;
-                self.update_filesystem_usage_cache_for_resize(existing_size, 0);
+                self.update_filesystem_usage_cache_for_resize(path, existing_size, 0);
             }
         } else if flags & O_CREAT != 0 {
             self.check_write_file_limits(path, 0)?;
             VirtualFileSystem::write_file_with_mode(&mut self.filesystem, path, Vec::new(), mode)?;
-            self.update_filesystem_usage_cache_for_inode_create(0);
+            self.update_filesystem_usage_cache_for_inode_create(path, 0);
         } else {
             let _ = VirtualFileSystem::stat(&mut self.filesystem, path)?;
             unreachable!("stat should return an error when opening a missing path");
@@ -5489,7 +6658,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         if descriptions.is_empty() {
             return Ok(None);
         }
-        let stat = match stat {
+        let mut stat = match stat {
             Some(stat) if !stat.is_directory && !stat.is_symbolic_link => stat.clone(),
             _ => return Ok(None),
         };
@@ -5501,6 +6670,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 }));
             }
         }
+        stat.nlink = 0;
         let data = self.filesystem.read_file(path)?;
         let backing: SharedAnonymousFile = Arc::new(Mutex::new(AnonymousFile::new(
             data,
@@ -5557,7 +6727,8 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         path: &str,
         stat: Option<&VirtualStat>,
     ) -> Option<(Vec<Arc<FileDescription>>, VirtualStat)> {
-        let stat = stat.filter(|stat| stat.is_directory)?.clone();
+        let mut stat = stat.filter(|stat| stat.is_directory)?.clone();
+        stat.nlink = 0;
         let descriptions = self
             .open_file_descriptions()
             .into_iter()
@@ -5622,6 +6793,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         command: &str,
         args: &[String],
         cwd: &str,
+        parent_pid: Option<u32>,
     ) -> KernelResult<ResolvedSpawnCommand> {
         if let Some(driver) = self.commands.resolve(command).cloned() {
             return Ok(ResolvedSpawnCommand {
@@ -5631,7 +6803,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             });
         }
 
-        let Some(path) = self.resolve_executable_path(command, cwd)? else {
+        let Some(path) = self.resolve_executable_path(command, cwd, parent_pid)? else {
             return Err(KernelError::command_not_found(command));
         };
 
@@ -5658,6 +6830,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         &mut self,
         command: &str,
         cwd: &str,
+        parent_pid: Option<u32>,
     ) -> KernelResult<Option<String>> {
         if !command.contains('/') {
             return Ok(None);
@@ -5684,9 +6857,12 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         // Registered command projections are executable kernel objects even
         // when their host/package backing blob is stored as 0644. Ordinary
         // VFS files must still carry a real execute bit, as Linux requires.
-        if stat.mode & EXECUTABLE_PERMISSION_BITS == 0
-            && self.resolve_registered_command_path(&path).is_none()
-        {
+        let registered = self.resolve_registered_command_path(&path).is_some();
+        if let Some(pid) = parent_pid {
+            if !registered {
+                self.check_dac_access(pid, &path, DAC_EXECUTE)?;
+            }
+        } else if stat.mode & EXECUTABLE_PERMISSION_BITS == 0 && !registered {
             return Err(KernelError::new(
                 "EACCES",
                 format!("permission denied, execute '{path}'"),
@@ -6428,19 +7604,23 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             vec![MountEntry {
                 path: String::from("/"),
                 plugin_id: String::from("root"),
+                guest_source: String::from("root"),
+                guest_fstype: String::from("root"),
                 read_only: false,
+                access_time: crate::mount_table::AccessTimePolicy::Relatime,
+                no_dir_atime: false,
             }]
         };
 
         mounts
             .into_iter()
             .map(|mount| {
-                let options = if mount.read_only { "ro" } else { "rw" };
+                let options = mount.option_string();
                 format!(
                     "{source} {target} {fstype} {options} 0 0\n",
-                    source = mount.plugin_id,
+                    source = mount.guest_source,
                     target = mount.path,
-                    fstype = mount.plugin_id,
+                    fstype = mount.guest_fstype,
                 )
             })
             .collect::<String>()
@@ -6580,7 +7760,23 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.filesystem_usage_cache = None;
     }
 
-    fn update_filesystem_usage_cache_for_resize(&mut self, old_size: u64, new_size: u64) {
+    fn path_uses_root_filesystem(&mut self, path: &str) -> bool {
+        let filesystem = self.raw_filesystem_mut();
+        let filesystem_any = filesystem as &mut dyn Any;
+        filesystem_any
+            .downcast_mut::<MountTable>()
+            .is_none_or(|mount_table| mount_table.path_uses_root_filesystem(path))
+    }
+
+    fn update_filesystem_usage_cache_for_resize(
+        &mut self,
+        path: &str,
+        old_size: u64,
+        new_size: u64,
+    ) {
+        if !self.path_uses_root_filesystem(path) {
+            return;
+        }
         if let Some(usage) = self.filesystem_usage_cache.as_mut() {
             usage.total_bytes = usage
                 .total_bytes
@@ -6591,6 +7787,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
 
     fn update_filesystem_usage_cache_for_write(
         &mut self,
+        path: &str,
         existing: Option<&VirtualStat>,
         new_size: u64,
     ) {
@@ -6599,21 +7796,27 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         }
 
         if let Some(stat) = existing {
-            self.update_filesystem_usage_cache_for_resize(stat.size, new_size);
+            self.update_filesystem_usage_cache_for_resize(path, stat.size, new_size);
         } else {
-            self.update_filesystem_usage_cache_for_inode_create(new_size);
+            self.update_filesystem_usage_cache_for_inode_create(path, new_size);
         }
     }
 
-    fn update_filesystem_usage_cache_for_inode_create(&mut self, size: u64) {
+    fn update_filesystem_usage_cache_for_inode_create(&mut self, path: &str, size: u64) {
+        if !self.path_uses_root_filesystem(path) {
+            return;
+        }
         if let Some(usage) = self.filesystem_usage_cache.as_mut() {
             usage.total_bytes = usage.total_bytes.saturating_add(size);
             usage.inode_count = usage.inode_count.saturating_add(1);
         }
     }
 
-    fn update_filesystem_usage_cache_for_inode_creates(&mut self, count: usize) {
+    fn update_filesystem_usage_cache_for_inode_creates(&mut self, path: &str, count: usize) {
         if count == 0 {
+            return;
+        }
+        if !self.path_uses_root_filesystem(path) {
             return;
         }
         if let Some(usage) = self.filesystem_usage_cache.as_mut() {
@@ -6621,21 +7824,28 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         }
     }
 
-    fn update_filesystem_usage_cache_for_inode_delete(&mut self, size: u64) {
+    fn update_filesystem_usage_cache_for_inode_delete(&mut self, path: &str, size: u64) {
+        if !self.path_uses_root_filesystem(path) {
+            return;
+        }
         if let Some(usage) = self.filesystem_usage_cache.as_mut() {
             usage.total_bytes = usage.total_bytes.saturating_sub(size);
             usage.inode_count = usage.inode_count.saturating_sub(1);
         }
     }
 
-    fn update_filesystem_usage_cache_for_remove(&mut self, removed: Option<&VirtualStat>) {
+    fn update_filesystem_usage_cache_for_remove(
+        &mut self,
+        path: &str,
+        removed: Option<&VirtualStat>,
+    ) {
         let Some(stat) = removed else {
             return;
         };
         if stat.is_directory || stat.nlink > 1 {
             return;
         }
-        self.update_filesystem_usage_cache_for_inode_delete(stat.size);
+        self.update_filesystem_usage_cache_for_inode_delete(path, stat.size);
     }
 
     fn storage_stat(&mut self, path: &str) -> KernelResult<Option<VirtualStat>> {
@@ -6670,9 +7880,202 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .unwrap_or(0))
     }
 
-    fn apply_creation_mode(&mut self, path: &str, mode: u32, umask: u32) -> KernelResult<()> {
-        let masked_mode = (mode & !0o777) | ((mode & 0o777) & !(umask & 0o777));
-        Ok(self.filesystem.chmod(path, masked_mode)?)
+    fn check_dac_traversal(&mut self, pid: u32, path: &str) -> KernelResult<()> {
+        if is_proc_path(path) {
+            return Ok(());
+        }
+        let identity = self
+            .processes
+            .get(pid)
+            .ok_or_else(|| KernelError::no_such_process(pid))?
+            .identity;
+        let normalized = normalize_path(path);
+        let components = normalized
+            .split('/')
+            .filter(|component| !component.is_empty())
+            .collect::<Vec<_>>();
+        let mut current = String::from("/");
+        for component in components.iter().take(components.len().saturating_sub(1)) {
+            current = join_child_path(&current, component);
+            let stat = self.filesystem.stat(&current)?;
+            if !stat.is_directory {
+                return Err(KernelError::new(
+                    "ENOTDIR",
+                    format!("path component is not a directory: {current}"),
+                ));
+            }
+            self.check_dac_mode_with_acl(&identity, &stat, DAC_EXECUTE, &current)?;
+        }
+        Ok(())
+    }
+
+    fn check_dac_access(&mut self, pid: u32, path: &str, access: u32) -> KernelResult<()> {
+        if is_proc_path(path) {
+            return Ok(());
+        }
+        self.check_dac_traversal(pid, path)?;
+        if access == 0 {
+            return Ok(());
+        }
+        let identity = self
+            .processes
+            .get(pid)
+            .ok_or_else(|| KernelError::no_such_process(pid))?
+            .identity;
+        let stat = self.filesystem.stat(path)?;
+        self.check_dac_mode_with_acl(&identity, &stat, access, path)
+    }
+
+    fn check_dac_mode_with_acl(
+        &mut self,
+        identity: &ProcessIdentity,
+        stat: &VirtualStat,
+        access: u32,
+        path: &str,
+    ) -> KernelResult<()> {
+        if identity.euid == 0 {
+            return check_dac_mode(identity, stat, access, path);
+        }
+        match self.read_posix_acl(path, POSIX_ACL_ACCESS)? {
+            Some(acl) => acl.check_access(identity, stat, access, path),
+            None => check_dac_mode(identity, stat, access, path),
+        }
+    }
+
+    fn read_posix_acl(&mut self, path: &str, name: &str) -> KernelResult<Option<PosixAcl>> {
+        match self.filesystem.get_xattr(path, name, true) {
+            Ok(value) => PosixAcl::parse(&value, path).map(Some),
+            Err(error) if matches!(error.code(), "ENODATA" | "EOPNOTSUPP") => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn sync_access_acl_mode(&mut self, path: &str, mode: u32) -> KernelResult<()> {
+        let Some(mut acl) = self.read_posix_acl(path, POSIX_ACL_ACCESS)? else {
+            return Ok(());
+        };
+        acl.apply_mode(mode);
+        self.filesystem
+            .set_xattr(path, POSIX_ACL_ACCESS, acl.encode(), 2, true)?;
+        Ok(())
+    }
+
+    fn check_dac_parent_access(&mut self, pid: u32, path: &str, access: u32) -> KernelResult<()> {
+        let mut parent = parent_path(path);
+        loop {
+            match self.check_dac_access(pid, &parent, access) {
+                Err(error) if error.code() == "ENOENT" && parent != "/" => {
+                    parent = parent_path(&parent);
+                }
+                result => return result,
+            }
+        }
+    }
+
+    fn check_sticky_directory_removal(&mut self, pid: u32, path: &str) -> KernelResult<()> {
+        let identity = self
+            .processes
+            .get(pid)
+            .ok_or_else(|| KernelError::no_such_process(pid))?
+            .identity;
+        if identity.euid == 0 {
+            return Ok(());
+        }
+        let parent = self.filesystem.stat(&parent_path(path))?;
+        if parent.mode & 0o1000 == 0 || identity.euid == parent.uid {
+            return Ok(());
+        }
+        let target = self.filesystem.lstat(path)?;
+        if identity.euid == target.uid {
+            Ok(())
+        } else {
+            Err(KernelError::new(
+                "EPERM",
+                format!("sticky directory prevents removing {path}"),
+            ))
+        }
+    }
+
+    fn apply_process_creation_metadata(
+        &mut self,
+        pid: u32,
+        path: &str,
+        mode: u32,
+        umask: u32,
+        is_directory: bool,
+    ) -> KernelResult<()> {
+        let identity = self
+            .processes
+            .get(pid)
+            .ok_or_else(|| KernelError::no_such_process(pid))?
+            .identity;
+        let parent_path = parent_path(path);
+        let parent = self.filesystem.stat(&parent_path).map_err(|error| {
+            KernelError::new(
+                error.code(),
+                format!("creation parent stat for '{parent_path}' failed: {error}"),
+            )
+        })?;
+        let inherit_setgid = parent.mode & 0o2000 != 0;
+        let gid = if inherit_setgid {
+            parent.gid
+        } else {
+            identity.egid
+        };
+        self.filesystem
+            .chown(path, identity.euid, gid)
+            .map_err(|error| {
+                KernelError::new(
+                    error.code(),
+                    format!("creation ownership for '{path}' failed: {error}"),
+                )
+            })?;
+        let inherited_acl = self.read_posix_acl(&parent_path, POSIX_ACL_DEFAULT)?;
+        let mut masked_mode = if let Some(acl) = inherited_acl.as_ref() {
+            acl.restrict_to_mode(mode).mode(mode)
+        } else {
+            (mode & !0o777) | ((mode & 0o777) & !(umask & 0o777))
+        };
+        if is_directory && inherit_setgid {
+            masked_mode |= 0o2000;
+        }
+        self.filesystem.chmod(path, masked_mode).map_err(|error| {
+            KernelError::new(
+                error.code(),
+                format!("creation mode for '{path}' failed: {error}"),
+            )
+        })?;
+        if let Some(default_acl) = inherited_acl {
+            let access_acl = default_acl.restrict_to_mode(mode);
+            self.filesystem
+                .set_xattr(path, POSIX_ACL_ACCESS, access_acl.encode(), 0, true)?;
+            if is_directory {
+                self.filesystem.set_xattr(
+                    path,
+                    POSIX_ACL_DEFAULT,
+                    default_acl.encode(),
+                    0,
+                    true,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn clear_setid_after_write(&mut self, pid: u32, path: &str) -> KernelResult<()> {
+        let identity = self
+            .processes
+            .get(pid)
+            .ok_or_else(|| KernelError::no_such_process(pid))?
+            .identity;
+        if identity.euid == 0 {
+            return Ok(());
+        }
+        let stat = self.filesystem.stat(path)?;
+        if stat.mode & 0o6000 != 0 {
+            self.filesystem.chmod(path, stat.mode & !0o6000)?;
+        }
+        Ok(())
     }
 
     fn missing_directory_paths(
@@ -6854,20 +8257,6 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         Ok(())
     }
 
-    fn check_path_resize_limits(&mut self, path: &str, new_size: u64) -> KernelResult<()> {
-        if is_virtual_device_storage_path(path) {
-            return Ok(());
-        }
-
-        let Some(existing) = self.storage_stat(path)? else {
-            return Ok(());
-        };
-        if existing.is_directory {
-            return Ok(());
-        }
-        self.check_path_resize_limits_with_existing(existing.size, new_size)
-    }
-
     fn check_path_resize_limits_with_existing(
         &mut self,
         existing_size: u64,
@@ -6907,6 +8296,30 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             filetype,
         );
     }
+
+    fn cleanup_unnamed_file_if_closed(
+        &mut self,
+        description: &Arc<FileDescription>,
+    ) -> KernelResult<()> {
+        if description.ref_count() != 0 {
+            return Ok(());
+        }
+        let Some(unnamed) = self.unnamed_files.get(&description.id()).cloned() else {
+            return Ok(());
+        };
+        match self.filesystem.remove_file(&unnamed.path) {
+            Ok(()) => {
+                self.unnamed_files.remove(&description.id());
+                self.invalidate_filesystem_usage_cache();
+                Ok(())
+            }
+            Err(error) if error.code() == "ENOENT" => {
+                self.unnamed_files.remove(&description.id());
+                Ok(())
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
 }
 
 impl KernelVm<MountTable> {
@@ -6934,7 +8347,9 @@ impl KernelVm<MountTable> {
             .inner_mut()
             .inner_mut()
             .mount(path, filesystem, options)
-            .map_err(KernelError::from)
+            .map_err(KernelError::from)?;
+        self.invalidate_filesystem_usage_cache();
+        Ok(())
     }
 
     pub fn mount_boxed_filesystem(
@@ -6949,7 +8364,9 @@ impl KernelVm<MountTable> {
             .inner_mut()
             .inner_mut()
             .mount_boxed(path, filesystem, options)
-            .map_err(KernelError::from)
+            .map_err(KernelError::from)?;
+        self.invalidate_filesystem_usage_cache();
+        Ok(())
     }
 
     pub fn unmount_filesystem(&mut self, path: &str) -> KernelResult<()> {
@@ -6959,6 +8376,31 @@ impl KernelVm<MountTable> {
             .inner_mut()
             .inner_mut()
             .unmount(path)
+            .map_err(KernelError::from)?;
+        self.invalidate_filesystem_usage_cache();
+        Ok(())
+    }
+
+    pub fn remount_filesystem_for_process(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        path: &str,
+        options: &str,
+    ) -> KernelResult<()> {
+        self.assert_not_terminated()?;
+        self.assert_driver_owns(requester_driver, pid)?;
+        if self.process_identity(requester_driver, pid)?.euid != 0 {
+            return Err(KernelError::new(
+                "EPERM",
+                "remount requires effective uid 0",
+            ));
+        }
+        self.check_mount_permissions(path)?;
+        self.filesystem
+            .inner_mut()
+            .inner_mut()
+            .remount(path, options)
             .map_err(KernelError::from)
     }
 
@@ -7606,10 +9048,370 @@ fn open_requires_write_access(flags: u32) -> bool {
     flags & (O_CREAT | O_EXCL | O_TRUNC) != 0 || (flags & 0b11) != crate::fd_table::O_RDONLY
 }
 
+const DAC_EXECUTE: u32 = 0o1;
+const DAC_WRITE: u32 = 0o2;
+const DAC_READ: u32 = 0o4;
+const POSIX_ACL_ACCESS: &str = "system.posix_acl_access";
+const POSIX_ACL_DEFAULT: &str = "system.posix_acl_default";
+const POSIX_ACL_XATTR_VERSION: u32 = 2;
+const POSIX_ACL_ENTRY_LIMIT: usize = 25;
+const XATTR_NAME_MAX: usize = 255;
+const ACL_USER_OBJ: u16 = 0x01;
+const ACL_USER: u16 = 0x02;
+const ACL_GROUP_OBJ: u16 = 0x04;
+const ACL_GROUP: u16 = 0x08;
+const ACL_MASK: u16 = 0x10;
+const ACL_OTHER: u16 = 0x20;
+const ACL_UNDEFINED_ID: u32 = u32::MAX;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PosixAclEntry {
+    tag: u16,
+    perm: u16,
+    id: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PosixAcl {
+    entries: Vec<PosixAclEntry>,
+}
+
+impl PosixAcl {
+    fn parse(value: &[u8], path: &str) -> KernelResult<Self> {
+        if value.len() < 4 || (value.len() - 4) % 8 != 0 {
+            return Err(invalid_acl(path, "invalid xattr length"));
+        }
+        let entry_count = (value.len() - 4) / 8;
+        if entry_count > POSIX_ACL_ENTRY_LIMIT {
+            return Err(KernelError::new(
+                "E2BIG",
+                format!(
+                    "POSIX ACL for {path} has {entry_count} entries; limit is {POSIX_ACL_ENTRY_LIMIT}"
+                ),
+            ));
+        }
+        let version = u32::from_le_bytes(value[0..4].try_into().expect("four ACL version bytes"));
+        if version != POSIX_ACL_XATTR_VERSION {
+            return Err(invalid_acl(path, "unsupported xattr version"));
+        }
+        let entries = value[4..]
+            .chunks_exact(8)
+            .map(|bytes| PosixAclEntry {
+                tag: u16::from_le_bytes([bytes[0], bytes[1]]),
+                perm: u16::from_le_bytes([bytes[2], bytes[3]]),
+                id: u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
+            })
+            .collect::<Vec<_>>();
+        let acl = Self { entries };
+        acl.validate(path)?;
+        Ok(acl)
+    }
+
+    fn validate(&self, path: &str) -> KernelResult<()> {
+        if self.entries.len() < 3 {
+            return Err(invalid_acl(path, "missing required entries"));
+        }
+        for entry in &self.entries {
+            if entry.perm > 0o7 {
+                return Err(invalid_acl(path, "permission bits exceed rwx"));
+            }
+            let named = matches!(entry.tag, ACL_USER | ACL_GROUP);
+            if (named && entry.id == ACL_UNDEFINED_ID) || (!named && entry.id != ACL_UNDEFINED_ID) {
+                return Err(invalid_acl(path, "entry id does not match its tag"));
+            }
+        }
+
+        let mut index = 0;
+        if self.entries.get(index).map(|entry| entry.tag) != Some(ACL_USER_OBJ) {
+            return Err(invalid_acl(path, "ACL must start with user::"));
+        }
+        index += 1;
+        let mut last_id = None;
+        while self
+            .entries
+            .get(index)
+            .is_some_and(|entry| entry.tag == ACL_USER)
+        {
+            let id = self.entries[index].id;
+            if last_id.is_some_and(|last| id <= last) {
+                return Err(invalid_acl(path, "named users are not strictly sorted"));
+            }
+            last_id = Some(id);
+            index += 1;
+        }
+        if self.entries.get(index).map(|entry| entry.tag) != Some(ACL_GROUP_OBJ) {
+            return Err(invalid_acl(path, "ACL is missing group::"));
+        }
+        index += 1;
+        last_id = None;
+        while self
+            .entries
+            .get(index)
+            .is_some_and(|entry| entry.tag == ACL_GROUP)
+        {
+            let id = self.entries[index].id;
+            if last_id.is_some_and(|last| id <= last) {
+                return Err(invalid_acl(path, "named groups are not strictly sorted"));
+            }
+            last_id = Some(id);
+            index += 1;
+        }
+        let has_named = self
+            .entries
+            .iter()
+            .any(|entry| matches!(entry.tag, ACL_USER | ACL_GROUP));
+        let has_mask = self
+            .entries
+            .get(index)
+            .is_some_and(|entry| entry.tag == ACL_MASK);
+        if has_mask {
+            index += 1;
+        }
+        if has_named && !has_mask {
+            return Err(invalid_acl(path, "named entries require a mask"));
+        }
+        if self.entries.get(index).map(|entry| entry.tag) != Some(ACL_OTHER)
+            || index + 1 != self.entries.len()
+        {
+            return Err(invalid_acl(path, "ACL must end with other::"));
+        }
+        Ok(())
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        let mut value = Vec::with_capacity(4 + self.entries.len() * 8);
+        value.extend_from_slice(&POSIX_ACL_XATTR_VERSION.to_le_bytes());
+        for entry in &self.entries {
+            value.extend_from_slice(&entry.tag.to_le_bytes());
+            value.extend_from_slice(&entry.perm.to_le_bytes());
+            value.extend_from_slice(&entry.id.to_le_bytes());
+        }
+        value
+    }
+
+    fn entry(&self, tag: u16) -> &PosixAclEntry {
+        self.entries
+            .iter()
+            .find(|entry| entry.tag == tag)
+            .expect("validated ACL required entry")
+    }
+
+    fn mask(&self) -> u32 {
+        self.entries
+            .iter()
+            .find(|entry| entry.tag == ACL_MASK)
+            .map_or(0o7, |entry| u32::from(entry.perm))
+    }
+
+    fn mode(&self, original_mode: u32) -> u32 {
+        let owner = u32::from(self.entry(ACL_USER_OBJ).perm);
+        let group = self
+            .entries
+            .iter()
+            .find(|entry| entry.tag == ACL_MASK)
+            .unwrap_or_else(|| self.entry(ACL_GROUP_OBJ));
+        let other = u32::from(self.entry(ACL_OTHER).perm);
+        (original_mode & !0o777) | (owner << 6) | (u32::from(group.perm) << 3) | other
+    }
+
+    fn apply_mode(&mut self, mode: u32) {
+        let has_mask = self.entries.iter().any(|entry| entry.tag == ACL_MASK);
+        for entry in &mut self.entries {
+            let permissions = match entry.tag {
+                ACL_USER_OBJ => Some((mode >> 6) & 0o7),
+                ACL_MASK => Some((mode >> 3) & 0o7),
+                ACL_GROUP_OBJ if !has_mask => Some((mode >> 3) & 0o7),
+                ACL_OTHER => Some(mode & 0o7),
+                _ => None,
+            };
+            if let Some(permissions) = permissions {
+                entry.perm = permissions as u16;
+            }
+        }
+    }
+
+    fn restrict_to_mode(&self, mode: u32) -> Self {
+        let mut acl = self.clone();
+        let has_mask = acl.entries.iter().any(|entry| entry.tag == ACL_MASK);
+        for entry in &mut acl.entries {
+            let restriction = match entry.tag {
+                ACL_USER_OBJ => Some((mode >> 6) & 0o7),
+                ACL_MASK => Some((mode >> 3) & 0o7),
+                ACL_GROUP_OBJ if !has_mask => Some((mode >> 3) & 0o7),
+                ACL_OTHER => Some(mode & 0o7),
+                _ => None,
+            };
+            if let Some(restriction) = restriction {
+                entry.perm &= restriction as u16;
+            }
+        }
+        acl
+    }
+
+    fn check_access(
+        &self,
+        identity: &ProcessIdentity,
+        stat: &VirtualStat,
+        access: u32,
+        path: &str,
+    ) -> KernelResult<()> {
+        let mask = self.mask();
+        let granted = if identity.euid == stat.uid {
+            u32::from(self.entry(ACL_USER_OBJ).perm)
+        } else if let Some(entry) = self
+            .entries
+            .iter()
+            .find(|entry| entry.tag == ACL_USER && entry.id == identity.euid)
+        {
+            u32::from(entry.perm) & mask
+        } else {
+            let in_group = |gid| identity.egid == gid || identity.supplementary_gids.contains(&gid);
+            let mut matched = false;
+            let mut group_permissions = 0;
+            if in_group(stat.gid) {
+                matched = true;
+                group_permissions |= u32::from(self.entry(ACL_GROUP_OBJ).perm);
+            }
+            for entry in self.entries.iter().filter(|entry| entry.tag == ACL_GROUP) {
+                if in_group(entry.id) {
+                    matched = true;
+                    group_permissions |= u32::from(entry.perm);
+                }
+            }
+            if matched {
+                group_permissions & mask
+            } else {
+                u32::from(self.entry(ACL_OTHER).perm)
+            }
+        };
+        if granted & access == access {
+            Ok(())
+        } else {
+            Err(KernelError::new(
+                "EACCES",
+                format!(
+                    "ACL permission denied: {path} requires {access:o}, granted={granted:o}, euid={}, egid={}",
+                    identity.euid, identity.egid
+                ),
+            ))
+        }
+    }
+}
+
+fn invalid_acl(path: &str, reason: &str) -> KernelError {
+    KernelError::new("EINVAL", format!("invalid POSIX ACL for {path}: {reason}"))
+}
+
+fn check_xattr_namespace(
+    identity: &ProcessIdentity,
+    name: &str,
+    write: bool,
+    path: &str,
+) -> KernelResult<()> {
+    if name.is_empty() || name.len() > XATTR_NAME_MAX {
+        return Err(KernelError::new(
+            "EINVAL",
+            format!(
+                "extended attribute name for {path} is {} bytes; maximum is {XATTR_NAME_MAX}",
+                name.len()
+            ),
+        ));
+    }
+    let supported = name.starts_with("user.")
+        || name.starts_with("trusted.")
+        || name.starts_with("security.")
+        || name == "system.posix_acl_access"
+        || name == "system.posix_acl_default";
+    if !supported {
+        return Err(KernelError::new(
+            "EOPNOTSUPP",
+            format!("unsupported extended attribute namespace for {name} on {path}"),
+        ));
+    }
+    if identity.euid != 0 && (name.starts_with("trusted.") || name.starts_with("security.")) {
+        return Err(KernelError::permission_denied(format!(
+            "{} {name} requires root privileges on {path}",
+            if write { "modifying" } else { "reading" }
+        )));
+    }
+    Ok(())
+}
+
+fn check_xattr_inode_write_policy(stat: &VirtualStat, name: &str, path: &str) -> KernelResult<()> {
+    if name.starts_with("user.") && !stat.is_directory && stat.mode & 0o170000 != S_IFREG {
+        return Err(KernelError::new(
+            "EPERM",
+            format!("user extended attributes require a regular file or directory: {path}"),
+        ));
+    }
+    Ok(())
+}
+
+fn check_dac_mode(
+    identity: &ProcessIdentity,
+    stat: &VirtualStat,
+    access: u32,
+    path: &str,
+) -> KernelResult<()> {
+    if identity.euid == 0 {
+        if access & DAC_EXECUTE != 0 && !stat.is_directory && stat.mode & 0o111 == 0 {
+            return Err(KernelError::new(
+                "EACCES",
+                format!("execute permission denied: {path}"),
+            ));
+        }
+        return Ok(());
+    }
+    let shift = if identity.euid == stat.uid {
+        6
+    } else if identity.egid == stat.gid || identity.supplementary_gids.contains(&stat.gid) {
+        3
+    } else {
+        0
+    };
+    let granted = (stat.mode >> shift) & 0o7;
+    if granted & access == access {
+        Ok(())
+    } else {
+        Err(KernelError::new(
+            "EACCES",
+            format!(
+                "permission denied: {path} requires {access:o}, mode={:o}, euid={}, egid={}",
+                stat.mode & 0o7777,
+                identity.euid,
+                identity.egid
+            ),
+        ))
+    }
+}
+
+fn credential_transition_denied(operation: &str, id: u32) -> KernelError {
+    KernelError::new(
+        "EPERM",
+        format!("{operation} is not permitted for credential id {id}"),
+    )
+}
+
 fn checked_write_end(offset: u64, len: usize) -> KernelResult<u64> {
     offset
         .checked_add(len as u64)
         .ok_or_else(|| KernelError::new("EINVAL", "write offset out of range"))
+}
+
+fn check_direct_io_alignment(flags: u32, offset: u64, len: usize) -> KernelResult<()> {
+    const DIRECT_IO_ALIGNMENT: u64 = 512;
+    if flags & O_DIRECT == 0 {
+        return Ok(());
+    }
+    if !offset.is_multiple_of(DIRECT_IO_ALIGNMENT)
+        || !(len as u64).is_multiple_of(DIRECT_IO_ALIGNMENT)
+    {
+        return Err(KernelError::new(
+            "EINVAL",
+            format!("O_DIRECT I/O requires {DIRECT_IO_ALIGNMENT}-byte aligned offset and length"),
+        ));
+    }
+    Ok(())
 }
 
 fn filetype_for_path(path: &str, stat: &VirtualStat) -> u8 {
@@ -7657,7 +9459,7 @@ fn synthetic_special_file_stat(ino: u64, mode: u32, dev: u64) -> VirtualStat {
 fn proc_dir_stat(ino: u64) -> VirtualStat {
     let now = now_ms();
     VirtualStat {
-        mode: 0o555,
+        mode: S_IFDIR | 0o555,
         size: 0,
         blocks: 0,
         dev: 3,
@@ -7681,7 +9483,7 @@ fn proc_dir_stat(ino: u64) -> VirtualStat {
 fn proc_file_stat(ino: u64, size: u64) -> VirtualStat {
     let now = now_ms();
     VirtualStat {
-        mode: 0o444,
+        mode: S_IFREG | 0o444,
         size,
         blocks: if size == 0 { 0 } else { size.div_ceil(512) },
         dev: 3,
@@ -7705,7 +9507,7 @@ fn proc_file_stat(ino: u64, size: u64) -> VirtualStat {
 fn proc_symlink_stat(ino: u64, size: u64) -> VirtualStat {
     let now = now_ms();
     VirtualStat {
-        mode: 0o777,
+        mode: S_IFLNK | 0o777,
         size,
         blocks: if size == 0 { 0 } else { size.div_ceil(512) },
         dev: 3,

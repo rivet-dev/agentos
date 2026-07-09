@@ -190,8 +190,12 @@ impl<M: MetadataStore> MetadataStore for CachedMetadataStore<M> {
         ino: u64,
         edits: Vec<ChunkEdit>,
         new_size: u64,
+        allocated_extents: Vec<(u64, u64)>,
     ) -> VfsResult<Vec<BlockKey>> {
-        let result = self.inner.commit_write(ino, edits, new_size).await;
+        let result = self
+            .inner
+            .commit_write(ino, edits, new_size, allocated_extents)
+            .await;
         self.clear_after_mutation();
         result
     }
@@ -210,5 +214,9 @@ impl<M: MetadataStore> MetadataStore for CachedMetadataStore<M> {
 
     async fn gc(&self) -> VfsResult<Vec<BlockKey>> {
         self.inner.gc().await
+    }
+
+    async fn flush(&self) -> VfsResult<()> {
+        self.inner.flush().await
     }
 }

@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-su"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "su-compatible AgentOS VM credential switch command"
+
+[[bin]]
+name = "su"
+path = "src/main.rs"
+
+[dependencies]
+wasi-ext = { path = "../../../../../toolchain/crates/wasi-ext" }

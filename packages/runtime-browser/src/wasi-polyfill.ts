@@ -145,6 +145,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
   const __agentOSWasiErrnoFault = 21;
   const __agentOSWasiErrnoInval = 28;
   const __agentOSWasiErrnoIo = 29;
+  const __agentOSWasiErrnoLoop = 32;
   const __agentOSWasiErrnoNoent = 44;
   const __agentOSWasiErrnoNosys = 52;
   const __agentOSWasiErrnoNotdir = 54;
@@ -152,7 +153,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
   const __agentOSWasiErrnoPipe = 64;
   const __agentOSWasiErrnoRofs = 69;
   const __agentOSWasiErrnoNotcapable = 76;
-  const __agentOSWasiErrnoXdev = 18;
+  const __agentOSWasiErrnoXdev = 75;
   const __agentOSWasiFiletypeUnknown = 0;
   const __agentOSWasiFiletypeCharacterDevice = 2;
   const __agentOSWasiFiletypeDirectory = 3;
@@ -252,6 +253,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
         fd_readdir: (...args) => this._fdReaddir(...args),
         fd_read: (...args) => this._fdRead(...args),
         fd_seek: (...args) => this._fdSeek(...args),
+        fd_datasync: (...args) => this._fdSync(...args),
         fd_sync: (...args) => this._fdSync(...args),
         fd_tell: (...args) => this._fdTell(...args),
         fd_write: (...args) => this._fdWrite(...args),
@@ -645,11 +647,17 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
 
       let flushed = false;
       while (pipe.chunks.length > 0) {
-        const chunk = pipe.chunks.shift();
+        const chunk = pipe.chunks[0];
         if (!chunk || chunk.length === 0) {
+          pipe.chunks.shift();
           continue;
         }
 
+        if ((pipe.readHandleCount ?? 0) > 0) {
+          break;
+        }
+
+        let delivered = false;
         for (const [consumerKey, consumer] of Array.from(pipe.consumers.entries())) {
           if (!consumer || typeof consumer.childId !== "string") {
             pipe.consumers.delete(consumerKey);
@@ -661,10 +669,16 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
               chunk,
             ]);
             flushed = true;
+            delivered = true;
+            break;
           } catch {
             pipe.consumers.delete(consumerKey);
           }
         }
+        if (!delivered) {
+          break;
+        }
+        pipe.chunks.shift();
       }
 
       return flushed;
@@ -743,7 +757,11 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
 
         if (event.type === "exit") {
           pipe.producers.delete(producerKey);
-          if (pipe.producers.size === 0 && (pipe.writeHandleCount ?? 0) === 0) {
+          if (
+            pipe.producers.size === 0 &&
+            (pipe.writeHandleCount ?? 0) === 0 &&
+            pipe.chunks.length === 0
+          ) {
             this._closePipeConsumers(pipe);
           }
           continue;
@@ -912,6 +930,8 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
           return __agentOSWasiErrnoNotempty;
         case "EEXIST":
           return __agentOSWasiErrnoExist;
+        case "ELOOP":
+          return __agentOSWasiErrnoLoop;
         case "EINVAL":
           return __agentOSWasiErrnoInval;
         case "EROFS":
@@ -1960,7 +1980,10 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
           }
           return 0;
         })();
-        if (entry.kind === "file" && retainedDelegateRefs <= 0) {
+        if (
+          (entry.kind === "file" || entry.kind === "directory") &&
+          retainedDelegateRefs <= 0
+        ) {
           __agentOSFs().closeSync(entry.realFd);
         }
         if (descriptor > 2 && retainedDelegateRefs <= 0) {

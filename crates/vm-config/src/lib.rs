@@ -21,6 +21,9 @@ pub struct CreateVmConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub database: Option<VmSqliteDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub user: Option<VmUserConfig>,
     #[serde(default, rename = "rootFilesystem")]
     pub root_filesystem: RootFilesystemConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -67,6 +70,9 @@ impl CreateVmConfig {
         }
         if let Some(database) = &self.database {
             database.validate()?;
+        }
+        if let Some(user) = &self.user {
+            user.validate()?;
         }
         self.root_filesystem.validate()?;
         if let Some(native_root) = &self.native_root {
@@ -130,6 +136,191 @@ fn validate_absolute_host_path(field: &str, path: &str) -> Result<(), VmConfigEr
         return Err(VmConfigError::new(format!(
             "{field} must be a non-empty absolute path without NUL bytes"
         )));
+    }
+    Ok(())
+}
+
+/// Initial Linux-style credentials and account record for processes in a VM.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+pub struct VmUserConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub uid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub gid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub euid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub egid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub homedir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub shell: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub gecos: Option<String>,
+    #[serde(default, rename = "groupName", skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub group_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub supplementary_gids: Option<Vec<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub accounts: Option<Vec<VmUserAccountConfig>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub groups: Option<Vec<VmGroupConfig>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+pub struct VmUserAccountConfig {
+    pub uid: u32,
+    pub gid: u32,
+    pub username: String,
+    pub homedir: String,
+    pub shell: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub gecos: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supplementary_gids: Vec<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
+pub struct VmGroupConfig {
+    pub gid: u32,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<String>,
+}
+
+impl VmUserConfig {
+    fn validate(&self) -> Result<(), VmConfigError> {
+        const MAX_SUPPLEMENTARY_GIDS: usize = 64;
+        const MAX_ACCOUNTS: usize = 64;
+        const MAX_GROUPS: usize = 128;
+        if self
+            .supplementary_gids
+            .as_ref()
+            .is_some_and(|groups| groups.len() > MAX_SUPPLEMENTARY_GIDS)
+        {
+            return Err(VmConfigError::new(format!(
+                "user.supplementaryGids exceeds limit of {MAX_SUPPLEMENTARY_GIDS}"
+            )));
+        }
+        for (label, value) in [
+            ("user.username", self.username.as_deref()),
+            ("user.groupName", self.group_name.as_deref()),
+        ] {
+            if value.is_some_and(|value| {
+                value.is_empty()
+                    || value.contains([':', '\n', '\r', '\0'])
+                    || value.chars().any(char::is_whitespace)
+            }) {
+                return Err(VmConfigError::new(format!("{label} is invalid")));
+            }
+        }
+        if self
+            .gecos
+            .as_deref()
+            .is_some_and(|value| value.contains([':', '\n', '\r', '\0']))
+        {
+            return Err(VmConfigError::new("user.gecos is invalid"));
+        }
+        let accounts = self.accounts.as_deref().unwrap_or_default();
+        let groups = self.groups.as_deref().unwrap_or_default();
+        if accounts.len() > MAX_ACCOUNTS {
+            return Err(VmConfigError::new(format!(
+                "user.accounts exceeds limit of {MAX_ACCOUNTS}"
+            )));
+        }
+        if groups.len() > MAX_GROUPS {
+            return Err(VmConfigError::new(format!(
+                "user.groups exceeds limit of {MAX_GROUPS}"
+            )));
+        }
+        let mut account_uids = std::collections::BTreeSet::new();
+        let mut account_names = std::collections::BTreeSet::new();
+        for account in accounts {
+            validate_account_name("user.accounts[].username", &account.username)?;
+            validate_guest_path("user.accounts[].homedir", &account.homedir)?;
+            validate_guest_path("user.accounts[].shell", &account.shell)?;
+            if account
+                .gecos
+                .as_deref()
+                .is_some_and(|value| value.contains([':', '\n', '\r', '\0']))
+            {
+                return Err(VmConfigError::new("user.accounts[].gecos is invalid"));
+            }
+            if account.supplementary_gids.len() > MAX_SUPPLEMENTARY_GIDS {
+                return Err(VmConfigError::new(format!(
+                    "user.accounts[].supplementaryGids exceeds limit of {MAX_SUPPLEMENTARY_GIDS}"
+                )));
+            }
+            if !account_uids.insert(account.uid) {
+                return Err(VmConfigError::new(format!(
+                    "duplicate user account uid {}",
+                    account.uid
+                )));
+            }
+            if !account_names.insert(account.username.as_str()) {
+                return Err(VmConfigError::new(format!(
+                    "duplicate user account name {}",
+                    account.username
+                )));
+            }
+        }
+        let mut group_gids = std::collections::BTreeSet::new();
+        let mut group_names = std::collections::BTreeSet::new();
+        for group in groups {
+            validate_account_name("user.groups[].name", &group.name)?;
+            for member in &group.members {
+                validate_account_name("user.groups[].members[]", member)?;
+            }
+            if !group_gids.insert(group.gid) {
+                return Err(VmConfigError::new(format!(
+                    "duplicate user group gid {}",
+                    group.gid
+                )));
+            }
+            if !group_names.insert(group.name.as_str()) {
+                return Err(VmConfigError::new(format!(
+                    "duplicate user group name {}",
+                    group.name
+                )));
+            }
+        }
+        if let Some(homedir) = self.homedir.as_deref() {
+            validate_guest_path("user.homedir", homedir)?;
+        }
+        if let Some(shell) = self.shell.as_deref() {
+            validate_guest_path("user.shell", shell)?;
+        }
+        Ok(())
+    }
+}
+
+fn validate_account_name(label: &str, value: &str) -> Result<(), VmConfigError> {
+    if value.is_empty()
+        || value.contains([':', '\n', '\r', '\0'])
+        || value.chars().any(char::is_whitespace)
+    {
+        return Err(VmConfigError::new(format!("{label} is invalid")));
     }
     Ok(())
 }
@@ -1055,6 +1246,7 @@ limits_struct!(WasmLimitsConfig {
     sync_read_limit_bytes,
     prewarm_timeout_ms,
     runner_heap_limit_mb,
+    runner_cpu_time_limit_ms,
 });
 
 limits_struct!(ProcessLimitsConfig {
@@ -1206,6 +1398,47 @@ mod tests {
             serde_json::from_str::<CreateVmConfig>(r#"{"rootFilesystem":{},"surprise":true}"#)
                 .expect_err("unknown fields should fail");
         assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn root_user_config_round_trips_and_validates() {
+        let config = CreateVmConfig {
+            user: Some(VmUserConfig {
+                uid: Some(0),
+                gid: Some(0),
+                username: Some(String::from("root")),
+                homedir: Some(String::from("/root")),
+                shell: Some(String::from("/bin/sh")),
+                supplementary_gids: Some(vec![0, 10]),
+                ..VmUserConfig::default()
+            }),
+            ..CreateVmConfig::default()
+        };
+        config.validate(usize::MAX).expect("valid root account");
+        let json = serde_json::to_string(&config).expect("serialize root user");
+        let decoded: CreateVmConfig = serde_json::from_str(&json).expect("decode root user");
+        assert_eq!(decoded, config);
+    }
+
+    #[test]
+    fn user_config_rejects_unbounded_groups_and_invalid_records() {
+        let too_many_groups = CreateVmConfig {
+            user: Some(VmUserConfig {
+                supplementary_gids: Some((0..65).collect()),
+                ..VmUserConfig::default()
+            }),
+            ..CreateVmConfig::default()
+        };
+        assert!(too_many_groups.validate(usize::MAX).is_err());
+
+        let invalid_name = CreateVmConfig {
+            user: Some(VmUserConfig {
+                username: Some(String::from("bad:name")),
+                ..VmUserConfig::default()
+            }),
+            ..CreateVmConfig::default()
+        };
+        assert!(invalid_name.validate(usize::MAX).is_err());
     }
 
     #[test]

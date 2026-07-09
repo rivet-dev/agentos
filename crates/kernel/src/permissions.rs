@@ -8,6 +8,8 @@ use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 
+const IMMUTABLE_XATTR: &str = "user.agentos.immutable";
+
 pub type FsPermissionCheck = Arc<dyn Fn(&FsAccessRequest) -> PermissionDecision + Send + Sync>;
 pub type NetworkPermissionCheck =
     Arc<dyn Fn(&NetworkAccessRequest) -> PermissionDecision + Send + Sync>;
@@ -396,6 +398,35 @@ impl<F> PermissionedFileSystem<F> {
 }
 
 impl<F: VirtualFileSystem> PermissionedFileSystem<F> {
+    fn check_not_immutable(&mut self, path: &str, op: &'static str) -> VfsResult<()> {
+        self.check_not_immutable_with_follow(path, op, true)
+    }
+
+    fn check_entry_not_immutable(&mut self, path: &str, op: &'static str) -> VfsResult<()> {
+        self.check_not_immutable_with_follow(path, op, false)
+    }
+
+    fn check_not_immutable_with_follow(
+        &mut self,
+        path: &str,
+        op: &'static str,
+        follow_symlinks: bool,
+    ) -> VfsResult<()> {
+        match self.inner.get_xattr(path, IMMUTABLE_XATTR, follow_symlinks) {
+            Ok(value) if value == b"1" => Err(VfsError::permission_denied(op, path)),
+            Ok(_) => Ok(()),
+            Err(error)
+                if matches!(
+                    error.code(),
+                    "ENODATA" | "ENOATTR" | "ENOENT" | "EOPNOTSUPP"
+                ) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     fn resolved_existing_path(&self, path: &str) -> VfsResult<String> {
         self.inner.realpath(path)
     }
@@ -539,6 +570,7 @@ impl<F: VirtualFileSystem> VirtualFileSystem for PermissionedFileSystem<F> {
 
     fn write_file(&mut self, path: &str, content: impl Into<Vec<u8>>) -> VfsResult<()> {
         self.check_subject(FsOperation::Write, path)?;
+        self.check_not_immutable(path, "write")?;
         self.inner.write_file(path, content)
     }
 
@@ -549,6 +581,7 @@ impl<F: VirtualFileSystem> VirtualFileSystem for PermissionedFileSystem<F> {
 
     fn append_file(&mut self, path: &str, content: impl Into<Vec<u8>>) -> VfsResult<u64> {
         self.check_subject(FsOperation::Write, path)?;
+        self.check_not_immutable(path, "write")?;
         self.inner.append_file(path, content)
     }
 
@@ -562,28 +595,48 @@ impl<F: VirtualFileSystem> VirtualFileSystem for PermissionedFileSystem<F> {
         self.inner.mkdir(path, recursive)
     }
 
+    fn mknod(&mut self, path: &str, mode: u32, rdev: u64) -> VfsResult<()> {
+        self.check_subject(FsOperation::Write, path)?;
+        self.inner.mknod(path, mode, rdev)
+    }
+
     fn exists(&self, path: &str) -> bool {
         PermissionedFileSystem::exists(self, path).unwrap_or(false)
     }
 
     fn stat(&mut self, path: &str) -> VfsResult<VirtualStat> {
-        self.check_subject(FsOperation::Stat, path)?;
-        self.inner.stat(path)
+        self.check_subject(FsOperation::Stat, path)
+            .map_err(|error| {
+                VfsError::new(
+                    error.code(),
+                    format!("permission path resolution for stat '{path}' failed: {error}"),
+                )
+            })?;
+        self.inner.stat(path).map_err(|error| {
+            VfsError::new(
+                error.code(),
+                format!("storage stat for '{path}' failed: {error}"),
+            )
+        })
     }
 
     fn remove_file(&mut self, path: &str) -> VfsResult<()> {
         self.check_subject(FsOperation::Remove, path)?;
+        self.check_entry_not_immutable(path, "unlink")?;
         self.inner.remove_file(path)
     }
 
     fn remove_dir(&mut self, path: &str) -> VfsResult<()> {
         self.check_subject(FsOperation::Remove, path)?;
+        self.check_entry_not_immutable(path, "rmdir")?;
         self.inner.remove_dir(path)
     }
 
     fn rename(&mut self, old_path: &str, new_path: &str) -> VfsResult<()> {
         self.check_subject(FsOperation::Rename, old_path)?;
         self.check_subject(FsOperation::Rename, new_path)?;
+        self.check_entry_not_immutable(old_path, "rename")?;
+        self.check_entry_not_immutable(new_path, "rename")?;
         self.inner.rename(old_path, new_path)
     }
 
@@ -621,16 +674,19 @@ impl<F: VirtualFileSystem> VirtualFileSystem for PermissionedFileSystem<F> {
     fn link(&mut self, old_path: &str, new_path: &str) -> VfsResult<()> {
         self.check_existing_subject(FsOperation::Link, old_path)?;
         self.check_destination_subject(FsOperation::Link, new_path)?;
+        self.check_not_immutable(old_path, "link")?;
         self.inner.link(old_path, new_path)
     }
 
     fn chmod(&mut self, path: &str, mode: u32) -> VfsResult<()> {
         self.check_subject(FsOperation::Chmod, path)?;
+        self.check_not_immutable(path, "chmod")?;
         self.inner.chmod(path, mode)
     }
 
     fn chown(&mut self, path: &str, uid: u32, gid: u32) -> VfsResult<()> {
         self.check_subject(FsOperation::Chown, path)?;
+        self.check_not_immutable(path, "chown")?;
         self.inner.chown(path, uid, gid)
     }
 
@@ -651,8 +707,69 @@ impl<F: VirtualFileSystem> VirtualFileSystem for PermissionedFileSystem<F> {
         self.inner.chown_spec(path, uid, gid, follow_symlinks)
     }
 
+    fn lchown(&mut self, path: &str, uid: u32, gid: u32) -> VfsResult<()> {
+        self.chown_spec(path, uid, gid, false)
+    }
+
+    fn get_xattr(&mut self, path: &str, name: &str, follow_symlinks: bool) -> VfsResult<Vec<u8>> {
+        if follow_symlinks {
+            self.check_subject(FsOperation::Read, path)?;
+        } else {
+            validate_path(path)?;
+            let subject = self.resolved_destination_path(path)?;
+            self.check(FsOperation::Read, &subject)?;
+        }
+        self.inner.get_xattr(path, name, follow_symlinks)
+    }
+
+    fn list_xattrs(&mut self, path: &str, follow_symlinks: bool) -> VfsResult<Vec<String>> {
+        if follow_symlinks {
+            self.check_subject(FsOperation::Read, path)?;
+        } else {
+            validate_path(path)?;
+            let subject = self.resolved_destination_path(path)?;
+            self.check(FsOperation::Read, &subject)?;
+        }
+        self.inner.list_xattrs(path, follow_symlinks)
+    }
+
+    fn set_xattr(
+        &mut self,
+        path: &str,
+        name: &str,
+        value: Vec<u8>,
+        flags: u32,
+        follow_symlinks: bool,
+    ) -> VfsResult<()> {
+        if follow_symlinks {
+            self.check_subject(FsOperation::Write, path)?;
+        } else {
+            validate_path(path)?;
+            let subject = self.resolved_destination_path(path)?;
+            self.check(FsOperation::Write, &subject)?;
+        }
+        self.check_not_immutable(path, "setxattr")?;
+        self.inner
+            .set_xattr(path, name, value, flags, follow_symlinks)
+    }
+
+    fn remove_xattr(&mut self, path: &str, name: &str, follow_symlinks: bool) -> VfsResult<()> {
+        if follow_symlinks {
+            self.check_subject(FsOperation::Write, path)?;
+        } else {
+            validate_path(path)?;
+            let subject = self.resolved_destination_path(path)?;
+            self.check(FsOperation::Write, &subject)?;
+        }
+        if name != IMMUTABLE_XATTR {
+            self.check_not_immutable(path, "removexattr")?;
+        }
+        self.inner.remove_xattr(path, name, follow_symlinks)
+    }
+
     fn utimes(&mut self, path: &str, atime_ms: u64, mtime_ms: u64) -> VfsResult<()> {
         self.check_subject(FsOperation::Utimes, path)?;
+        self.check_not_immutable(path, "utimes")?;
         self.inner.utimes(path, atime_ms, mtime_ms)
     }
 
@@ -664,16 +781,74 @@ impl<F: VirtualFileSystem> VirtualFileSystem for PermissionedFileSystem<F> {
         follow_symlinks: bool,
     ) -> VfsResult<()> {
         self.check_subject(FsOperation::Utimes, path)?;
+        self.check_not_immutable(path, "utimes")?;
         self.inner.utimes_spec(path, atime, mtime, follow_symlinks)
     }
 
     fn truncate(&mut self, path: &str, length: u64) -> VfsResult<()> {
         self.check_subject(FsOperation::Truncate, path)?;
+        self.check_not_immutable(path, "truncate")?;
         self.inner.truncate(path, length)
+    }
+
+    fn sync(&mut self, path: &str) -> VfsResult<()> {
+        self.inner.sync(path)
+    }
+
+    fn allocate(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        self.check_subject(FsOperation::Write, path)?;
+        self.check_not_immutable(path, "fallocate")?;
+        self.inner.allocate(path, offset, length)
+    }
+
+    fn insert_range(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        self.check_subject(FsOperation::Write, path)?;
+        self.check_not_immutable(path, "fallocate")?;
+        self.inner.insert_range(path, offset, length)
+    }
+
+    fn collapse_range(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        self.check_subject(FsOperation::Write, path)?;
+        self.check_not_immutable(path, "fallocate")?;
+        self.inner.collapse_range(path, offset, length)
+    }
+
+    fn zero_range(
+        &mut self,
+        path: &str,
+        offset: u64,
+        length: u64,
+        keep_size: bool,
+    ) -> VfsResult<()> {
+        self.check_subject(FsOperation::Write, path)?;
+        self.check_not_immutable(path, "fallocate")?;
+        self.inner.zero_range(path, offset, length, keep_size)
+    }
+
+    fn punch_hole(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        self.check_subject(FsOperation::Write, path)?;
+        self.check_not_immutable(path, "fallocate")?;
+        self.inner.punch_hole(path, offset, length)
+    }
+
+    fn allocated_ranges(&mut self, path: &str) -> VfsResult<Vec<(u64, u64)>> {
+        self.check_subject(FsOperation::Read, path)?;
+        self.inner.allocated_ranges(path)
+    }
+
+    fn unwritten_ranges(&mut self, path: &str) -> VfsResult<Vec<(u64, u64)>> {
+        self.check_subject(FsOperation::Read, path)?;
+        self.inner.unwritten_ranges(path)
     }
 
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
         self.check_subject(FsOperation::Read, path)?;
         self.inner.pread(path, offset, length)
+    }
+
+    fn pwrite(&mut self, path: &str, content: impl Into<Vec<u8>>, offset: u64) -> VfsResult<()> {
+        self.check_subject(FsOperation::Write, path)?;
+        self.check_not_immutable(path, "write")?;
+        self.inner.pwrite(path, content, offset)
     }
 }

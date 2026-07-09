@@ -6,6 +6,7 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	statSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -64,6 +65,9 @@ describe("stage", () => {
 		expect(readFileSync(join(pkg, "bin", "linked-sh"), "utf8")).toBe("\0asm-sh");
 		expect(readFileSync(join(pkg, "bin", "bash"), "utf8")).toBe("\0asm-sh");
 		expect(readFileSync(join(pkg, "bin", "id"), "utf8")).toBe("\0asm-stubs");
+		for (const command of result.staged) {
+			expect(statSync(join(pkg, "bin", command)).mode & 0o777).toBe(0o755);
+		}
 	});
 
 	test("re-staging wipes stale entries from bin/", () => {
@@ -144,6 +148,11 @@ describe("build", () => {
 		expect(readFileSync(join(pkg, "dist", "package", "bin", "bash"), "utf8")).toBe(
 			"\0asm-sh",
 		);
+		for (const command of result.commands) {
+			expect(
+				statSync(join(pkg, "dist", "package", "bin", command)).mode & 0o777,
+			).toBe(0o755);
+		}
 	});
 
 	test("empty bin/ assembles a valid placeholder", () => {

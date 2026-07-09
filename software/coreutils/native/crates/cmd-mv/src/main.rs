@@ -85,6 +85,12 @@ fn move_path(source: &Path, destination: &Path) -> io::Result<()> {
         ));
     }
 
+    match fs::rename(source, destination) {
+        Ok(()) => return Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {}
+        Err(error) => return Err(error),
+    }
+
     let metadata = fs::symlink_metadata(source)?;
     let file_type = metadata.file_type();
 

@@ -127,12 +127,34 @@
 				"_fsMkdir",
 				"_fsRmdir",
 				"_fsExists",
+				"_fsAccess",
 				"_fsStat",
 				"_fsUnlink",
 				"_fsRename",
+				"_fsRenameAt2",
 				"_fsChmod",
 				"_fsChown",
-				"_fsLink",
+				"_fsLchown",
+				"_fsGetxattr",
+				"_fsListxattr",
+				"_fsSetxattr",
+					"_fsRemovexattr",
+					"_fsTruncateForProcess",
+					"_fsFallocate",
+					"_fsInsertRange",
+					"_fsCollapseRange",
+					"_fsPunchHole",
+					"_fsZeroRange",
+					"_fsFiemap",
+					"_fsNamedFifoPeerReady",
+					"_fsBlockingIoTimeoutMs",
+					"_fsMknod",
+					"_fsOpenTmpfile",
+					"_fsLinkFd",
+					"_fsRemount",
+					"_fsStatfs",
+					"_fsChmodForProcess",
+					"_fsLink",
 				"_fsSymlink",
 				"_fsReadlink",
 				"_fsLstat",
@@ -217,8 +239,33 @@
 			"returnType": "unknown",
 			"names": [
 				"process.cpuUsage",
+				"process.fcntlLock",
+				"process.flock",
+				"process.getegid",
+				"process.geteuid",
+				"process.getgid",
+				"process.getgrent",
+				"process.getgrgid",
+				"process.getgrnam",
+				"process.getgroups",
+				"process.getpwent",
+				"process.getpwnam",
+				"process.getpwuid",
+				"process.getresgid",
+				"process.getresuid",
+				"process.getuid",
 				"process.memoryUsage",
 				"process.resourceUsage",
+				"process.setegid",
+				"process.seteuid",
+				"process.setgid",
+				"process.setgroups",
+				"process.setregid",
+				"process.setresgid",
+				"process.setresuid",
+				"process.setreuid",
+				"process.setuid",
+				"process.umask",
 				"process.versions",
 				"_vmCreateContext",
 				"_vmRunInContext",
@@ -299,6 +346,7 @@
 				"_sqliteStatementSetAllowUnknownNamedParametersRaw",
 				"_sqliteStatementFinalizeRaw",
 				"_kernelStdioWriteRaw",
+				"_kernelDescendantStdinWaitingRaw",
 				"_kernelPollRaw",
 				"_kernelIsattyRaw",
 				"_kernelTtySizeRaw",
@@ -625,6 +673,10 @@
 			"method": "fs.promises.access",
 			"translateArgs": false
 		},
+		"_fsAccess": {
+			"method": "fs.accessSync",
+			"translateArgs": false
+		},
 		"_fsChmod": {
 			"method": "fs.chmodSync",
 			"translateArgs": false
@@ -639,6 +691,86 @@
 		},
 		"_fsChownAsync": {
 			"method": "fs.promises.chown",
+			"translateArgs": false
+		},
+		"_fsLchown": {
+			"method": "fs.lchownSync",
+			"translateArgs": false
+		},
+		"_fsGetxattr": {
+			"method": "fs.getxattrSync",
+			"translateArgs": false
+		},
+		"_fsListxattr": {
+			"method": "fs.listxattrSync",
+			"translateArgs": false
+		},
+		"_fsSetxattr": {
+			"method": "fs.setxattrSync",
+			"translateArgs": false
+		},
+		"_fsRemovexattr": {
+			"method": "fs.removexattrSync",
+			"translateArgs": false
+		},
+		"_fsTruncateForProcess": {
+			"method": "fs.truncateForProcessSync",
+			"translateArgs": false
+		},
+		"_fsFallocate": {
+			"method": "fs.fallocateSync",
+			"translateArgs": false
+		},
+		"_fsInsertRange": {
+			"method": "fs.insertRangeSync",
+			"translateArgs": false
+		},
+		"_fsCollapseRange": {
+			"method": "fs.collapseRangeSync",
+			"translateArgs": false
+		},
+		"_fsPunchHole": {
+			"method": "fs.punchHoleSync",
+			"translateArgs": false
+		},
+		"_fsZeroRange": {
+			"method": "fs.zeroRangeSync",
+			"translateArgs": false
+		},
+		"_fsFiemap": {
+			"method": "fs.fiemapSync",
+			"translateArgs": false
+		},
+		"_fsNamedFifoPeerReady": {
+			"method": "fs.namedFifoPeerReadySync",
+			"translateArgs": false
+		},
+		"_fsBlockingIoTimeoutMs": {
+			"method": "fs.blockingIoTimeoutMsSync",
+			"translateArgs": false
+		},
+		"_fsMknod": {
+			"method": "fs.mknodSync",
+			"translateArgs": false
+		},
+		"_fsOpenTmpfile": {
+			"method": "fs.openTmpfileSync",
+			"translateArgs": false
+		},
+		"_fsLinkFd": {
+			"method": "fs.linkFdSync",
+			"translateArgs": false
+		},
+		"_fsRemount": {
+			"method": "fs.remountSync",
+			"translateArgs": false
+		},
+		"_fsStatfs": {
+			"method": "fs.statfsSync",
+			"translateArgs": false
+		},
+		"_fsChmodForProcess": {
+			"method": "fs.chmodForProcessSync",
 			"translateArgs": false
 		},
 		"_fsExists": {
@@ -711,6 +843,10 @@
 		},
 		"_fsRename": {
 			"method": "fs.renameSync",
+			"translateArgs": false
+		},
+		"_fsRenameAt2": {
+			"method": "fs.renameAt2Sync",
 			"translateArgs": false
 		},
 		"_fsRenameAsync": {
@@ -787,6 +923,10 @@
 		},
 		"_kernelIsattyRaw": {
 			"method": "__kernel_isatty",
+			"translateArgs": false
+		},
+		"_kernelDescendantStdinWaitingRaw": {
+			"method": "__kernel_descendant_stdin_waiting",
 			"translateArgs": false
 		},
 		"_kernelPollRaw": {

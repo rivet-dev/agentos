@@ -33,6 +33,7 @@ pub trait MetadataStore: Send + Sync {
         ino: u64,
         edits: Vec<ChunkEdit>,
         new_size: u64,
+        allocated_extents: Vec<(u64, u64)>,
     ) -> VfsResult<Vec<BlockKey>>;
 
     async fn get_chunks(&self, ino: u64, range: ChunkRange) -> VfsResult<Vec<ChunkRef>>;
@@ -40,4 +41,8 @@ pub trait MetadataStore: Send + Sync {
     async fn snapshot(&self, root: u64) -> VfsResult<SnapshotId>;
     async fn fork(&self, snap: SnapshotId) -> VfsResult<u64>;
     async fn gc(&self) -> VfsResult<Vec<BlockKey>>;
+
+    async fn flush(&self) -> VfsResult<()> {
+        Ok(())
+    }
 }

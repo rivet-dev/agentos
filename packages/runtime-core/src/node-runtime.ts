@@ -31,6 +31,7 @@ import type {
 	VirtualFileSystem,
 } from "./test-runtime.js";
 import type { JsRuntimeConfig } from "./generated/JsRuntimeConfig.js";
+import type { VmUserConfig } from "./generated/VmUserConfig.js";
 import type { SidecarProcess } from "./sidecar-process.js";
 import {
 	createKernel,
@@ -147,6 +148,8 @@ export interface NodeRuntimeCreateOptions {
 	env?: Record<string, string>;
 	/** Initial working directory for guest processes. Defaults to `/workspace`. */
 	cwd?: string;
+	/** Initial virtual Linux credentials and account record. Defaults to `1000:1000` (`agentos`). */
+	user?: VmUserConfig;
 	/**
 	 * Permission policy for the VM. Merged over a secure default that **denies
 	 * network access** (guest code cannot reach the network until you opt in);
@@ -649,6 +652,7 @@ export class NodeRuntime {
 			},
 			env: options.env,
 			cwd: options.cwd,
+			user: options.user,
 			sidecar: options.sidecar,
 			onBootTiming: (timing) => options.onBootTiming?.(timing),
 			loopbackExemptPorts: options.loopbackExemptPorts,

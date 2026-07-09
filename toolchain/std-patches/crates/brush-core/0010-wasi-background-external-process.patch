@@ -1,0 +1,286 @@
+From: AgentOS Runtime <runtime@agentos.invalid>
+Subject: [PATCH] brush-core: spawn background jobs as real children
+
+WASI cannot make progress on a background Tokio task while the foreground
+shell is blocked in a managed child wait. More importantly, an internal task
+has no process ID: `$!` is empty, an external `kill` cannot signal it, and
+`wait` can hang forever after a script tries to terminate the job.
+
+Spawn pipelines whose commands are proven external through the existing
+process path. Run functions, builtins, aliases, dynamically expanded commands,
+and compound lists in a new Brush child with the visible shell state restored.
+Every background job consequently has a real guest PID and participates in
+normal signal and wait semantics.
+
+diff --git a/src/interp.rs b/src/interp.rs
+--- a/src/interp.rs
++++ b/src/interp.rs
+@@ -1,6 +1,7 @@
+ use brush_parser::ast::{self, CommandPrefixOrSuffixItem};
+ use itertools::Itertools;
+ use std::collections::VecDeque;
++use std::fmt::Write as FmtWrite;
+ use std::io::Write;
+ use std::path::{Path, PathBuf};
+ use sys::commands::ExitStatusExt;
+@@ -239,10 +240,15 @@ impl Execute for ast::CompoundList {
+             let run_async = matches!(sep, ast::SeparatorOperator::Async);
+ 
+             if run_async {
+-                // TODO: Reenable launching in child process?
+-                // let job = spawn_ao_list_in_child(ao_list, shell, params).await?;
+-
+-                let job = spawn_ao_list_in_task(ao_list, shell, params);
++                let job = if ao_list.additional.is_empty()
++                    && ao_list.first.timed.is_none()
++                    && !ao_list.first.bang
++                    && pipeline_commands_are_external(&ao_list.first, shell)
++                {
++                    spawn_pipeline_as_background_job(&ao_list.first, shell, params).await?
++                } else {
++                    spawn_ao_list_in_child(ao_list, shell, params)?
++                };
+                 let job_formatted = job.to_pid_style_string();
+ 
+                 if shell.options.interactive && !shell.is_subshell() {
+@@ -264,30 +270,207 @@ impl Execute for ast::CompoundList {
+     }
+ }
+ 
+-fn spawn_ao_list_in_task<'a>(
++fn pipeline_commands_are_external(pipeline: &ast::Pipeline, shell: &mut Shell) -> bool {
++    pipeline.seq.iter().all(|command| {
++        let ast::Command::Simple(command) = command else {
++            return false;
++        };
++        let Some(command_word) = command.word_or_name.as_ref() else {
++            return false;
++        };
++        let command_name = command_word.value.as_str();
++
++        // Quotes, escapes, and expansions require the normal shell expansion
++        // path before their command type is knowable. Treat them as ambiguous.
++        if command_name
++            .bytes()
++            .any(|byte| !byte.is_ascii_alphanumeric() && !matches!(byte, b'_' | b'-' | b'.' | b'/'))
++        {
++            return false;
++        }
++        if shell.aliases.contains_key(command_name)
++            || shell.funcs().get(command_name).is_some()
++            || shell
++                .builtins()
++                .get(command_name)
++                .is_some_and(|registration| !registration.disabled)
++        {
++            return false;
++        }
++
++        command_name.contains(std::path::MAIN_SEPARATOR)
++            || shell
++                .find_first_executable_in_path_using_cache(command_name)
++                .is_some()
++    })
++}
++
++async fn spawn_pipeline_as_background_job<'a>(
++    pipeline: &ast::Pipeline,
++    shell: &'a mut Shell,
++    params: &ExecutionParameters,
++) -> Result<&'a jobs::Job, error::Error> {
++    let spawn_results = spawn_pipeline_processes(pipeline, shell, params).await?;
++    let mut tasks = Vec::with_capacity(spawn_results.len());
++    for result in spawn_results {
++        match result {
++            ExecutionSpawnResult::StartedProcess(child) => {
++                tasks.push(jobs::JobTask::External(child));
++            }
++            ExecutionSpawnResult::Completed(result) => {
++                tasks.push(jobs::JobTask::Internal(tokio::spawn(
++                    async move { Ok(result) },
++                )));
++            }
++        }
++    }
++
++    Ok(shell.jobs.add_as_current(jobs::Job::new(
++        tasks,
++        pipeline.to_string(),
++        jobs::JobState::Running,
++    )))
++}
++
++fn background_child_source(
++    ao_list: &ast::AndOrList,
++    shell: &Shell,
++) -> Result<String, error::Error> {
++    let mut source = String::new();
++
++    for (name, variable) in shell
++        .env
++        .iter()
++        .filter(|(name, variable)| {
++            variable.is_enumerable()
++                && !matches!(variable.value(), ShellValue::Dynamic { .. })
++                // A fresh child initializes these process-local values itself.
++                // Redeclaring them fails because Brush marks them readonly.
++                && !(variable.is_readonly()
++                    && matches!(name.as_str(), "BASH_VERSINFO" | "EUID" | "PPID" | "UID"))
++        })
++        .sorted_by_key(|(name, _)| *name)
++    {
++        let mut flags = variable.attribute_flags(shell);
++        if flags.is_empty() {
++            flags.push('-');
++        }
++        let value = variable.resolve_value(shell);
++        let separator = if matches!(value, ShellValue::Unset(_)) {
++            ""
++        } else {
++            "="
++        };
++        writeln!(
++            source,
++            "declare -{flags} {name}{separator}{}",
++            value.format(crate::variables::FormatStyle::DeclarePrint, shell)?
++        )?;
++    }
++
++    for (name, value) in shell.aliases.iter().sorted_by_key(|(name, _)| *name) {
++        let assignment = std::format!("{name}={value}");
++        writeln!(
++            source,
++            "alias {}",
++            crate::escape::force_quote(&assignment, crate::escape::QuoteMode::SingleQuote)
++        )?;
++    }
++
++    for (_, registration) in shell.funcs().iter().sorted_by_key(|(name, _)| *name) {
++        writeln!(source, "{}", registration.definition())?;
++    }
++
++    source.push_str("set --");
++    for parameter in &shell.positional_parameters {
++        write!(
++            source,
++            " {}",
++            crate::escape::force_quote(parameter, crate::escape::QuoteMode::SingleQuote)
++        )?;
++    }
++    source.push('\n');
++
++    for option in crate::namedoptions::options(crate::namedoptions::ShellOptionKind::Set)
++        .iter()
++        .sorted_by_key(|option| option.name)
++    {
++        let sign = if option.definition.get(&shell.options) {
++            '-'
++        } else {
++            '+'
++        };
++        writeln!(source, "set {sign}{}", option.name)?;
++    }
++    for option in crate::namedoptions::options(crate::namedoptions::ShellOptionKind::SetO)
++        .iter()
++        .sorted_by_key(|option| option.name)
++    {
++        let sign = if option.definition.get(&shell.options) {
++            '-'
++        } else {
++            '+'
++        };
++        writeln!(source, "set {sign}o {}", option.name)?;
++    }
++    for option in crate::namedoptions::options(crate::namedoptions::ShellOptionKind::Shopt)
++        .iter()
++        .sorted_by_key(|option| option.name)
++    {
++        let sign = if option.definition.get(&shell.options) {
++            "-s"
++        } else {
++            "-u"
++        };
++        writeln!(source, "shopt {sign} {}", option.name)?;
++    }
++
++    writeln!(source, "{ao_list}")?;
++    Ok(source)
++}
++
++fn spawn_ao_list_in_child<'a>(
+     ao_list: &ast::AndOrList,
+     shell: &'a mut Shell,
+     params: &ExecutionParameters,
+-) -> &'a jobs::Job {
+-    // Clone the inputs.
+-    let mut cloned_shell = shell.clone();
+-    let cloned_params = params.clone();
+-    let cloned_ao_list = ao_list.clone();
+-
+-    // Mark the child shell as not interactive; we don't want it messing with the terminal too much.
+-    cloned_shell.options.interactive = false;
+-
+-    let join_handle = tokio::spawn(async move {
+-        cloned_ao_list
+-            .execute(&mut cloned_shell, &cloned_params)
+-            .await
+-    });
++) -> Result<&'a jobs::Job, error::Error> {
++    let command_name = shell
++        .env_str("BASH")
++        .filter(|name| !name.is_empty())
++        .unwrap_or_else(|| "sh".into())
++        .into_owned();
++    let executable_path = if command_name.contains(std::path::MAIN_SEPARATOR) {
++        PathBuf::from(&command_name)
++    } else {
++        shell
++            .find_first_executable_in_path_using_cache(&command_name)
++            .ok_or_else(|| {
++                error::Error::from(error::ErrorKind::CommandNotFound(command_name.clone()))
++            })?
++    };
++    let source = background_child_source(ao_list, shell)?;
++    let args = [CommandArg::String("-c".into()), CommandArg::String(source)];
++
++    let context = commands::ExecutionContext {
++        shell,
++        command_name,
++        params: params.clone(),
++    };
++    let child = match commands::execute_external_command(
++        context,
++        executable_path.to_string_lossy().as_ref(),
++        &mut None,
++        &args,
++    )? {
++        ExecutionSpawnResult::StartedProcess(child) => child,
++        ExecutionSpawnResult::Completed(_) => unreachable!("external shell spawn completed inline"),
++    };
+ 
+-    shell.jobs.add_as_current(jobs::Job::new(
+-        [jobs::JobTask::Internal(join_handle)],
++    Ok(shell.jobs.add_as_current(jobs::Job::new(
++        [jobs::JobTask::External(child)],
+         ao_list.to_string(),
+         jobs::JobState::Running,
+-    ))
++    )))
+ }
+ 
+ #[async_trait::async_trait]
+diff --git a/src/sys/stubs/commands.rs b/src/sys/stubs/commands.rs
+--- a/src/sys/stubs/commands.rs
++++ b/src/sys/stubs/commands.rs
+@@ -46,5 +46,9 @@ pub trait ExitStatusExt {
+ impl ExitStatusExt for std::process::ExitStatus {
+     fn signal(&self) -> Option<i32> {
++        #[cfg(target_os = "wasi")]
++        return std::os::wasi::process::ExitStatusExt::signal(self);
++
++        #[cfg(not(target_os = "wasi"))]
+         None
+     }
+ }
+-- 
+2.43.0

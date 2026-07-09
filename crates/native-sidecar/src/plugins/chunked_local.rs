@@ -10,6 +10,8 @@ use vfs::engine::engines::{ChunkedFs, ChunkedFsOptions};
 use vfs::engine::CachedMetadataStore;
 
 const DEFAULT_METADATA_CACHE_ENTRIES: usize = 4096;
+const LOCAL_CHUNK_SIZE: u32 = 8 * 1024;
+const LOCAL_INLINE_THRESHOLD: usize = 4 * 1024;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,15 +52,13 @@ impl<B> FileSystemPluginFactory<MountPluginContext<B>> for ChunkedLocalMountPlug
             ));
         }
 
-        let chunk_size = config.chunk_size.unwrap_or(vfs::engine::DEFAULT_CHUNK_SIZE);
+        let chunk_size = config.chunk_size.unwrap_or(LOCAL_CHUNK_SIZE);
         if chunk_size == 0 {
             return Err(PluginError::invalid_input(
                 "chunked_local mount requires chunkSize to be greater than zero",
             ));
         }
-        let inline_threshold = config
-            .inline_threshold
-            .unwrap_or(vfs::engine::DEFAULT_INLINE_THRESHOLD);
+        let inline_threshold = config.inline_threshold.unwrap_or(LOCAL_INLINE_THRESHOLD);
         if inline_threshold > chunk_size as usize {
             return Err(PluginError::invalid_input(
                 "chunked_local mount requires inlineThreshold to be less than or equal to chunkSize",
@@ -75,7 +75,7 @@ impl<B> FileSystemPluginFactory<MountPluginContext<B>> for ChunkedLocalMountPlug
         );
         let blocks = FileBlockStore::new(config.block_root)
             .map_err(|error| PluginError::new(error.code(), error.message().to_owned()))?;
-        let fs = ChunkedFs::with_options(
+        let fs = ChunkedFs::with_adaptive_chunk_size(
             metadata,
             blocks,
             ChunkedFsOptions {

@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use vfs::engine::engines::{ChunkedFs, ChunkedFsOptions, ObjectFs};
-use vfs::engine::{BlockKey, BlockStore, VirtualFileSystem};
+use vfs::engine::{BlockKey, BlockStore, InodeType, VirtualFileSystem, S_IFBLK, S_IFCHR, S_IFIFO};
 
 #[tokio::test]
 async fn s3_block_store_round_trips_and_cleans_blocks() {
@@ -59,6 +59,17 @@ async fn object_s3_round_trips_native_objects() {
     fs.write_file("/dir/file.txt", b"hello object s3")
         .await
         .unwrap();
+    let before_atime = fs.stat("/dir/file.txt").await.unwrap();
+    let atime_ms = u64::try_from(before_atime.atime.sec).unwrap() * 1_000
+        + u64::from(before_atime.atime.nsec / 1_000_000)
+        + 2_000;
+    fs.set_atime("/dir/file.txt", atime_ms).await.unwrap();
+    let after_atime = fs.stat("/dir/file.txt").await.unwrap();
+    assert!(after_atime.atime > before_atime.atime);
+    assert_eq!(after_atime.mtime, before_atime.mtime);
+    assert_eq!(after_atime.ctime, before_atime.ctime);
+    assert_eq!(after_atime.birthtime, before_atime.birthtime);
+    assert_eq!(fs.realpath("/dir/file.txt").await.unwrap(), "/dir/file.txt");
     assert_eq!(
         fs.read_file("/dir/file.txt").await.unwrap(),
         b"hello object s3"
@@ -66,6 +77,17 @@ async fn object_s3_round_trips_native_objects() {
     assert_eq!(fs.pread("/dir/file.txt", 6, 6).await.unwrap(), b"object");
     assert!(fs.exists("/dir/file.txt").await);
     assert_eq!(fs.read_dir("/dir").await.unwrap(), vec!["file.txt"]);
+
+    let requests_before_invalid_xattr = server.requests().len();
+    let invalid_name = format!("user.{}", "x".repeat(256));
+    assert_eq!(
+        fs.set_xattr("/dir/file.txt", &invalid_name, b"value", 0, true)
+            .await
+            .unwrap_err()
+            .code(),
+        "ERANGE"
+    );
+    assert_eq!(server.requests().len(), requests_before_invalid_xattr);
 
     fs.rename("/dir/file.txt", "/dir/renamed.txt")
         .await
@@ -79,6 +101,86 @@ async fn object_s3_round_trips_native_objects() {
         .object_keys()
         .iter()
         .any(|key| key == "test-bucket/objects/dir/renamed.txt"));
+}
+
+#[tokio::test]
+async fn object_s3_resolves_explicit_directory_markers_for_new_files() {
+    let server = MockS3Server::start();
+    let backend = S3ObjectBackend::with_options(
+        s3_client(server.base_url()).await,
+        "test-bucket",
+        S3ObjectBackendOptions {
+            prefix: "objects/".to_string(),
+        },
+    );
+    let fs = ObjectFs::new(backend);
+
+    fs.mkdir("/fill-probe", false).await.unwrap();
+    assert_eq!(fs.realpath("/fill-probe").await.unwrap(), "/fill-probe");
+    assert!(fs.stat("/fill-probe").await.unwrap().is_directory);
+    fs.chmod("/fill-probe", 0o700).await.unwrap();
+    fs.set_xattr("/fill-probe", "user.marker", b"directory", 0, true)
+        .await
+        .unwrap();
+    assert_eq!(fs.stat("/fill-probe").await.unwrap().mode & 0o7777, 0o700);
+    assert_eq!(
+        fs.get_xattr("/fill-probe", "user.marker", true)
+            .await
+            .unwrap(),
+        b"directory"
+    );
+    fs.write_file("/fill-probe/small", b"").await.unwrap();
+    fs.chmod("/fill-probe/small", 0o600).await.unwrap();
+    assert_eq!(
+        fs.stat("/fill-probe/small").await.unwrap().mode & 0o7777,
+        0o600
+    );
+    assert_eq!(
+        fs.realpath("/fill-probe/small").await.unwrap(),
+        "/fill-probe/small"
+    );
+    fs.truncate("/fill-probe/small", 0).await.unwrap();
+}
+
+#[tokio::test]
+async fn object_s3_preserves_and_cleans_special_nodes_under_directory_markers() {
+    let server = MockS3Server::start();
+    let backend = S3ObjectBackend::with_options(
+        s3_client(server.base_url()).await,
+        "test-bucket",
+        S3ObjectBackendOptions {
+            prefix: "objects/".to_string(),
+        },
+    );
+    let fs = ObjectFs::new(backend);
+
+    fs.mkdir("/dev", false).await.unwrap();
+    fs.mknod("/dev/block", S_IFBLK | 0o640, (8 << 8) | 1)
+        .await
+        .unwrap();
+    fs.mknod("/dev/char", S_IFCHR | 0o600, (1 << 8) | 3)
+        .await
+        .unwrap();
+    fs.mknod("/dev/fifo", S_IFIFO | 0o600, 0).await.unwrap();
+
+    assert_eq!(fs.realpath("/dev").await.unwrap(), "/dev");
+    let entries = fs.read_dir_with_types("/dev").await.unwrap();
+    assert!(entries
+        .iter()
+        .any(|entry| entry.name == "block" && entry.kind == InodeType::BlockDevice));
+    assert!(entries
+        .iter()
+        .any(|entry| entry.name == "char" && entry.kind == InodeType::CharacterDevice));
+    assert!(entries
+        .iter()
+        .any(|entry| entry.name == "fifo" && entry.kind == InodeType::Fifo));
+    assert_eq!(fs.stat("/dev/block").await.unwrap().rdev, (8 << 8) | 1);
+
+    fs.remove_file("/dev/block").await.unwrap();
+    fs.remove_file("/dev/char").await.unwrap();
+    fs.remove_file("/dev/fifo").await.unwrap();
+    fs.remove_dir("/dev").await.unwrap();
+    assert!(!fs.exists("/dev").await);
 }
 
 #[tokio::test]
@@ -196,7 +298,7 @@ impl MockS3Server {
                         handle_stream(stream, &objects_for_thread, &requests_for_thread)
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(10));
+                        thread::sleep(Duration::from_millis(1));
                     }
                     Err(_) => break,
                 }

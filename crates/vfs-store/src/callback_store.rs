@@ -138,6 +138,7 @@ pub enum MetadataCallbackMethod {
         ino: u64,
         edits: Vec<ChunkEdit>,
         new_size: u64,
+        allocated_extents: Vec<(u64, u64)>,
     },
     GetChunks {
         ino: u64,
@@ -272,11 +273,13 @@ where
         ino: u64,
         edits: Vec<ChunkEdit>,
         new_size: u64,
+        allocated_extents: Vec<(u64, u64)>,
     ) -> VfsResult<Vec<BlockKey>> {
         match self.invoke(MetadataCallbackMethod::CommitWrite {
             ino,
             edits,
             new_size,
+            allocated_extents,
         })? {
             MetadataCallbackResponse::BlockKeys { keys } => Ok(keys),
             other => Err(unexpected_response("commitWrite", other)),
@@ -340,6 +343,7 @@ fn code_from_string(code: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
     use vfs::engine::engines::{ChunkedFs, ChunkedFsOptions};
     use vfs::engine::mem::{InMemoryMetadataStore, MemoryBlockStore};
@@ -385,6 +389,8 @@ mod tests {
                     birthtime: now,
                     storage: Storage::Inline(b"hello".to_vec()),
                     symlink_target: None,
+                    allocated_extents: vec![(0, 1)],
+                    xattrs: BTreeMap::new(),
                 },
             };
             let payload = serde_json::to_vec(&response).expect("encode metadata callback response");
@@ -514,8 +520,9 @@ mod tests {
                 ino,
                 edits,
                 new_size,
+                allocated_extents,
             } => inner
-                .commit_write(ino, edits, new_size)
+                .commit_write(ino, edits, new_size, allocated_extents)
                 .await
                 .map(|keys| MetadataCallbackResponse::BlockKeys { keys }),
             MetadataCallbackMethod::GetChunks { ino, range } => inner

@@ -1,0 +1,164 @@
+--- a/src/ls.rs
++++ b/src/ls.rs
+@@ -3,16 +3,20 @@
+ // For the full copyright and license information, please view the LICENSE
+ // file that was distributed with this source code.
+ 
++#![cfg_attr(target_os = "wasi", feature(wasi_ext))]
++
+ // spell-checker:ignore (ToDO) somegroup nlink tabsize dired subdired dtype colorterm stringly
+ // spell-checker:ignore nohash strtime clocale
+ 
+-#[cfg(unix)]
++#[cfg(any(unix, target_os = "wasi"))]
+ use rustc_hash::FxHashMap;
+ use rustc_hash::FxHashSet;
+ use std::borrow::Cow;
+ use std::cell::RefCell;
+ #[cfg(unix)]
+ use std::os::unix::fs::{FileTypeExt, MetadataExt};
++#[cfg(target_os = "wasi")]
++use std::os::wasi::fs::MetadataExt;
+ #[cfg(windows)]
+ use std::os::windows::fs::MetadataExt;
+ use std::{
+@@ -132,6 +136,43 @@
+     }
+ }
+ 
++#[cfg(target_os = "wasi")]
++mod wasi_entries {
++    const RECORD_BYTES: usize = 4096;
++
++    #[link(wasm_import_module = "host_user")]
++    unsafe extern "C" {
++        fn getpwuid(uid: u32, buf_ptr: *mut u8, buf_len: u32, ret_len: *mut u32) -> u32;
++        fn getgrgid(gid: u32, buf_ptr: *mut u8, buf_len: u32, ret_len: *mut u32) -> u32;
++    }
++
++    fn name_from_record(
++        id: u32,
++        lookup: unsafe extern "C" fn(u32, *mut u8, u32, *mut u32) -> u32,
++    ) -> String {
++        let mut buffer = [0; RECORD_BYTES];
++        let mut len = 0;
++        let errno = unsafe { lookup(id, buffer.as_mut_ptr(), buffer.len() as u32, &mut len) };
++        if errno != 0 || len as usize > buffer.len() {
++            return id.to_string();
++        }
++        std::str::from_utf8(&buffer[..len as usize])
++            .ok()
++            .and_then(|record| record.split(':').next())
++            .filter(|name| !name.is_empty())
++            .map(str::to_owned)
++            .unwrap_or_else(|| id.to_string())
++    }
++
++    pub fn uid2usr(uid: u32) -> String {
++        name_from_record(uid, getpwuid)
++    }
++
++    pub fn gid2grp(gid: u32) -> String {
++        name_from_record(gid, getgrgid)
++    }
++}
++
+ mod dired;
+ use dired::{DiredOutput, is_dired_arg_present};
+ mod colors;
+@@ -444,7 +485,7 @@ struct LongFormat {
+     author: bool,
+     group: bool,
+     owner: bool,
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     numeric_uid_gid: bool,
+ }
+ 
+@@ -1067,13 +1108,13 @@ impl Config {
+             let group = !options.get_flag(options::NO_GROUP)
+                 && !options.get_flag(options::format::LONG_NO_GROUP);
+             let owner = !options.get_flag(options::format::LONG_NO_OWNER);
+-            #[cfg(unix)]
++            #[cfg(any(unix, target_os = "wasi"))]
+             let numeric_uid_gid = options.get_flag(options::format::LONG_NUMERIC_UID_GID);
+             LongFormat {
+                 author,
+                 group,
+                 owner,
+-                #[cfg(unix)]
++                #[cfg(any(unix, target_os = "wasi"))]
+                 numeric_uid_gid,
+             }
+         };
+@@ -2252,9 +2293,9 @@
+     // number of users/groups is very limited. It seems like nohash::IntMap
+     // performance was equivalent to BTreeMap.
+     // It's possible a simple vector linear(binary?) search implementation would be even faster.
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     uid_cache: FxHashMap<u32, String>,
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     gid_cache: FxHashMap<u32, String>,
+     recent_time_range: RangeInclusive<SystemTime>,
+ }
+@@ -2269,9 +2310,9 @@
+     let mut state = ListState {
+         out: BufWriter::new(stdout()),
+         style_manager: config.color.as_ref().map(StyleManager::new),
+-        #[cfg(unix)]
++        #[cfg(any(unix, target_os = "wasi"))]
+         uid_cache: FxHashMap::default(),
+-        #[cfg(unix)]
++        #[cfg(any(unix, target_os = "wasi"))]
+         gid_cache: FxHashMap::default(),
+         // Time range for which to use the "recent" format. Anything from 0.5 year in the past to now
+         // (files with modification time in the future use "old" format).
+@@ -3289,12 +3330,44 @@
+     })
+ }
+ 
+-#[cfg(not(unix))]
++#[cfg(target_os = "wasi")]
++fn display_uname<'a>(
++    metadata: &Metadata,
++    config: &Config,
++    state: &'a mut ListState,
++) -> &'a String {
++    let uid = metadata.uid();
++    state.uid_cache.entry(uid).or_insert_with(|| {
++        if config.long.numeric_uid_gid {
++            uid.to_string()
++        } else {
++            wasi_entries::uid2usr(uid)
++        }
++    })
++}
++
++#[cfg(target_os = "wasi")]
++fn display_group<'a>(
++    metadata: &Metadata,
++    config: &Config,
++    state: &'a mut ListState,
++) -> &'a String {
++    let gid = metadata.gid();
++    state.gid_cache.entry(gid).or_insert_with(|| {
++        if config.long.numeric_uid_gid {
++            gid.to_string()
++        } else {
++            wasi_entries::gid2grp(gid)
++        }
++    })
++}
++
++#[cfg(all(not(unix), not(target_os = "wasi")))]
+ fn display_uname(_metadata: &Metadata, _config: &Config, _state: &mut ListState) -> &'static str {
+     "somebody"
+ }
+ 
+-#[cfg(not(unix))]
++#[cfg(all(not(unix), not(target_os = "wasi")))]
+ fn display_group(_metadata: &Metadata, _config: &Config, _state: &mut ListState) -> &'static str {
+     "somegroup"
+ }

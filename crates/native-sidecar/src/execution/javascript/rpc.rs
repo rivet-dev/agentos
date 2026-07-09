@@ -4,6 +4,51 @@ use agentos_kernel::vfs::{VirtualTimeSpec, VirtualUtimeSpec};
 
 const ALLOWED_WASM_PROCESS_SYNC_RPCS: &[&str] = &[
     "process.umask",
+    "process.getuid",
+    "process.getgid",
+    "process.geteuid",
+    "process.getegid",
+    "process.getresuid",
+    "process.getresgid",
+    "process.getgroups",
+    "process.getpwuid",
+    "process.getpwnam",
+    "process.getpwent",
+    "process.getgrgid",
+    "process.getgrnam",
+    "process.getgrent",
+    "process.setuid",
+    "process.seteuid",
+    "process.setreuid",
+    "process.setresuid",
+    "process.setgid",
+    "process.setegid",
+    "process.setregid",
+    "process.setresgid",
+    "process.setgroups",
+    "fs.accessSync",
+    "fs.blockingIoTimeoutMsSync",
+    "fs.chmodForProcessSync",
+    "fs.chownSync",
+    "fs.collapseRangeSync",
+    "fs.fallocateSync",
+    "fs.fiemapSync",
+    "fs.getxattrSync",
+    "fs.insertRangeSync",
+    "fs.lchownSync",
+    "fs.linkFdSync",
+    "fs.listxattrSync",
+    "fs.mknodSync",
+    "fs.namedFifoPeerReadySync",
+    "fs.openTmpfileSync",
+    "fs.punchHoleSync",
+    "fs.remountSync",
+    "fs.removexattrSync",
+    "fs.renameAt2Sync",
+    "fs.setxattrSync",
+    "fs.statfsSync",
+    "fs.truncateForProcessSync",
+    "fs.zeroRangeSync",
     "process.getpgid",
     "process.setpgid",
     "process.waitpid_transition",
@@ -38,6 +83,7 @@ const ALLOWED_WASM_PROCESS_SYNC_RPCS: &[&str] = &[
     "process.fd_set_flags",
     "process.fd_getfd",
     "process.fd_setfd",
+    "process.fd_flock",
     "process.fd_record_lock",
     "process.fd_record_lock_cancel",
     "process.fd_dup",
@@ -296,10 +342,8 @@ pub(crate) fn javascript_sync_rpc_option_bool(
     key: &str,
 ) -> Option<bool> {
     let value = args.get(index)?;
-    if key == "recursive" {
-        if let Some(boolean) = value.as_bool() {
-            return Some(boolean);
-        }
+    if let Some(boolean) = value.as_bool() {
+        return Some(boolean);
     }
     value.get(key).and_then(Value::as_bool)
 }
@@ -470,7 +514,7 @@ pub(in crate::execution) fn javascript_sync_rpc_base64_arg(
 // running per-method breakdown.
 
 fn wasm_process_resolve_at_path(
-    kernel: &SidecarKernel,
+    kernel: &mut SidecarKernel,
     pid: u32,
     dir_fd: u32,
     path: &str,
@@ -1271,6 +1315,8 @@ where
                         "filetype": fd_stat.filetype,
                         "nlink": stat.nlink,
                         "mode": stat.mode,
+                        "uid": stat.uid,
+                        "gid": stat.gid,
                         "size": stat.size,
                         "atimeMs": stat.atime_ms,
                         "mtimeMs": stat.mtime_ms,
@@ -1303,8 +1349,14 @@ where
                 .map_err(|_| SidecarError::InvalidState("fd_truncate length must be u64".into()))?;
             kernel
                 .fd_truncate(EXECUTION_DRIVER_NAME, process.kernel_pid, fd, length)
-                .map(|()| Value::Null)
-                .map_err(kernel_error)
+                .map_err(kernel_error)?;
+            crate::filesystem::mirror_kernel_fd_contents_to_process_shadow(
+                kernel,
+                process,
+                process.kernel_pid,
+                fd,
+            )?;
+            Ok(Value::Null)
         }
         "process.fd_set_flags" => {
             let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "fd_set_flags fd")?;
@@ -1345,6 +1397,14 @@ where
                     flags,
                 )
                 .map(Value::from)
+                .map_err(kernel_error)
+        }
+        "process.fd_flock" => {
+            let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "fd_flock fd")?;
+            let operation = javascript_sync_rpc_arg_u32(&request.args, 1, "fd_flock operation")?;
+            kernel
+                .fd_flock(EXECUTION_DRIVER_NAME, process.kernel_pid, fd, operation)
+                .map(|()| Value::Null)
                 .map_err(kernel_error)
         }
         "process.fd_record_lock" => {
@@ -1945,6 +2005,168 @@ where
             kernel
                 .umask(EXECUTION_DRIVER_NAME, process.kernel_pid, new_mask)
                 .map(|mask| json!(mask))
+                .map_err(kernel_error)
+        }
+        "process.getuid" => kernel
+            .getuid(EXECUTION_DRIVER_NAME, process.kernel_pid)
+            .map(|value| json!(value))
+            .map_err(kernel_error),
+        "process.getgid" => kernel
+            .getgid(EXECUTION_DRIVER_NAME, process.kernel_pid)
+            .map(|value| json!(value))
+            .map_err(kernel_error),
+        "process.geteuid" => kernel
+            .geteuid(EXECUTION_DRIVER_NAME, process.kernel_pid)
+            .map(|value| json!(value))
+            .map_err(kernel_error),
+        "process.getegid" => kernel
+            .getegid(EXECUTION_DRIVER_NAME, process.kernel_pid)
+            .map(|value| json!(value))
+            .map_err(kernel_error),
+        "process.getresuid" => kernel
+            .getresuid(EXECUTION_DRIVER_NAME, process.kernel_pid)
+            .map(|(uid, euid, suid)| json!([uid, euid, suid]))
+            .map_err(kernel_error),
+        "process.getresgid" => kernel
+            .getresgid(EXECUTION_DRIVER_NAME, process.kernel_pid)
+            .map(|(gid, egid, sgid)| json!([gid, egid, sgid]))
+            .map_err(kernel_error),
+        "process.getgroups" => kernel
+            .getgroups(EXECUTION_DRIVER_NAME, process.kernel_pid)
+            .map(|groups| json!(groups))
+            .map_err(kernel_error),
+        "process.getpwuid" => {
+            let uid = javascript_sync_rpc_arg_u32(&request.args, 0, "passwd uid")?;
+            kernel
+                .getpwuid(uid)
+                .map(|entry| json!(entry))
+                .map_err(kernel_error)
+        }
+        "process.getpwnam" => {
+            let name = javascript_sync_rpc_arg_str(&request.args, 0, "passwd name")?;
+            kernel
+                .getpwnam(name)
+                .map(|entry| json!(entry))
+                .map_err(kernel_error)
+        }
+        "process.getpwent" => {
+            let index = javascript_sync_rpc_arg_u32(&request.args, 0, "passwd index")?;
+            kernel
+                .getpwent(index as usize)
+                .map(|entry| json!(entry))
+                .map_err(kernel_error)
+        }
+        "process.getgrgid" => {
+            let gid = javascript_sync_rpc_arg_u32(&request.args, 0, "group gid")?;
+            kernel
+                .getgrgid(gid)
+                .map(|entry| json!(entry))
+                .map_err(kernel_error)
+        }
+        "process.getgrnam" => {
+            let name = javascript_sync_rpc_arg_str(&request.args, 0, "group name")?;
+            kernel
+                .getgrnam(name)
+                .map(|entry| json!(entry))
+                .map_err(kernel_error)
+        }
+        "process.getgrent" => {
+            let index = javascript_sync_rpc_arg_u32(&request.args, 0, "group index")?;
+            kernel
+                .getgrent(index as usize)
+                .map(|entry| json!(entry))
+                .map_err(kernel_error)
+        }
+        "process.setuid" => {
+            let uid = javascript_sync_rpc_arg_u32(&request.args, 0, "setuid uid")?;
+            kernel
+                .setuid(EXECUTION_DRIVER_NAME, process.kernel_pid, uid)
+                .map(|()| Value::Null)
+                .map_err(kernel_error)
+        }
+        "process.seteuid" => {
+            let uid = javascript_sync_rpc_arg_u32(&request.args, 0, "seteuid uid")?;
+            kernel
+                .seteuid(EXECUTION_DRIVER_NAME, process.kernel_pid, uid)
+                .map(|()| Value::Null)
+                .map_err(kernel_error)
+        }
+        "process.setreuid" => {
+            let uid = javascript_sync_rpc_arg_u32_optional(&request.args, 0, "setreuid uid")?;
+            let euid = javascript_sync_rpc_arg_u32_optional(&request.args, 1, "setreuid euid")?;
+            kernel
+                .setreuid(EXECUTION_DRIVER_NAME, process.kernel_pid, uid, euid)
+                .map(|()| Value::Null)
+                .map_err(kernel_error)
+        }
+        "process.setresuid" => {
+            let uid = javascript_sync_rpc_arg_u32_optional(&request.args, 0, "setresuid uid")?;
+            let euid = javascript_sync_rpc_arg_u32_optional(&request.args, 1, "setresuid euid")?;
+            let suid = javascript_sync_rpc_arg_u32_optional(&request.args, 2, "setresuid suid")?;
+            kernel
+                .setresuid(EXECUTION_DRIVER_NAME, process.kernel_pid, uid, euid, suid)
+                .map(|()| Value::Null)
+                .map_err(kernel_error)
+        }
+        "process.setgid" => {
+            let gid = javascript_sync_rpc_arg_u32(&request.args, 0, "setgid gid")?;
+            kernel
+                .setgid(EXECUTION_DRIVER_NAME, process.kernel_pid, gid)
+                .map(|()| Value::Null)
+                .map_err(kernel_error)
+        }
+        "process.setegid" => {
+            let gid = javascript_sync_rpc_arg_u32(&request.args, 0, "setegid gid")?;
+            kernel
+                .setegid(EXECUTION_DRIVER_NAME, process.kernel_pid, gid)
+                .map(|()| Value::Null)
+                .map_err(kernel_error)
+        }
+        "process.setregid" => {
+            let gid = javascript_sync_rpc_arg_u32_optional(&request.args, 0, "setregid gid")?;
+            let egid = javascript_sync_rpc_arg_u32_optional(&request.args, 1, "setregid egid")?;
+            kernel
+                .setregid(EXECUTION_DRIVER_NAME, process.kernel_pid, gid, egid)
+                .map(|()| Value::Null)
+                .map_err(kernel_error)
+        }
+        "process.setresgid" => {
+            let gid = javascript_sync_rpc_arg_u32_optional(&request.args, 0, "setresgid gid")?;
+            let egid = javascript_sync_rpc_arg_u32_optional(&request.args, 1, "setresgid egid")?;
+            let sgid = javascript_sync_rpc_arg_u32_optional(&request.args, 2, "setresgid sgid")?;
+            kernel
+                .setresgid(EXECUTION_DRIVER_NAME, process.kernel_pid, gid, egid, sgid)
+                .map(|()| Value::Null)
+                .map_err(kernel_error)
+        }
+        "process.setgroups" => {
+            let groups = request
+                .args
+                .first()
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    SidecarError::InvalidState(
+                        "process setgroups requires an array argument".into(),
+                    )
+                })?
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    let raw = value.as_u64().ok_or_else(|| {
+                        SidecarError::InvalidState(format!(
+                            "process setgroups entry {index} must be a non-negative integer"
+                        ))
+                    })?;
+                    u32::try_from(raw).map_err(|_| {
+                        SidecarError::InvalidState(format!(
+                            "process setgroups entry {index} exceeds u32"
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            kernel
+                .setgroups(EXECUTION_DRIVER_NAME, process.kernel_pid, groups)
+                .map(|()| Value::Null)
                 .map_err(kernel_error)
         }
         "process.getpgid" => {

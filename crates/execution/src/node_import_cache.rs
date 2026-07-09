@@ -60,6 +60,8 @@ const NODE_PYTHON_RUNNER_SOURCE: &str = include_str!("../assets/runners/python-r
 static CLEANED_NODE_IMPORT_CACHE_ROOTS: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
 #[cfg(test)]
 static NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+static NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Copy)]
 struct BundledPyodidePackageAsset {
@@ -2348,6 +2350,7 @@ pub(crate) struct NodeImportCache {
     materialized: AtomicBool,
     materialization_lock: Mutex<()>,
     async_materialization_lock: AsyncMutex<()>,
+    materialization_marker_path: PathBuf,
     cache_path: PathBuf,
     loader_path: PathBuf,
     register_path: PathBuf,
@@ -2368,6 +2371,7 @@ pub(crate) struct NodeImportCacheCleanup {
 #[derive(Debug, Clone)]
 struct NodeImportCacheMaterialization {
     root_dir: PathBuf,
+    materialization_marker_path: PathBuf,
     loader_path: PathBuf,
     register_path: PathBuf,
     python_runner_path: PathBuf,
@@ -2463,6 +2467,7 @@ impl NodeImportCache {
             materialized: AtomicBool::new(false),
             materialization_lock: Mutex::new(()),
             async_materialization_lock: AsyncMutex::new(()),
+            materialization_marker_path: root_dir.join(".materialized"),
             cache_path: root_dir.join("state.json"),
             loader_path: root_dir.join("loader.mjs"),
             register_path: root_dir.join("register.mjs"),
@@ -2544,7 +2549,7 @@ impl NodeImportCache {
         runtime: &RuntimeContext,
         timeout: Duration,
     ) -> Result<(), io::Error> {
-        if self.materialized.load(Ordering::Acquire) {
+        if self.is_materialized() {
             return Ok(());
         }
 
@@ -2552,19 +2557,22 @@ impl NodeImportCache {
             .materialization_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if self.materialized.load(Ordering::Acquire) {
+        if self.is_materialized() {
             return Ok(());
         }
+        self.materialized.store(false, Ordering::Release);
 
         let materialization = NodeImportCacheMaterialization::from(self);
-        let result = runtime
-            .blocking()
-            .run_sync(
-                NODE_IMPORT_CACHE_BLOCKING_JOB_RESERVATION_BYTES,
-                timeout,
-                move || materialization.materialize(),
-            )
-            .map_err(|error| match error {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
+        let result = runtime.blocking().run_sync(
+            NODE_IMPORT_CACHE_BLOCKING_JOB_RESERVATION_BYTES,
+            timeout,
+            move || materialization.materialize(worker_cancelled),
+        );
+        let result = result.map_err(|error| {
+            cancelled.store(true, Ordering::Release);
+            match error {
                 agentos_runtime::BlockingJobError::TimedOut { .. } => io::Error::new(
                     io::ErrorKind::TimedOut,
                     format!(
@@ -2573,7 +2581,8 @@ impl NodeImportCache {
                     ),
                 ),
                 other => io::Error::other(other.to_string()),
-            })?;
+            }
+        })?;
         result?;
         self.materialized.store(true, Ordering::Release);
         Ok(())
@@ -2587,32 +2596,36 @@ impl NodeImportCache {
         runtime: &RuntimeContext,
         timeout: Duration,
     ) -> Result<(), io::Error> {
-        if self.materialized.load(Ordering::Acquire) {
+        if self.is_materialized() {
             return Ok(());
         }
 
         let _materialization_guard = self.async_materialization_lock.lock().await;
-        if self.materialized.load(Ordering::Acquire) {
+        if self.is_materialized() {
             return Ok(());
         }
+        self.materialized.store(false, Ordering::Release);
 
         let materialization = NodeImportCacheMaterialization::from(self);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
         let job = runtime.blocking().run(
             NODE_IMPORT_CACHE_BLOCKING_JOB_RESERVATION_BYTES,
-            move || materialization.materialize(),
+            move || materialization.materialize(worker_cancelled),
         );
-        let result = time::timeout(timeout, job)
-            .await
-            .map_err(|_| {
-                io::Error::new(
+        let result = match time::timeout(timeout, job).await {
+            Ok(result) => result.map_err(|error| io::Error::other(error.to_string()))?,
+            Err(_) => {
+                cancelled.store(true, Ordering::Release);
+                return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     format!(
                         "timed out materializing node import cache after {} ms",
                         timeout.as_millis()
                     ),
-                )
-            })?
-            .map_err(|error| io::Error::other(error.to_string()))?;
+                ));
+            }
+        };
         result?;
         self.materialized.store(true, Ordering::Release);
         Ok(())
@@ -2638,12 +2651,17 @@ impl NodeImportCache {
                 .map_err(|error| io::Error::other(error.to_string()))?;
         self.ensure_materialized_with_timeout_and_runtime(&runtime, timeout)
     }
+
+    fn is_materialized(&self) -> bool {
+        self.materialized.load(Ordering::Acquire) && self.materialization_marker_path.is_file()
+    }
 }
 
 impl From<&NodeImportCache> for NodeImportCacheMaterialization {
     fn from(cache: &NodeImportCache) -> Self {
         Self {
             root_dir: cache.root_dir.clone(),
+            materialization_marker_path: cache.materialization_marker_path.clone(),
             loader_path: cache.loader_path.clone(),
             register_path: cache.register_path.clone(),
             python_runner_path: cache.python_runner_path.clone(),
@@ -2658,7 +2676,7 @@ impl From<&NodeImportCache> for NodeImportCacheMaterialization {
 }
 
 impl NodeImportCacheMaterialization {
-    fn materialize(self) -> Result<(), io::Error> {
+    fn materialize(self, cancelled: Arc<AtomicBool>) -> Result<(), io::Error> {
         #[cfg(test)]
         {
             let delay_ms = NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS.load(Ordering::Relaxed);
@@ -2667,6 +2685,7 @@ impl NodeImportCacheMaterialization {
             }
         }
 
+        check_materialization_cancelled(&cancelled)?;
         fs::create_dir_all(&self.root_dir)?;
         fs::create_dir_all(self.asset_root.join("builtins"))?;
         fs::create_dir_all(self.asset_root.join("denied"))?;
@@ -2729,10 +2748,26 @@ impl NodeImportCacheMaterialization {
             BUNDLED_PYTHON_STDLIB_ZIP,
         )?;
         for asset in BUNDLED_PYODIDE_PACKAGE_ASSETS {
+            check_materialization_cancelled(&cancelled)?;
             write_bytes_if_changed(&self.pyodide_dist_path.join(asset.file_name), asset.bytes)?;
         }
+        check_materialization_cancelled(&cancelled)?;
+        write_file_if_changed(
+            &self.materialization_marker_path,
+            NODE_IMPORT_CACHE_ASSET_VERSION,
+        )?;
         Ok(())
     }
+}
+
+fn check_materialization_cancelled(cancelled: &AtomicBool) -> Result<(), io::Error> {
+    if cancelled.load(Ordering::Acquire) {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "node import cache materialization cancelled",
+        ));
+    }
+    Ok(())
 }
 
 fn render_loader_source() -> String {
@@ -3710,7 +3745,8 @@ fn write_file_if_changed(path: &Path, contents: &str) -> Result<(), io::Error> {
 #[cfg(test)]
 mod tests {
     use super::{
-        NodeImportCache, NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS, NODE_WASM_RUNNER_SOURCE,
+        NodeImportCache, NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_LOCK,
+        NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS, NODE_WASM_RUNNER_SOURCE,
     };
     use crate::host_node::node_binary;
     use serde_json::Value;
@@ -4447,6 +4483,9 @@ export async function loadPyodide(options) {
 
     #[test]
     fn ensure_materialized_honors_configured_timeout() {
+        let _delay_guard = NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_LOCK
+            .lock()
+            .expect("materialization delay test lock");
         let temp_root = tempdir().expect("create node import cache temp root");
         let import_cache = NodeImportCache::new_in(temp_root.path().to_path_buf());
 
@@ -4468,7 +4507,35 @@ export async function loadPyodide(options) {
     }
 
     #[test]
+    fn timed_out_materialization_cannot_recreate_dropped_cache_root() {
+        let _delay_guard = NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_LOCK
+            .lock()
+            .expect("materialization delay test lock");
+        let temp_root = tempdir().expect("create node import cache temp root");
+        let import_cache = NodeImportCache::new_in(temp_root.path().to_path_buf());
+        let cache_root = import_cache.root_dir.clone();
+
+        NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS.store(50, Ordering::Relaxed);
+        let error = import_cache
+            .ensure_materialized_with_timeout(Duration::from_millis(5))
+            .expect_err("materialization should time out");
+        NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS.store(0, Ordering::Relaxed);
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+
+        drop(import_cache);
+        std::thread::sleep(Duration::from_millis(75));
+        assert!(
+            !cache_root.exists(),
+            "timed-out materializer recreated the cache root after teardown: {}",
+            cache_root.display()
+        );
+    }
+
+    #[test]
     fn ensure_materialized_skips_repeated_materialization_after_success() {
+        let _delay_guard = NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_LOCK
+            .lock()
+            .expect("materialization delay test lock");
         let temp_root = tempdir().expect("create node import cache temp root");
         let import_cache = NodeImportCache::new_in(temp_root.path().to_path_buf());
 
@@ -4480,6 +4547,25 @@ export async function loadPyodide(options) {
         let result = import_cache.ensure_materialized_with_timeout(Duration::from_millis(5));
         NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS.store(0, Ordering::Relaxed);
         result.expect("second materialization should use memoized success");
+    }
+
+    #[test]
+    fn ensure_materialized_repairs_an_externally_removed_cache_root() {
+        let temp_root = tempdir().expect("create node import cache temp root");
+        let import_cache = NodeImportCache::new_in(temp_root.path().to_path_buf());
+
+        import_cache
+            .ensure_materialized()
+            .expect("initial materialization should succeed");
+        assert!(import_cache.wasm_runner_path().is_file());
+
+        fs::remove_dir_all(&import_cache.root_dir).expect("remove materialized cache root");
+        import_cache
+            .ensure_materialized()
+            .expect("missing materialized cache should be repaired");
+
+        assert!(import_cache.wasm_runner_path().is_file());
+        assert!(import_cache.materialization_marker_path.is_file());
     }
 
     #[test]

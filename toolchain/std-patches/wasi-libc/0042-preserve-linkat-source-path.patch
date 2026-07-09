@@ -1,0 +1,13 @@
+diff --git a/libc-bottom-half/sources/posix.c b/libc-bottom-half/sources/posix.c
+index 52209f9..db90494 100644
+--- a/libc-bottom-half/sources/posix.c
++++ b/libc-bottom-half/sources/posix.c
+@@ -407,7 +407,7 @@ __wasilibc_link(const char *oldpath, const char *newpath, int flags)
+ {
+     char *old_relative_path;
+     char *new_relative_path;
+-    int old_dirfd = find_relpath(oldpath, &old_relative_path);
++    int old_dirfd = find_relpath_alt(oldpath, &old_relative_path);
+     int new_dirfd = find_relpath(newpath, &new_relative_path);
+ 
+     // If we can't find a preopen for it, fail as if we can't find the path.

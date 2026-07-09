@@ -11,6 +11,46 @@ import type { Binding, Bindings } from "./bindings.js";
 const stringArray = z.array(z.string());
 const nonNegativeInteger = z.number().int().nonnegative();
 const positiveInteger = z.number().int().positive();
+const vmIdSchema = z.number().int().min(0).max(0xffffffff);
+const vmAccountNameSchema = z
+	.string()
+	.min(1)
+	.refine((value) => !/[:\s\0]/u.test(value), "Invalid account name");
+const vmGuestPathSchema = z.string().startsWith("/");
+const vmUserAccountSchema = z
+	.object({
+		uid: vmIdSchema,
+		gid: vmIdSchema,
+		username: vmAccountNameSchema,
+		homedir: vmGuestPathSchema,
+		shell: vmGuestPathSchema,
+		gecos: z.string().optional(),
+		supplementaryGids: z.array(vmIdSchema).max(64),
+	})
+	.strict();
+const vmGroupSchema = z
+	.object({
+		gid: vmIdSchema,
+		name: vmAccountNameSchema,
+		members: z.array(vmAccountNameSchema),
+	})
+	.strict();
+const vmUserConfigSchema = z
+	.object({
+		uid: vmIdSchema.optional(),
+		gid: vmIdSchema.optional(),
+		euid: vmIdSchema.optional(),
+		egid: vmIdSchema.optional(),
+		username: z.string().optional(),
+		homedir: z.string().optional(),
+		shell: z.string().optional(),
+		gecos: z.string().optional(),
+		groupName: z.string().optional(),
+		supplementaryGids: z.array(vmIdSchema).max(64).optional(),
+		accounts: z.array(vmUserAccountSchema).max(64).optional(),
+		groups: z.array(vmGroupSchema).max(128).optional(),
+	})
+	.strict();
 const functionSchema = z.custom<(...args: any[]) => any>(
 	(value) => typeof value === "function",
 	{ message: "Expected function" },
@@ -176,6 +216,7 @@ export const agentOsLimitsSchema = z
 				syncReadLimitBytes: positiveInteger.optional(),
 				prewarmTimeoutMs: positiveInteger.optional(),
 				runnerHeapLimitMb: positiveInteger.optional(),
+				runnerCpuTimeLimitMs: nonNegativeInteger.optional(),
 			})
 			.strict()
 			.optional(),
@@ -234,6 +275,8 @@ const plainMountConfigSchema = z
 		driver: z.custom((value) => typeof value === "object" && value !== null, {
 			message: "Expected filesystem driver object",
 		}),
+		guestFstype: z.string().min(1).optional(),
+		guestSource: z.string().min(1).optional(),
 		readOnly: z.boolean().optional(),
 	})
 	.strict();
@@ -242,6 +285,8 @@ export const nativeMountConfigSchema = z
 	.object({
 		path: z.string(),
 		plugin: nativeMountPluginSchema,
+		guestFstype: z.string().min(1).optional(),
+		guestSource: z.string().min(1).optional(),
 		readOnly: z.boolean().optional(),
 	})
 	.strict() as z.ZodType<NativeMountConfig>;
@@ -322,6 +367,7 @@ export const bindingsSchema = z
  * behavior is serialized by AgentOs.create() into the sidecar VM config.
  */
 export const agentOsOptionFieldSchemas = {
+	user: vmUserConfigSchema.optional(),
 	software: z.array(z.unknown()).optional(),
 	defaultSoftware: z.boolean().optional(),
 	loopbackExemptPorts: z.array(z.number().int().min(0).max(65535)).optional(),

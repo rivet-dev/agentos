@@ -1,0 +1,169 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Runtime <runtime@agentos.invalid>
+Date: Thu, 9 Jul 2026 22:35:00 -0700
+Subject: [PATCH] brush-core: parse Linux signals on WASI
+
+AgentOS provides Linux-compatible process signals through its WASI bridge.
+Keep Brush trap/kill parsing aligned with those guest-visible numbers.
+
+--- a/src/sys/stubs/signal.rs
++++ b/src/sys/stubs/signal.rs
+@@ -2,25 +2,120 @@
+ 
+ use crate::{error, sys, traps};
+ 
+-/// A stub enum representing system signals on unsupported platforms.
++/// Linux-compatible signal numbers used by the AgentOS WASI process bridge.
+ #[allow(unnameable_types)]
++#[repr(i32)]
+ #[derive(Clone, Copy, Eq, Hash, PartialEq)]
+-pub enum Signal {}
++pub enum Signal {
++    Sighup = 1,
++    Sigint = 2,
++    Sigquit = 3,
++    Sigill = 4,
++    Sigtrap = 5,
++    Sigabrt = 6,
++    Sigbus = 7,
++    Sigfpe = 8,
++    Sigkill = 9,
++    Sigusr1 = 10,
++    Sigsegv = 11,
++    Sigusr2 = 12,
++    Sigpipe = 13,
++    Sigalrm = 14,
++    Sigterm = 15,
++    Sigchld = 17,
++    Sigcont = 18,
++    Sigstop = 19,
++    Sigtstp = 20,
++    Sigttin = 21,
++    Sigttou = 22,
++    Sigwinch = 28,
++}
+ 
+ impl Signal {
+     /// Returns an iterator over all possible signals.
+     pub fn iterator() -> impl Iterator<Item = Self> {
+-        std::iter::empty()
++        const SIGNALS: [Signal; 22] = [
++            Signal::Sighup,
++            Signal::Sigint,
++            Signal::Sigquit,
++            Signal::Sigill,
++            Signal::Sigtrap,
++            Signal::Sigabrt,
++            Signal::Sigbus,
++            Signal::Sigfpe,
++            Signal::Sigkill,
++            Signal::Sigusr1,
++            Signal::Sigsegv,
++            Signal::Sigusr2,
++            Signal::Sigpipe,
++            Signal::Sigalrm,
++            Signal::Sigterm,
++            Signal::Sigchld,
++            Signal::Sigcont,
++            Signal::Sigstop,
++            Signal::Sigtstp,
++            Signal::Sigttin,
++            Signal::Sigttou,
++            Signal::Sigwinch,
++        ];
++        SIGNALS.into_iter()
+     }
+ 
+     /// Converts the signal into its corresponding name as a `&'static str`.
+     pub const fn as_str(self) -> &'static str {
+-        ""
++        match self {
++            Self::Sighup => "SIGHUP",
++            Self::Sigint => "SIGINT",
++            Self::Sigquit => "SIGQUIT",
++            Self::Sigill => "SIGILL",
++            Self::Sigtrap => "SIGTRAP",
++            Self::Sigabrt => "SIGABRT",
++            Self::Sigbus => "SIGBUS",
++            Self::Sigfpe => "SIGFPE",
++            Self::Sigkill => "SIGKILL",
++            Self::Sigusr1 => "SIGUSR1",
++            Self::Sigsegv => "SIGSEGV",
++            Self::Sigusr2 => "SIGUSR2",
++            Self::Sigpipe => "SIGPIPE",
++            Self::Sigalrm => "SIGALRM",
++            Self::Sigterm => "SIGTERM",
++            Self::Sigchld => "SIGCHLD",
++            Self::Sigcont => "SIGCONT",
++            Self::Sigstop => "SIGSTOP",
++            Self::Sigtstp => "SIGTSTP",
++            Self::Sigttin => "SIGTTIN",
++            Self::Sigttou => "SIGTTOU",
++            Self::Sigwinch => "SIGWINCH",
++        }
+     }
+ 
+     /// Creates a `Signal` from a string representation.
+     pub fn from_str(s: &str) -> Result<Self, error::Error> {
+-        Err(error::ErrorKind::InvalidSignal(s.into()).into())
++        match s {
++            "SIGHUP" => Ok(Self::Sighup),
++            "SIGINT" => Ok(Self::Sigint),
++            "SIGQUIT" => Ok(Self::Sigquit),
++            "SIGILL" => Ok(Self::Sigill),
++            "SIGTRAP" => Ok(Self::Sigtrap),
++            "SIGABRT" | "SIGIOT" => Ok(Self::Sigabrt),
++            "SIGBUS" => Ok(Self::Sigbus),
++            "SIGFPE" => Ok(Self::Sigfpe),
++            "SIGKILL" => Ok(Self::Sigkill),
++            "SIGUSR1" => Ok(Self::Sigusr1),
++            "SIGSEGV" => Ok(Self::Sigsegv),
++            "SIGUSR2" => Ok(Self::Sigusr2),
++            "SIGPIPE" => Ok(Self::Sigpipe),
++            "SIGALRM" => Ok(Self::Sigalrm),
++            "SIGTERM" => Ok(Self::Sigterm),
++            "SIGCHLD" | "SIGCLD" => Ok(Self::Sigchld),
++            "SIGCONT" => Ok(Self::Sigcont),
++            "SIGSTOP" => Ok(Self::Sigstop),
++            "SIGTSTP" => Ok(Self::Sigtstp),
++            "SIGTTIN" => Ok(Self::Sigttin),
++            "SIGTTOU" => Ok(Self::Sigttou),
++            "SIGWINCH" => Ok(Self::Sigwinch),
++            _ => Err(error::ErrorKind::InvalidSignal(s.into()).into()),
++        }
+     }
+ }
+ 
+@@ -28,7 +123,31 @@
+     type Error = error::Error;
+ 
+     fn try_from(value: i32) -> Result<Self, Self::Error> {
+-        Err(error::ErrorKind::InvalidSignal(std::format!("{value}")).into())
++        match value {
++            1 => Ok(Self::Sighup),
++            2 => Ok(Self::Sigint),
++            3 => Ok(Self::Sigquit),
++            4 => Ok(Self::Sigill),
++            5 => Ok(Self::Sigtrap),
++            6 => Ok(Self::Sigabrt),
++            7 => Ok(Self::Sigbus),
++            8 => Ok(Self::Sigfpe),
++            9 => Ok(Self::Sigkill),
++            10 => Ok(Self::Sigusr1),
++            11 => Ok(Self::Sigsegv),
++            12 => Ok(Self::Sigusr2),
++            13 => Ok(Self::Sigpipe),
++            14 => Ok(Self::Sigalrm),
++            15 => Ok(Self::Sigterm),
++            17 => Ok(Self::Sigchld),
++            18 => Ok(Self::Sigcont),
++            19 => Ok(Self::Sigstop),
++            20 => Ok(Self::Sigtstp),
++            21 => Ok(Self::Sigttin),
++            22 => Ok(Self::Sigttou),
++            28 => Ok(Self::Sigwinch),
++            _ => Err(error::ErrorKind::InvalidSignal(std::format!("{value}")).into()),
++        }
+     }
+ }
+

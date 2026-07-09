@@ -100,26 +100,48 @@ const WASM_MODULE_BYTES_CACHE_CAPACITY: usize = 64;
 const NODE_WASI_MODULE_SOURCE: &str = include_str!("../assets/runners/wasi-module.js");
 const WASM_SIDECAR_ROUTED_FS_SYNC_METHODS: &[&str] = &[
     "fs.accessSync",
+    "fs.blockingIoTimeoutMsSync",
+    "fs.chmodForProcessSync",
     "fs.chmodSync",
+    "fs.chownSync",
     "fs.closeSync",
+    "fs.collapseRangeSync",
     "fs.existsSync",
+    "fs.fallocateSync",
     "fs.fdatasyncSync",
+    "fs.fiemapSync",
     "fs.fstatSync",
     "fs.fsyncSync",
     "fs.ftruncateSync",
+    "fs.getxattrSync",
+    "fs.insertRangeSync",
+    "fs.lchownSync",
+    "fs.linkFdSync",
     "fs.linkSync",
+    "fs.listxattrSync",
     "fs.lstatSync",
     "fs.mkdirSync",
+    "fs.mknodSync",
+    "fs.namedFifoPeerReadySync",
     "fs.openSync",
+    "fs.openTmpfileSync",
+    "fs.punchHoleSync",
     "fs.readFileSync",
     "fs.readSync",
     "fs.readdirSync",
     "fs.readlinkSync",
+    "fs.remountSync",
+    "fs.removexattrSync",
+    "fs.renameAt2Sync",
     "fs.renameSync",
     "fs.rmdirSync",
+    "fs.setxattrSync",
+    "fs.statfsSync",
     "fs.statSync",
     "fs.symlinkSync",
+    "fs.truncateForProcessSync",
     "fs.unlinkSync",
+    "fs.zeroRangeSync",
     "fs.writeFileSync",
     "fs.writeSync",
 ];
@@ -212,6 +234,8 @@ pub struct WasmExecutionLimits {
     pub prewarm_timeout_ms: Option<u64>,
     /// V8 heap cap for the trusted JS runner isolate that hosts WASI/WASM.
     pub runner_heap_limit_mb: Option<u32>,
+    /// Active-CPU cap for the trusted JS runner isolate that hosts WASI/WASM.
+    pub runner_cpu_time_limit_ms: Option<u32>,
     /// VM readiness work bound forwarded unchanged to the WASI V8 runner.
     pub reactor_work_quantum: Option<usize>,
     /// Per-call host bridge deadline forwarded unchanged to the WASI V8 runner.
@@ -2680,9 +2704,21 @@ fn start_wasm_javascript_execution(
                         .map_err(map_javascript_error)?;
                     true
                 }
-                WasmSnapshotRunnerMode::Auto => javascript_engine
-                    .snapshot_userland_ready(&userland_bundle)
-                    .unwrap_or(false),
+                WasmSnapshotRunnerMode::Auto => {
+                    let snapshot_ready = javascript_engine
+                        .snapshot_userland_ready(&userland_bundle)
+                        .unwrap_or(false);
+                    if snapshot_ready {
+                        javascript_engine
+                            .pre_warm_workers(
+                                &userland_bundle,
+                                runner_heap_limit_mb,
+                                v8_warm_worker_count(),
+                            )
+                            .map_err(map_javascript_error)?;
+                    }
+                    snapshot_ready
+                }
                 WasmSnapshotRunnerMode::Off => false,
             };
 
@@ -2744,6 +2780,7 @@ fn wasm_runner_javascript_limits(
 ) -> JavascriptExecutionLimits {
     JavascriptExecutionLimits {
         v8_heap_limit_mb: Some(runner_heap_limit_mb),
+        cpu_time_limit_ms: limits.runner_cpu_time_limit_ms,
         reactor_work_quantum: limits.reactor_work_quantum,
         bridge_call_timeout_ms: limits.bridge_call_timeout_ms,
         ..JavascriptExecutionLimits::default()
@@ -3383,6 +3420,52 @@ if (typeof globalThis !== "undefined") {{
           }}
           return _processTakeSignal.applySync(void 0, args);
         case "process.getpgid":
+        case "process.getuid":
+        case "process.getgid":
+        case "process.geteuid":
+        case "process.getegid":
+        case "process.getresuid":
+        case "process.getresgid":
+        case "process.getgroups":
+        case "process.getpwuid":
+        case "process.getpwnam":
+        case "process.getpwent":
+        case "process.getgrgid":
+        case "process.getgrnam":
+        case "process.getgrent":
+        case "process.setuid":
+        case "process.seteuid":
+        case "process.setreuid":
+        case "process.setresuid":
+        case "process.setgid":
+        case "process.setegid":
+        case "process.setregid":
+        case "process.setresgid":
+        case "process.setgroups":
+        case "process.umask":
+        case "fs.accessSync":
+        case "fs.blockingIoTimeoutMsSync":
+        case "fs.chmodForProcessSync":
+        case "fs.chownSync":
+        case "fs.collapseRangeSync":
+        case "fs.fallocateSync":
+        case "fs.fiemapSync":
+        case "fs.getxattrSync":
+        case "fs.insertRangeSync":
+        case "fs.lchownSync":
+        case "fs.linkFdSync":
+        case "fs.listxattrSync":
+        case "fs.mknodSync":
+        case "fs.namedFifoPeerReadySync":
+        case "fs.openTmpfileSync":
+        case "fs.punchHoleSync":
+        case "fs.remountSync":
+        case "fs.removexattrSync":
+        case "fs.renameAt2Sync":
+        case "fs.setxattrSync":
+        case "fs.statfsSync":
+        case "fs.truncateForProcessSync":
+        case "fs.zeroRangeSync":
         case "process.setpgid":
         case "process.waitpid_transition":
         case "process.itimer_real":
@@ -3416,6 +3499,7 @@ if (typeof globalThis !== "undefined") {{
         case "process.fd_set_flags":
         case "process.fd_getfd":
         case "process.fd_setfd":
+        case "process.fd_flock":
         case "process.fd_record_lock":
         case "process.fd_record_lock_cancel":
         case "process.fd_dup":
@@ -4297,7 +4381,7 @@ fn v8_warm_worker_count() -> usize {
     std::env::var("AGENTOS_V8_WARM_ISOLATES")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(2)
+        .unwrap_or(4)
 }
 
 fn validate_module_limits(
@@ -4704,6 +4788,7 @@ mod tests {
             max_sockets: None,
             max_blocking_read_ms: None,
             runner_heap_limit_mb: None,
+            runner_cpu_time_limit_ms: None,
             reactor_work_quantum: None,
             bridge_call_timeout_ms: None,
         };
@@ -4807,6 +4892,7 @@ mod tests {
             max_sockets: None,
             max_blocking_read_ms: None,
             runner_heap_limit_mb: Some(512),
+            runner_cpu_time_limit_ms: Some(1_234),
             reactor_work_quantum: Some(64),
             bridge_call_timeout_ms: Some(30_000),
         });
@@ -4836,6 +4922,11 @@ mod tests {
             wasm_runner_heap_limit_mb(&request),
             512,
             "runner heap must come from the typed wire limit, not AGENTOS_WASM_RUNNER_HEAP_LIMIT_MB"
+        );
+        assert_eq!(
+            wasm_runner_javascript_limits(&request.limits, wasm_runner_heap_limit_mb(&request))
+                .cpu_time_limit_ms,
+            Some(1_234),
         );
     }
 
@@ -4879,6 +4970,7 @@ mod tests {
             max_sockets: None,
             max_blocking_read_ms: None,
             runner_heap_limit_mb: Some(512),
+            runner_cpu_time_limit_ms: Some(1_234),
             reactor_work_quantum: Some(64),
             bridge_call_timeout_ms: Some(30_000),
         });
@@ -4930,6 +5022,7 @@ mod tests {
             max_sockets: None,
             max_blocking_read_ms: None,
             runner_heap_limit_mb: Some(512),
+            runner_cpu_time_limit_ms: Some(1_234),
             reactor_work_quantum: Some(64),
             bridge_call_timeout_ms: Some(30_000),
         });
@@ -4966,6 +5059,7 @@ mod tests {
             max_sockets: None,
             max_blocking_read_ms: None,
             runner_heap_limit_mb: Some(512),
+            runner_cpu_time_limit_ms: Some(1_234),
             reactor_work_quantum: Some(64),
             bridge_call_timeout_ms: Some(30_000),
         });

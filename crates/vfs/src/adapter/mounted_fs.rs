@@ -208,6 +208,15 @@ where
         Ok(())
     }
 
+    fn mknod(&mut self, path: &str, mode: u32, rdev: u64) -> PosixVfsResult<()> {
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move {
+            inner.mknod(&path, mode, rdev).await
+        })
+    }
+
     fn exists(&self, path: &str) -> bool {
         let inner = Arc::clone(&self.inner);
         let path = path.to_owned();
@@ -318,12 +327,105 @@ where
         )
     }
 
+    fn chown_spec(
+        &mut self,
+        path: &str,
+        uid: u32,
+        gid: u32,
+        follow_symlinks: bool,
+    ) -> PosixVfsResult<()> {
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move {
+            if follow_symlinks {
+                inner.chown(&path, uid, gid).await
+            } else {
+                inner.lchown(&path, uid, gid).await
+            }
+        })
+    }
+
+    fn lchown(&mut self, path: &str, uid: u32, gid: u32) -> PosixVfsResult<()> {
+        self.chown_spec(path, uid, gid, false)
+    }
+
+    fn get_xattr(
+        &mut self,
+        path: &str,
+        name: &str,
+        follow_symlinks: bool,
+    ) -> PosixVfsResult<Vec<u8>> {
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let name = name.to_owned();
+        let reserved_bytes = path.len().saturating_add(name.len());
+        self.run(reserved_bytes, async move {
+            inner.get_xattr(&path, &name, follow_symlinks).await
+        })
+    }
+
+    fn list_xattrs(&mut self, path: &str, follow_symlinks: bool) -> PosixVfsResult<Vec<String>> {
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move {
+            inner.list_xattrs(&path, follow_symlinks).await
+        })
+    }
+
+    fn set_xattr(
+        &mut self,
+        path: &str,
+        name: &str,
+        value: Vec<u8>,
+        flags: u32,
+        follow_symlinks: bool,
+    ) -> PosixVfsResult<()> {
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let name = name.to_owned();
+        let reserved_bytes = path
+            .len()
+            .saturating_add(name.len())
+            .saturating_add(value.len());
+        self.run(reserved_bytes, async move {
+            inner
+                .set_xattr(&path, &name, &value, flags, follow_symlinks)
+                .await
+        })
+    }
+
+    fn remove_xattr(
+        &mut self,
+        path: &str,
+        name: &str,
+        follow_symlinks: bool,
+    ) -> PosixVfsResult<()> {
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let name = name.to_owned();
+        let reserved_bytes = path.len().saturating_add(name.len());
+        self.run(reserved_bytes, async move {
+            inner.remove_xattr(&path, &name, follow_symlinks).await
+        })
+    }
+
     fn utimes(&mut self, path: &str, atime_ms: u64, mtime_ms: u64) -> PosixVfsResult<()> {
         let inner = Arc::clone(&self.inner);
         let path = path.to_owned();
         let reserved_bytes = path.len();
         self.run(reserved_bytes, async move {
             inner.utimes(&path, atime_ms, mtime_ms).await
+        })
+    }
+
+    fn set_atime(&mut self, path: &str, atime_ms: u64) -> PosixVfsResult<()> {
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move {
+            inner.set_atime(&path, atime_ms).await
         })
     }
 
@@ -336,12 +438,97 @@ where
         })
     }
 
+    fn sync(&mut self, path: &str) -> PosixVfsResult<()> {
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move { inner.sync(&path).await })
+    }
+
+    fn allocate(&mut self, path: &str, offset: u64, length: u64) -> PosixVfsResult<()> {
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move {
+            inner.allocate(&path, offset, length).await
+        })
+    }
+
+    fn insert_range(&mut self, path: &str, offset: u64, length: u64) -> PosixVfsResult<()> {
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move {
+            inner.insert_range(&path, offset, length).await
+        })
+    }
+
+    fn collapse_range(&mut self, path: &str, offset: u64, length: u64) -> PosixVfsResult<()> {
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move {
+            inner.collapse_range(&path, offset, length).await
+        })
+    }
+
+    fn zero_range(
+        &mut self,
+        path: &str,
+        offset: u64,
+        length: u64,
+        keep_size: bool,
+    ) -> PosixVfsResult<()> {
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move {
+            inner.zero_range(&path, offset, length, keep_size).await
+        })
+    }
+
+    fn punch_hole(&mut self, path: &str, offset: u64, length: u64) -> PosixVfsResult<()> {
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move {
+            inner.punch_hole(&path, offset, length).await
+        })
+    }
+
+    fn allocated_ranges(&mut self, path: &str) -> PosixVfsResult<Vec<(u64, u64)>> {
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move {
+            inner.allocated_ranges(&path).await
+        })
+    }
+
+    fn unwritten_ranges(&mut self, path: &str) -> PosixVfsResult<Vec<(u64, u64)>> {
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move {
+            inner.unwritten_ranges(&path).await
+        })
+    }
+
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> PosixVfsResult<Vec<u8>> {
         let inner = Arc::clone(&self.inner);
         let path = path.to_owned();
         let reserved_bytes = path.len().saturating_add(length);
         self.run(reserved_bytes, async move {
             inner.pread(&path, offset, length).await
+        })
+    }
+
+    fn pwrite(&mut self, path: &str, content: Vec<u8>, offset: u64) -> PosixVfsResult<()> {
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len().saturating_add(content.len());
+        self.run(reserved_bytes, async move {
+            inner.pwrite(&path, &content, offset).await
         })
     }
 }
@@ -366,7 +553,7 @@ fn convert_stat(stat: crate::engine::VirtualStat, device_id: u64) -> VirtualStat
         size: stat.size,
         blocks: stat.blocks,
         dev: device_id,
-        rdev: 0,
+        rdev: stat.rdev,
         is_directory: stat.is_directory,
         is_symbolic_link: stat.is_symbolic_link,
         atime_ms: timespec_ms(stat.atime),

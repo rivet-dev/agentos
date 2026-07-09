@@ -1,0 +1,15 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-bc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "bounded bc-compatible calculator for AgentOS VMs"
+
+[[bin]]
+name = "bc"
+path = "src/main.rs"
+
+[dependencies]
+num-bigint = "0.4.6"
+num-traits = "0.2.19"

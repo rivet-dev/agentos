@@ -4173,6 +4173,9 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 						},
 					},
 					host_fs: {
+						set_open_direct(_enabled) {
+							return errnoSuccess;
+						},
 						fd_mode(fd) {
 							const descriptor = fd >>> 0;
 							if (descriptor <= 2) return 0o020666;

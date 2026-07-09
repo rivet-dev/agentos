@@ -24,7 +24,14 @@ use google_drive::GoogleDriveMountPlugin;
 use host_dir::HostDirMountPlugin;
 use js_bridge::JsBridgeMountPlugin;
 use module_access::ModuleAccessMountPlugin;
-use object_s3::ObjectS3MountPlugin;
+// `object_s3` deliberately remains compiled but unregistered. Its one-object-per-file
+// design turns ordinary POSIX metadata, sparse, truncate, and random-write workloads
+// into repeated whole-object downloads and replacements. A single applicable pathname
+// test generated 3,992,055 S3 requests before exceeding two hours. Re-exposing it needs
+// a bounded coherent dirty-inode cache whose reads, links, renames, unlinks, fsync/sync,
+// eviction, unmount, and upload-error behavior is proven first. Keep the implementation
+// and focused regressions intact so that work can resume without reconstructing it.
+// use object_s3::ObjectS3MountPlugin;
 use sandbox_agent::SandboxAgentMountPlugin;
 
 pub(crate) trait SidecarMountPluginFactory<Context>:
@@ -51,7 +58,8 @@ pub(crate) fn register_native_mount_plugins<B>(
     register_plugin(registry, SandboxAgentMountPlugin)?;
     register_plugin(registry, ChunkedLocalMountPlugin)?;
     register_plugin(registry, ChunkedActorSqliteMountPlugin)?;
-    register_plugin(registry, ObjectS3MountPlugin)?;
+    // Temporarily dormant; see the detailed rationale beside the retained import above.
+    // register_plugin(registry, ObjectS3MountPlugin)?;
     register_plugin(registry, ChunkedS3MountPlugin)?;
     register_plugin(registry, GoogleDriveMountPlugin)?;
     Ok(())

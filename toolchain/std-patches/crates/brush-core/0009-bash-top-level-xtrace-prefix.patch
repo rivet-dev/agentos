@@ -1,0 +1,12 @@
+--- a/src/shell.rs
++++ b/src/shell.rs
+@@ -1531,7 +1531,8 @@ impl Shell {
+         let mut prefix = ps4;
+ 
+         // Add additional depth-based prefixes using the first character of PS4.
+-        let additional_depth = self.script_call_stack.depth() + self.depth;
++        // The main script frame is Bash's baseline trace level, not nested depth.
++        let additional_depth = self.script_call_stack.depth().saturating_sub(1) + self.depth;
+         if let Some(c) = prefix.chars().next() {
+             for _ in 0..additional_depth {
+                 prefix.insert(0, c);

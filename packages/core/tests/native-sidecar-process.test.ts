@@ -1212,6 +1212,8 @@ describe("native sidecar process client", () => {
 				mounts: [
 					{
 						guestPath: "/root/node_modules",
+						guestSource: "host_dir",
+						guestFstype: "host_dir",
 						readOnly: true,
 						plugin: {
 							id: "host_dir",

@@ -1,0 +1,42 @@
+From: AgentOS Runtime <runtime@agentos.invalid>
+Subject: [PATCH] brush-builtins: wait for managed PID and job specs
+
+AgentOS background commands expose virtual process IDs through `$!`. Resolve
+numeric wait operands against those managed jobs, while retaining Brush's `%`
+job-spec resolution, so POSIX `wait $!` returns the child's actual status.
+
+diff --git a/src/wait.rs b/src/wait.rs
+--- a/src/wait.rs
++++ b/src/wait.rs
+@@ -39,7 +39,28 @@ impl builtins::Command for WaitCommand {
+             return error::unimp("wait -p");
+         }
+         if !self.job_specs.is_empty() {
+-            return error::unimp("wait with job specs");
++            let mut result = ExecutionResult::success();
++            for spec in &self.job_specs {
++                let job = if spec.starts_with('%') {
++                    context.shell.jobs.resolve_job_spec(spec)
++                } else {
++                    spec.parse::<i32>().ok().and_then(|pid| {
++                        context
++                            .shell
++                            .jobs
++                            .jobs
++                            .iter_mut()
++                            .find(|job| job.representative_pid() == Some(pid))
++                    })
++                };
++                let Some(job) = job else {
++                    writeln!(context.stderr(), "wait: {spec}: no such job")?;
++                    return Ok(ExecutionResult::new(127));
++                };
++                result = job.wait().await?;
++            }
++            context.shell.jobs.poll()?;
++            return Ok(result);
+         }
+ 
+         let jobs = context.shell.jobs.wait_all().await?;
+-- 
+2.43.0

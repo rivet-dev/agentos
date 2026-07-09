@@ -28,6 +28,246 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 		rationale: "Host process resource usage bridge reference.",
 	},
 	{
+		name: "process.umask",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.flock",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.fcntlLock",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.getuid",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.getgid",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.geteuid",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.getegid",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.getresuid",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.getresgid",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.getgroups",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.getpwuid",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.getpwnam",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.getpwent",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.getgrgid",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.getgrnam",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.getgrent",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.setuid",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.seteuid",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.setreuid",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.setresuid",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.setgid",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.setegid",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.setregid",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.setresgid",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "process.setgroups",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsAccess",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsRenameAt2",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsLchown",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsGetxattr",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsListxattr",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsSetxattr",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsRemovexattr",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsTruncateForProcess",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsFallocate",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsInsertRange",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsCollapseRange",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsPunchHole",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsZeroRange",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsFiemap",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsNamedFifoPeerReady",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsBlockingIoTimeoutMs",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsMknod",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsOpenTmpfile",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsLinkFd",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsRemount",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsStatfs",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_fsChmodForProcess",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
+		name: "_kernelDescendantStdinWaitingRaw",
+		classification: "hardened",
+		rationale: "Kernel-owned guest filesystem and process bridge reference.",
+	},
+	{
 		name: "process.versions",
 		classification: "hardened",
 		rationale: "Host process versions bridge reference.",

@@ -37,6 +37,7 @@ fn overrides_only_present_keys() {
         }),
         wasm: Some(WasmLimitsConfig {
             max_module_file_bytes: Some(1_048_576),
+            runner_cpu_time_limit_ms: Some(90_000),
             ..Default::default()
         }),
         js_runtime: Some(JsRuntimeLimitsConfig {
@@ -56,6 +57,7 @@ fn overrides_only_present_keys() {
 
     assert_eq!(parsed.bindings.max_binding_schema_bytes, 4096);
     assert_eq!(parsed.wasm.max_module_file_bytes, 1_048_576);
+    assert_eq!(parsed.wasm.runner_cpu_time_limit_ms, 90_000);
     assert_eq!(parsed.js_runtime.v8_heap_limit_mb, Some(256));
     assert_eq!(parsed.python.execution_timeout_ms, 1000);
     assert_eq!(parsed.http.max_fetch_response_bytes, 65536);

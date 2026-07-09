@@ -562,6 +562,7 @@ fn legacy_limits_config(
         sync_read_limit_bytes: legacy_u64(metadata, "limits.wasm.sync_read_limit_bytes"),
         prewarm_timeout_ms: legacy_u64(metadata, "limits.wasm.prewarm_timeout_ms"),
         runner_heap_limit_mb: legacy_u64(metadata, "limits.wasm.runner_heap_limit_mb"),
+        runner_cpu_time_limit_ms: legacy_u64(metadata, "limits.wasm.runner_cpu_time_limit_ms"),
     };
     let process = agentos_vm_config::ProcessLimitsConfig {
         max_spawn_file_actions: legacy_u64(metadata, "limits.process.max_spawn_file_actions")
@@ -704,6 +705,7 @@ fn legacy_has_wasm_limits(config: &agentos_vm_config::WasmLimitsConfig) -> bool 
         || config.sync_read_limit_bytes.is_some()
         || config.prewarm_timeout_ms.is_some()
         || config.runner_heap_limit_mb.is_some()
+        || config.runner_cpu_time_limit_ms.is_some()
 }
 
 fn legacy_has_process_limits(config: &agentos_vm_config::ProcessLimitsConfig) -> bool {
@@ -1317,6 +1319,19 @@ mod tests {
         let wasm = config.wasm.expect("wasm limits");
 
         assert_eq!(wasm.runner_heap_limit_mb, Some(789));
+    }
+
+    #[test]
+    fn legacy_metadata_preserves_wasm_runner_cpu_limit_as_only_new_field() {
+        let metadata = BTreeMap::from([(
+            String::from("limits.wasm.runner_cpu_time_limit_ms"),
+            String::from("987"),
+        )]);
+
+        let config = legacy_limits_config(&metadata).expect("limits config");
+        let wasm = config.wasm.expect("wasm limits");
+
+        assert_eq!(wasm.runner_cpu_time_limit_ms, Some(987));
     }
 
     #[test]

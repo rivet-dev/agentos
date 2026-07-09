@@ -9,6 +9,3 @@ description = "true standalone binary for secure-exec VM"
 [[bin]]
 name = "true"
 path = "src/main.rs"
-
-[dependencies]
-uu_true = "0.7.0"

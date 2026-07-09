@@ -716,11 +716,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmd-bc"
+version = "0.1.0"
+dependencies = [
+ "num-bigint",
+ "num-traits",
+]
+
+[[package]]
 name = "cmd-cat"
 version = "0.1.0"
 dependencies = [
  "uu_cat",
  "uucore 0.7.0",
+]
+
+[[package]]
+name = "cmd-chgrp"
+version = "0.1.0"
+dependencies = [
+ "wasi-ext",
 ]
 
 [[package]]
@@ -731,11 +746,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmd-chown"
+version = "0.1.0"
+dependencies = [
+ "wasi-ext",
+]
+
+[[package]]
 name = "cmd-cksum"
 version = "0.1.0"
 dependencies = [
  "uu_cksum",
 ]
+
+[[package]]
+name = "cmd-cmp"
+version = "0.1.0"
 
 [[package]]
 name = "cmd-codex"
@@ -805,6 +831,10 @@ version = "0.1.0"
 dependencies = [
  "uu_dd",
 ]
+
+[[package]]
+name = "cmd-df"
+version = "0.1.0"
 
 [[package]]
 name = "cmd-diff"
@@ -913,6 +943,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmd-findmnt"
+version = "0.1.0"
+
+[[package]]
 name = "cmd-fmt"
 version = "0.1.0"
 dependencies = [
@@ -924,6 +958,13 @@ name = "cmd-fold"
 version = "0.1.0"
 dependencies = [
  "uu_fold",
+]
+
+[[package]]
+name = "cmd-getent"
+version = "0.1.0"
+dependencies = [
+ "wasi-ext",
 ]
 
 [[package]]
@@ -941,10 +982,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmd-hostname"
+version = "0.1.0"
+
+[[package]]
 name = "cmd-http-test"
 version = "0.1.0"
 dependencies = [
  "secureexec-wasi-http",
+]
+
+[[package]]
+name = "cmd-id"
+version = "0.1.0"
+dependencies = [
+ "wasi-ext",
 ]
 
 [[package]]
@@ -1015,6 +1067,13 @@ name = "cmd-mktemp"
 version = "0.1.0"
 dependencies = [
  "uu_mktemp",
+]
+
+[[package]]
+name = "cmd-mount"
+version = "0.1.0"
+dependencies = [
+ "wasi-ext",
 ]
 
 [[package]]
@@ -1151,6 +1210,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmd-runas"
+version = "0.1.0"
+dependencies = [
+ "wasi-ext",
+]
+
+[[package]]
 name = "cmd-sed"
 version = "0.1.0"
 dependencies = [
@@ -1277,6 +1343,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmd-su"
+version = "0.1.0"
+dependencies = [
+ "wasi-ext",
+]
+
+[[package]]
 name = "cmd-sum"
 version = "0.1.0"
 dependencies = [
@@ -1342,9 +1415,6 @@ dependencies = [
 [[package]]
 name = "cmd-true"
 version = "0.1.0"
-dependencies = [
- "uu_true",
-]
 
 [[package]]
 name = "cmd-truncate"
@@ -5776,17 +5846,6 @@ dependencies = [
  "clap",
  "fluent",
  "nom 8.0.0",
- "uucore 0.7.0",
-]
-
-[[package]]
-name = "uu_true"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dfec486c633bf98e354373f7d0ec26910e51376ddfeea29b2fd8a2d2f3d96736"
-dependencies = [
- "clap",
- "fluent",
  "uucore 0.7.0",
 ]
 

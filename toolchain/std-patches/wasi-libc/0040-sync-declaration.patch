@@ -1,0 +1,28 @@
+diff --git a/libc-top-half/musl/include/unistd.h b/libc-top-half/musl/include/unistd.h
+index e4b0942..d59585c 100644
+--- a/libc-top-half/musl/include/unistd.h
++++ b/libc-top-half/musl/include/unistd.h
+@@ -203,11 +203,11 @@ int setregid(gid_t, gid_t);
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no POSIX file locking */
+ int lockf(int, int, off_t);
+ #endif
+ long gethostid(void);
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no nice, sync, or setpgrp */
++#ifdef __wasilibc_unmodified_upstream /* WASI has no nice or setpgrp */
+ int nice(int);
+-void sync(void);
+ pid_t setpgrp(void);
+ #endif
++void sync(void);
+ char *crypt(const char *, const char *);
+ void encrypt(char *, int);
+@@ -277,9 +277,7 @@ int getresgid(gid_t *, gid_t *, gid_t *);
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no cwd */
+ char *get_current_dir_name(void);
+ #endif
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no syncfs */
+ int syncfs(int);
+-#endif
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no eaccess */
+ int euidaccess(const char *, int);
+ int eaccess(const char *, int);

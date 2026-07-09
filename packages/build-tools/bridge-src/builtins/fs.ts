@@ -67,16 +67,16 @@ var Stats = class {
     return (this.mode & 61440) === 40960;
   }
   isBlockDevice() {
-    return false;
+    return (this.mode & 61440) === 24576;
   }
   isCharacterDevice() {
-    return false;
+    return (this.mode & 61440) === 8192;
   }
   isFIFO() {
-    return false;
+    return (this.mode & 61440) === 4096;
   }
   isSocket() {
-    return false;
+    return (this.mode & 61440) === 49152;
   }
 };
 var Dirent = class {
@@ -1989,6 +1989,9 @@ function bridgeErrorCode(err) {
   if (msg.includes("EINVAL") || msg.includes("invalid argument")) {
     return "EINVAL";
   }
+  if (msg.includes("ENXIO") || msg.includes("no such device or address")) {
+    return "ENXIO";
+  }
   if (msg.includes("EXDEV") || msg.includes("cross-device link")) {
     return "EXDEV";
   }
@@ -2902,6 +2905,9 @@ var fs = {
       const msg = e?.message ?? String(e);
       if (msg.includes("ENOENT")) throw createFsError("ENOENT", msg, "open", pathStr);
       if (msg.includes("EMFILE")) throw createFsError("EMFILE", msg, "open", pathStr);
+      if (bridgeErrorCode(e) === "ENXIO") {
+        throw createFsError("ENXIO", msg, "open", pathStr);
+      }
       throw e;
     }
   },

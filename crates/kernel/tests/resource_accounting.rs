@@ -522,7 +522,7 @@ fn filesystem_limits_reject_fd_pwrite_before_resizing_file() {
         )
         .expect("spawn shell");
     let fd = kernel
-        .fd_open("shell", process.pid(), "/tmp/data.txt", 0, None)
+        .fd_open("shell", process.pid(), "/tmp/data.txt", O_RDWR, None)
         .expect("open file");
 
     let error = kernel
@@ -533,6 +533,62 @@ fn filesystem_limits_reject_fd_pwrite_before_resizing_file() {
         kernel
             .read_file("/tmp/data.txt")
             .expect("file should stay unchanged"),
+        b"abc".to_vec()
+    );
+
+    process.finish(0);
+    kernel.wait_and_reap(process.pid()).expect("reap shell");
+}
+
+#[test]
+fn filesystem_limits_reject_fd_allocate_before_resizing_file() {
+    let mut config = KernelVmConfig::new("vm-fd-allocate-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_filesystem_bytes: Some(16),
+        ..ResourceLimits::default()
+    };
+
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .register_driver(CommandDriver::new("shell", ["sh"]))
+        .expect("register shell");
+    kernel
+        .filesystem_mut()
+        .write_file("/tmp/data.txt", b"abc".to_vec())
+        .expect("seed file");
+    let process = kernel
+        .spawn_process(
+            "sh",
+            Vec::new(),
+            SpawnOptions {
+                requester_driver: Some(String::from("shell")),
+                ..SpawnOptions::default()
+            },
+        )
+        .expect("spawn shell");
+    let fd = kernel
+        .fd_open("shell", process.pid(), "/tmp/data.txt", O_RDWR, None)
+        .expect("open file");
+
+    kernel
+        .fd_allocate("shell", process.pid(), fd, u64::MAX, 0)
+        .expect("zero-length allocation is a no-op");
+    assert_eq!(
+        kernel
+            .read_file("/tmp/data.txt")
+            .expect("file is unchanged"),
+        b"abc".to_vec()
+    );
+
+    let error = kernel
+        .fd_allocate("shell", process.pid(), fd, 8, 9)
+        .expect_err("allocation should exceed filesystem byte limit");
+    assert_eq!(error.code(), "ENOSPC");
+    assert_eq!(
+        kernel
+            .read_file("/tmp/data.txt")
+            .expect("file is unchanged"),
         b"abc".to_vec()
     );
 
@@ -714,6 +770,101 @@ fn filesystem_limits_ignore_read_only_mount_usage() {
     kernel
         .write_file("/tmp/a.txt", b"ok".to_vec())
         .expect("mounted files should not count against root filesystem byte limits");
+}
+
+#[test]
+fn writable_mount_mutations_do_not_pollute_root_filesystem_usage_cache() {
+    let mut config = KernelVmConfig::new("vm-writable-mount-accounting");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_filesystem_bytes: Some(4),
+        ..ResourceLimits::default()
+    };
+
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: Vec::new(),
+        bootstrap_entries: Vec::new(),
+    })
+    .expect("build empty root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+    kernel
+        .mount_filesystem("/mnt", MemoryFileSystem::new(), MountOptions::new("memory"))
+        .expect("mount writable filesystem");
+
+    kernel
+        .snapshot_root_filesystem()
+        .expect("prime root filesystem usage cache");
+    for index in 0..8 {
+        kernel
+            .write_file(&format!("/mnt/file-{index}"), b"x".to_vec())
+            .expect("mounted writes must not consume root filesystem quota");
+    }
+
+    let snapshot = kernel
+        .snapshot_root_filesystem()
+        .expect("mounted writes must not make root snapshot exceed its quota");
+    assert!(
+        snapshot
+            .entries
+            .iter()
+            .all(|entry| !entry.path.starts_with("/mnt/")),
+        "root snapshot must exclude mounted filesystem entries"
+    );
+}
+
+#[test]
+fn mount_topology_changes_invalidate_root_filesystem_usage_cache() {
+    let mut config = KernelVmConfig::new("vm-mount-accounting-invalidation");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_filesystem_bytes: Some(4),
+        ..ResourceLimits::default()
+    };
+
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: Vec::new(),
+        bootstrap_entries: Vec::new(),
+    })
+    .expect("build empty root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+    kernel
+        .snapshot_root_filesystem()
+        .expect("prime root filesystem usage cache");
+    kernel
+        .root_filesystem_mut()
+        .expect("native root filesystem")
+        .write_file("/oversized", vec![b'x'; 8])
+        .expect("mutate root beneath kernel accounting");
+
+    kernel
+        .mount_filesystem("/mnt", MemoryFileSystem::new(), MountOptions::new("memory"))
+        .expect("mount writable filesystem");
+    let error = kernel
+        .snapshot_root_filesystem()
+        .expect_err("mount must invalidate stale root usage");
+    assert_eq!(error.code(), "ENOSPC");
+    assert!(
+        error
+            .to_string()
+            .contains("limits.resources.maxFilesystemBytes"),
+        "{error}"
+    );
+
+    kernel
+        .root_filesystem_mut()
+        .expect("native root filesystem")
+        .remove_file("/oversized")
+        .expect("restore root beneath kernel accounting");
+    kernel
+        .unmount_filesystem("/mnt")
+        .expect("unmount writable filesystem");
+    kernel
+        .snapshot_root_filesystem()
+        .expect("unmount must invalidate stale root usage");
 }
 
 #[test]

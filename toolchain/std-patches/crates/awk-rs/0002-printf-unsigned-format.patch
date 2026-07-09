@@ -1,0 +1,40 @@
+diff --git a/src/interpreter/stmt.rs b/src/interpreter/stmt.rs
+--- a/src/interpreter/stmt.rs
++++ b/src/interpreter/stmt.rs
+@@ -473,6 +473,20 @@ impl<'a> Interpreter<'a> {
+                         format!("{}", n)
+                     }
+                 }
++                'u' => {
++                    let n = arg.to_number() as u64;
++                    if let Some(w) = width_num {
++                        if flags.contains('0') && !left_align {
++                            format!("{:0>width$}", n, width = w)
++                        } else if left_align {
++                            format!("{:<width$}", n, width = w)
++                        } else {
++                            format!("{:>width$}", n, width = w)
++                        }
++                    } else {
++                        format!("{}", n)
++                    }
++                }
+                 'f' | 'F' => {
+                     let n = arg.to_number();
+                     let p = precision_num.unwrap_or(6);
+diff --git a/src/interpreter/mod.rs b/src/interpreter/mod.rs
+--- a/src/interpreter/mod.rs
++++ b/src/interpreter/mod.rs
+@@ -1035,6 +1035,12 @@ mod tests {
+         assert_eq!(output, "42 hello\n");
+     }
+ 
++    #[test]
++    fn test_printf_unsigned() {
++        let output = run_awk("BEGIN { printf \"%u %05u\\n\", 42, 7 }", "");
++        assert_eq!(output, "42 00007\n");
++    }
++
+     #[test]
+     fn test_range_pattern() {
+         let output = run_awk(

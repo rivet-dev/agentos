@@ -1,0 +1,12 @@
+diff --git a/libc-top-half/musl/src/errno/__strerror.h b/libc-top-half/musl/src/errno/__strerror.h
+index 73aaf93..2e82199 100644
+--- a/libc-top-half/musl/src/errno/__strerror.h
++++ b/libc-top-half/musl/src/errno/__strerror.h
+@@ -58,6 +58,6 @@ E(EINVAL,       "Invalid argument")
+ 
+ E(E2BIG,        "Argument list too long")
+-E(ELOOP,        "Symbolic link loop")
++E(ELOOP,        "Too many levels of symbolic links")
+ E(ENAMETOOLONG, "Filename too long")
+ E(ENFILE,       "Too many open files in system")
+ E(EMFILE,       "No file descriptors available")

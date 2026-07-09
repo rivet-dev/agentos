@@ -14,6 +14,23 @@ fn create_test_vfs() -> impl VirtualFileSystem {
     create_device_layer(MemoryFileSystem::new())
 }
 
+#[test]
+fn created_null_device_keeps_device_semantics_after_rename() {
+    let mut filesystem = create_test_vfs();
+    filesystem.mkdir("/tmp", false).unwrap();
+    filesystem
+        .mknod("/tmp/null", 0o020666, (1 << 8) | 3)
+        .unwrap();
+    filesystem.rename("/tmp/null", "/tmp/sink").unwrap();
+
+    filesystem.truncate("/tmp/sink", 0).unwrap();
+    filesystem.write_file("/tmp/sink", b"discarded").unwrap();
+    assert_eq!(filesystem.read_file("/tmp/sink").unwrap(), Vec::<u8>::new());
+    let stat = filesystem.stat("/tmp/sink").unwrap();
+    assert_eq!(stat.mode & 0o170000, 0o020000);
+    assert_eq!(stat.rdev, (1 << 8) | 3);
+}
+
 fn assert_not_trivial_pattern(bytes: &[u8]) {
     assert!(bytes.iter().any(|byte| *byte != 0));
     assert!(
@@ -110,11 +127,13 @@ fn device_paths_exist_and_stat_as_devices() {
 
     let device_stat = filesystem.stat("/dev/null").expect("stat /dev/null");
     assert!(!device_stat.is_directory);
-    assert_eq!(device_stat.mode, 0o666);
+    assert_eq!(device_stat.mode & 0o170000, 0o020000);
+    assert_eq!(device_stat.mode & 0o777, 0o666);
 
     let dir_stat = filesystem.stat("/dev").expect("stat /dev");
     assert!(dir_stat.is_directory);
-    assert_eq!(dir_stat.mode, 0o755);
+    assert_eq!(dir_stat.mode & 0o170000, 0o040000);
+    assert_eq!(dir_stat.mode & 0o777, 0o755);
 }
 
 #[test]

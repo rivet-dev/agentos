@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use rusqlite::{params, Connection};
-use std::collections::BTreeMap;
+use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Mutex;
 use vfs::engine::error::{VfsError, VfsResult};
@@ -22,9 +22,10 @@ struct LocalFsMigration {
 // This ladder belongs to the standalone rusqlite metadata database opened by
 // `SqliteMetadataStore`. It is not interchangeable with the filesystem ladder
 // installed in the per-VM descriptor database by `chunked_actor_sqlite`.
-const LOCAL_FS_MIGRATIONS: &[LocalFsMigration] = &[LocalFsMigration {
-    version: 1,
-    statements: r#"
+const LOCAL_FS_MIGRATIONS: &[LocalFsMigration] = &[
+    LocalFsMigration {
+        version: 1,
+        statements: r#"
         CREATE TABLE agentos_fs_inodes (
           ino INTEGER PRIMARY KEY CHECK (ino > 0),
           kind INTEGER NOT NULL CHECK (kind IN (0, 1, 2)),
@@ -79,13 +80,67 @@ const LOCAL_FS_MIGRATIONS: &[LocalFsMigration] = &[LocalFsMigration {
           root_ino INTEGER NOT NULL CHECK (root_ino > 0),
           created_ns INTEGER NOT NULL
         ) STRICT;
-    "#,
-}];
+        "#,
+    },
+    LocalFsMigration {
+        version: 2,
+        statements: r#"
+            ALTER TABLE agentos_fs_inodes RENAME TO agentos_fs_inodes_v1;
+            CREATE TABLE agentos_fs_inodes (
+              ino INTEGER PRIMARY KEY CHECK (ino > 0),
+              kind INTEGER NOT NULL CHECK (kind IN (0, 1, 2, 3, 4, 5)),
+              mode INTEGER NOT NULL CHECK (mode BETWEEN 0 AND 4294967295),
+              uid INTEGER NOT NULL CHECK (uid BETWEEN 0 AND 4294967295),
+              gid INTEGER NOT NULL CHECK (gid BETWEEN 0 AND 4294967295),
+              size INTEGER NOT NULL CHECK (size >= 0),
+              nlink INTEGER NOT NULL CHECK (nlink >= 0),
+              atime_ns INTEGER NOT NULL,
+              mtime_ns INTEGER NOT NULL,
+              ctime_ns INTEGER NOT NULL,
+              birthtime_ns INTEGER NOT NULL,
+              storage_mode INTEGER NOT NULL CHECK (storage_mode IN (0, 1, 2)),
+              storage_chunk_size INTEGER CHECK (
+                storage_chunk_size IS NULL OR
+                storage_chunk_size BETWEEN 1 AND 4294967295
+              ),
+              inline_content BLOB,
+              symlink_target TEXT,
+              xattrs_json BLOB NOT NULL DEFAULT X'7B7D',
+              allocated_extents_json BLOB NOT NULL DEFAULT X'5B5D',
+              CHECK (
+                (storage_mode = 0 AND storage_chunk_size IS NULL AND inline_content IS NULL) OR
+                (storage_mode = 1 AND storage_chunk_size IS NULL AND inline_content IS NOT NULL) OR
+                (storage_mode = 2 AND storage_chunk_size IS NOT NULL AND inline_content IS NULL)
+              ),
+              CHECK (
+                (kind = 2 AND symlink_target IS NOT NULL) OR
+                (kind <> 2 AND symlink_target IS NULL)
+              )
+            ) STRICT;
+            INSERT INTO agentos_fs_inodes
+              (ino, kind, mode, uid, gid, size, nlink, atime_ns, mtime_ns, ctime_ns,
+               birthtime_ns, storage_mode, storage_chunk_size, inline_content, symlink_target,
+               xattrs_json, allocated_extents_json)
+            SELECT ino, kind, mode, uid, gid, size, nlink, atime_ns, mtime_ns, ctime_ns,
+                   birthtime_ns, storage_mode, storage_chunk_size, inline_content, symlink_target,
+                   X'7B7D',
+                   CASE WHEN kind = 0 AND size > 0
+                     THEN CAST(printf('[[0,%d]]', (size + 511) / 512) AS BLOB)
+                     ELSE X'5B5D'
+                   END
+              FROM agentos_fs_inodes_v1;
+            DROP TABLE agentos_fs_inodes_v1;
+        "#,
+    },
+];
 
 pub struct SqliteMetadataStore {
     connection: Mutex<Connection>,
+    pending_write_count: Mutex<usize>,
     inner: InMemoryMetadataStore,
 }
+
+const MAX_PENDING_WRITE_COMMITS: usize = 256;
 
 impl SqliteMetadataStore {
     pub fn open(path: impl AsRef<Path>) -> VfsResult<Self> {
@@ -101,6 +156,12 @@ impl SqliteMetadataStore {
     }
 
     fn from_connection(mut connection: Connection) -> VfsResult<Self> {
+        connection
+            .pragma_update(None, "journal_mode", "WAL")
+            .map_err(|err| VfsError::eio(format!("enable SQLite WAL mode: {err}")))?;
+        connection
+            .pragma_update(None, "synchronous", "NORMAL")
+            .map_err(|err| VfsError::eio(format!("configure SQLite synchronous mode: {err}")))?;
         install_schema(&mut connection)?;
         let dump = load_dump(&connection)?;
         let is_new = dump.is_none();
@@ -112,6 +173,7 @@ impl SqliteMetadataStore {
         }
         Ok(Self {
             connection: Mutex::new(connection),
+            pending_write_count: Mutex::new(0),
             inner,
         })
     }
@@ -129,10 +191,341 @@ impl SqliteMetadataStore {
     }
 
     fn persist(&self) -> VfsResult<()> {
+        self.flush_pending_writes()?;
         let dump = self.inner.dump();
         let mut connection = self.connection.lock().expect("sqlite mutex poisoned");
         persist_dump(&mut connection, &dump)
     }
+
+    fn persist_create(&self, parent: u64, name: &str, meta: &InodeMeta) -> VfsResult<()> {
+        self.flush_pending_writes()?;
+        let parent_meta = self.inner.inode_meta(parent)?;
+        let mut connection = self.connection.lock().expect("sqlite mutex poisoned");
+        let tx = connection
+            .transaction()
+            .map_err(|err| VfsError::eio(format!("begin SQLite create transaction: {err}")))?;
+        upsert_inode(&tx, &parent_meta)?;
+        upsert_inode(&tx, meta)?;
+        tx.execute(
+            "INSERT INTO agentos_fs_dentries (parent_ino, name, child_ino, kind) VALUES (?, ?, ?, ?)",
+            params![parent, name, meta.ino, kind_id(meta.kind)],
+        )
+        .map_err(|err| VfsError::eio(format!("persist SQLite dentry {name}: {err}")))?;
+        tx.commit()
+            .map_err(|err| VfsError::eio(format!("commit SQLite create transaction: {err}")))
+    }
+
+    fn persist_set_attr(&self, ino: u64, storage_changed: bool) -> VfsResult<()> {
+        let meta = self.inner.inode_meta(ino)?;
+        let mut pending = self
+            .pending_write_count
+            .lock()
+            .expect("sqlite pending-write mutex poisoned");
+        let mut connection = self.connection.lock().expect("sqlite mutex poisoned");
+        if *pending > 0 {
+            if let Err(error) = self.persist_set_attr_rows(&connection, &meta, storage_changed) {
+                let rollback_result = connection.execute_batch("ROLLBACK");
+                *pending = 0;
+                if let Err(rollback_error) = rollback_result {
+                    return Err(VfsError::eio(format!(
+                        "{error}; rollback batched SQLite setattr failed: {rollback_error}"
+                    )));
+                }
+                return Err(error);
+            }
+            return Ok(());
+        }
+
+        let tx = connection
+            .transaction()
+            .map_err(|err| VfsError::eio(format!("begin SQLite setattr transaction: {err}")))?;
+        self.persist_set_attr_rows(&tx, &meta, storage_changed)?;
+        tx.commit()
+            .map_err(|err| VfsError::eio(format!("commit SQLite setattr transaction: {err}")))
+    }
+
+    fn persist_set_attr_rows(
+        &self,
+        connection: &Connection,
+        meta: &InodeMeta,
+        storage_changed: bool,
+    ) -> VfsResult<()> {
+        let mut affected_keys = BTreeSet::new();
+        if storage_changed {
+            let mut statement = connection
+                .prepare_cached("SELECT block_key FROM agentos_fs_chunks WHERE ino = ?")
+                .map_err(|err| VfsError::eio(format!("prepare setattr chunk lookup: {err}")))?;
+            let rows = statement
+                .query_map(params![meta.ino], |row| row.get::<_, String>(0))
+                .map_err(|err| VfsError::eio(format!("query setattr chunks: {err}")))?;
+            for row in rows {
+                affected_keys.insert(BlockKey(
+                    row.map_err(|err| VfsError::eio(format!("read setattr chunk key: {err}")))?,
+                ));
+            }
+        }
+        upsert_inode(connection, meta)?;
+        if storage_changed {
+            connection
+                .execute("DELETE FROM agentos_fs_chunks WHERE ino = ?", params![meta.ino])
+                .map_err(|err| VfsError::eio(format!("delete setattr chunks: {err}")))?;
+            for key in affected_keys {
+                let refcount = self.inner.refcount(&key);
+                if refcount == 0 {
+                    connection
+                        .execute("DELETE FROM agentos_fs_block_refs WHERE block_key = ?", params![key.0])
+                        .map_err(|err| {
+                            VfsError::eio(format!("delete setattr block ref {}: {err}", key.0))
+                        })?;
+                } else {
+                    connection
+                        .execute(
+                            "INSERT INTO agentos_fs_block_refs (block_key, refcount) VALUES (?, ?)
+                             ON CONFLICT(block_key) DO UPDATE SET refcount=excluded.refcount",
+                            params![key.0, refcount],
+                        )
+                        .map_err(|err| {
+                            VfsError::eio(format!("persist setattr block ref {}: {err}", key.0))
+                        })?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn flush_pending_writes(&self) -> VfsResult<()> {
+        let mut pending = self
+            .pending_write_count
+            .lock()
+            .expect("sqlite pending-write mutex poisoned");
+        if *pending == 0 {
+            return Ok(());
+        }
+        let connection = self.connection.lock().expect("sqlite mutex poisoned");
+        connection
+            .execute_batch("COMMIT")
+            .map_err(|err| VfsError::eio(format!("commit pending SQLite writes: {err}")))?;
+        *pending = 0;
+        Ok(())
+    }
+
+    fn flush_durable(&self) -> VfsResult<()> {
+        self.flush_pending_writes()?;
+        let connection = self.connection.lock().expect("sqlite mutex poisoned");
+        connection
+            .execute_batch("PRAGMA wal_checkpoint(FULL)")
+            .map_err(|err| VfsError::eio(format!("checkpoint SQLite metadata WAL: {err}")))
+    }
+
+    fn persist_commit_write(
+        &self,
+        ino: u64,
+        edits: &[ChunkEdit],
+        old_size: u64,
+        new_size: u64,
+        chunk_size: u64,
+    ) -> VfsResult<()> {
+        let meta = self.inner.inode_meta(ino)?;
+        let keep_chunks = if new_size == 0 {
+            0
+        } else {
+            new_size.div_ceil(chunk_size)
+        };
+        let old_chunks = if old_size == 0 {
+            0
+        } else {
+            old_size.div_ceil(chunk_size)
+        };
+        let mut pending = self
+            .pending_write_count
+            .lock()
+            .expect("sqlite pending-write mutex poisoned");
+        let connection = self.connection.lock().expect("sqlite mutex poisoned");
+        if *pending == 0 {
+            connection.execute_batch("BEGIN IMMEDIATE").map_err(|err| {
+                VfsError::eio(format!("begin batched SQLite write transaction: {err}"))
+            })?;
+        }
+
+        let write_result = (|| -> VfsResult<()> {
+            let mut affected_keys = BTreeSet::new();
+            upsert_inode(&connection, &meta)?;
+            if new_size < old_size {
+                let mut statement = connection
+                    .prepare_cached(
+                        "SELECT block_key FROM agentos_fs_chunks WHERE ino = ? AND chunk_index >= ?",
+                    )
+                    .map_err(|err| {
+                        VfsError::eio(format!("prepare truncated chunk lookup: {err}"))
+                    })?;
+                let rows = statement
+                    .query_map(params![ino, keep_chunks], |row| row.get::<_, String>(0))
+                    .map_err(|err| VfsError::eio(format!("query truncated chunks: {err}")))?;
+                for row in rows {
+                    affected_keys.insert(BlockKey(row.map_err(|err| {
+                        VfsError::eio(format!("read truncated chunk key: {err}"))
+                    })?));
+                }
+            }
+
+            for edit in edits.iter().filter(|edit| edit.index < keep_chunks) {
+                let previous = if edit.index >= old_chunks {
+                    None
+                } else {
+                    connection
+                        .prepare_cached(
+                            "SELECT block_key FROM agentos_fs_chunks WHERE ino = ? AND chunk_index = ?",
+                        )
+                        .map_err(|err| {
+                            VfsError::eio(format!(
+                                "prepare previous SQLite chunk lookup {ino}/{}: {err}",
+                                edit.index
+                            ))
+                        })?
+                        .query_row(params![ino, edit.index], |row| row.get::<_, String>(0))
+                        .optional()
+                        .map_err(|err| {
+                            VfsError::eio(format!(
+                                "query previous SQLite chunk {ino}/{}: {err}",
+                                edit.index
+                            ))
+                        })?
+                };
+                if let Some(key) = previous {
+                    affected_keys.insert(BlockKey(key));
+                }
+                affected_keys.insert(edit.key.clone());
+            }
+
+            if new_size < old_size {
+                connection
+                    .prepare_cached("DELETE FROM agentos_fs_chunks WHERE ino = ? AND chunk_index >= ?")
+                    .map_err(|err| VfsError::eio(format!("prepare truncated chunk delete: {err}")))?
+                    .execute(params![ino, keep_chunks])
+                    .map_err(|err| {
+                        VfsError::eio(format!("delete truncated SQLite chunks: {err}"))
+                    })?;
+            }
+            let mut insert_chunk = connection
+                .prepare_cached(
+                    "INSERT INTO agentos_fs_chunks (ino, chunk_index, block_key, len) VALUES (?, ?, ?, ?)
+                     ON CONFLICT(ino, chunk_index) DO UPDATE SET
+                       block_key=excluded.block_key, len=excluded.len",
+                )
+                .map_err(|err| VfsError::eio(format!("prepare SQLite chunk upsert: {err}")))?;
+            for edit in edits.iter().filter(|edit| edit.index < keep_chunks) {
+                insert_chunk
+                    .execute(params![ino, edit.index, edit.key.0, edit.len])
+                    .map_err(|err| {
+                        VfsError::eio(format!("persist SQLite chunk {ino}/{}: {err}", edit.index))
+                    })?;
+            }
+
+            for key in affected_keys {
+                let refcount = self.inner.refcount(&key);
+                if refcount == 0 {
+                    connection
+                        .execute("DELETE FROM agentos_fs_block_refs WHERE block_key = ?", params![key.0])
+                        .map_err(|err| {
+                            VfsError::eio(format!("delete SQLite block ref {}: {err}", key.0))
+                        })?;
+                } else {
+                    connection
+                        .execute(
+                            "INSERT INTO agentos_fs_block_refs (block_key, refcount) VALUES (?, ?)
+                             ON CONFLICT(block_key) DO UPDATE SET refcount=excluded.refcount",
+                            params![key.0, refcount],
+                        )
+                        .map_err(|err| {
+                            VfsError::eio(format!("persist SQLite block ref {}: {err}", key.0))
+                        })?;
+                }
+            }
+            Ok(())
+        })();
+
+        if let Err(error) = write_result {
+            let rollback_result = connection.execute_batch("ROLLBACK");
+            *pending = 0;
+            if let Err(rollback_error) = rollback_result {
+                return Err(VfsError::eio(format!(
+                    "{error}; rollback batched SQLite writes failed: {rollback_error}"
+                )));
+            }
+            return Err(error);
+        }
+
+        *pending += 1;
+        if *pending >= MAX_PENDING_WRITE_COMMITS {
+            connection.execute_batch("COMMIT").map_err(|err| {
+                VfsError::eio(format!("commit bounded SQLite write batch: {err}"))
+            })?;
+            *pending = 0;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for SqliteMetadataStore {
+    fn drop(&mut self) {
+        if let Err(error) = self.flush_pending_writes() {
+            eprintln!("failed to flush pending SQLite metadata writes during drop: {error}");
+        }
+    }
+}
+
+fn upsert_inode(connection: &Connection, meta: &InodeMeta) -> VfsResult<()> {
+    let (storage_mode, storage_chunk_size, inline_content) = match &meta.storage {
+        Storage::None => (0, None, None),
+        Storage::Inline(data) => (1, None, Some(data.as_slice())),
+        Storage::Chunked { chunk_size } => (2, Some(*chunk_size), None),
+    };
+    let xattrs_json = serde_json::to_vec(&meta.xattrs)
+        .map_err(|err| VfsError::eio(format!("serialize inode {} xattrs: {err}", meta.ino)))?;
+    let allocated_extents_json = serde_json::to_vec(&meta.allocated_extents).map_err(|err| {
+        VfsError::eio(format!(
+            "serialize inode {} allocation extents: {err}",
+            meta.ino
+        ))
+    })?;
+    connection
+        .execute(
+            "INSERT INTO agentos_fs_inodes
+             (ino, kind, mode, uid, gid, size, nlink, atime_ns, mtime_ns, ctime_ns, birthtime_ns,
+              storage_mode, storage_chunk_size, inline_content, symlink_target, xattrs_json,
+              allocated_extents_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(ino) DO UPDATE SET
+              kind=excluded.kind, mode=excluded.mode, uid=excluded.uid, gid=excluded.gid,
+              size=excluded.size, nlink=excluded.nlink, atime_ns=excluded.atime_ns,
+              mtime_ns=excluded.mtime_ns, ctime_ns=excluded.ctime_ns,
+              birthtime_ns=excluded.birthtime_ns, storage_mode=excluded.storage_mode,
+              storage_chunk_size=excluded.storage_chunk_size,
+              inline_content=excluded.inline_content, symlink_target=excluded.symlink_target,
+              xattrs_json=excluded.xattrs_json,
+              allocated_extents_json=excluded.allocated_extents_json",
+            params![
+                meta.ino,
+                kind_id(meta.kind),
+                meta.mode,
+                meta.uid,
+                meta.gid,
+                meta.size,
+                meta.nlink,
+                timespec_to_ns(meta.atime),
+                timespec_to_ns(meta.mtime),
+                timespec_to_ns(meta.ctime),
+                timespec_to_ns(meta.birthtime),
+                storage_mode,
+                storage_chunk_size,
+                inline_content,
+                meta.symlink_target,
+                xattrs_json,
+                allocated_extents_json,
+            ],
+        )
+        .map_err(|err| VfsError::eio(format!("persist SQLite inode {}: {err}", meta.ino)))?;
+    Ok(())
 }
 
 fn install_schema(connection: &mut Connection) -> VfsResult<()> {
@@ -246,7 +639,8 @@ fn load_dump(connection: &Connection) -> VfsResult<Option<MetadataDump>> {
     let mut statement = connection
         .prepare(
             "SELECT ino, kind, mode, uid, gid, size, nlink, atime_ns, mtime_ns, ctime_ns,
-                    birthtime_ns, storage_mode, storage_chunk_size, inline_content, symlink_target
+                    birthtime_ns, storage_mode, storage_chunk_size, inline_content, symlink_target,
+                    xattrs_json, allocated_extents_json
              FROM agentos_fs_inodes",
         )
         .map_err(|err| VfsError::eio(format!("prepare inode load: {err}")))?;
@@ -258,10 +652,15 @@ fn load_dump(connection: &Connection) -> VfsResult<Option<MetadataDump>> {
             let chunk_size: Option<u32> = row.get(12)?;
             let inline_content: Option<Vec<u8>> = row.get(13)?;
             let symlink_target: Option<String> = row.get(14)?;
+            let xattrs_json: Vec<u8> = row.get(15)?;
+            let allocated_extents_json: Vec<u8> = row.get(16)?;
             let kind = match kind_id {
                 0 => InodeType::File,
                 1 => InodeType::Directory,
-                _ => InodeType::Symlink,
+                2 => InodeType::Symlink,
+                3 => InodeType::CharacterDevice,
+                4 => InodeType::BlockDevice,
+                _ => InodeType::Fifo,
             };
             let storage = match storage_id {
                 1 => Storage::Inline(inline_content.unwrap_or_default()),
@@ -284,6 +683,22 @@ fn load_dump(connection: &Connection) -> VfsResult<Option<MetadataDump>> {
                 birthtime: ns_to_timespec(row.get(10)?),
                 storage,
                 symlink_target,
+                allocated_extents: serde_json::from_slice(&allocated_extents_json).map_err(
+                    |error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            allocated_extents_json.len(),
+                            rusqlite::types::Type::Blob,
+                            Box::new(error),
+                        )
+                    },
+                )?,
+                xattrs: serde_json::from_slice(&xattrs_json).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        xattrs_json.len(),
+                        rusqlite::types::Type::Blob,
+                        Box::new(error),
+                    )
+                })?,
             })
         })
         .map_err(|err| VfsError::eio(format!("load SQLite inodes: {err}")))?;
@@ -372,35 +787,7 @@ fn persist_dump(connection: &mut Connection, dump: &MetadataDump) -> VfsResult<(
     .map_err(|err| VfsError::eio(format!("clear SQLite metadata tables: {err}")))?;
 
     for meta in dump.inodes.values() {
-        let (storage_mode, storage_chunk_size, inline_content) = match &meta.storage {
-            Storage::None => (0, None, None),
-            Storage::Inline(data) => (1, None, Some(data.as_slice())),
-            Storage::Chunked { chunk_size } => (2, Some(*chunk_size), None),
-        };
-        tx.execute(
-            "INSERT INTO agentos_fs_inodes
-             (ino, kind, mode, uid, gid, size, nlink, atime_ns, mtime_ns, ctime_ns, birthtime_ns,
-              storage_mode, storage_chunk_size, inline_content, symlink_target)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                meta.ino,
-                kind_id(meta.kind),
-                meta.mode,
-                meta.uid,
-                meta.gid,
-                meta.size,
-                meta.nlink,
-                timespec_to_ns(meta.atime),
-                timespec_to_ns(meta.mtime),
-                timespec_to_ns(meta.ctime),
-                timespec_to_ns(meta.birthtime),
-                storage_mode,
-                storage_chunk_size,
-                inline_content,
-                meta.symlink_target,
-            ],
-        )
-        .map_err(|err| VfsError::eio(format!("persist SQLite inode {}: {err}", meta.ino)))?;
+        upsert_inode(&tx, meta)?;
     }
 
     for ((parent, name), child) in &dump.dentries {
@@ -441,6 +828,9 @@ fn kind_id(kind: InodeType) -> i64 {
         InodeType::File => 0,
         InodeType::Directory => 1,
         InodeType::Symlink => 2,
+        InodeType::CharacterDevice => 3,
+        InodeType::BlockDevice => 4,
+        InodeType::Fifo => 5,
     }
 }
 
@@ -480,8 +870,8 @@ impl MetadataStore for SqliteMetadataStore {
         attrs: CreateInodeAttrs,
     ) -> VfsResult<InodeMeta> {
         let result = self.inner.create(parent, name, attrs).await;
-        if result.is_ok() {
-            self.persist()?;
+        if let Ok(meta) = &result {
+            self.persist_create(parent, name, meta)?;
         }
         result
     }
@@ -517,9 +907,10 @@ impl MetadataStore for SqliteMetadataStore {
     }
 
     async fn set_attr(&self, ino: u64, patch: InodePatch) -> VfsResult<Vec<BlockKey>> {
+        let storage_changed = patch.storage.is_some();
         let result = self.inner.set_attr(ino, patch).await;
         if result.is_ok() {
-            self.persist()?;
+            self.persist_set_attr(ino, storage_changed)?;
         }
         result
     }
@@ -529,10 +920,20 @@ impl MetadataStore for SqliteMetadataStore {
         ino: u64,
         edits: Vec<ChunkEdit>,
         new_size: u64,
+        allocated_extents: Vec<(u64, u64)>,
     ) -> VfsResult<Vec<BlockKey>> {
-        let result = self.inner.commit_write(ino, edits, new_size).await;
+        let chunk_size = match self.inner.inode_meta(ino)?.storage {
+            Storage::Chunked { chunk_size } => u64::from(chunk_size),
+            Storage::Inline(_) | Storage::None => u64::from(DEFAULT_CHUNK_SIZE),
+        };
+        let old_size = self.inner.inode_meta(ino)?.size;
+        let persisted_edits = edits.clone();
+        let result = self
+            .inner
+            .commit_write(ino, edits, new_size, allocated_extents)
+            .await;
         if result.is_ok() {
-            self.persist()?;
+            self.persist_commit_write(ino, &persisted_edits, old_size, new_size, chunk_size)?;
         }
         result
     }
@@ -555,6 +956,31 @@ impl MetadataStore for SqliteMetadataStore {
 
     async fn gc(&self) -> VfsResult<Vec<BlockKey>> {
         self.inner.gc().await
+    }
+
+    async fn flush(&self) -> VfsResult<()> {
+        self.flush_durable()
+    }
+}
+
+#[cfg(test)]
+mod writeback_tests {
+    use super::*;
+
+    #[test]
+    fn file_store_uses_writeback_sqlite_settings() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SqliteMetadataStore::open(temp.path().join("metadata.sqlite")).unwrap();
+        let connection = store.connection.lock().expect("sqlite mutex poisoned");
+        let journal_mode: String = connection
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        let synchronous: i64 = connection
+            .query_row("PRAGMA synchronous", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(journal_mode, "wal");
+        assert_eq!(synchronous, 1);
     }
 }
 

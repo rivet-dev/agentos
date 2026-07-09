@@ -1781,6 +1781,8 @@ if (mode === 'write') {
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
                 mounts: vec![MountDescriptor {
                     guest_path: String::from("/workspace"),
+                    guest_source: String::from("host_dir"),
+                    guest_fstype: String::from("host_dir"),
                     read_only: false,
                     plugin: MountPluginDescriptor {
                         id: String::from("host_dir"),
@@ -3654,6 +3656,8 @@ process.stdout.write('status=' + result.status + ';out=' + (result.stdout || '')
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
                 mounts: vec![MountDescriptor {
                     guest_path: String::from("/workspace"),
+                    guest_source: String::from("host_dir"),
+                    guest_fstype: String::from("host_dir"),
                     read_only: false,
                     plugin: MountPluginDescriptor {
                         id: String::from("host_dir"),

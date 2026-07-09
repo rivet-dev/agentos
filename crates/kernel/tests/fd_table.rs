@@ -13,6 +13,62 @@ fn assert_error_code<T: Debug>(result: FdResult<T>, expected: &str) {
 }
 
 #[test]
+fn posix_record_locks_conflict_split_and_release_by_process() {
+    let locks = FileLockManager::new();
+    let target = FileLockTarget::new(7, 42);
+    locks
+        .set_record_lock(
+            target,
+            RecordLock::new(RecordLockType::Write, 10, 20, 10).expect("write lock range"),
+        )
+        .expect("owner write lock");
+
+    let conflict = locks
+        .query_record_lock(
+            target,
+            RecordLock::new(RecordLockType::Read, 15, 5, 20).expect("read lock range"),
+        )
+        .expect("conflicting lock");
+    assert_eq!(conflict.pid, 10);
+    assert_eq!((conflict.start, conflict.end), (10, Some(30)));
+    assert_error_code(
+        locks.set_record_lock(
+            target,
+            RecordLock::new(RecordLockType::Read, 15, 5, 20).expect("read lock range"),
+        ),
+        "EWOULDBLOCK",
+    );
+
+    locks
+        .set_record_lock(
+            target,
+            RecordLock::new(RecordLockType::Unlock, 15, 5, 10).expect("unlock range"),
+        )
+        .expect("split owner range");
+    locks
+        .set_record_lock(
+            target,
+            RecordLock::new(RecordLockType::Read, 15, 5, 20).expect("read lock range"),
+        )
+        .expect("acquire split gap");
+    assert_error_code(
+        locks.set_record_lock(
+            target,
+            RecordLock::new(RecordLockType::Write, 25, 1, 20).expect("write lock range"),
+        ),
+        "EWOULDBLOCK",
+    );
+
+    locks.release_process_target(10, target);
+    locks
+        .set_record_lock(
+            target,
+            RecordLock::new(RecordLockType::Write, 25, 1, 20).expect("write lock range"),
+        )
+        .expect("owner close releases remaining ranges");
+}
+
+#[test]
 fn preallocates_stdio_fds_0_1_2() {
     let mut manager = FdTableManager::new();
     manager.create(1);
@@ -263,6 +319,33 @@ fn nonblocking_status_flags_are_tracked_per_fd_entry() {
             .description
             .flags(),
         O_WRONLY
+    );
+}
+
+#[test]
+fn shared_description_open_preserves_nonblocking_status() {
+    let mut manager = FdTableManager::new();
+    manager.create(1);
+
+    let description =
+        std::sync::Arc::new(agentos_kernel::fd_table::FileDescription::with_ref_count(
+            41,
+            "pipe:41:read",
+            O_RDONLY | O_NONBLOCK,
+            0,
+        ));
+    let table = manager.get_mut(1).expect("FD table should exist");
+    let fd = table
+        .open_with(description, agentos_kernel::fd_table::FILETYPE_PIPE, None)
+        .expect("open shared pipe description");
+
+    assert_eq!(
+        table.get(fd).expect("opened entry").status_flags,
+        O_NONBLOCK
+    );
+    assert_eq!(
+        table.fcntl(fd, F_GETFL, 0).expect("read open status"),
+        O_RDONLY | O_NONBLOCK
     );
 }
 

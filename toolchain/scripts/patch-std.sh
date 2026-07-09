@@ -143,23 +143,48 @@ if [ "$MODE" = "check" ]; then
     CHECK_SRC="$(mktemp -d "${TMPDIR:-/tmp}/agentos-std-patch-check.XXXXXX")"
     cp -a "$STD_SRC/." "$CHECK_SRC/"
 
-    # The installed rust-src may be pristine, fully patched, or left patched by
-    # an earlier build. Reconstruct a pristine copy without touching the
-    # installed tree, then validate the complete series by applying each patch
-    # in order. A patch must be either cleanly present or cleanly absent during
-    # reconstruction; partial or malformed hunks are a hard failure.
+    # Patches can depend on files or context introduced by earlier patches, so
+    # classify the source tree using the complete ordered series. Testing each
+    # patch independently against pristine Rust incorrectly rejects those valid
+    # dependencies. First try reversing a fully applied tree; if that fails,
+    # verify that the full series applies to the original copy. Anything else is
+    # a partial or malformed tree and remains a hard failure.
+    STATE_SRC="$(mktemp -d "${TMPDIR:-/tmp}/agentos-std-patch-state.XXXXXX")"
+    cp -a "$STD_SRC/." "$STATE_SRC/"
+    FULLY_PATCHED=1
     while IFS= read -r PATCH; do
-        PATCH_NAME="$(basename "$PATCH")"
-        if patch --batch --dry-run -R $PATCH_FLAGS -d "$CHECK_SRC" < "$PATCH" > /dev/null 2>&1; then
-            patch --batch -R $PATCH_FLAGS -d "$CHECK_SRC" < "$PATCH" > /dev/null 2>&1
-        elif patch --batch --dry-run $PATCH_FLAGS -d "$CHECK_SRC" < "$PATCH" > /dev/null 2>&1; then
-            :
+        if patch --batch --dry-run -R $PATCH_FLAGS -d "$STATE_SRC" < "$PATCH" > /dev/null 2>&1; then
+            patch --batch -R $PATCH_FLAGS -d "$STATE_SRC" < "$PATCH" > /dev/null 2>&1
         else
-            echo "FAIL: cannot reconstruct pristine std source at $PATCH_NAME"
-            echo "The patch is malformed or the installed source is only partially patched."
-            exit 1
+            FULLY_PATCHED=0
+            break
         fi
     done < <(printf '%s\n' "$PATCH_FILES" | sort -r)
+
+    if [ "$FULLY_PATCHED" -eq 1 ]; then
+        rm -rf "$CHECK_SRC"
+        CHECK_SRC="$STATE_SRC"
+    else
+        rm -rf "$STATE_SRC"
+        STATE_SRC="$(mktemp -d "${TMPDIR:-/tmp}/agentos-std-patch-state.XXXXXX")"
+        cp -a "$STD_SRC/." "$STATE_SRC/"
+        PRISTINE=1
+        FAILED_PATCH_NAME=""
+        while IFS= read -r PATCH; do
+            if patch --batch --dry-run $PATCH_FLAGS -d "$STATE_SRC" < "$PATCH" > /dev/null 2>&1; then
+                patch --batch $PATCH_FLAGS -d "$STATE_SRC" < "$PATCH" > /dev/null 2>&1
+            else
+                PRISTINE=0
+                FAILED_PATCH_NAME="$(basename "$PATCH")"
+                break
+            fi
+        done < <(printf '%s\n' "$PATCH_FILES" | sort)
+        rm -rf "$STATE_SRC"
+        if [ "$PRISTINE" -ne 1 ]; then
+            echo "FAIL: Rust std source is partially patched or the patch series is malformed at $FAILED_PATCH_NAME."
+            exit 1
+        fi
+    fi
 
     STD_SRC="$CHECK_SRC"
     echo "Checking against reconstructed pristine std source: $STD_SRC"

@@ -49,12 +49,10 @@ ALIAS_SYMLINKS := \
 # Stub commands: each gets a symlink to _stubs
 STUB_COMMANDS := \
 	chcon runcon \
-	chgrp chown chroot \
-	df \
-	groups id \
-	hostname hostid \
+	chroot \
+	groups \
+	hostid \
 	install \
-	mkfifo mknod \
 	pinky who users uptime \
 	stty sync tty
 

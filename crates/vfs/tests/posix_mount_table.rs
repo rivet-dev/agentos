@@ -1,11 +1,22 @@
+use agentos_runtime::{RuntimeConfig, SidecarRuntime};
 use std::any::Any;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
+use vfs::adapter::MountedEngineFileSystem;
+use vfs::engine::engines::{ChunkedFs, ChunkedFsOptions};
+use vfs::engine::mem::{InMemoryMetadataStore, MemoryBlockStore};
 use vfs::posix::{
     MemoryFileSystem, SingleSymlinkFileSystem, VfsResult, VirtualDirEntry, VirtualFileSystem,
     VirtualStat, VirtualUtimeSpec,
 };
 use vfs::posix::{MountOptions, MountTable, MountedFileSystem};
+
+fn test_runtime_context() -> agentos_runtime::RuntimeContext {
+    SidecarRuntime::process(&RuntimeConfig::default())
+        .expect("create test runtime")
+        .context()
+}
 
 struct ShutdownTrackingFileSystem {
     shutdown: Arc<AtomicBool>,
@@ -116,6 +127,14 @@ impl MountedFileSystem for ShutdownTrackingFileSystem {
         unreachable!("failed mount should not truncate {path}")
     }
 
+    fn insert_range(&mut self, path: &str, _offset: u64, _length: u64) -> VfsResult<()> {
+        unreachable!("failed mount should not insert range in {path}")
+    }
+
+    fn collapse_range(&mut self, path: &str, _offset: u64, _length: u64) -> VfsResult<()> {
+        unreachable!("failed mount should not collapse range in {path}")
+    }
+
     fn pread(&mut self, path: &str, _offset: u64, _length: usize) -> VfsResult<Vec<u8>> {
         unreachable!("failed mount should not pread {path}")
     }
@@ -152,6 +171,29 @@ fn mount_table_prefers_mounted_filesystems_and_merges_mount_points() {
 
     let root_entries = table.read_dir("/").expect("read root directory");
     assert!(root_entries.contains(&String::from("data")));
+}
+
+#[test]
+fn mount_table_tracks_plugin_guest_source_and_filesystem_type_separately() {
+    let mut table = MountTable::new(MemoryFileSystem::new());
+    table
+        .mount(
+            "/data",
+            MemoryFileSystem::new(),
+            MountOptions::new("chunked_local")
+                .guest_source("/dev/agentos-test")
+                .guest_fstype("agentos"),
+        )
+        .expect("mount agentos filesystem");
+
+    let entry = table
+        .get_mounts()
+        .into_iter()
+        .find(|entry| entry.path == "/data")
+        .expect("mounted entry");
+    assert_eq!(entry.plugin_id, "chunked_local");
+    assert_eq!(entry.guest_source, "/dev/agentos-test");
+    assert_eq!(entry.guest_fstype, "agentos");
 }
 
 #[test]
@@ -347,6 +389,66 @@ fn mount_table_realpath_keeps_mount_local_absolute_symlinks_inside_mount() {
             .expect("realpath through mount-local absolute symlink"),
         "/mnt/target.txt"
     );
+}
+
+#[test]
+fn mount_table_content_ops_follow_guest_absolute_symlink_targets() {
+    let mut table = MountTable::new(MemoryFileSystem::new());
+    let mut mounted = MemoryFileSystem::new();
+    mounted.mkdir("/target/child", true).unwrap();
+    mounted
+        .write_file("/target/child/file", b"content".to_vec())
+        .unwrap();
+    table
+        .mount("/mnt", mounted, MountOptions::new("memory"))
+        .unwrap();
+    table.symlink("/mnt/target", "/mnt/link").unwrap();
+
+    assert_eq!(table.read_link("/mnt/link").unwrap(), "/mnt/target");
+    assert!(table.stat("/mnt/link/child").unwrap().is_directory);
+    assert_eq!(table.read_file("/mnt/link/child/file").unwrap(), b"content");
+    table
+        .set_xattr(
+            "/mnt/target/child/file",
+            "trusted.note",
+            b"value".to_vec(),
+            0,
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        table
+            .get_xattr("/mnt/link/child/file", "trusted.note", false)
+            .unwrap(),
+        b"value"
+    );
+}
+
+#[test]
+fn mount_table_lchown_updates_the_symlink_not_its_target() {
+    let mut table = MountTable::new(MemoryFileSystem::new());
+    let mut mounted = MemoryFileSystem::new();
+    mounted
+        .write_file("/target.txt", b"target".to_vec())
+        .expect("seed mount target");
+    mounted
+        .chown("/target.txt", 10, 20)
+        .expect("seed target ownership");
+    mounted
+        .symlink("/target.txt", "/link.txt")
+        .expect("seed mount-local absolute symlink");
+    table
+        .mount("/mnt", mounted, MountOptions::new("memory"))
+        .expect("mount memory filesystem");
+
+    table
+        .lchown("/mnt/link.txt", 30, 40)
+        .expect("lchown mounted symlink");
+
+    let link = table.lstat("/mnt/link.txt").expect("lstat symlink");
+    assert_eq!((link.uid, link.gid), (30, 40));
+    let target = table.stat("/mnt/target.txt").expect("stat target");
+    assert_eq!((target.uid, target.gid), (10, 20));
 }
 
 #[test]
@@ -569,4 +671,220 @@ fn mount_table_does_not_alias_paths_that_repeat_the_mount_segment() {
         table.read_file("/data/data/file.txt").expect("read nested"),
         b"NESTED".to_vec()
     );
+}
+
+#[test]
+fn remount_enforces_atime_and_read_only_policies_without_changing_other_times() {
+    let engine = ChunkedFs::with_options(
+        InMemoryMetadataStore::new(),
+        MemoryBlockStore::new(),
+        ChunkedFsOptions::default(),
+    );
+    let mut mounted = MountedEngineFileSystem::with_runtime_context(engine, test_runtime_context());
+    mounted
+        .mkdir("/dir", true)
+        .expect("create mounted directory");
+    mounted
+        .write_file("/dir/file", b"data".to_vec())
+        .expect("create mounted file");
+
+    let mut table = MountTable::new(MemoryFileSystem::new());
+    table
+        .mount_boxed("/data", Box::new(mounted), MountOptions::new("memory"))
+        .expect("mount chunked filesystem");
+
+    let initial = table.stat("/data/dir/file").unwrap();
+    std::thread::sleep(Duration::from_millis(5));
+    assert_eq!(table.read_file("/data/dir/file").unwrap(), b"data");
+    let first_read = table.stat("/data/dir/file").unwrap();
+    assert!(first_read.atime_ms > initial.atime_ms);
+    assert_eq!(first_read.mtime_ms, initial.mtime_ms);
+    assert_eq!(first_read.ctime_ms, initial.ctime_ms);
+
+    std::thread::sleep(Duration::from_millis(5));
+    table.read_file("/data/dir/file").unwrap();
+    assert_eq!(
+        table.stat("/data/dir/file").unwrap().atime_ms,
+        first_read.atime_ms,
+        "relatime must not update a second read after atime is newer than mtime and ctime"
+    );
+
+    table.remount("/data", "remount,strictatime").unwrap();
+    std::thread::sleep(Duration::from_millis(5));
+    table.read_file("/data/dir/file").unwrap();
+    let strict_read = table.stat("/data/dir/file").unwrap();
+    assert!(strict_read.atime_ms > first_read.atime_ms);
+
+    table.remount("/data", "remount,noatime").unwrap();
+    std::thread::sleep(Duration::from_millis(5));
+    table.read_file("/data/dir/file").unwrap();
+    assert_eq!(
+        table.stat("/data/dir/file").unwrap().atime_ms,
+        strict_read.atime_ms
+    );
+
+    table
+        .remount("/data", "remount,relatime,nodiratime")
+        .unwrap();
+    let directory_before = table.stat("/data/dir").unwrap();
+    std::thread::sleep(Duration::from_millis(5));
+    table.read_dir("/data/dir").unwrap();
+    assert_eq!(
+        table.stat("/data/dir").unwrap().atime_ms,
+        directory_before.atime_ms
+    );
+
+    table.remount("/data", "remount,ro,strictatime").unwrap();
+    let read_only_before = table.stat("/data/dir/file").unwrap();
+    std::thread::sleep(Duration::from_millis(5));
+    table.read_file("/data/dir/file").unwrap();
+    assert_eq!(
+        table.stat("/data/dir/file").unwrap().atime_ms,
+        read_only_before.atime_ms
+    );
+    assert_eq!(
+        table
+            .write_file("/data/dir/file", b"blocked".to_vec())
+            .unwrap_err()
+            .code(),
+        "EROFS"
+    );
+    assert_eq!(
+        table
+            .get_mounts()
+            .into_iter()
+            .find(|mount| mount.path == "/data")
+            .unwrap()
+            .option_string(),
+        "ro,strictatime,nodiratime"
+    );
+}
+
+#[test]
+fn mounted_chunked_unlink_does_not_follow_a_self_referential_symlink() {
+    let engine = ChunkedFs::with_options(
+        InMemoryMetadataStore::new(),
+        MemoryBlockStore::new(),
+        ChunkedFsOptions::default(),
+    );
+    let mounted = MountedEngineFileSystem::with_runtime_context(engine, test_runtime_context());
+    let mut table = MountTable::new(MemoryFileSystem::new());
+    table
+        .mount_boxed("/data", Box::new(mounted), MountOptions::new("memory"))
+        .expect("mount chunked filesystem");
+    table
+        .symlink("self", "/data/self")
+        .expect("create self-referential symlink");
+
+    table
+        .remove_file("/data/self")
+        .expect("unlink the symlink entry without following it");
+
+    assert_eq!(table.lstat("/data/self").unwrap_err().code(), "ENOENT");
+}
+
+#[test]
+fn remount_rejects_unknown_options_and_non_mount_paths() {
+    let mut table = MountTable::new(MemoryFileSystem::new());
+    table
+        .mount(
+            "/data",
+            MemoryFileSystem::new(),
+            MountOptions::new("memory"),
+        )
+        .unwrap();
+    assert_eq!(
+        table
+            .remount("/data", "remount,ro,lazytime")
+            .unwrap_err()
+            .code(),
+        "EINVAL"
+    );
+    assert_eq!(
+        table
+            .get_mounts()
+            .into_iter()
+            .find(|mount| mount.path == "/data")
+            .unwrap()
+            .option_string(),
+        "rw,relatime",
+        "an invalid remount must not partially apply earlier options"
+    );
+    assert_eq!(
+        table
+            .remount("/data/not-a-mount", "remount,ro")
+            .unwrap_err()
+            .code(),
+        "EINVAL"
+    );
+}
+
+#[test]
+fn mounted_capacity_reports_usage_enforces_enospc_and_reclaims_space() {
+    let mut table = MountTable::new(MemoryFileSystem::new());
+    table
+        .mount(
+            "/data",
+            MemoryFileSystem::new(),
+            MountOptions::new("memory")
+                .max_bytes(Some(8))
+                .max_inodes(Some(4)),
+        )
+        .unwrap();
+
+    let empty = table.path_stats("/data", None, None).unwrap();
+    assert_eq!(empty.total_bytes, 8);
+    assert_eq!(empty.used_bytes, 0);
+    assert_eq!(empty.available_bytes, 8);
+
+    table.write_file("/data/file", b"1234".to_vec()).unwrap();
+    let written = table.path_stats("/data/file", None, None).unwrap();
+    assert_eq!(written.used_bytes, 4);
+    assert_eq!(written.available_bytes, 4);
+
+    let error = table
+        .pwrite("/data/file", b"56789".to_vec(), 4)
+        .unwrap_err();
+    assert_eq!(error.code(), "ENOSPC");
+    assert_eq!(table.read_file("/data/file").unwrap(), b"1234");
+
+    assert_eq!(
+        table.remount("/data", "remount,size=3").unwrap_err().code(),
+        "ENOSPC"
+    );
+    assert_eq!(
+        table.path_stats("/data", None, None).unwrap().total_bytes,
+        8
+    );
+
+    table.remount("/data", "remount,size=6").unwrap();
+    table.pwrite("/data/file", b"56".to_vec(), 4).unwrap();
+    assert_eq!(
+        table
+            .path_stats("/data", None, None)
+            .unwrap()
+            .available_bytes,
+        0
+    );
+    table.remove_file("/data/file").unwrap();
+    table
+        .write_file("/data/reused", b"123456".to_vec())
+        .expect("cached capacity must be reclaimed without a statfs rescan");
+    table.remove_file("/data/reused").unwrap();
+
+    table.mkdir("/data/a/b/c", true).unwrap();
+    assert_eq!(table.create_dir("/data/d").unwrap_err().code(), "ENOSPC");
+    table.remove_dir("/data/a/b/c").unwrap();
+    table.remove_dir("/data/a/b").unwrap();
+    table.remove_dir("/data/a").unwrap();
+    table
+        .mkdir("/data/d/e/f", true)
+        .expect("removed directory inodes must be reclaimed without a statfs rescan");
+    table.remove_dir("/data/d/e/f").unwrap();
+    table.remove_dir("/data/d/e").unwrap();
+    table.remove_dir("/data/d").unwrap();
+
+    let reclaimed = table.path_stats("/data", None, None).unwrap();
+    assert_eq!(reclaimed.used_bytes, 0);
+    assert_eq!(reclaimed.available_bytes, 6);
 }

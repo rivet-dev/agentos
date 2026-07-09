@@ -1,0 +1,12 @@
+--- a/src/interpreter/mod.rs
++++ b/src/interpreter/mod.rs
+@@ -225,8 +225,7 @@ impl<'a> Interpreter<'a> {
+ 
+     /// Set a variable before execution
+     pub fn set_variable(&mut self, name: &str, value: &str) {
+-        self.variables
+-            .insert(name.to_string(), Value::from_string(value.to_string()));
++        self.set_variable_value(name, Value::from_string(value.to_string()));
+     }
+ 
+     /// Set the current filename (FILENAME)

@@ -127,7 +127,12 @@ int ppoll(struct pollfd *fds, nfds_t nfds, const struct timespec *timeout,
  * no-op and any other target fails with EPERM. OpenSSH's uidswap.c relies on
  * exactly the self-assignment case (setuid(getuid()) etc.) to guarantee it
  * holds no elevated privileges.
+ *
+ * Retained as a fallback for the historical fixed-identity runtime. Current
+ * AgentOS builds leave this guard disabled and use the live host_user-backed
+ * implementations from 0033-user-credentials.patch.
  */
+#ifdef AGENTOS_WASI_LIBC_LEGACY_USER_SHIMS
 static int set_fixed_id(unsigned int requested, unsigned int current) {
 	if (requested == current)
 		return 0;
@@ -205,6 +210,7 @@ int getresgid(gid_t *rgid, gid_t *egid, gid_t *sgid) {
 		*sgid = getgid();
 	return 0;
 }
+#endif
 
 /*
  * getgrent(3p) / setgrent(3p) / endgrent(3p) — enumerate the live projected
@@ -212,7 +218,11 @@ int getresgid(gid_t *rgid, gid_t *egid, gid_t *sgid) {
  * process-global cursor used by Linux libc, while setgrent rewinds it and
  * endgrent releases it. Physical records and member lists are bounded so a
  * hostile guest database cannot grow an unbounded libc allocation.
+ *
+ * Retained for the historical projected-/etc implementation. Current builds
+ * use the bounded kernel account database from 0037-user-account-database.patch.
  */
+#ifdef AGENTOS_WASI_LIBC_LEGACY_USER_SHIMS
 #define AGENTOS_GROUP_LINE_MAX 4096
 #define AGENTOS_GROUP_MEMBERS_MAX 128
 
@@ -403,6 +413,7 @@ int setgroups(size_t size, const gid_t *list) {
 	errno = EPERM;
 	return -1;
 }
+#endif
 
 int initgroups(const char *user, gid_t group) {
 	gid_t set[1];

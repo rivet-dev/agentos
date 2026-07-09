@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Thu, 9 Jul 2026 23:45:00 -0700
+Subject: [PATCH 10/10] fstests: preserve fs_perms exec check on WASI
+
+WASI cannot resume a forked linear-memory continuation. Spawn the executable
+permission probe after applying the requested effective credentials, wait for
+it, and preserve its exit status. Native builds retain fork and exec.
+---
+ src/fs_perms.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/src/fs_perms.c b/src/fs_perms.c
+index 6c89bfe6..16e85e12 100644
+--- a/src/fs_perms.c
++++ b/src/fs_perms.c
+@@ -89,12 +89,29 @@ int testfperm(int userId, int groupId, char* fperm) {
+ 	int status;
+ 	pid_t pid;
+ 
++#ifdef __wasi__
++	{
++	    char *child_argv[] = { "./test.file", NULL };
++	    int error = posix_spawnp(&pid, child_argv[0], NULL, NULL,
++				     child_argv, environ);
++	    if (error != 0) {
++		errno = error;
++		ret = 0;
++		goto out;
++	    }
++	    if (waitpid(pid, &status, 0) < 0) {
++		ret = 0;
++		goto out;
++	    }
++	}
++#else
+ 	pid = fork();
+ 	if (pid == 0) {
+ 	    execlp("./test.file","test.file",NULL);
+ 	    exit(0);
+ 	}
+ 	wait(&status);
++#endif
+ 	ret = WEXITSTATUS(status);
+     } else if (!strcmp("t", fperm)) {
+ 	ret = utime("test.file", NULL) ? 0 : 1;
+-- 
+2.47.3

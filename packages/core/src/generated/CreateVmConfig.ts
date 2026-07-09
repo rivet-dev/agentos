@@ -6,6 +6,7 @@ import type { RootFilesystemConfig } from "./RootFilesystemConfig.js";
 import type { VmDnsConfig } from "./VmDnsConfig.js";
 import type { VmLimitsConfig } from "./VmLimitsConfig.js";
 import type { VmListenPolicyConfig } from "./VmListenPolicyConfig.js";
+import type { VmUserConfig } from "./VmUserConfig.js";
 
 /**
  * Canonical Rust-side VM config. Unknown fields must stay rejected here and in
@@ -13,4 +14,4 @@ import type { VmListenPolicyConfig } from "./VmListenPolicyConfig.js";
  * `packages/core/src/node-runtime-options-schema.ts`; update both when a
  * public `NodeRuntime.create(...)` option changes the generated VM config.
  */
-export type CreateVmConfig = { cwd?: string, env: Record<string, string>, rootFilesystem: RootFilesystemConfig, permissions?: PermissionsPolicy, limits?: VmLimitsConfig, dns?: VmDnsConfig, nativeRoot?: NativeRootFilesystemConfig, listen?: VmListenPolicyConfig, loopbackExemptPorts: Array<number>, jsRuntime?: JsRuntimeConfig, bootstrapCommands?: Array<string>, };
+export type CreateVmConfig = { cwd?: string, env: Record<string, string>, user?: VmUserConfig, rootFilesystem: RootFilesystemConfig, permissions?: PermissionsPolicy, limits?: VmLimitsConfig, dns?: VmDnsConfig, nativeRoot?: NativeRootFilesystemConfig, listen?: VmListenPolicyConfig, loopbackExemptPorts: Array<number>, jsRuntime?: JsRuntimeConfig, bootstrapCommands?: Array<string>, };

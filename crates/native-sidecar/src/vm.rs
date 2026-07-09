@@ -365,6 +365,46 @@ where
         let mut config = KernelVmConfig::new(vm_id.clone());
         config.cwd = guest_cwd.clone();
         config.env = guest_env.clone();
+        if let Some(user) = create_config.user.as_ref() {
+            config.user = agentos_kernel::user::UserConfig {
+                uid: user.uid,
+                gid: user.gid,
+                euid: user.euid,
+                egid: user.egid,
+                username: user.username.clone(),
+                homedir: user.homedir.clone(),
+                shell: user.shell.clone(),
+                gecos: user.gecos.clone(),
+                group_name: user.group_name.clone(),
+                supplementary_gids: user.supplementary_gids.clone().unwrap_or_default(),
+                accounts: user
+                    .accounts
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|account| agentos_kernel::user::UserAccount {
+                        uid: account.uid,
+                        gid: account.gid,
+                        username: account.username.clone(),
+                        homedir: account.homedir.clone(),
+                        shell: account.shell.clone(),
+                        gecos: account.gecos.clone().unwrap_or_default(),
+                        supplementary_gids: account.supplementary_gids.clone(),
+                    })
+                    .collect(),
+                groups: user
+                    .groups
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|group| agentos_kernel::user::GroupRecord {
+                        gid: group.gid,
+                        name: group.name.clone(),
+                        members: group.members.clone(),
+                    })
+                    .collect(),
+            };
+        }
         config.permissions = permissions;
         config.dns = agentos_kernel::dns::DnsConfig {
             name_servers: dns.name_servers.clone(),
@@ -2036,6 +2076,8 @@ where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    let max_filesystem_bytes = vm.kernel.resource_limits().max_filesystem_bytes;
+    let max_inode_count = vm.kernel.resource_limits().max_inode_count;
     for mount in mounts {
         let config_value: serde_json::Value =
             serde_json::from_str(&mount.plugin.config).map_err(|error| {
@@ -2061,7 +2103,12 @@ where
             .mount_boxed_filesystem(
                 &mount.guest_path,
                 filesystem,
-                MountOptions::new(mount.plugin.id.clone()).read_only(mount.read_only),
+                MountOptions::new(mount.plugin.id.clone())
+                    .guest_source(mount.guest_source.clone())
+                    .guest_fstype(mount.guest_fstype.clone())
+                    .read_only(mount.read_only)
+                    .max_bytes(max_filesystem_bytes)
+                    .max_inodes(max_inode_count),
             )
             .map_err(kernel_error)?;
         emit_security_audit_event(
@@ -2158,6 +2205,8 @@ fn package_leaf_mount_to_descriptor(
             root,
         } => MountDescriptor {
             guest_path,
+            guest_source: String::from("agentos_packages"),
+            guest_fstype: String::from("agentos_packages"),
             read_only: true,
             plugin: MountPluginDescriptor {
                 id: String::from("agentos_packages"),
@@ -2175,6 +2224,8 @@ fn package_leaf_mount_to_descriptor(
             host_path,
         } => MountDescriptor {
             guest_path,
+            guest_source: String::from("agentos_packages"),
+            guest_fstype: String::from("agentos_packages"),
             read_only: true,
             plugin: MountPluginDescriptor {
                 id: String::from("agentos_packages"),
@@ -2189,6 +2240,8 @@ fn package_leaf_mount_to_descriptor(
         crate::package_projection::PackageLeafMount::SingleSymlink { guest_path, target } => {
             MountDescriptor {
                 guest_path,
+                guest_source: String::from("agentos_packages"),
+                guest_fstype: String::from("agentos_packages"),
                 read_only: true,
                 plugin: MountPluginDescriptor {
                     id: String::from("agentos_packages"),
@@ -2331,6 +2384,8 @@ fn append_module_access_mount(
 
     mounts.push(MountDescriptor {
         guest_path: String::from("/root/node_modules"),
+        guest_source: String::from("module_access"),
+        guest_fstype: String::from("module_access"),
         read_only: true,
         plugin: MountPluginDescriptor {
             id: String::from("module_access"),
@@ -2424,6 +2479,8 @@ fn append_module_access_symlink_mount(
 
     mounts.push(MountDescriptor {
         guest_path: guest_path.to_owned(),
+        guest_source: String::from("host_dir"),
+        guest_fstype: String::from("host_dir"),
         read_only: true,
         plugin: MountPluginDescriptor {
             id: String::from("host_dir"),

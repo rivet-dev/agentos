@@ -10,6 +10,15 @@ pub struct FileSystemUsage {
     pub inode_count: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileSystemStats {
+    pub total_bytes: u64,
+    pub used_bytes: u64,
+    pub available_bytes: u64,
+    pub total_inodes: u64,
+    pub free_inodes: u64,
+}
+
 pub trait RootFilesystemResourceLimits {
     fn max_filesystem_bytes(&self) -> Option<u64>;
     fn max_inode_count(&self) -> Option<usize>;
@@ -25,12 +34,12 @@ pub fn measure_filesystem_usage<F: VirtualFileSystem>(
 fn measure_path_usage<F: VirtualFileSystem>(
     filesystem: &mut F,
     path: &str,
-    visited: &mut BTreeSet<u64>,
+    visited: &mut BTreeSet<(u64, u64)>,
 ) -> VfsResult<FileSystemUsage> {
     let stat = filesystem.lstat(path)?;
     let mut usage = FileSystemUsage::default();
 
-    if visited.insert(stat.ino) {
+    if visited.insert((stat.dev, stat.ino)) {
         usage.inode_count += 1;
         if !stat.is_directory {
             usage.total_bytes = usage.total_bytes.saturating_add(stat.size);

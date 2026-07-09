@@ -1,0 +1,140 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Thu, 9 Jul 2026 23:05:00 -0700
+Subject: [PATCH 9/9] fstests: port helper process launches to WASI
+
+WASI cannot resume a forked linear-memory continuation and does not expose
+execvp. Preserve permname's disjoint concurrent workers by spawning one copy
+per shard, and preserve runas credential inheritance and exit status by
+spawning its command after applying the requested identity.
+
+The native paths remain unchanged.
+---
+ src/permname.c | 57 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ src/runas.c    | 23 +++++++++++++++++++++
+ 2 files changed, 80 insertions(+)
+
+diff --git a/src/permname.c b/src/permname.c
+index a5b0246d..fdc067bd 100644
+--- a/src/permname.c
++++ b/src/permname.c
+@@ -16,6 +16,7 @@ int	nproc = 1;
+ int	nflag;
+ int	vflag;
+ int     pid;
++int	child_index = -1;
+ 
+ void	mkf(int idx, int p);
+ 
+@@ -65,6 +66,12 @@ main(int argc, char **argv)
+ 			nflag = 1; 
+ 		} else if (strcmp(*argv, "-v") == 0) {
+ 			vflag = 1;
++#ifdef __wasi__
++		} else if (strcmp(*argv, "-P") == 0) {
++			argc--;
++			argv++;
++			child_index = atoi(*argv);
++#endif
+ 		} else if (strcmp(*argv, "-h") == 0) {
+                         usage++;
+ 		} else {
+@@ -111,6 +118,55 @@ main(int argc, char **argv)
+ 		else if (a == 63)
+ 			alpha[63] = '@';
+ 	}
++#ifdef __wasi__
++	if (child_index >= 0) {
++		pid = getpid();
++		mkf(0, child_index);
++		return 0;
++	}
++	pid_t children[64];
++	for (a = 0; a < nproc; a++) {
++		char asize_arg[16], len_arg[16], nproc_arg[16], child_arg[16];
++		char *child_argv[16];
++		int arg = 0;
++
++		snprintf(asize_arg, sizeof(asize_arg), "%d", asize);
++		snprintf(len_arg, sizeof(len_arg), "%d", len);
++		snprintf(nproc_arg, sizeof(nproc_arg), "%d", nproc);
++		snprintf(child_arg, sizeof(child_arg), "%d", a);
++		child_argv[arg++] = argv0;
++		child_argv[arg++] = "-c";
++		child_argv[arg++] = asize_arg;
++		child_argv[arg++] = "-l";
++		child_argv[arg++] = len_arg;
++		child_argv[arg++] = "-p";
++		child_argv[arg++] = nproc_arg;
++		if (dflag)
++			child_argv[arg++] = "-d";
++		if (nflag)
++			child_argv[arg++] = "-n";
++		if (vflag)
++			child_argv[arg++] = "-v";
++		child_argv[arg++] = "-P";
++		child_argv[arg++] = child_arg;
++		child_argv[arg] = NULL;
++		int error = posix_spawnp(&children[a], argv0, NULL, NULL,
++				 child_argv, environ);
++		if (error != 0) {
++			errno = error;
++			perror("posix_spawnp");
++			exit(1);
++		}
++	}
++	for (a = 0; a < nproc; a++) {
++		if (waitpid(children[a], &stat, 0) < 0) {
++			perror("waitpid");
++			exit(1);
++		}
++		if (!WIFEXITED(stat) || WEXITSTATUS(stat) != 0)
++			exit(1);
++	}
++#else
+ 	for (a = 0; a < nproc; a++) {
+                 int r=fork();
+                 if (r<0) {
+@@ -132,6 +188,7 @@ main(int argc, char **argv)
+                 }
+                 if (!r) break;
+         }
++#endif
+         
+ 	return 0;
+ }
+diff --git a/src/runas.c b/src/runas.c
+index 879d756a..5fe86d19 100644
+--- a/src/runas.c
++++ b/src/runas.c
+@@ -108,7 +108,28 @@ main(int argc, char **argv)
+ 	    }
+         }
+ 
++#ifdef __wasi__
++	{
++		pid_t child;
++		int status;
++		int error = posix_spawnp(&child, cmd[0], NULL, NULL, cmd, environ);
++
++		if (error != 0) {
++			errno = error;
++			fprintf(stderr, "%s: %s\n", cmd[0], strerror(errno));
++			exit(1);
++		}
++		if (waitpid(child, &status, 0) < 0) {
++			fprintf(stderr, "%s: %s\n", cmd[0], strerror(errno));
++			exit(1);
++		}
++		if (WIFEXITED(status))
++			exit(WEXITSTATUS(status));
++		exit(128 + WTERMSIG(status));
++	}
++#else
+ 	execvp(cmd[0], cmd);
+ 	fprintf(stderr, "%s: %s\n", cmd[0], strerror(errno));
+ 	exit(1);
++#endif
+ }
+-- 
+2.47.3

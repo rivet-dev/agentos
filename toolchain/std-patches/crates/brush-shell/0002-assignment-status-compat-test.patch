@@ -1,0 +1,18 @@
+--- a/tests/cases/assignments.yaml
++++ b/tests/cases/assignments.yaml
+@@ -9,6 +9,15 @@ cases:
+       x=yz
+       echo "x: ${x}"
+ 
++  - name: "Assignment observes previous status"
++    stdin: |
++      false
++      saved=$?
++      echo "saved: ${saved}"
++
++      substitution=$(false)
++      echo "substitution: $?"
++
+   - name: "Invalid variable name"
+     ignore_stderr: true
+     stdin: |

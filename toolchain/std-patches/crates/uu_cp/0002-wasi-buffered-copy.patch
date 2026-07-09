@@ -1,0 +1,59 @@
+--- a/src/platform/other.rs
++++ b/src/platform/other.rs
+@@ -3,14 +3,35 @@
+ // For the full copyright and license information, please view the LICENSE
+ // file that was distributed with this source code.
+ // spell-checker:ignore reflink
+-use std::fs;
+ use std::path::Path;
++#[cfg(not(target_os = "wasi"))]
++use std::fs;
++#[cfg(target_os = "wasi")]
++use std::fs::{File, OpenOptions};
++#[cfg(target_os = "wasi")]
++use std::io::{Read, Write};
+ use uucore::translate;
+ 
+ use crate::{
+     CopyDebug, CopyResult, CpError, OffloadReflinkDebug, ReflinkMode, SparseDebug, SparseMode,
+ };
+ 
++#[cfg(target_os = "wasi")]
++fn copy_stream(src: &mut File, dest: &mut File) -> std::io::Result<u64> {
++    const BUFFER_BYTES: usize = 1024 * 1024;
++
++    let mut buffer = vec![0_u8; BUFFER_BYTES];
++    let mut copied = 0_u64;
++    loop {
++        let count = src.read(&mut buffer)?;
++        if count == 0 {
++            return Ok(copied);
++        }
++        dest.write_all(&buffer[..count])?;
++        copied += count as u64;
++    }
++}
++
+ /// Copies `source` to `dest` for systems without copy-on-write
+ pub(crate) fn copy_on_write(
+     source: &Path,
+@@ -34,6 +55,19 @@
+         reflink: OffloadReflinkDebug::Unsupported,
+         sparse_detection: SparseDebug::Unsupported,
+     };
++    #[cfg(target_os = "wasi")]
++    {
++        let mut src_file = File::open(source)?;
++        let mut dst_file = OpenOptions::new()
++            .create(true)
++            .truncate(true)
++            .write(true)
++            .open(dest)?;
++        copy_stream(&mut src_file, &mut dst_file)
++            .map_err(|_| std::io::Error::from(std::io::ErrorKind::Other))
++            .map_err(|error| CpError::IoErrContext(error, context.to_owned()))?;
++    }
++    #[cfg(not(target_os = "wasi"))]
+     fs::copy(source, dest).map_err(|e| CpError::IoErrContext(e, context.to_owned()))?;
+ 
+     Ok(copy_debug)

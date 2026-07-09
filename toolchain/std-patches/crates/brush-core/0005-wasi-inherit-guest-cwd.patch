@@ -1,0 +1,24 @@
+--- a/src/shell.rs
++++ b/src/shell.rs
+@@ -346,12 +346,20 @@ impl Shell {
+     /// * `options` - The options to use when creating the shell.
+     pub async fn new(options: CreateOptions) -> Result<Self, error::Error> {
++        #[cfg(target_os = "wasi")]
++        let initial_working_dir = std::env::var_os("PWD")
++            .filter(|pwd| Path::new(pwd).is_absolute())
++            .map(PathBuf::from)
++            .unwrap_or(std::env::current_dir()?);
++        #[cfg(not(target_os = "wasi"))]
++        let initial_working_dir = std::env::current_dir()?;
++
+         // Instantiate the shell with some defaults.
+         let mut shell = Self {
+             traps: traps::TrapHandlerConfig::default(),
+             open_files: openfiles::OpenFiles::new(),
+-            // Populate working directory from the host environment.
+-            working_dir: std::env::current_dir()?,
++            // WASI has no process-global chdir; the runtime supplies the guest cwd in PWD.
++            working_dir: initial_working_dir,
+             env: env::ShellEnvironment::new(),
+             funcs: functions::FunctionEnv::default(),
+             options: RuntimeOptions::defaults_from(&options),

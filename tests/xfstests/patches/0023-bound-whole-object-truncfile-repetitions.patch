@@ -1,0 +1,35 @@
+From 2bda91b2d63f31ce4ed1700e9872a94d74f8ce23 Mon Sep 17 00:00:00 2001
+From: AgentOS <dev@agentos.dev>
+Date: Tue, 14 Jul 2026 23:00:00 -0700
+Subject: [PATCH] generic/014: accept exact whole-object iteration reduction
+
+Keep the upstream 10,000-iteration default. The AgentOS runner supplies a
+smaller value only for an exact reviewed test/backend reduction record.
+---
+ tests/generic/014 | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/tests/generic/014 b/tests/generic/014
+index af4c1c22..8782c263 100755
+--- a/tests/generic/014
++++ b/tests/generic/014
+@@ -39,7 +39,16 @@ echo "------"
+ echo "------"
+ echo "test 1"
+ echo "------"
+-$here/src/truncfile -c 10000 $TEST_DIR/truncfile.$$.0 >$tmp.out 2>&1
++iterations=${XFSTESTS_GENERIC_014_ITERATIONS:-10000}
++case "$iterations" in
++	''|*[!0-9]*)
++		_fail "invalid generic/014 iteration count: $iterations"
++		;;
++esac
++if [ "$iterations" -lt 1 ] || [ "$iterations" -gt 10000 ]; then
++	_fail "generic/014 iteration count must be in 1..10000: $iterations"
++fi
++$here/src/truncfile -c "$iterations" $TEST_DIR/truncfile.$$.0 >$tmp.out 2>&1
+ ret=$?
+ if [ "$ret" -ne 0 ]; then
+ 	out=`cat $tmp.out`
+-- 
+2.47.2

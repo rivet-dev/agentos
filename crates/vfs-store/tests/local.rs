@@ -1,8 +1,11 @@
 use agentos_vfs::{FileBlockStore, SqliteMetadataStore};
 use rusqlite::Connection;
+use vfs::adapter::MountedEngineFileSystem;
 use vfs::engine::engines::{ChunkedFs, ChunkedFsOptions};
 use vfs::engine::mem::MemoryBlockStore;
 use vfs::engine::{BlockKey, BlockStore, VirtualFileSystem};
+use vfs::posix::MountedFileSystem;
+use vfs::posix::{MemoryFileSystem, MountOptions, MountTable};
 
 #[tokio::test]
 async fn file_block_store_persists_blocks() {
@@ -32,7 +35,7 @@ async fn sqlite_store_installs_canonical_schema() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 1);
+    assert_eq!(version, 2);
 
     let mut statement = connection
         .prepare(
@@ -130,7 +133,7 @@ fn sqlite_store_rejects_future_schema_versions() {
                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
                schema_version INTEGER NOT NULL CHECK (schema_version >= 0)
              ) STRICT;
-             INSERT INTO agentos_fs_schema_version (singleton, schema_version) VALUES (1, 2);",
+             INSERT INTO agentos_fs_schema_version (singleton, schema_version) VALUES (1, 3);",
         )
         .unwrap();
     drop(connection);
@@ -140,7 +143,7 @@ fn sqlite_store_rejects_future_schema_versions() {
         .expect("future schema must be rejected");
     assert!(error
         .message()
-        .contains("version 2; latest supported version is 1"));
+        .contains("version 3; latest supported version is 2"));
 }
 
 #[tokio::test]
@@ -162,6 +165,9 @@ async fn sqlite_store_reopens_persisted_metadata() {
         );
         fs.mkdir("/dir", false).await.unwrap();
         fs.write_file("/dir/file", b"persisted").await.unwrap();
+        fs.set_xattr("/dir/file", "user.persisted", b"xattr", 0, true)
+            .await
+            .unwrap();
     }
 
     let metadata = SqliteMetadataStore::open(&db).unwrap();
@@ -176,6 +182,215 @@ async fn sqlite_store_reopens_persisted_metadata() {
     );
     assert_eq!(fs.read_file("/dir/file").await.unwrap(), b"persisted");
     assert_eq!(fs.read_dir("/dir").await.unwrap(), vec!["file"]);
+    assert_eq!(
+        fs.get_xattr("/dir/file", "user.persisted", true)
+            .await
+            .unwrap(),
+        b"xattr"
+    );
+}
+
+#[tokio::test]
+async fn sqlite_store_reopens_incremental_pwrite_overwrite_and_truncate() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = temp.path().join("metadata.sqlite");
+    let block_root = temp.path().join("blocks");
+
+    {
+        let fs = ChunkedFs::with_options(
+            SqliteMetadataStore::open(&db).unwrap(),
+            FileBlockStore::new(&block_root).unwrap(),
+            ChunkedFsOptions {
+                inline_threshold: 1,
+                chunk_size: 4,
+                ..ChunkedFsOptions::default()
+            },
+        );
+        fs.write_file("/file", b"abcdefghijkl").await.unwrap();
+        fs.pwrite("/file", b"XY", 5).await.unwrap();
+        fs.truncate("/file", 8).await.unwrap();
+        assert_eq!(fs.read_file("/file").await.unwrap(), b"abcdeXYh");
+    }
+
+    let fs = ChunkedFs::with_options(
+        SqliteMetadataStore::open(&db).unwrap(),
+        FileBlockStore::new(&block_root).unwrap(),
+        ChunkedFsOptions {
+            inline_threshold: 1,
+            chunk_size: 4,
+            ..ChunkedFsOptions::default()
+        },
+    );
+    assert_eq!(fs.read_file("/file").await.unwrap(), b"abcdeXYh");
+    assert_eq!(fs.stat("/file").await.unwrap().size, 8);
+}
+
+#[tokio::test]
+async fn sqlite_store_preserves_truncated_chunk_prefix_during_sparse_growth() {
+    let temp = tempfile::tempdir().unwrap();
+    let fs = ChunkedFs::with_options(
+        SqliteMetadataStore::open(temp.path().join("metadata.sqlite")).unwrap(),
+        FileBlockStore::new(temp.path().join("blocks")).unwrap(),
+        ChunkedFsOptions {
+            inline_threshold: 4096,
+            chunk_size: 65536,
+            ..ChunkedFsOptions::default()
+        },
+    );
+
+    fs.write_file("/file", &vec![0x63; 65536]).await.unwrap();
+    fs.truncate("/file", 1).await.unwrap();
+    assert_eq!(fs.read_file("/file").await.unwrap(), b"c");
+
+    fs.pwrite("/file", &vec![0x41; 65536], 65536).await.unwrap();
+    assert_eq!(fs.pread("/file", 0, 1).await.unwrap(), b"c");
+    assert_eq!(fs.pread("/file", 65536, 16).await.unwrap(), vec![0x41; 16]);
+}
+
+#[tokio::test]
+async fn sqlite_store_commits_each_bounded_write_batch_atomically() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = temp.path().join("metadata.sqlite");
+    let block_root = temp.path().join("blocks");
+    let fs = ChunkedFs::with_options(
+        SqliteMetadataStore::open(&db).unwrap(),
+        FileBlockStore::new(&block_root).unwrap(),
+        ChunkedFsOptions {
+            inline_threshold: 1,
+            chunk_size: 4,
+            ..ChunkedFsOptions::default()
+        },
+    );
+    fs.write_file("/file", b"").await.unwrap();
+    for index in 0..255_u64 {
+        fs.pwrite("/file", &[index as u8; 4], index * 4)
+            .await
+            .unwrap();
+    }
+
+    let reopen = || {
+        ChunkedFs::with_options(
+            SqliteMetadataStore::open(&db).unwrap(),
+            FileBlockStore::new(&block_root).unwrap(),
+            ChunkedFsOptions {
+                inline_threshold: 1,
+                chunk_size: 4,
+                ..ChunkedFsOptions::default()
+            },
+        )
+    };
+    assert_eq!(reopen().stat("/file").await.unwrap().size, 4);
+
+    fs.pwrite("/file", &[255; 4], 255 * 4).await.unwrap();
+    let reopened = reopen();
+    let bytes = reopened.read_file("/file").await.unwrap();
+    assert_eq!(bytes.len(), 1024);
+    assert_eq!(&bytes[..4], &[0; 4]);
+    assert_eq!(&bytes[1020..], &[255; 4]);
+}
+
+#[tokio::test]
+async fn chunked_local_sync_flushes_pending_metadata_for_reopen() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = temp.path().join("metadata.sqlite");
+    let block_root = temp.path().join("blocks");
+    let options = ChunkedFsOptions {
+        inline_threshold: 1,
+        chunk_size: 4,
+        ..ChunkedFsOptions::default()
+    };
+
+    {
+        let fs = ChunkedFs::with_options(
+            SqliteMetadataStore::open(&db).unwrap(),
+            FileBlockStore::new(&block_root).unwrap(),
+            options.clone(),
+        );
+        fs.write_file("/file", b"abcdefgh").await.unwrap();
+    }
+
+    let fs = ChunkedFs::with_options(
+        SqliteMetadataStore::open(&db).unwrap(),
+        FileBlockStore::new(&block_root).unwrap(),
+        options.clone(),
+    );
+    fs.pwrite("/file", b"ijkl", 8).await.unwrap();
+
+    let reopen = || {
+        ChunkedFs::with_options(
+            SqliteMetadataStore::open(&db).unwrap(),
+            FileBlockStore::new(&block_root).unwrap(),
+            options.clone(),
+        )
+    };
+    assert_eq!(reopen().stat("/file").await.unwrap().size, 8);
+
+    fs.sync("/file").await.unwrap();
+    let reopened = reopen();
+    assert_eq!(reopened.stat("/file").await.unwrap().size, 12);
+    assert_eq!(reopened.read_file("/file").await.unwrap(), b"abcdefghijkl");
+}
+
+#[tokio::test]
+async fn sqlite_store_persists_sparse_allocation_extents() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = temp.path().join("metadata.sqlite");
+    let block_root = temp.path().join("blocks");
+
+    {
+        let fs = ChunkedFs::with_options(
+            SqliteMetadataStore::open(&db).unwrap(),
+            FileBlockStore::new(&block_root).unwrap(),
+            ChunkedFsOptions {
+                inline_threshold: 1,
+                chunk_size: 4096,
+                ..ChunkedFsOptions::default()
+            },
+        );
+        fs.write_file("/sparse", b"").await.unwrap();
+        fs.pwrite("/sparse", &vec![b'x'; 50 * 1024], 1_600 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(fs.stat("/sparse").await.unwrap().blocks, 100);
+    }
+
+    let fs = ChunkedFs::with_options(
+        SqliteMetadataStore::open(&db).unwrap(),
+        FileBlockStore::new(&block_root).unwrap(),
+        ChunkedFsOptions {
+            inline_threshold: 1,
+            chunk_size: 4096,
+            ..ChunkedFsOptions::default()
+        },
+    );
+    let stat = fs.stat("/sparse").await.unwrap();
+    assert_eq!(stat.size, 1_650 * 1024);
+    assert_eq!(stat.blocks, 100);
+}
+
+#[tokio::test]
+async fn sqlite_store_reopens_many_incremental_creates() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = temp.path().join("metadata.sqlite");
+
+    {
+        let fs = ChunkedFs::new(
+            SqliteMetadataStore::open(&db).unwrap(),
+            MemoryBlockStore::new(),
+        );
+        fs.mkdir("/many", false).await.unwrap();
+        for index in 0..1_000 {
+            fs.write_file(&format!("/many/file-{index}"), b"")
+                .await
+                .unwrap();
+        }
+    }
+
+    let fs = ChunkedFs::new(
+        SqliteMetadataStore::open(&db).unwrap(),
+        MemoryBlockStore::new(),
+    );
+    assert_eq!(fs.read_dir("/many").await.unwrap().len(), 1_000);
 }
 
 #[tokio::test]
@@ -216,4 +431,76 @@ async fn chunked_local_reopens_and_cleans_stale_blocks() {
     fs.truncate("/file", 5).await.unwrap();
     assert_eq!(fs.read_file("/file").await.unwrap(), b"abcde");
     assert!(!blocks.exists(&stale_key).await.unwrap());
+}
+
+#[test]
+fn chunked_local_mounted_adapter_creates_exclusive_files_with_modes() {
+    let temp = tempfile::tempdir().unwrap();
+    let fs = ChunkedFs::new(
+        SqliteMetadataStore::open(temp.path().join("metadata.sqlite")).unwrap(),
+        FileBlockStore::new(temp.path().join("blocks")).unwrap(),
+    );
+    let mut mounted = MountedEngineFileSystem::new(fs).unwrap();
+
+    mounted.mkdir("/nested", false).unwrap();
+    mounted
+        .create_file_exclusive_with_mode("/at-root", Vec::new(), Some(0o600))
+        .unwrap();
+    mounted
+        .create_file_exclusive_with_mode("/nested/file", Vec::new(), Some(0o640))
+        .unwrap();
+
+    assert_eq!(mounted.stat("/at-root").unwrap().mode & 0o777, 0o600);
+    assert_eq!(mounted.stat("/nested/file").unwrap().mode & 0o777, 0o640);
+}
+
+#[test]
+fn chunked_local_mounted_adapter_preserves_sparse_pwrite_allocation() {
+    let temp = tempfile::tempdir().unwrap();
+    let fs = ChunkedFs::new(
+        SqliteMetadataStore::open(temp.path().join("metadata.sqlite")).unwrap(),
+        FileBlockStore::new(temp.path().join("blocks")).unwrap(),
+    );
+    let mut mounted = MountedEngineFileSystem::new(fs).unwrap();
+
+    mounted.write_file("/sparse", Vec::new()).unwrap();
+    mounted
+        .pwrite("/sparse", vec![b'x'; 50 * 1024], 1_600 * 1024)
+        .unwrap();
+
+    let stat = mounted.stat("/sparse").unwrap();
+    assert_eq!(stat.size, 1_650 * 1024);
+    assert_eq!(stat.blocks, 100);
+}
+
+#[test]
+fn chunked_local_mount_table_preserves_sparse_pwrite_allocation() {
+    let temp = tempfile::tempdir().unwrap();
+    let fs = ChunkedFs::new(
+        SqliteMetadataStore::open(temp.path().join("metadata.sqlite")).unwrap(),
+        FileBlockStore::new(temp.path().join("blocks")).unwrap(),
+    );
+    let mounted = MountedEngineFileSystem::new(fs).unwrap();
+    let mut table = MountTable::new(MemoryFileSystem::new());
+    vfs::posix::VirtualFileSystem::mkdir(&mut table, "/mnt", false).unwrap();
+    table
+        .mount_boxed(
+            "/mnt",
+            Box::new(mounted),
+            MountOptions::new("chunked_local"),
+        )
+        .unwrap();
+
+    vfs::posix::VirtualFileSystem::write_file(&mut table, "/mnt/sparse", Vec::new()).unwrap();
+    vfs::posix::VirtualFileSystem::pwrite(
+        &mut table,
+        "/mnt/sparse",
+        vec![b'x'; 50 * 1024],
+        1_600 * 1024,
+    )
+    .unwrap();
+
+    let stat = vfs::posix::VirtualFileSystem::stat(&mut table, "/mnt/sparse").unwrap();
+    assert_eq!(stat.size, 1_650 * 1024);
+    assert_eq!(stat.blocks, 100);
 }

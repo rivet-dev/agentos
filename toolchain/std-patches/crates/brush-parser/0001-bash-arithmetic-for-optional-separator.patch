@@ -1,0 +1,30 @@
+--- a/src/parser.rs
++++ b/src/parser.rs
+@@ -429,7 +429,7 @@
+             }
+ 
+         rule arithmetic_for_body() -> ast::DoGroupCommand =
+-            sequential_sep() body:do_group() { body } /
++            sequential_sep()? body:do_group() { body } /
+             body:brace_group() { ast::DoGroupCommand { list: body.list, loc: body.loc } }
+ 
+         rule extended_test_command() -> ast::ExtendedTestExprCommand =
+@@ -1229,4 +1229,18 @@ for f in A B C; do
+ 
+         Ok(())
+     }
++
++    #[test]
++    fn parse_arithmetic_for_without_separator_before_do() -> Result<()> {
++        let input = "for ((i = 0; i < 2; i++)) do echo $i; done";
++        let tokens = tokenize_str(input)?;
++        super::token_parser::program(
++            &Tokens {
++                tokens: tokens.as_slice(),
++            },
++            &ParserOptions::default(),
++            &SourceInfo::default(),
++        )?;
++        Ok(())
++    }
+ }

@@ -850,6 +850,8 @@ fn schema_supports_configuration_and_structured_events() {
         RequestPayload::ConfigureVm(agentos_native_sidecar::protocol::ConfigureVmRequest {
             mounts: vec![agentos_native_sidecar::protocol::MountDescriptor {
                 guest_path: "/workspace".to_string(),
+                guest_source: "host_dir".to_string(),
+                guest_fstype: "host_dir".to_string(),
                 read_only: false,
                 plugin: agentos_native_sidecar::protocol::MountPluginDescriptor {
                     id: "host_dir".to_string(),

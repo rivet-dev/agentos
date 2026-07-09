@@ -11,7 +11,7 @@ use std::sync::Arc;
 use vfs::posix::usage::RootFilesystemResourceLimits;
 
 pub use vfs::posix::usage::{
-    measure_filesystem_usage, FileSystemUsage, DEFAULT_MAX_FILESYSTEM_BYTES,
+    measure_filesystem_usage, FileSystemStats, FileSystemUsage, DEFAULT_MAX_FILESYSTEM_BYTES,
     DEFAULT_MAX_INODE_COUNT,
 };
 

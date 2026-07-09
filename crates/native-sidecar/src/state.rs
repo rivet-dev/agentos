@@ -1185,6 +1185,9 @@ pub(crate) struct ActiveProcess {
     pub(crate) guest_cwd: String,
     pub(crate) env: BTreeMap<String, String>,
     pub(crate) host_cwd: PathBuf,
+    /// VM-owned host root used only for kernel/runtime shadow reconciliation.
+    /// This must not be inferred from a mapped host cwd or exposed through envp.
+    pub(crate) shadow_root: Option<PathBuf>,
     pub(crate) host_write_dirty: bool,
     pub(crate) mapped_host_fds: BTreeMap<u32, ActiveMappedHostFd>,
     pub(crate) next_mapped_host_fd: u32,

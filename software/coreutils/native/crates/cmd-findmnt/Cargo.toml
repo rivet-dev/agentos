@@ -1,0 +1,11 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-findmnt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "findmnt-compatible mount query command for AgentOS VMs"
+
+[[bin]]
+name = "findmnt"
+path = "src/main.rs"

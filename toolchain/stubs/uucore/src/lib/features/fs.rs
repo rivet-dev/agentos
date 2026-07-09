@@ -47,13 +47,22 @@ pub mod wasi_mode_consts {
 #[cfg(target_os = "wasi")]
 use wasi_mode_consts::*;
 
-// wasmVM: WASI stubs for major/minor (device numbers not meaningful on VFS)
+// Linux dev_t encoding used by AgentOS special inodes.
 #[cfg(target_os = "wasi")]
-pub fn major(_dev: u64) -> u32 { 0 }
+pub fn major(dev: u64) -> u32 {
+    (((dev >> 8) & 0xfff) | ((dev >> 32) & 0xffff_f000)) as u32
+}
 #[cfg(target_os = "wasi")]
-pub fn minor(_dev: u64) -> u32 { 0 }
+pub fn minor(dev: u64) -> u32 {
+    ((dev & 0xff) | ((dev >> 12) & 0xffff_ff00)) as u32
+}
 #[cfg(target_os = "wasi")]
-pub fn makedev(_major: u32, _minor: u32) -> u64 { 0 }
+pub fn makedev(major: u32, minor: u32) -> u64 {
+    ((u64::from(major) & 0xfff) << 8)
+        | ((u64::from(major) & !0xfff) << 32)
+        | (u64::from(minor) & 0xff)
+        | ((u64::from(minor) & !0xff) << 12)
+}
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::env;

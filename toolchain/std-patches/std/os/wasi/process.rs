@@ -94,8 +94,8 @@ pub trait ExitStatusExt {
 
     /// If the process was terminated by a signal, returns that signal.
     ///
-    /// AgentOS process statuses are reported as exit codes by the wasi-spawn
-    /// broker, so there is no POSIX signal payload to expose here.
+    /// AgentOS preserves the host signal in the POSIX wait status returned by
+    /// the WASI process broker.
     #[stable(feature = "process_extensions", since = "1.2.0")]
     fn signal(&self) -> Option<i32>;
 }
@@ -107,6 +107,6 @@ impl ExitStatusExt for process::ExitStatus {
     }
 
     fn signal(&self) -> Option<i32> {
-        None
+        self.as_inner().signal()
     }
 }

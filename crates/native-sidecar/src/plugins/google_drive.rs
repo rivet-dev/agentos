@@ -688,6 +688,9 @@ enum PersistedFilesystemInodeKind {
     File { storage: PersistedFileStorage },
     Directory,
     SymbolicLink { target: String },
+    CharacterDevice { rdev: u64 },
+    BlockDevice { rdev: u64 },
+    Fifo,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -754,6 +757,13 @@ fn persist_manifest_from_snapshot(
                     target: target.clone(),
                 }
             }
+            MemoryFileSystemSnapshotInodeKind::CharacterDevice { rdev } => {
+                PersistedFilesystemInodeKind::CharacterDevice { rdev: *rdev }
+            }
+            MemoryFileSystemSnapshotInodeKind::BlockDevice { rdev } => {
+                PersistedFilesystemInodeKind::BlockDevice { rdev: *rdev }
+            }
+            MemoryFileSystemSnapshotInodeKind::Fifo => PersistedFilesystemInodeKind::Fifo,
         };
 
         inodes.insert(
@@ -851,6 +861,13 @@ fn load_filesystem_from_manifest(
             PersistedFilesystemInodeKind::SymbolicLink { target } => {
                 MemoryFileSystemSnapshotInodeKind::SymbolicLink { target }
             }
+            PersistedFilesystemInodeKind::CharacterDevice { rdev } => {
+                MemoryFileSystemSnapshotInodeKind::CharacterDevice { rdev }
+            }
+            PersistedFilesystemInodeKind::BlockDevice { rdev } => {
+                MemoryFileSystemSnapshotInodeKind::BlockDevice { rdev }
+            }
+            PersistedFilesystemInodeKind::Fifo => MemoryFileSystemSnapshotInodeKind::Fifo,
         };
 
         inodes.insert(

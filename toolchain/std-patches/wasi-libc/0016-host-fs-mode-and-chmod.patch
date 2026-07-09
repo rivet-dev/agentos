@@ -14,7 +14,7 @@ ordinary stat/access/chmod semantics without per-program patches.
  
  static_assert(S_ISBLK(S_IFBLK), "Value mismatch");
  static_assert(S_ISCHR(S_IFCHR), "Value mismatch");
-@@ -20,7 +21,48 @@ static_assert(S_ISREG(S_IFREG), "Value mismatch");
+@@ -20,7 +21,64 @@ static_assert(S_ISREG(S_IFREG), "Value mismatch");
  static_assert(S_ISSOCK(S_IFSOCK), "Value mismatch");
  
 -static inline void to_public_stat(const __wasi_filestat_t *in,
@@ -41,13 +41,25 @@ ordinary stat/access/chmod semantics without per-program patches.
 +  __import_name__("path_size")
 +));
 +
++uint64_t __agentos_host_fd_blocks(uint32_t fd) __attribute__((
++  __import_module__("host_fs"),
++  __import_name__("fd_blocks")
++));
++
++uint64_t __agentos_host_path_blocks(uint32_t fd, const char *path, size_t path_len,
++                                    uint32_t follow_symlinks) __attribute__((
++  __import_module__("host_fs"),
++  __import_name__("path_blocks")
++));
++
 +static inline mode_t host_permissions(uint32_t mode) {
 +  return mode & 07777;
 +}
 +
 +static inline void apply_host_stat_metadata(struct stat *out,
 +                                            uint32_t host_mode,
-+                                            uint64_t host_size) {
++                                            uint64_t host_size,
++                                            uint64_t host_blocks) {
 +  mode_t host_type = host_mode & S_IFMT;
 +  if (host_type != 0) {
 +    out->st_mode = (out->st_mode & ~S_IFMT) | host_type;
@@ -56,50 +68,55 @@ ordinary stat/access/chmod semantics without per-program patches.
 +  if (host_size != UINT64_MAX) {
 +    out->st_size = (off_t)host_size;
 +  }
++  if (host_blocks != UINT64_MAX) {
++    out->st_blocks = (blkcnt_t)host_blocks;
++  }
 +}
 +
 +static inline void to_public_stat_with_mode(const __wasi_filestat_t *in,
 +                                            struct stat *out,
 +                                            uint32_t host_mode,
-+                                            uint64_t host_size) {
++                                            uint64_t host_size,
++                                            uint64_t host_blocks) {
    // Ensure that we don't truncate any values.
    static_assert(sizeof(in->dev) == sizeof(out->st_dev), "Size mismatch");
    static_assert(sizeof(in->ino) == sizeof(out->st_ino), "Size mismatch");
-@@ -43,6 +84,7 @@ static inline void to_public_stat_with_mode(const __wasi_filestat_t *in,
+@@ -43,6 +100,7 @@ static inline void to_public_stat_with_mode(const __wasi_filestat_t *in,
        .st_ctim = timestamp_to_timespec(in->ctim),
    };
  
-+  apply_host_stat_metadata(out, host_mode, host_size);
++  apply_host_stat_metadata(out, host_mode, host_size, host_blocks);
    // Convert file type to legacy types encoded in st_mode.
 -  switch (in->filetype) {
 +  switch ((host_mode & S_IFMT) == 0 ? in->filetype : 0) {
      case __WASI_FILETYPE_BLOCK_DEVICE:
-@@ -67,6 +109,11 @@ static inline void to_public_stat_with_mode(const __wasi_filestat_t *in,
+@@ -67,6 +125,11 @@ static inline void to_public_stat_with_mode(const __wasi_filestat_t *in,
        break;
    }
  }
 +
 +static inline void to_public_stat(const __wasi_filestat_t *in,
 +                                  struct stat *out) {
-+  to_public_stat_with_mode(in, out, 0, UINT64_MAX);
++  to_public_stat_with_mode(in, out, 0, UINT64_MAX, UINT64_MAX);
 +}
  
  static inline bool utimens_get_timestamps(const struct timespec *times,
                                            __wasi_timestamp_t *st_atim,
 --- a/libc-bottom-half/cloudlibc/src/libc/sys/stat/fstat.c
 +++ b/libc-bottom-half/cloudlibc/src/libc/sys/stat/fstat.c
-@@ -15,6 +15,7 @@ int fstat(int fildes, struct stat *buf) {
+@@ -15,6 +15,8 @@ int fstat(int fildes, struct stat *buf) {
      errno = error;
      return -1;
    }
 -  to_public_stat(&internal_stat, buf);
 +  to_public_stat_with_mode(&internal_stat, buf, __agentos_host_fd_mode(fildes),
-+                           __agentos_host_fd_size(fildes));
++                           __agentos_host_fd_size(fildes),
++                           __agentos_host_fd_blocks(fildes));
    return 0;
  }
 --- a/libc-bottom-half/cloudlibc/src/libc/sys/stat/fstatat.c
 +++ b/libc-bottom-half/cloudlibc/src/libc/sys/stat/fstatat.c
-@@ -27,6 +27,13 @@ int __wasilibc_nocwd_fstatat(int fd, const char *restrict path, struct stat *res
+@@ -27,6 +27,15 @@ int __wasilibc_nocwd_fstatat(int fd, const char *restrict path, struct stat *res
      errno = error;
      return -1;
    }
@@ -111,7 +128,9 @@ ordinary stat/access/chmod semantics without per-program patches.
 +                           __agentos_host_path_mode(fd, path, path_len,
 +                                                    follow_symlinks),
 +                           __agentos_host_path_size(fd, path, path_len,
-+                                                    follow_symlinks));
++                                                    follow_symlinks),
++                           __agentos_host_path_blocks(fd, path, path_len,
++                                                      follow_symlinks));
    return 0;
  }
 --- a/libc-bottom-half/cloudlibc/src/libc/unistd/ftruncate.c

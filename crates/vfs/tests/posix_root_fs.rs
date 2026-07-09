@@ -39,6 +39,9 @@ fn directory_metadata(ino: u64) -> MemoryFileSystemSnapshotMetadata {
         ctime_ms: 0,
         ctime_nsec: 0,
         birthtime_ms: 0,
+        allocated_extents: Vec::new(),
+        unwritten_extents: Vec::new(),
+        xattrs: BTreeMap::new(),
     }
 }
 

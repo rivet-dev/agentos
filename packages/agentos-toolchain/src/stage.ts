@@ -1,4 +1,5 @@
 import {
+	chmodSync,
 	copyFileSync,
 	existsSync,
 	mkdirSync,
@@ -79,6 +80,7 @@ export function stage(options: StageOptions): StageResult {
 			continue;
 		}
 		copyFileSync(source, join(binDir, command));
+		chmodSync(join(binDir, command), 0o755);
 		staged.push(command);
 	}
 
@@ -90,6 +92,7 @@ export function stage(options: StageOptions): StageResult {
 			continue;
 		}
 		copyFileSync(stubsSource, join(binDir, stub));
+		chmodSync(join(binDir, stub), 0o755);
 		staged.push(stub);
 	}
 
@@ -102,6 +105,7 @@ export function stage(options: StageOptions): StageResult {
 			continue;
 		}
 		copyFileSync(source, join(binDir, alias));
+		chmodSync(join(binDir, alias), 0o755);
 		staged.push(alias);
 	}
 

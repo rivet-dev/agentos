@@ -1,0 +1,40 @@
+From: AgentOS <dev@agentos.dev>
+Subject: [PATCH] wasi-libc: grant read rights for O_RDONLY openat
+
+Linux callers also commonly pass literal zero for O_RDONLY, while wasi-libc's
+internal O_RDONLY bit is nonzero. Accept both forms and select rights from the
+masked access mode directly so read-only openat calls receive FD_READ and
+FD_READDIR instead of failing with EINVAL or reaching path_open without rights.
+
+--- a/libc-bottom-half/cloudlibc/src/libc/fcntl/openat.c
++++ b/libc-bottom-half/cloudlibc/src/libc/fcntl/openat.c
+@@ -31,16 +31,19 @@ int __wasilibc_nocwd_openat_nomode(int fd, const char *path, int oflag) {
+         __WASI_RIGHTS_FD_READDIR | __WASI_RIGHTS_FD_FILESTAT_SET_SIZE);
+   switch (oflag & O_ACCMODE) {
++    case 0:
+     case O_RDONLY:
+-    case O_RDWR:
+-    case O_WRONLY:
+-      if ((oflag & O_RDONLY) != 0) {
+-        max |= __WASI_RIGHTS_FD_READ | __WASI_RIGHTS_FD_READDIR;
+-      }
+-      if ((oflag & O_WRONLY) != 0) {
+-        max |= __WASI_RIGHTS_FD_DATASYNC | __WASI_RIGHTS_FD_WRITE |
+-               __WASI_RIGHTS_FD_ALLOCATE |
+-               __WASI_RIGHTS_FD_FILESTAT_SET_SIZE;
+-      }
++      max |= __WASI_RIGHTS_FD_READ | __WASI_RIGHTS_FD_READDIR;
++      break;
++    case O_RDWR:
++      max |= __WASI_RIGHTS_FD_READ | __WASI_RIGHTS_FD_READDIR |
++             __WASI_RIGHTS_FD_DATASYNC | __WASI_RIGHTS_FD_WRITE |
++             __WASI_RIGHTS_FD_ALLOCATE |
++             __WASI_RIGHTS_FD_FILESTAT_SET_SIZE;
++      break;
++    case O_WRONLY:
++      max |= __WASI_RIGHTS_FD_DATASYNC | __WASI_RIGHTS_FD_WRITE |
++             __WASI_RIGHTS_FD_ALLOCATE |
++             __WASI_RIGHTS_FD_FILESTAT_SET_SIZE;
+       break;
+     case O_EXEC:
+       break;

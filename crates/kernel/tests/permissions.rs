@@ -110,6 +110,56 @@ fn permission_wrapped_filesystem_allows_access_with_explicit_allow_all_callback(
 }
 
 #[test]
+fn immutable_marker_rejects_mutations_until_cleared() {
+    let mut filesystem = wrap_filesystem(Permissions::allow_all());
+    filesystem
+        .set_xattr(
+            "/existing.txt",
+            "user.agentos.immutable",
+            b"1".to_vec(),
+            0,
+            true,
+        )
+        .expect("set immutable marker");
+
+    for error in [
+        filesystem
+            .write_file("/existing.txt", b"changed".to_vec())
+            .expect_err("immutable write must fail"),
+        filesystem
+            .truncate("/existing.txt", 0)
+            .expect_err("immutable truncate must fail"),
+        filesystem
+            .punch_hole("/existing.txt", 0, 512)
+            .expect_err("immutable hole punch must fail"),
+        filesystem
+            .remove_file("/existing.txt")
+            .expect_err("immutable unlink must fail"),
+    ] {
+        assert_eq!(error.code(), "EPERM");
+    }
+
+    filesystem
+        .remove_xattr("/existing.txt", "user.agentos.immutable", true)
+        .expect("clear immutable marker");
+    filesystem
+        .write_file("/existing.txt", b"changed".to_vec())
+        .expect("write after clearing immutable marker");
+}
+
+#[test]
+fn immutable_check_does_not_block_devices_without_xattr_support() {
+    let mut filesystem = wrap_filesystem(Permissions::allow_all());
+
+    filesystem
+        .write_file("/dev/stdout", b"output".to_vec())
+        .expect("write device without immutable xattr support");
+    filesystem
+        .write_file("/dev/stderr", b"error".to_vec())
+        .expect("write second device without immutable xattr support");
+}
+
+#[test]
 fn permission_wrapped_filesystem_resolves_symlinks_before_permission_checks() {
     let mut inner = MemoryFileSystem::new();
     inner.mkdir("/allowed", true).expect("seed allowed dir");
@@ -151,6 +201,48 @@ fn permission_wrapped_filesystem_resolves_symlinks_before_permission_checks() {
             .as_slice(),
         [String::from("/private/secret.txt")].as_slice()
     );
+}
+
+#[test]
+fn permission_wrapped_lchown_does_not_follow_the_final_symlink() {
+    let mut inner = MemoryFileSystem::new();
+    inner.mkdir("/allowed", true).expect("seed allowed dir");
+    inner.mkdir("/private", true).expect("seed private dir");
+    inner
+        .write_file("/private/secret.txt", b"secret".to_vec())
+        .expect("seed secret file");
+    inner
+        .chown("/private/secret.txt", 10, 20)
+        .expect("seed target ownership");
+    inner
+        .symlink("/private/secret.txt", "/allowed/alias.txt")
+        .expect("seed symlink");
+
+    let permissions = Permissions {
+        filesystem: Some(Arc::new(|request: &FsAccessRequest| {
+            if request.path.starts_with("/allowed") {
+                PermissionDecision::allow()
+            } else {
+                PermissionDecision::deny("allowed-only")
+            }
+        })),
+        ..Permissions::default()
+    };
+    let mut filesystem = PermissionedFileSystem::new(inner, "vm-permissions", permissions);
+
+    filesystem
+        .lchown("/allowed/alias.txt", 30, 40)
+        .expect("lchown should authorize the link path");
+
+    let link = filesystem
+        .lstat("/allowed/alias.txt")
+        .expect("lstat symlink");
+    assert_eq!((link.uid, link.gid), (30, 40));
+    let target = filesystem
+        .inner_mut()
+        .stat("/private/secret.txt")
+        .expect("stat target");
+    assert_eq!((target.uid, target.gid), (10, 20));
 }
 
 #[test]
@@ -439,6 +531,34 @@ fn kernel_default_spawn_cwd_matches_workspace() {
             .as_deref(),
         Some("/workspace")
     );
+
+    process.finish(0);
+    kernel.wait_and_reap(process.pid()).expect("reap process");
+}
+
+#[test]
+fn process_exists_returns_false_when_an_intermediate_component_is_missing() {
+    let mut config = KernelVmConfig::new("vm-exists-missing-parent");
+    config.permissions = Permissions::allow_all();
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .register_driver(CommandDriver::new("alpha", ["probe"]))
+        .expect("register driver");
+
+    let process = kernel
+        .spawn_process(
+            "probe",
+            Vec::new(),
+            SpawnOptions {
+                requester_driver: Some(String::from("alpha")),
+                ..SpawnOptions::default()
+            },
+        )
+        .expect("spawn probe");
+
+    assert!(!kernel
+        .exists_for_process("alpha", process.pid(), "/sys/kernel/debug")
+        .expect("missing parent should be reported as absent"));
 
     process.finish(0);
     kernel.wait_and_reap(process.pid()).expect("reap process");

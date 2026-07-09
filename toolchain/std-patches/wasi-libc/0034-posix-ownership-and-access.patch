@@ -1,0 +1,225 @@
+Expose real file ownership, ownership mutations, and process-aware access checks.
+
+WASI Preview 1 filestat omits uid/gid, and the prior access fallback only checked
+whether any permission bit existed. Route these operations through AgentOS so C
+helpers observe the same ownership and DAC decisions as the kernel.
+
+diff --git a/libc-bottom-half/cloudlibc/src/libc/sys/stat/fstat.c b/libc-bottom-half/cloudlibc/src/libc/sys/stat/fstat.c
+index d735134..521a9eb 100644
+--- a/libc-bottom-half/cloudlibc/src/libc/sys/stat/fstat.c
++++ b/libc-bottom-half/cloudlibc/src/libc/sys/stat/fstat.c
+@@ -18,6 +18,14 @@ int fstat(int fildes, struct stat *buf) {
+   }
+   to_public_stat_with_mode(&internal_stat, buf, __agentos_host_fd_mode(fildes),
+                            __agentos_host_fd_size(fildes),
+                            __agentos_host_fd_blocks(fildes));
++  uint32_t uid, gid;
++  error = __agentos_host_fd_owner(fildes, &uid, &gid);
++  if (error != 0) {
++    errno = error;
++    return -1;
++  }
++  buf->st_uid = (uid_t)uid;
++  buf->st_gid = (gid_t)gid;
+   return 0;
+ }
+diff --git a/libc-bottom-half/cloudlibc/src/libc/sys/stat/fstatat.c b/libc-bottom-half/cloudlibc/src/libc/sys/stat/fstatat.c
+index b79623b..30e0392 100644
+--- a/libc-bottom-half/cloudlibc/src/libc/sys/stat/fstatat.c
++++ b/libc-bottom-half/cloudlibc/src/libc/sys/stat/fstatat.c
+@@ -34,7 +34,16 @@ int __wasilibc_nocwd_fstatat(int fd, const char *restrict path, struct stat *res
+                                                     follow_symlinks),
+                            __agentos_host_path_size(fd, path, path_len,
+                                                     follow_symlinks),
+                            __agentos_host_path_blocks(fd, path, path_len,
+                                                       follow_symlinks));
++  uint32_t uid, gid;
++  error = __agentos_host_path_owner(fd, path, path_len, follow_symlinks,
++                                    &uid, &gid);
++  if (error != 0) {
++    errno = error;
++    return -1;
++  }
++  buf->st_uid = (uid_t)uid;
++  buf->st_gid = (gid_t)gid;
+   return 0;
+ }
+diff --git a/libc-bottom-half/cloudlibc/src/libc/sys/stat/stat_impl.h b/libc-bottom-half/cloudlibc/src/libc/sys/stat/stat_impl.h
+index 88660f1..de6b378 100644
+--- a/libc-bottom-half/cloudlibc/src/libc/sys/stat/stat_impl.h
++++ b/libc-bottom-half/cloudlibc/src/libc/sys/stat/stat_impl.h
+@@ -56,6 +56,19 @@ uint64_t __agentos_host_path_blocks(uint32_t fd, const char *path, size_t path_len
+   __import_name__("path_blocks")
+ ));
+ 
++uint32_t __agentos_host_fd_owner(uint32_t fd, uint32_t *uid,
++                                 uint32_t *gid) __attribute__((
++  __import_module__("host_fs"),
++  __import_name__("fd_owner")
++));
++
++uint32_t __agentos_host_path_owner(uint32_t fd, const char *path,
++                                   size_t path_len, uint32_t follow_symlinks,
++                                   uint32_t *uid, uint32_t *gid) __attribute__((
++  __import_module__("host_fs"),
++  __import_name__("path_owner")
++));
++
+ static inline mode_t host_permissions(uint32_t mode) {
+   return mode & 07777;
+ }
+diff --git a/libc-bottom-half/cloudlibc/src/libc/unistd/faccessat.c b/libc-bottom-half/cloudlibc/src/libc/unistd/faccessat.c
+index 5a3c6ac..0080445 100644
+--- a/libc-bottom-half/cloudlibc/src/libc/unistd/faccessat.c
++++ b/libc-bottom-half/cloudlibc/src/libc/unistd/faccessat.c
+@@ -10,10 +10,11 @@
+ #include <sys/stat.h>
+ #include <unistd.h>
+ 
+-uint32_t __agentos_host_path_mode(uint32_t fd, const char *path, size_t path_len,
+-                                  uint32_t follow_symlinks) __attribute__((
++uint32_t __agentos_host_path_access(uint32_t fd, const char *path,
++                                    size_t path_len, uint32_t mode,
++                                    uint32_t effective_ids) __attribute__((
+   __import_module__("host_fs"),
+-  __import_name__("path_mode")
++  __import_name__("path_access")
+ ));
+ 
+ int __wasilibc_nocwd_faccessat(int fd, const char *path, int amode, int flag) {
+@@ -34,19 +35,10 @@ int __wasilibc_nocwd_faccessat(int fd, const char *path, int amode, int flag) {
+     return -1;
+   }
+ 
+-  uint32_t mode = __agentos_host_path_mode(fd, path, strlen(path), 1);
+-  if ((amode & R_OK) != 0 && (mode & 0444) == 0) {
+-    errno = EACCES;
+-    return -1;
+-  }
+-  if ((amode & W_OK) != 0 && (mode & 0222) == 0) {
+-    errno = EACCES;
+-    return -1;
+-  }
+-  // Match Linux access(2): execute for non-directories requires at least one
+-  // execute bit. This is true even for root.
+-  if ((amode & X_OK) != 0 && (mode & 0111) == 0) {
+-    errno = EACCES;
++  error = __agentos_host_path_access(fd, path, strlen(path), amode,
++                                     (flag & AT_EACCESS) != 0);
++  if (error != 0) {
++    errno = error;
+     return -1;
+   }
+ 
+diff --git a/libc-bottom-half/sources/posix.c b/libc-bottom-half/sources/posix.c
+index 22f6857..168e1d3 100644
+--- a/libc-bottom-half/sources/posix.c
++++ b/libc-bottom-half/sources/posix.c
+@@ -27,12 +27,48 @@ uint32_t __agentos_host_fchmod(uint32_t fd, uint32_t mode) __attribute__((
+     __import_name__("fchmod")
+ ));
+ 
++uint32_t __agentos_host_path_owner(uint32_t fd, const char *path,
++                                   size_t path_len, uint32_t follow_symlinks,
++                                   uint32_t *uid, uint32_t *gid) __attribute__((
++    __import_module__("host_fs"),
++    __import_name__("path_owner")
++));
++
++uint32_t __agentos_host_fd_owner(uint32_t fd, uint32_t *uid,
++                                 uint32_t *gid) __attribute__((
++    __import_module__("host_fs"),
++    __import_name__("fd_owner")
++));
++
++uint32_t __agentos_host_path_chown(uint32_t fd, const char *path,
++                                   size_t path_len, uint32_t uid, uint32_t gid,
++                                   uint32_t follow_symlinks) __attribute__((
++    __import_module__("host_fs"),
++    __import_name__("path_chown")
++));
++
++uint32_t __agentos_host_fd_chown(uint32_t fd, uint32_t uid,
++                                 uint32_t gid) __attribute__((
++    __import_module__("host_fs"),
++    __import_name__("fd_chown")
++));
++
+ static int chmod_errno_from_host_result(uint32_t result) {
+     if (result == 0) return 0;
+     errno = (int)result;
+     return -1;
+ }
+ 
++static int ownership_errno_from_host_result(uint32_t result) {
++    if (result == 0) return 0;
++    errno = (int)result;
++    return -1;
++}
++
++static uint32_t preserved_id(uint32_t requested, uint32_t current) {
++    return requested == UINT32_MAX ? current : requested;
++}
++
+ int __wasilibc_find_relpath_fallback(
+     const char *path,
+     const char **abs_prefix,
+@@ -375,6 +411,58 @@ int fchmodat(int fd, const char *path, mode_t mode, int flag) {
+         (uint32_t)(mode & 07777)));
+ }
+ 
++static int host_path_chown(int fd, const char *path, uid_t uid, gid_t gid,
++                           int follow_symlinks) {
++    uint32_t current_uid, current_gid;
++    uint32_t result = __agentos_host_path_owner(
++        (uint32_t)fd, path, strlen(path), (uint32_t)follow_symlinks,
++        &current_uid, &current_gid);
++    if (result != 0) return ownership_errno_from_host_result(result);
++    return ownership_errno_from_host_result(__agentos_host_path_chown(
++        (uint32_t)fd, path, strlen(path),
++        preserved_id((uint32_t)uid, current_uid),
++        preserved_id((uint32_t)gid, current_gid),
++        (uint32_t)follow_symlinks));
++}
++
++int chown(const char *path, uid_t uid, gid_t gid) {
++    char *relative_path;
++    int dirfd = find_relpath(path, &relative_path);
++    if (dirfd == -1) { errno = ENOENT; return -1; }
++    return host_path_chown(dirfd, relative_path, uid, gid, 1);
++}
++
++int lchown(const char *path, uid_t uid, gid_t gid) {
++    char *relative_path;
++    int dirfd = find_relpath(path, &relative_path);
++    if (dirfd == -1) { errno = ENOENT; return -1; }
++    return host_path_chown(dirfd, relative_path, uid, gid, 0);
++}
++
++int fchown(int fd, uid_t uid, gid_t gid) {
++    uint32_t current_uid, current_gid;
++    uint32_t result = __agentos_host_fd_owner(
++        (uint32_t)fd, &current_uid, &current_gid);
++    if (result != 0) return ownership_errno_from_host_result(result);
++    return ownership_errno_from_host_result(__agentos_host_fd_chown(
++        (uint32_t)fd, preserved_id((uint32_t)uid, current_uid),
++        preserved_id((uint32_t)gid, current_gid)));
++}
++
++int fchownat(int fd, const char *path, uid_t uid, gid_t gid, int flag) {
++    int supported = AT_SYMLINK_NOFOLLOW;
++#ifdef AT_EMPTY_PATH
++    supported |= AT_EMPTY_PATH;
++#endif
++    if ((flag & ~supported) != 0) { errno = EINVAL; return -1; }
++#ifdef AT_EMPTY_PATH
++    if (path[0] == '\0' && (flag & AT_EMPTY_PATH) != 0)
++        return fchown(fd, uid, gid);
++#endif
++    return host_path_chown(fd, path, uid, gid,
++                           (flag & AT_SYMLINK_NOFOLLOW) == 0);
++}
++
+ int statvfs(const char *__restrict path, struct statvfs *__restrict buf) {
+     // TODO: We plan to support this eventually in WASI, but not yet.
+     // Meanwhile, we provide a stub so that libc++'s `<filesystem>`

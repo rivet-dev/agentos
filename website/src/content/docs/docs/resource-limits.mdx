@@ -49,6 +49,7 @@ Set caps on the `limits` object in the `agentOS` config. Limits are grouped by s
 | `python.maxOldSpaceMb` | Pyodide runner V8 old-space heap, in MiB | Default is `0`, which keeps the engine default. |
 | `wasm.prewarmTimeoutMs` | WASM compile-cache warmup timeout | Default is `30000`. |
 | `wasm.runnerHeapLimitMb` | Trusted WASI/WASM runner V8 heap, in MiB | Default is `2048`; this is not guest linear memory. |
+| `wasm.runnerCpuTimeLimitMs` | Trusted WASI/WASM runner active-CPU budget | Default is `30000`; `0` disables this budget for trusted configurations. |
 | `process.maxSpawnFileActions` | File actions decoded for one `posix_spawn` call | Default is `4096`; excess actions fail with `E2BIG`. |
 | `process.maxSpawnFileActionBytes` | Serialized file-action bytes for one `posix_spawn` call | Default is `1 MiB`; excess input fails with `E2BIG`. |
 

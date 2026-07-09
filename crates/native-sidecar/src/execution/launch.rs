@@ -918,11 +918,17 @@ fn collect_process_host_sync_roots(
     seen: &mut BTreeSet<(PathBuf, String)>,
     roots: &mut Vec<(PathBuf, String)>,
 ) {
-    let normalized_host_cwd = normalize_host_path(&process.host_cwd);
-    if !path_is_within_root(&normalized_host_cwd, normalized_vm_root) {
-        let guest_cwd = normalize_path(&process.guest_cwd);
-        if seen.insert((normalized_host_cwd.clone(), guest_cwd.clone())) {
-            roots.push((normalized_host_cwd, guest_cwd));
+    // Kernel-backed runtimes make clean writes observable immediately and keep
+    // their host trees only as mirrors. Importing every such mirror lets an
+    // inherited child's older snapshot overwrite a shared kernel file. Only a
+    // dirty or otherwise non-observable process root is authoritative input.
+    if process.host_write_dirty || !process.clean_host_writes_are_observable() {
+        let normalized_host_cwd = normalize_host_path(&process.host_cwd);
+        if !path_is_within_root(&normalized_host_cwd, normalized_vm_root) {
+            let guest_cwd = normalize_path(&process.guest_cwd);
+            if seen.insert((normalized_host_cwd.clone(), guest_cwd.clone())) {
+                roots.push((normalized_host_cwd, guest_cwd));
+            }
         }
     }
 
@@ -2549,7 +2555,19 @@ pub(super) fn guest_runtime_identity(
 ) -> GuestRuntimeConfig {
     let user = vm.kernel.user_profile();
     let resource_limits = vm.kernel.resource_limits();
-    let identity = shared_guest_runtime_identity(&user, resource_limits, virtual_pid, virtual_ppid);
+    let mut identity =
+        shared_guest_runtime_identity(&user, resource_limits, virtual_pid, virtual_ppid);
+    if let Some(pid) = virtual_pid.and_then(|pid| u32::try_from(pid).ok()) {
+        if let Ok(process_identity) = vm.kernel.process_identity(EXECUTION_DRIVER_NAME, pid) {
+            identity.virtual_uid = u64::from(process_identity.uid);
+            identity.virtual_gid = u64::from(process_identity.gid);
+            if let Some(account) = user.account(process_identity.uid) {
+                identity.os_user = account.username.clone();
+                identity.os_homedir = account.homedir.clone();
+                identity.os_shell = account.shell.clone();
+            }
+        }
+    }
     GuestRuntimeConfig {
         virtual_uid: Some(identity.virtual_uid),
         virtual_gid: Some(identity.virtual_gid),
@@ -2625,6 +2643,7 @@ pub(super) fn wasm_execution_limits(vm: &VmState) -> WasmExecutionLimits {
         max_blocking_read_ms: resource_limits.max_blocking_read_ms,
         prewarm_timeout_ms: Some(vm.limits.wasm.prewarm_timeout_ms),
         runner_heap_limit_mb: Some(vm.limits.wasm.runner_heap_limit_mb),
+        runner_cpu_time_limit_ms: Some(vm.limits.wasm.runner_cpu_time_limit_ms),
         reactor_work_quantum: vm_reactor_work_quantum(&vm.limits),
         bridge_call_timeout_ms: Some(bridge_call_timeout_ms(&vm.limits)),
     }
@@ -3408,6 +3427,30 @@ pub(super) fn stage_agentos_package_command(
     resolved.runtime = GuestRuntimeKind::WebAssembly;
     resolved.entrypoint = shadow_path.to_string_lossy().into_owned();
     Ok(())
+}
+
+pub(super) fn enforce_resolved_wasm_execute_dac(
+    vm: &mut VmState,
+    parent_kernel_pid: u32,
+    resolved: &ResolvedChildProcessExecution,
+) -> Result<(), SidecarError> {
+    if resolved.binding_command || resolved.runtime != GuestRuntimeKind::WebAssembly {
+        return Ok(());
+    }
+    let Some(guest_entrypoint) = resolved.env.get("AGENTOS_GUEST_ENTRYPOINT") else {
+        return Ok(());
+    };
+    let guest_entrypoint = normalize_path(guest_entrypoint);
+    if vm
+        .command_guest_paths
+        .values()
+        .any(|path| normalize_path(path) == guest_entrypoint)
+    {
+        return Ok(());
+    }
+    vm.kernel
+        .check_execute_for_process(EXECUTION_DRIVER_NAME, parent_kernel_pid, &guest_entrypoint)
+        .map_err(kernel_error)
 }
 
 pub(super) fn prepare_javascript_shadow(
@@ -4206,6 +4249,8 @@ mod host_mount_path_for_guest_path_from_mounts_tests {
     fn resolves_module_access_mount_paths() {
         let mounts = vec![MountDescriptor {
             guest_path: String::from("/root/node_modules"),
+            guest_source: String::from("module_access"),
+            guest_fstype: String::from("module_access"),
             read_only: true,
             plugin: MountPluginDescriptor {
                 id: String::from("module_access"),
@@ -4230,6 +4275,8 @@ mod host_mount_path_for_guest_path_from_mounts_tests {
     fn does_not_resolve_agentos_packages_as_host_paths() {
         let mounts = vec![MountDescriptor {
             guest_path: String::from("/opt/agentos/bin/pi"),
+            guest_source: String::from("agentos_packages"),
+            guest_fstype: String::from("agentos_packages"),
             read_only: true,
             plugin: MountPluginDescriptor {
                 id: String::from("agentos_packages"),
@@ -4380,6 +4427,7 @@ where
                         Arc::clone(&vm_pending_event_bytes_budget),
                     )
                     .with_guest_cwd(guest_cwd.clone())
+                    .with_shadow_root(normalize_host_path(&vm.cwd))
                     .with_host_cwd(resolve_vm_guest_path_to_host(vm, &guest_cwd)),
                 );
                 self.bridge.emit_lifecycle(&vm_id, LifecycleState::Busy)?;
@@ -4464,6 +4512,10 @@ where
             )
             .map_err(kernel_error)?;
         let kernel_pid = kernel_handle.pid();
+        if let Err(error) = enforce_resolved_wasm_execute_dac(vm, kernel_pid, &resolved) {
+            kernel_handle.finish(126);
+            return Err(error);
+        }
         record_execute_phase("kernel_spawn_process", phase_start.elapsed());
         let tty_master_fd = if requested_tty {
             let (master_fd, slave_fd, _) = vm
@@ -4686,6 +4738,7 @@ where
             .with_tty_master_fd(tty_master_fd)
             .with_guest_cwd(resolved.guest_cwd.clone())
             .with_env(process_env)
+            .with_shadow_root(sandbox_root)
             .with_host_cwd(resolved.host_cwd.clone()),
         );
         self.bridge.emit_lifecycle(&vm_id, LifecycleState::Busy)?;

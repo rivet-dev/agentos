@@ -1,0 +1,99 @@
+Preserve the POSIX creation mode across the WASI path_open boundary.
+
+WASI Preview 1 path_open has no mode parameter, so upstream wasi-libc discards
+the open/openat vararg. Publish the mode to a one-shot AgentOS host import before
+the corresponding path_open call. The runner applies mode & ~umask only when
+that call actually creates a new path.
+
+diff --git a/libc-bottom-half/sources/at_fdcwd.c b/libc-bottom-half/sources/at_fdcwd.c
+index a58d005..0ee09bb 100644
+--- a/libc-bottom-half/sources/at_fdcwd.c
++++ b/libc-bottom-half/sources/at_fdcwd.c
+@@ -8,6 +8,8 @@
+ 
+ #include <fcntl.h>
++#include <errno.h>
+ #include <stdio.h>
++#include <stdarg.h>
+ #include <unistd.h>
+ #include <dirent.h>
+ #include <sys/types.h>
+@@ -20,11 +22,30 @@
+ #define O_TMPFILE 0
+ #endif
+ 
++uint32_t __agentos_host_set_open_mode(uint32_t mode) __attribute__((
++    __import_module__("host_fs"),
++    __import_name__("set_open_mode")
++));
++
+ int openat(int dirfd, const char *pathname, int flags, ...) {
++    mode_t mode = 0;
++    if ((flags & (O_CREAT | O_TMPFILE)) != 0) {
++        va_list args;
++        va_start(args, flags);
++        mode = (mode_t)va_arg(args, int);
++        va_end(args);
++    }
+     if (dirfd == AT_FDCWD || pathname[0] == '/') {
+-        return open(pathname, flags);
++        return open(pathname, flags, mode);
+     }
+ 
++    if ((flags & (O_CREAT | O_TMPFILE)) != 0) {
++        uint32_t error = __agentos_host_set_open_mode((uint32_t)mode);
++        if (error != 0) {
++            errno = (int)error;
++            return -1;
++        }
++    }
+     return __wasilibc_nocwd_openat_nomode(dirfd, pathname, flags);
+ }
+ 
+diff --git a/libc-bottom-half/sources/posix.c b/libc-bottom-half/sources/posix.c
+index d0e78df..27045a7 100644
+--- a/libc-bottom-half/sources/posix.c
++++ b/libc-bottom-half/sources/posix.c
+@@ -4,6 +4,7 @@
+ #include <dirent.h>
+ #include <fcntl.h>
+ #include <stdlib.h>
++#include <stdarg.h>
+ #include <sys/stat.h>
+ #include <sys/statvfs.h>
+ #include <unistd.h>
+@@ -42,7 +43,12 @@ uint32_t __agentos_host_fd_chown(uint32_t fd, uint32_t uid,
+     __import_name__("fd_chown")
+ ));
+ 
++uint32_t __agentos_host_set_open_mode(uint32_t mode) __attribute__((
++    __import_module__("host_fs"),
++    __import_name__("set_open_mode")
++));
++
+ static int chmod_errno_from_host_result(uint32_t result) {
+     if (result == 0) return 0;
+     errno = (int)result;
+     return -1;
+@@ -49,9 +55,18 @@ static int find_relpath_alt(const char *path, char **relative) {
+ }
+ 
+ int open(const char *path, int oflag, ...) {
+-    // WASI libc's `openat` ignores the mode argument, so call a special
+-    // entrypoint which avoids the varargs calling convention.
+-    return __wasilibc_open_nomode(path, oflag);
++    if ((oflag & O_CREAT) != 0) {
++        va_list args;
++        va_start(args, oflag);
++        mode_t mode = (mode_t)va_arg(args, int);
++        va_end(args);
++        uint32_t error = __agentos_host_set_open_mode((uint32_t)mode);
++        if (error != 0) {
++            errno = (int)error;
++            return -1;
++        }
++    }
++    return __wasilibc_open_nomode(path, oflag);
+ }
+ 
+ // See the documentation in libc.h

@@ -1,0 +1,47 @@
+--- a/src/sed/compiler.rs
++++ b/src/sed/compiler.rs
+@@ -480,6 +480,10 @@ fn bre_to_ere(pattern: &str) -> String {
+                     chars.next();
+                     result.push(')'); // Group end
+                 }
++                Some('|') => {
++                    chars.next();
++                    result.push('|'); // GNU BRE alternation
++                }
+                 Some(v) if v.is_ascii_digit() => {
+                     // Back-reference.  In sed BREs these are single-digit
+                     // (\1-\9) whereas fancy_regex supports multi-digit
+@@ -638,7 +642,6 @@ pub fn compile_replacement(
+                         _ => match parse_char_escape(line) {
+                             Some(decoded) => literal.push(decoded),
+                             None => {
+-                                literal.push('\\');
+                                 literal.push(line.current());
+                                 line.advance();
+                             }
+@@ -1950,8 +1953,25 @@ mod tests {
+             &template.parts[0],
+             ReplacementPart::Literal(s) if s == "line\nnewline\tend"
+         ));
+     }
+ 
++    #[test]
++    fn test_bre_gnu_alternation_translation() {
++        assert_eq!(bre_to_ere(r"left\|right"), "left|right");
++    }
++
++    #[test]
++    fn test_compile_replacement_unknown_escape_is_literal() {
++        let mut lines = ScriptLineProvider::new(Vec::new());
++        let mut chars = ScriptCharProvider::new(r"/left\;right/");
++        let template = compile_replacement(&mut lines, &mut chars).unwrap();
++
++        assert!(matches!(
++            &template.parts[..],
++            [ReplacementPart::Literal(value)] if value == "left;right"
++        ));
++    }
++
+     #[test]
+     fn test_compile_replacement_line_continuation() {
+         let script = vec![

@@ -898,6 +898,8 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
                 mounts: vec![MountDescriptor {
                     guest_path: String::from("/workspace"),
+                    guest_source: String::from("js_bridge"),
+                    guest_fstype: String::from("js_bridge"),
                     read_only: false,
                     plugin: MountPluginDescriptor {
                         id: String::from("js_bridge"),

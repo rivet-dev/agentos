@@ -1,7 +1,7 @@
 use agentos_kernel::kernel::{KernelVm, KernelVmConfig, VirtualProcessOptions};
 use agentos_kernel::permissions::Permissions;
 use agentos_kernel::resource_accounting::ResourceLimits;
-use agentos_kernel::user::UserConfig;
+use agentos_kernel::user::{GroupRecord, UserAccount, UserConfig};
 use agentos_kernel::vfs::MemoryFileSystem;
 use std::collections::BTreeMap;
 use std::thread;
@@ -25,6 +25,38 @@ fn configured_kernel() -> KernelVm<MemoryFileSystem> {
         gecos: Some(String::from("Deploy User")),
         group_name: Some(String::from("deployers")),
         supplementary_gids: vec![44, 502, 900],
+        accounts: Vec::new(),
+        groups: Vec::new(),
+    };
+    KernelVm::new(MemoryFileSystem::new(), config)
+}
+
+fn multi_user_root_kernel() -> KernelVm<MemoryFileSystem> {
+    let mut config = KernelVmConfig::new("vm-multi-user");
+    config.permissions = Permissions::allow_all();
+    config.user = UserConfig {
+        uid: Some(0),
+        gid: Some(0),
+        username: Some(String::from("root")),
+        homedir: Some(String::from("/root")),
+        shell: Some(String::from("/bin/sh")),
+        group_name: Some(String::from("root")),
+        supplementary_gids: vec![0],
+        accounts: vec![UserAccount {
+            uid: 1000,
+            gid: 1000,
+            username: String::from("fsgqa"),
+            homedir: String::from("/home/fsgqa"),
+            shell: String::from("/bin/sh"),
+            gecos: String::new(),
+            supplementary_gids: vec![1000, 2000],
+        }],
+        groups: vec![GroupRecord {
+            gid: 2000,
+            name: String::from("testers"),
+            members: vec![String::from("fsgqa")],
+        }],
+        ..UserConfig::default()
     };
     KernelVm::new(MemoryFileSystem::new(), config)
 }
@@ -136,6 +168,126 @@ fn identity_queries_require_process_ownership() {
     let error = kernel
         .getuid("other-driver", process.pid())
         .expect_err("foreign driver should be rejected");
+    assert_eq!(error.code(), "EPERM");
+}
+
+#[test]
+fn root_can_drop_and_restore_effective_ids_through_saved_ids() {
+    let mut kernel = multi_user_root_kernel();
+    let process = kernel
+        .create_virtual_process(
+            "identity-driver",
+            "identity-driver",
+            "identity-check",
+            Vec::new(),
+            VirtualProcessOptions::default(),
+        )
+        .expect("create root process");
+    let pid = process.pid();
+
+    kernel
+        .setresuid("identity-driver", pid, None, Some(1000), None)
+        .expect("drop effective uid");
+    assert_eq!(
+        kernel.getresuid("identity-driver", pid).expect("getresuid"),
+        (0, 1000, 0)
+    );
+    kernel
+        .seteuid("identity-driver", pid, 0)
+        .expect("restore saved root euid");
+    assert_eq!(kernel.geteuid("identity-driver", pid).unwrap(), 0);
+
+    kernel
+        .setuid("identity-driver", pid, 1000)
+        .expect("permanently drop uid");
+    let error = kernel
+        .seteuid("identity-driver", pid, 0)
+        .expect_err("unprivileged process must not regain root");
+    assert_eq!(error.code(), "EPERM");
+}
+
+#[test]
+fn switch_user_sets_all_credentials_groups_and_fork_inherits_them() {
+    let mut kernel = multi_user_root_kernel();
+    let parent = kernel
+        .create_virtual_process(
+            "identity-driver",
+            "identity-driver",
+            "parent",
+            Vec::new(),
+            VirtualProcessOptions::default(),
+        )
+        .expect("create root parent");
+    kernel
+        .switch_user("identity-driver", parent.pid(), 1000)
+        .expect("switch to fsgqa");
+    let identity = kernel
+        .process_identity("identity-driver", parent.pid())
+        .expect("parent identity");
+    assert_eq!(
+        (identity.uid, identity.euid, identity.suid),
+        (1000, 1000, 1000)
+    );
+    assert_eq!(
+        (identity.gid, identity.egid, identity.sgid),
+        (1000, 1000, 1000)
+    );
+    assert_eq!(identity.supplementary_gids, vec![1000, 2000]);
+
+    let child = kernel
+        .create_virtual_process(
+            "identity-driver",
+            "identity-driver",
+            "child",
+            Vec::new(),
+            VirtualProcessOptions {
+                parent_pid: Some(parent.pid()),
+                ..VirtualProcessOptions::default()
+            },
+        )
+        .expect("fork child");
+    assert_eq!(
+        kernel
+            .process_identity("identity-driver", child.pid())
+            .expect("child identity"),
+        identity
+    );
+    assert_eq!(
+        kernel.getpwnam("fsgqa").expect("lookup fsgqa"),
+        "fsgqa:x:1000:1000::/home/fsgqa:/bin/sh"
+    );
+    assert_eq!(
+        kernel.getgrnam("testers").expect("lookup testers"),
+        "testers:x:2000:fsgqa"
+    );
+}
+
+#[test]
+fn only_effective_root_can_replace_supplementary_groups() {
+    let mut kernel = multi_user_root_kernel();
+    let process = kernel
+        .create_virtual_process(
+            "identity-driver",
+            "identity-driver",
+            "identity-check",
+            Vec::new(),
+            VirtualProcessOptions::default(),
+        )
+        .expect("create root process");
+    let pid = process.pid();
+    kernel
+        .setgroups("identity-driver", pid, vec![0, 44, 44])
+        .expect("root setgroups");
+    assert_eq!(
+        kernel.getgroups("identity-driver", pid).unwrap(),
+        vec![0, 44]
+    );
+    kernel
+        .seteuid("identity-driver", pid, 1000)
+        .expect("drop effective uid");
+    let error = kernel
+        .setgroups("identity-driver", pid, vec![1000])
+        .expect_err("non-root setgroups must fail");
     assert_eq!(error.code(), "EPERM");
 }
 

@@ -1,0 +1,97 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -46,5 +46,5 @@ version = "3"
+ [target.'cfg(target_os = "redox")'.dependencies.libredox]
+ version = "0.1.0"
+ 
+-[target."cfg(unix)".dependencies.libc]
++[target.'cfg(any(unix, target_os = "wasi"))'.dependencies.libc]
+ version = "0.2.27"
+
+--- a/src/wasm.rs
++++ b/src/wasm.rs
+@@ -1,40 +1,66 @@
+ use crate::FileTime;
+ use std::fs::{self, File};
++use std::ffi::CString;
+ use std::io;
++use std::os::fd::AsRawFd;
++use std::os::wasi::ffi::OsStrExt;
+ use std::path::Path;
++use std::time::UNIX_EPOCH;
+ 
+-pub fn set_file_times(_p: &Path, _atime: FileTime, _mtime: FileTime) -> io::Result<()> {
+-    Err(io::Error::new(io::ErrorKind::Other, "Wasm not implemented"))
++fn timespec(time: FileTime) -> libc::timespec {
++    libc::timespec {
++        tv_sec: time.unix_seconds(),
++        tv_nsec: time.nanoseconds() as _,
++    }
+ }
+ 
+-pub fn set_symlink_file_times(_p: &Path, _atime: FileTime, _mtime: FileTime) -> io::Result<()> {
+-    Err(io::Error::new(io::ErrorKind::Other, "Wasm not implemented"))
++fn set_path_times(p: &Path, atime: FileTime, mtime: FileTime, flags: libc::c_int) -> io::Result<()> {
++    let path = CString::new(p.as_os_str().as_bytes())?;
++    let times = [timespec(atime), timespec(mtime)];
++    let result = unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), flags) };
++    if result == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+ }
+ 
+-pub fn set_file_mtime(_p: &Path, _mtime: FileTime) -> io::Result<()> {
+-    Err(io::Error::new(io::ErrorKind::Other, "Wasm not implemented"))
++pub fn set_file_times(p: &Path, atime: FileTime, mtime: FileTime) -> io::Result<()> {
++    set_path_times(p, atime, mtime, 0)
+ }
+ 
+-pub fn set_file_atime(_p: &Path, _atime: FileTime) -> io::Result<()> {
+-    Err(io::Error::new(io::ErrorKind::Other, "Wasm not implemented"))
++pub fn set_symlink_file_times(p: &Path, atime: FileTime, mtime: FileTime) -> io::Result<()> {
++    set_path_times(p, atime, mtime, libc::AT_SYMLINK_NOFOLLOW)
++}
++
++pub fn set_file_mtime(p: &Path, mtime: FileTime) -> io::Result<()> {
++    let atime = from_last_access_time(&fs::metadata(p)?);
++    set_file_times(p, atime, mtime)
++}
++
++pub fn set_file_atime(p: &Path, atime: FileTime) -> io::Result<()> {
++    let mtime = from_last_modification_time(&fs::metadata(p)?);
++    set_file_times(p, atime, mtime)
+ }
+ 
+-pub fn from_last_modification_time(_meta: &fs::Metadata) -> FileTime {
+-    unimplemented!()
++pub fn from_last_modification_time(meta: &fs::Metadata) -> FileTime {
++    FileTime::from_system_time(meta.modified().unwrap_or(UNIX_EPOCH))
+ }
+ 
+-pub fn from_last_access_time(_meta: &fs::Metadata) -> FileTime {
+-    unimplemented!()
++pub fn from_last_access_time(meta: &fs::Metadata) -> FileTime {
++    FileTime::from_system_time(meta.accessed().unwrap_or(UNIX_EPOCH))
+ }
+ 
+-pub fn from_creation_time(_meta: &fs::Metadata) -> Option<FileTime> {
+-    unimplemented!()
++pub fn from_creation_time(meta: &fs::Metadata) -> Option<FileTime> {
++    meta.created().ok().map(FileTime::from_system_time)
+ }
+ 
+ pub fn set_file_handle_times(
+-    _f: &File,
+-    _atime: Option<FileTime>,
+-    _mtime: Option<FileTime>,
++    f: &File,
++    atime: Option<FileTime>,
++    mtime: Option<FileTime>,
+ ) -> io::Result<()> {
+-    Err(io::Error::new(io::ErrorKind::Other, "Wasm not implemented"))
++    let metadata = f.metadata()?;
++    let times = [
++        timespec(atime.unwrap_or_else(|| from_last_access_time(&metadata))),
++        timespec(mtime.unwrap_or_else(|| from_last_modification_time(&metadata))),
++    ];
++    let result = unsafe { libc::futimens(f.as_raw_fd(), times.as_ptr()) };
++    if result == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+ }

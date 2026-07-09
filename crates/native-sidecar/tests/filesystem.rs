@@ -386,6 +386,8 @@ mod shadow_root {
             .expect("registry WASM commands are required before mounting command root");
         let mut mounts = vec![MountDescriptor {
             guest_path: String::from("/__secure_exec/commands/0"),
+            guest_source: String::from("host_dir"),
+            guest_fstype: String::from("host_dir"),
             read_only: true,
             plugin: MountPluginDescriptor {
                 id: String::from("host_dir"),
@@ -1185,6 +1187,8 @@ mod shadow_root {
             vec![
                 MountDescriptor {
                     guest_path: String::from("/mount-boundaries/./memory//"),
+                    guest_source: String::from("memory"),
+                    guest_fstype: String::from("memory"),
                     read_only: false,
                     plugin: MountPluginDescriptor {
                         id: String::from("memory"),
@@ -1193,6 +1197,8 @@ mod shadow_root {
                 },
                 MountDescriptor {
                     guest_path: String::from("/mount-boundaries/host/../host//"),
+                    guest_source: String::from("host_dir"),
+                    guest_fstype: String::from("host_dir"),
                     read_only: false,
                     plugin: MountPluginDescriptor {
                         id: String::from("host_dir"),
@@ -1337,6 +1343,8 @@ mod shadow_root {
             &vm_id,
             vec![MountDescriptor {
                 guest_path: mountpoint.clone(),
+                guest_source: String::from("memory"),
+                guest_fstype: String::from("memory"),
                 read_only: false,
                 plugin: MountPluginDescriptor {
                     id: String::from("memory"),
@@ -1569,6 +1577,8 @@ mod shadow_root {
             &session_id,
             vec![MountDescriptor {
                 guest_path: String::from("/mapped"),
+                guest_source: String::from("host_dir"),
+                guest_fstype: String::from("host_dir"),
                 read_only: false,
                 plugin: MountPluginDescriptor {
                     id: String::from("host_dir"),

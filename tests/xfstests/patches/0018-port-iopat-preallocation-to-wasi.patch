@@ -1,0 +1,111 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Fri, 10 Jul 2026 20:25:00 -0700
+Subject: [PATCH] fstests: port iopat allocation and buffers to WASI
+
+---
+ src/iopat.c | 53 ++++++++++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 48 insertions(+), 5 deletions(-)
+
+diff --git a/src/iopat.c b/src/iopat.c
+index a107a9a0..e17e4573 100644
+--- a/src/iopat.c
++++ b/src/iopat.c
+@@ -4,47 +4,90 @@
+  * All Rights Reserved.
+  */
+ 
++#include <errno.h>
++#include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
+ #include <fcntl.h>
+ #include <sys/ioctl.h>
++#ifndef __wasi__
+ #include <xfs/xfs.h>
+ struct xfs_flock64 f;
++#endif
+ 
+ int main(int argc, char **argv)
+ {
+    int fd, i;
++   int64_t *x;
+ 
+-   int64_t x[131072];
++   if (argc != 2) {
++      fprintf(stderr, "usage: %s file\n", argv[0]);
++      return 2;
++   }
++   x = malloc(1048576);
++   if (x == NULL) {
++      perror("malloc");
++      return 1;
++   }
+ 
+    for (i = 0; i < 131072; i++) {
+       x[i] = -1;
+    }
+    fd = open(argv[1], O_RDWR | O_CREAT, 0644);
++   if (fd < 0) {
++      perror("open");
++      free(x);
++      return 1;
++   }
+ 
+ #ifdef WRITE
++#ifdef __wasi__
++   {
++      int error = posix_fallocate(fd, 0, 1048576);
++      if (error != 0) {
++         errno = error;
++         perror("posix_fallocate");
++         free(x);
++         close(fd);
++         return 1;
++      }
++   }
++#else
+    f.l_whence = 0;
+    f.l_start = 0;
+    f.l_len = 1048576;
+    xfsctl (argv[1], fd, XFS_IOC_RESVSP, &f);
++#endif
+    for (i = 0; i < 131072; i++) {
+       x[i] = i;
+    }
+-   write(fd, &x, 1048576);
++   if (write(fd, x, 1048576) != 1048576) {
++      perror("write");
++      free(x);
++      close(fd);
++      return 1;
++   }
+ #endif
+ 
+ #ifdef READ
+-   read(fd, &x, 1048576);
++   if (read(fd, x, 1048576) != 1048576) {
++      perror("read");
++      free(x);
++      close(fd);
++      return 1;
++   }
+    for (i = 0; i < 131072; i++) {
+       if (x[i] != i) {
+          printf("error: %d %d %lld\n", i ,8 * i, (long long)x[i]);
+-	 exit(1);
++	 free(x);
++	 close(fd);
++	 return 1;
+       }
+    }
+ #endif
+ 
++   free(x);
+    close(fd);
+    exit(0);
+ }
+-
+-- 
+2.43.0

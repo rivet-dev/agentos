@@ -10,6 +10,10 @@ pub trait BlockStore: Send + Sync {
     async fn exists(&self, key: &BlockKey) -> VfsResult<bool>;
     async fn delete_many(&self, keys: &[BlockKey]) -> VfsResult<()>;
     async fn copy(&self, src: &BlockKey, dst: &BlockKey) -> VfsResult<()>;
+
+    async fn sync(&self) -> VfsResult<()> {
+        Ok(())
+    }
 }
 
 #[async_trait]

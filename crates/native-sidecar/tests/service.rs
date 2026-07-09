@@ -2210,6 +2210,8 @@ ykAheWCsAteSEWVc0w==\n\
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/__secure_exec/commands/0"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: true,
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
@@ -8359,6 +8361,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("memory"),
@@ -8407,12 +8411,20 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     MountEntry {
                         path: String::from("/workspace"),
                         plugin_id: String::from("memory"),
+                        guest_source: String::from("agentos"),
+                        guest_fstype: String::from("agentos"),
                         read_only: false,
+                        access_time: agentos_kernel::mount_table::AccessTimePolicy::Relatime,
+                        no_dir_atime: false,
                     },
                     MountEntry {
                         path: String::from("/"),
                         plugin_id: String::from("root"),
+                        guest_source: String::from("root"),
+                        guest_fstype: String::from("root"),
                         read_only: false,
+                        access_time: agentos_kernel::mount_table::AccessTimePolicy::Relatime,
+                        no_dir_atime: false,
                     },
                 ]
             );
@@ -8436,6 +8448,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/readonly"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: true,
                             plugin: MountPluginDescriptor {
                                 id: String::from("memory"),
@@ -8509,6 +8523,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
@@ -8584,6 +8600,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
@@ -8944,6 +8962,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("js_bridge"),
@@ -9081,6 +9101,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("js_bridge"),
@@ -9171,6 +9193,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("js_bridge"),
@@ -9290,6 +9314,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("js_bridge"),
@@ -9375,6 +9401,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("js_bridge"),
@@ -9471,6 +9499,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/sandbox"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("sandbox_agent"),
@@ -9568,6 +9598,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/data"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("chunked_s3"),
@@ -9636,6 +9668,10 @@ console.log(JSON.stringify({ status: "ok", summary }));
             );
             let _ = fs::remove_file(metadata_path);
         }
+        // Keep this end-to-end implementation test dormant beside the disabled
+        // registration. It becomes part of the return-to-service gate when the
+        // whole-object durability and request-amplification contract is complete.
+        #[allow(dead_code)]
         fn configure_vm_instantiates_object_s3_mounts_through_the_plugin_registry() {
             let server = MockS3Server::start();
             let mut sidecar = create_test_sidecar();
@@ -9670,6 +9706,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/objects"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("object_s3"),
@@ -9720,6 +9758,17 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 .iter()
                 .any(|key| key == "test-bucket/object-service-test/file.txt"));
         }
+        fn object_s3_mount_plugin_is_not_registered() {
+            let sidecar = create_test_sidecar();
+            assert!(
+                !sidecar
+                    .mount_plugins
+                    .plugin_ids()
+                    .iter()
+                    .any(|plugin_id| plugin_id == "object_s3"),
+                "object_s3 must remain unavailable until its return-to-service gates pass"
+            );
+        }
         fn configure_vm_instantiates_chunked_local_mounts_through_the_plugin_registry() {
             let root = temp_dir("agentos-native-sidecar-chunked-local");
             let metadata_path = root.join("metadata.sqlite");
@@ -9757,6 +9806,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/local"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("chunked_local"),
@@ -10315,6 +10366,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
@@ -10661,6 +10714,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("memory"),
@@ -10871,6 +10926,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/etc"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("memory"),
@@ -10940,6 +10997,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("memory"),
@@ -11097,6 +11156,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
@@ -11244,6 +11305,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/__secure_exec/commands/0"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: true,
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
@@ -11344,6 +11407,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/__secure_exec/commands/0"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: true,
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
@@ -11740,6 +11805,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/__secure_exec/commands/0"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: true,
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
@@ -14149,6 +14216,8 @@ process.stdout.write(`${JSON.stringify({
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
                         mounts: vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
+                            guest_source: String::from("agentos"),
+                            guest_fstype: String::from("agentos"),
                             read_only: false,
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
@@ -24968,7 +25037,7 @@ try {
             configure_vm_js_bridge_mount_readdir_of_mount_root_survives_broken_driver_realpath();
             configure_vm_instantiates_sandbox_agent_mounts_through_the_plugin_registry();
             configure_vm_instantiates_s3_mounts_through_the_plugin_registry();
-            configure_vm_instantiates_object_s3_mounts_through_the_plugin_registry();
+            object_s3_mount_plugin_is_not_registered();
             configure_vm_instantiates_chunked_local_mounts_through_the_plugin_registry();
             bridge_permissions_map_symlink_operations_to_symlink_access();
             vm_limits_config_reads_filesystem_limits();
@@ -25157,6 +25226,11 @@ try {
         fn service_state_handle_tables_are_bounded() {
             sqlite_database_handles_are_bounded();
             sqlite_statement_handles_are_bounded();
+        }
+
+        #[test]
+        fn object_s3_plugin_remains_dormant() {
+            object_s3_mount_plugin_is_not_registered();
         }
 
         #[test]

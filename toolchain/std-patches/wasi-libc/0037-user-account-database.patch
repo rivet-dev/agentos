@@ -1,0 +1,394 @@
+Implement the POSIX passwd and group database through host_user.
+
+The VM account database is kernel-owned and may contain multiple configured
+users and groups. Route name/id lookups, iteration, reentrant APIs, and
+getgrouplist through that database instead of consulting guest /etc files.
+
+diff --git a/libc-bottom-half/sources/host_user_accounts.c b/libc-bottom-half/sources/host_user_accounts.c
+new file mode 100644
+index 0000000..a1f4e3d
+--- /dev/null
++++ b/libc-bottom-half/sources/host_user_accounts.c
+@@ -0,0 +1,292 @@
++#define _GNU_SOURCE
++#include <errno.h>
++#include <grp.h>
++#include <limits.h>
++#include <pwd.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++
++#define WASM_IMPORT(mod, fn) \
++    __attribute__((__import_module__(mod), __import_name__(fn)))
++#define ACCOUNT_TEXT_MAX 4096
++#define ACCOUNT_MEMBERS_MAX 256
++
++WASM_IMPORT("host_user", "getpwnam")
++uint32_t __host_getpwnam(const uint8_t *, uint32_t, uint8_t *, uint32_t,
++                         uint32_t *);
++WASM_IMPORT("host_user", "getpwent")
++uint32_t __host_getpwent(uint32_t, uint8_t *, uint32_t, uint32_t *);
++WASM_IMPORT("host_user", "getpwuid")
++uint32_t __host_getpwuid(uint32_t, uint8_t *, uint32_t, uint32_t *);
++WASM_IMPORT("host_user", "getgrnam")
++uint32_t __host_getgrnam(const uint8_t *, uint32_t, uint8_t *, uint32_t,
++                         uint32_t *);
++WASM_IMPORT("host_user", "getgrgid")
++uint32_t __host_getgrgid(uint32_t, uint8_t *, uint32_t, uint32_t *);
++WASM_IMPORT("host_user", "getgrent")
++uint32_t __host_getgrent(uint32_t, uint8_t *, uint32_t, uint32_t *);
++
++typedef uint32_t (*id_lookup)(uint32_t, uint8_t *, uint32_t, uint32_t *);
++typedef uint32_t (*name_lookup)(const uint8_t *, uint32_t, uint8_t *, uint32_t,
++                                uint32_t *);
++
++static int parse_passwd(char *text, size_t length, struct passwd *entry) {
++    char *fields[7];
++    size_t field = 0;
++    fields[0] = text;
++    for (size_t i = 0; i < length && field < 6; i++) {
++        if (text[i] == ':') {
++            text[i] = '\0';
++            fields[++field] = text + i + 1;
++        }
++    }
++    if (field != 6) return EIO;
++    entry->pw_name = fields[0];
++    entry->pw_passwd = fields[1];
++    entry->pw_uid = (uid_t)strtoul(fields[2], 0, 10);
++    entry->pw_gid = (gid_t)strtoul(fields[3], 0, 10);
++    entry->pw_gecos = fields[4];
++    entry->pw_dir = fields[5];
++    entry->pw_shell = fields[6];
++    return 0;
++}
++
++static int finish_passwd(uint32_t error, char *temporary, uint32_t length,
++                         struct passwd *entry, char *buffer, size_t size,
++                         struct passwd **result) {
++    *result = 0;
++    if (error == ENOENT) return 0;
++    if (error != 0) return (int)error;
++    if (length >= ACCOUNT_TEXT_MAX) return EOVERFLOW;
++    if ((size_t)length + 1 > size) return ERANGE;
++    memcpy(buffer, temporary, length);
++    buffer[length] = '\0';
++    int parsed = parse_passwd(buffer, length, entry);
++    if (parsed != 0) return parsed;
++    *result = entry;
++    return 0;
++}
++
++static int passwd_by_id(id_lookup lookup, uint32_t value,
++                        struct passwd *entry, char *buffer, size_t size,
++                        struct passwd **result) {
++    char temporary[ACCOUNT_TEXT_MAX];
++    uint32_t length = 0;
++    uint32_t error = lookup(value, (uint8_t *)temporary, sizeof temporary - 1,
++                            &length);
++    return finish_passwd(error, temporary, length, entry, buffer, size, result);
++}
++
++static int passwd_by_name(name_lookup lookup, const char *name,
++                          struct passwd *entry, char *buffer, size_t size,
++                          struct passwd **result) {
++    char temporary[ACCOUNT_TEXT_MAX];
++    uint32_t length = 0;
++    uint32_t error = lookup((const uint8_t *)name, (uint32_t)strlen(name),
++                            (uint8_t *)temporary, sizeof temporary - 1, &length);
++    return finish_passwd(error, temporary, length, entry, buffer, size, result);
++}
++
++static struct passwd passwd_entry;
++static char passwd_buffer[ACCOUNT_TEXT_MAX];
++static uint32_t passwd_index;
++
++struct passwd *getpwnam(const char *name) {
++    struct passwd *result;
++    int error = passwd_by_name(__host_getpwnam, name, &passwd_entry,
++                               passwd_buffer, sizeof passwd_buffer, &result);
++    if (error != 0) errno = error;
++    return error == 0 ? result : 0;
++}
++
++struct passwd *getpwent(void) {
++    struct passwd *result;
++    int error = passwd_by_id(__host_getpwent, passwd_index, &passwd_entry,
++                             passwd_buffer, sizeof passwd_buffer, &result);
++    if (error != 0) { errno = error; return 0; }
++    if (result) passwd_index++;
++    return result;
++}
++
++void setpwent(void) { passwd_index = 0; }
++void endpwent(void) { passwd_index = 0; }
++
++int getpwuid_r(uid_t uid, struct passwd *entry, char *buffer, size_t size,
++               struct passwd **result) {
++    int error = passwd_by_id(__host_getpwuid, (uint32_t)uid, entry, buffer,
++                             size, result);
++    if (error != 0) errno = error;
++    return error;
++}
++
++int getpwnam_r(const char *name, struct passwd *entry, char *buffer, size_t size,
++               struct passwd **result) {
++    int error = passwd_by_name(__host_getpwnam, name, entry, buffer, size,
++                               result);
++    if (error != 0) errno = error;
++    return error;
++}
++
++static size_t group_member_count(const char *text, size_t length) {
++    const char *members = text;
++    for (int separators = 0; separators < 3; separators++) {
++        members = memchr(members, ':', length - (size_t)(members - text));
++        if (!members) return SIZE_MAX;
++        members++;
++    }
++    if (*members == '\0') return 0;
++    size_t count = 1;
++    for (const char *cursor = members; *cursor; cursor++)
++        if (*cursor == ',') count++;
++    return count;
++}
++
++static int parse_group(char *text, size_t length, struct group *entry,
++                       char **members, size_t member_capacity) {
++    char *fields[4];
++    size_t field = 0;
++    fields[0] = text;
++    for (size_t i = 0; i < length && field < 3; i++) {
++        if (text[i] == ':') {
++            text[i] = '\0';
++            fields[++field] = text + i + 1;
++        }
++    }
++    if (field != 3) return EIO;
++    entry->gr_name = fields[0];
++    entry->gr_passwd = fields[1];
++    entry->gr_gid = (gid_t)strtoul(fields[2], 0, 10);
++    entry->gr_mem = members;
++    size_t count = 0;
++    char *cursor = fields[3];
++    while (*cursor) {
++        if (count >= member_capacity) return ERANGE;
++        members[count++] = cursor;
++        char *comma = strchr(cursor, ',');
++        if (!comma) break;
++        *comma = '\0';
++        cursor = comma + 1;
++    }
++    members[count] = 0;
++    return 0;
++}
++
++static int finish_group(uint32_t error, char *temporary, uint32_t length,
++                        struct group *entry, char *buffer, size_t size,
++                        struct group **result) {
++    *result = 0;
++    if (error == ENOENT) return 0;
++    if (error != 0) return (int)error;
++    if (length >= ACCOUNT_TEXT_MAX) return EOVERFLOW;
++    temporary[length] = '\0';
++    size_t member_count = group_member_count(temporary, length);
++    if (member_count == SIZE_MAX) return EIO;
++    uintptr_t strings_end = (uintptr_t)buffer + length + 1;
++    uintptr_t aligned = (strings_end + sizeof(char *) - 1) & ~(sizeof(char *) - 1);
++    if (aligned < (uintptr_t)buffer ||
++        aligned + (member_count + 1) * sizeof(char *) > (uintptr_t)buffer + size)
++        return ERANGE;
++    memcpy(buffer, temporary, length + 1);
++    int parsed = parse_group(buffer, length, entry, (char **)aligned,
++                             member_count);
++    if (parsed != 0) return parsed;
++    *result = entry;
++    return 0;
++}
++
++static int group_by_id(id_lookup lookup, uint32_t value, struct group *entry,
++                       char *buffer, size_t size, struct group **result) {
++    char temporary[ACCOUNT_TEXT_MAX];
++    uint32_t length = 0;
++    uint32_t error = lookup(value, (uint8_t *)temporary, sizeof temporary - 1,
++                            &length);
++    return finish_group(error, temporary, length, entry, buffer, size, result);
++}
++
++static int group_by_name(name_lookup lookup, const char *name,
++                         struct group *entry, char *buffer, size_t size,
++                         struct group **result) {
++    char temporary[ACCOUNT_TEXT_MAX];
++    uint32_t length = 0;
++    uint32_t error = lookup((const uint8_t *)name, (uint32_t)strlen(name),
++                            (uint8_t *)temporary, sizeof temporary - 1, &length);
++    return finish_group(error, temporary, length, entry, buffer, size, result);
++}
++
++static struct group group_entry;
++static char group_buffer[ACCOUNT_TEXT_MAX +
++                         (ACCOUNT_MEMBERS_MAX + 1) * sizeof(char *)];
++static uint32_t group_index;
++
++struct group *getgrgid(gid_t gid) {
++    struct group *result;
++    int error = group_by_id(__host_getgrgid, (uint32_t)gid, &group_entry,
++                            group_buffer, sizeof group_buffer, &result);
++    if (error != 0) errno = error;
++    return error == 0 ? result : 0;
++}
++
++struct group *getgrnam(const char *name) {
++    struct group *result;
++    int error = group_by_name(__host_getgrnam, name, &group_entry, group_buffer,
++                              sizeof group_buffer, &result);
++    if (error != 0) errno = error;
++    return error == 0 ? result : 0;
++}
++
++struct group *getgrent(void) {
++    struct group *result;
++    int error = group_by_id(__host_getgrent, group_index, &group_entry,
++                            group_buffer, sizeof group_buffer, &result);
++    if (error != 0) { errno = error; return 0; }
++    if (result) group_index++;
++    return result;
++}
++
++void setgrent(void) { group_index = 0; }
++void endgrent(void) { group_index = 0; }
++
++int getgrgid_r(gid_t gid, struct group *entry, char *buffer, size_t size,
++               struct group **result) {
++    int error = group_by_id(__host_getgrgid, (uint32_t)gid, entry, buffer,
++                            size, result);
++    if (error != 0) errno = error;
++    return error;
++}
++
++int getgrnam_r(const char *name, struct group *entry, char *buffer, size_t size,
++               struct group **result) {
++    int error = group_by_name(__host_getgrnam, name, entry, buffer, size, result);
++    if (error != 0) errno = error;
++    return error;
++}
++
++static int group_has_member(const struct group *entry, const char *user) {
++    for (char **member = entry->gr_mem; member && *member; member++)
++        if (strcmp(*member, user) == 0) return 1;
++    return 0;
++}
++
++int getgrouplist(const char *user, gid_t primary, gid_t *groups, int *ngroups) {
++    if (!user || !ngroups || *ngroups < 0) { errno = EINVAL; return -1; }
++    gid_t found[ACCOUNT_MEMBERS_MAX];
++    size_t count = 0;
++    found[count++] = primary;
++    for (uint32_t index = 0; index < ACCOUNT_MEMBERS_MAX; index++) {
++        struct group *entry;
++        int error = group_by_id(__host_getgrent, index, &group_entry,
++                                group_buffer, sizeof group_buffer, &entry);
++        if (error != 0) { errno = error; return -1; }
++        if (!entry) break;
++        if (!group_has_member(entry, user)) continue;
++        size_t existing = 0;
++        while (existing < count && found[existing] != entry->gr_gid) existing++;
++        if (existing == count) found[count++] = entry->gr_gid;
++    }
++    int capacity = *ngroups;
++    int copied = capacity < (int)count ? capacity : (int)count;
++    for (int i = 0; i < copied; i++) groups[i] = found[i];
++    *ngroups = (int)count;
++    return capacity < (int)count ? -1 : (int)count;
++}
+diff --git a/libc-bottom-half/sources/host_user_getpwuid.c b/libc-bottom-half/sources/host_user_getpwuid.c
+index c80a680..09fcbfb 100644
+--- a/libc-bottom-half/sources/host_user_getpwuid.c
++++ b/libc-bottom-half/sources/host_user_getpwuid.c
+@@ -20,5 +20,5 @@ uint32_t __host_getpwuid(uint32_t uid, uint8_t *buf_ptr, uint32_t buf_len, uint
+ 
+ static struct passwd pw_entry;
+-static char pw_buf[512];
++static char pw_buf[4096];
+ 
+ struct passwd *getpwuid(uid_t uid) {
+diff --git a/libc-top-half/musl/src/passwd/getpwent.c b/libc-top-half/musl/src/passwd/getpwent.c
+index 6ca7e67..2ec5460 100644
+--- a/libc-top-half/musl/src/passwd/getpwent.c
++++ b/libc-top-half/musl/src/passwd/getpwent.c
+@@ -1,5 +1,6 @@
+ #include "pwf.h"
+ 
++#ifdef __wasilibc_unmodified_upstream
+ static FILE *f;
+ static char *line;
+ static struct passwd pw;
+@@ -40,3 +41,4 @@ struct passwd *getpwnam(const char *name)
+ 	__getpw_a(name, 0, &pw, &line, &size, &res);
+ 	return res;
+ }
++#endif
+diff --git a/libc-top-half/musl/src/passwd/getpw_r.c b/libc-top-half/musl/src/passwd/getpw_r.c
+index 73871d4..759cb50 100644
+--- a/libc-top-half/musl/src/passwd/getpw_r.c
++++ b/libc-top-half/musl/src/passwd/getpw_r.c
+@@ -1,4 +1,5 @@
+ #include "pwf.h"
+ #include <pthread.h>
++#ifdef __wasilibc_unmodified_upstream
+ 
+ #define FIX(x) (pw->pw_##x = pw->pw_##x-line+buf)
+@@ -42,3 +43,4 @@ int getpwuid_r(uid_t uid, struct passwd *pw, char *buf, size_t size, struct pas
+ {
+ 	return getpw_r(0, uid, pw, buf, size, res);
+ }
++#endif
+diff --git a/libc-top-half/musl/src/passwd/getgrent.c b/libc-top-half/musl/src/passwd/getgrent.c
+index 0c3f00c..883edb2 100644
+--- a/libc-top-half/musl/src/passwd/getgrent.c
++++ b/libc-top-half/musl/src/passwd/getgrent.c
+@@ -1,5 +1,6 @@
+ #include "pwf.h"
+ 
++#ifdef __wasilibc_unmodified_upstream
+ static FILE *f;
+ static char *line, **mem;
+ static struct group gr;
+@@ -43,3 +44,4 @@ struct group *getgrnam(const char *name)
+ 	__getgr_a(name, 0, &gr, &line, &size, &mem, &nmem, &res);
+ 	return res;
+ }
++#endif
+diff --git a/libc-top-half/musl/src/passwd/getgr_r.c b/libc-top-half/musl/src/passwd/getgr_r.c
+index 7c3c5ed..a0ae8dc 100644
+--- a/libc-top-half/musl/src/passwd/getgr_r.c
++++ b/libc-top-half/musl/src/passwd/getgr_r.c
+@@ -1,4 +1,5 @@
+ #include "pwf.h"
+ #include <pthread.h>
++#ifdef __wasilibc_unmodified_upstream
+ 
+ #define FIX(x) (gr->gr_##x = gr->gr_##x-line+buf)
+@@ -48,3 +49,4 @@ int getgrgid_r(gid_t gid, struct group *gr, char *buf, size_t size, struct grou
+ {
+ 	return getgr_r(0, gid, gr, buf, size, res);
+ }
++#endif
+diff --git a/libc-top-half/musl/src/passwd/getgrouplist.c b/libc-top-half/musl/src/passwd/getgrouplist.c
+index fdf32e1..50adb99 100644
+--- a/libc-top-half/musl/src/passwd/getgrouplist.c
++++ b/libc-top-half/musl/src/passwd/getgrouplist.c
+@@ -9,6 +9,7 @@
+ #include <errno.h>
+ #include "nscd.h"
+ 
++#ifdef __wasilibc_unmodified_upstream
+ int getgrouplist(const char *user, gid_t gid, gid_t *groups, int *ngroups)
+ {
+ 	int rv, nlim, ret = -1;
+@@ -83,3 +84,4 @@ cleanup:
+ 	free(mem);
+ 	return ret;
+ }
++#endif

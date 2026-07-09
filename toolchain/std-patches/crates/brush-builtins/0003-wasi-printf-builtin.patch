@@ -1,0 +1,33 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -210,7 +210,7 @@ features = [
+     "sync",
+ ]
+ 
+-[target."cfg(any(unix, windows))".dependencies.uucore]
++[target."cfg(any(unix, windows, target_os = \"wasi\"))".dependencies.uucore]
+ version = "0.4.0"
+ features = ["format"]
+ default-features = false
+--- a/src/factory.rs
++++ b/src/factory.rs
+@@ -144,7 +144,7 @@ pub fn default_builtins(set: BuiltinSet) -> BuiltinMap {
+         m.insert("mapfile".into(), builtin::<mapfile::MapFileCommand>());
+         #[cfg(feature = "builtin.mapfile")]
+         m.insert("readarray".into(), builtin::<mapfile::MapFileCommand>());
+-        #[cfg(all(feature = "builtin.printf", any(unix, windows)))]
++        #[cfg(all(feature = "builtin.printf", any(unix, windows, target_os = "wasi")))]
+         m.insert("printf".into(), builtin::<printf::PrintfCommand>());
+         #[cfg(feature = "builtin.shopt")]
+         m.insert("shopt".into(), builtin::<shopt::ShoptCommand>());
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -68,7 +68,7 @@ mod mapfile;
+ mod mapfile;
+ #[cfg(feature = "builtin.popd")]
+ mod popd;
+-#[cfg(all(feature = "builtin.printf", any(unix, windows)))]
++#[cfg(all(feature = "builtin.printf", any(unix, windows, target_os = "wasi")))]
+ mod printf;
+ #[cfg(feature = "builtin.pushd")]
+ mod pushd;

@@ -339,6 +339,10 @@ impl VirtualFileSystem for RootFileSystem {
         self.overlay.mkdir(path, recursive)
     }
 
+    fn mknod(&mut self, path: &str, mode: u32, rdev: u64) -> VfsResult<()> {
+        self.overlay.mknod(path, mode, rdev)
+    }
+
     fn exists(&self, path: &str) -> bool {
         self.overlay.exists(path)
     }
@@ -397,6 +401,34 @@ impl VirtualFileSystem for RootFileSystem {
         self.overlay.chown_spec(path, uid, gid, follow_symlinks)
     }
 
+    fn lchown(&mut self, path: &str, uid: u32, gid: u32) -> VfsResult<()> {
+        self.overlay.lchown(path, uid, gid)
+    }
+
+    fn get_xattr(&mut self, path: &str, name: &str, follow_symlinks: bool) -> VfsResult<Vec<u8>> {
+        self.overlay.get_xattr(path, name, follow_symlinks)
+    }
+
+    fn list_xattrs(&mut self, path: &str, follow_symlinks: bool) -> VfsResult<Vec<String>> {
+        self.overlay.list_xattrs(path, follow_symlinks)
+    }
+
+    fn set_xattr(
+        &mut self,
+        path: &str,
+        name: &str,
+        value: Vec<u8>,
+        flags: u32,
+        follow_symlinks: bool,
+    ) -> VfsResult<()> {
+        self.overlay
+            .set_xattr(path, name, value, flags, follow_symlinks)
+    }
+
+    fn remove_xattr(&mut self, path: &str, name: &str, follow_symlinks: bool) -> VfsResult<()> {
+        self.overlay.remove_xattr(path, name, follow_symlinks)
+    }
+
     fn utimes(&mut self, path: &str, atime_ms: u64, mtime_ms: u64) -> VfsResult<()> {
         self.overlay.utimes(path, atime_ms, mtime_ms)
     }
@@ -416,8 +448,46 @@ impl VirtualFileSystem for RootFileSystem {
         self.overlay.truncate(path, length)
     }
 
+    fn allocate(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        self.overlay.allocate(path, offset, length)
+    }
+
+    fn insert_range(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        self.overlay.insert_range(path, offset, length)
+    }
+
+    fn collapse_range(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        self.overlay.collapse_range(path, offset, length)
+    }
+
+    fn zero_range(
+        &mut self,
+        path: &str,
+        offset: u64,
+        length: u64,
+        keep_size: bool,
+    ) -> VfsResult<()> {
+        self.overlay.zero_range(path, offset, length, keep_size)
+    }
+
+    fn punch_hole(&mut self, path: &str, offset: u64, length: u64) -> VfsResult<()> {
+        self.overlay.punch_hole(path, offset, length)
+    }
+
+    fn allocated_ranges(&mut self, path: &str) -> VfsResult<Vec<(u64, u64)>> {
+        self.overlay.allocated_ranges(path)
+    }
+
+    fn unwritten_ranges(&mut self, path: &str) -> VfsResult<Vec<(u64, u64)>> {
+        self.overlay.unwritten_ranges(path)
+    }
+
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
         self.overlay.pread(path, offset, length)
+    }
+
+    fn pwrite(&mut self, path: &str, content: impl Into<Vec<u8>>, offset: u64) -> VfsResult<()> {
+        self.overlay.pwrite(path, content, offset)
     }
 }
 

@@ -1,11 +1,187 @@
 use async_trait::async_trait;
 use std::sync::{Arc, Condvar, Mutex};
+use std::thread::sleep;
+use std::time::Duration;
 use vfs::engine::engines::{ChunkedFs, ChunkedFsOptions, ObjectFs};
 use vfs::engine::mem::{InMemoryMetadataStore, MemoryBlockStore, MemoryObjectBackend};
 use vfs::engine::{
     BlockKey, CachedMetadataStore, ChunkEdit, ChunkRange, CreateInodeAttrs, InodePatch, InodeType,
-    MetadataStore, SnapshotId, Storage, VfsResult, VirtualFileSystem,
+    MetadataStore, ObjectBackend, SnapshotId, Storage, VfsResult, VirtualFileSystem, S_IFBLK,
+    S_IFIFO,
 };
+
+#[tokio::test]
+async fn chunked_fs_updates_content_metadata_and_namespace_timestamps() {
+    let fs = ChunkedFs::new(InMemoryMetadataStore::new(), MemoryBlockStore::new());
+    fs.create_dir("/dir").await.unwrap();
+    let parent_before_create = fs.stat("/dir").await.unwrap();
+
+    sleep(Duration::from_millis(2));
+    fs.write_file("/dir/file", b"first").await.unwrap();
+    let parent_after_create = fs.stat("/dir").await.unwrap();
+    assert!(parent_after_create.mtime > parent_before_create.mtime);
+    assert!(parent_after_create.ctime > parent_before_create.ctime);
+
+    let before_write = fs.stat("/dir/file").await.unwrap();
+    sleep(Duration::from_millis(2));
+    fs.write_file("/dir/file", b"second").await.unwrap();
+    let after_write = fs.stat("/dir/file").await.unwrap();
+    assert_eq!(after_write.atime, before_write.atime);
+    assert!(after_write.mtime > before_write.mtime);
+    assert!(after_write.ctime > before_write.ctime);
+
+    sleep(Duration::from_millis(2));
+    fs.chmod("/dir/file", 0o600).await.unwrap();
+    let after_chmod = fs.stat("/dir/file").await.unwrap();
+    assert_eq!(after_chmod.atime, after_write.atime);
+    assert_eq!(after_chmod.mtime, after_write.mtime);
+    assert!(after_chmod.ctime > after_write.ctime);
+
+    sleep(Duration::from_millis(2));
+    fs.rename("/dir/file", "/dir/renamed").await.unwrap();
+    let after_rename = fs.stat("/dir/renamed").await.unwrap();
+    assert_eq!(after_rename.atime, after_chmod.atime);
+    assert_eq!(after_rename.mtime, after_chmod.mtime);
+    assert!(after_rename.ctime > after_chmod.ctime);
+}
+
+#[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
+async fn object_fs_atime_update_preserves_content_and_other_timestamps() {
+    let fs = ObjectFs::new(MemoryObjectBackend::new());
+    fs.write_file("/file", b"whole object").await.unwrap();
+    let before = fs.stat("/file").await.unwrap();
+    let atime_ms = u64::try_from(before.atime.sec).unwrap() * 1_000
+        + u64::from(before.atime.nsec / 1_000_000)
+        + 2_000;
+
+    fs.set_atime("/file", atime_ms).await.unwrap();
+
+    let after = fs.stat("/file").await.unwrap();
+    assert!(after.atime > before.atime);
+    assert_eq!(after.mtime, before.mtime);
+    assert_eq!(after.ctime, before.ctime);
+    assert_eq!(after.birthtime, before.birthtime);
+    assert_eq!(fs.read_file("/file").await.unwrap(), b"whole object");
+}
+
+#[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
+async fn object_fs_coalesces_dirty_state_until_sync() {
+    let backend = MemoryObjectBackend::new();
+    let fs = ObjectFs::new(backend.clone());
+
+    fs.write_file("/file", b"initial").await.unwrap();
+    fs.pwrite("/file", b"final", 0).await.unwrap();
+    fs.truncate("/file", 5).await.unwrap();
+    fs.chmod("/file", 0o600).await.unwrap();
+
+    assert!(backend.head("file").await.unwrap().is_none());
+    assert_eq!(fs.read_file("/file").await.unwrap(), b"final");
+    assert_eq!(fs.stat("/file").await.unwrap().mode & 0o777, 0o600);
+
+    fs.sync("/file").await.unwrap();
+
+    let persisted = backend.head("file").await.unwrap().unwrap();
+    assert_eq!(persisted.mode & 0o777, 0o600);
+    assert_eq!(
+        backend.get_range("file", 0, persisted.size).await.unwrap(),
+        b"final"
+    );
+}
+
+#[tokio::test]
+async fn chunked_fs_preserves_special_inode_metadata() {
+    let fs = ChunkedFs::new(InMemoryMetadataStore::new(), MemoryBlockStore::new());
+    fs.create_dir("/devices").await.unwrap();
+    fs.mknod("/devices/block", S_IFBLK | 0o640, (8 << 8) | 1)
+        .await
+        .unwrap();
+    fs.mknod("/devices/fifo", S_IFIFO | 0o600, 0).await.unwrap();
+    fs.set_xattr("/devices/fifo", "user.probe", b"fifo", 0, true)
+        .await
+        .unwrap();
+
+    let block = fs.stat("/devices/block").await.unwrap();
+    assert_eq!(block.mode & 0o170000, S_IFBLK);
+    assert_eq!(block.rdev, (8 << 8) | 1);
+    assert!(fs
+        .list_xattrs("/devices/block", true)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        fs.get_xattr("/devices/block", "agentos.internal.rdev", true)
+            .await
+            .unwrap_err()
+            .code(),
+        "EOPNOTSUPP"
+    );
+    let entries = fs.read_dir_with_types("/devices").await.unwrap();
+    assert!(entries
+        .iter()
+        .any(|entry| entry.name == "block" && entry.kind == InodeType::BlockDevice));
+    assert!(entries
+        .iter()
+        .any(|entry| entry.name == "fifo" && entry.kind == InodeType::Fifo));
+    assert_eq!(
+        fs.get_xattr("/devices/fifo", "user.probe", true)
+            .await
+            .unwrap(),
+        b"fifo"
+    );
+    assert_eq!(
+        fs.read_file("/devices/fifo").await.unwrap_err().code(),
+        "ENXIO"
+    );
+}
+
+#[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
+async fn object_fs_preserves_special_inode_metadata() {
+    let fs = ObjectFs::new(MemoryObjectBackend::new());
+    fs.create_dir("/devices").await.unwrap();
+    fs.mknod("/devices/block", S_IFBLK | 0o640, (8 << 8) | 1)
+        .await
+        .unwrap();
+    fs.mknod("/devices/fifo", S_IFIFO | 0o600, 0).await.unwrap();
+    fs.set_xattr("/devices/fifo", "user.probe", b"fifo", 0, true)
+        .await
+        .unwrap();
+
+    let block = fs.stat("/devices/block").await.unwrap();
+    assert_eq!(block.mode & 0o170000, S_IFBLK);
+    assert_eq!(block.rdev, (8 << 8) | 1);
+    assert!(fs
+        .list_xattrs("/devices/block", true)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        fs.get_xattr("/devices/block", "agentos.internal.rdev", true)
+            .await
+            .unwrap_err()
+            .code(),
+        "EOPNOTSUPP"
+    );
+    let entries = fs.read_dir_with_types("/devices").await.unwrap();
+    assert!(entries
+        .iter()
+        .any(|entry| entry.name == "block" && entry.kind == InodeType::BlockDevice));
+    assert!(entries
+        .iter()
+        .any(|entry| entry.name == "fifo" && entry.kind == InodeType::Fifo));
+    assert_eq!(
+        fs.get_xattr("/devices/fifo", "user.probe", true)
+            .await
+            .unwrap(),
+        b"fifo"
+    );
+    assert_eq!(
+        fs.read_file("/devices/fifo").await.unwrap_err().code(),
+        "ENXIO"
+    );
+}
 
 #[tokio::test]
 async fn chunked_fs_round_trips_inline_and_chunked_files() {
@@ -31,6 +207,58 @@ async fn chunked_fs_round_trips_inline_and_chunked_files() {
 
     fs.pwrite("/large.txt", b"ZZ", 2).await.unwrap();
     assert_eq!(fs.read_file("/large.txt").await.unwrap(), b"abZZefghi");
+}
+
+#[tokio::test]
+async fn adaptive_chunking_uses_first_large_write_as_the_inode_chunk_size() {
+    let metadata = InMemoryMetadataStore::new();
+    let fs = ChunkedFs::with_adaptive_chunk_size(
+        metadata,
+        MemoryBlockStore::new(),
+        ChunkedFsOptions {
+            inline_threshold: 1,
+            chunk_size: 4,
+            ..ChunkedFsOptions::default()
+        },
+    );
+
+    fs.write_file("/adaptive", b"abcdefghij").await.unwrap();
+    let meta = fs.metadata().resolve("/adaptive").await.unwrap();
+    assert_eq!(meta.storage, Storage::Chunked { chunk_size: 10 });
+    assert_eq!(
+        fs.metadata()
+            .get_chunks(
+                meta.ino,
+                ChunkRange {
+                    start: 0,
+                    end: None,
+                },
+            )
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn chunked_fs_xattrs_are_inode_scoped() {
+    let fs = ChunkedFs::new(InMemoryMetadataStore::new(), MemoryBlockStore::new());
+    fs.write_file("/file", b"data").await.unwrap();
+    fs.link("/file", "/hardlink").await.unwrap();
+    fs.set_xattr("/file", "user.agentos", b"value", 1, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.get_xattr("/hardlink", "user.agentos", true)
+            .await
+            .unwrap(),
+        b"value"
+    );
+    assert_eq!(
+        fs.list_xattrs("/file", true).await.unwrap(),
+        vec!["user.agentos"]
+    );
 }
 
 #[tokio::test]
@@ -80,11 +308,112 @@ async fn chunked_fs_sparse_pwrite_and_truncate_zero_fill_holes() {
         fs.read_file("/sparse").await.unwrap(),
         b"\0\0\0\0\0\0\0\0\0\0end"
     );
+    let sparse_stat = fs.stat("/sparse").await.unwrap();
+    assert_eq!(sparse_stat.size, 13);
+    assert_eq!(sparse_stat.blocks, 1);
 
     fs.write_file("/truncate", b"abcdefgh").await.unwrap();
     fs.truncate("/truncate", 5).await.unwrap();
     fs.truncate("/truncate", 8).await.unwrap();
     assert_eq!(fs.read_file("/truncate").await.unwrap(), b"abcde\0\0\0");
+    assert_eq!(fs.stat("/truncate").await.unwrap().blocks, 1);
+}
+
+#[tokio::test]
+async fn chunked_fs_allocate_preserves_data_and_materializes_sparse_blocks() {
+    let fs = ChunkedFs::with_options(
+        InMemoryMetadataStore::new(),
+        MemoryBlockStore::new(),
+        ChunkedFsOptions {
+            inline_threshold: 1,
+            chunk_size: 128,
+            ..ChunkedFsOptions::default()
+        },
+    );
+
+    fs.write_file("/allocated", b"prefix").await.unwrap();
+    fs.allocate("/allocated", 512, 512).await.unwrap();
+
+    let contents = fs.read_file("/allocated").await.unwrap();
+    assert_eq!(&contents[..6], b"prefix");
+    assert!(contents[6..].iter().all(|byte| *byte == 0));
+    let stat = fs.stat("/allocated").await.unwrap();
+    assert_eq!(stat.size, 1024);
+    assert_eq!(stat.blocks, 2);
+}
+
+#[tokio::test]
+async fn chunked_fs_punch_hole_preserves_size_and_deallocates_complete_blocks() {
+    let fs = ChunkedFs::with_options(
+        InMemoryMetadataStore::new(),
+        MemoryBlockStore::new(),
+        ChunkedFsOptions {
+            inline_threshold: 1,
+            chunk_size: 512,
+            ..ChunkedFsOptions::default()
+        },
+    );
+    fs.write_file("/punched", &vec![b'x'; 2048]).await.unwrap();
+
+    fs.punch_hole("/punched", 512, 1024).await.unwrap();
+
+    let contents = fs.read_file("/punched").await.unwrap();
+    assert!(contents[..512].iter().all(|byte| *byte == b'x'));
+    assert!(contents[512..1536].iter().all(|byte| *byte == 0));
+    assert!(contents[1536..].iter().all(|byte| *byte == b'x'));
+    let stat = fs.stat("/punched").await.unwrap();
+    assert_eq!(stat.size, 2048);
+    assert_eq!(stat.blocks, 2);
+    assert_eq!(
+        fs.allocated_ranges("/punched").await.unwrap(),
+        vec![(0, 512), (1536, 2048)]
+    );
+}
+
+#[tokio::test]
+async fn chunked_fs_zero_range_reallocates_exact_bytes_and_honors_keep_size() {
+    let fs = ChunkedFs::with_options(
+        InMemoryMetadataStore::new(),
+        MemoryBlockStore::new(),
+        ChunkedFsOptions {
+            inline_threshold: 1,
+            chunk_size: 512,
+            ..ChunkedFsOptions::default()
+        },
+    );
+    fs.write_file("/zeroed", &vec![b'x'; 2048]).await.unwrap();
+    fs.punch_hole("/zeroed", 512, 512).await.unwrap();
+
+    fs.zero_range("/zeroed", 384, 768, false).await.unwrap();
+    let contents = fs.read_file("/zeroed").await.unwrap();
+    assert!(contents[..384].iter().all(|byte| *byte == b'x'));
+    assert!(contents[384..1152].iter().all(|byte| *byte == 0));
+    assert!(contents[1152..].iter().all(|byte| *byte == b'x'));
+    assert_eq!(
+        fs.allocated_ranges("/zeroed").await.unwrap(),
+        vec![(0, 2048)]
+    );
+    assert_eq!(
+        fs.unwritten_ranges("/zeroed").await.unwrap(),
+        vec![(512, 1024)]
+    );
+
+    fs.zero_range("/zeroed", 3072, 512, true).await.unwrap();
+    assert_eq!(fs.stat("/zeroed").await.unwrap().size, 2048);
+    fs.truncate("/zeroed", 3584).await.unwrap();
+    assert_eq!(
+        fs.allocated_ranges("/zeroed").await.unwrap(),
+        vec![(0, 2048), (3072, 3584)]
+    );
+    assert_eq!(
+        fs.unwritten_ranges("/zeroed").await.unwrap(),
+        vec![(512, 1024), (3072, 3584)]
+    );
+    fs.pwrite("/zeroed", &vec![b'y'; 512], 512).await.unwrap();
+    assert_eq!(
+        fs.unwritten_ranges("/zeroed").await.unwrap(),
+        vec![(3072, 3584)]
+    );
 }
 
 #[tokio::test]
@@ -138,6 +467,7 @@ async fn metadata_snapshot_and_fork_share_chunk_refs_until_cow_write() {
                 len: 5,
             }],
             5,
+            vec![(0, 1)],
         )
         .await
         .unwrap();
@@ -165,11 +495,50 @@ async fn metadata_snapshot_and_fork_share_chunk_refs_until_cow_write() {
                 len: 7,
             }],
             7,
+            vec![(0, 1)],
         )
         .await
         .unwrap();
     assert_eq!(metadata.refcount(&key), 2);
     assert_eq!(metadata.refcount(&new_key), 1);
+}
+
+#[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
+async fn object_fs_empty_root_exists_for_first_file_creation() {
+    let fs = ObjectFs::new(MemoryObjectBackend::new());
+
+    assert!(fs.exists("/").await);
+    assert!(fs.stat("/").await.unwrap().is_directory);
+    assert!(fs.read_dir("/").await.unwrap().is_empty());
+
+    fs.write_file("/first", b"created").await.unwrap();
+    assert_eq!(fs.read_file("/first").await.unwrap(), b"created");
+}
+
+#[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
+async fn object_fs_root_supports_persistent_metadata_and_acl_lookup() {
+    let fs = ObjectFs::new(MemoryObjectBackend::new());
+
+    let missing_acl = fs
+        .get_xattr("/", "system.posix_acl_access", true)
+        .await
+        .unwrap_err();
+    assert_eq!(missing_acl.code(), "ENODATA");
+    fs.chmod("/", 0o770).await.unwrap();
+    fs.chown("/", 1000, 1001).await.unwrap();
+    fs.set_xattr("/", "user.root", b"value", 1, true)
+        .await
+        .unwrap();
+
+    let stat = fs.stat("/").await.unwrap();
+    assert_eq!(stat.mode & 0o7777, 0o770);
+    assert_eq!((stat.uid, stat.gid), (1000, 1001));
+    assert_eq!(
+        fs.get_xattr("/", "user.root", true).await.unwrap(),
+        b"value"
+    );
 }
 
 #[tokio::test]
@@ -207,6 +576,289 @@ async fn object_fs_maps_files_to_native_objects() {
 }
 
 #[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
+async fn object_fs_metadata_mutations_preserve_file_contents() {
+    let fs = ObjectFs::new(MemoryObjectBackend::new());
+    fs.write_file("/owned", b"contents").await.unwrap();
+
+    fs.chmod("/owned", 0o600).await.unwrap();
+    fs.chown("/owned", 1000, 1001).await.unwrap();
+    fs.utimes("/owned", 10, 20).await.unwrap();
+    fs.write_file("/owned", b"updated").await.unwrap();
+
+    let stat = fs.stat("/owned").await.unwrap();
+    assert_eq!(stat.mode & 0o7777, 0o600);
+    assert_eq!((stat.uid, stat.gid), (1000, 1001));
+    assert_eq!(fs.read_file("/owned").await.unwrap(), b"updated");
+}
+
+#[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
+async fn object_fs_preserves_sparse_allocation_accounting() {
+    let fs = ObjectFs::new(MemoryObjectBackend::new());
+    fs.write_file("/sparse", b"").await.unwrap();
+    fs.pwrite("/sparse", &vec![b'x'; 50 * 1024], 1_600 * 1024)
+        .await
+        .unwrap();
+
+    let stat = fs.stat("/sparse").await.unwrap();
+    assert_eq!(stat.size, 1_650 * 1024);
+    assert_eq!(stat.blocks, 100);
+    assert!(stat.blocks * 512 < stat.size);
+
+    fs.set_xattr("/sparse", "user.test", b"value", 0, true)
+        .await
+        .unwrap();
+    assert_eq!(fs.stat("/sparse").await.unwrap().blocks, 100);
+
+    fs.truncate("/sparse", 1_610 * 1024).await.unwrap();
+    assert_eq!(fs.stat("/sparse").await.unwrap().blocks, 20);
+}
+
+#[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
+async fn object_fs_whole_object_sparse_mutations_preserve_semantics() {
+    const WRITE_OFFSET: u64 = 16 * 1024 * 1024;
+    const LOGICAL_SIZE: u64 = 32 * 1024 * 1024;
+
+    let fs = ObjectFs::new(MemoryObjectBackend::new());
+    fs.write_file("/sparse", b"").await.unwrap();
+    fs.pwrite("/sparse", b"data", WRITE_OFFSET).await.unwrap();
+    fs.truncate("/sparse", LOGICAL_SIZE).await.unwrap();
+
+    let stat = fs.stat("/sparse").await.unwrap();
+    assert_eq!(stat.size, LOGICAL_SIZE);
+    assert_eq!(stat.blocks, 1);
+    assert_eq!(
+        fs.pread("/sparse", WRITE_OFFSET - 4, 12).await.unwrap(),
+        b"\0\0\0\0data\0\0\0\0"
+    );
+    assert_eq!(
+        fs.pread("/sparse", LOGICAL_SIZE - 8, 8).await.unwrap(),
+        vec![0; 8]
+    );
+}
+
+#[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
+async fn object_fs_punch_hole_preserves_size_and_deallocates_complete_blocks() {
+    let fs = ObjectFs::new(MemoryObjectBackend::new());
+    fs.write_file("/punched", &vec![b'x'; 2048]).await.unwrap();
+
+    fs.punch_hole("/punched", 512, 1024).await.unwrap();
+
+    let contents = fs.read_file("/punched").await.unwrap();
+    assert!(contents[..512].iter().all(|byte| *byte == b'x'));
+    assert!(contents[512..1536].iter().all(|byte| *byte == 0));
+    assert!(contents[1536..].iter().all(|byte| *byte == b'x'));
+    let stat = fs.stat("/punched").await.unwrap();
+    assert_eq!(stat.size, 2048);
+    assert_eq!(stat.blocks, 2);
+    assert_eq!(
+        fs.allocated_ranges("/punched").await.unwrap(),
+        vec![(0, 512), (1536, 2048)]
+    );
+}
+
+#[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
+async fn object_fs_zero_range_reallocates_exact_bytes_and_honors_keep_size() {
+    let fs = ObjectFs::new(MemoryObjectBackend::new());
+    fs.write_file("/zeroed", &vec![b'x'; 2048]).await.unwrap();
+    fs.punch_hole("/zeroed", 512, 512).await.unwrap();
+
+    fs.zero_range("/zeroed", 384, 768, false).await.unwrap();
+    let contents = fs.read_file("/zeroed").await.unwrap();
+    assert!(contents[..384].iter().all(|byte| *byte == b'x'));
+    assert!(contents[384..1152].iter().all(|byte| *byte == 0));
+    assert!(contents[1152..].iter().all(|byte| *byte == b'x'));
+    assert_eq!(
+        fs.allocated_ranges("/zeroed").await.unwrap(),
+        vec![(0, 2048)]
+    );
+    assert_eq!(
+        fs.unwritten_ranges("/zeroed").await.unwrap(),
+        vec![(512, 1024)]
+    );
+
+    fs.zero_range("/zeroed", 3072, 512, true).await.unwrap();
+    assert_eq!(fs.stat("/zeroed").await.unwrap().size, 2048);
+    fs.truncate("/zeroed", 3584).await.unwrap();
+    assert_eq!(
+        fs.allocated_ranges("/zeroed").await.unwrap(),
+        vec![(0, 2048), (3072, 3584)]
+    );
+    assert_eq!(
+        fs.unwritten_ranges("/zeroed").await.unwrap(),
+        vec![(512, 1024), (3072, 3584)]
+    );
+    fs.pwrite("/zeroed", &vec![b'y'; 512], 512).await.unwrap();
+    assert_eq!(
+        fs.unwritten_ranges("/zeroed").await.unwrap(),
+        vec![(3072, 3584)]
+    );
+}
+
+#[tokio::test]
+async fn chunked_fs_insert_and_collapse_shift_bytes_and_extents() {
+    let fs = ChunkedFs::with_options(
+        InMemoryMetadataStore::new(),
+        MemoryBlockStore::new(),
+        ChunkedFsOptions {
+            inline_threshold: 1,
+            chunk_size: 512,
+            ..ChunkedFsOptions::default()
+        },
+    );
+    let data = [
+        vec![b'A'; 512],
+        vec![b'B'; 512],
+        vec![b'C'; 512],
+        vec![b'D'; 512],
+    ]
+    .concat();
+    fs.write_file("/shift", &data).await.unwrap();
+    fs.punch_hole("/shift", 512, 512).await.unwrap();
+
+    fs.insert_range("/shift", 512, 512).await.unwrap();
+    let inserted = fs.read_file("/shift").await.unwrap();
+    assert_eq!(inserted.len(), 2560);
+    assert_eq!(&inserted[..512], vec![b'A'; 512]);
+    assert!(inserted[512..1536].iter().all(|byte| *byte == 0));
+    assert_eq!(&inserted[1536..2048], vec![b'C'; 512]);
+    assert_eq!(
+        fs.allocated_ranges("/shift").await.unwrap(),
+        vec![(0, 512), (1536, 2560)]
+    );
+
+    fs.collapse_range("/shift", 512, 512).await.unwrap();
+    fs.collapse_range("/shift", 512, 512).await.unwrap();
+    assert_eq!(
+        fs.read_file("/shift").await.unwrap(),
+        [vec![b'A'; 512], vec![b'C'; 512], vec![b'D'; 512]].concat()
+    );
+    assert_eq!(
+        fs.allocated_ranges("/shift").await.unwrap(),
+        vec![(0, 1536)]
+    );
+}
+
+#[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
+async fn object_fs_insert_and_collapse_shift_bytes_and_extents() {
+    let fs = ObjectFs::new(MemoryObjectBackend::new());
+    let data = [
+        vec![b'A'; 512],
+        vec![b'B'; 512],
+        vec![b'C'; 512],
+        vec![b'D'; 512],
+    ]
+    .concat();
+    fs.write_file("/shift", &data).await.unwrap();
+    fs.punch_hole("/shift", 512, 512).await.unwrap();
+
+    fs.insert_range("/shift", 512, 512).await.unwrap();
+    let inserted = fs.read_file("/shift").await.unwrap();
+    assert_eq!(inserted.len(), 2560);
+    assert_eq!(&inserted[..512], vec![b'A'; 512]);
+    assert!(inserted[512..1536].iter().all(|byte| *byte == 0));
+    assert_eq!(&inserted[1536..2048], vec![b'C'; 512]);
+    assert_eq!(
+        fs.allocated_ranges("/shift").await.unwrap(),
+        vec![(0, 512), (1536, 2560)]
+    );
+
+    fs.collapse_range("/shift", 512, 512).await.unwrap();
+    fs.collapse_range("/shift", 512, 512).await.unwrap();
+    assert_eq!(
+        fs.read_file("/shift").await.unwrap(),
+        [vec![b'A'; 512], vec![b'C'; 512], vec![b'D'; 512]].concat()
+    );
+    assert_eq!(
+        fs.allocated_ranges("/shift").await.unwrap(),
+        vec![(0, 1536)]
+    );
+}
+
+#[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
+async fn object_fs_realpath_resolves_symlinks_and_rejects_loops() {
+    let fs = ObjectFs::new(MemoryObjectBackend::new());
+    fs.write_file("/implicit/file", b"implicit").await.unwrap();
+    assert_eq!(
+        fs.realpath("/implicit/file").await.unwrap(),
+        "/implicit/file"
+    );
+    fs.mkdir("/dir", false).await.unwrap();
+    fs.write_file("/dir/file", b"contents").await.unwrap();
+    fs.symlink("dir/file", "/relative").await.unwrap();
+    fs.symlink("/relative", "/absolute").await.unwrap();
+
+    assert_eq!(fs.realpath("/relative").await.unwrap(), "/dir/file");
+    assert_eq!(fs.realpath("/absolute").await.unwrap(), "/dir/file");
+    assert_eq!(fs.realpath("/dir").await.unwrap(), "/dir");
+
+    fs.symlink("self", "/self").await.unwrap();
+    assert_eq!(fs.realpath("/self").await.unwrap_err().code(), "ELOOP");
+}
+
+#[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
+async fn object_fs_xattrs_follow_create_replace_and_remove_semantics() {
+    let fs = ObjectFs::new(MemoryObjectBackend::new());
+    fs.write_file("/xattrs", b"contents").await.unwrap();
+
+    fs.set_xattr("/xattrs", "user.test", b"one", 1, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.get_xattr("/xattrs", "user.test", true).await.unwrap(),
+        b"one"
+    );
+    assert!(fs
+        .set_xattr("/xattrs", "user.test", b"again", 1, true)
+        .await
+        .is_err());
+    fs.set_xattr("/xattrs", "user.test", b"two", 2, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.list_xattrs("/xattrs", true).await.unwrap(),
+        vec!["user.test"]
+    );
+    fs.remove_xattr("/xattrs", "user.test", true).await.unwrap();
+    assert!(fs.get_xattr("/xattrs", "user.test", true).await.is_err());
+}
+
+#[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
+async fn object_fs_hard_links_share_content_metadata_and_link_count() {
+    let fs = ObjectFs::new(MemoryObjectBackend::new());
+    fs.write_file("/source", b"first").await.unwrap();
+    fs.link("/source", "/alias").await.unwrap();
+
+    let source = fs.stat("/source").await.unwrap();
+    let alias = fs.stat("/alias").await.unwrap();
+    assert_ne!(source.ino, 0);
+    assert_eq!(source.ino, alias.ino);
+    assert_eq!((source.nlink, alias.nlink), (2, 2));
+
+    fs.write_file("/alias", b"second").await.unwrap();
+    fs.set_xattr("/source", "user.shared", b"yes", 1, true)
+        .await
+        .unwrap();
+    assert_eq!(fs.read_file("/source").await.unwrap(), b"second");
+    assert_eq!(
+        fs.get_xattr("/alias", "user.shared", true).await.unwrap(),
+        b"yes"
+    );
+
+    fs.remove_file("/source").await.unwrap();
+    assert_eq!(fs.stat("/alias").await.unwrap().nlink, 1);
+    assert_eq!(fs.read_file("/alias").await.unwrap(), b"second");
+}
+
+#[tokio::test]
 async fn object_fs_recursively_renames_prefix_directories() {
     let backend = MemoryObjectBackend::new();
     let fs = ObjectFs::new(backend);
@@ -221,6 +873,73 @@ async fn object_fs_recursively_renames_prefix_directories() {
     assert!(!fs.exists("/src/root.txt").await);
     assert_eq!(fs.read_file("/dst/root.txt").await.unwrap(), b"root");
     assert_eq!(fs.read_file("/dst/nested/leaf.txt").await.unwrap(), b"leaf");
+}
+
+#[tokio::test]
+#[ignore = "ObjectS3 is dormant; retain this unsupported whole-object target for its return"]
+async fn object_fs_rename_enforces_linux_replacement_rules() {
+    let fs = ObjectFs::new(MemoryObjectBackend::new());
+
+    fs.write_file("/file", b"source").await.unwrap();
+    fs.mkdir("/directory", false).await.unwrap();
+    let error = fs.rename("/file", "/directory").await.unwrap_err();
+    assert_eq!(error.code(), "EISDIR");
+    assert_eq!(fs.read_file("/file").await.unwrap(), b"source");
+    assert!(fs.stat("/directory").await.unwrap().is_directory);
+
+    fs.mkdir("/source-dir", false).await.unwrap();
+    fs.write_file("/destination-file", b"destination")
+        .await
+        .unwrap();
+    let error = fs
+        .rename("/source-dir", "/destination-file")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "ENOTDIR");
+    assert!(fs.stat("/source-dir").await.unwrap().is_directory);
+    assert_eq!(
+        fs.read_file("/destination-file").await.unwrap(),
+        b"destination"
+    );
+
+    fs.mkdir("/source-tree", false).await.unwrap();
+    fs.write_file("/source-tree/source", b"source")
+        .await
+        .unwrap();
+    fs.mkdir("/destination-tree", false).await.unwrap();
+    fs.write_file("/destination-tree/destination", b"destination")
+        .await
+        .unwrap();
+    let error = fs
+        .rename("/source-tree", "/destination-tree")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "ENOTEMPTY");
+    assert_eq!(
+        fs.read_file("/source-tree/source").await.unwrap(),
+        b"source"
+    );
+    assert_eq!(
+        fs.read_file("/destination-tree/destination").await.unwrap(),
+        b"destination"
+    );
+
+    fs.mkdir("/empty-source", false).await.unwrap();
+    fs.mkdir("/empty-destination", false).await.unwrap();
+    fs.rename("/empty-source", "/empty-destination")
+        .await
+        .unwrap();
+    assert!(!fs.exists("/empty-source").await);
+    assert!(fs.stat("/empty-destination").await.unwrap().is_directory);
+
+    fs.symlink("relative-target", "/source-link").await.unwrap();
+    fs.write_file("/destination", b"destination").await.unwrap();
+    fs.rename("/source-link", "/destination").await.unwrap();
+    assert!(!fs.exists("/source-link").await);
+    assert_eq!(
+        fs.readlink("/destination").await.unwrap(),
+        "relative-target"
+    );
 }
 
 #[tokio::test]
@@ -293,6 +1012,7 @@ async fn metadata_set_attr_drops_chunk_refs_when_file_becomes_inline() {
                 len: 5,
             }],
             5,
+            vec![(0, 1)],
         )
         .await
         .unwrap();
@@ -422,8 +1142,11 @@ impl MetadataStore for PausingResolveStore {
         ino: u64,
         edits: Vec<ChunkEdit>,
         new_size: u64,
+        allocated_extents: Vec<(u64, u64)>,
     ) -> VfsResult<Vec<BlockKey>> {
-        self.inner.commit_write(ino, edits, new_size).await
+        self.inner
+            .commit_write(ino, edits, new_size, allocated_extents)
+            .await
     }
 
     async fn get_chunks(

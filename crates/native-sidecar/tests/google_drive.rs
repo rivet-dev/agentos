@@ -112,6 +112,9 @@ oFnGY0OFksX/ye0/XGpy2SFxYRwGU98HPYeBvAQQrVjdkzfy7BmXQQ==\n\
                 ctime_ms: 0,
                 ctime_nsec: 0,
                 birthtime_ms: 0,
+                allocated_extents: Vec::new(),
+                unwritten_extents: Vec::new(),
+                xattrs: BTreeMap::new(),
             }
         }
 
@@ -252,6 +255,9 @@ oFnGY0OFksX/ye0/XGpy2SFxYRwGU98HPYeBvAQQrVjdkzfy7BmXQQ==\n\
                                 ctime_ms: 0,
                                 ctime_nsec: 0,
                                 birthtime_ms: 0,
+                                allocated_extents: Vec::new(),
+                                unwritten_extents: Vec::new(),
+                                xattrs: BTreeMap::new(),
                             },
                             kind: PersistedFilesystemInodeKind::Directory,
                         },
@@ -272,6 +278,9 @@ oFnGY0OFksX/ye0/XGpy2SFxYRwGU98HPYeBvAQQrVjdkzfy7BmXQQ==\n\
                                 ctime_ms: 0,
                                 ctime_nsec: 0,
                                 birthtime_ms: 0,
+                                allocated_extents: Vec::new(),
+                                unwritten_extents: Vec::new(),
+                                xattrs: BTreeMap::new(),
                             },
                             kind: PersistedFilesystemInodeKind::File {
                                 storage: PersistedFileStorage::Chunked {

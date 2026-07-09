@@ -260,6 +260,8 @@ export interface SidecarMountPluginDescriptor {
 
 export interface SidecarMountDescriptor {
 	guestPath: string;
+	guestSource?: string;
+	guestFstype?: string;
 	readOnly: boolean;
 	plugin: SidecarMountPluginDescriptor;
 }
@@ -1829,6 +1831,8 @@ function toWireRootFilesystemEntry(entry: RootFilesystemEntry): {
 
 function toWireMountDescriptor(descriptor: SidecarMountDescriptor): {
 	guest_path: string;
+	guest_source: string;
+	guest_fstype: string;
 	read_only: boolean;
 	plugin: {
 		id: string;
@@ -1837,6 +1841,8 @@ function toWireMountDescriptor(descriptor: SidecarMountDescriptor): {
 } {
 	return {
 		guest_path: descriptor.guestPath,
+		guest_source: descriptor.guestSource ?? descriptor.plugin.id,
+		guest_fstype: descriptor.guestFstype ?? descriptor.plugin.id,
 		read_only: descriptor.readOnly,
 		plugin: {
 			id: descriptor.plugin.id,

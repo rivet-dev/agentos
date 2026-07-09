@@ -2954,6 +2954,48 @@ importers:
         specifier: ^5.5.2
         version: 5.9.3
 
+  software/acl:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@rivet-dev/agentos-test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/attr:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@rivet-dev/agentos-test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
   software/browserbase:
     dependencies:
       browse:
@@ -3740,6 +3782,27 @@ importers:
         version: 2.1.9(@types/node@22.19.15)
 
   software/wget:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@rivet-dev/agentos-test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/xfsprogs:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*

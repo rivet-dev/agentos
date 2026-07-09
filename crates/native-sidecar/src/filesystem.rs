@@ -17,8 +17,7 @@ use crate::service::{
 };
 use crate::state::{
     ActiveExecutionEvent, ActiveProcess, BridgeError, ShadowNodeType, ShadowSyncInventoryEntry,
-    SidecarKernel, VmState, EXECUTION_DRIVER_NAME, EXECUTION_SANDBOX_ROOT_ENV,
-    PYTHON_VFS_RPC_GUEST_ROOT,
+    SidecarKernel, VmState, EXECUTION_DRIVER_NAME, PYTHON_VFS_RPC_GUEST_ROOT,
 };
 use crate::{DispatchResult, NativeSidecar, NativeSidecarBridge, SidecarError};
 
@@ -43,7 +42,11 @@ use agentos_execution::{
     ModuleResolver, PythonVfsRpcMethod, PythonVfsRpcRequest, PythonVfsRpcResponsePayload,
     PythonVfsRpcStat,
 };
-use agentos_kernel::vfs::{VirtualFileSystem, VirtualStat, VirtualTimeSpec, VirtualUtimeSpec};
+use agentos_kernel::kernel::is_internal_unnamed_file_name;
+use agentos_kernel::vfs::{
+    VirtualFileSystem, VirtualStat, VirtualTimeSpec, VirtualUtimeSpec, RENAME_EXCHANGE,
+    RENAME_NOREPLACE,
+};
 use agentos_native_sidecar_core::{
     decode_guest_filesystem_content, handle_guest_filesystem_call as core_guest_filesystem_call,
 };
@@ -60,10 +63,12 @@ use std::io::{Read, Write};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
 use std::os::unix::fs::{symlink, FileExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 const PYTHON_PYODIDE_GUEST_ROOT: &str = "/__agentos_pyodide";
+static NEXT_SHADOW_RENAME_EXCHANGE_ID: AtomicU64 = AtomicU64::new(1);
 
 fn kernel_path_error(
     operation: &str,
@@ -72,6 +77,9 @@ fn kernel_path_error(
 ) -> SidecarError {
     let error = error.into();
     let base = kernel_error(error);
+    if std::env::var_os("AGENTOS_TRACE_FS_ERRORS").is_some() {
+        eprintln!("[agent-os-fs-error] operation={operation} path={path} error={base}");
+    }
     match base {
         SidecarError::Kernel(message) => {
             SidecarError::Kernel(format!("{operation} {path}: {message}"))
@@ -80,28 +88,37 @@ fn kernel_path_error(
     }
 }
 
-fn filesystem_access_denied(path: &str, mode: u32) -> SidecarError {
-    SidecarError::Execution(format!(
-        "EACCES: filesystem access denied for {path} with mode {mode:o}"
-    ))
+fn classify_fiemap_ranges(
+    allocated: Vec<(u64, u64)>,
+    unwritten: &[(u64, u64)],
+) -> Vec<(u64, u64, bool)> {
+    let mut classified = Vec::new();
+    for (start, end) in allocated {
+        let mut cursor = start;
+        for &(unwritten_start, unwritten_end) in unwritten {
+            if unwritten_end <= cursor || unwritten_start >= end {
+                continue;
+            }
+            if cursor < unwritten_start {
+                classified.push((cursor, unwritten_start.min(end), false));
+            }
+            let overlap_start = cursor.max(unwritten_start);
+            let overlap_end = end.min(unwritten_end);
+            if overlap_start < overlap_end {
+                classified.push((overlap_start, overlap_end, true));
+                cursor = overlap_end;
+            }
+            if cursor == end {
+                break;
+            }
+        }
+        if cursor < end {
+            classified.push((cursor, end, false));
+        }
+    }
+    classified
 }
 
-fn filesystem_access_mode_is_allowed(file_mode: u32, requested: u32) -> bool {
-    const ACCESS_MASK: u32 = libc::R_OK as u32 | libc::W_OK as u32 | libc::X_OK as u32;
-    if requested & ACCESS_MASK == 0 {
-        return true;
-    }
-    if requested & libc::R_OK as u32 != 0 && file_mode & 0o444 == 0 {
-        return false;
-    }
-    if requested & libc::W_OK as u32 != 0 && file_mode & 0o222 == 0 {
-        return false;
-    }
-    if requested & libc::X_OK as u32 != 0 && file_mode & 0o111 == 0 {
-        return false;
-    }
-    true
-}
 const PYTHON_PYODIDE_CACHE_GUEST_ROOT: &str = "/__agentos_pyodide_cache";
 const UTIME_NOW_NSEC: i64 = libc::UTIME_NOW;
 const UTIME_OMIT_NSEC: i64 = libc::UTIME_OMIT;
@@ -1365,20 +1382,25 @@ fn fs_sync_request_marks_host_write_dirty(
         | "fs.writeFileSync"
         | "fs.promises.writeFile"
         | "fs.mkdirSync"
+        | "fs.mknodSync"
         | "fs.promises.mkdir"
         | "fs.copyFileSync"
         | "fs.promises.copyFile"
         | "fs.symlinkSync"
         | "fs.promises.symlink"
         | "fs.linkSync"
+        | "fs.openTmpfileSync"
+        | "fs.linkFdSync"
         | "fs.promises.link"
         | "fs.renameSync"
+        | "fs.renameAt2Sync"
         | "fs.promises.rename"
         | "fs.rmdirSync"
         | "fs.promises.rmdir"
         | "fs.unlinkSync"
         | "fs.promises.unlink"
         | "fs.chmodSync"
+        | "fs.chmodForProcessSync"
         | "fs.promises.chmod"
         | "fs.chownSync"
         | "fs.promises.chown"
@@ -1387,6 +1409,14 @@ fn fs_sync_request_marks_host_write_dirty(
         | "fs.lutimesSync"
         | "fs.promises.lutimes"
         | "fs.futimesSync" => true,
+        "fs.ftruncateSync"
+        | "fs.truncateForProcessSync"
+        | "fs.fallocateSync"
+        | "fs.insertRangeSync"
+        | "fs.collapseRangeSync"
+        | "fs.punchHoleSync"
+        | "fs.zeroRangeSync" => true,
+        "fs.setxattrSync" | "fs.removexattrSync" => true,
         _ => false,
     })
 }
@@ -1430,7 +1460,9 @@ pub(crate) fn service_javascript_fs_sync_rpc(
     request: &JavascriptSyncRpcRequest,
 ) -> Result<Value, SidecarError> {
     let _phase_timer = FsSyncPhaseTimer::start(request.method.as_str());
-    if fs_sync_request_marks_host_write_dirty(request)? {
+    if process.runtime != GuestRuntimeKind::WebAssembly
+        && fs_sync_request_marks_host_write_dirty(request)?
+    {
         process.mark_host_write_dirty();
     }
     match request.method.as_str() {
@@ -1505,6 +1537,14 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     record_fs_sync_subphase(request.method.as_str(), "kernel_fd_open", phase_start);
                 })
         }
+        "fs.namedFifoPeerReadySync" => {
+            let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "named FIFO fd")?;
+            kernel
+                .fd_named_pipe_peer_ready(EXECUTION_DRIVER_NAME, kernel_pid, fd)
+                .map(|ready| json!(ready))
+                .map_err(kernel_error)
+        }
+        "fs.blockingIoTimeoutMsSync" => Ok(json!(kernel.resource_limits().max_blocking_read_ms)),
         "fs.read" | "fs.readSync" => {
             service_javascript_fs_read_sync_rpc(kernel, process, kernel_pid, request)
                 .map(|bytes| javascript_sync_rpc_bytes_value(&bytes))
@@ -1644,6 +1684,38 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .map(|()| Value::Null)
                 .map_err(kernel_error)
         }
+        "fs.openTmpfileSync" => {
+            let directory =
+                javascript_sync_rpc_path_arg(process, &request.args, 0, "unnamed-file directory")?;
+            let flags = javascript_sync_rpc_arg_u32(&request.args, 1, "unnamed-file open flags")?;
+            let mode = javascript_sync_rpc_arg_u32(&request.args, 2, "unnamed-file mode")?;
+            let linkable =
+                javascript_sync_rpc_option_bool(&request.args, 3, "linkable").unwrap_or(true);
+            kernel
+                .fd_open_tmpfile(
+                    EXECUTION_DRIVER_NAME,
+                    kernel_pid,
+                    &directory,
+                    flags,
+                    mode,
+                    linkable,
+                )
+                .map(|fd| Value::from(u64::from(fd)))
+                .map_err(kernel_error)
+        }
+        "fs.linkFdSync" => {
+            let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "unnamed-file fd")?;
+            let destination = javascript_sync_rpc_path_arg(
+                process,
+                &request.args,
+                1,
+                "unnamed-file link destination",
+            )?;
+            kernel
+                .fd_link_tmpfile_for_process(EXECUTION_DRIVER_NAME, kernel_pid, fd, &destination)
+                .map(|()| Value::Null)
+                .map_err(kernel_error)
+        }
         "fs.fstat" | "fs.fstatSync" => {
             let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem fstat fd")?;
             if let Some(mapped) = process.mapped_host_fd(fd) {
@@ -1678,9 +1750,165 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     });
             }
             kernel
-                .fd_stat(EXECUTION_DRIVER_NAME, kernel_pid, fd)
-                .map(|_| Value::Null)
+                .fd_sync(EXECUTION_DRIVER_NAME, kernel_pid, fd)
+                .map(|()| Value::Null)
                 .map_err(kernel_error)
+        }
+        "fs.truncateSync" | "fs.truncateForProcessSync" => {
+            let path = javascript_sync_rpc_path_arg(
+                process,
+                &request.args,
+                0,
+                "filesystem truncate path",
+            )?;
+            let length = javascript_sync_rpc_arg_u64_optional(
+                &request.args,
+                1,
+                "filesystem truncate length",
+            )?
+            .unwrap_or(0);
+            kernel
+                .truncate_for_process(EXECUTION_DRIVER_NAME, kernel_pid, &path, length)
+                .map_err(|error| kernel_path_error("fs.truncate", &path, error))?;
+            mirror_kernel_path_to_process_shadow(kernel, process, &path)?;
+            Ok(Value::Null)
+        }
+        "fs.fallocateSync" => {
+            let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem fallocate fd")?;
+            let offset =
+                javascript_sync_rpc_arg_u64(&request.args, 1, "filesystem fallocate offset")?;
+            let length =
+                javascript_sync_rpc_arg_u64(&request.args, 2, "filesystem fallocate length")?;
+            let path = kernel
+                .fd_path(EXECUTION_DRIVER_NAME, kernel_pid, fd)
+                .map_err(kernel_error)?;
+            kernel
+                .fd_allocate(EXECUTION_DRIVER_NAME, kernel_pid, fd, offset, length)
+                .map_err(kernel_error)?;
+            mirror_kernel_path_to_process_shadow(kernel, process, &path)?;
+            Ok(Value::Null)
+        }
+        "fs.insertRangeSync" => {
+            let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem insert-range fd")?;
+            let offset =
+                javascript_sync_rpc_arg_u64(&request.args, 1, "filesystem insert-range offset")?;
+            let length =
+                javascript_sync_rpc_arg_u64(&request.args, 2, "filesystem insert-range length")?;
+            let path = kernel
+                .fd_path(EXECUTION_DRIVER_NAME, kernel_pid, fd)
+                .map_err(kernel_error)?;
+            kernel
+                .fd_insert_range(EXECUTION_DRIVER_NAME, kernel_pid, fd, offset, length)
+                .map_err(kernel_error)?;
+            mirror_kernel_path_to_process_shadow(kernel, process, &path)?;
+            Ok(Value::Null)
+        }
+        "fs.collapseRangeSync" => {
+            let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem collapse-range fd")?;
+            let offset =
+                javascript_sync_rpc_arg_u64(&request.args, 1, "filesystem collapse-range offset")?;
+            let length =
+                javascript_sync_rpc_arg_u64(&request.args, 2, "filesystem collapse-range length")?;
+            let path = kernel
+                .fd_path(EXECUTION_DRIVER_NAME, kernel_pid, fd)
+                .map_err(kernel_error)?;
+            kernel
+                .fd_collapse_range(EXECUTION_DRIVER_NAME, kernel_pid, fd, offset, length)
+                .map_err(kernel_error)?;
+            mirror_kernel_path_to_process_shadow(kernel, process, &path)?;
+            Ok(Value::Null)
+        }
+        "fs.punchHoleSync" => {
+            let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem punch-hole fd")?;
+            let offset =
+                javascript_sync_rpc_arg_u64(&request.args, 1, "filesystem punch-hole offset")?;
+            let length =
+                javascript_sync_rpc_arg_u64(&request.args, 2, "filesystem punch-hole length")?;
+            let path = kernel
+                .fd_path(EXECUTION_DRIVER_NAME, kernel_pid, fd)
+                .map_err(kernel_error)?;
+            kernel
+                .fd_punch_hole(EXECUTION_DRIVER_NAME, kernel_pid, fd, offset, length)
+                .map_err(kernel_error)?;
+            mirror_kernel_path_to_process_shadow(kernel, process, &path)?;
+            Ok(Value::Null)
+        }
+        "fs.zeroRangeSync" => {
+            let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem zero-range fd")?;
+            let offset =
+                javascript_sync_rpc_arg_u64(&request.args, 1, "filesystem zero-range offset")?;
+            let length =
+                javascript_sync_rpc_arg_u64(&request.args, 2, "filesystem zero-range length")?;
+            let keep_size =
+                javascript_sync_rpc_arg_u32(&request.args, 3, "filesystem zero-range keep-size")?
+                    != 0;
+            let path = kernel
+                .fd_path(EXECUTION_DRIVER_NAME, kernel_pid, fd)
+                .map_err(kernel_error)?;
+            kernel
+                .fd_zero_range(
+                    EXECUTION_DRIVER_NAME,
+                    kernel_pid,
+                    fd,
+                    offset,
+                    length,
+                    keep_size,
+                )
+                .map_err(kernel_error)?;
+            mirror_kernel_path_to_process_shadow(kernel, process, &path)?;
+            Ok(Value::Null)
+        }
+        "fs.fiemapSync" => {
+            let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem fiemap fd")?;
+            let path = kernel
+                .fd_path(EXECUTION_DRIVER_NAME, kernel_pid, fd)
+                .map_err(kernel_error)?;
+            let ranges = kernel
+                .fd_allocated_ranges(EXECUTION_DRIVER_NAME, kernel_pid, fd)
+                .map_err(|error| kernel_path_error("fs.fiemap", &path, error))?;
+            let unwritten = kernel
+                .fd_unwritten_ranges(EXECUTION_DRIVER_NAME, kernel_pid, fd)
+                .map_err(|error| kernel_path_error("fs.fiemap", &path, error))?;
+            Ok(json!(classify_fiemap_ranges(ranges, &unwritten)
+                .into_iter()
+                .map(|(start, end, unwritten)| {
+                    json!({ "start": start, "end": end, "unwritten": unwritten })
+                })
+                .collect::<Vec<_>>()))
+        }
+        "fs.chmodForProcessSync" => {
+            let path =
+                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem chmod path")?;
+            let mode = javascript_sync_rpc_arg_u32(&request.args, 1, "filesystem chmod mode")?;
+            let mut result =
+                kernel.chmod_for_process(EXECUTION_DRIVER_NAME, kernel_pid, &path, mode);
+            if result.as_ref().is_err_and(|error| error.code() == "ENOENT") {
+                let shadow_path = process_shadow_host_path(process, &path).ok_or_else(|| {
+                    SidecarError::InvalidState(format!(
+                        "filesystem chmod cannot resolve process shadow path for {path}"
+                    ))
+                })?;
+                let contents = fs::read(&shadow_path).map_err(|error| {
+                    SidecarError::Io(format!(
+                        "failed to materialize chmod target {}: {error}",
+                        shadow_path.display()
+                    ))
+                })?;
+                kernel
+                    .write_file_for_process(
+                        EXECUTION_DRIVER_NAME,
+                        kernel_pid,
+                        &path,
+                        contents,
+                        Some(mode),
+                    )
+                    .map_err(|error| kernel_path_error("fs.chmod", &path, error))?;
+                result = kernel.chmod_for_process(EXECUTION_DRIVER_NAME, kernel_pid, &path, mode);
+            }
+            result.map_err(|error| kernel_path_error("fs.chmod", &path, error))?;
+            mirror_kernel_path_to_process_shadow(kernel, process, &path)?;
+            mirror_process_mode_to_shadow(process, &path, mode)?;
+            Ok(Value::Null)
         }
         "fs.ftruncateSync" => {
             let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem ftruncate fd")?;
@@ -1707,7 +1935,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 }
                 if let Some(guest_path) = mapped_guest_path.as_deref() {
                     kernel
-                        .truncate(guest_path, length)
+                        .truncate_for_process(EXECUTION_DRIVER_NAME, kernel_pid, guest_path, length)
                         .map_err(|error| kernel_path_error("fs.ftruncate", guest_path, error))?;
                 }
                 let mapped = process.mapped_host_fd_mut(fd).ok_or_else(|| {
@@ -1835,6 +2063,20 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             mirror_kernel_path_to_process_shadow(kernel, process, path)?;
             Ok(Value::Null)
         }
+        "fs.statfsSync" => {
+            let path =
+                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem statfs path")?;
+            let stats = kernel
+                .filesystem_stats_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path.as_str())
+                .map_err(kernel_error)?;
+            Ok(json!({
+                "totalBytes": stats.total_bytes,
+                "usedBytes": stats.used_bytes,
+                "availableBytes": stats.available_bytes,
+                "totalInodes": stats.total_inodes,
+                "freeInodes": stats.free_inodes,
+            }))
+        }
         "fs.statSync" | "fs.promises.stat" => {
             let path =
                 javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem stat path")?;
@@ -1922,6 +2164,34 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .map(|()| Value::Null)
                 .map_err(kernel_error)
         }
+        "fs.mknodSync" => {
+            let path =
+                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem mknod path")?;
+            let mode = javascript_sync_rpc_arg_u32(&request.args, 1, "filesystem mknod mode")?;
+            let rdev = javascript_sync_rpc_arg_u64(&request.args, 2, "filesystem mknod device")?;
+            kernel
+                .mknod_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path.as_str(), mode, rdev)
+                .map(|()| Value::Null)
+                .map_err(kernel_error)
+        }
+        "fs.remountSync" => {
+            let path =
+                javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem remount path")?;
+            let options = request.args.get(1).and_then(Value::as_str).ok_or_else(|| {
+                SidecarError::InvalidState(String::from(
+                    "filesystem remount options must be a string",
+                ))
+            })?;
+            kernel
+                .remount_filesystem_for_process(
+                    EXECUTION_DRIVER_NAME,
+                    kernel_pid,
+                    path.as_str(),
+                    options,
+                )
+                .map(|()| Value::Null)
+                .map_err(kernel_error)
+        }
         "fs.accessSync" | "fs.promises.access" => {
             let path =
                 javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem access path")?;
@@ -1929,6 +2199,8 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             let mode =
                 javascript_sync_rpc_arg_u32_optional(&request.args, 1, "filesystem access mode")?
                     .unwrap_or(0);
+            let effective_ids =
+                javascript_sync_rpc_option_bool(&request.args, 2, "effective IDs").unwrap_or(false);
             let valid_mask = libc::R_OK as u32 | libc::W_OK as u32 | libc::X_OK as u32;
             if mode & !valid_mask != 0 {
                 return Err(SidecarError::Execution(format!(
@@ -1943,25 +2215,19 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     O_PATH_ANCHOR,
                     Mode::empty(),
                 )?;
-                let metadata = opened.handle.metadata().map_err(|error| {
+                opened.handle.metadata().map_err(|error| {
                     SidecarError::Io(format!(
                         "failed to access mapped guest path {} -> {}: {error}",
                         path,
                         opened.host_path.display()
                     ))
                 })?;
-                if !filesystem_access_mode_is_allowed(metadata.mode, mode) {
-                    return Err(filesystem_access_denied(path, mode));
-                }
                 return Ok(Value::Null);
             }
-            let stat = kernel
-                .stat_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path)
-                .map_err(kernel_error)?;
-            if !filesystem_access_mode_is_allowed(stat.mode, mode) {
-                return Err(filesystem_access_denied(path, mode));
-            }
-            Ok(Value::Null)
+            kernel
+                .access_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path, mode, effective_ids)
+                .map(|()| Value::Null)
+                .map_err(kernel_error)
         }
         "fs.copyFileSync" | "fs.promises.copyFile" => {
             let source = javascript_sync_rpc_path_arg(
@@ -2135,7 +2401,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 None => {}
             }
             kernel
-                .symlink(target, link_path)
+                .symlink_for_process(EXECUTION_DRIVER_NAME, kernel_pid, target, link_path)
                 .map(|()| Value::Null)
                 .map_err(kernel_error)
         }
@@ -2147,7 +2413,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 javascript_sync_rpc_path_arg(process, &request.args, 1, "filesystem link path")?;
             let destination = destination.as_str();
             kernel
-                .link(source, destination)
+                .link_for_process(EXECUTION_DRIVER_NAME, kernel_pid, source, destination)
                 .map(|()| Value::Null)
                 .map_err(kernel_error)
         }
@@ -2177,12 +2443,60 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             if source_host.is_some() || destination_host.is_some() {
                 return rename_mapped_host_path(source, source_host, destination, destination_host);
             }
-            kernel.rename(source, destination).map_err(kernel_error)?;
+            kernel
+                .rename_for_process(EXECUTION_DRIVER_NAME, kernel_pid, source, destination)
+                .map_err(kernel_error)?;
             // Mirror the rename into the process shadow tree, otherwise the
             // exit-time shadow->kernel sync resurrects the stale source path
             // (the shadow walk only copies entries in, it cannot express
             // deletions).
             rename_process_shadow_path(process, source, destination)?;
+            Ok(Value::Null)
+        }
+        "fs.renameAt2Sync" => {
+            let source = javascript_sync_rpc_path_arg(
+                process,
+                &request.args,
+                0,
+                "filesystem renameat2 source",
+            )?;
+            let source = source.as_str();
+            let destination = javascript_sync_rpc_path_arg(
+                process,
+                &request.args,
+                1,
+                "filesystem renameat2 destination",
+            )?;
+            let destination = destination.as_str();
+            let flags =
+                javascript_sync_rpc_arg_u32(&request.args, 2, "filesystem renameat2 flags")?;
+            let source_host = mapped_runtime_host_path(kernel, process, source, true);
+            let destination_host = mapped_runtime_host_path(kernel, process, destination, true);
+            if matches!(source_host, Some(MappedRuntimeHostAccess::ReadOnly(_))) {
+                return Err(read_only_mapped_runtime_host_path_error(source));
+            }
+            if matches!(destination_host, Some(MappedRuntimeHostAccess::ReadOnly(_))) {
+                return Err(read_only_mapped_runtime_host_path_error(destination));
+            }
+            if source_host.is_some() || destination_host.is_some() {
+                return rename_mapped_host_path_at2(
+                    source,
+                    source_host,
+                    destination,
+                    destination_host,
+                    flags,
+                );
+            }
+            kernel
+                .rename_at2_for_process(
+                    EXECUTION_DRIVER_NAME,
+                    kernel_pid,
+                    source,
+                    destination,
+                    flags,
+                )
+                .map_err(kernel_error)?;
+            rename_process_shadow_path_at2(process, source, destination, flags)?;
             Ok(Value::Null)
         }
         "fs.rmdirSync" | "fs.promises.rmdir" => {
@@ -2203,7 +2517,9 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     // Mirror the deletion into the kernel for the same reason as
                     // fs.unlink below: readdir/stat merge kernel state, so a
                     // kernel-backed directory would otherwise resurrect.
-                    if let Err(error) = kernel.remove_dir(path) {
+                    if let Err(error) =
+                        kernel.remove_dir_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path)
+                    {
                         if error.code() != "ENOENT" {
                             return Err(kernel_error(error));
                         }
@@ -2215,7 +2531,9 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 }
                 None => {}
             }
-            kernel.remove_dir(path).map_err(kernel_error)?;
+            kernel
+                .remove_dir_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path)
+                .map_err(kernel_error)?;
             // Mirror the removal into the process shadow tree, otherwise the
             // exit-time shadow->kernel sync resurrects the deleted directory.
             remove_process_shadow_path(process, path)?;
@@ -2255,7 +2573,9 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     // removal a kernel-backed file (e.g. created by a wasm
                     // command) would resurrect in the very listing that follows
                     // the unlink. Best-effort: absent kernel entries are fine.
-                    if let Err(error) = kernel.remove_file(path) {
+                    if let Err(error) =
+                        kernel.remove_file_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path)
+                    {
                         if error.code() != "ENOENT" {
                             return Err(kernel_error(error));
                         }
@@ -2267,7 +2587,9 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 }
                 None => {}
             }
-            kernel.remove_file(path).map_err(kernel_error)?;
+            kernel
+                .remove_file_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path)
+                .map_err(kernel_error)?;
             // Mirror the deletion into the process shadow tree: wasm guest
             // deletions route kernel-direct, and without removing the shadow
             // copy the exit-time shadow->kernel sync resurrects the file for
@@ -2298,7 +2620,9 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                         .exists_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path)
                         .map_err(kernel_error)?
                     {
-                        kernel.chmod(path, mode).map_err(kernel_error)?;
+                        kernel
+                            .chmod_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path, mode)
+                            .map_err(kernel_error)?;
                     }
                     opened.handle.set_mode(mode & 0o7777).map_err(|error| {
                         SidecarError::Io(format!(
@@ -2315,18 +2639,132 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 None => {}
             }
             kernel
-                .chmod(path, mode)
+                .chmod_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path, mode)
                 .map(|()| Value::Null)
                 .map_err(kernel_error)
         }
-        "fs.chownSync" | "fs.promises.chown" => {
+        "fs.chownSync" | "fs.promises.chown" | "fs.lchownSync" | "fs.promises.lchown" => {
             let path =
                 javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem chown path")?;
             let path = path.as_str();
             let uid = javascript_sync_rpc_arg_u32(&request.args, 1, "filesystem chown uid")?;
             let gid = javascript_sync_rpc_arg_u32(&request.args, 2, "filesystem chown gid")?;
+            let is_lchown = matches!(
+                request.method.as_str(),
+                "fs.lchownSync" | "fs.promises.lchown"
+            );
+            let mut result = if is_lchown {
+                kernel.lchown_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path, uid, gid)
+            } else {
+                kernel.chown_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path, uid, gid, true)
+            };
+            if is_lchown && result.as_ref().is_err_and(|error| error.code() == "ENOENT") {
+                if materialize_process_shadow_symlink(kernel, process, kernel_pid, path)? {
+                    result = kernel.lchown_for_process(
+                        EXECUTION_DRIVER_NAME,
+                        kernel_pid,
+                        path,
+                        uid,
+                        gid,
+                    );
+                }
+            }
+            result.map(|()| Value::Null).map_err(kernel_error)
+        }
+        "fs.getxattrSync" => {
+            let path = javascript_sync_rpc_path_arg(
+                process,
+                &request.args,
+                0,
+                "filesystem getxattr path",
+            )?;
+            let name = javascript_sync_rpc_arg_str(&request.args, 1, "filesystem xattr name")?;
+            let follow_symlinks =
+                javascript_sync_rpc_option_bool(&request.args, 2, "follow symlinks")
+                    .unwrap_or(true);
             kernel
-                .chown(path, uid, gid)
+                .get_xattr_for_process(
+                    EXECUTION_DRIVER_NAME,
+                    kernel_pid,
+                    path.as_str(),
+                    name,
+                    follow_symlinks,
+                )
+                .map(|bytes| javascript_sync_rpc_bytes_value(&bytes))
+                .map_err(kernel_error)
+        }
+        "fs.listxattrSync" => {
+            let path = javascript_sync_rpc_path_arg(
+                process,
+                &request.args,
+                0,
+                "filesystem listxattr path",
+            )?;
+            let follow_symlinks =
+                javascript_sync_rpc_option_bool(&request.args, 1, "follow symlinks")
+                    .unwrap_or(true);
+            kernel
+                .list_xattrs_for_process(
+                    EXECUTION_DRIVER_NAME,
+                    kernel_pid,
+                    path.as_str(),
+                    follow_symlinks,
+                )
+                .map(|names| json!(names))
+                .map_err(kernel_error)
+        }
+        "fs.setxattrSync" => {
+            let path = javascript_sync_rpc_path_arg(
+                process,
+                &request.args,
+                0,
+                "filesystem setxattr path",
+            )?;
+            let name = javascript_sync_rpc_arg_str(&request.args, 1, "filesystem xattr name")?;
+            let value = javascript_sync_rpc_bytes_arg(&request.args, 2, "filesystem xattr value")?;
+            let flags = javascript_sync_rpc_arg_u32(&request.args, 3, "filesystem xattr flags")?;
+            let follow_symlinks =
+                javascript_sync_rpc_option_bool(&request.args, 4, "follow symlinks")
+                    .unwrap_or(true);
+            kernel
+                .set_xattr_for_process(
+                    EXECUTION_DRIVER_NAME,
+                    kernel_pid,
+                    path.as_str(),
+                    name,
+                    value,
+                    flags,
+                    follow_symlinks,
+                )
+                .map_err(kernel_error)?;
+            if name == "system.posix_acl_access" {
+                let mode = kernel
+                    .stat_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path.as_str())
+                    .map_err(kernel_error)?
+                    .mode;
+                mirror_process_mode_to_shadow(process, path.as_str(), mode)?;
+            }
+            Ok(Value::Null)
+        }
+        "fs.removexattrSync" => {
+            let path = javascript_sync_rpc_path_arg(
+                process,
+                &request.args,
+                0,
+                "filesystem removexattr path",
+            )?;
+            let name = javascript_sync_rpc_arg_str(&request.args, 1, "filesystem xattr name")?;
+            let follow_symlinks =
+                javascript_sync_rpc_option_bool(&request.args, 2, "follow symlinks")
+                    .unwrap_or(true);
+            kernel
+                .remove_xattr_for_process(
+                    EXECUTION_DRIVER_NAME,
+                    kernel_pid,
+                    path.as_str(),
+                    name,
+                    follow_symlinks,
+                )
                 .map(|()| Value::Null)
                 .map_err(kernel_error)
         }
@@ -2342,11 +2780,14 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             );
             if let Some(shadow_path) = process_shadow_host_path(process, path) {
                 if fs::symlink_metadata(&shadow_path).is_ok() {
-                    let result = if follow_symlinks {
-                        kernel.utimes_spec(path, atime, mtime)
-                    } else {
-                        kernel.lutimes(path, atime, mtime)
-                    };
+                    let result = kernel.utimes_spec_for_process(
+                        EXECUTION_DRIVER_NAME,
+                        kernel_pid,
+                        path,
+                        atime,
+                        mtime,
+                        follow_symlinks,
+                    );
                     if let Err(error) = result {
                         if error.code() != "ENOENT" {
                             return Err(kernel_error(error));
@@ -2404,11 +2845,14 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                             .exists_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path)
                             .map_err(kernel_error)?
                         {
-                            let result = if follow_symlinks {
-                                kernel.utimes_spec(path, atime, mtime)
-                            } else {
-                                kernel.lutimes(path, atime, mtime)
-                            };
+                            let result = kernel.utimes_spec_for_process(
+                                EXECUTION_DRIVER_NAME,
+                                kernel_pid,
+                                path,
+                                atime,
+                                mtime,
+                                follow_symlinks,
+                            );
                             if let Err(error) = result {
                                 if error.code() != "ENOENT" {
                                     return Err(kernel_error(error));
@@ -2428,13 +2872,16 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 }
                 None => {}
             }
-            if follow_symlinks {
-                kernel
-                    .utimes_spec(path, atime, mtime)
-                    .map_err(kernel_error)?;
-            } else {
-                kernel.lutimes(path, atime, mtime).map_err(kernel_error)?;
-            };
+            kernel
+                .utimes_spec_for_process(
+                    EXECUTION_DRIVER_NAME,
+                    kernel_pid,
+                    path,
+                    atime,
+                    mtime,
+                    follow_symlinks,
+                )
+                .map_err(kernel_error)?;
             Ok(Value::Null)
         }
         "fs.futimesSync" => {
@@ -2477,7 +2924,13 @@ fn javascript_sync_rpc_path_arg(
     label: &str,
 ) -> Result<String, SidecarError> {
     let path = javascript_sync_rpc_arg_str(args, index, label)?;
-    Ok(normalize_process_filesystem_rpc_path(process, path))
+    let path = normalize_process_filesystem_rpc_path(process, path);
+    if path.split('/').any(is_internal_unnamed_file_name) {
+        return Err(SidecarError::Kernel(format!(
+            "ENOENT: no such file or directory: {path}"
+        )));
+    }
+    Ok(path)
 }
 
 fn normalize_process_filesystem_rpc_path(process: &ActiveProcess, path: &str) -> String {
@@ -2489,13 +2942,7 @@ fn normalize_process_filesystem_rpc_path(process: &ActiveProcess, path: &str) ->
         {
             return guest_path;
         }
-        if let Some(sandbox_root) = process
-            .env
-            .get(EXECUTION_SANDBOX_ROOT_ENV)
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .map(|path| normalize_host_path(&path))
-        {
+        if let Some(sandbox_root) = process.shadow_root.as_ref() {
             if let Ok(suffix) = normalized_host_path.strip_prefix(&sandbox_root) {
                 let suffix = suffix.to_string_lossy();
                 return normalize_path(&format!("/{}", suffix.trim_start_matches('/')));
@@ -2567,7 +3014,7 @@ fn mirror_kernel_path_to_process_shadow(
     process: &ActiveProcess,
     guest_path: &str,
 ) -> Result<(), SidecarError> {
-    let Some(shadow_path) = resolve_process_guest_path_to_host(process, guest_path) else {
+    let Some(shadow_path) = process_shadow_host_path(process, guest_path) else {
         return Ok(());
     };
     // This is internal reconciliation after the guest has already completed a
@@ -2576,6 +3023,34 @@ fn mirror_kernel_path_to_process_shadow(
     // code; the trusted sidecar only mirrors them into this VM's own shadow.
     let bytes = kernel.read_file(guest_path).map_err(kernel_error)?;
     write_process_shadow_file(&shadow_path, guest_path, &bytes)
+}
+
+fn mirror_process_mode_to_shadow(
+    process: &ActiveProcess,
+    guest_path: &str,
+    mode: u32,
+) -> Result<(), SidecarError> {
+    let Some(shadow_path) = process_shadow_host_path(process, guest_path) else {
+        return Ok(());
+    };
+    match fs::symlink_metadata(&shadow_path) {
+        Ok(metadata) if !metadata.file_type().is_symlink() => {
+            fs::set_permissions(&shadow_path, fs::Permissions::from_mode(mode & 0o7777)).map_err(
+                |error| {
+                    SidecarError::Io(format!(
+                        "failed to mirror ACL mode for {} into process shadow: {error}",
+                        normalize_path(guest_path)
+                    ))
+                },
+            )
+        }
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SidecarError::Io(format!(
+            "failed to inspect process shadow for ACL mode {}: {error}",
+            normalize_path(guest_path)
+        ))),
+    }
 }
 
 fn write_process_shadow_file(
@@ -2838,25 +3313,51 @@ fn mapped_runtime_host_path_for_read(
 }
 
 fn process_shadow_host_path(process: &ActiveProcess, guest_path: &str) -> Option<PathBuf> {
-    if process_prefers_kernel_fs_sync_rpc(process) {
-        return None;
-    }
-
     let normalized_guest_path = normalized_process_guest_path(process, guest_path);
-    let normalized_guest_cwd = normalize_path(&process.guest_cwd);
-    let mut host_root = normalize_host_path(&process.host_cwd);
-    for _ in normalized_guest_cwd
-        .trim_start_matches('/')
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-    {
-        host_root = host_root.parent()?.to_path_buf();
+    let shadow_root = process.shadow_root.as_ref()?;
+    Some(shadow_host_path_for_guest(
+        shadow_root,
+        &normalized_guest_path,
+    ))
+}
+
+fn materialize_process_shadow_symlink(
+    kernel: &mut SidecarKernel,
+    process: &ActiveProcess,
+    kernel_pid: u32,
+    guest_path: &str,
+) -> Result<bool, SidecarError> {
+    let Some(shadow_path) = process_shadow_host_path(process, guest_path) else {
+        return Ok(false);
+    };
+    let metadata = match fs::symlink_metadata(&shadow_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(SidecarError::Io(format!(
+                "failed to inspect process shadow symlink {}: {error}",
+                shadow_path.display()
+            )))
+        }
+    };
+    if !metadata.file_type().is_symlink() {
+        return Ok(false);
     }
-    if normalized_guest_path == "/" {
-        Some(host_root)
-    } else {
-        Some(host_root.join(normalized_guest_path.trim_start_matches('/')))
-    }
+    let target = fs::read_link(&shadow_path).map_err(|error| {
+        SidecarError::Io(format!(
+            "failed to read process shadow symlink {}: {error}",
+            shadow_path.display()
+        ))
+    })?;
+    kernel
+        .symlink_for_process(
+            EXECUTION_DRIVER_NAME,
+            kernel_pid,
+            &target.to_string_lossy(),
+            guest_path,
+        )
+        .map_err(kernel_error)?;
+    Ok(true)
 }
 
 fn normalized_process_guest_path(process: &ActiveProcess, guest_path: &str) -> String {
@@ -2872,11 +3373,7 @@ fn normalized_process_guest_path(process: &ActiveProcess, guest_path: &str) -> S
 }
 
 fn process_prefers_kernel_fs_sync_rpc(process: &ActiveProcess) -> bool {
-    process.runtime == GuestRuntimeKind::WebAssembly
-        && process
-            .env
-            .get(EXECUTION_SANDBOX_ROOT_ENV)
-            .is_some_and(|value| !value.is_empty())
+    process.runtime == GuestRuntimeKind::WebAssembly && process.shadow_root.is_some()
 }
 
 fn runtime_host_access_roots(process: &ActiveProcess, key: &str) -> Option<Vec<PathBuf>> {
@@ -3423,6 +3920,39 @@ fn mapped_child_rename(
     }
 }
 
+fn mapped_child_rename_at2(
+    source: &MappedRuntimeParentPath,
+    destination: &MappedRuntimeParentPath,
+    flags: u32,
+) -> std::io::Result<()> {
+    if flags == 0 {
+        return mapped_child_rename(source, destination);
+    }
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        let flags = nix::fcntl::RenameFlags::from_bits(flags)
+            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EINVAL))?;
+        return nix::fcntl::renameat2(
+            Some(source.directory.as_raw_fd()),
+            source.child_name.as_os_str(),
+            Some(destination.directory.as_raw_fd()),
+            destination.child_name.as_os_str(),
+            flags,
+        )
+        .map_err(errno_to_io);
+    }
+
+    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+    {
+        let _ = (source, destination, flags);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "renameat2 flags require a Linux host for mapped host paths",
+        ))
+    }
+}
+
 fn create_mapped_runtime_directory(
     parent: &MappedRuntimeParentPath,
     guest_path: &str,
@@ -3878,6 +4408,48 @@ fn rename_mapped_host_path(
                         destination,
                         source_host_path.display(),
                         destination_host_path.display()
+                    ))
+                })
+        }
+        (Some(MappedRuntimeHostAccess::ReadOnly(_)), _) => {
+            Err(read_only_mapped_runtime_host_path_error(source))
+        }
+        (_, Some(MappedRuntimeHostAccess::ReadOnly(_))) => {
+            Err(read_only_mapped_runtime_host_path_error(destination))
+        }
+        _ => Err(SidecarError::Kernel(format!(
+            "EXDEV: invalid cross-device link: {source} -> {destination}"
+        ))),
+    }
+}
+
+fn rename_mapped_host_path_at2(
+    source: &str,
+    source_host: Option<MappedRuntimeHostAccess>,
+    destination: &str,
+    destination_host: Option<MappedRuntimeHostAccess>,
+    flags: u32,
+) -> Result<Value, SidecarError> {
+    match (source_host, destination_host) {
+        (
+            Some(MappedRuntimeHostAccess::Writable(source_host)),
+            Some(MappedRuntimeHostAccess::Writable(destination_host)),
+        ) => {
+            if normalize_host_path(&source_host.host_root)
+                != normalize_host_path(&destination_host.host_root)
+            {
+                return Err(SidecarError::Kernel(format!(
+                    "EXDEV: invalid cross-device link: {source} -> {destination}"
+                )));
+            }
+            let source_parent = open_mapped_runtime_parent_beneath(&source_host, "fs.renameAt2")?;
+            let destination_parent =
+                open_mapped_runtime_parent_beneath(&destination_host, "fs.renameAt2")?;
+            mapped_child_rename_at2(&source_parent, &destination_parent, flags)
+                .map(|()| Value::Null)
+                .map_err(|error| {
+                    SidecarError::Io(format!(
+                        "failed to renameat2 mapped guest path {source} -> {destination} with flags {flags:#x}: {error}"
                     ))
                 })
         }
@@ -4725,7 +5297,7 @@ pub(crate) fn remove_process_shadow_path(
     process: &ActiveProcess,
     guest_path: &str,
 ) -> Result<(), SidecarError> {
-    let Some(shadow_path) = resolve_process_guest_path_to_host(process, guest_path) else {
+    let Some(shadow_path) = process_shadow_host_path(process, guest_path) else {
         return Ok(());
     };
     remove_shadow_path_if_exists(&shadow_path, guest_path)
@@ -4739,10 +5311,10 @@ pub(crate) fn rename_process_shadow_path(
     source: &str,
     destination: &str,
 ) -> Result<(), SidecarError> {
-    let Some(source_shadow) = resolve_process_guest_path_to_host(process, source) else {
+    let Some(source_shadow) = process_shadow_host_path(process, source) else {
         return Ok(());
     };
-    let Some(destination_shadow) = resolve_process_guest_path_to_host(process, destination) else {
+    let Some(destination_shadow) = process_shadow_host_path(process, destination) else {
         return Ok(());
     };
 
@@ -4763,6 +5335,71 @@ pub(crate) fn rename_process_shadow_path(
             "failed to mirror guest rename {source} -> {destination} into shadow root: {error}"
         ))
     })
+}
+
+fn rename_process_shadow_path_at2(
+    process: &ActiveProcess,
+    source: &str,
+    destination: &str,
+    flags: u32,
+) -> Result<(), SidecarError> {
+    match flags {
+        0 | RENAME_NOREPLACE => rename_process_shadow_path(process, source, destination),
+        RENAME_EXCHANGE => {
+            let Some(source_shadow) = process_shadow_host_path(process, source) else {
+                return Ok(());
+            };
+            let Some(destination_shadow) = process_shadow_host_path(process, destination) else {
+                return Ok(());
+            };
+            if fs::symlink_metadata(&source_shadow).is_err()
+                || fs::symlink_metadata(&destination_shadow).is_err()
+            {
+                return Ok(());
+            }
+
+            let parent = source_shadow.parent().ok_or_else(|| {
+                SidecarError::Io(format!("shadow rename source has no parent: {source}"))
+            })?;
+            let temporary = (0..128)
+                .find_map(|_| {
+                    let id = NEXT_SHADOW_RENAME_EXCHANGE_ID.fetch_add(1, Ordering::Relaxed);
+                    let candidate = parent.join(format!(".agentos-rename-exchange-{id}"));
+                    if fs::symlink_metadata(&candidate).is_err() {
+                        Some(candidate)
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| {
+                    SidecarError::Io(String::from(
+                        "could not allocate a bounded shadow rename-exchange path",
+                    ))
+                })?;
+            fs::rename(&source_shadow, &temporary).map_err(|error| {
+                SidecarError::Io(format!(
+                    "failed to stage shadow rename exchange {source} -> {destination}: {error}"
+                ))
+            })?;
+            if let Err(error) = fs::rename(&destination_shadow, &source_shadow) {
+                let rollback = fs::rename(&temporary, &source_shadow);
+                return Err(SidecarError::Io(format!(
+                    "failed to exchange shadow rename {source} -> {destination}: {error}; rollback: {rollback:?}"
+                )));
+            }
+            if let Err(error) = fs::rename(&temporary, &destination_shadow) {
+                let rollback_destination = fs::rename(&source_shadow, &destination_shadow);
+                let rollback_source = fs::rename(&temporary, &source_shadow);
+                return Err(SidecarError::Io(format!(
+                    "failed to complete shadow rename exchange {source} -> {destination}: {error}; rollback destination: {rollback_destination:?}; rollback source: {rollback_source:?}"
+                )));
+            }
+            Ok(())
+        }
+        _ => Err(SidecarError::Kernel(format!(
+            "EINVAL: invalid renameat2 flags: {flags:#x}"
+        ))),
+    }
 }
 
 fn sync_host_directory_to_kernel(
@@ -4886,13 +5523,13 @@ fn ensure_guest_parent_dir(vm: &mut VmState, guest_path: &str) -> Result<(), Sid
 #[cfg(test)]
 mod tests {
     use super::{
-        create_mapped_runtime_directory, create_mapped_runtime_root_directory,
-        mapped_runtime_host_path_exists, mapped_runtime_relative_path,
-        mapped_runtime_resolved_guest_path, mapped_runtime_symlink_metadata,
-        materialize_mapped_host_path_from_kernel, move_across_devices_at,
-        open_mapped_runtime_beneath, open_mapped_runtime_parent_beneath, read_mapped_runtime_link,
-        rename_mapped_host_path, MappedRuntimeHostAccess, MappedRuntimeHostPath, SidecarError,
-        O_PATH_ANCHOR,
+        classify_fiemap_ranges, create_mapped_runtime_directory,
+        create_mapped_runtime_root_directory, mapped_runtime_host_path_exists,
+        mapped_runtime_relative_path, mapped_runtime_resolved_guest_path,
+        mapped_runtime_symlink_metadata, materialize_mapped_host_path_from_kernel,
+        move_across_devices_at, open_mapped_runtime_beneath, open_mapped_runtime_parent_beneath,
+        read_mapped_runtime_link, rename_mapped_host_path, MappedRuntimeHostAccess,
+        MappedRuntimeHostPath, SidecarError, O_PATH_ANCHOR,
     };
     use crate::execution::javascript_sync_rpc_error_code;
     use crate::state::{SidecarKernel, EXECUTION_DRIVER_NAME, JAVASCRIPT_COMMAND};
@@ -4902,6 +5539,19 @@ mod tests {
     use agentos_kernel::permissions::Permissions;
     use agentos_kernel::vfs::MemoryFileSystem;
     use std::fs;
+
+    #[test]
+    fn fiemap_ranges_split_data_and_unwritten_allocations() {
+        assert_eq!(
+            classify_fiemap_ranges(vec![(0, 2048), (3072, 4096)], &[(512, 1536), (3072, 4096)]),
+            vec![
+                (0, 512, false),
+                (512, 1536, true),
+                (1536, 2048, false),
+                (3072, 4096, true),
+            ]
+        );
+    }
     use std::os::fd::AsFd;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;

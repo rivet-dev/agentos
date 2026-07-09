@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Fri, 10 Jul 2026 20:05:00 -0700
+Subject: [PATCH] fstests: report AgentOS dedupe as unsupported
+
+---
+ common/reflink | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/common/reflink b/common/reflink
+index 87998309..4cab2388 100644
+--- a/common/reflink
++++ b/common/reflink
+@@ -142,6 +142,9 @@ _require_scratch_explicit_shared_extents()
+ # this test requires the test fs support dedupe...
+ _require_test_dedupe()
+ {
++	[ "$FSTYP" = "agentos" ] && \
++		_notrun "Dedupe not supported by test filesystem type: $FSTYP"
++
+ 	_require_test
+ 	_require_xfs_io_command "dedupe"
+ 
+@@ -161,6 +164,9 @@ _require_test_dedupe()
+ # this test requires the scratch fs support dedupe...
+ _require_scratch_dedupe()
+ {
++	[ "$FSTYP" = "agentos" ] && \
++		_notrun "Dedupe not supported by scratch filesystem type: $FSTYP"
++
+ 	_require_scratch
+ 	_require_xfs_io_command "dedupe"
+ 
+-- 
+2.43.0

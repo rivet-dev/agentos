@@ -721,6 +721,9 @@ struct servent *getservbyname(const char *name, const char *proto) {
 	return NULL;
 }
 
+/* Retained for the historical projected-/etc account source. Current builds
+ * use the bounded kernel account database from 0037-user-account-database.patch. */
+#ifdef AGENTOS_WASI_LIBC_LEGACY_USER_SHIMS
 struct passwd *getpwnam(const char *name) {
 	static _Thread_local struct passwd entry;
 	static _Thread_local char line[1024];
@@ -780,6 +783,7 @@ struct passwd *getpwnam(const char *name) {
 	(void)close_database(passwd, "/etc/passwd", 0);
 	return NULL;
 }
+#endif
 
 char *inet_ntoa(struct in_addr in) {
 	static _Thread_local char buf[INET_ADDRSTRLEN];

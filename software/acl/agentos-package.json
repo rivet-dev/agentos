@@ -1,0 +1,12 @@
+{
+	"commands": [
+		"chacl",
+		"getfacl",
+		"setfacl"
+	],
+	"registry": {
+		"title": "POSIX ACL tools",
+		"description": "Inspect and modify POSIX access and default ACLs.",
+		"priority": 42
+	}
+}

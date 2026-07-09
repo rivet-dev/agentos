@@ -70,6 +70,7 @@ pub const DEFAULT_WASM_CAPTURED_OUTPUT_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 pub const DEFAULT_WASM_SYNC_READ_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 pub const DEFAULT_WASM_PREWARM_TIMEOUT_MS: u64 = 30_000;
 pub const DEFAULT_WASM_RUNNER_HEAP_LIMIT_MB: u32 = 2048;
+pub const DEFAULT_WASM_RUNNER_CPU_TIME_LIMIT_MS: u32 = 30_000;
 pub const DEFAULT_PROCESS_PENDING_STDIN_BYTES: usize = 64 * 1024 * 1024;
 pub const DEFAULT_PROCESS_MAX_SPAWN_FILE_ACTIONS: usize = 4096;
 pub const DEFAULT_PROCESS_MAX_SPAWN_FILE_ACTION_BYTES: usize = 1024 * 1024;
@@ -342,6 +343,8 @@ pub struct WasmLimits {
     pub prewarm_timeout_ms: u64,
     /// V8 heap cap for the trusted JS runner isolate that hosts WASI/WASM.
     pub runner_heap_limit_mb: u32,
+    /// Active-CPU cap for the trusted JS runner isolate that hosts WASI/WASM.
+    pub runner_cpu_time_limit_ms: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -495,6 +498,7 @@ impl Default for WasmLimits {
             sync_read_limit_bytes: DEFAULT_WASM_SYNC_READ_LIMIT_BYTES,
             prewarm_timeout_ms: DEFAULT_WASM_PREWARM_TIMEOUT_MS,
             runner_heap_limit_mb: DEFAULT_WASM_RUNNER_HEAP_LIMIT_MB,
+            runner_cpu_time_limit_ms: DEFAULT_WASM_RUNNER_CPU_TIME_LIMIT_MS,
         }
     }
 }
@@ -791,6 +795,10 @@ pub fn vm_limits_from_config(
         if let Some(value) = wasm.runner_heap_limit_mb {
             limits.wasm.runner_heap_limit_mb = u32::try_from(value)
                 .map_err(|_| integer_too_large("limits.wasm.runnerHeapLimitMb", value))?;
+        }
+        if let Some(value) = wasm.runner_cpu_time_limit_ms {
+            limits.wasm.runner_cpu_time_limit_ms = u32::try_from(value)
+                .map_err(|_| integer_too_large("limits.wasm.runnerCpuTimeLimitMs", value))?;
         }
     }
     if let Some(process) = config.process.as_ref() {

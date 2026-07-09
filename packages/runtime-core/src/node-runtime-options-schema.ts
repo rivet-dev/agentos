@@ -3,6 +3,46 @@ import type { NodeRuntimeCreateOptions } from "./node-runtime.js";
 
 const permissionModeSchema = z.enum(["allow", "deny"]);
 const stringArray = z.array(z.string());
+const vmIdSchema = z.number().int().min(0).max(0xffffffff);
+const vmAccountNameSchema = z
+	.string()
+	.min(1)
+	.refine((value) => !/[:\s\0]/u.test(value), "Invalid account name");
+const vmGuestPathSchema = z.string().startsWith("/");
+const vmUserAccountSchema = z
+	.object({
+		uid: vmIdSchema,
+		gid: vmIdSchema,
+		username: vmAccountNameSchema,
+		homedir: vmGuestPathSchema,
+		shell: vmGuestPathSchema,
+		gecos: z.string().optional(),
+		supplementaryGids: z.array(vmIdSchema).max(64),
+	})
+	.strict();
+const vmGroupSchema = z
+	.object({
+		gid: vmIdSchema,
+		name: vmAccountNameSchema,
+		members: z.array(vmAccountNameSchema),
+	})
+	.strict();
+const vmUserConfigSchema = z
+	.object({
+		uid: vmIdSchema.optional(),
+		gid: vmIdSchema.optional(),
+		euid: vmIdSchema.optional(),
+		egid: vmIdSchema.optional(),
+		username: z.string().optional(),
+		homedir: z.string().optional(),
+		shell: z.string().optional(),
+		gecos: z.string().optional(),
+		groupName: z.string().optional(),
+		supplementaryGids: z.array(vmIdSchema).max(64).optional(),
+		accounts: z.array(vmUserAccountSchema).max(64).optional(),
+		groups: z.array(vmGroupSchema).max(128).optional(),
+	})
+	.strict();
 
 const fsPermissionRuleSchema = z
 	.object({
@@ -121,6 +161,7 @@ export const nodeRuntimeCreateOptionsSchema = z
 		),
 		env: z.record(z.string(), z.string()).optional(),
 		cwd: z.string().optional(),
+		user: vmUserConfigSchema.optional(),
 		permissions: nodeRuntimePermissionsSchema.optional(),
 		commandsDir: z.string().optional(),
 		wasmCommandDirs: stringArray.optional(),

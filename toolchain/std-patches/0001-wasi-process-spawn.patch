@@ -14,7 +14,7 @@
 
 --- /dev/null
 +++ b/library/std/src/sys/process/wasi.rs
-@@ -0,0 +1,824 @@
+@@ -0,0 +1,829 @@
 +// WASI process implementation using wasmVM host_process syscalls.
 +//
 +// Replaces the unsupported() stubs with real process management
@@ -593,6 +593,11 @@
 +        } else {
 +            None
 +        }
++    }
++
++    pub fn signal(&self) -> Option<i32> {
++        let signal = self.0 & 0x7f;
++        (signal != 0 && signal != 0x7f).then_some(signal)
 +    }
 +}
 +

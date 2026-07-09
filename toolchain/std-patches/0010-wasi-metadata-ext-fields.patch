@@ -19,7 +19,7 @@
  /// WASI-specific extensions to [`fs::Metadata`].
  pub trait MetadataExt {
      /// Returns the `st_dev` field of the internal `filestat_t`
-@@ -324,6 +336,14 @@
+@@ -324,6 +336,16 @@
      fn ino(&self) -> u64;
      /// Returns the `st_nlink` field of the internal `filestat_t`
      fn nlink(&self) -> u64;
@@ -31,10 +31,12 @@
 +    fn uid(&self) -> u32;
 +    /// Returns the owning group ID.
 +    fn gid(&self) -> u32;
++    /// Returns allocated storage in 512-byte blocks.
++    fn blocks(&self) -> u64;
  }
  
  impl MetadataExt for fs::Metadata {
-@@ -336,6 +356,18 @@
+@@ -336,6 +358,21 @@
      fn nlink(&self) -> u64 {
          self.as_inner().as_inner().st_nlink
      }
@@ -49,6 +51,9 @@
 +    }
 +    fn gid(&self) -> u32 {
 +        self.as_inner().as_inner().st_gid
++    }
++    fn blocks(&self) -> u64 {
++        self.as_inner().as_inner().st_blocks as u64
 +    }
  }
  

@@ -164,7 +164,14 @@ fn metadata_get_change_time(md: &Metadata) -> Option<SystemTime> {
     Some(st)
 }
 
-#[cfg(not(unix))]
+// WASI Preview 1's filestat `ctim` is surfaced by std as `created()`. In the
+// AgentOS Linux-in-WASM ABI that field carries POSIX inode change time.
+#[cfg(target_os = "wasi")]
+fn metadata_get_change_time(md: &Metadata) -> Option<SystemTime> {
+    md.created().ok()
+}
+
+#[cfg(not(any(unix, target_os = "wasi")))]
 fn metadata_get_change_time(_md: &Metadata) -> Option<SystemTime> {
     // Not available.
     None

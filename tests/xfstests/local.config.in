@@ -1,0 +1,7 @@
+export FSTYP=agentos
+export TEST_DEV=/dev/agentos-test
+export TEST_DIR=/mnt/test
+export SCRATCH_DEV=/dev/agentos-scratch
+export SCRATCH_MNT=/mnt/scratch
+export RESULT_BASE=/mnt/results
+export CANON_DEVS=no

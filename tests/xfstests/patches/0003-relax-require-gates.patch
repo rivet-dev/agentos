@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AgentOS Tests <tests@agentos.invalid>
+Date: Thu, 9 Jul 2026 15:58:58 -0700
+Subject: [PATCH 3/4] fstests: relax agentos device requirement gates
+
+---
+ common/attr |  3 +++
+ common/rc   | 19 +++++++++++++++++++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/common/attr b/common/attr
+index 112c4f1e..865235d5 100644
+--- a/common/attr
++++ b/common/attr
+@@ -22,6 +22,9 @@ _acl_get_max()
+ 			echo 5461
+ 		fi
+ 		;;
++	agentos)
++		echo 25
++		;;
+ 	jfs)
+ 		echo 8191
+ 		;;
+
+diff --git a/common/rc b/common/rc
+index b35c47f1..642eb087 100644
+--- a/common/rc
++++ b/common/rc
+@@ -2020,6 +2020,12 @@ _check_mounted_on()
+ # finishes the test with the filesystem in a corrupt state
+ _require_scratch_nocheck()
+ {
++	if [ "$FSTYP" = "agentos" ]; then
++		[ -n "$SCRATCH_MNT" ] || _notrun "this test requires a valid \$SCRATCH_MNT"
++		mkdir -p "$SCRATCH_MNT"
++		return 0
++	fi
++
+     case "$FSTYP" in
+ 	glusterfs)
+ 		echo $SCRATCH_DEV | grep -E -q ":/?" > /dev/null 2>&1
+@@ -2245,6 +2251,13 @@ _require_test_delalloc()
+ #
+ _require_test()
+ {
++	if [ "$FSTYP" = "agentos" ]; then
++		[ -n "$TEST_DIR" ] || _notrun "this test requires a valid \$TEST_DIR"
++		mkdir -p "$TEST_DIR"
++		touch "${RESULT_DIR}/require_test"
++		return 0
++	fi
++
+     case "$FSTYP" in
+ 	glusterfs)
+ 		echo $TEST_DEV | grep -E -q ":/?" > /dev/null 2>&1
+@@ -2399,6 +2412,8 @@ _require_no_logdev()
+ #
+ _require_loop()
+ {
++	[ "$FSTYP" = "agentos" ] && return 0
++
+     modprobe loop >/dev/null 2>&1
+     if grep loop /proc/devices >/dev/null 2>&1
+     then
+@@ -2474,6 +2489,8 @@ _require_command()
+ # $1 - device
+ _require_block_device()
+ {
++	[ "$FSTYP" = "agentos" ] && return 0
++
+ 	if [ -z "$1" ]; then
+ 		echo "Usage: _require_block_device <dev>" 1>&2
+ 		_exit 1
+@@ -2487,6 +2504,8 @@ _require_block_device()
+ # $1 - device
+ _require_local_device()
+ {
++	[ "$FSTYP" = "agentos" ] && return 0
++
+ 	if [ -z "$1" ]; then
+ 		echo "Usage: _require_local_device <dev>" 1>&2
+ 		_exit 1

@@ -228,7 +228,7 @@ fn lchown_reaches_the_ephemeral_root_overlay_without_following() {
         .expect("create process");
     let pid = process.pid();
     kernel
-        .write_file_for_process(DRIVER, pid, "/target", b"data", None)
+        .write_file("/target", b"data")
         .expect("create target");
     kernel.symlink("/target", "/link").expect("create link");
 

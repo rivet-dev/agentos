@@ -68,6 +68,8 @@ impl InMemoryMetadataStore {
             birthtime: now,
             storage: Storage::None,
             symlink_target: None,
+            allocated_extents: Vec::new(),
+            xattrs: BTreeMap::new(),
         };
         let mut inodes = BTreeMap::new();
         inodes.insert(Self::ROOT_INO, root);
@@ -103,6 +105,13 @@ impl InMemoryMetadataStore {
             chunks: state.chunks.clone(),
             block_refs: state.block_refs.clone(),
         }
+    }
+
+    pub fn inode_meta(&self, ino: u64) -> VfsResult<InodeMeta> {
+        self.state
+            .lock()
+            .expect("metadata mutex poisoned")
+            .inode(ino)
     }
 
     pub fn from_dump(dump: MetadataDump) -> Self {
@@ -146,6 +155,12 @@ impl State {
                 .map(|target| target.len() as u64)
                 .unwrap_or(0),
         };
+        let allocated_extents = match &attrs.storage {
+            Storage::Inline(data) if !data.is_empty() => {
+                vec![(0, (data.len() as u64).div_ceil(512))]
+            }
+            Storage::Inline(_) | Storage::Chunked { .. } | Storage::None => Vec::new(),
+        };
         InodeMeta {
             ino,
             kind: attrs.kind,
@@ -164,6 +179,8 @@ impl State {
             birthtime: now,
             storage: attrs.storage,
             symlink_target: attrs.symlink_target,
+            allocated_extents,
+            xattrs: attrs.xattrs,
         }
     }
 
@@ -387,7 +404,7 @@ impl MetadataStore for InMemoryMetadataStore {
 
     async fn link(&self, parent: u64, name: &str, target: u64) -> VfsResult<()> {
         let mut state = self.state.lock().expect("metadata mutex poisoned");
-        let parent_meta = state.inode(parent)?;
+        let mut parent_meta = state.inode(parent)?;
         if parent_meta.kind != InodeType::Directory {
             return Err(VfsError::enotdir(format!("inode {parent}")));
         }
@@ -406,14 +423,20 @@ impl MetadataStore for InMemoryMetadataStore {
         target_meta.nlink += 1;
         target_meta.ctime = Timespec::now();
         state.dentries.insert((parent, name.to_string()), target);
+        State::now_touch(&mut parent_meta);
+        state.inodes.insert(parent, parent_meta);
         Ok(())
     }
 
     async fn remove(&self, parent: u64, name: &str) -> VfsResult<Vec<BlockKey>> {
-        self.state
-            .lock()
-            .expect("metadata mutex poisoned")
-            .remove_child(parent, name)
+        let mut state = self.state.lock().expect("metadata mutex poisoned");
+        let result = state.remove_child(parent, name)?;
+        let parent_meta = state
+            .inodes
+            .get_mut(&parent)
+            .ok_or_else(|| VfsError::enoent(format!("inode {parent}")))?;
+        State::now_touch(parent_meta);
+        Ok(result)
     }
 
     async fn rename(
@@ -433,16 +456,51 @@ impl MetadataStore for InMemoryMetadataStore {
             }
         }
         let mut freed = Vec::new();
-        if state.dentries.contains_key(&(dst_parent, dst.to_string())) {
+        if let Some(destination) = state.dentries.get(&(dst_parent, dst.to_string())).copied() {
+            let destination_meta = state.inode(destination)?;
+            match (
+                source_meta.kind == InodeType::Directory,
+                destination_meta.kind == InodeType::Directory,
+            ) {
+                (false, true) => return Err(VfsError::eisdir(dst)),
+                (true, false) => return Err(VfsError::enotdir(dst)),
+                _ => {}
+            }
             freed = state.remove_child(dst_parent, dst)?;
         }
         state.dentries.remove(&(src_parent, src.to_string()));
         state.dentries.insert((dst_parent, dst.to_string()), child);
+        let now = Timespec::now();
+        state
+            .inodes
+            .get_mut(&child)
+            .ok_or_else(|| VfsError::enoent(format!("inode {child}")))?
+            .ctime = now;
+        for parent in [src_parent, dst_parent] {
+            let parent_meta = state
+                .inodes
+                .get_mut(&parent)
+                .ok_or_else(|| VfsError::enoent(format!("inode {parent}")))?;
+            parent_meta.mtime = now;
+            parent_meta.ctime = now;
+        }
         Ok(freed)
     }
 
     async fn set_attr(&self, ino: u64, patch: InodePatch) -> VfsResult<Vec<BlockKey>> {
         let mut state = self.state.lock().expect("metadata mutex poisoned");
+        let access_time_only = patch.atime.is_some()
+            && patch.mode.is_none()
+            && patch.uid.is_none()
+            && patch.gid.is_none()
+            && patch.mtime.is_none()
+            && patch.storage.is_none()
+            && patch.size.is_none()
+            && patch.allocated_extents.is_none()
+            && patch.xattrs.is_none();
+        let content_changed =
+            patch.storage.is_some() || patch.size.is_some() || patch.allocated_extents.is_some();
+        let explicit_mtime = patch.mtime.is_some();
         let mut freed = Vec::new();
         if let Some(storage) = &patch.storage {
             if matches!(storage, Storage::Inline(_) | Storage::None) {
@@ -477,12 +535,37 @@ impl MetadataStore for InMemoryMetadataStore {
                     .as_ref()
                     .map_or(0, |target| target.len() as u64),
             };
+            if patch.allocated_extents.is_none() {
+                match &storage {
+                    Storage::Inline(data) => {
+                        meta.allocated_extents = if data.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![(0, (data.len() as u64).div_ceil(512))]
+                        };
+                    }
+                    Storage::None => meta.allocated_extents.clear(),
+                    Storage::Chunked { .. } => {}
+                }
+            }
             meta.storage = storage;
+        }
+        if let Some(allocated_extents) = patch.allocated_extents {
+            meta.allocated_extents = allocated_extents;
+        }
+        if let Some(xattrs) = patch.xattrs {
+            meta.xattrs = xattrs;
         }
         if let Some(size) = patch.size {
             meta.size = size;
         }
-        meta.ctime = Timespec::now();
+        let now = Timespec::now();
+        if content_changed && !explicit_mtime {
+            meta.mtime = now;
+        }
+        if !access_time_only {
+            meta.ctime = now;
+        }
         Ok(freed)
     }
 
@@ -491,6 +574,7 @@ impl MetadataStore for InMemoryMetadataStore {
         ino: u64,
         edits: Vec<ChunkEdit>,
         new_size: u64,
+        allocated_extents: Vec<(u64, u64)>,
     ) -> VfsResult<Vec<BlockKey>> {
         let mut state = self.state.lock().expect("metadata mutex poisoned");
         let meta = state.inode(ino)?;
@@ -536,11 +620,16 @@ impl MetadataStore for InMemoryMetadataStore {
                 state.inc_block_ref(&key);
             }
         }
+        // A range shift can release a content-addressed block at one index and
+        // reintroduce the same key at another index in this commit. Only return
+        // keys that are still unreferenced after every edit has been applied.
+        freed.retain(|key| !state.block_refs.contains_key(key));
         let meta = state
             .inodes
             .get_mut(&ino)
             .ok_or_else(|| VfsError::enoent(format!("inode {ino}")))?;
         meta.size = new_size;
+        meta.allocated_extents = allocated_extents;
         meta.ctime = Timespec::now();
         meta.mtime = meta.ctime;
         Ok(freed)

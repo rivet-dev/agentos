@@ -8,6 +8,10 @@
 
 #![no_std]
 
+extern crate alloc;
+
+use alloc::{vec, vec::Vec};
+
 /// WASI-style errno type. 0 = success.
 pub type Errno = u32;
 
@@ -265,6 +269,32 @@ extern "C" {
     fn proc_sigaction(signal: u32, action: u32, mask_lo: u32, mask_hi: u32, flags: u32) -> Errno;
 }
 
+#[link(wasm_import_module = "host_fs")]
+extern "C" {
+    fn remount(
+        path_ptr: *const u8,
+        path_len: u32,
+        options_ptr: *const u8,
+        options_len: u32,
+    ) -> Errno;
+    fn path_owner(
+        fd: u32,
+        path_ptr: *const u8,
+        path_len: u32,
+        follow_symlinks: u32,
+        ret_uid: *mut u32,
+        ret_gid: *mut u32,
+    ) -> Errno;
+    fn path_chown(
+        fd: u32,
+        path_ptr: *const u8,
+        path_len: u32,
+        uid: u32,
+        gid: u32,
+        follow_symlinks: u32,
+    ) -> Errno;
+}
+
 // ============================================================
 // host_user module — user/group identity and terminal detection
 // ============================================================
@@ -283,6 +313,31 @@ extern "C" {
     /// Get the effective group ID. Writes to `ret_gid`. Returns errno.
     fn getegid(ret_gid: *mut u32) -> Errno;
 
+    #[link_name = "getresuid"]
+    fn host_getresuid(ret_uid: *mut u32, ret_euid: *mut u32, ret_suid: *mut u32) -> Errno;
+    #[link_name = "getresgid"]
+    fn host_getresgid(ret_gid: *mut u32, ret_egid: *mut u32, ret_sgid: *mut u32) -> Errno;
+    #[link_name = "setuid"]
+    fn host_setuid(uid: u32) -> Errno;
+    #[link_name = "seteuid"]
+    fn host_seteuid(uid: u32) -> Errno;
+    #[link_name = "setreuid"]
+    fn host_setreuid(uid: u32, euid: u32) -> Errno;
+    #[link_name = "setresuid"]
+    fn host_setresuid(uid: u32, euid: u32, suid: u32) -> Errno;
+    #[link_name = "setgid"]
+    fn host_setgid(gid: u32) -> Errno;
+    #[link_name = "setegid"]
+    fn host_setegid(gid: u32) -> Errno;
+    #[link_name = "setregid"]
+    fn host_setregid(gid: u32, egid: u32) -> Errno;
+    #[link_name = "setresgid"]
+    fn host_setresgid(gid: u32, egid: u32, sgid: u32) -> Errno;
+    #[link_name = "getgroups"]
+    fn host_getgroups(size: u32, groups_ptr: *mut u32, ret_count: *mut u32) -> Errno;
+    #[link_name = "setgroups"]
+    fn host_setgroups(count: u32, groups_ptr: *const u32) -> Errno;
+
     /// Check if a file descriptor refers to a terminal.
     ///
     /// Writes 1 (true) or 0 (false) to `ret_bool`. Returns errno.
@@ -294,6 +349,28 @@ extern "C" {
     /// to `buf_ptr` with max length `buf_len`. Actual length written to `ret_len`.
     /// Returns errno.
     fn getpwuid(uid: u32, buf_ptr: *mut u8, buf_len: u32, ret_len: *mut u32) -> Errno;
+    #[link_name = "getpwnam"]
+    fn host_getpwnam(
+        name_ptr: *const u8,
+        name_len: u32,
+        buf_ptr: *mut u8,
+        buf_len: u32,
+        ret_len: *mut u32,
+    ) -> Errno;
+    #[link_name = "getpwent"]
+    fn host_getpwent(index: u32, buf_ptr: *mut u8, buf_len: u32, ret_len: *mut u32) -> Errno;
+    #[link_name = "getgrgid"]
+    fn host_getgrgid(gid: u32, buf_ptr: *mut u8, buf_len: u32, ret_len: *mut u32) -> Errno;
+    #[link_name = "getgrnam"]
+    fn host_getgrnam(
+        name_ptr: *const u8,
+        name_len: u32,
+        buf_ptr: *mut u8,
+        buf_len: u32,
+        ret_len: *mut u32,
+    ) -> Errno;
+    #[link_name = "getgrent"]
+    fn host_getgrent(index: u32, buf_ptr: *mut u8, buf_len: u32, ret_len: *mut u32) -> Errno;
 }
 
 // ============================================================
@@ -1295,6 +1372,130 @@ pub fn get_egid() -> Result<u32, Errno> {
     }
 }
 
+fn errno_result(errno: Errno) -> Result<(), Errno> {
+    if errno == ERRNO_SUCCESS {
+        Ok(())
+    } else {
+        Err(errno)
+    }
+}
+
+fn optional_id(id: Option<u32>) -> u32 {
+    id.unwrap_or(u32::MAX)
+}
+
+pub fn get_resuid() -> Result<(u32, u32, u32), Errno> {
+    let (mut uid, mut euid, mut suid) = (0, 0, 0);
+    let errno = unsafe { host_getresuid(&mut uid, &mut euid, &mut suid) };
+    (errno == ERRNO_SUCCESS)
+        .then_some((uid, euid, suid))
+        .ok_or(errno)
+}
+
+pub fn get_resgid() -> Result<(u32, u32, u32), Errno> {
+    let (mut gid, mut egid, mut sgid) = (0, 0, 0);
+    let errno = unsafe { host_getresgid(&mut gid, &mut egid, &mut sgid) };
+    (errno == ERRNO_SUCCESS)
+        .then_some((gid, egid, sgid))
+        .ok_or(errno)
+}
+
+pub fn set_uid(uid: u32) -> Result<(), Errno> {
+    errno_result(unsafe { host_setuid(uid) })
+}
+
+pub fn set_euid(uid: u32) -> Result<(), Errno> {
+    errno_result(unsafe { host_seteuid(uid) })
+}
+
+pub fn set_reuid(uid: Option<u32>, euid: Option<u32>) -> Result<(), Errno> {
+    errno_result(unsafe { host_setreuid(optional_id(uid), optional_id(euid)) })
+}
+
+pub fn set_resuid(uid: Option<u32>, euid: Option<u32>, suid: Option<u32>) -> Result<(), Errno> {
+    errno_result(unsafe { host_setresuid(optional_id(uid), optional_id(euid), optional_id(suid)) })
+}
+
+pub fn set_gid(gid: u32) -> Result<(), Errno> {
+    errno_result(unsafe { host_setgid(gid) })
+}
+
+pub fn set_egid(gid: u32) -> Result<(), Errno> {
+    errno_result(unsafe { host_setegid(gid) })
+}
+
+pub fn set_regid(gid: Option<u32>, egid: Option<u32>) -> Result<(), Errno> {
+    errno_result(unsafe { host_setregid(optional_id(gid), optional_id(egid)) })
+}
+
+pub fn set_resgid(gid: Option<u32>, egid: Option<u32>, sgid: Option<u32>) -> Result<(), Errno> {
+    errno_result(unsafe { host_setresgid(optional_id(gid), optional_id(egid), optional_id(sgid)) })
+}
+
+pub fn get_groups() -> Result<Vec<u32>, Errno> {
+    let mut count = 0;
+    let errno = unsafe { host_getgroups(0, core::ptr::null_mut(), &mut count) };
+    if errno != ERRNO_SUCCESS {
+        return Err(errno);
+    }
+    let mut groups = vec![0; count as usize];
+    let errno = unsafe { host_getgroups(count, groups.as_mut_ptr(), &mut count) };
+    if errno != ERRNO_SUCCESS {
+        return Err(errno);
+    }
+    groups.truncate(count as usize);
+    Ok(groups)
+}
+
+pub fn set_groups(groups: &[u32]) -> Result<(), Errno> {
+    errno_result(unsafe {
+        host_setgroups(checked_u32_len(groups.len())?, groups.as_ptr())
+    })
+}
+
+pub fn path_ids(path: &str, follow_symlinks: bool) -> Result<(u32, u32), Errno> {
+    let (mut uid, mut gid) = (0, 0);
+    let errno = unsafe {
+        path_owner(
+            u32::MAX,
+            path.as_ptr(),
+            checked_u32_len(path.len())?,
+            u32::from(follow_symlinks),
+            &mut uid,
+            &mut gid,
+        )
+    };
+    if errno == ERRNO_SUCCESS {
+        Ok((uid, gid))
+    } else {
+        Err(errno)
+    }
+}
+
+pub fn chown_path(path: &str, uid: u32, gid: u32, follow_symlinks: bool) -> Result<(), Errno> {
+    errno_result(unsafe {
+        path_chown(
+            u32::MAX,
+            path.as_ptr(),
+            checked_u32_len(path.len())?,
+            uid,
+            gid,
+            u32::from(follow_symlinks),
+        )
+    })
+}
+
+pub fn remount_path(path: &str, options: &str) -> Result<(), Errno> {
+    errno_result(unsafe {
+        remount(
+            path.as_ptr(),
+            checked_u32_len(path.len())?,
+            options.as_ptr(),
+            checked_u32_len(options.len())?,
+        )
+    })
+}
+
 /// Check if a file descriptor is a terminal.
 ///
 /// Returns `Ok(true)` if it's a terminal, `Ok(false)` otherwise, `Err(errno)` on failure.
@@ -1316,6 +1517,78 @@ pub fn get_pwuid(uid: u32, buf: &mut [u8]) -> Result<u32, Errno> {
     let mut len: u32 = 0;
     let buf_len = checked_u32_len(buf.len())?;
     let errno = unsafe { getpwuid(uid, buf.as_mut_ptr(), buf_len, &mut len) };
+    if errno == ERRNO_SUCCESS {
+        validate_returned_len(len, buf.len())
+    } else {
+        Err(errno)
+    }
+}
+
+pub fn get_pwnam(name: &str, buf: &mut [u8]) -> Result<u32, Errno> {
+    let mut len = 0;
+    let errno = unsafe {
+        host_getpwnam(
+            name.as_ptr(),
+            checked_u32_len(name.len())?,
+            buf.as_mut_ptr(),
+            checked_u32_len(buf.len())?,
+            &mut len,
+        )
+    };
+    if errno == ERRNO_SUCCESS {
+        validate_returned_len(len, buf.len())
+    } else {
+        Err(errno)
+    }
+}
+
+pub fn get_pwent(index: u32, buf: &mut [u8]) -> Result<u32, Errno> {
+    let mut len = 0;
+    let errno = unsafe {
+        host_getpwent(index, buf.as_mut_ptr(), checked_u32_len(buf.len())?, &mut len)
+    };
+    if errno == ERRNO_SUCCESS {
+        validate_returned_len(len, buf.len())
+    } else {
+        Err(errno)
+    }
+}
+
+pub fn get_grgid(gid: u32, buf: &mut [u8]) -> Result<u32, Errno> {
+    let mut len = 0;
+    let errno = unsafe {
+        host_getgrgid(gid, buf.as_mut_ptr(), checked_u32_len(buf.len())?, &mut len)
+    };
+    if errno == ERRNO_SUCCESS {
+        validate_returned_len(len, buf.len())
+    } else {
+        Err(errno)
+    }
+}
+
+pub fn get_grnam(name: &str, buf: &mut [u8]) -> Result<u32, Errno> {
+    let mut len = 0;
+    let errno = unsafe {
+        host_getgrnam(
+            name.as_ptr(),
+            checked_u32_len(name.len())?,
+            buf.as_mut_ptr(),
+            checked_u32_len(buf.len())?,
+            &mut len,
+        )
+    };
+    if errno == ERRNO_SUCCESS {
+        validate_returned_len(len, buf.len())
+    } else {
+        Err(errno)
+    }
+}
+
+pub fn get_grent(index: u32, buf: &mut [u8]) -> Result<u32, Errno> {
+    let mut len = 0;
+    let errno = unsafe {
+        host_getgrent(index, buf.as_mut_ptr(), checked_u32_len(buf.len())?, &mut len)
+    };
     if errno == ERRNO_SUCCESS {
         validate_returned_len(len, buf.len())
     } else {

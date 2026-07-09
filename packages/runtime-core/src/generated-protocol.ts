@@ -1032,6 +1032,8 @@ export function writeMountPluginDescriptor(bc: bare.ByteCursor, x: MountPluginDe
 
 export type MountDescriptor = {
     readonly guestPath: string
+    readonly guestSource: string
+    readonly guestFstype: string
     readonly readOnly: boolean
     readonly plugin: MountPluginDescriptor
 }
@@ -1039,6 +1041,8 @@ export type MountDescriptor = {
 export function readMountDescriptor(bc: bare.ByteCursor): MountDescriptor {
     return {
         guestPath: bare.readString(bc),
+        guestSource: bare.readString(bc),
+        guestFstype: bare.readString(bc),
         readOnly: bare.readBool(bc),
         plugin: readMountPluginDescriptor(bc),
     }
@@ -1046,6 +1050,8 @@ export function readMountDescriptor(bc: bare.ByteCursor): MountDescriptor {
 
 export function writeMountDescriptor(bc: bare.ByteCursor, x: MountDescriptor): void {
     bare.writeString(bc, x.guestPath)
+    bare.writeString(bc, x.guestSource)
+    bare.writeString(bc, x.guestFstype)
     bare.writeBool(bc, x.readOnly)
     writeMountPluginDescriptor(bc, x.plugin)
 }

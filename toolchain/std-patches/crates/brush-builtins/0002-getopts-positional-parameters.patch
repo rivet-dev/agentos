@@ -1,0 +1,41 @@
+diff --git a/src/getopts.rs b/src/getopts.rs
+--- a/src/getopts.rs
++++ b/src/getopts.rs
+@@ -78,6 +78,12 @@ impl builtins::Command for GetOptsCommand {
+             return Ok(ExecutionExitCode::InvalidUsage.into());
+         }
+ 
++        let getopts_args = if self.args.is_empty() {
++            &context.shell.positional_parameters
++        } else {
++            &self.args
++        };
++
+         let mut new_optarg = None;
+         let new_optind;
+         let mut variable_value;
+@@ -84,8 +90,8 @@ impl builtins::Command for GetOptsCommand {
+ 
+         // See if there are any args left to parse.
+         let mut next_index_zero_based = next_index - 1;
+-        if next_index_zero_based < self.args.len() {
+-            let arg = self.args[next_index_zero_based].as_str();
++        if next_index_zero_based < getopts_args.len() {
++            let arg = getopts_args[next_index_zero_based].as_str();
+ 
+             // See if this is an option.
+             if arg.starts_with('-') && arg != "--" {
+@@ -114,11 +120,11 @@ impl builtins::Command for GetOptsCommand {
+                             next_index += 1;
+                             next_index_zero_based += 1;
+ 
+-                            if next_index_zero_based >= self.args.len() {
++                            if next_index_zero_based >= getopts_args.len() {
+                                 return Ok(ExecutionResult::general_error());
+                             }
+ 
+-                            new_optarg = Some(self.args[next_index_zero_based].clone());
++                            new_optarg = Some(getopts_args[next_index_zero_based].clone());
+                         } else {
+                             is_error = true;
+                         }

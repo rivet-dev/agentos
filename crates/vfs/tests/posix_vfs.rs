@@ -1,11 +1,41 @@
 use std::{fmt::Debug, thread::sleep, time::Duration};
 use vfs::posix::{
-    normalize_path, validate_path, MemoryFileSystem, VfsResult, VirtualFileSystem, S_IFLNK, S_IFREG,
+    normalize_path, validate_path, MemoryFileSystem, VfsResult, VirtualFileSystem, RENAME_EXCHANGE,
+    RENAME_NOREPLACE, S_IFLNK, S_IFREG, XATTR_CREATE, XATTR_REPLACE,
 };
 
 fn assert_error_code<T: Debug>(result: vfs::posix::VfsResult<T>, expected: &str) {
     let error = result.expect_err("operation should fail");
     assert_eq!(error.code(), expected);
+}
+
+#[test]
+fn character_device_identity_survives_rename_and_snapshot() {
+    let mut filesystem = MemoryFileSystem::new();
+    filesystem.mkdir("/devices", false).unwrap();
+    filesystem
+        .mknod("/devices/null", 0o020666, (1 << 8) | 3)
+        .unwrap();
+    filesystem
+        .mknod("/devices/block", 0o060640, (8 << 8) | 1)
+        .unwrap();
+    filesystem.mknod("/devices/fifo", 0o010600, 0).unwrap();
+
+    let created = filesystem.lstat("/devices/null").unwrap();
+    assert_eq!(created.mode & 0o170000, 0o020000);
+    assert_eq!(created.rdev, (1 << 8) | 3);
+
+    filesystem.rename("/devices/null", "/devices/sink").unwrap();
+    let restored = MemoryFileSystem::from_snapshot(filesystem.snapshot());
+    let restored_stat = restored.lstat("/devices/sink").unwrap();
+    assert_eq!(restored_stat.mode & 0o170000, 0o020000);
+    assert_eq!(restored_stat.rdev, (1 << 8) | 3);
+    let block = restored.lstat("/devices/block").unwrap();
+    assert_eq!(block.mode & 0o170000, 0o060000);
+    assert_eq!(block.rdev, (8 << 8) | 1);
+    let fifo = restored.lstat("/devices/fifo").unwrap();
+    assert_eq!(fifo.mode & 0o170000, 0o010000);
+    assert_eq!(fifo.rdev, 0);
 }
 
 fn assert_invalid_path_keeps_snapshot<T: Debug>(
@@ -100,6 +130,66 @@ fn rename_moves_directory_trees_without_losing_children() {
             .expect("read renamed second child"),
         "2"
     );
+}
+
+#[test]
+fn rename_at2_preserves_noreplace_exchange_and_invalid_flag_semantics() {
+    let mut filesystem = MemoryFileSystem::new();
+    filesystem.write_file("/source", "source").unwrap();
+    filesystem
+        .write_file("/destination", "destination")
+        .unwrap();
+
+    assert_error_code(
+        filesystem.rename_at2("/missing", "/destination", RENAME_NOREPLACE),
+        "ENOENT",
+    );
+    assert_eq!(
+        filesystem.read_text_file("/destination").unwrap(),
+        "destination"
+    );
+
+    assert_error_code(
+        filesystem.rename_at2("/source", "/destination", RENAME_NOREPLACE),
+        "EEXIST",
+    );
+    assert_eq!(filesystem.read_text_file("/source").unwrap(), "source");
+    assert_eq!(
+        filesystem.read_text_file("/destination").unwrap(),
+        "destination"
+    );
+
+    filesystem
+        .rename_at2("/source", "/destination", RENAME_EXCHANGE)
+        .unwrap();
+    assert_eq!(filesystem.read_text_file("/source").unwrap(), "destination");
+    assert_eq!(filesystem.read_text_file("/destination").unwrap(), "source");
+
+    assert_error_code(
+        filesystem.rename_at2(
+            "/source",
+            "/destination",
+            RENAME_NOREPLACE | RENAME_EXCHANGE,
+        ),
+        "EINVAL",
+    );
+    assert_eq!(filesystem.read_text_file("/source").unwrap(), "destination");
+    assert_eq!(filesystem.read_text_file("/destination").unwrap(), "source");
+}
+
+#[test]
+fn rename_rejects_incompatible_destination_types_without_mutation() {
+    let mut filesystem = MemoryFileSystem::new();
+    filesystem.write_file("/file", "file").unwrap();
+    filesystem.mkdir("/directory", false).unwrap();
+
+    assert_error_code(filesystem.rename("/file", "/directory"), "EISDIR");
+    assert_eq!(filesystem.read_text_file("/file").unwrap(), "file");
+    assert!(filesystem.lstat("/directory").unwrap().is_directory);
+
+    assert_error_code(filesystem.rename("/directory", "/file"), "ENOTDIR");
+    assert_eq!(filesystem.read_text_file("/file").unwrap(), "file");
+    assert!(filesystem.lstat("/directory").unwrap().is_directory);
 }
 
 #[test]
@@ -460,6 +550,192 @@ fn oversized_raw_truncate_and_pwrite_fail_without_mutating_file_contents() {
 }
 
 #[test]
+fn sparse_pwrite_reports_only_allocated_blocks_and_survives_snapshots() {
+    let mut filesystem = MemoryFileSystem::new();
+    filesystem
+        .write_file("/sparse", Vec::new())
+        .expect("create sparse file");
+    filesystem
+        .pwrite("/sparse", vec![b'x'; 50 * 1024], 1_600 * 1024)
+        .expect("write sparse extent");
+
+    let stat = filesystem.stat("/sparse").expect("stat sparse file");
+    assert_eq!(stat.size, 1_650 * 1024);
+    assert_eq!(stat.blocks, 100);
+    assert!(stat.blocks * 512 < stat.size);
+
+    let mut restored = MemoryFileSystem::from_snapshot(filesystem.snapshot());
+    assert_eq!(
+        restored
+            .stat("/sparse")
+            .expect("stat restored sparse file")
+            .blocks,
+        100
+    );
+    restored
+        .truncate("/sparse", 1_610 * 1024)
+        .expect("truncate sparse extent");
+    assert_eq!(
+        restored
+            .stat("/sparse")
+            .expect("stat truncated sparse file")
+            .blocks,
+        20
+    );
+}
+
+#[test]
+fn allocate_preserves_existing_bytes_and_accounts_for_the_requested_extent() {
+    let mut filesystem = MemoryFileSystem::new();
+    filesystem
+        .write_file("/allocated", b"prefix".to_vec())
+        .expect("seed allocation target");
+
+    filesystem
+        .allocate("/allocated", 512, 1024)
+        .expect("allocate range");
+
+    let contents = filesystem
+        .read_file("/allocated")
+        .expect("read allocated file");
+    assert_eq!(&contents[..6], b"prefix");
+    assert!(contents[6..].iter().all(|byte| *byte == 0));
+    let stat = filesystem.stat("/allocated").expect("stat allocated file");
+    assert_eq!(stat.size, 1536);
+    assert_eq!(stat.blocks, 3);
+}
+
+#[test]
+fn punch_hole_zeroes_complete_blocks_without_changing_file_size() {
+    let mut filesystem = MemoryFileSystem::new();
+    let mut contents = vec![b'a'; 2048];
+    contents[1536..].fill(b'z');
+    filesystem
+        .write_file("/punched", contents)
+        .expect("seed punch target");
+
+    filesystem
+        .punch_hole("/punched", 512, 1024)
+        .expect("punch aligned range");
+    filesystem
+        .punch_hole("/punched", 512, 1024)
+        .expect("repeat punch is idempotent");
+
+    let contents = filesystem.read_file("/punched").expect("read punch target");
+    assert!(contents[..512].iter().all(|byte| *byte == b'a'));
+    assert!(contents[512..1536].iter().all(|byte| *byte == 0));
+    assert!(contents[1536..].iter().all(|byte| *byte == b'z'));
+    let stat = filesystem.stat("/punched").expect("stat punch target");
+    assert_eq!(stat.size, 2048);
+    assert_eq!(stat.blocks, 2);
+    assert_eq!(
+        filesystem
+            .allocated_ranges("/punched")
+            .expect("map allocated ranges"),
+        vec![(0, 512), (1536, 2048)]
+    );
+}
+
+#[test]
+fn zero_range_zeroes_exact_bytes_reallocates_holes_and_honors_keep_size() {
+    let mut filesystem = MemoryFileSystem::new();
+    filesystem
+        .write_file("/zeroed", vec![b'a'; 2048])
+        .expect("seed zero-range target");
+    filesystem
+        .punch_hole("/zeroed", 512, 512)
+        .expect("create source hole");
+
+    filesystem
+        .zero_range("/zeroed", 384, 768, false)
+        .expect("zero unaligned range");
+    let contents = filesystem.read_file("/zeroed").expect("read zeroed file");
+    assert!(contents[..384].iter().all(|byte| *byte == b'a'));
+    assert!(contents[384..1152].iter().all(|byte| *byte == 0));
+    assert!(contents[1152..].iter().all(|byte| *byte == b'a'));
+    assert_eq!(
+        filesystem.allocated_ranges("/zeroed").unwrap(),
+        vec![(0, 2048)]
+    );
+    assert_eq!(
+        filesystem.unwritten_ranges("/zeroed").unwrap(),
+        vec![(512, 1024)]
+    );
+
+    filesystem
+        .zero_range("/zeroed", 3072, 512, true)
+        .expect("zero beyond EOF with keep-size");
+    assert_eq!(filesystem.stat("/zeroed").unwrap().size, 2048);
+    filesystem
+        .truncate("/zeroed", 3584)
+        .expect("extend into reserved zero range");
+    assert_eq!(
+        filesystem.allocated_ranges("/zeroed").unwrap(),
+        vec![(0, 2048), (3072, 3584)]
+    );
+    assert_eq!(
+        filesystem.unwritten_ranges("/zeroed").unwrap(),
+        vec![(512, 1024), (3072, 3584)]
+    );
+    filesystem
+        .zero_range("/zeroed", 3584, 512, false)
+        .expect("extend with zero range");
+    assert_eq!(filesystem.stat("/zeroed").unwrap().size, 4096);
+    assert_eq!(
+        filesystem.allocated_ranges("/zeroed").unwrap(),
+        vec![(0, 2048), (3072, 4096)]
+    );
+    assert_eq!(
+        filesystem.unwritten_ranges("/zeroed").unwrap(),
+        vec![(512, 1024), (3072, 4096)]
+    );
+    filesystem
+        .pwrite("/zeroed", vec![b'b'; 512], 512)
+        .expect("convert one unwritten sector to data");
+    assert_eq!(
+        filesystem.unwritten_ranges("/zeroed").unwrap(),
+        vec![(3072, 4096)]
+    );
+    assert_error_code(filesystem.zero_range("/zeroed", 0, 0, false), "EINVAL");
+}
+
+#[test]
+fn insert_and_collapse_range_shift_bytes_and_sparse_extents() {
+    let mut filesystem = MemoryFileSystem::new();
+    let data = [
+        vec![b'A'; 512],
+        vec![b'B'; 512],
+        vec![b'C'; 512],
+        vec![b'D'; 512],
+    ]
+    .concat();
+    filesystem.write_file("/shift", data).unwrap();
+    filesystem.punch_hole("/shift", 512, 512).unwrap();
+
+    filesystem.insert_range("/shift", 512, 512).unwrap();
+    let inserted = filesystem.read_file("/shift").unwrap();
+    assert_eq!(inserted.len(), 2560);
+    assert_eq!(&inserted[..512], vec![b'A'; 512]);
+    assert!(inserted[512..1536].iter().all(|byte| *byte == 0));
+    assert_eq!(&inserted[1536..2048], vec![b'C'; 512]);
+    assert_eq!(
+        filesystem.allocated_ranges("/shift").unwrap(),
+        vec![(0, 512), (1536, 2560)]
+    );
+
+    filesystem.collapse_range("/shift", 512, 512).unwrap();
+    filesystem.collapse_range("/shift", 512, 512).unwrap();
+    assert_eq!(
+        filesystem.read_file("/shift").unwrap(),
+        [vec![b'A'; 512], vec![b'C'; 512], vec![b'D'; 512]].concat()
+    );
+    assert_eq!(
+        filesystem.allocated_ranges("/shift").unwrap(),
+        vec![(0, 1536)]
+    );
+}
+
+#[test]
 fn directory_reads_and_metadata_updates_refresh_timestamps() {
     let mut filesystem = MemoryFileSystem::new();
     filesystem
@@ -610,5 +886,54 @@ fn memory_filesystem_instances_have_distinct_device_ids() {
     assert_ne!(
         restored.lstat("/file.txt").expect("stat restored file").dev,
         second_stat.dev
+    );
+}
+
+#[test]
+fn xattrs_follow_inode_identity_and_survive_snapshots() {
+    let mut filesystem = MemoryFileSystem::new();
+    filesystem.write_file("/file", b"data").unwrap();
+    filesystem.link("/file", "/hardlink").unwrap();
+
+    filesystem
+        .set_xattr("/file", "user.agentos", b"one".to_vec(), XATTR_CREATE, true)
+        .unwrap();
+    assert_eq!(
+        filesystem
+            .get_xattr("/hardlink", "user.agentos", true)
+            .unwrap(),
+        b"one"
+    );
+    assert_error_code(
+        filesystem.set_xattr(
+            "/file",
+            "user.agentos",
+            b"duplicate".to_vec(),
+            XATTR_CREATE,
+            true,
+        ),
+        "EEXIST",
+    );
+    filesystem
+        .set_xattr(
+            "/hardlink",
+            "user.agentos",
+            b"two".to_vec(),
+            XATTR_REPLACE,
+            true,
+        )
+        .unwrap();
+
+    let mut restored = MemoryFileSystem::from_snapshot(filesystem.snapshot());
+    assert_eq!(
+        restored.get_xattr("/file", "user.agentos", true).unwrap(),
+        b"two"
+    );
+    restored
+        .remove_xattr("/file", "user.agentos", true)
+        .unwrap();
+    assert_error_code(
+        restored.get_xattr("/hardlink", "user.agentos", true),
+        "ENODATA",
     );
 }

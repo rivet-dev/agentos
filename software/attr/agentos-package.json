@@ -1,0 +1,12 @@
+{
+	"commands": [
+		"attr",
+		"getfattr",
+		"setfattr"
+	],
+	"registry": {
+		"title": "attr",
+		"description": "Inspect and modify filesystem extended attributes.",
+		"priority": 41
+	}
+}

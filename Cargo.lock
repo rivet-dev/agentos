@@ -378,6 +378,7 @@ dependencies = [
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",
+ "base64 0.22.1",
  "rusqlite",
  "serde",
  "serde_json",

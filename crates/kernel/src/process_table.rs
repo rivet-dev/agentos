@@ -524,6 +524,35 @@ impl ProcessTable {
             .map(|record| record.entry.clone())
     }
 
+    pub fn set_identity(&self, pid: u32, identity: ProcessIdentity) -> ProcessResult<()> {
+        let mut state = self.inner.lock_state();
+        let record = state
+            .entries
+            .get_mut(&pid)
+            .ok_or_else(|| ProcessTableError::no_such_process(pid))?;
+        record.entry.identity = identity;
+        Ok(())
+    }
+
+    pub fn inherited_context(&self, parent_pid: u32) -> ProcessResult<ProcessContext> {
+        let state = self.inner.lock_state();
+        let parent = state
+            .entries
+            .get(&parent_pid)
+            .ok_or_else(|| ProcessTableError::no_such_process(parent_pid))?;
+        Ok(ProcessContext {
+            pid: 0,
+            ppid: parent_pid,
+            env: parent.entry.env.clone(),
+            cwd: parent.entry.cwd.clone(),
+            umask: parent.entry.umask,
+            fds: ProcessFileDescriptors::default(),
+            identity: parent.entry.identity.clone(),
+            blocked_signals: parent.blocked_signals,
+            pending_signals: SignalSet::empty(),
+        })
+    }
+
     /// Replace the userspace image metadata while retaining Linux process
     /// identity (PID/PPID/PGID/SID), wait relationships, signal mask, pending
     /// signals, and the driver process used to report the eventual exit.

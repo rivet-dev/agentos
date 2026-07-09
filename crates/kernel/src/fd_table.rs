@@ -16,6 +16,7 @@ pub const O_EXCL: u32 = 0o200;
 pub const O_TRUNC: u32 = 0o1000;
 pub const O_APPEND: u32 = 0o2000;
 pub const O_NONBLOCK: u32 = 0o4000;
+pub const O_DIRECT: u32 = 0o40000;
 pub const O_DIRECTORY: u32 = 0o200000;
 pub const O_NOFOLLOW: u32 = 0o400000;
 pub const F_DUPFD: u32 = 0;
@@ -31,12 +32,13 @@ pub const LOCK_UN: u32 = 8;
 const DEFAULT_MAX_RECORD_LOCKS: usize = 4096;
 
 pub const FILETYPE_UNKNOWN: u8 = 0;
+pub const FILETYPE_BLOCK_DEVICE: u8 = 1;
 pub const FILETYPE_CHARACTER_DEVICE: u8 = 2;
 pub const FILETYPE_DIRECTORY: u8 = 3;
 pub const FILETYPE_REGULAR_FILE: u8 = 4;
 pub const FILETYPE_SOCKET_DGRAM: u8 = 5;
 pub const FILETYPE_SOCKET_STREAM: u8 = 6;
-pub const FILETYPE_PIPE: u8 = 6;
+pub const FILETYPE_PIPE: u8 = FILETYPE_SOCKET_STREAM;
 pub const FILETYPE_SYMBOLIC_LINK: u8 = 7;
 
 pub type FdResult<T> = Result<T, FdTableError>;
@@ -868,6 +870,7 @@ impl ProcessFdTable {
         filetype: u8,
         target_fd: Option<u32>,
     ) -> FdResult<u32> {
+        let entry_status_flags = status_flags(description.flags());
         let fd = match target_fd {
             Some(fd) => {
                 self.validate_fd_bounds(fd)?;
@@ -884,7 +887,7 @@ impl ProcessFdTable {
             FdEntry {
                 fd,
                 description,
-                status_flags: 0,
+                status_flags: entry_status_flags,
                 fd_flags: 0,
                 rights: 0,
                 filetype,
@@ -1201,6 +1204,13 @@ impl ProcessFdTable {
         }
 
         child
+    }
+
+    pub fn len_for_exec(&self) -> usize {
+        self.entries
+            .values()
+            .filter(|entry| entry.fd_flags & FD_CLOEXEC == 0)
+            .count()
     }
 
     pub fn close_all(&mut self) {

@@ -1,0 +1,29 @@
+--- a/src/arithmetic.rs
++++ b/src/arithmetic.rs
+@@ -36,6 +36,8 @@ peg::parser! {
+             x:lvalue() _ "<<=" _ y:(@) { ast::ArithmeticExpr::BinaryAssignment(ast::BinaryOperator::ShiftLeft, x, Box::new(y)) }
+             x:lvalue() _ ">>=" _ y:(@) { ast::ArithmeticExpr::BinaryAssignment(ast::BinaryOperator::ShiftRight, x, Box::new(y)) }
+             x:lvalue() _ "&=" _ y:(@) { ast::ArithmeticExpr::BinaryAssignment(ast::BinaryOperator::BitwiseAnd, x, Box::new(y)) }
++            x:lvalue() _ "^=" _ y:(@) { ast::ArithmeticExpr::BinaryAssignment(ast::BinaryOperator::BitwiseXor, x, Box::new(y)) }
++            x:lvalue() _ "|=" _ y:(@) { ast::ArithmeticExpr::BinaryAssignment(ast::BinaryOperator::BitwiseOr, x, Box::new(y)) }
+             --
+             x:lvalue() _ "=" _ y:(@) { ast::ArithmeticExpr::Assignment(x, Box::new(y)) }
+             --
+@@ -128,3 +130,17 @@ peg::parser! {
+         }
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::parse;
++
++    #[test]
++    fn parses_compound_bitwise_assignments() {
++        for expression in ["mode &= 0777", "mode ^= 0400", "mode |= 0200"] {
++            parse(expression).unwrap_or_else(|error| {
++                panic!("failed to parse {expression:?}: {error}")
++            });
++        }
++    }
++}

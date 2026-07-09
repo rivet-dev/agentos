@@ -102,6 +102,7 @@ impl ActiveProcess {
             guest_cwd: String::from("/"),
             env: BTreeMap::new(),
             host_cwd: PathBuf::from("/"),
+            shadow_root: None,
             host_write_dirty: false,
             mapped_host_fds: BTreeMap::new(),
             next_mapped_host_fd: MAPPED_HOST_FD_START,
@@ -453,6 +454,11 @@ impl ActiveProcess {
         self
     }
 
+    pub(crate) fn with_shadow_root(mut self, shadow_root: PathBuf) -> Self {
+        self.shadow_root = Some(shadow_root);
+        self
+    }
+
     pub(crate) fn mark_host_write_dirty(&mut self) {
         self.host_write_dirty = true;
     }
@@ -465,14 +471,19 @@ impl ActiveProcess {
                 .any(ActiveProcess::host_write_dirty_recursive)
     }
 
-    pub(crate) fn clean_host_writes_are_observable_recursive(&self) -> bool {
+    pub(crate) fn clean_host_writes_are_observable(&self) -> bool {
         matches!(
             self.execution,
             ActiveExecution::Javascript(_) | ActiveExecution::Python(_) | ActiveExecution::Wasm(_)
-        ) && self
-            .child_processes
-            .values()
-            .all(ActiveProcess::clean_host_writes_are_observable_recursive)
+        )
+    }
+
+    pub(crate) fn clean_host_writes_are_observable_recursive(&self) -> bool {
+        self.clean_host_writes_are_observable()
+            && self
+                .child_processes
+                .values()
+                .all(ActiveProcess::clean_host_writes_are_observable_recursive)
     }
 
     pub(crate) fn with_guest_cwd(mut self, guest_cwd: String) -> Self {

@@ -2,6 +2,8 @@
 
 #[path = "../../../bridge/tests/support.rs"]
 mod bridge_support;
+#[path = "../../src/plugins/s3_common.rs"]
+mod s3_common;
 
 use agentos_native_sidecar::protocol::{
     DisposeReason, EventFrame, GuestRuntimeKind, OwnershipScope, RequestFrame, RequestId,
@@ -9,6 +11,7 @@ use agentos_native_sidecar::protocol::{
 };
 use agentos_native_sidecar::{DispatchResult, NativeSidecar, NativeSidecarConfig};
 pub use bridge_support::RecordingBridge;
+pub(crate) use s3_common::test_support::MockS3Server;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -325,14 +328,20 @@ pub fn execute_wire(
     }
 }
 
-pub fn collect_process_output_wire_with_timeout(
+#[derive(Debug)]
+pub struct ProcessOutputTimeout {
+    pub stdout: String,
+    pub stderr: String,
+}
+
+pub fn try_collect_process_output_wire_with_timeout(
     sidecar: &mut NativeSidecar<RecordingBridge>,
     connection_id: &str,
     session_id: &str,
     vm_id: &str,
     process_id: &str,
     timeout: Duration,
-) -> (String, String, i32) {
+) -> Result<(String, String, i32), ProcessOutputTimeout> {
     let ownership = wire_session(connection_id, session_id);
     let deadline = Instant::now() + timeout;
     let mut stdout = Vec::new();
@@ -383,21 +392,46 @@ pub fn collect_process_output_wire_with_timeout(
 
         if let Some((exit_code, seen_at)) = exit {
             if Instant::now().duration_since(seen_at) >= Duration::from_millis(200) {
-                return (
+                return Ok((
                     process_stream_to_string(&stdout),
                     process_stream_to_string(&stderr),
                     exit_code,
-                );
+                ));
             }
         }
 
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for wire process events; stdout bytes: {}; stderr bytes: {}",
-            stdout.len(),
-            stderr.len()
-        );
+        if Instant::now() >= deadline {
+            return Err(ProcessOutputTimeout {
+                stdout: process_stream_to_string(&stdout),
+                stderr: process_stream_to_string(&stderr),
+            });
+        }
     }
+}
+
+pub fn collect_process_output_wire_with_timeout(
+    sidecar: &mut NativeSidecar<RecordingBridge>,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+    process_id: &str,
+    timeout: Duration,
+) -> (String, String, i32) {
+    try_collect_process_output_wire_with_timeout(
+        sidecar,
+        connection_id,
+        session_id,
+        vm_id,
+        process_id,
+        timeout,
+    )
+    .unwrap_or_else(|output| {
+        panic!(
+            "timed out waiting for wire process events; stdout bytes: {}; stderr bytes: {}",
+            output.stdout.len(),
+            output.stderr.len()
+        )
+    })
 }
 
 pub fn authenticate(sidecar: &mut NativeSidecar<RecordingBridge>, connection_hint: &str) -> String {

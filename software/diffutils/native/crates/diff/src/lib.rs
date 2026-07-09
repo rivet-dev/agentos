@@ -248,8 +248,33 @@ fn preprocess(text: &str, opts: &Options) -> String {
 }
 
 fn diff_files(path_a: &Path, path_b: &Path, opts: &Options) -> Result<bool, String> {
-    let text_a = read_file(path_a)?;
-    let text_b = read_file(path_b)?;
+    let bytes_a = read_file(path_a)?;
+    let bytes_b = read_file(path_b)?;
+
+    if bytes_a == bytes_b {
+        return Ok(false);
+    }
+
+    if opts.brief {
+        print_stdout_line(format_args!(
+            "Files {} and {} differ",
+            path_a.display(),
+            path_b.display()
+        ))?;
+        return Ok(true);
+    }
+
+    if is_binary(&bytes_a) || is_binary(&bytes_b) {
+        print_stdout_line(format_args!(
+            "Binary files {} and {} differ",
+            path_a.display(),
+            path_b.display()
+        ))?;
+        return Ok(true);
+    }
+
+    let text_a = String::from_utf8(bytes_a).expect("non-binary input is valid UTF-8");
+    let text_b = String::from_utf8(bytes_b).expect("non-binary input is valid UTF-8");
 
     // Check for differences (possibly with preprocessing)
     let needs_pp = opts.ignore_case || opts.ignore_whitespace || opts.ignore_blank_lines;
@@ -261,15 +286,6 @@ fn diff_files(path_a: &Path, path_b: &Path, opts: &Options) -> Result<bool, Stri
 
     if !has_changes {
         return Ok(false);
-    }
-
-    if opts.brief {
-        print_stdout_line(format_args!(
-            "Files {} and {} differ",
-            path_a.display(),
-            path_b.display()
-        ))?;
-        return Ok(true);
     }
 
     if opts.recursive {
@@ -454,16 +470,20 @@ fn print_stdout_line(args: std::fmt::Arguments<'_>) -> Result<(), String> {
         .map_err(|e| format!("failed to write output: {e}"))
 }
 
-fn read_file(path: &Path) -> Result<String, String> {
+fn is_binary(bytes: &[u8]) -> bool {
+    bytes.contains(&0) || std::str::from_utf8(bytes).is_err()
+}
+
+fn read_file(path: &Path) -> Result<Vec<u8>, String> {
     if path.to_str() == Some("-") {
         use std::io::Read;
-        let mut buf = String::new();
+        let mut buf = Vec::new();
         io::stdin()
-            .read_to_string(&mut buf)
+            .read_to_end(&mut buf)
             .map_err(|e| format!("stdin: {}", e))?;
         Ok(buf)
     } else {
-        fs::read_to_string(path).map_err(|e| format!("{}: {}", path.display(), e))
+        fs::read(path).map_err(|e| format!("{}: {}", path.display(), e))
     }
 }
 
@@ -472,5 +492,17 @@ fn format_range(start: usize, len: usize) -> String {
         format!("{}", start)
     } else {
         format!("{},{}", start, start + len - 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_binary;
+
+    #[test]
+    fn binary_detection_covers_nul_and_invalid_utf8() {
+        assert!(!is_binary(b"ordinary text\n"));
+        assert!(is_binary(b"contains\0nul"));
+        assert!(is_binary(&[0xff, 0xfe, b'\n']));
     }
 }

@@ -1,0 +1,93 @@
+--- a/src/factory.rs
++++ b/src/factory.rs
+@@ -116,7 +116,7 @@
+     m.insert("type".into(), builtin::<type_::TypeCommand>());
+     #[cfg(all(feature = "builtin.ulimit", unix))]
+     m.insert("ulimit".into(), builtin::<ulimit::ULimitCommand>());
+-    #[cfg(all(feature = "builtin.umask", unix))]
++    #[cfg(all(feature = "builtin.umask", any(unix, target_arch = "wasm32")))]
+     m.insert("umask".into(), builtin::<umask::UmaskCommand>());
+     #[cfg(feature = "builtin.unalias")]
+     m.insert("unalias".into(), builtin::<unalias::UnaliasCommand>());
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -98,7 +98,7 @@
+ mod type_;
+ #[cfg(all(feature = "builtin.ulimit", unix))]
+ mod ulimit;
+-#[cfg(all(feature = "builtin.umask", unix))]
++#[cfg(all(feature = "builtin.umask", any(unix, target_arch = "wasm32")))]
+ mod umask;
+ #[cfg(feature = "builtin.unalias")]
+ mod unalias;
+--- a/src/umask.rs
++++ b/src/umask.rs
+@@ -1,7 +1,7 @@
+ use brush_core::{ErrorKind, ExecutionResult, builtins};
+ use cfg_if::cfg_if;
+ use clap::Parser;
+-#[cfg(not(target_os = "linux"))]
++#[cfg(all(not(target_os = "linux"), not(target_arch = "wasm32")))]
+ use nix::sys::stat::Mode;
+ use std::io::Write;
+ 
+@@ -29,7 +29,7 @@
+     ) -> Result<brush_core::ExecutionResult, Self::Error> {
+         if let Some(mode) = &self.mode {
+             if mode.starts_with(|c: char| c.is_digit(8)) {
+-                let parsed = nix::sys::stat::mode_t::from_str_radix(mode.as_str(), 8)?;
++                let parsed = u32::from_str_radix(mode.as_str(), 8)?;
+                 set_umask(parsed)?;
+             } else {
+                 return brush_core::error::unimp("umask setting mode from symbolic value");
+@@ -58,7 +58,30 @@
+ }
+ 
+ cfg_if! {
+-    if #[cfg(target_os = "linux")] {
++    if #[cfg(target_arch = "wasm32")] {
++        #[link(wasm_import_module = "host_process")]
++        unsafe extern "C" {
++            #[link_name = "umask"]
++            fn host_process_umask(mask: u32, set_mask: u32, previous_mask: *mut u32) -> u32;
++        }
++
++        fn call_host_process_umask(mask: u32, set_mask: bool) -> Result<u32, brush_core::Error> {
++            let mut previous_mask = 0;
++            // The host import writes one u32 to the valid stack pointer supplied here.
++            let status = unsafe {
++                host_process_umask(mask & 0o777, u32::from(set_mask), &mut previous_mask)
++            };
++            if status == 0 {
++                Ok(previous_mask & 0o777)
++            } else {
++                Err(ErrorKind::InvalidUmask.into())
++            }
++        }
++
++        fn get_umask() -> Result<u32, brush_core::Error> {
++            call_host_process_umask(0, false)
++        }
++    } else if #[cfg(target_os = "linux")] {
+         fn get_umask() -> Result<u32, brush_core::Error> {
+             let umask = procfs::process::Process::myself().ok().and_then(|me| me.status().ok()).and_then(|status| status.umask);
+             umask.ok_or_else(|| brush_core::ErrorKind::InvalidUmask.into())
+@@ -73,9 +96,16 @@
+     }
+ }
+ 
+-fn set_umask(value: nix::sys::stat::mode_t) -> Result<(), brush_core::Error> {
++#[cfg(target_arch = "wasm32")]
++fn set_umask(value: u32) -> Result<(), brush_core::Error> {
++    call_host_process_umask(value, true).map(|_| ())
++}
++
++#[cfg(not(target_arch = "wasm32"))]
++fn set_umask(value: u32) -> Result<(), brush_core::Error> {
+     // value of mode_t can be platform dependent
+-    let mode = nix::sys::stat::Mode::from_bits(value).ok_or_else(|| ErrorKind::InvalidUmask)?;
++    let mode = nix::sys::stat::Mode::from_bits(value as nix::sys::stat::mode_t)
++        .ok_or_else(|| ErrorKind::InvalidUmask)?;
+     nix::sys::stat::umask(mode);
+     Ok(())
+ }

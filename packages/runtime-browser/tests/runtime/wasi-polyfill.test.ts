@@ -4,13 +4,20 @@ import { wireStatToVirtualStat } from "../../src/converged-fs-bridge.js";
 
 type WasiInstance = {
 	fdTable: Map<number, unknown>;
+	wasiImport: Record<string, (...args: unknown[]) => number>;
 	instance: { exports: { memory: WebAssembly.Memory } };
 	_collectIovs: (...args: unknown[]) => Uint8Array;
 	_boundedReadLength: (...args: unknown[]) => number;
 	_writeToIovs: (...args: unknown[]) => number;
 	_writeUint32: (...args: unknown[]) => number;
+	_fdClose: (...args: unknown[]) => number;
 	_fdPread: (...args: unknown[]) => number;
 	_fdPwrite: (...args: unknown[]) => number;
+	_flushPipeConsumers: (pipe: {
+		chunks: Uint8Array[];
+		consumers: Map<string, { childId: string }>;
+		readHandleCount: number;
+	}) => boolean;
 	_writeFilestat: (...args: unknown[]) => number;
 };
 
@@ -84,6 +91,97 @@ function createWasi(fsModule: unknown): WasiTestContext {
 }
 
 describe("browser WASI polyfill", () => {
+	it("exposes fd_datasync with fd_sync semantics", () => {
+		const synced: number[] = [];
+		const { wasi, restore } = createWasi({
+			fsyncSync: (fd: number) => synced.push(fd),
+		});
+		try {
+			wasi.fdTable.set(4, { kind: "file", realFd: 44 });
+			expect(wasi.wasiImport.fd_datasync?.(4)).toBe(ERRNO_SUCCESS);
+			expect(wasi.wasiImport.fd_sync?.(4)).toBe(ERRNO_SUCCESS);
+			expect(synced).toEqual([44, 44]);
+		} finally {
+			restore();
+		}
+	});
+
+	it("keeps pipe bytes for a parent-owned read handle", () => {
+		const writes: unknown[][] = [];
+		const previous = (
+			globalThis as typeof globalThis & { __agentOSSyncRpc?: unknown }
+		).__agentOSSyncRpc;
+		(
+			globalThis as typeof globalThis & { __agentOSSyncRpc?: unknown }
+		).__agentOSSyncRpc = {
+			callSync: (_method: string, args: unknown[]) => writes.push(args),
+		};
+		const { wasi, restore } = createWasi({});
+		try {
+			const pipe = {
+				chunks: [new Uint8Array([1, 2, 3])],
+				consumers: new Map([["child:stdin", { childId: "child" }]]),
+				readHandleCount: 1,
+			};
+			expect(wasi._flushPipeConsumers(pipe)).toBe(false);
+			expect(pipe.chunks).toHaveLength(1);
+			expect(writes).toEqual([]);
+		} finally {
+			restore();
+			(
+				globalThis as typeof globalThis & { __agentOSSyncRpc?: unknown }
+			).__agentOSSyncRpc = previous;
+		}
+	});
+
+	it("delivers a pipe chunk to exactly one child consumer", () => {
+		const writes: unknown[][] = [];
+		const previous = (
+			globalThis as typeof globalThis & { __agentOSSyncRpc?: unknown }
+		).__agentOSSyncRpc;
+		(
+			globalThis as typeof globalThis & { __agentOSSyncRpc?: unknown }
+		).__agentOSSyncRpc = {
+			callSync: (_method: string, args: unknown[]) => writes.push(args),
+		};
+		const { wasi, restore } = createWasi({});
+		try {
+			const pipe = {
+				chunks: [new Uint8Array([1, 2, 3])],
+				consumers: new Map([
+					["first:stdin", { childId: "first" }],
+					["second:stdin", { childId: "second" }],
+				]),
+				readHandleCount: 0,
+			};
+			expect(wasi._flushPipeConsumers(pipe)).toBe(true);
+			expect(pipe.chunks).toEqual([]);
+			expect(writes).toHaveLength(1);
+			expect(writes[0]?.[0]).toBe("first");
+		} finally {
+			restore();
+			(
+				globalThis as typeof globalThis & { __agentOSSyncRpc?: unknown }
+			).__agentOSSyncRpc = previous;
+		}
+	});
+
+	it("closes the backing descriptor for opened directories", () => {
+		const closed: number[] = [];
+		const { wasi, restore } = createWasi({
+			closeSync: (fd: number) => closed.push(fd),
+		});
+		try {
+			wasi.fdTable.set(4, { kind: "directory", realFd: 99 });
+
+			expect(wasi._fdClose(4)).toBe(ERRNO_SUCCESS);
+			expect(closed).toEqual([99]);
+			expect(wasi.fdTable.has(4)).toBe(false);
+		} finally {
+			restore();
+		}
+	});
+
 	it("passes fd_pwrite offsets above 4 GiB without wasm32 truncation", () => {
 		const positions: unknown[] = [];
 		const { wasi, restore } = createWasi({

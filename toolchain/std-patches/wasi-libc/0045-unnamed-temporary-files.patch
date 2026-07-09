@@ -1,0 +1,189 @@
+Route O_TMPFILE and linkat(AT_EMPTY_PATH) through AgentOS host imports.
+
+WASI Preview 1 cannot create or publish an unnamed inode. Reserve explicit
+wasi-libc flag values and delegate those two operations to the managed runner,
+which retains the descriptor until close and applies normal VFS hard-link
+semantics when the inode is published.
+
+diff --git a/libc-bottom-half/headers/public/__header_fcntl.h b/libc-bottom-half/headers/public/__header_fcntl.h
+index 18f45a1..48ea3df 100644
+--- a/libc-bottom-half/headers/public/__header_fcntl.h
++++ b/libc-bottom-half/headers/public/__header_fcntl.h
+@@ -15,6 +15,7 @@
+ #define O_TRUNC (__WASI_OFLAGS_TRUNC << 12)
+ 
+ #define O_DIRECT   (0x20000000)
++#define O_TMPFILE  (0x40000000)
+ #define O_NOFOLLOW (0x01000000)
+ #define O_EXEC     (0x02000000)
+ #define O_RDONLY   (0x04000000)
+@@ -57,5 +58,6 @@
+ #define AT_SYMLINK_FOLLOW   (0x2)
+ #define AT_REMOVEDIR        (0x4)
++#define AT_EMPTY_PATH       (0x1000)
+ 
+ #define AT_FDCWD (-2)
+ 
+diff --git a/libc-bottom-half/sources/at_fdcwd.c b/libc-bottom-half/sources/at_fdcwd.c
+index fb55e7c..e662265 100644
+--- a/libc-bottom-half/sources/at_fdcwd.c
++++ b/libc-bottom-half/sources/at_fdcwd.c
+@@ -10,6 +10,8 @@
+ #include <errno.h>
+ #include <stdio.h>
+ #include <stdarg.h>
++#include <stdint.h>
++#include <string.h>
+ #include <unistd.h>
+ #include <dirent.h>
+ #include <sys/types.h>
+@@ -32,6 +34,21 @@ uint32_t __agentos_host_set_open_direct(uint32_t enabled) __attribute__((
+     __import_name__("set_open_direct")
+ ));
+ 
++uint32_t __agentos_host_open_tmpfile(uint32_t dirfd, const char *path,
++                                     size_t path_len, uint32_t flags,
++                                     uint32_t mode, uint32_t *fd) __attribute__((
++    __import_module__("host_fs"),
++    __import_name__("open_tmpfile")
++));
++
++uint32_t __agentos_host_fd_link(uint32_t fd, uint32_t new_dirfd,
++                                const char *path, size_t path_len) __attribute__((
++    __import_module__("host_fs"),
++    __import_name__("fd_link")
++));
++
++int __agentos_link_tmpfile(int fd, const char *newpath);
++
+ int openat(int dirfd, const char *pathname, int flags, ...) {
+     mode_t mode = 0;
+     if ((flags & (O_CREAT | O_TMPFILE)) != 0) {
+@@ -44,6 +61,18 @@ int openat(int dirfd, const char *pathname, int flags, ...) {
+         return open(pathname, flags, mode);
+     }
+ 
++    if ((flags & O_TMPFILE) == O_TMPFILE) {
++        uint32_t fd = 0;
++        uint32_t error = __agentos_host_open_tmpfile(
++            (uint32_t)dirfd, pathname, strlen(pathname), (uint32_t)flags,
++            (uint32_t)mode, &fd);
++        if (error != 0) {
++            errno = (int)error;
++            return -1;
++        }
++        return (int)fd;
++    }
++
+     if ((flags & O_DIRECT) != 0) {
+         uint32_t error = __agentos_host_set_open_direct(1);
+         if (error != 0) {
+@@ -128,6 +157,18 @@ int utimensat(int dirfd, const char *pathname, const struct timespec times[2], i
+ }
+ 
+ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags) {
++    if (oldpath[0] == '\0' && flags == AT_EMPTY_PATH) {
++        if (newdirfd == AT_FDCWD || newpath[0] == '/') {
++            return __agentos_link_tmpfile(olddirfd, newpath);
++        }
++        uint32_t error = __agentos_host_fd_link(
++            (uint32_t)olddirfd, (uint32_t)newdirfd, newpath, strlen(newpath));
++        if (error != 0) {
++            errno = (int)error;
++            return -1;
++        }
++        return 0;
++    }
+     if ((olddirfd == AT_FDCWD || oldpath[0] == '/') &&
+         (newdirfd == AT_FDCWD || newpath[0] == '/')) {
+         return __wasilibc_link(oldpath, newpath, flags);
+diff --git a/libc-bottom-half/sources/posix.c b/libc-bottom-half/sources/posix.c
+index b950daf..50704d9 100644
+--- a/libc-bottom-half/sources/posix.c
++++ b/libc-bottom-half/sources/posix.c
+@@ -64,7 +64,20 @@ uint32_t __agentos_host_set_open_direct(uint32_t enabled) __attribute__((
+     __import_name__("set_open_direct")
+ ));
+ 
++uint32_t __agentos_host_open_tmpfile(uint32_t dirfd, const char *path,
++                                     size_t path_len, uint32_t flags,
++                                     uint32_t mode, uint32_t *fd) __attribute__((
++    __import_module__("host_fs"),
++    __import_name__("open_tmpfile")
++));
++
++uint32_t __agentos_host_fd_link(uint32_t fd, uint32_t new_dirfd,
++                                const char *path, size_t path_len) __attribute__((
++    __import_module__("host_fs"),
++    __import_name__("fd_link")
++));
++
+ static int chmod_errno_from_host_result(uint32_t result) {
+     if (result == 0) return 0;
+     errno = (int)result;
+     return -1;
+@@ -122,6 +135,30 @@ static int find_relpath_alt(const char *path, char **relative) {
+ }
+ 
+ int open(const char *path, int oflag, ...) {
++    mode_t mode = 0;
++    if ((oflag & O_CREAT) != 0 || (oflag & O_TMPFILE) == O_TMPFILE) {
++        va_list args;
++        va_start(args, oflag);
++        mode = (mode_t)va_arg(args, int);
++        va_end(args);
++    }
++    if ((oflag & O_TMPFILE) == O_TMPFILE) {
++        char *relative_path;
++        int dirfd = find_relpath(path, &relative_path);
++        if (dirfd == -1) {
++            errno = ENOENT;
++            return -1;
++        }
++        uint32_t fd = 0;
++        uint32_t error = __agentos_host_open_tmpfile(
++            (uint32_t)dirfd, relative_path, strlen(relative_path),
++            (uint32_t)oflag, (uint32_t)mode, &fd);
++        if (error != 0) {
++            errno = (int)error;
++            return -1;
++        }
++        return (int)fd;
++    }
+     if ((oflag & O_DIRECT) != 0) {
+         uint32_t error = __agentos_host_set_open_direct(1);
+         if (error != 0) {
+@@ -130,10 +167,6 @@ int open(const char *path, int oflag, ...) {
+         }
+     }
+     if ((oflag & O_CREAT) != 0) {
+-        va_list args;
+-        va_start(args, oflag);
+-        mode_t mode = (mode_t)va_arg(args, int);
+-        va_end(args);
+         uint32_t error = __agentos_host_set_open_mode((uint32_t)mode);
+         if (error != 0) {
+             errno = (int)error;
+@@ -143,6 +176,22 @@ int open(const char *path, int oflag, ...) {
+     return __wasilibc_open_nomode(path, oflag);
+ }
+ 
++int __agentos_link_tmpfile(int fd, const char *newpath) {
++    char *relative_path;
++    int dirfd = find_relpath(newpath, &relative_path);
++    if (dirfd == -1) {
++        errno = ENOENT;
++        return -1;
++    }
++    uint32_t error = __agentos_host_fd_link(
++        (uint32_t)fd, (uint32_t)dirfd, relative_path, strlen(relative_path));
++    if (error != 0) {
++        errno = (int)error;
++        return -1;
++    }
++    return 0;
++}
++
+ // See the documentation in libc.h
+ int __wasilibc_open_nomode(const char *path, int oflag) {
+     char *relative_path;

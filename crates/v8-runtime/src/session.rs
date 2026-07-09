@@ -617,7 +617,7 @@ fn warm_worker_capacity_per_key() -> usize {
     std::env::var("AGENTOS_V8_WARM_ISOLATES")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(2)
+        .unwrap_or(MAX_PROCESS_WARM_WORKERS)
         .min(MAX_PROCESS_WARM_WORKERS)
 }
 
@@ -737,16 +737,47 @@ impl WarmWorkerPool {
                 break;
             }
             let desired = target_count.min(capacity);
-            {
+            let refill_slot = {
                 let mut state = self.state.lock().expect("warm worker pool lock poisoned");
                 let current = state.workers.get(&key).map_or(0, Vec::len);
                 let total = state.workers.values().map(Vec::len).sum::<usize>();
-                if current >= desired
-                    || total.saturating_add(state.reserved_workers) >= MAX_PROCESS_WARM_WORKERS
-                {
+                if current >= desired {
                     break;
                 }
-                state.reserved_workers += 1;
+                if total.saturating_add(state.reserved_workers) < MAX_PROCESS_WARM_WORKERS {
+                    state.reserved_workers += 1;
+                    Some(None)
+                } else {
+                    let evict_key = state
+                        .workers
+                        .iter()
+                        .find(|(candidate, workers)| *candidate != &key && !workers.is_empty())
+                        .map(|(candidate, _)| candidate.clone());
+                    evict_key.and_then(|evict_key| {
+                        let workers = state
+                            .workers
+                            .get_mut(&evict_key)
+                            .expect("selected warm worker key exists");
+                        let worker = workers.pop();
+                        if workers.is_empty() {
+                            state.workers.remove(&evict_key);
+                        }
+                        worker.map(|worker| Some((evict_key, worker)))
+                    })
+                }
+            };
+            let Some(evicted) = refill_slot else {
+                break;
+            };
+            if let Some((evicted_key, worker)) = evicted {
+                drop(worker.assignment_tx);
+                let _ = worker.join_handle.join();
+                eprintln!(
+                    "agentos-v8-runtime: warm worker evicted key={} heap={}",
+                    warm_key_prefix(&evicted_key),
+                    evicted_key.heap_limit_mb
+                );
+                continue;
             }
 
             let worker = spawn_warm_worker(
@@ -874,7 +905,7 @@ fn spawn_warm_worker(
 #[cfg(not(test))]
 fn precreate_warm_isolate(
     snapshot_cache: Arc<SnapshotCache>,
-    slot_control: SlotControl,
+    _slot_control: SlotControl,
     bridge_code: String,
     userland_code: String,
     heap_limit_mb: Option<u32>,
@@ -885,7 +916,10 @@ fn precreate_warm_isolate(
         (!userland_code.is_empty()).then_some(userland_code.as_str()),
     )?;
     let snapshot_blob = (*snapshot_blob).clone();
-    let _idle_slots = lock_idle_slots(&slot_control);
+    // Parked workers are bounded by MAX_PROCESS_WARM_WORKERS and do not execute
+    // guest code until they receive a slot-owning SessionAssignment. Building
+    // one must not wait for every active session to exit: long-lived parents
+    // need the pool to replenish while short-lived child commands come and go.
     let mut isolate = snapshot::create_isolate_from_snapshot(snapshot_blob, heap_limit_mb);
     isolate.set_host_import_module_dynamically_callback(execution::dynamic_import_callback);
     isolate.set_host_initialize_import_meta_object_callback(execution::import_meta_object_callback);
@@ -896,16 +930,6 @@ fn precreate_warm_isolate(
         bridge_code,
         userland_code,
     })
-}
-
-#[cfg(not(test))]
-fn lock_idle_slots(slot_control: &SlotControl) -> std::sync::MutexGuard<'_, usize> {
-    let (lock, cvar) = &**slot_control;
-    let mut count = lock.lock().unwrap();
-    while *count != 0 {
-        count = cvar.wait(count).unwrap();
-    }
-    count
 }
 
 /// Normalize an opt-in CPU-time budget: `Some(0)` means "disabled" and folds to
@@ -1423,8 +1447,21 @@ impl SessionManager {
                 join_handle
             }
             Ok((join_handle, false)) => join_handle,
-            Err(assignment) => spawn_session_thread(assignment)
-                .map_err(|e| format!("failed to spawn session thread: {}", e))?,
+            Err(assignment) => {
+                if let Some(hint) = warm_hint {
+                    self.warm_pool.ensure_count(
+                        self.runtime.clone(),
+                        Arc::clone(&self.snapshot_cache),
+                        Arc::clone(&self.slot_control),
+                        hint.bridge_code,
+                        hint.userland_code,
+                        hint.heap_limit_mb,
+                        warm_worker_capacity_per_key(),
+                    );
+                }
+                spawn_session_thread(assignment)
+                    .map_err(|e| format!("failed to spawn session thread: {}", e))?
+            }
         };
 
         self.sessions.insert(

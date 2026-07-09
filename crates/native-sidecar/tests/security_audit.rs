@@ -251,6 +251,8 @@ fn mount_operations_emit_security_audit_events() {
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
                 mounts: vec![MountDescriptor {
                     guest_path: String::from("/workspace"),
+                    guest_source: String::from("memory"),
+                    guest_fstype: String::from("memory"),
                     read_only: false,
                     plugin: MountPluginDescriptor {
                         id: String::from("memory"),

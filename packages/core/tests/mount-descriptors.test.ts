@@ -16,6 +16,8 @@ describe("sidecar mount descriptors", () => {
 			}),
 		).toEqual({
 			guestPath: "/workspace",
+			guestSource: "host_dir",
+			guestFstype: "host_dir",
 			readOnly: true,
 			plugin: {
 				id: "host_dir",
@@ -46,6 +48,8 @@ describe("sidecar mount descriptors", () => {
 			}),
 		).toEqual({
 			guestPath: "/custom",
+			guestSource: "js_bridge",
+			guestFstype: "js_bridge",
 			readOnly: false,
 			plugin: {
 				id: "js_bridge",

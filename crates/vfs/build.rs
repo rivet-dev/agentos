@@ -11,7 +11,6 @@ fn main() {
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must be set"));
 
-    println!("cargo:rerun-if-changed=build.rs");
     stage_package_format_schema(&manifest_dir, &out_dir);
 
     let workspace_fixtures = [
@@ -24,34 +23,42 @@ fn main() {
         .find(|fixture| fixture.exists())
         .unwrap_or(vendored);
 
-    println!("cargo:rerun-if-changed={}", src.display());
+    copy_if_changed(&src, &out_dir.join("base-filesystem.json"));
 
-    let dest = out_dir.join("base-filesystem.json");
-    fs::copy(&src, &dest).unwrap_or_else(|error| {
-        panic!(
-            "failed to stage base-filesystem.json from {} to {}: {}",
-            src.display(),
-            dest.display(),
-            error
-        )
-    });
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed={}", src.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest_dir
+            .join("package-format")
+            .join("v1.bare")
+            .display()
+    );
 }
 
 fn stage_package_format_schema(manifest_dir: &Path, out_dir: &Path) {
     let source_schema = manifest_dir.join("package-format").join("v1.bare");
-    println!("cargo:rerun-if-changed={}", source_schema.display());
-
     let schema_dir = out_dir.join("package-format-schema");
     fs::create_dir_all(&schema_dir).expect("failed to create generated package schema dir");
-    fs::copy(&source_schema, schema_dir.join("v1.bare")).unwrap_or_else(|error| {
-        panic!(
-            "failed to stage package schema from {}: {}",
-            source_schema.display(),
-            error
-        )
-    });
+    let schema_changed = copy_if_changed(&source_schema, &schema_dir.join("v1.bare"));
+    let generated_missing =
+        !out_dir.join("combined_imports.rs").exists() || !out_dir.join("v1_generated.rs").exists();
+    if !schema_changed && !generated_missing {
+        return;
+    }
 
     let cfg = vbare_compiler::Config::default();
     vbare_compiler::process_schemas_with_config(&schema_dir, &cfg)
         .expect("failed to generate package format BARE schema");
+}
+
+fn copy_if_changed(source: &Path, destination: &Path) -> bool {
+    let contents = fs::read(source)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", source.display()));
+    if fs::read(destination).is_ok_and(|existing| existing == contents) {
+        return false;
+    }
+    fs::write(destination, contents)
+        .unwrap_or_else(|error| panic!("failed to write {}: {error}", destination.display()));
+    true
 }

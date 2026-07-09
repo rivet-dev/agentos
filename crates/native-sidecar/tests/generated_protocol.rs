@@ -77,6 +77,8 @@ fn live_bare_codec_matches_generated_request_bytes() {
         live_protocol::RequestPayload::ConfigureVm(live_protocol::ConfigureVmRequest {
             mounts: vec![live_protocol::MountDescriptor {
                 guest_path: "/node_modules".to_string(),
+                guest_source: "host_dir".to_string(),
+                guest_fstype: "host_dir".to_string(),
                 read_only: true,
                 plugin: live_protocol::MountPluginDescriptor {
                     id: "host_dir".to_string(),
@@ -255,6 +257,8 @@ fn generated_configure_frame() -> ProtocolFrame {
         payload: RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
             mounts: vec![MountDescriptor {
                 guest_path: "/node_modules".to_string(),
+                guest_source: "host_dir".to_string(),
+                guest_fstype: "host_dir".to_string(),
                 read_only: true,
                 plugin: MountPluginDescriptor {
                     id: "host_dir".to_string(),

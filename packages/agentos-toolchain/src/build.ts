@@ -2,6 +2,7 @@ import {
 	execFileSync,
 } from "node:child_process";
 import {
+	chmodSync,
 	cpSync,
 	existsSync,
 	mkdirSync,
@@ -118,6 +119,9 @@ export function build(packageDirInput?: string): BuildResult {
 			recursive: true,
 			verbatimSymlinks: true,
 		});
+		for (const command of commands) {
+			chmodSync(join(outDir, "bin", command), 0o755);
+		}
 	}
 
 	// share/ (man pages, etc.) — the projection builds a man symlink farm from

@@ -55,26 +55,40 @@ impl<B> ObjectFs<B> {
     }
 
     fn file_meta(&self, size: u64) -> ObjectMeta {
+        let now = Timespec::now();
         ObjectMeta {
             size,
-            mtime: Timespec::now(),
+            allocated_extents: (size > 0).then_some((0, size)).into_iter().collect(),
+            atime: now,
+            mtime: now,
+            ctime: now,
+            birthtime: now,
             mode: self.options.file_mode,
             uid: self.options.uid,
             gid: self.options.gid,
             kind: InodeType::File,
             symlink_target: None,
+            link_id: None,
+            xattrs: Default::default(),
         }
     }
 
     fn dir_meta(&self) -> ObjectMeta {
+        let now = Timespec::now();
         ObjectMeta {
             size: 0,
-            mtime: Timespec::now(),
+            allocated_extents: Vec::new(),
+            atime: now,
+            mtime: now,
+            ctime: now,
+            birthtime: now,
             mode: self.options.dir_mode,
             uid: self.options.uid,
             gid: self.options.gid,
             kind: InodeType::Directory,
             symlink_target: None,
+            link_id: None,
+            xattrs: Default::default(),
         }
     }
 }
@@ -259,14 +273,21 @@ impl<B: ObjectBackend> VirtualFileSystem for ObjectFs<B> {
 
     async fn symlink(&self, target: &str, link_path: &str) -> VfsResult<()> {
         let key = self.key_for(link_path)?;
+        let now = Timespec::now();
         let meta = ObjectMeta {
             size: 0,
-            mtime: Timespec::now(),
+            allocated_extents: Vec::new(),
+            atime: now,
+            mtime: now,
+            ctime: now,
+            birthtime: now,
             mode: 0o777,
             uid: self.options.uid,
             gid: self.options.gid,
             kind: InodeType::Symlink,
             symlink_target: Some(target.to_string()),
+            link_id: None,
+            xattrs: Default::default(),
         };
         self.backend.put(&key, &[], meta).await
     }
@@ -355,11 +376,15 @@ fn object_stat(meta: ObjectMeta, key: &str) -> VirtualStat {
         InodeType::File => crate::engine::types::S_IFREG,
         InodeType::Directory => crate::engine::types::S_IFDIR,
         InodeType::Symlink => crate::engine::types::S_IFLNK,
+        InodeType::CharacterDevice => crate::engine::types::S_IFCHR,
+        InodeType::BlockDevice => crate::engine::types::S_IFBLK,
+        InodeType::Fifo => crate::engine::types::S_IFIFO,
     };
     VirtualStat {
         mode: type_bits | (meta.mode & 0o7777),
         size: meta.size,
         blocks: meta.size.div_ceil(512),
+        rdev: 0,
         is_directory: meta.kind == InodeType::Directory,
         is_symbolic_link: meta.kind == InodeType::Symlink,
         atime: meta.mtime,

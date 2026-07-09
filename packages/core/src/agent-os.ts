@@ -12,7 +12,10 @@ import type {
 	MountConfigJsonValue,
 	NativeMountPluginDescriptor,
 } from "@rivet-dev/agentos-runtime-core/descriptors";
-import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
+import type {
+	CreateVmConfig,
+	VmUserConfig,
+} from "@rivet-dev/agentos-runtime-core/vm-config";
 import type {
 	CancelPromptResult,
 	DurableSessionEventEntry,
@@ -548,6 +551,10 @@ export interface PlainMountConfig {
 	path: string;
 	/** The filesystem driver to mount. */
 	driver: VirtualFileSystem;
+	/** Filesystem type exposed through guest mount discovery. */
+	guestFstype?: string;
+	/** Source name exposed through guest mount discovery. */
+	guestSource?: string;
 	/** If true, write operations throw EROFS. */
 	readOnly?: boolean;
 }
@@ -556,6 +563,10 @@ export interface PlainMountConfig {
 export interface NativeMountConfig {
 	path: string;
 	plugin: NativeMountPluginDescriptor;
+	/** Filesystem type exposed through guest mount discovery. */
+	guestFstype?: string;
+	/** Source name exposed through guest mount discovery. */
+	guestSource?: string;
 	readOnly?: boolean;
 }
 
@@ -670,6 +681,7 @@ export interface AgentOsLimits {
 		syncReadLimitBytes?: number;
 		prewarmTimeoutMs?: number;
 		runnerHeapLimitMb?: number;
+		runnerCpuTimeLimitMs?: number;
 	};
 	/** Process spawn, I/O, and lifecycle-event backlog limits. */
 	process?: {
@@ -759,6 +771,8 @@ export type LimitWarningHandler = (warning: LimitWarning) => void;
  * Rivet actor accepts this surface directly alongside ordinary actor options.
  */
 export interface AgentOsOptions {
+	/** Initial virtual Linux credentials and account record. Defaults to `1000:1000` (`agentos`). */
+	user?: VmUserConfig;
 	/**
 	 * Software to install in the VM. Each entry is a package-dir ref. Arrays are
 	 * flattened, so meta-packages that export arrays of sub-packages work directly.
@@ -2775,6 +2789,7 @@ export class AgentOs {
 				const createVmConfig: CreateVmConfig = {
 					env,
 					database: options?.database,
+					...(options?.user ? { user: options.user } : {}),
 					rootFilesystem: serializeRootFilesystemForSidecar(
 						options?.rootFilesystem,
 						bootstrapLower,

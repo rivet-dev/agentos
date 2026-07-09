@@ -41,10 +41,13 @@ const WASI_ERRNO_LOOP = 32;
 const WASI_ERRNO_MFILE = 33;
 const WASI_ERRNO_MSGSIZE = 35;
 const WASI_ERRNO_NETUNREACH = 40;
+const WASI_ERRNO_NFILE = 41;
 const WASI_ERRNO_NAMETOOLONG = 37;
 const WASI_ERRNO_NOBUFS = 42;
 const WASI_ERRNO_NOENT = 44;
 const WASI_ERRNO_NOEXEC = 45;
+const WASI_ERRNO_NOSPC = 51;
+const WASI_ERRNO_NOSYS = 52;
 const WASI_ERRNO_HOSTUNREACH = 23;
 const WASI_ERRNO_NOTDIR = 54;
 const WASI_ERRNO_NOTEMPTY = 55;
@@ -52,14 +55,18 @@ const WASI_ERRNO_NOTCONN = 53;
 const WASI_ERRNO_NOTSOCK = 57;
 const WASI_ERRNO_NOTSUP = 58;
 const WASI_ERRNO_NXIO = 60;
+const WASI_ERRNO_OVERFLOW = 61;
 const WASI_ERRNO_PERM = 63;
 const WASI_ERRNO_PIPE = 64;
 const WASI_ERRNO_PROTONOSUPPORT = 66;
+const WASI_ERRNO_RANGE = 68;
 const WASI_ERRNO_2BIG = 1;
 const WASI_ERRNO_ROFS = 69;
 const WASI_ERRNO_SPIPE = 70;
 const WASI_ERRNO_SRCH = 71;
 const WASI_ERRNO_TIMEDOUT = 73;
+const WASI_ERRNO_XDEV = 75;
+const WASI_ERRNO_NODATA = 78;
 const WASI_ERRNO_FAULT = 21;
 const WASI_RIGHT_FD_WRITE = 64n;
 const WASI_FILETYPE_UNKNOWN = 0;
@@ -74,6 +81,9 @@ const WASI_OFLAGS_EXCL = 4;
 const WASI_OFLAGS_TRUNC = 8;
 const WASI_FDFLAGS_APPEND = 1;
 const WASI_FDFLAGS_NONBLOCK = 4;
+const WASI_LIBC_O_DIRECT = 0x20000000;
+const WASI_LIBC_O_RDONLY = 0x04000000;
+const WASI_LIBC_O_WRONLY = 0x10000000;
 const KERNEL_O_WRONLY = 0o1;
 const KERNEL_O_RDWR = 0o2;
 const KERNEL_O_CREAT = 0o100;
@@ -81,6 +91,7 @@ const KERNEL_O_EXCL = 0o200;
 const KERNEL_O_TRUNC = 0o1000;
 const KERNEL_O_APPEND = 0o2000;
 const KERNEL_O_NONBLOCK = 0o4000;
+const KERNEL_O_DIRECT = 0o40000;
 const KERNEL_O_DIRECTORY = 0o200000;
 const KERNEL_O_NOFOLLOW = 0o400000;
 const WASI_WHENCE_SET = 0;
@@ -1091,6 +1102,24 @@ const FULL_PREOPEN_RIGHTS_BASE =
   WASI_RIGHT_PATH_UNLINK_FILE;
 const FULL_PREOPEN_RIGHTS_INHERITING = READ_WRITE_PREOPEN_RIGHTS_INHERITING;
 
+function kernelFdRightsBase(flags) {
+  const accessMode = Number(flags) & (KERNEL_O_WRONLY | KERNEL_O_RDWR);
+  let rights =
+    WASI_RIGHT_FD_SEEK |
+    WASI_RIGHT_FD_TELL |
+    WASI_RIGHT_FD_FDSTAT_SET_FLAGS |
+    WASI_RIGHT_FD_FILESTAT_GET |
+    WASI_RIGHT_FD_SYNC |
+    WASI_RIGHT_POLL_FD_READWRITE;
+  if (accessMode !== KERNEL_O_WRONLY) {
+    rights |= WASI_RIGHT_FD_READ;
+  }
+  if (accessMode === KERNEL_O_WRONLY || accessMode === KERNEL_O_RDWR) {
+    rights |= WASI_RIGHT_FD_WRITE;
+  }
+  return rights;
+}
+
 function buildPreopenRights() {
   switch (permissionTier) {
     case 'read-only':
@@ -1471,6 +1500,10 @@ if (typeof wasiImport.sock_shutdown !== 'function') {
       return mapHostProcessError(error);
     }
   };
+}
+if (typeof wasiImport.fd_allocate !== 'function') {
+  wasiImport.fd_allocate = (fd, offset, length) =>
+    mutateGuestFileRange(fd, offset, length, 'fs.fallocateSync');
 }
 const delegateClockTimeGet =
   typeof wasi.wasiImport.clock_time_get === 'function'
@@ -1905,7 +1938,7 @@ function hasMutationOpenFlags(oflags) {
   );
 }
 
-function kernelOpenFlagsFromWasi(oflags, rightsBase, fdflags, lookupflags) {
+function kernelOpenFlagsFromWasi(oflags, rightsBase, fdflags, lookupflags, direct = false) {
   const wantsRead = hasReadRights(rightsBase);
   const wantsWrite = hasWriteRights(rightsBase);
   let flags = wantsWrite ? (wantsRead ? KERNEL_O_RDWR : KERNEL_O_WRONLY) : 0;
@@ -1917,10 +1950,96 @@ function kernelOpenFlagsFromWasi(oflags, rightsBase, fdflags, lookupflags) {
   if ((normalizedOflags & WASI_OFLAGS_TRUNC) !== 0) flags |= KERNEL_O_TRUNC;
   if ((normalizedFdflags & WASI_FDFLAGS_APPEND) !== 0) flags |= KERNEL_O_APPEND;
   if ((normalizedFdflags & WASI_FDFLAGS_NONBLOCK) !== 0) flags |= KERNEL_O_NONBLOCK;
+  if (direct) flags |= KERNEL_O_DIRECT;
   if (((Number(lookupflags) >>> 0) & WASI_LOOKUPFLAGS_SYMLINK_FOLLOW) === 0) {
     flags |= KERNEL_O_NOFOLLOW;
   }
   return flags;
+}
+
+function errorHasCode(error, code) {
+  return error?.code === code || String(error?.message ?? error ?? '').includes(code);
+}
+
+function blockingIoDeadline(timeoutMs) {
+  return Number.isFinite(timeoutMs) ? Date.now() + Math.max(0, Number(timeoutMs)) : null;
+}
+
+function throwBlockingFifoOpenTimeout(guestPath) {
+  const error = new Error(`EAGAIN: FIFO open timed out for ${guestPath}`);
+  error.code = 'EAGAIN';
+  throw error;
+}
+
+function openBlockingGuestFifoForPathOpen(
+  guestPath,
+  oflags,
+  rightsBase,
+  fdflags,
+  lookupflags,
+  openedFdPtr,
+  mode,
+  direct,
+) {
+  let stat;
+  try {
+    stat = fsModule.statSync(guestPath);
+  } catch (error) {
+    if (errorHasCode(error, 'ENOENT')) return null;
+    throw error;
+  }
+  const isFifo = stat?.isFIFO?.() === true ||
+    (Number(stat?.mode ?? 0) & 0xf000) === 0x1000;
+  const flags = kernelOpenFlagsFromWasi(oflags, rightsBase, fdflags, lookupflags, direct);
+  if (
+    !isFifo ||
+    (Number(fdflags) & WASI_FDFLAGS_NONBLOCK) !== 0 ||
+    (flags & 0b11) === KERNEL_O_RDWR
+  ) {
+    return null;
+  }
+
+  const timeoutMs = callSyncRpc('fs.blockingIoTimeoutMsSync', []);
+  const deadline = blockingIoDeadline(timeoutMs);
+  const nonblockingFlags = flags | KERNEL_O_NONBLOCK;
+  const accessMode = flags & 0b11;
+  let kernelFd = null;
+
+  for (;;) {
+    if (kernelFd === null) {
+      try {
+        kernelFd = Number(callSyncRpc('process.fd_open', [
+          guestPath,
+          nonblockingFlags,
+          mode,
+        ])) >>> 0;
+      } catch (error) {
+        if (accessMode !== KERNEL_O_WRONLY || !errorHasCode(error, 'ENXIO')) {
+          throw error;
+        }
+      }
+    }
+    if (
+      kernelFd !== null &&
+      callSyncRpc('fs.namedFifoPeerReadySync', [kernelFd]) === true
+    ) {
+      callSyncRpc('process.fd_set_flags', [kernelFd, flags]);
+      break;
+    }
+    if (deadline !== null && Date.now() >= deadline) {
+      if (kernelFd !== null) callSyncRpc('process.fd_close', [kernelFd]);
+      throwBlockingFifoOpenTimeout(guestPath);
+    }
+    // Returning between short RPCs lets the sidecar pump sibling processes,
+    // including the peer whose open completes this Linux blocking operation.
+    Atomics.wait(syntheticWaitArray, 0, 0, 1);
+  }
+  const openedFd = registerKernelDelegateFd(kernelFd);
+  const handle = lookupFdHandle(openedFd);
+  if (handle) handle.guestPath = guestPath;
+  const result = writeGuestUint32(openedFdPtr, openedFd);
+  if (result !== WASI_ERRNO_SUCCESS) wasiImport.fd_close(openedFd);
+  return result;
 }
 
 function denyReadOnlyMutation() {
@@ -1988,7 +2107,7 @@ function resolvedGuestPathIsReadOnly(fd, pathPtr, pathLen) {
 // Guest path recorded for a managed (path_open passthrough) fd, if known.
 function guestPathForManagedFd(fd) {
   const handle = lookupFdHandle(fd);
-  if (handle?.kind === 'passthrough' && typeof handle.guestPath === 'string') {
+  if (typeof handle?.guestPath === 'string') {
     return handle.guestPath;
   }
   return null;
@@ -2449,6 +2568,11 @@ function writeGuestFdstat(ptr, filetype, flags, rightsBase, rightsInheriting) {
 
 function mapSyntheticFsError(error) {
   switch (error?.code) {
+    case 'E2BIG':
+      return WASI_ERRNO_2BIG;
+    case 'EAGAIN':
+    case 'EWOULDBLOCK':
+      return WASI_ERRNO_AGAIN;
     case 'EBADF':
       return WASI_ERRNO_BADF;
     case 'EACCES':
@@ -2461,16 +2585,39 @@ function mapSyntheticFsError(error) {
       return WASI_ERRNO_EXIST;
     case 'EISDIR':
       return WASI_ERRNO_ISDIR;
+    case 'ELOOP':
+      return WASI_ERRNO_LOOP;
+    case 'EMFILE':
+      return WASI_ERRNO_MFILE;
+    case 'ENFILE':
+      return WASI_ERRNO_NFILE;
     case 'ENOENT':
       return WASI_ERRNO_NOENT;
     case 'ENOTEMPTY':
       return WASI_ERRNO_NOTEMPTY;
     case 'ENOEXEC':
       return WASI_ERRNO_NOEXEC;
+    case 'ENOSPC':
+      return WASI_ERRNO_NOSPC;
+    case 'ENOSYS':
+      return WASI_ERRNO_NOSYS;
+    case 'EOPNOTSUPP':
+    case 'ENOTSUP':
+      return WASI_ERRNO_NOTSUP;
+    case 'ENODATA':
+      return WASI_ERRNO_NODATA;
+    case 'ENOTDIR':
+      return WASI_ERRNO_NOTDIR;
     case 'EINVAL':
       return WASI_ERRNO_INVAL;
     case 'ENXIO':
       return WASI_ERRNO_NXIO;
+    case 'ERANGE':
+      return WASI_ERRNO_RANGE;
+    case 'EOVERFLOW':
+      return WASI_ERRNO_OVERFLOW;
+    case 'EXDEV':
+      return WASI_ERRNO_XDEV;
     default:
       return WASI_ERRNO_IO;
   }
@@ -2535,6 +2682,8 @@ function mapHostProcessError(error) {
       return WASI_ERRNO_PERM;
     case 'EROFS':
       return WASI_ERRNO_ROFS;
+    case 'EXDEV':
+      return WASI_ERRNO_XDEV;
     case 'ESRCH':
       return WASI_ERRNO_SRCH;
     case 'ETIMEDOUT':
@@ -2559,6 +2708,8 @@ function mapHostProcessError(error) {
       return WASI_ERRNO_NXIO;
     case 'EPIPE':
       return WASI_ERRNO_PIPE;
+    case 'ESPIPE':
+      return WASI_ERRNO_SPIPE;
     case 'EPROTONOSUPPORT':
       return WASI_ERRNO_PROTONOSUPPORT;
     default:
@@ -7114,9 +7265,18 @@ const hostProcessImport = {
                 if (writeGuestUint32(retStatusPtr, 0) !== WASI_ERRNO_SUCCESS) {
                   return WASI_ERRNO_FAULT;
                 }
-                // WNOHANG must not acquire an all-sibling scheduling quantum:
-                // servicing a sibling's synchronous RPC can itself wait. The
-                // matching child received the zero-time probe above.
+                // Linux keeps every child scheduled while waitpid(...,
+                // WNOHANG) only limits which status may be reaped. Give all
+                // children one zero-time service sweep so a selected child can
+                // consume pipeline data produced by a sibling, then re-check
+                // the selected set before reporting that no status is ready.
+                pumpSpawnedChildren(0);
+                const readyRecord = records.find(
+                  (record) => typeof record.exitStatus === 'number',
+                );
+                if (readyRecord) {
+                  return returnLegacyWaitedChild(readyRecord, retStatusPtr, retPidPtr);
+                }
                 return writeGuestUint32(retPidPtr, 0);
               }
               // waitpid(pid) limits which child may be reaped; it does not
@@ -7221,9 +7381,23 @@ const hostProcessImport = {
               }
 
               if (nonBlocking) {
-                // Preserve WNOHANG's nonblocking contract. A zero-time sweep
-                // of every sibling can still block while servicing their
-                // internal synchronous RPCs.
+                // A zero-time sibling sweep supplies the scheduling progress
+                // that Linux processes receive independently of waitpid. It
+                // does not wait for an event, and only a matching child can be
+                // reaped by this call.
+                pumpSpawnedChildren(0);
+                const readyRecord = records.find(
+                  (record) => typeof record.exitStatus === 'number',
+                );
+                if (readyRecord) {
+                  return returnWaitedChild(
+                    readyRecord,
+                    retExitCodePtr,
+                    retSignalPtr,
+                    retPidPtr,
+                    retCoreDumpedPtr,
+                  );
+                }
                 return writeGuestUint32(retPidPtr, 0);
               }
 
@@ -7345,8 +7519,13 @@ const hostProcessImport = {
                 if (writeGuestUint32(retStatusPtr, 0) !== WASI_ERRNO_SUCCESS) {
                   return WASI_ERRNO_FAULT;
                 }
-                // Do not turn WNOHANG into an O(children) RPC-service pass;
-                // the matching set received nonblocking probes above.
+                pumpSpawnedChildren(0);
+                const readyRecord = records.find(
+                  (record) => typeof record.rawWaitStatus === 'number',
+                );
+                if (readyRecord) {
+                  return returnRawWaitedChild(readyRecord, retStatusPtr, retPidPtr);
+                }
                 return writeGuestUint32(retPidPtr, 0);
               }
 
@@ -7494,6 +7673,15 @@ const hostProcessImport = {
             const previous = Number(
               callSyncRpc('process.umask', [Number(mask) & 0o777]),
             ) >>> 0;
+            return writeGuestUint32(retPreviousPtr, previous);
+          } catch (error) {
+            return mapHostProcessError(error);
+          }
+        },
+        umask(mask, setMask, retPreviousPtr) {
+          try {
+            const args = Number(setMask) !== 0 ? [Number(mask) & 0o777] : [];
+            const previous = Number(callSyncRpc('process.umask', args)) >>> 0;
             return writeGuestUint32(retPreviousPtr, previous);
           } catch (error) {
             return mapHostProcessError(error);
@@ -7915,6 +8103,67 @@ const hostProcessImport = {
               runnerCloexecFds.delete(numericFd);
             }
             return WASI_ERRNO_SUCCESS;
+          } catch (error) {
+            return mapHostProcessError(error);
+          }
+        },
+        fd_flock(fd, operation) {
+          const LOCK_NB = 4;
+          const LOCK_UN = 8;
+          try {
+            const numericFd = Number(fd) >>> 0;
+            const normalizedOperation = Number(operation) >>> 0;
+            const handle = lookupFdHandle(numericFd);
+            if (handle?.kind !== 'kernel-fd') {
+              return handle || hostNetSockets.has(numericFd)
+                ? WASI_ERRNO_NOTSUP
+                : WASI_ERRNO_BADF;
+            }
+
+            const blocking =
+              (normalizedOperation & LOCK_NB) === 0 &&
+              (normalizedOperation & ~LOCK_NB) !== LOCK_UN;
+            const kernelOperation = blocking
+              ? normalizedOperation | LOCK_NB
+              : normalizedOperation;
+            const startedAt = Date.now();
+            const deadline = startedAt + unixConnectTimeoutMs;
+            const warningAt = startedAt + Math.floor(unixConnectTimeoutMs * 0.8);
+            let warnedNearLimit = false;
+            while (true) {
+              try {
+                callSyncRpc('process.fd_flock', [
+                  Number(handle.targetFd) >>> 0,
+                  kernelOperation,
+                ]);
+                return WASI_ERRNO_SUCCESS;
+              } catch (error) {
+                if (
+                  !blocking ||
+                  (error?.code !== 'EAGAIN' && error?.code !== 'EWOULDBLOCK')
+                ) {
+                  return mapHostProcessError(error);
+                }
+                const now = Date.now();
+                if (!warnedNearLimit && now >= warningAt) {
+                  warnedNearLimit = true;
+                  process.stderr.write(
+                    `[agentos] flock is nearing limits.resources.maxBlockingReadMs (${unixConnectTimeoutMs} ms)\n`,
+                  );
+                }
+                if (now >= deadline) {
+                  process.stderr.write(
+                    `[agentos] flock exceeded limits.resources.maxBlockingReadMs (${unixConnectTimeoutMs} ms); raise limits.resources.maxBlockingReadMs if needed\n`,
+                  );
+                  return WASI_ERRNO_TIMEDOUT;
+                }
+                if (dispatchPendingWasmSignals()) return WASI_ERRNO_INTR;
+                // Keep the sidecar dispatcher free so the lock owner can run
+                // and unlock while this guest observes blocking flock semantics.
+                pumpSpawnedChildrenOrWait(SPAWNED_CHILD_WAIT_SLICE_MS);
+                if (dispatchPendingWasmSignals()) return WASI_ERRNO_INTR;
+              }
+            }
           } catch (error) {
             return mapHostProcessError(error);
           }
@@ -8496,26 +8745,189 @@ const hostProcessImport = {
 
 const limitedHostProcessImport = {
   fd_dup_min: hostProcessImport.fd_dup_min,
+  fd_flock: hostProcessImport.fd_flock,
   fd_getfd: hostProcessImport.fd_getfd,
   fd_setfd: hostProcessImport.fd_setfd,
   fd_record_lock: hostProcessImport.fd_record_lock,
   proc_getrlimit: hostProcessImport.proc_getrlimit,
   proc_setrlimit: hostProcessImport.proc_setrlimit,
   proc_umask: hostProcessImport.proc_umask,
+  umask: hostProcessImport.umask,
 };
+
+function hostUserLookup(rpcMethod, args, bufPtr, bufLen, retLenPtr) {
+  try {
+    const entry = String(callSyncRpc(rpcMethod, args));
+    return writeGuestBytes(bufPtr, bufLen, encodeGuestBytes(entry), retLenPtr);
+  } catch (error) {
+    return mapSyntheticFsError(error);
+  }
+}
+
+function hostUserNameLookup(rpcMethod, namePtr, nameLen, bufPtr, bufLen, retLenPtr) {
+  try {
+    return hostUserLookup(
+      rpcMethod,
+      [readGuestString(namePtr, nameLen)],
+      bufPtr,
+      bufLen,
+      retLenPtr,
+    );
+  } catch (error) {
+    return mapSyntheticFsError(error);
+  }
+}
 
 const hostUserImport = {
   getuid(retUidPtr) {
-    return writeGuestUint32(retUidPtr, VIRTUAL_UID);
+    try {
+      return writeGuestUint32(retUidPtr, callSyncRpc('process.getuid', []));
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
   },
   getgid(retGidPtr) {
-    return writeGuestUint32(retGidPtr, VIRTUAL_GID);
+    try {
+      return writeGuestUint32(retGidPtr, callSyncRpc('process.getgid', []));
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
   },
   geteuid(retUidPtr) {
-    return writeGuestUint32(retUidPtr, VIRTUAL_UID);
+    try {
+      return writeGuestUint32(retUidPtr, callSyncRpc('process.geteuid', []));
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
   },
   getegid(retGidPtr) {
-    return writeGuestUint32(retGidPtr, VIRTUAL_GID);
+    try {
+      return writeGuestUint32(retGidPtr, callSyncRpc('process.getegid', []));
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  getresuid(retUidPtr, retEuidPtr, retSuidPtr) {
+    try {
+      const [uid, euid, suid] = callSyncRpc('process.getresuid', []);
+      return writeGuestUint32(retUidPtr, uid) ||
+        writeGuestUint32(retEuidPtr, euid) ||
+        writeGuestUint32(retSuidPtr, suid);
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  getresgid(retGidPtr, retEgidPtr, retSgidPtr) {
+    try {
+      const [gid, egid, sgid] = callSyncRpc('process.getresgid', []);
+      return writeGuestUint32(retGidPtr, gid) ||
+        writeGuestUint32(retEgidPtr, egid) ||
+        writeGuestUint32(retSgidPtr, sgid);
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  setuid(uid) {
+    try {
+      callSyncRpc('process.setuid', [Number(uid) >>> 0]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  seteuid(uid) {
+    try {
+      callSyncRpc('process.seteuid', [Number(uid) >>> 0]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  setreuid(uid, euid) {
+    try {
+      callSyncRpc('process.setreuid', [hostUserOptionalId(uid), hostUserOptionalId(euid)]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  setresuid(uid, euid, suid) {
+    try {
+      callSyncRpc('process.setresuid', [
+        hostUserOptionalId(uid),
+        hostUserOptionalId(euid),
+        hostUserOptionalId(suid),
+      ]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  setgid(gid) {
+    try {
+      callSyncRpc('process.setgid', [Number(gid) >>> 0]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  setegid(gid) {
+    try {
+      callSyncRpc('process.setegid', [Number(gid) >>> 0]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  setregid(gid, egid) {
+    try {
+      callSyncRpc('process.setregid', [hostUserOptionalId(gid), hostUserOptionalId(egid)]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  setresgid(gid, egid, sgid) {
+    try {
+      callSyncRpc('process.setresgid', [
+        hostUserOptionalId(gid),
+        hostUserOptionalId(egid),
+        hostUserOptionalId(sgid),
+      ]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  getgroups(size, groupsPtr, retCountPtr) {
+    try {
+      const groups = callSyncRpc('process.getgroups', []);
+      const capacity = Number(size) >>> 0;
+      if (capacity !== 0 && capacity < groups.length) {
+        return WASI_ERRNO_INVAL;
+      }
+      if (capacity !== 0) {
+        for (let index = 0; index < groups.length; index += 1) {
+          const errno = writeGuestUint32(Number(groupsPtr) + index * 4, groups[index]);
+          if (errno !== WASI_ERRNO_SUCCESS) return errno;
+        }
+      }
+      return writeGuestUint32(retCountPtr, groups.length);
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  setgroups(count, groupsPtr) {
+    try {
+      const groups = [];
+      for (let index = 0; index < (Number(count) >>> 0); index += 1) {
+        groups.push(readGuestUint32(Number(groupsPtr) + index * 4));
+      }
+      callSyncRpc('process.setgroups', [groups]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
   },
   isatty(fd, retBoolPtr) {
     const descriptor = Number(fd) >>> 0;
@@ -8523,12 +8935,60 @@ const hostUserImport = {
     return writeGuestUint32(retBoolPtr, isTerminal);
   },
   getpwuid(uid, bufPtr, bufLen, retLenPtr) {
-    const numericUid = Number(uid) >>> 0;
-    const passwdEntry =
-      numericUid === VIRTUAL_UID
-        ? `${VIRTUAL_OS_USER}:x:${VIRTUAL_UID}:${VIRTUAL_GID}::${VIRTUAL_OS_HOMEDIR}:${VIRTUAL_OS_SHELL}`
-        : `user${numericUid}:x:${numericUid}:${numericUid}::/home/user${numericUid}:/bin/sh`;
-    return writeGuestBytes(bufPtr, bufLen, encodeGuestBytes(passwdEntry), retLenPtr);
+    return hostUserLookup(
+      'process.getpwuid',
+      [Number(uid) >>> 0],
+      bufPtr,
+      bufLen,
+      retLenPtr,
+    );
+  },
+  getpwnam(namePtr, nameLen, bufPtr, bufLen, retLenPtr) {
+    return hostUserNameLookup(
+      'process.getpwnam',
+      namePtr,
+      nameLen,
+      bufPtr,
+      bufLen,
+      retLenPtr,
+    );
+  },
+  getpwent(index, bufPtr, bufLen, retLenPtr) {
+    return hostUserLookup(
+      'process.getpwent',
+      [Number(index) >>> 0],
+      bufPtr,
+      bufLen,
+      retLenPtr,
+    );
+  },
+  getgrgid(gid, bufPtr, bufLen, retLenPtr) {
+    return hostUserLookup(
+      'process.getgrgid',
+      [Number(gid) >>> 0],
+      bufPtr,
+      bufLen,
+      retLenPtr,
+    );
+  },
+  getgrnam(namePtr, nameLen, bufPtr, bufLen, retLenPtr) {
+    return hostUserNameLookup(
+      'process.getgrnam',
+      namePtr,
+      nameLen,
+      bufPtr,
+      bufLen,
+      retLenPtr,
+    );
+  },
+  getgrent(index, bufPtr, bufLen, retLenPtr) {
+    return hostUserLookup(
+      'process.getgrent',
+      [Number(index) >>> 0],
+      bufPtr,
+      bufLen,
+      retLenPtr,
+    );
   },
 };
 
@@ -8673,7 +9133,557 @@ function resolveHostFsMapping(value, fromGuestDir = HOST_FS_GUEST_CWD) {
   return resolveModuleGuestPathToHostMapping(guestPath);
 }
 
+let pendingOpenCreateMode = null;
+let pendingOpenDirect = false;
+
+function mutateGuestFileRange(fd, offset, length, method, extraArgs = []) {
+  try {
+    const handle = lookupFdHandle(Number(fd) >>> 0);
+    if (handle?.readOnly === true || isWorkspaceReadOnly()) {
+      return WASI_ERRNO_ROFS;
+    }
+    if (handle?.kind !== 'guest-file' && handle?.kind !== 'kernel-fd' || typeof handle.targetFd !== 'number') {
+      return WASI_ERRNO_BADF;
+    }
+    const rangeOffset = Number(offset);
+    const rangeLength = Number(length);
+    if (
+      !Number.isSafeInteger(rangeOffset) ||
+      !Number.isSafeInteger(rangeLength) ||
+      rangeOffset < 0 ||
+      rangeLength < 0
+    ) {
+      return WASI_ERRNO_INVAL;
+    }
+    callSyncRpc(method, [
+      Number(handle.targetFd) >>> 0,
+      rangeOffset,
+      rangeLength,
+      ...extraArgs,
+    ]);
+    forgetHostFsSize(handle.guestPath);
+    return WASI_ERRNO_SUCCESS;
+  } catch (error) {
+    traceHostProcess('guest-file-range-error', {
+      method,
+      code: error?.code,
+      message: error?.message,
+    });
+    return mapSyntheticFsError(error);
+  }
+}
+
+
 const hostFsImport = {
+  open_tmpfile(dirFd, pathPtr, pathLen, flags, mode, retFdPtr) {
+    try {
+      const directory = resolvePathOpenGuestPath(dirFd, pathPtr, pathLen);
+      if (typeof directory !== 'string') return WASI_ERRNO_BADF;
+      if (isWorkspaceReadOnly() || guestPathIsReadOnly(directory)) return WASI_ERRNO_ROFS;
+
+      const normalizedFlags = Number(flags) >>> 0;
+      const wantsRead = (normalizedFlags & WASI_LIBC_O_RDONLY) !== 0;
+      const wantsWrite = (normalizedFlags & WASI_LIBC_O_WRONLY) !== 0;
+      let kernelFlags = wantsRead && wantsWrite
+        ? KERNEL_O_RDWR
+        : wantsWrite
+          ? KERNEL_O_WRONLY
+          : 0;
+      if ((normalizedFlags & WASI_FDFLAGS_APPEND) !== 0) kernelFlags |= KERNEL_O_APPEND;
+      if ((normalizedFlags & WASI_FDFLAGS_NONBLOCK) !== 0) kernelFlags |= KERNEL_O_NONBLOCK;
+      if ((normalizedFlags & WASI_LIBC_O_DIRECT) !== 0) kernelFlags |= KERNEL_O_DIRECT;
+
+      const kernelFd = Number(callSyncRpc('fs.openTmpfileSync', [
+        directory,
+        kernelFlags,
+        Number(mode) >>> 0,
+        (normalizedFlags & (WASI_OFLAGS_EXCL << 12)) === 0,
+      ])) >>> 0;
+      const guestFd = registerKernelDelegateFd(kernelFd);
+      const result = writeGuestUint32(retFdPtr, guestFd);
+      if (result !== WASI_ERRNO_SUCCESS) wasiImport.fd_close(guestFd);
+      return result;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  fd_link(fd, newDirFd, pathPtr, pathLen) {
+    try {
+      const handle = lookupFdHandle(Number(fd) >>> 0);
+      const destination = resolvePathOpenGuestPath(newDirFd, pathPtr, pathLen);
+      if (
+        handle?.kind !== 'guest-file' && handle?.kind !== 'kernel-fd' ||
+        typeof handle.targetFd !== 'number'
+      ) {
+        return WASI_ERRNO_INVAL;
+      }
+      if (typeof destination !== 'string') {
+        return WASI_ERRNO_BADF;
+      }
+      if (isWorkspaceReadOnly() || guestPathIsReadOnly(destination)) {
+        return WASI_ERRNO_ROFS;
+      }
+      callSyncRpc('fs.linkFdSync', [Number(handle.targetFd) >>> 0, destination]);
+      handle.guestPath = destination;
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  remount(pathPtr, pathLen, optionsPtr, optionsLen) {
+    try {
+      const target = path.posix.resolve(HOST_FS_GUEST_CWD, readGuestString(pathPtr, pathLen));
+      const options = readGuestString(optionsPtr, optionsLen);
+      callSyncRpc('fs.remountSync', [target, options]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  path_mknod(fd, pathPtr, pathLen, mode, rdev) {
+    let target;
+    try {
+      const rawTarget = readGuestString(pathPtr, pathLen);
+      target = Number(fd) >>> 0 === 0xffffffff
+        ? path.posix.resolve(HOST_FS_GUEST_CWD, rawTarget)
+        : resolvePathOpenGuestPath(fd, pathPtr, pathLen);
+      if (typeof target !== 'string') {
+        return WASI_ERRNO_BADF;
+      }
+      callSyncRpc('fs.mknodSync', [target, Number(mode) >>> 0, Number(rdev)]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      traceHostProcess('host-fs-path-mknod-error', {
+        code: error?.code,
+        message: error?.message,
+        target,
+      });
+      return mapSyntheticFsError(error);
+    }
+  },
+  path_renameat2(
+    oldFd,
+    oldPathPtr,
+    oldPathLen,
+    newFd,
+    newPathPtr,
+    newPathLen,
+    flags,
+  ) {
+    let oldPath;
+    let newPath;
+    try {
+      const rawOldPath = readGuestString(oldPathPtr, oldPathLen);
+      const rawNewPath = readGuestString(newPathPtr, newPathLen);
+      const oldDirectoryFd = Number(oldFd) >>> 0;
+      const newDirectoryFd = Number(newFd) >>> 0;
+      oldPath = oldDirectoryFd === 0xfffffffe || oldDirectoryFd === 0xffffffff
+        ? path.posix.resolve(HOST_FS_GUEST_CWD, rawOldPath)
+        : resolvePathOpenGuestPath(oldFd, oldPathPtr, oldPathLen);
+      newPath = newDirectoryFd === 0xfffffffe || newDirectoryFd === 0xffffffff
+        ? path.posix.resolve(HOST_FS_GUEST_CWD, rawNewPath)
+        : resolvePathOpenGuestPath(newFd, newPathPtr, newPathLen);
+      if (typeof oldPath !== 'string' || typeof newPath !== 'string') {
+        return WASI_ERRNO_BADF;
+      }
+      if (
+        isWorkspaceReadOnly() ||
+        guestPathIsReadOnly(oldPath) ||
+        guestPathIsReadOnly(newPath)
+      ) {
+        return WASI_ERRNO_ROFS;
+      }
+      callSyncRpc('fs.renameAt2Sync', [oldPath, newPath, Number(flags) >>> 0]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      traceHostProcess('host-fs-path-renameat2-error', {
+        code: error?.code,
+        message: error?.message,
+        oldPath,
+        newPath,
+        flags: Number(flags) >>> 0,
+      });
+      return mapSyntheticFsError(error);
+    }
+  },
+  path_statfs(
+    fd,
+    pathPtr,
+    pathLen,
+    retTotalBytesPtr,
+    retUsedBytesPtr,
+    retAvailableBytesPtr,
+    retTotalInodesPtr,
+    retFreeInodesPtr,
+  ) {
+    let target;
+    try {
+      const rawTarget = readGuestString(pathPtr, pathLen);
+      target = Number(fd) >>> 0 === 0xffffffff
+        ? path.posix.resolve(HOST_FS_GUEST_CWD, rawTarget)
+        : resolvePathOpenGuestPath(fd, pathPtr, pathLen);
+      if (typeof target !== 'string') {
+        return WASI_ERRNO_BADF;
+      }
+      const stats = callSyncRpc('fs.statfsSync', [target]);
+      return (
+        writeGuestUint64(retTotalBytesPtr, BigInt(stats.totalBytes)) ||
+        writeGuestUint64(retUsedBytesPtr, BigInt(stats.usedBytes)) ||
+        writeGuestUint64(retAvailableBytesPtr, BigInt(stats.availableBytes)) ||
+        writeGuestUint64(retTotalInodesPtr, BigInt(stats.totalInodes)) ||
+        writeGuestUint64(retFreeInodesPtr, BigInt(stats.freeInodes))
+      );
+    } catch (error) {
+      traceHostProcess('host-fs-path-statfs-error', {
+        code: error?.code,
+        message: error?.message,
+        target,
+      });
+      return mapSyntheticFsError(error);
+    }
+  },
+  fd_fiemap(fd, index, retStartPtr, retEndPtr, retFlagsPtr) {
+    try {
+      const handle = lookupFdHandle(Number(fd) >>> 0);
+      if (handle?.kind !== 'guest-file' && handle?.kind !== 'kernel-fd' || typeof handle.targetFd !== 'number') {
+        return WASI_ERRNO_BADF;
+      }
+      const ranges = callSyncRpc('fs.fiemapSync', [Number(handle.targetFd) >>> 0]);
+      const range = Array.isArray(ranges) ? ranges[Number(index) >>> 0] : null;
+      if (!range) {
+        return WASI_ERRNO_NODATA;
+      }
+      return (
+        writeGuestUint64(retStartPtr, BigInt(range.start)) ||
+        writeGuestUint64(retEndPtr, BigInt(range.end)) ||
+        writeGuestUint32(retFlagsPtr, range.unwritten === true ? 0x800 : 0)
+      );
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  fd_punch_hole(fd, offset, length) {
+    try {
+      const handle = lookupFdHandle(Number(fd) >>> 0);
+      if (handle?.readOnly === true || isWorkspaceReadOnly()) {
+        return WASI_ERRNO_ROFS;
+      }
+      if (handle?.kind !== 'guest-file' && handle?.kind !== 'kernel-fd' || typeof handle.targetFd !== 'number') {
+        return WASI_ERRNO_BADF;
+      }
+      const punchOffset = Number(offset);
+      const punchLength = Number(length);
+      if (
+        !Number.isSafeInteger(punchOffset) ||
+        !Number.isSafeInteger(punchLength) ||
+        punchOffset < 0 ||
+        punchLength < 0
+      ) {
+        return WASI_ERRNO_INVAL;
+      }
+      callSyncRpc('fs.punchHoleSync', [
+        Number(handle.targetFd) >>> 0,
+        punchOffset,
+        punchLength,
+      ]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  fd_zero_range(fd, offset, length, keepSize) {
+    return mutateGuestFileRange(
+      fd,
+      offset,
+      length,
+      'fs.zeroRangeSync',
+      [Number(keepSize) !== 0 ? 1 : 0],
+    );
+  },
+  fd_insert_range(fd, offset, length) {
+    return mutateGuestFileRange(fd, offset, length, 'fs.insertRangeSync');
+  },
+  fd_collapse_range(fd, offset, length) {
+    return mutateGuestFileRange(fd, offset, length, 'fs.collapseRangeSync');
+  },
+  set_open_mode(mode) {
+    pendingOpenCreateMode = Number(mode) & 0o7777;
+    return WASI_ERRNO_SUCCESS;
+  },
+  set_open_direct(enabled) {
+    pendingOpenDirect = Number(enabled) !== 0;
+    return WASI_ERRNO_SUCCESS;
+  },
+  path_owner(fd, pathPtr, pathLen, followSymlinks, retUidPtr, retGidPtr) {
+    try {
+      const rawTarget = readGuestString(pathPtr, pathLen);
+      const target = Number(fd) >>> 0 === 0xffffffff
+        ? path.posix.resolve(HOST_FS_GUEST_CWD, rawTarget)
+        : resolvePathOpenGuestPath(fd, pathPtr, pathLen);
+      if (typeof target !== 'string') {
+        return WASI_ERRNO_BADF;
+      }
+      const stat = callSyncRpc(
+        Number(followSymlinks) === 0 ? 'fs.lstatSync' : 'fs.statSync',
+        [target],
+      );
+      return writeGuestUint32(retUidPtr, stat.uid) || writeGuestUint32(retGidPtr, stat.gid);
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  fd_owner(fd, retUidPtr, retGidPtr) {
+    try {
+      const handle = lookupFdHandle(fd);
+      if (handle?.kind === 'kernel-fd') {
+        const stat = callSyncRpc('process.fd_filestat', [Number(handle.targetFd) >>> 0]);
+        return writeGuestUint32(retUidPtr, stat.uid) || writeGuestUint32(retGidPtr, stat.gid);
+      }
+      if (handle?.kind === 'pipe-read' || handle?.kind === 'pipe-write') {
+        const uid = callSyncRpc('process.geteuid', []);
+        const gid = callSyncRpc('process.getegid', []);
+        return writeGuestUint32(retUidPtr, uid) || writeGuestUint32(retGidPtr, gid);
+      }
+      const target = guestPathForManagedFd(fd);
+      if (typeof target !== 'string') {
+        return WASI_ERRNO_BADF;
+      }
+      const stat = callSyncRpc('fs.statSync', [target]);
+      return writeGuestUint32(retUidPtr, stat.uid) || writeGuestUint32(retGidPtr, stat.gid);
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  path_access(fd, pathPtr, pathLen, mode, effectiveIds) {
+    try {
+      const rawTarget = readGuestString(pathPtr, pathLen);
+      const target = Number(fd) >>> 0 === 0xffffffff
+        ? path.posix.resolve(HOST_FS_GUEST_CWD, rawTarget)
+        : resolvePathOpenGuestPath(fd, pathPtr, pathLen);
+      if (typeof target !== 'string') {
+        return WASI_ERRNO_BADF;
+      }
+      callSyncRpc('fs.accessSync', [target, Number(mode) >>> 0, Number(effectiveIds) !== 0]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      traceHostProcess('host-fs-path-access-error', {
+        code: error?.code,
+        message: error?.message,
+      });
+      return mapSyntheticFsError(error);
+    }
+  },
+  path_chown(fd, pathPtr, pathLen, uid, gid, followSymlinks) {
+    let rawTarget;
+    let target;
+    try {
+      rawTarget = readGuestString(pathPtr, pathLen);
+      target = Number(fd) >>> 0 === 0xffffffff
+        ? path.posix.resolve(HOST_FS_GUEST_CWD, rawTarget)
+        : resolvePathOpenGuestPath(fd, pathPtr, pathLen);
+      if (typeof target !== 'string') {
+        return WASI_ERRNO_BADF;
+      }
+      if (Number(followSymlinks) === 0) {
+        callSyncRpc('fs.lchownSync', [target, Number(uid) >>> 0, Number(gid) >>> 0]);
+      } else {
+        callSyncRpc('fs.chownSync', [target, Number(uid) >>> 0, Number(gid) >>> 0]);
+      }
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      traceHostProcess('host-fs-path-chown-error', {
+        code: error?.code,
+        message: error?.message,
+        followSymlinks: Number(followSymlinks) !== 0,
+        fd: Number(fd) >>> 0,
+        rawTarget,
+        target,
+      });
+      return mapSyntheticFsError(error);
+    }
+  },
+  fd_chown(fd, uid, gid) {
+    try {
+      const target = guestPathForManagedFd(fd);
+      if (typeof target !== 'string') {
+        return WASI_ERRNO_BADF;
+      }
+      callSyncRpc('fs.chownSync', [target, Number(uid) >>> 0, Number(gid) >>> 0]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  path_getxattr(
+    fd,
+    pathPtr,
+    pathLen,
+    namePtr,
+    nameLen,
+    valuePtr,
+    size,
+    followSymlinks,
+    retSizePtr,
+  ) {
+    try {
+      const rawTarget = readGuestString(pathPtr, pathLen);
+      const target = Number(fd) >>> 0 === 0xffffffff
+        ? path.posix.resolve(HOST_FS_GUEST_CWD, rawTarget)
+        : resolvePathOpenGuestPath(fd, pathPtr, pathLen);
+      if (typeof target !== 'string') return WASI_ERRNO_BADF;
+      const value = callSyncRpc('fs.getxattrSync', [
+        target,
+        readGuestString(namePtr, nameLen),
+        Number(followSymlinks) !== 0,
+      ]);
+      const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value ?? []);
+      const sizeResult = writeGuestUint32(retSizePtr, bytes.byteLength);
+      if (sizeResult !== WASI_ERRNO_SUCCESS) return sizeResult;
+      const capacity = Number(size) >>> 0;
+      if (capacity === 0) return WASI_ERRNO_SUCCESS;
+      if (capacity < bytes.byteLength) return WASI_ERRNO_RANGE;
+      new Uint8Array(instanceMemory.buffer).set(bytes, Number(valuePtr) >>> 0);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  fd_getxattr(fd, namePtr, nameLen, valuePtr, size, retSizePtr) {
+    try {
+      const target = guestPathForManagedFd(fd);
+      if (typeof target !== 'string') return WASI_ERRNO_BADF;
+      const value = callSyncRpc('fs.getxattrSync', [
+        target,
+        readGuestString(namePtr, nameLen),
+        true,
+      ]);
+      const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value ?? []);
+      const sizeResult = writeGuestUint32(retSizePtr, bytes.byteLength);
+      if (sizeResult !== WASI_ERRNO_SUCCESS) return sizeResult;
+      const capacity = Number(size) >>> 0;
+      if (capacity === 0) return WASI_ERRNO_SUCCESS;
+      if (capacity < bytes.byteLength) return WASI_ERRNO_RANGE;
+      new Uint8Array(instanceMemory.buffer).set(bytes, Number(valuePtr) >>> 0);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  path_listxattr(fd, pathPtr, pathLen, listPtr, size, followSymlinks, retSizePtr) {
+    try {
+      const rawTarget = readGuestString(pathPtr, pathLen);
+      const target = Number(fd) >>> 0 === 0xffffffff
+        ? path.posix.resolve(HOST_FS_GUEST_CWD, rawTarget)
+        : resolvePathOpenGuestPath(fd, pathPtr, pathLen);
+      if (typeof target !== 'string') return WASI_ERRNO_BADF;
+      const names = callSyncRpc('fs.listxattrSync', [target, Number(followSymlinks) !== 0]);
+      const bytes = Buffer.from((Array.isArray(names) ? names : []).map((name) => `${name}\0`).join(''));
+      const sizeResult = writeGuestUint32(retSizePtr, bytes.byteLength);
+      if (sizeResult !== WASI_ERRNO_SUCCESS) return sizeResult;
+      const capacity = Number(size) >>> 0;
+      if (capacity === 0) return WASI_ERRNO_SUCCESS;
+      if (capacity < bytes.byteLength) return WASI_ERRNO_RANGE;
+      new Uint8Array(instanceMemory.buffer).set(bytes, Number(listPtr) >>> 0);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  fd_listxattr(fd, listPtr, size, retSizePtr) {
+    try {
+      const target = guestPathForManagedFd(fd);
+      if (typeof target !== 'string') return WASI_ERRNO_BADF;
+      const names = callSyncRpc('fs.listxattrSync', [target, true]);
+      const bytes = Buffer.from((Array.isArray(names) ? names : []).map((name) => `${name}\0`).join(''));
+      const sizeResult = writeGuestUint32(retSizePtr, bytes.byteLength);
+      if (sizeResult !== WASI_ERRNO_SUCCESS) return sizeResult;
+      const capacity = Number(size) >>> 0;
+      if (capacity === 0) return WASI_ERRNO_SUCCESS;
+      if (capacity < bytes.byteLength) return WASI_ERRNO_RANGE;
+      new Uint8Array(instanceMemory.buffer).set(bytes, Number(listPtr) >>> 0);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  path_setxattr(
+    fd,
+    pathPtr,
+    pathLen,
+    namePtr,
+    nameLen,
+    valuePtr,
+    size,
+    flags,
+    followSymlinks,
+  ) {
+    let target;
+    try {
+      const rawTarget = readGuestString(pathPtr, pathLen);
+      target = Number(fd) >>> 0 === 0xffffffff
+        ? path.posix.resolve(HOST_FS_GUEST_CWD, rawTarget)
+        : resolvePathOpenGuestPath(fd, pathPtr, pathLen);
+      if (typeof target !== 'string') return WASI_ERRNO_BADF;
+      callSyncRpc('fs.setxattrSync', [
+        target,
+        readGuestString(namePtr, nameLen),
+        readGuestBytes(valuePtr, size),
+        Number(flags) >>> 0,
+        Number(followSymlinks) !== 0,
+      ]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      traceHostProcess('host-fs-path-setxattr-error', {
+        code: error?.code,
+        message: error?.message,
+        target,
+      });
+      return mapSyntheticFsError(error);
+    }
+  },
+  fd_setxattr(fd, namePtr, nameLen, valuePtr, size, flags) {
+    try {
+      const target = guestPathForManagedFd(fd);
+      if (typeof target !== 'string') return WASI_ERRNO_BADF;
+      callSyncRpc('fs.setxattrSync', [
+        target,
+        readGuestString(namePtr, nameLen),
+        readGuestBytes(valuePtr, size),
+        Number(flags) >>> 0,
+        true,
+      ]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  path_removexattr(fd, pathPtr, pathLen, namePtr, nameLen, followSymlinks) {
+    try {
+      const rawTarget = readGuestString(pathPtr, pathLen);
+      const target = Number(fd) >>> 0 === 0xffffffff
+        ? path.posix.resolve(HOST_FS_GUEST_CWD, rawTarget)
+        : resolvePathOpenGuestPath(fd, pathPtr, pathLen);
+      if (typeof target !== 'string') return WASI_ERRNO_BADF;
+      callSyncRpc('fs.removexattrSync', [
+        target,
+        readGuestString(namePtr, nameLen),
+        Number(followSymlinks) !== 0,
+      ]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
+  fd_removexattr(fd, namePtr, nameLen) {
+    try {
+      const target = guestPathForManagedFd(fd);
+      if (typeof target !== 'string') return WASI_ERRNO_BADF;
+      callSyncRpc('fs.removexattrSync', [target, readGuestString(namePtr, nameLen), true]);
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  },
   fd_mode(fd) {
     const descriptor = Number(fd) >>> 0;
     const handle = lookupFdHandle(descriptor);
@@ -8736,6 +9746,29 @@ const hostFsImport = {
       return (1n << 64n) - 1n;
     }
   },
+  fd_blocks(fd) {
+    const descriptor = Number(fd) >>> 0;
+    try {
+      const handle = lookupFdHandle(descriptor);
+      if (handle?.kind === 'kernel-fd') {
+        const stat = callSyncRpc('process.fd_filestat', [Number(handle.targetFd) >>> 0]);
+        return BigInt(stat?.blocks ?? -1);
+      }
+      if (typeof handle?.ioFd === 'number') {
+        return BigInt(fsModule.fstatSync(Number(handle.ioFd) >>> 0).blocks ?? -1);
+      }
+      if (typeof handle?.guestPath === 'string') {
+        const hostPath = resolveHostFsPath(handle.guestPath);
+        const stat = fsModule.statSync(
+          typeof hostPath === 'string' ? hostPath : handle.guestPath,
+        );
+        return BigInt(stat?.blocks ?? -1);
+      }
+      return BigInt(fsModule.fstatSync(descriptor).blocks ?? -1);
+    } catch {
+      return (1n << 64n) - 1n;
+    }
+  },
   path_mode(fd, pathPtr, pathLen, followSymlinks) {
     try {
       const target = resolvePathOpenGuestPath(fd, pathPtr, pathLen);
@@ -8789,6 +9822,35 @@ const hostFsImport = {
       return BigInt(guestStat?.size ?? -1);
     } catch {
       return (1n << 64n) - 1n;
+    }
+  },
+  path_blocks(fd, pathPtr, pathLen, followSymlinks) {
+    const target = resolvePathOpenGuestPath(fd, pathPtr, pathLen);
+    if (typeof target !== 'string') return (1n << 64n) - 1n;
+    try {
+      const stat = callSyncRpc(
+        Number(followSymlinks) === 0 ? 'fs.lstatSync' : 'fs.statSync',
+        [target],
+      );
+      return BigInt(stat?.blocks ?? -1);
+    } catch {
+      return (1n << 64n) - 1n;
+    }
+  },
+  path_rdev(fd, pathPtr, pathLen, followSymlinks) {
+    const rawTarget = readGuestString(pathPtr, pathLen);
+    const target = Number(fd) >>> 0 === 0xffffffff
+      ? path.posix.resolve(HOST_FS_GUEST_CWD, rawTarget)
+      : resolvePathOpenGuestPath(fd, pathPtr, pathLen);
+    if (typeof target !== 'string') return 0n;
+    try {
+      const stat = callSyncRpc(
+        Number(followSymlinks) === 0 ? 'fs.lstatSync' : 'fs.statSync',
+        [target],
+      );
+      return BigInt(stat?.rdev ?? 0);
+    } catch {
+      return 0n;
     }
   },
   chmod(fd, pathPtr, pathLen, mode) {
@@ -8903,6 +9965,13 @@ const hostFsImport = {
         return 1;
       }
       const handle = lookupFdHandle(descriptor);
+      if (handle?.kind === 'kernel-fd') {
+        callSyncRpc('process.fd_truncate', [
+          Number(handle.targetFd) >>> 0,
+          BigInt(nextSize).toString(),
+        ]);
+        return WASI_ERRNO_SUCCESS;
+      }
       if (handle?.readOnly === true) {
         return 1;
       }
@@ -8986,6 +10055,10 @@ if (delegatePathOpen) {
     fdflags,
     openedFdPtr,
   ) => {
+    const requestedCreateMode = pendingOpenCreateMode;
+    pendingOpenCreateMode = null;
+    const requestedDirect = pendingOpenDirect;
+    pendingOpenDirect = false;
     const workspaceReadOnlyDenied = __agentOSWasiMeasurePhase('path_open', 'readonly_policy', () =>
       isWorkspaceReadOnly() &&
       (hasMutationOpenFlags(oflags) || hasWriteRights(rightsBase))
@@ -9033,6 +10106,23 @@ if (delegatePathOpen) {
       return procFdResult;
     }
     if (SIDECAR_MANAGED_PROCESS) {
+      try {
+        const fifoResult = openBlockingGuestFifoForPathOpen(
+          guestPath,
+          oflags,
+          rightsBase,
+          fdflags,
+          dirflags,
+          openedFdPtr,
+          requestedCreateMode ?? 0o666,
+          requestedDirect,
+        );
+        if (fifoResult !== null) return fifoResult;
+      } catch (error) {
+        return mapHostProcessError(error);
+      }
+    }
+    if (SIDECAR_MANAGED_PROCESS) {
       if (typeof guestPath !== 'string') {
         return WASI_ERRNO_BADF;
       }
@@ -9045,13 +10135,13 @@ if (delegatePathOpen) {
             ? callSyncRpc('process.path_open_at', [
                 Number(passthroughDirHandle.targetFd) >>> 0,
                 readGuestString(pathPtr, pathLen),
-                kernelOpenFlagsFromWasi(oflags, rightsBase, fdflags, dirflags),
-                0o666,
+                kernelOpenFlagsFromWasi(oflags, rightsBase, fdflags, dirflags, requestedDirect),
+                requestedCreateMode ?? 0o666,
               ])
             : callSyncRpc('process.fd_open', [
                 guestPath,
-                kernelOpenFlagsFromWasi(oflags, rightsBase, fdflags, dirflags),
-                0o666,
+                kernelOpenFlagsFromWasi(oflags, rightsBase, fdflags, dirflags, requestedDirect),
+                requestedCreateMode ?? 0o666,
               ])
         ) >>> 0;
         if ((Number(oflags) & WASI_OFLAGS_DIRECTORY) !== 0) {
@@ -9064,6 +10154,8 @@ if (delegatePathOpen) {
           }
         }
         const openedFd = registerKernelDelegateFd(kernelFd);
+        const openedHandle = lookupFdHandle(openedFd);
+        if (openedHandle) openedHandle.guestPath = guestPath;
         const writeResult = writeGuestUint32(openedFdPtr, openedFd);
         if (writeResult !== WASI_ERRNO_SUCCESS) {
           wasiImport.fd_close(openedFd);
@@ -10175,21 +11267,13 @@ wasiImport.fd_fdstat_get = (fd, statPtr) => {
       const kernelFlags = Number(stat?.flags) >>> 0;
       const wasiFlags = (kernelFlags & KERNEL_O_APPEND ? WASI_FDFLAGS_APPEND : 0)
         | (kernelFlags & KERNEL_O_NONBLOCK ? WASI_FDFLAGS_NONBLOCK : 0);
-      const result = writeGuestFdstat(
+      return writeGuestFdstat(
         statPtr,
         Number(stat?.filetype) >>> 0,
         wasiFlags,
-        WASI_RIGHT_FD_READ |
-          WASI_RIGHT_FD_WRITE |
-          WASI_RIGHT_FD_SEEK |
-          WASI_RIGHT_FD_TELL |
-          WASI_RIGHT_FD_FDSTAT_SET_FLAGS |
-          WASI_RIGHT_FD_FILESTAT_GET |
-          WASI_RIGHT_FD_SYNC |
-          WASI_RIGHT_POLL_FD_READWRITE,
+        kernelFdRightsBase(kernelFlags),
         0n,
       );
-      return result;
     } catch (error) {
       return mapHostProcessError(error);
     }

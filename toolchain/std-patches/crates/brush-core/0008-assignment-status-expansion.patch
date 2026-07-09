@@ -1,0 +1,68 @@
+--- a/src/commands.rs
++++ b/src/commands.rs
+@@ -583,6 +583,7 @@ pub(crate) async fn invoke_command_in_subshell_and_get_output(
+ 
+     // Store the status.
+     *shell.last_exit_status_mut() = cmd_result.exit_code.into();
++    shell.assignment_command_substitution_status = Some(cmd_result.exit_code.into());
+ 
+     Ok(output_str)
+ }
+--- a/src/interp.rs
++++ b/src/interp.rs
+@@ -1024,5 +1024,7 @@ impl ExecuteInPipeline for ast::SimpleCommand {
+             }
+         } else {
+-            // Reset last status.
+-            *context.shell.last_exit_status_mut() = 0;
++            // Assignment expansion observes the status of the preceding command.
++            // The assignment-only command itself succeeds unless a command
++            // substitution supplies its status.
++            context.shell.assignment_command_substitution_status = None;
+ 
+             // No command to run; assignments must be applied to this shell.
+@@ -1039,8 +1041,12 @@ impl ExecuteInPipeline for ast::SimpleCommand {
+                 .await?;
+             }
+ 
+-            // Return the last exit status we have; in some cases, an expansion
+-            // might result in a non-zero exit status stored in the shell.
+-            Ok(ExecutionResult::new(context.shell.last_result()).into())
++            let status = context
++                .shell
++                .assignment_command_substitution_status
++                .take()
++                .unwrap_or(0);
++            *context.shell.last_exit_status_mut() = status;
++            Ok(ExecutionResult::new(status).into())
+         }
+     }
+ }
+--- a/src/shell.rs
++++ b/src/shell.rs
+@@ -61,6 +61,9 @@ pub struct Shell {
+     /// The status of the last completed command.
+     last_exit_status: u8,
+ 
++    /// The status of the last command substitution performed while expanding an assignment.
++    pub(crate) assignment_command_substitution_status: Option<u8>,
++
+     /// The status of each of the commands in the last pipeline.
+     pub last_pipeline_statuses: Vec<u8>,
+ 
+@@ -127,6 +130,7 @@ impl Clone for Shell {
+             jobs: jobs::JobManager::new(),
+             aliases: self.aliases.clone(),
+             last_exit_status: self.last_exit_status,
++            assignment_command_substitution_status: self.assignment_command_substitution_status,
+             last_pipeline_statuses: self.last_pipeline_statuses.clone(),
+             positional_parameters: self.positional_parameters.clone(),
+             shell_name: self.shell_name.clone(),
+@@ -365,6 +369,7 @@ impl Shell {
+             jobs: jobs::JobManager::new(),
+             aliases: HashMap::default(),
+             last_exit_status: 0,
++            assignment_command_substitution_status: None,
+             last_pipeline_statuses: vec![0],
+             positional_parameters: vec![],
+             shell_name: options.shell_name,

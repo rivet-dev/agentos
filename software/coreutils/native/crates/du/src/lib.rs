@@ -4,10 +4,16 @@
 //! Supports -s (summary), -h (human-readable), -a (all files), -c (grand total),
 //! -d N (max depth).
 
+#![cfg_attr(target_os = "wasi", feature(wasi_ext))]
+
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Write};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+#[cfg(target_os = "wasi")]
+use std::os::wasi::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 pub fn main(args: Vec<OsString>) -> i32 {
@@ -56,6 +62,7 @@ pub fn main(args: Vec<OsString>) -> i32 {
             s if s.starts_with('-') && s.len() > 1 && !s.starts_with("--") => {
                 for ch in s[1..].chars() {
                     match ch {
+                        'k' => {}
                         's' => summary = true,
                         'h' => human = true,
                         'a' => all_files = true,
@@ -134,9 +141,7 @@ fn walk_du<W: Write>(
     let meta = fs::metadata(path)?;
 
     if meta.is_file() {
-        let size = meta.len();
-        // Convert to 1K blocks (like du default)
-        let blocks = (size + 1023) / 1024;
+        let blocks = allocated_kib(&meta);
         if all_files || depth == 0 {
             print_size(out, blocks, human, &path.to_string_lossy())?;
         }
@@ -168,8 +173,7 @@ fn walk_du<W: Write>(
                 )?;
                 dir_total += sub;
             } else {
-                let size = child_meta.len();
-                let blocks = (size + 1023) / 1024;
+                let blocks = allocated_kib(&child_meta);
                 dir_total += blocks;
                 if all_files {
                     if let Some(md) = max_depth {
@@ -196,12 +200,15 @@ fn walk_du<W: Write>(
     }
 
     // Symlinks, special files -- just report their metadata size
-    let size = meta.len();
-    let blocks = (size + 1023) / 1024;
+    let blocks = allocated_kib(&meta);
     if all_files || depth == 0 {
         print_size(out, blocks, human, &path.to_string_lossy())?;
     }
     Ok(blocks)
+}
+
+fn allocated_kib(metadata: &fs::Metadata) -> u64 {
+    metadata.blocks().div_ceil(2)
 }
 
 fn print_size<W: Write>(out: &mut W, blocks: u64, human: bool, name: &str) -> io::Result<()> {
@@ -230,5 +237,35 @@ fn format_human(blocks: u64) -> String {
         } else {
             format!("{:.1}G", gb)
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::allocated_kib;
+    use std::fs::{self, OpenOptions};
+    use std::io::{Seek, SeekFrom, Write};
+
+    #[test]
+    fn allocated_size_uses_sparse_block_count() {
+        let path = std::env::temp_dir().join(format!(
+            "agentos-du-sparse-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)
+            .expect("create sparse test file");
+        file.seek(SeekFrom::Start(1_600 * 1024))
+            .expect("seek sparse test file");
+        file.write_all(&vec![b'x'; 50 * 1024])
+            .expect("write sparse extent");
+        file.sync_all().expect("sync sparse test file");
+        let metadata = file.metadata().expect("stat sparse test file");
+        assert!(allocated_kib(&metadata) < metadata.len().div_ceil(1024));
+        drop(file);
+        fs::remove_file(path).expect("remove sparse test file");
     }
 }

@@ -41,6 +41,8 @@ describe("descriptors", () => {
 			}),
 		).toEqual({
 			guestPath: "/workspace",
+			guestSource: "host",
+			guestFstype: "host",
 			readOnly: true,
 			plugin: {
 				id: "host",

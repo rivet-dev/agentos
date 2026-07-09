@@ -1,6 +1,6 @@
 --- a/library/std/src/sys/fs/unix.rs
 +++ b/library/std/src/sys/fs/unix.rs
-@@ -85,6 +85,21 @@
+@@ -85,6 +85,22 @@
  use crate::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd};
  #[cfg(target_family = "unix")]
  use crate::os::unix::prelude::*;
@@ -16,6 +16,7 @@
 +        pub fn path_mode(dir_fd: u32, path_ptr: *const u8, path_len: u32, follow_symlinks: u32) -> u32;
 +        pub fn fd_mode(fd: i32) -> u32;
 +        pub fn chmod(dir_fd: u32, path_ptr: *const u8, path_len: u32, mode: u32) -> u32;
++        pub fn set_open_mode(mode: u32) -> u32;
 +    }
 +}
 +

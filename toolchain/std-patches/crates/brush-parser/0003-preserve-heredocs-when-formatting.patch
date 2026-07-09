@@ -1,0 +1,155 @@
+From: AgentOS Runtime <runtime@agentos.invalid>
+Subject: [PATCH] brush-parser: preserve heredocs when formatting functions
+
+Brush uses formatted function definitions to restore the inherited function
+environment in a real background child. Pretty-print indentation prefixes
+here-document terminators with spaces, making the formatted definition invalid
+for ordinary `<<` heredocs. Quoted delimiters have a second constraint: the
+opening word retains its quotes while the closing tag is quote-removed. Shell
+grammar does not require compound-command indentation, so keep bodies at column
+zero, use their newline separators instead of appending a standalone semicolon
+after a closing tag, and emit the parsed delimiter form required at each
+location.
+
+--- a/src/ast.rs
++++ b/src/ast.rs
+@@ -5,8 +5,6 @@ use std::fmt::{Display, Write};
+ 
+ use crate::{TokenLocation, tokenizer};
+ 
+-const DISPLAY_INDENT: &str = "    ";
+-
+ /// Provides the source location for the syntax item
+ pub trait SourceLocation {
+     /// The location of the syntax item, when known
+@@ -589,7 +587,7 @@ impl Display for CaseClauseCommand {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         write!(f, "case {} in", self.value)?;
+         for case in &self.cases {
+-            write!(indenter::indented(f).with_str(DISPLAY_INDENT), "{case}")?;
++            write!(f, "{case}")?;
+         }
+         writeln!(f)?;
+         write!(f, "esac")
+@@ -630,11 +628,10 @@ impl Display for CompoundList {
+             // Write the and-or list.
+             write!(f, "{}", item.0)?;
+ 
+-            // Write the separator... unless we're on the list item and it's a ';'.
+-            if i == self.0.len() - 1 && matches!(item.1, SeparatorOperator::Sequence) {
+-                // Skip
+-            } else {
++            // Newlines already separate synchronous items. This also keeps a
++            // here-document closing delimiter on a line by itself.
++            if matches!(item.1, SeparatorOperator::Async) {
+                 write!(f, "{}", item.1)?;
+             }
+         }
+ 
+@@ -685,11 +683,7 @@ impl Display for IfClauseCommand {
+ impl Display for IfClauseCommand {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         writeln!(f, "if {}; then", self.condition)?;
+-        write!(
+-            indenter::indented(f).with_str(DISPLAY_INDENT),
+-            "{}",
+-            self.then
+-        )?;
++        write!(f, "{}", self.then)?;
+         if let Some(elses) = &self.elses {
+             for else_clause in elses {
+                 write!(f, "{else_clause}")?;
+@@ -724,11 +718,7 @@ impl Display for ElseClause {
+             writeln!(f, "else")?;
+         }
+ 
+-        write!(
+-            indenter::indented(f).with_str(DISPLAY_INDENT),
+-            "{}",
+-            self.body
+-        )
++        write!(f, "{}", self.body)
+     }
+ }
+ 
+@@ -765,7 +755,7 @@ impl Display for CaseItem {
+         writeln!(f, ")")?;
+ 
+         if let Some(cmd) = &self.cmd {
+-            write!(indenter::indented(f).with_str(DISPLAY_INDENT), "{cmd}")?;
++            write!(f, "{cmd}")?;
+         }
+         writeln!(f)?;
+         write!(f, "{}", self.post_action)
+@@ -900,11 +890,7 @@ impl Display for BraceGroupCommand {
+ impl Display for BraceGroupCommand {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         writeln!(f, "{{ ")?;
+-        write!(
+-            indenter::indented(f).with_str(DISPLAY_INDENT),
+-            "{}",
+-            self.list
+-        )?;
++        write!(f, "{}", self.list)?;
+         writeln!(f)?;
+         write!(f, "}}")?;
+ 
+@@ -926,11 +912,7 @@ impl Display for DoGroupCommand {
+ impl Display for DoGroupCommand {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         writeln!(f, "do")?;
+-        write!(
+-            indenter::indented(f).with_str(DISPLAY_INDENT),
+-            "{}",
+-            self.list
+-        )?;
++        write!(f, "{}", self.list)?;
+         writeln!(f)?;
+         write!(f, "done")
+     }
+@@ -1312,7 +1294,7 @@ impl Display for IoRedirect {
+                 writeln!(f, "{here_end}")?;
+ 
+                 write!(f, "{doc}")?;
+-                writeln!(f, "{here_end}")?;
++                writeln!(f, "{}", tokenizer::unquote_str(&here_end.value))?;
+             }
+             Self::HereString(fd_num, s) => {
+                 if let Some(fd_num) = fd_num {
+--- a/src/parser.rs
++++ b/src/parser.rs
+@@ -1177,6 +1177,32 @@ mod tests {
+     }
+ 
+     #[test]
++    fn format_quoted_here_doc_with_unquoted_closing_tag() -> Result<()> {
++        let input = "f() {\ncat >/dev/null <<'ENDL'\nbody\nENDL\n:\n}\n";
++        let tokens = tokenize_str(input)?;
++        let result = super::token_parser::program(
++            &Tokens {
++                tokens: tokens.as_slice(),
++            },
++            &ParserOptions::default(),
++            &SourceInfo::default(),
++        )?;
++
++        let formatted = result.to_string();
++        assert!(formatted.contains("<<'ENDL'\nbody\nENDL\n:\n"));
++
++        let formatted_tokens = tokenize_str(&formatted)?;
++        super::token_parser::program(
++            &Tokens {
++                tokens: formatted_tokens.as_slice(),
++            },
++            &ParserOptions::default(),
++            &SourceInfo::default(),
++        )?;
++        Ok(())
++    }
++
++    #[test]
+     fn parse_function_with_pipe_redirection() -> Result<()> {
+         let inputs = [r"foo() { echo 1; } 2>&1 | cat", r"foo() { echo 1; } |& cat"];
+ 
+-- 
+2.43.0

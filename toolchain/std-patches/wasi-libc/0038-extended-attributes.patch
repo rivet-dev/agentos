@@ -1,0 +1,235 @@
+Expose Linux-compatible path and descriptor extended-attribute APIs through the
+AgentOS host filesystem imports.
+
+diff --git a/libc-bottom-half/sources/agentos_xattr.c b/libc-bottom-half/sources/agentos_xattr.c
+new file mode 100644
+index 0000000..30c9001
+--- /dev/null
++++ b/libc-bottom-half/sources/agentos_xattr.c
+@@ -0,0 +1,167 @@
++#include <errno.h>
++#include <stdint.h>
++#include <string.h>
++#include <sys/xattr.h>
++#include <wasi/libc-find-relpath.h>
++
++uint32_t __agentos_host_path_getxattr(
++    uint32_t fd, const char *path, size_t path_len,
++    const char *name, size_t name_len, void *value, size_t size,
++    uint32_t follow_symlinks, uint32_t *result_size) __attribute__((
++    __import_module__("host_fs"), __import_name__("path_getxattr")));
++uint32_t __agentos_host_fd_getxattr(
++    uint32_t fd, const char *name, size_t name_len, void *value, size_t size,
++    uint32_t *result_size) __attribute__((
++    __import_module__("host_fs"), __import_name__("fd_getxattr")));
++uint32_t __agentos_host_path_listxattr(
++    uint32_t fd, const char *path, size_t path_len, char *list, size_t size,
++    uint32_t follow_symlinks, uint32_t *result_size) __attribute__((
++    __import_module__("host_fs"), __import_name__("path_listxattr")));
++uint32_t __agentos_host_fd_listxattr(
++    uint32_t fd, char *list, size_t size, uint32_t *result_size) __attribute__((
++    __import_module__("host_fs"), __import_name__("fd_listxattr")));
++uint32_t __agentos_host_path_setxattr(
++    uint32_t fd, const char *path, size_t path_len,
++    const char *name, size_t name_len, const void *value, size_t size,
++    uint32_t flags, uint32_t follow_symlinks) __attribute__((
++    __import_module__("host_fs"), __import_name__("path_setxattr")));
++uint32_t __agentos_host_fd_setxattr(
++    uint32_t fd, const char *name, size_t name_len,
++    const void *value, size_t size, uint32_t flags) __attribute__((
++    __import_module__("host_fs"), __import_name__("fd_setxattr")));
++uint32_t __agentos_host_path_removexattr(
++    uint32_t fd, const char *path, size_t path_len,
++    const char *name, size_t name_len, uint32_t follow_symlinks) __attribute__((
++    __import_module__("host_fs"), __import_name__("path_removexattr")));
++uint32_t __agentos_host_fd_removexattr(
++    uint32_t fd, const char *name, size_t name_len) __attribute__((
++    __import_module__("host_fs"), __import_name__("fd_removexattr")));
++
++static int xattr_result(uint32_t result) {
++    if (result == 0) return 0;
++    errno = (int)result;
++    return -1;
++}
++
++static int xattr_relpath(const char *path, char **relative) {
++    static __thread char *relative_buf;
++    static __thread size_t relative_buf_len;
++    const char *abs;
++    int fd;
++    if (__wasilibc_find_relpath_alloc) {
++        fd = __wasilibc_find_relpath_alloc(
++            path, &abs, &relative_buf, &relative_buf_len, 1);
++    } else {
++        fd = __wasilibc_find_relpath(
++            path, &abs, &relative_buf, relative_buf_len);
++    }
++    *relative = relative_buf;
++    return fd;
++}
++
++static ssize_t path_getxattr_impl(const char *path, const char *name,
++                                  void *value, size_t size, int follow) {
++    const char *relative = path;
++    int fd = -1;
++    if (path == NULL) { errno = EFAULT; return -1; }
++    uint32_t result_size = 0;
++    uint32_t result = __agentos_host_path_getxattr(
++        (uint32_t)fd, relative, strlen(relative), name, strlen(name),
++        value, size, (uint32_t)follow, &result_size);
++    if (xattr_result(result) != 0) return -1;
++    return (ssize_t)result_size;
++}
++
++ssize_t getxattr(const char *path, const char *name, void *value, size_t size) {
++    return path_getxattr_impl(path, name, value, size, 1);
++}
++
++ssize_t lgetxattr(const char *path, const char *name, void *value, size_t size) {
++    return path_getxattr_impl(path, name, value, size, 0);
++}
++
++ssize_t fgetxattr(int fd, const char *name, void *value, size_t size) {
++    uint32_t result_size = 0;
++    uint32_t result = __agentos_host_fd_getxattr(
++        (uint32_t)fd, name, strlen(name), value, size, &result_size);
++    if (xattr_result(result) != 0) return -1;
++    return (ssize_t)result_size;
++}
++
++static ssize_t path_listxattr_impl(const char *path, char *list,
++                                   size_t size, int follow) {
++    const char *relative = path;
++    int fd = -1;
++    if (path == NULL) { errno = EFAULT; return -1; }
++    uint32_t result_size = 0;
++    uint32_t result = __agentos_host_path_listxattr(
++        (uint32_t)fd, relative, strlen(relative), list, size,
++        (uint32_t)follow, &result_size);
++    if (xattr_result(result) != 0) return -1;
++    return (ssize_t)result_size;
++}
++
++ssize_t listxattr(const char *path, char *list, size_t size) {
++    return path_listxattr_impl(path, list, size, 1);
++}
++
++ssize_t llistxattr(const char *path, char *list, size_t size) {
++    return path_listxattr_impl(path, list, size, 0);
++}
++
++ssize_t flistxattr(int fd, char *list, size_t size) {
++    uint32_t result_size = 0;
++    uint32_t result = __agentos_host_fd_listxattr(
++        (uint32_t)fd, list, size, &result_size);
++    if (xattr_result(result) != 0) return -1;
++    return (ssize_t)result_size;
++}
++
++static int path_setxattr_impl(const char *path, const char *name,
++                              const void *value, size_t size,
++                              int flags, int follow) {
++    const char *relative = path;
++    int fd = -1;
++    if (path == NULL) { errno = EFAULT; return -1; }
++    return xattr_result(__agentos_host_path_setxattr(
++        (uint32_t)fd, relative, strlen(relative), name, strlen(name),
++        value, size, (uint32_t)flags, (uint32_t)follow));
++}
++
++int setxattr(const char *path, const char *name, const void *value,
++             size_t size, int flags) {
++    return path_setxattr_impl(path, name, value, size, flags, 1);
++}
++
++int lsetxattr(const char *path, const char *name, const void *value,
++              size_t size, int flags) {
++    return path_setxattr_impl(path, name, value, size, flags, 0);
++}
++
++int fsetxattr(int fd, const char *name, const void *value,
++              size_t size, int flags) {
++    return xattr_result(__agentos_host_fd_setxattr(
++        (uint32_t)fd, name, strlen(name), value, size, (uint32_t)flags));
++}
++
++static int path_removexattr_impl(const char *path, const char *name, int follow) {
++    const char *relative = path;
++    int fd = -1;
++    if (path == NULL) { errno = EFAULT; return -1; }
++    return xattr_result(__agentos_host_path_removexattr(
++        (uint32_t)fd, relative, strlen(relative), name, strlen(name),
++        (uint32_t)follow));
++}
++
++int removexattr(const char *path, const char *name) {
++    return path_removexattr_impl(path, name, 1);
++}
++
++int lremovexattr(const char *path, const char *name) {
++    return path_removexattr_impl(path, name, 0);
++}
++
++int fremovexattr(int fd, const char *name) {
++    return xattr_result(__agentos_host_fd_removexattr(
++        (uint32_t)fd, name, strlen(name)));
++}
+diff --git a/libc-top-half/musl/include/sys/xattr.h b/libc-top-half/musl/include/sys/xattr.h
+index 472a4ad..34cb77e 100644
+--- a/libc-top-half/musl/include/sys/xattr.h
++++ b/libc-top-half/musl/include/sys/xattr.h
+@@ -9,7 +9,12 @@ extern "C" {
+ #define __NEED_size_t
+ #include <bits/alltypes.h>
+ 
++#ifndef ENODATA
++#define ENODATA 78
++#endif
++
+ #define XATTR_CREATE 1
+ #define XATTR_REPLACE 2
++#define XATTR_SIZE_MAX 65536
+ 
+ ssize_t getxattr(const char *, const char *, void *, size_t);
+diff --git a/libc-bottom-half/headers/public/__errno_values.h b/libc-bottom-half/headers/public/__errno_values.h
+index 138beeb..4e780a2 100644
+--- a/libc-bottom-half/headers/public/__errno_values.h
++++ b/libc-bottom-half/headers/public/__errno_values.h
+@@ -80,6 +80,10 @@
+ #define ETXTBSY __WASI_ERRNO_TXTBSY
+ #define EXDEV __WASI_ERRNO_XDEV
+ #define ENOTCAPABLE __WASI_ERRNO_NOTCAPABLE
++#define ENODATA 78
++#if ENODATA == ESOCKTNOSUPPORT
++#error "AgentOS private errno values must be distinct"
++#endif
+ 
+ #define EOPNOTSUPP ENOTSUP
+ #define EWOULDBLOCK EAGAIN
+diff --git a/libc-top-half/musl/src/errno/__strerror.h b/libc-top-half/musl/src/errno/__strerror.h
+index 2c3c1f7..9d282f7 100644
+--- a/libc-top-half/musl/src/errno/__strerror.h
++++ b/libc-top-half/musl/src/errno/__strerror.h
+@@ -75,9 +75,9 @@ E(ECANCELED,    "Operation canceled")
+ E(ENOSYS,       "Function not implemented")
+ E(ENOMSG,       "No message of desired type")
+ E(EIDRM,        "Identifier removed")
++E(ENODATA,      "No data available")
+ #ifdef __wasilibc_unmodified_upstream // errno value not in WASI
+ E(ENOSTR,       "Device not a stream")
+-E(ENODATA,      "No data available")
+ E(ETIME,        "Device timeout")
+ E(ENOSR,        "Out of streams resources")
+ #endif
+diff --git a/scripts/install-include-headers.sh b/scripts/install-include-headers.sh
+index 0a07370..a3321e8 100755
+--- a/scripts/install-include-headers.sh
++++ b/scripts/install-include-headers.sh
+@@ -63,6 +63,6 @@ MUSL_OMIT_HEADERS+=("sys/procfs.h" "sys/user.h" "sys/kd.h" "sys/vt.h" \
+     "sys/fanotify.h" "sys/personality.h" "elf.h" "link.h" "bits/link.h" \
+     "scsi/scsi.h" "scsi/scsi_ioctl.h" "scsi/sg.h" "sys/auxv.h" \
+-    "shadow.h" "mntent.h" "pty.h" "ulimit.h" "sys/xattr.h" \
++    "shadow.h" "mntent.h" "pty.h" "ulimit.h" \
+     "wordexp.h" "sys/membarrier.h" "sys/signalfd.h" \
+     "net/if_arp.h" \
+     "net/ethernet.h" "net/route.h" "netinet/if_ether.h" "netinet/ether.h" \

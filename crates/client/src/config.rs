@@ -13,6 +13,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::fs::VirtualFileSystem;
+pub use agentos_vm_config::{VmGroupConfig, VmUserAccountConfig, VmUserConfig};
 
 /// Resolved client options (= TS `AgentOsOptions`). All fields optional with documented defaults.
 ///
@@ -24,6 +25,8 @@ pub struct AgentOsConfig {
     /// durable state. Actor deployments inject `ActorUds`; standalone clients
     /// normally provide a `SqliteFile` descriptor.
     pub database: Option<agentos_vm_config::VmSqliteDescriptor>,
+    /// Initial virtual Linux credentials and account record. Defaults to `1000:1000` (`agentos`).
+    pub user: Option<VmUserConfig>,
     /// Software packages to install (flattened). Default `[]`.
     pub software: Vec<SoftwareInput>,
     /// Package directories to project into the VM's `/opt/agentos` tree (the
@@ -95,6 +98,11 @@ impl AgentOsConfigBuilder {
 
     pub fn allowed_node_builtins(mut self, builtins: Vec<String>) -> Self {
         self.config.allowed_node_builtins = Some(builtins);
+        self
+    }
+
+    pub fn user(mut self, user: VmUserConfig) -> Self {
+        self.config.user = Some(user);
         self
     }
 
@@ -706,6 +714,12 @@ pub struct WasmLimits {
         skip_serializing_if = "Option::is_none"
     )]
     pub runner_heap_limit_mb: Option<u64>,
+    #[serde(
+        default,
+        rename = "runnerCpuTimeLimitMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub runner_cpu_time_limit_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -892,12 +906,16 @@ pub enum MountConfig {
     Plain {
         path: String,
         driver: Arc<dyn VirtualFileSystem>,
+        guest_source: Option<String>,
+        guest_fstype: Option<String>,
         read_only: bool,
     },
     /// Native plugin mount (`{ id; config? }`).
     Native {
         path: String,
         plugin: MountPlugin,
+        guest_source: Option<String>,
+        guest_fstype: Option<String>,
         read_only: bool,
     },
     /// Overlay mount (`{ type: "overlay"; store; mode?; lowers }`).
@@ -932,6 +950,8 @@ pub fn node_modules_mount(host_node_modules_dir: impl Into<String>) -> MountConf
                 "readOnly": true,
             })),
         },
+        guest_source: Some(String::from("host_dir")),
+        guest_fstype: Some(String::from("host_dir")),
         read_only: true,
     }
 }

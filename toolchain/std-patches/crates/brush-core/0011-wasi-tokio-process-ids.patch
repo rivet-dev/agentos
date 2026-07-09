@@ -1,0 +1,46 @@
+From: AgentOS Runtime <runtime@agentos.invalid>
+Subject: [PATCH] brush-core: use managed Tokio processes on WASI
+
+AgentOS provides the Tokio WASI process backend with real virtual child IDs and
+nonblocking waits. Route Brush's WASI platform through it instead of the stub
+wrapper whose `Child::id()` always returns `None`, so `$!` and job control can
+address background children.
+
+diff --git a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -133,6 +133,7 @@ version = "1.48.0"
+ features = [
+     "io-util",
+     "macros",
++    "process",
+     "rt",
+     "sync",
+ ]
+diff --git a/src/sys.rs b/src/sys.rs
+--- a/src/sys.rs
++++ b/src/sys.rs
+@@ -21,6 +21,6 @@ pub(crate) use wasm as platform;
+ #[cfg(any(unix, windows))]
+ pub(crate) mod hostname;
+-#[cfg(any(unix, windows))]
++#[cfg(any(unix, windows, target_os = "wasi"))]
+ pub mod tokio_process;
+ 
+ pub mod fs;
+diff --git a/src/sys/wasm.rs b/src/sys/wasm.rs
+--- a/src/sys/wasm.rs
++++ b/src/sys/wasm.rs
+@@ -4,7 +4,10 @@ pub use crate::sys::stubs::fs;
+ pub use crate::sys::stubs::input;
+ pub(crate) use crate::sys::stubs::network;
+ pub(crate) use crate::sys::stubs::pipes;
++#[cfg(not(target_os = "wasi"))]
+ pub use crate::sys::stubs::process;
++#[cfg(target_os = "wasi")]
++pub use crate::sys::tokio_process as process;
+ pub use crate::sys::stubs::resource;
+ pub use crate::sys::stubs::signal;
+ pub use crate::sys::stubs::terminal;
+-- 
+2.43.0

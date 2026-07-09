@@ -11,15 +11,17 @@ use agentos_bridge::FilesystemAccess;
 use agentos_kernel::mount_plugin::{
     FileSystemPluginFactory, FileSystemPluginRegistry, OpenFileSystemPluginRequest, PluginError,
 };
-use agentos_kernel::mount_table::MountedVirtualFileSystem;
+use agentos_kernel::mount_table::MountedFileSystem;
 use agentos_kernel::permissions::{
     CommandAccessRequest, EnvAccessRequest, FsAccessRequest, FsOperation, NetworkAccessRequest,
     PermissionDecision, Permissions,
 };
-use agentos_kernel::vfs::MemoryFileSystem;
 use agentos_native_sidecar_core::permissions::filesystem_permission_capability;
 use std::fmt;
 use std::sync::Arc;
+use vfs::adapter::MountedEngineFileSystem;
+use vfs::engine::engines::{ChunkedFs, ChunkedFsOptions};
+use vfs::engine::mem::{InMemoryMetadataStore, MemoryBlockStore};
 
 #[cfg(test)]
 use crate::service::{dirname, normalize_path};
@@ -1032,17 +1034,27 @@ impl<B> crate::plugins::host_dir::HostDirReadLimitContext for MountPluginContext
 #[derive(Debug)]
 struct MemoryMountPlugin;
 
-impl<Context> FileSystemPluginFactory<Context> for MemoryMountPlugin {
+impl<B> FileSystemPluginFactory<MountPluginContext<B>> for MemoryMountPlugin {
     fn plugin_id(&self) -> &'static str {
         "memory"
     }
 
     fn open(
         &self,
-        _request: OpenFileSystemPluginRequest<'_, Context>,
-    ) -> Result<Box<dyn agentos_kernel::mount_table::MountedFileSystem>, PluginError> {
-        Ok(Box::new(MountedVirtualFileSystem::new(
-            MemoryFileSystem::new(),
+        request: OpenFileSystemPluginRequest<'_, MountPluginContext<B>>,
+    ) -> Result<Box<dyn MountedFileSystem>, PluginError> {
+        let filesystem = ChunkedFs::with_options(
+            InMemoryMetadataStore::new(),
+            MemoryBlockStore::new(),
+            ChunkedFsOptions {
+                inline_threshold: 4 * 1024,
+                chunk_size: 8 * 1024,
+                ..ChunkedFsOptions::default()
+            },
+        );
+        Ok(Box::new(MountedEngineFileSystem::with_runtime_context(
+            filesystem,
+            request.context.runtime_context.clone(),
         )))
     }
 }

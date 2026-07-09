@@ -81,6 +81,16 @@ add compatibility views, aliases, legacy adoption paths, or dual writes.
 
 ## Runtime And Registry
 
+- The WASM guest is a Linux-in-WASM environment — a POSIX superset of WASI, not
+  stock WASI. The kernel supplies a POSIX userspace via host imports: a process
+  table with real `fork`/`exec`/`wait` and signals, fd/socket tables, the brush
+  shell, and a uutils coreutils surface. A program written for Linux is expected
+  to run unmodified, subject to the available execution runtime (Node.js, WASM,
+  Python). Do NOT reason about guest capabilities from plain-WASI limits (e.g.
+  "no shell", "no subprocess spawning", "no process model") — those hold for raw
+  WASI Preview 1, not for agentOS. See
+  `website/public/docs/docs/architecture/processes.md` and
+  `posix-syscalls.md`, and `crates/kernel/CLAUDE.md`.
 - The projected `/opt/agentos` filesystem is the source of truth for software
   and agent resolution. Read it live; do not cache package lists captured at VM
   configuration time.

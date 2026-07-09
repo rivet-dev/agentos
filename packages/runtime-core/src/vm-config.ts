@@ -1,5 +1,8 @@
 export type { AcpLimitsConfig } from "./generated/AcpLimitsConfig.js";
 export type { CreateVmConfig } from "./generated/CreateVmConfig.js";
+export type { VmUserConfig } from "./generated/VmUserConfig.js";
+export type { VmUserAccountConfig } from "./generated/VmUserAccountConfig.js";
+export type { VmGroupConfig } from "./generated/VmGroupConfig.js";
 export type { FsPermissionRule } from "./generated/FsPermissionRule.js";
 export type { FsPermissionRuleSet } from "./generated/FsPermissionRuleSet.js";
 export type { FsPermissionScope } from "./generated/FsPermissionScope.js";

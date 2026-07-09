@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-chgrp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "chgrp-compatible AgentOS VM ownership command"
+
+[[bin]]
+name = "chgrp"
+path = "src/main.rs"
+
+[dependencies]
+wasi-ext = { path = "../../../../../toolchain/crates/wasi-ext" }

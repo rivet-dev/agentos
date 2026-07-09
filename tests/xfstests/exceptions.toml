@@ -1,0 +1,2136 @@
+schema = 1
+
+# Strict by default. Add only exact, reviewed [[exceptions]] records; see README.md.
+
+[[exceptions]]
+id = "generic/014"
+backend = "object_s3"
+disposition = "reduced"
+reason = "object_s3 is a whole-object filesystem; each upstream loop performs a random write and truncate on an object up to 256 MiB, so exact focused coverage and 100 randomized loops preserve the sparse assertions without repeating whole-object copies only for stress volume."
+tracking_issue = "ISSUES.md#f-014"
+reduction = "truncfile-iterations"
+full_iterations = 10000
+reduced_iterations = 100
+focused_coverage = "cargo test -p agentos-vfs-core --test conformance object_fs_whole_object_sparse_mutations_preserve_semantics -- --exact"
+
+[[exceptions]]
+id = "generic/018"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "This test exclusively exercises filesystem-specific online physical-block defragmentation; AgentOS memory storage has logical allocated extents but no physical block allocator or defragmentation operation."
+tracking_issue = "ISSUES.md#f-018-online-defragmentation"
+notrun_reason = "defragmentation not supported for fstype \"agentos\""
+
+[[exceptions]]
+id = "generic/018"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "This test exclusively exercises filesystem-specific online physical-block defragmentation; AgentOS chunked-local storage maps logical chunks through metadata and content-addressed blocks, with no contiguous physical allocator or defragmentation operation."
+tracking_issue = "ISSUES.md#f-018-online-defragmentation"
+notrun_reason = "defragmentation not supported for fstype \"agentos\""
+
+[[exceptions]]
+id = "generic/018"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "This test exclusively exercises filesystem-specific online physical-block defragmentation; AgentOS chunked-S3 storage maps logical chunks to independent objects, with no contiguous physical allocator or defragmentation operation."
+tracking_issue = "ISSUES.md#f-018-online-defragmentation"
+notrun_reason = "defragmentation not supported for fstype \"agentos\""
+
+[[exceptions]]
+id = "generic/018"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "This test exclusively exercises filesystem-specific online physical-block defragmentation; AgentOS whole-object S3 storage rewrites logical file objects and has no physical extent allocator or defragmentation operation."
+tracking_issue = "ISSUES.md#f-018-online-defragmentation"
+notrun_reason = "defragmentation not supported for fstype \"agentos\""
+
+[[exceptions]]
+id = "generic/034"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Device-mapper flakey block-device fault injection requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/073"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Device-mapper flakey page-write recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/073"
+backend = "memory"
+disposition = "deferred"
+reason = "Device-mapper flakey page-write recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/073"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey page-write recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/073"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey page-write recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/081"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Device-mapper snapshot exhaustion requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/081"
+backend = "memory"
+disposition = "deferred"
+reason = "Device-mapper snapshot exhaustion requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/081"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Device-mapper snapshot exhaustion requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/081"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Device-mapper snapshot exhaustion requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/090"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Device-mapper flakey crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/090"
+backend = "memory"
+disposition = "deferred"
+reason = "Device-mapper flakey crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/090"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/090"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/101"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Device-mapper flakey truncate crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/101"
+backend = "memory"
+disposition = "deferred"
+reason = "Device-mapper flakey truncate crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/101"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey truncate crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/101"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey truncate crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/104"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Device-mapper flakey hard-link fsync crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/104"
+backend = "memory"
+disposition = "deferred"
+reason = "Device-mapper flakey hard-link fsync crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/104"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey hard-link fsync crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/104"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey hard-link fsync crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/106"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Device-mapper flakey hard-link removal crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/106"
+backend = "memory"
+disposition = "deferred"
+reason = "Device-mapper flakey hard-link removal crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/106"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey hard-link removal crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/106"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey hard-link removal crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/107"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Device-mapper flakey cross-directory hard-link crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/107"
+backend = "memory"
+disposition = "deferred"
+reason = "Device-mapper flakey cross-directory hard-link crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/107"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey cross-directory hard-link crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/107"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey cross-directory hard-link crash-replay coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/108"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "LVM stripe partial-I/O failure injection with a host scsi_debug device requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/108"
+backend = "memory"
+disposition = "deferred"
+reason = "LVM stripe partial-I/O failure injection with a host scsi_debug device requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/108"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "LVM stripe partial-I/O failure injection with a host scsi_debug device requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/108"
+backend = "object_s3"
+disposition = "deferred"
+reason = "LVM stripe partial-I/O failure injection with a host scsi_debug device requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/110"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone metadata persistence rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/152"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block reclamation after punching every reflink copy."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/152"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block reclamation after punching every reflink copy."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/152"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block reclamation after punching every reflink copy."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/152"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block reclamation after punching every reflink copy."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/153"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block reclamation after collapsing ranges in every reflink copy."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/153"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block reclamation after collapsing ranges in every reflink copy."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/153"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block reclamation after collapsing ranges in every reflink copy."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/153"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block reclamation after collapsing ranges in every reflink copy."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/154"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block consumption after copy-on-write updates to every reflink copy."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/154"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block consumption after copy-on-write updates to every reflink copy."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/154"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block consumption after copy-on-write updates to every reflink copy."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/154"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block consumption after copy-on-write updates to every reflink copy."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/155"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block consumption after zero-range copy-on-write updates."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/155"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block consumption after zero-range copy-on-write updates."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/155"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block consumption after zero-range copy-on-write updates."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/155"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block consumption after zero-range copy-on-write updates."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/156"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers fallocate unsharing of shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/156"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers fallocate unsharing of shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/156"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers fallocate unsharing of shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/156"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers fallocate unsharing of shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/157"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers rejection of invalid reflink requests."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/157"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers rejection of invalid reflink requests."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/157"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers rejection of invalid reflink requests."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/157"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers rejection of invalid reflink requests."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/158"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers rejection of invalid dedupe requests."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/158"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers rejection of invalid dedupe requests."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/158"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers rejection of invalid dedupe requests."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/158"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers rejection of invalid dedupe requests."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/159"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers immutable-file reflink rejection."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/159"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers immutable-file reflink rejection."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/159"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers immutable-file reflink rejection."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/159"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers immutable-file reflink rejection."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/160"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers immutable-file dedupe rejection."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/160"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers immutable-file dedupe rejection."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/160"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers immutable-file dedupe rejection."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/160"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers immutable-file dedupe rejection."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/161"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test races deletion with rewriting a reflink twin."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/161"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test races deletion with rewriting a reflink twin."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/161"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test races deletion with rewriting a reflink twin."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/161"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test races deletion with rewriting a reflink twin."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/162"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test races dedupe with rewriting the destination."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/162"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test races dedupe with rewriting the destination."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/162"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test races dedupe with rewriting the destination."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/162"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test races dedupe with rewriting the destination."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/163"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test races dedupe with rewriting the source."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/163"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test races dedupe with rewriting the source."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/163"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test races dedupe with rewriting the source."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/163"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test races dedupe with rewriting the source."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by scratch filesystem type: agentos"
+
+
+[[exceptions]]
+id = "generic/110"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone metadata persistence rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/110"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone metadata persistence rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/110"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone metadata persistence rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/111"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone range behavior rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/111"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone range behavior rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/111"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone range behavior rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/111"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone range behavior rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/115"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone-versus-write races rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/115"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone-versus-write races rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/115"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone-versus-write races rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/115"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone-versus-write races rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/116"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone source-range validation rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/116"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone source-range validation rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/116"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone source-range validation rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/116"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone source-range validation rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/118"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers partial-range cloning rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/118"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers partial-range cloning rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/118"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers partial-range cloning rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/118"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers partial-range cloning rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/119"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers arbitrary clone file sets rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/119"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers arbitrary clone file sets rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/119"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers arbitrary clone file sets rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/119"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers arbitrary clone file sets rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/121"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers deduping equal ranges rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/121"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers deduping equal ranges rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/121"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers deduping equal ranges rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/121"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers deduping equal ranges rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/122"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers rejecting unequal-range dedupe rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/122"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers rejecting unequal-range dedupe rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/122"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers rejecting unequal-range dedupe rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/122"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers rejecting unequal-range dedupe rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/134"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone destination growth rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/134"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone destination growth rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/134"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone destination growth rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/134"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers clone destination growth rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/136"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers whole-file dedupe rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/136"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers whole-file dedupe rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/136"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers whole-file dedupe rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/136"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare extent deduplication support; this test covers whole-file dedupe rather than core pathname or I/O semantics."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/138"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers page-cache copy-on-write behavior."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/138"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers page-cache copy-on-write behavior."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/138"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers page-cache copy-on-write behavior."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/138"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers page-cache copy-on-write behavior."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/139"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers direct-I/O copy-on-write behavior."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/139"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers direct-I/O copy-on-write behavior."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/139"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers direct-I/O copy-on-write behavior."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/139"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers direct-I/O copy-on-write behavior."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/140"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers mmap copy-on-write behavior."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/140"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers mmap copy-on-write behavior."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/140"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers mmap copy-on-write behavior."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/140"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers mmap copy-on-write behavior."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/142"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers repeated clone copy-on-write isolation."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/142"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers repeated clone copy-on-write isolation."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/142"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers repeated clone copy-on-write isolation."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/142"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers repeated clone copy-on-write isolation."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/143"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers repeated direct-I/O clone isolation."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/143"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers repeated direct-I/O clone isolation."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/143"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers repeated direct-I/O clone isolation."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/143"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers repeated direct-I/O clone isolation."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/065"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Device-mapper flakey log-write recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/065"
+backend = "memory"
+disposition = "deferred"
+reason = "Device-mapper flakey log-write recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/065"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey log-write recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/065"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey log-write recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/066"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Device-mapper flakey buffered-write recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/066"
+backend = "memory"
+disposition = "deferred"
+reason = "Device-mapper flakey buffered-write recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/066"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey buffered-write recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/066"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey buffered-write recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/067"
+backend = "chunked_local"
+disposition = "excluded"
+reason = "The test exclusively exercises host block-device loop setup and mount/umount administration, outside logical AgentOS mount semantics."
+
+[[exceptions]]
+id = "generic/067"
+backend = "memory"
+disposition = "excluded"
+reason = "The test exclusively exercises host block-device loop setup and mount/umount administration, outside logical AgentOS mount semantics."
+
+[[exceptions]]
+id = "generic/067"
+backend = "chunked_s3"
+disposition = "excluded"
+reason = "The test exclusively exercises host block-device loop setup and mount/umount administration, outside logical AgentOS mount semantics."
+
+[[exceptions]]
+id = "generic/067"
+backend = "object_s3"
+disposition = "excluded"
+reason = "The test exclusively exercises host block-device loop setup and mount/umount administration, outside logical AgentOS mount semantics."
+
+[[exceptions]]
+id = "generic/057"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Device-mapper flakey crash-consistency coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/057"
+backend = "memory"
+disposition = "deferred"
+reason = "Device-mapper flakey crash-consistency coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/057"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey crash-consistency coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/057"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey crash-consistency coverage requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/059"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Device-mapper flakey delayed-write recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/059"
+backend = "memory"
+disposition = "deferred"
+reason = "Device-mapper flakey delayed-write recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/059"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey delayed-write recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/059"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey delayed-write recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/050"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Filesystem shutdown and recovery require a production host lifecycle hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/050"
+backend = "memory"
+disposition = "deferred"
+reason = "Filesystem shutdown and recovery require a production host lifecycle hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/050"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Filesystem shutdown and recovery require a production host lifecycle hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/050"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Filesystem shutdown and recovery require a production host lifecycle hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/052"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Filesystem shutdown error persistence requires a production host lifecycle hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/052"
+backend = "memory"
+disposition = "deferred"
+reason = "Filesystem shutdown error persistence requires a production host lifecycle hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/052"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Filesystem shutdown error persistence requires a production host lifecycle hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/052"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Filesystem shutdown error persistence requires a production host lifecycle hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/056"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Device-mapper flakey read/write fault recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/056"
+backend = "memory"
+disposition = "deferred"
+reason = "Device-mapper flakey read/write fault recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/056"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey read/write fault recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/056"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey read/write fault recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/039"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Device-mapper flakey write-fault injection requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/039"
+backend = "memory"
+disposition = "deferred"
+reason = "Device-mapper flakey write-fault injection requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/039"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey write-fault injection requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/039"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey write-fault injection requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/040"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Device-mapper flakey metadata-fault injection requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/040"
+backend = "memory"
+disposition = "deferred"
+reason = "Device-mapper flakey metadata-fault injection requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/040"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey metadata-fault injection requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/040"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey metadata-fault injection requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/041"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Device-mapper flakey I/O-fault recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/041"
+backend = "memory"
+disposition = "deferred"
+reason = "Device-mapper flakey I/O-fault recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/041"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey I/O-fault recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/041"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey I/O-fault recovery requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/042"
+backend = "chunked_local"
+disposition = "deferred"
+reason = "Filesystem shutdown and post-shutdown error behavior require a production host lifecycle hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/042"
+backend = "memory"
+disposition = "deferred"
+reason = "Filesystem shutdown and post-shutdown error behavior require a production host lifecycle hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/042"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Filesystem shutdown and post-shutdown error behavior require a production host lifecycle hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/042"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Filesystem shutdown and post-shutdown error behavior require a production host lifecycle hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/034"
+backend = "memory"
+disposition = "deferred"
+reason = "Device-mapper flakey block-device fault injection requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/034"
+backend = "chunked_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey block-device fault injection requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/034"
+backend = "object_s3"
+disposition = "deferred"
+reason = "Device-mapper flakey block-device fault injection requires a production host lifecycle/fault hook for logical AgentOS mounts."
+tracking_issue = "SPEC.md#milestone-3-host-lifecycle-and-fault-hooks"
+
+[[exceptions]]
+id = "generic/144"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers fallocate around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/144"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers fallocate around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/144"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers fallocate around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/144"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers fallocate around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/145"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers collapse-range around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/145"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers collapse-range around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/145"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers collapse-range around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/145"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers collapse-range around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/146"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers hole punching around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/146"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers hole punching around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/146"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers hole punching around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/146"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers hole punching around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/147"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers range insertion around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/147"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers range insertion around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/147"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers range insertion around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/147"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers range insertion around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/148"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers truncate copy-on-write at a shared partial block."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/148"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers truncate copy-on-write at a shared partial block."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/148"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers truncate copy-on-write at a shared partial block."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/148"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers truncate copy-on-write at a shared partial block."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/149"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers zero-range around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/149"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers zero-range around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/149"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers zero-range around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/149"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers zero-range around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/150"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block consumption across repeated clones."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/150"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block consumption across repeated clones."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/150"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block consumption across repeated clones."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/150"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block consumption across repeated clones."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/151"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block reclamation after deleting reflink copies."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/151"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block reclamation after deleting reflink copies."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/151"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block reclamation after deleting reflink copies."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/151"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers block reclamation after deleting reflink copies."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/171"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers page-cache CoW ENOSPC after reflink."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/171"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers page-cache CoW ENOSPC after reflink."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/171"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers page-cache CoW ENOSPC after reflink."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/171"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers page-cache CoW ENOSPC after reflink."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/172"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers page-cache CoW ENOSPC for a clone larger than half the filesystem."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/172"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers page-cache CoW ENOSPC for a clone larger than half the filesystem."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/172"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers page-cache CoW ENOSPC for a clone larger than half the filesystem."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/172"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers page-cache CoW ENOSPC for a clone larger than half the filesystem."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/173"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers mmap CoW ENOSPC after reflink."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/173"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers mmap CoW ENOSPC after reflink."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/173"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers mmap CoW ENOSPC after reflink."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/173"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers mmap CoW ENOSPC after reflink."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/174"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers direct-I/O CoW ENOSPC after reflink."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/174"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers direct-I/O CoW ENOSPC after reflink."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/174"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers direct-I/O CoW ENOSPC after reflink."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/174"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers direct-I/O CoW ENOSPC after reflink."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/178"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers hole punching without clobbering shared CoW extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/178"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers hole punching without clobbering shared CoW extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/178"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers hole punching without clobbering shared CoW extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/178"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers hole punching without clobbering shared CoW extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/179"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers unaligned hole punching around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/179"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers unaligned hole punching around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/179"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers unaligned hole punching around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/179"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers unaligned hole punching around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/180"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers unaligned zero-range around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/180"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers unaligned zero-range around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/180"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers unaligned zero-range around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/180"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; this test covers unaligned zero-range around shared extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/177"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "This test requires Linux device-mapper dm-flakey fault injection and journal replay, which do not match AgentOS virtual filesystem backends."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "This test requires dm flakey support"
+
+[[exceptions]]
+id = "generic/181"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; This test covers the Linux zero-length reflink-to-EOF convention."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/181"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; This test covers the Linux zero-length reflink-to-EOF convention."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/181"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; This test covers the Linux zero-length reflink-to-EOF convention."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/181"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; This test covers the Linux zero-length reflink-to-EOF convention."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/182"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare dedupe support; This test covers the Linux zero-length dedupe success convention."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/182"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare dedupe support; This test covers the Linux zero-length dedupe success convention."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/182"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare dedupe support; This test covers the Linux zero-length dedupe success convention."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/182"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare dedupe support; This test covers the Linux zero-length dedupe success convention."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Dedupe not supported by test filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/183"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; This test covers direct-I/O CoW writes across multiple reflinked extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/183"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; This test covers direct-I/O CoW writes across multiple reflinked extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/183"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; This test covers direct-I/O CoW writes across multiple reflinked extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/183"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; This test covers direct-I/O CoW writes across multiple reflinked extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/185"
+backend = "chunked_local"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; This test covers buffered CoW writes across multiple reflinked extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/185"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; This test covers buffered CoW writes across multiple reflinked extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/185"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; This test covers buffered CoW writes across multiple reflinked extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+[[exceptions]]
+id = "generic/185"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "AgentOS does not currently declare reflink support; This test covers buffered CoW writes across multiple reflinked extents."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "Reflink not supported by scratch filesystem type: agentos"
+
+
+[[exceptions]]
+id = "generic/177"
+backend = "memory"
+disposition = "allowed-notrun"
+reason = "This test requires Linux device-mapper dm-flakey fault injection and journal replay, which do not match AgentOS virtual filesystem backends."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "This test requires dm flakey support"
+
+[[exceptions]]
+id = "generic/177"
+backend = "chunked_s3"
+disposition = "allowed-notrun"
+reason = "This test requires Linux device-mapper dm-flakey fault injection and journal replay, which do not match AgentOS virtual filesystem backends."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "This test requires dm flakey support"
+
+[[exceptions]]
+id = "generic/177"
+backend = "object_s3"
+disposition = "allowed-notrun"
+reason = "This test requires Linux device-mapper dm-flakey fault injection and journal replay, which do not match AgentOS virtual filesystem backends."
+tracking_issue = "SPEC.md#generic-is-filesystem-agnostic-not-a-pure-posix-suite"
+notrun_reason = "This test requires dm flakey support"

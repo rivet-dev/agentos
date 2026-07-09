@@ -31,12 +31,16 @@ import type {
 export interface PlainMountConfig {
 	path: string;
 	driver: VirtualFileSystem;
+	guestSource?: string;
+	guestFstype?: string;
 	readOnly?: boolean;
 }
 
 export interface NativeMountConfig {
 	path: string;
 	plugin: NativeMountPluginDescriptor;
+	guestSource?: string;
+	guestFstype?: string;
 	readOnly?: boolean;
 }
 
@@ -46,6 +50,8 @@ export function serializeMountConfigForSidecar(
 	if ("driver" in mount) {
 		return {
 			guestPath: mount.path,
+			guestSource: mount.guestSource ?? "js_bridge",
+			guestFstype: mount.guestFstype ?? "js_bridge",
 			readOnly: mount.readOnly ?? false,
 			plugin: {
 				id: "js_bridge",
@@ -56,6 +62,8 @@ export function serializeMountConfigForSidecar(
 
 	return {
 		guestPath: mount.path,
+		guestSource: mount.guestSource ?? mount.plugin.id,
+		guestFstype: mount.guestFstype ?? mount.plugin.id,
 		readOnly: mount.readOnly ?? false,
 		plugin: {
 			id: mount.plugin.id,

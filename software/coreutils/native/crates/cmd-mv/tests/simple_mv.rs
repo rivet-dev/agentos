@@ -54,6 +54,29 @@ fn same_source_and_destination_does_not_delete_file() {
 
 #[cfg(unix)]
 #[test]
+fn same_filesystem_move_preserves_inode() {
+    use std::os::unix::fs::MetadataExt;
+
+    let dir = TestDir::new("preserve-inode");
+    let source = dir.path().join("source.txt");
+    let destination = dir.path().join("destination.txt");
+    fs::write(&source, "payload").expect("source file should be written");
+    let source_inode = fs::metadata(&source).expect("source metadata").ino();
+
+    let output = run_mv(&[&source, &destination]);
+
+    assert!(output.status.success());
+    assert!(!source.exists());
+    assert_eq!(
+        fs::metadata(&destination)
+            .expect("destination metadata")
+            .ino(),
+        source_inode
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn rejects_destination_inside_source_through_symlink() {
     use std::os::unix::fs::symlink;
 

@@ -305,6 +305,21 @@ pub(super) fn service_javascript_kernel_stdio_write_sync_rpc(
             .fd_write_nonblocking(EXECUTION_DRIVER_NAME, process.kernel_pid, fd, &chunk)
             .map_err(kernel_error)?
     };
+    if written > 0
+        && process.tty_master_fd.is_none()
+        && kernel
+            .fd_stat(EXECUTION_DRIVER_NAME, process.kernel_pid, fd)
+            .map_err(kernel_error)?
+            .filetype
+            == agentos_kernel::fd_table::FILETYPE_REGULAR_FILE
+    {
+        crate::filesystem::mirror_kernel_fd_contents_to_process_shadow(
+            kernel,
+            process,
+            process.kernel_pid,
+            fd,
+        )?;
+    }
 
     let event = if fd == 1 {
         ActiveExecutionEvent::Stdout(chunk[..written].to_vec())

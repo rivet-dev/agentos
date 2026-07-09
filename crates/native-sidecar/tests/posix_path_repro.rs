@@ -73,6 +73,8 @@ fn configure_mounts(
             0,
             MountDescriptor {
                 guest_path: String::from("/__secure_exec/commands/0"),
+                guest_source: String::from("host_dir"),
+                guest_fstype: String::from("host_dir"),
                 read_only: true,
                 plugin: MountPluginDescriptor {
                     id: String::from("host_dir"),
@@ -322,6 +324,8 @@ console.log(JSON.stringify({
         HashMap::from([(String::from("env.WORKTREE"), String::from("/workspace"))]),
         vec![MountDescriptor {
             guest_path: String::from("/workspace"),
+            guest_source: String::from("host_dir"),
+            guest_fstype: String::from("host_dir"),
             read_only: false,
             plugin: MountPluginDescriptor {
                 id: String::from("host_dir"),
@@ -446,6 +450,8 @@ console.log(JSON.stringify({
         HashMap::from([(String::from("env.WORKTREE"), String::from("/workspace"))]),
         vec![MountDescriptor {
             guest_path: String::from("/workspace"),
+            guest_source: String::from("host_dir"),
+            guest_fstype: String::from("host_dir"),
             read_only: false,
             plugin: MountPluginDescriptor {
                 id: String::from("host_dir"),
