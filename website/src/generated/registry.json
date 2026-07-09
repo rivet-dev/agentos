@@ -77,6 +77,18 @@
 			"image": "/images/registry/browserbase.svg"
 		},
 		{
+			"slug": "everything",
+			"title": "Everything",
+			"description": "Meta-package: all available WASM command packages.",
+			"types": [
+				"software"
+			],
+			"category": "meta",
+			"priority": 110,
+			"package": "@agentos-software/everything",
+			"status": "available"
+		},
+		{
 			"slug": "build-essential",
 			"title": "Build Essential",
 			"description": "Meta-package: common + git + curl.",
@@ -103,7 +115,7 @@
 		{
 			"slug": "git",
 			"title": "git",
-			"description": "Git version control (clone, commit, push, pull).",
+			"description": "Upstream Git version control for AgentOS VMs.",
 			"types": [
 				"software"
 			],
@@ -191,9 +203,22 @@
 			"image": "/images/registry/tar.svg"
 		},
 		{
+			"slug": "ssh",
+			"title": "ssh",
+			"description": "OpenSSH client for remote commands and git-over-ssh, with enforced known_hosts verification and RSA, ECDSA, Ed25519, DH, ECDH, ChaCha20, and AES crypto.",
+			"types": [
+				"software"
+			],
+			"category": "networking",
+			"priority": 55,
+			"package": "@agentos-software/ssh",
+			"status": "available",
+			"image": "/images/registry/ssh.svg"
+		},
+		{
 			"slug": "wget",
 			"title": "wget",
-			"description": "GNU wget file downloader.",
+			"description": "GNU Wget file downloader.",
 			"types": [
 				"software"
 			],

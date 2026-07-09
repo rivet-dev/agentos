@@ -32,6 +32,9 @@ const hasHostGit = spawnSync('git', ['--version'], { stdio: 'ignore' }).status =
 // git-remote-https aliases to it.
 const hasGitHttpHelper =
   hasGit && existsSync(resolve(COMMANDS_DIR, 'git-remote-http'));
+// The real OpenSSH client (software/ssh) lights up git-over-ssh; its presence
+// changes how ssh:// remotes fail when unreachable.
+const hasSshClient = existsSync(resolve(COMMANDS_DIR, 'ssh'));
 
 const gitConfig = [
   '-c safe.directory=*',
@@ -122,6 +125,24 @@ function runHostGit(args: string[], cwd?: string) {
   }
 }
 
+async function runHostGitResult(args: string[], cwd?: string) {
+  return await new Promise<{ status: number | null; stdout: string; stderr: string }>((resolveResult, reject) => {
+    const child = spawn('git', args, { cwd });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on('data', (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr.on('data', (chunk) => stderr.push(Buffer.from(chunk)));
+    child.on('error', reject);
+    child.on('close', (status) => {
+      resolveResult({
+        status,
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+      });
+    });
+  });
+}
+
 /** Helper: run command and assert success */
 async function run(kernel: Kernel, cmd: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const r = await kernel.exec(cmd);
@@ -134,6 +155,26 @@ async function run(kernel: Kernel, cmd: string): Promise<{ stdout: string; stder
 async function expectGitRef(kernel: Kernel, repo: string, ref: string) {
   const result = await run(kernel, git(`-C ${repo} rev-parse --verify ${ref}`));
   expect(result.stdout.trim()).toMatch(/^[0-9a-f]{40,64}$/);
+}
+
+function sidebandPacket(band: 1 | 2 | 3, payload: Uint8Array): Uint8Array {
+  const packetLength = payload.length + 5;
+  const header = new TextEncoder().encode(packetLength.toString(16).padStart(4, '0'));
+  const packet = new Uint8Array(packetLength);
+  packet.set(header, 0);
+  packet[4] = band;
+  packet.set(payload, 5);
+  return packet;
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  const output = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return output;
 }
 
 // TODO(P6): requires git WASM artifact, intentionally excluded from the fast software-build gate.
@@ -169,6 +210,71 @@ describeIf(hasGit, 'git command', () => {
     await run(kernel, git("-C /repo commit -m 'first commit'"));
 
     expect(await vfs.exists('/repo/.git/refs/heads/main')).toBe(true);
+  });
+
+  it('hidden sideband helper repeatedly streams band 1 and forwards progress without spooling', async () => {
+    ({ kernel, dispose } = await createGitKernel());
+
+    const encoder = new TextEncoder();
+    const payloadChunks = Array.from({ length: 128 }, (_, index) =>
+      encoder.encode(`pack-${index.toString().padStart(3, '0')}:${'x'.repeat(4096)}\n`));
+    const stream: Uint8Array[] = [];
+    for (const [index, payload] of payloadChunks.entries()) {
+      stream.push(sidebandPacket(1, payload));
+      if (index % 16 === 0)
+        stream.push(sidebandPacket(2, encoder.encode(`progress ${index}\n`)));
+    }
+    stream.push(encoder.encode('0000'));
+
+    const result = await kernel.exec('git sideband--helper demux parity-test 1', {
+      stdin: concatBytes(stream),
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toBe(new TextDecoder().decode(concatBytes(payloadChunks)));
+    expect(result.stderr).toContain('progress 0');
+    expect(result.stderr).toContain('progress 112');
+
+    const coloredProgress = concatBytes([
+      sidebandPacket(2, encoder.encode('\x1b[31mred\x1b[0m\n')),
+      encoder.encode('0000'),
+    ]);
+    const sanitized = await kernel.exec('git sideband--helper demux parity-test 0', {
+      stdin: coloredProgress,
+    });
+    expect(sanitized.exitCode, sanitized.stderr).toBe(0);
+    expect(sanitized.stderr).toContain('^[[31mred^[[0m');
+
+    const ansiAllowed = await kernel.exec('git sideband--helper demux parity-test 1', {
+      stdin: coloredProgress,
+    });
+    expect(ansiAllowed.exitCode, ansiAllowed.stderr).toBe(0);
+    expect(ansiAllowed.stderr).toContain('\x1b[31mred\x1b[0m');
+
+    const invalidPolicy = await kernel.exec('git sideband--helper demux parity-test 16', {
+      stdin: coloredProgress,
+    });
+    expect(invalidPolicy.exitCode).not.toBe(0);
+    expect(invalidPolicy.stderr).toContain('invalid sideband control-character policy');
+
+    const muxed = await kernel.exec('git sideband--helper mux 65520 0 5', {
+      stdin: 'receive progress\n',
+    });
+    expect(muxed.exitCode, muxed.stderr).toBe(0);
+    expect(muxed.stdout).toMatch(/^[0-9a-f]{4}\u0002receive progress\n$/);
+
+    const help = await kernel.exec('git help -a');
+    expect(help.stdout).not.toContain('sideband--helper');
+
+    const patchText = readFileSync(
+      resolve(import.meta.dirname, '../../../toolchain/c/patches/git/0002-wasi-synchronous-sideband-demux.patch'),
+      'utf8',
+    );
+    const addedImplementation = patchText
+      .split('\n')
+      .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
+      .join('\n');
+    expect(addedImplementation).not.toContain('tmp_sideband_');
+    expect(addedImplementation).not.toMatch(/odb_mkstemp|spool_fd|spool_tempfile/);
   });
 
   it('branch lists branches with current marked', async () => {
@@ -428,12 +534,43 @@ describeIf(hasGit, 'git command', () => {
     expect(result.stderr).not.toContain('GitSubcommandUnsupported');
   });
 
-  it('clone rejects SSH-style remotes with a real Git spawn failure', async () => {
+  it('local push streams through the shipped receive-pack sideband mux', async () => {
     ({ kernel, dispose } = await createGitKernel());
 
-    const result = await kernel.exec(git('clone git@github.com:rivet-dev/agentos.git /tmp/clone'));
+    await run(kernel, git('init --bare /tmp/origin.git'));
+    await run(kernel, git('init /tmp/work'));
+    await kernel.writeFile('/tmp/work/pushed.txt', 'receive-pack streaming\n');
+    await kernel.writeFile('/tmp/git-system-config', '[safe]\n\tdirectory = *\n');
+    await run(kernel, git('-C /tmp/work add pushed.txt'));
+    await run(kernel, git("-C /tmp/work commit -m 'stream to receive-pack'"));
+
+    const pushed = await kernel.exec(
+      git('-C /tmp/work push /tmp/origin.git main:refs/heads/main'),
+      { env: { GIT_CONFIG_SYSTEM: '/tmp/git-system-config', GIT_TRACE: '1' } },
+    );
+    expect(pushed.exitCode, pushed.stderr).toBe(0);
+    expect(pushed.stderr).toContain('sideband--helper');
+
+    const ref = await run(kernel, git('-C /tmp/origin.git rev-parse --verify refs/heads/main'));
+    expect(ref.stdout.trim()).toMatch(/^[0-9a-f]{40,64}$/);
+  });
+
+  it('clone over ssh:// reaches the real ssh client and surfaces its transport error', async () => {
+    ({ kernel, dispose } = await createGitKernel());
+
+    // Port 1 on loopback is never exempted for this kernel, so the real
+    // OpenSSH client (now on PATH — git connect.c execs `ssh`) fails with a
+    // genuine connection error instead of a spawn failure. Full git-over-ssh
+    // success coverage lives in software/ssh/test/ssh.test.ts.
+    const result = await kernel.exec(git('clone ssh://git@127.0.0.1:1/repo.git /tmp/clone'));
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toMatch(/cannot run ssh|unable to fork|ssh|fatal/i);
+    if (hasSshClient) {
+      // The error must come from ssh's transport, proving git spawned it.
+      expect(result.stderr).toMatch(/ssh:|Connection closed|Could not read from remote repository/i);
+      expect(result.stderr).not.toMatch(/cannot run ssh|unable to fork/i);
+    } else {
+      expect(result.stderr).toMatch(/cannot run ssh|unable to fork|ssh|fatal/i);
+    }
     expect(result.stderr).not.toContain('GitSubcommandUnsupported');
   });
 
@@ -595,7 +732,7 @@ describeIf(hasGit, 'git command', () => {
       const res = await kernel.exec(git(`clone ${trustedUrl()} /tmp/clone`), {
         env: { GIT_CURL_VERBOSE: '1' },
       });
-      expect(res.exitCode).toBe(0);
+      expect(res.exitCode, res.stderr).toBe(0);
       // Proof a real TLS handshake happened in-guest (mbedTLS via libcurl).
       expect(res.stderr).toMatch(/SSL connection|TLS|SSL certificate|CAfile/i);
 
@@ -622,6 +759,21 @@ describeIf(hasGit, 'git command', () => {
       await expectGitRef(kernel, '/tmp/clone', `refs/remotes/origin/${bareBranch}`);
     });
 
+    it('repeated fetches keep streaming refs without sideband temp packs', async () => {
+      ({ kernel, vfs, dispose } = await createGitKernelWithNet([trustedPort], trustedCaPem));
+      await run(kernel, git(`clone ${trustedUrl()} /tmp/clone`));
+
+      for (let index = 0; index < 3; index++) {
+        const branch = `stream-round-${index}`;
+        runHostGit(['-C', join(repoRoot, 'origin.git'), 'branch', branch, 'main']);
+        await run(kernel, git('-C /tmp/clone fetch origin'));
+        await expectGitRef(kernel, '/tmp/clone', `refs/remotes/origin/${branch}`);
+      }
+
+      const fsck = await kernel.exec(git('-C /tmp/clone fsck --full'));
+      expect(fsck.exitCode, fsck.stderr).toBe(0);
+    });
+
     it('push sends a small commit over HTTPS smart-HTTP', async () => {
       ({ kernel, vfs, dispose } = await createGitKernelWithNet([trustedPort], trustedCaPem));
       await run(kernel, git(`clone ${trustedUrl()} /tmp/clone`));
@@ -630,7 +782,7 @@ describeIf(hasGit, 'git command', () => {
       await run(kernel, git('-C /tmp/clone add pushed.txt'));
       await run(kernel, git("-C /tmp/clone commit -m 'push small'"));
       const pushed = await kernel.exec(git('-C /tmp/clone push origin HEAD:refs/heads/small-push'));
-      expect(pushed.exitCode).toBe(0);
+      expect(pushed.exitCode, pushed.stderr).toBe(0);
 
       // Verify the ref really landed in the origin bare repo (host side).
       const originRef = spawnSync(
@@ -653,8 +805,15 @@ describeIf(hasGit, 'git command', () => {
       await kernel.writeFile('/tmp/clone/big.bin', big);
       await run(kernel, git('-C /tmp/clone add big.bin'));
       await run(kernel, git("-C /tmp/clone commit -m 'push large'"));
-      const pushed = await kernel.exec(git('-C /tmp/clone push origin HEAD:refs/heads/large-push'));
-      expect(pushed.exitCode).toBe(0);
+      const pushed = await kernel.exec(
+        git('-C /tmp/clone push origin HEAD:refs/heads/large-push'),
+        { env: { GIT_TRACE: '1' } },
+      );
+      expect(pushed.exitCode, pushed.stderr).toBe(0);
+      const demuxStart = pushed.stderr.indexOf('sideband--helper demux send-pack');
+      const packStart = pushed.stderr.indexOf('pack-objects');
+      expect(demuxStart, pushed.stderr).toBeGreaterThanOrEqual(0);
+      expect(packStart, pushed.stderr).toBeGreaterThan(demuxStart);
 
       const originRef = spawnSync(
         'git',
@@ -669,6 +828,45 @@ describeIf(hasGit, 'git command', () => {
         { encoding: 'utf8' },
       );
       expect(cat.status).toBe(0);
+    });
+
+    it('pack-objects failure reports the same smart-HTTP transport failure as native Git', async () => {
+      const trustedCaPath = join(repoRoot, 'trusted-ca.pem');
+      writeFileSync(trustedCaPath, trustedCaPem);
+      const nativeFailure = await runHostGitResult([
+        '-C', join(repoRoot, 'worktree'),
+        '-c', `http.sslCAInfo=${trustedCaPath}`,
+        '-c', 'pack.windowMemory=bogus',
+        'push', trustedUrl(),
+        'main:refs/heads/native-pack-failure',
+      ]);
+      expect(nativeFailure.status).not.toBe(0);
+      expect(nativeFailure.stderr).toMatch(/bad numeric config value/);
+
+      ({ kernel, vfs, dispose } = await createGitKernelWithNet([trustedPort], trustedCaPem));
+      await run(kernel, git(`clone ${trustedUrl()} /tmp/clone`));
+      await kernel.writeFile('/tmp/clone/failing-pack.txt', 'must not reach origin\n');
+      await run(kernel, git('-C /tmp/clone add failing-pack.txt'));
+      await run(kernel, git("-C /tmp/clone commit -m 'pack failure'"));
+
+      const wasmFailure = await kernel.exec(
+        git('-C /tmp/clone -c pack.windowMemory=bogus push origin HEAD:refs/heads/wasm-pack-failure'),
+      );
+      expect(wasmFailure.exitCode).not.toBe(0);
+      expect(wasmFailure.stderr).toMatch(/bad numeric config value/);
+      const transportFailure = /remote unpack failed: eof before pack header|remote end hung up unexpectedly/i;
+      expect(nativeFailure.stderr).toMatch(transportFailure);
+      expect(wasmFailure.stderr).toMatch(transportFailure);
+      expect(wasmFailure.stderr.match(transportFailure)?.[0].toLowerCase()).toBe(
+        nativeFailure.stderr.match(transportFailure)?.[0].toLowerCase(),
+      );
+
+      const absent = spawnSync(
+        'git',
+        ['-C', join(repoRoot, 'origin.git'), 'rev-parse', '--verify', 'refs/heads/wasm-pack-failure'],
+        { encoding: 'utf8' },
+      );
+      expect(absent.status).not.toBe(0);
     });
 
     it('clone fails with a real certificate-verification error on an untrusted CA', async () => {

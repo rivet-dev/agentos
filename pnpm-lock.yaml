@@ -3648,6 +3648,33 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.19.15)
 
+  software/ssh:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      '@types/ssh2':
+        specifier: ^1.15.1
+        version: 1.15.5
+      ssh2:
+        specifier: ^1.16.0
+        version: 1.17.0
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
   software/tar:
     devDependencies:
       '@agentos-software/manifest':
@@ -6023,6 +6050,9 @@ packages:
 
   '@types/semver@7.7.1':
     resolution: {integrity: sha512-FmgJfu+MOcQ370SD0ev7EI8TlCAfKYU+B4m5T3yXc1CiRN94g/SZPtsCkk506aUDtlMnFZvasDwHHUcZUEaYuA==}
+
+  '@types/ssh2@1.15.5':
+    resolution: {integrity: sha512-N1ASjp/nXH3ovBHddRJpli4ozpk6UdDYIX4RJWFa9L1YKnzdhTlVmiGHm4DZnj/jLbqZpes4aeR30EFGQtvhQQ==}
 
   '@types/uuid@10.0.0':
     resolution: {integrity: sha512-7gqG38EyHgyP1S+7+xomFtL+ZNHcKv6DwNaCZmJmo1vgMugyF3TCnXVg4t1uk89mLNwnLtnY3TpOpCOyp1/xHQ==}
@@ -11924,6 +11954,10 @@ snapshots:
   '@types/retry@0.12.2': {}
 
   '@types/semver@7.7.1': {}
+
+  '@types/ssh2@1.15.5':
+    dependencies:
+      '@types/node': 18.19.130
 
   '@types/uuid@10.0.0': {}
 

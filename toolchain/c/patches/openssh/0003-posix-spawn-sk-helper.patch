@@ -1,0 +1,134 @@
+Use posix_spawn for the OpenSSH security-key helper.
+
+The helper immediately execs and communicates over a Unix socketpair, so
+ordered spawn actions preserve the native descriptor and exec-error behavior
+without requiring an address-space snapshot.
+
+--- a/ssh-sk-client.c
++++ b/ssh-sk-client.c
+@@ -24,6 +24,7 @@
+ #include <limits.h>
+ #include <errno.h>
+ #include <signal.h>
++#include <spawn.h>
+ #include <stdarg.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -40,16 +41,18 @@
+ #include "ssh-sk.h"
+ #include "misc.h"
+ 
++extern char **environ;
++
+ /* #define DEBUG_SK 1 */
+ 
+ static int
+ start_helper(int *fdp, pid_t *pidp, void (**osigchldp)(int))
+ {
+ 	void (*osigchld)(int);
+-	int oerrno, pair[2], execpipe[2];
+-	ssize_t n;
++	int oerrno, pair[2], r;
+ 	pid_t pid;
+-	char execbuf[100], *helper, *verbosity = NULL;
++	char *helper, *verbosity = NULL, *argv[3];
++	posix_spawn_file_actions_t actions;
+ 
+ 	*fdp = -1;
+ 	*pidp = 0;
+@@ -62,61 +65,55 @@
+ 	verbosity = "-vvv";
+ #endif
+ 
+-	/* Create a O_CLOEXEC pipe to capture the execve() failure */
+-	if (pipe(execpipe) == -1) {
+-		error("pipe:  %s", strerror(errno));
+-		return SSH_ERR_SYSTEM_ERROR;
+-	}
+ 	/* Start helper */
+ 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == -1) {
+ 		error("socketpair: %s", strerror(errno));
+-		close(execpipe[0]);
+-		close(execpipe[1]);
+ 		return SSH_ERR_SYSTEM_ERROR;
+ 	}
+ 	osigchld = ssh_signal(SIGCHLD, SIG_DFL);
+-	if ((pid = fork()) == -1) {
+-		oerrno = errno;
+-		error("fork: %s", strerror(errno));
++	argv[0] = helper;
++	argv[1] = verbosity;
++	argv[2] = NULL;
++	memset(&actions, 0, sizeof(actions));
++	if ((r = posix_spawn_file_actions_init(&actions)) != 0) {
++		error("posix_spawn file actions: %s", strerror(r));
+ 		close(pair[0]);
+ 		close(pair[1]);
+-		close(execpipe[0]);
+-		close(execpipe[1]);
+ 		ssh_signal(SIGCHLD, osigchld);
+-		errno = oerrno;
++		errno = r;
+ 		return SSH_ERR_SYSTEM_ERROR;
+ 	}
+-	if (pid == 0) {
+-		close(execpipe[0]);
+-		FD_CLOSEONEXEC(execpipe[1]);
+-		if ((dup2(pair[1], STDIN_FILENO) == -1) ||
+-		    (dup2(pair[1], STDOUT_FILENO) == -1)) {
+-			snprintf(execbuf, sizeof execbuf,
+-			    "dup2: %s", strerror(errno));
+-			write(execpipe[1], execbuf, strlen(execbuf)+1);
+-			_exit(1);
+-		}
++	if ((r = posix_spawn_file_actions_addclose(&actions, pair[0])) != 0 ||
++	    (r = posix_spawn_file_actions_adddup2(&actions, pair[1],
++	    STDIN_FILENO)) != 0 ||
++	    (r = posix_spawn_file_actions_adddup2(&actions, pair[1],
++	    STDOUT_FILENO)) != 0 ||
++	    (r = posix_spawn_file_actions_addclose(&actions, pair[1])) != 0 ||
++	    (r = posix_spawn_file_actions_addclosefrom_np(&actions,
++	    STDERR_FILENO + 1)) != 0) {
++		error("posix_spawn file actions: %s", strerror(r));
++		posix_spawn_file_actions_destroy(&actions);
+ 		close(pair[0]);
+ 		close(pair[1]);
+-		closefrom(STDERR_FILENO + 1);
+-		debug_f("starting %s %s", helper,
+-		    verbosity == NULL ? "" : verbosity);
+-		execlp(helper, helper, verbosity, (char *)NULL);
+-		snprintf(execbuf, sizeof execbuf,
+-		    "execlp: %s", strerror(errno));
+-		write(execpipe[1], execbuf, strlen(execbuf)+1);
+-		_exit(1);
++		ssh_signal(SIGCHLD, osigchld);
++		errno = r;
++		return SSH_ERR_SYSTEM_ERROR;
+ 	}
+-	close(pair[1]);
+-
+-	close(execpipe[1]);
+-	n = read(execpipe[0], execbuf, sizeof execbuf);
+-	close(execpipe[0]);
+-	if (n > 0) {
+-		execbuf[n - 1] = '\0';
+-		error_f("%s", execbuf);
+-		return SSH_ERR_AGENT_FAILURE;
++	debug_f("starting %s %s", helper,
++	    verbosity == NULL ? "" : verbosity);
++	r = posix_spawnp(&pid, helper, &actions, NULL, argv, environ);
++	posix_spawn_file_actions_destroy(&actions);
++	if (r != 0) {
++		oerrno = r;
++		error("posix_spawn(%s): %s", helper, strerror(r));
++		close(pair[0]);
++		close(pair[1]);
++		ssh_signal(SIGCHLD, osigchld);
++		errno = oerrno;
++		return r == EAGAIN || r == ENOMEM ?
++		    SSH_ERR_SYSTEM_ERROR : SSH_ERR_AGENT_FAILURE;
+ 	}
++	close(pair[1]);
+ 
+ 	/* success */
+ 	debug3_f("started pid=%ld", (long)pid);

@@ -1,0 +1,14 @@
+{
+	"commands": [
+		"ssh",
+		"ssh-keysign",
+		"ssh-sk-helper"
+	],
+	"registry": {
+		"title": "ssh",
+		"description": "OpenSSH client for remote commands and git-over-ssh, with enforced known_hosts verification and RSA, ECDSA, Ed25519, DH, ECDH, ChaCha20, and AES crypto.",
+		"priority": 55,
+		"image": "/images/registry/ssh.svg",
+		"category": "networking"
+	}
+}

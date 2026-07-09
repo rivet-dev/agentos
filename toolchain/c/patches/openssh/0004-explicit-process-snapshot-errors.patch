@@ -1,0 +1,67 @@
+Fail explicitly for SSH detach operations that need a live process snapshot.
+
+AgentOS can spawn exec-only child programs, but it cannot clone the V8/WASM
+continuation, heap, authenticated transport, channel table, and pending packet
+state of a running SSH client. Report this architecture boundary at the exact
+detach operation instead of falling through to a generic fork/daemon error or
+partially mutating interactive state.
+
+--- a/ssh.c
++++ b/ssh.c
+@@ -1838,6 +1838,11 @@
+ {
+ 	pid_t pid;
+ 
++#ifdef AGENTOS_NO_PROCESS_SNAPSHOT
++	fatal_f("ControlPersist detach requires cloning live authenticated "
++	    "process state, which this VM cannot snapshot");
++#endif
++
+ 	debug_f("backgrounding master process");
+ 
+ 	/*
+@@ -1880,6 +1885,10 @@
+ {
+ 	if (need_controlpersist_detach)
+ 		control_persist_detach();
++#ifdef AGENTOS_NO_PROCESS_SNAPSHOT
++	fatal("backgrounding with ForkAfterAuthentication requires cloning live "
++	    "authenticated process state, which this VM cannot snapshot");
++#endif
+ 	debug("forking to background");
+ 	options.fork_after_authentication = 0;
+ 	if (daemon(1, 1) == -1)
+--- a/mux.c
++++ b/mux.c
+@@ -2382,6 +2382,14 @@
+ 		else
+ 			muxclient_command = SSHMUX_COMMAND_OPEN;
+ 	}
++#ifdef AGENTOS_NO_PROCESS_SNAPSHOT
++	/* Reject before forwarding or opening a session on the master. */
++	if (options.fork_after_authentication &&
++	    (muxclient_command == SSHMUX_COMMAND_OPEN ||
++	    muxclient_command == SSHMUX_COMMAND_STDIO_FWD))
++		fatal("backgrounding a multiplexed SSH client requires cloning live "
++		    "authenticated process state, which this VM cannot snapshot");
++#endif
+ 
+ 	switch (options.control_master) {
+ 	case SSHCTL_MASTER_AUTO:
+--- a/clientloop.c
++++ b/clientloop.c
+@@ -1290,6 +1290,14 @@
+ 			case '&':
+ 				if (c->ctl_chan != -1)
+ 					goto noescape;
++#ifdef AGENTOS_NO_PROCESS_SNAPSHOT
++				if ((r = sshbuf_putf(berr, "%c& [backgrounding "
++				    "requires cloning live authenticated process "
++				    "state, which this VM cannot snapshot]\r\n",
++				    efc->escape_char)) != 0)
++					fatal_fr(r, "sshbuf_putf");
++				continue;
++#endif
+ 				/*
+ 				 * Detach the program (continue to serve
+ 				 * connections, but put in background and no

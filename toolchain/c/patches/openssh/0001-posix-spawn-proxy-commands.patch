@@ -1,0 +1,214 @@
+Use posix_spawn for ProxyCommand and ProxyUseFdpass helpers. These children
+immediately execute a shell, so POSIX's atomic spawn operation preserves the
+native OpenSSH pipe/socketpair descriptor wiring, environment, signal default,
+and helper lifecycle without depending on an address-space snapshot.
+
+--- a/sshconnect.c
++++ b/sshconnect.c
+@@ -31,6 +31,7 @@
+ #include <pwd.h>
+ #include <poll.h>
+ #include <signal.h>
++#include <spawn.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <stdarg.h>
+@@ -66,6 +67,7 @@
+ extern int debug_flag;
+ extern Options options;
+ extern char *__progname;
++extern char **environ;
+ 
+ static int show_other_keys(struct hostkeys *, struct sshkey *);
+ static void warn_changed_key(struct sshkey *);
+@@ -144,9 +146,11 @@
+     const char *host_arg, u_short port, const char *proxy_command)
+ {
+ 	char *command_string;
+-	int sp[2], sock;
++	int sp[2], sock, spawn_error;
+ 	pid_t pid;
+ 	char *shell;
++	char *spawn_argv[4];
++	posix_spawn_file_actions_t actions;
+ 
+ 	if ((shell = getenv("SHELL")) == NULL)
+ 		shell = _PATH_BSHELL;
+@@ -159,47 +163,31 @@
+ 	    host, host_arg, port);
+ 	debug("Executing proxy dialer command: %.500s", command_string);
+ 
+-	/* Fork and execute the proxy command. */
+-	if ((pid = fork()) == 0) {
+-		char *argv[10];
+-
+-		close(sp[1]);
+-		/* Redirect stdin and stdout. */
+-		if (sp[0] != 0) {
+-			if (dup2(sp[0], 0) == -1)
+-				perror("dup2 stdin");
+-		}
+-		if (sp[0] != 1) {
+-			if (dup2(sp[0], 1) == -1)
+-				perror("dup2 stdout");
+-		}
+-		if (sp[0] >= 2)
+-			close(sp[0]);
+-
+-		/*
+-		 * Stderr is left for non-ControlPersist connections is so
+-		 * error messages may be printed on the user's terminal.
+-		 */
+-		if (!debug_flag && options.control_path != NULL &&
+-		    options.control_persist && stdfd_devnull(0, 0, 1) == -1)
+-			error_f("stdfd_devnull failed");
+-
+-		argv[0] = shell;
+-		argv[1] = "-c";
+-		argv[2] = command_string;
+-		argv[3] = NULL;
+-
+-		/*
+-		 * Execute the proxy command.
+-		 * Note that we gave up any extra privileges above.
+-		 */
+-		execv(argv[0], argv);
+-		perror(argv[0]);
+-		exit(1);
+-	}
++	spawn_argv[0] = shell;
++	spawn_argv[1] = "-c";
++	spawn_argv[2] = command_string;
++	spawn_argv[3] = NULL;
++	if ((spawn_error = posix_spawn_file_actions_init(&actions)) != 0 ||
++	    (spawn_error = posix_spawn_file_actions_addclose(&actions,
++	    sp[1])) != 0 ||
++	    (sp[0] != 0 && (spawn_error = posix_spawn_file_actions_adddup2(
++	    &actions, sp[0], 0)) != 0) ||
++	    (sp[0] != 1 && (spawn_error = posix_spawn_file_actions_adddup2(
++	    &actions, sp[0], 1)) != 0) ||
++	    (sp[0] >= 2 && (spawn_error = posix_spawn_file_actions_addclose(
++	    &actions, sp[0])) != 0) ||
++	    (!debug_flag && options.control_path != NULL &&
++	    options.control_persist && (spawn_error =
++	    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO,
++	    _PATH_DEVNULL, O_RDWR, 0)) != 0))
++		fatal("posix_spawn file actions failed: %.100s",
++		    strerror(spawn_error));
++	spawn_error = posix_spawn(&pid, shell, &actions, NULL, spawn_argv,
++	    environ);
++	posix_spawn_file_actions_destroy(&actions);
+ 	/* Parent. */
+-	if (pid == -1)
+-		fatal("fork failed: %.100s", strerror(errno));
++	if (spawn_error != 0)
++		fatal("posix_spawn failed: %.100s", strerror(spawn_error));
+ 	close(sp[0]);
+ 	free(command_string);
+ 
+@@ -226,9 +214,13 @@
+     u_short port, const char *proxy_command)
+ {
+ 	char *command_string;
+-	int pin[2], pout[2];
++	int pin[2], pout[2], spawn_error;
+ 	pid_t pid;
+ 	char *shell;
++	char *spawn_argv[4];
++	posix_spawn_file_actions_t actions;
++	posix_spawnattr_t attributes;
++	sigset_t signal_defaults;
+ 
+ 	if ((shell = getenv("SHELL")) == NULL || *shell == '\0')
+ 		shell = _PATH_BSHELL;
+@@ -242,48 +234,49 @@
+ 	    host, host_arg, port);
+ 	debug("Executing proxy command: %.500s", command_string);
+ 
+-	/* Fork and execute the proxy command. */
+-	if ((pid = fork()) == 0) {
+-		char *argv[10];
+-
+-		/* Redirect stdin and stdout. */
+-		close(pin[1]);
+-		if (pin[0] != 0) {
+-			if (dup2(pin[0], 0) == -1)
+-				perror("dup2 stdin");
+-			close(pin[0]);
+-		}
+-		close(pout[0]);
+-		if (dup2(pout[1], 1) == -1)
+-			perror("dup2 stdout");
+-		/* Cannot be 1 because pin allocated two descriptors. */
+-		close(pout[1]);
+-
+-		/*
+-		 * Stderr is left for non-ControlPersist connections is so
+-		 * error messages may be printed on the user's terminal.
+-		 */
+-		if (!debug_flag && options.control_path != NULL &&
+-		    options.control_persist && stdfd_devnull(0, 0, 1) == -1)
+-			error_f("stdfd_devnull failed");
+-
+-		argv[0] = shell;
+-		argv[1] = "-c";
+-		argv[2] = command_string;
+-		argv[3] = NULL;
+-
+-		/*
+-		 * Execute the proxy command.  Note that we gave up any
+-		 * extra privileges above.
+-		 */
+-		ssh_signal(SIGPIPE, SIG_DFL);
+-		execv(argv[0], argv);
+-		perror(argv[0]);
+-		exit(1);
+-	}
++	spawn_argv[0] = shell;
++	spawn_argv[1] = "-c";
++	spawn_argv[2] = command_string;
++	spawn_argv[3] = NULL;
++	if ((spawn_error = posix_spawn_file_actions_init(&actions)) != 0 ||
++	    (spawn_error = posix_spawn_file_actions_addclose(&actions,
++	    pin[1])) != 0 ||
++	    (pin[0] != 0 && (spawn_error = posix_spawn_file_actions_adddup2(
++	    &actions, pin[0], 0)) != 0) ||
++	    (pin[0] != 0 && (spawn_error = posix_spawn_file_actions_addclose(
++	    &actions, pin[0])) != 0) ||
++	    (spawn_error = posix_spawn_file_actions_addclose(&actions,
++	    pout[0])) != 0 ||
++	    (spawn_error = posix_spawn_file_actions_adddup2(&actions,
++	    pout[1], 1)) != 0 ||
++	    (spawn_error = posix_spawn_file_actions_addclose(&actions,
++	    pout[1])) != 0 ||
++	    (!debug_flag && options.control_path != NULL &&
++	    options.control_persist && (spawn_error =
++	    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO,
++	    _PATH_DEVNULL, O_RDWR, 0)) != 0))
++		fatal("posix_spawn file actions failed: %.100s",
++		    strerror(spawn_error));
++	if ((spawn_error = posix_spawnattr_init(&attributes)) != 0)
++		fatal("posix_spawn attributes failed: %.100s",
++		    strerror(spawn_error));
++	if (sigemptyset(&signal_defaults) == -1 ||
++	    sigaddset(&signal_defaults, SIGPIPE) == -1)
++		fatal("posix_spawn signal defaults failed: %.100s",
++		    strerror(errno));
++	if ((spawn_error = posix_spawnattr_setsigdefault(&attributes,
++	    &signal_defaults)) != 0 ||
++	    (spawn_error = posix_spawnattr_setflags(&attributes,
++	    POSIX_SPAWN_SETSIGDEF)) != 0)
++		fatal("posix_spawn attributes failed: %.100s",
++		    strerror(spawn_error));
++	spawn_error = posix_spawn(&pid, shell, &actions, &attributes,
++	    spawn_argv, environ);
++	posix_spawnattr_destroy(&attributes);
++	posix_spawn_file_actions_destroy(&actions);
+ 	/* Parent. */
+-	if (pid == -1)
+-		fatal("fork failed: %.100s", strerror(errno));
++	if (spawn_error != 0)
++		fatal("posix_spawn failed: %.100s", strerror(spawn_error));
+ 	else
+ 		proxy_command_pid = pid; /* save pid to clean up later */
+ 
