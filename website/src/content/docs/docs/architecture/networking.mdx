@@ -8,7 +8,7 @@ skill: true
 
 This is the internals view of agentOS networking: the kernel socket table, the layers a request crosses, and where policy is enforced. For the user-facing API (`vmFetch`, preview URLs, the confinement model from a caller's perspective), see [Networking & Previews](/docs/networking). For the trust boundary this all sits inside, see [Architecture](/docs/architecture).
 
-The governing rule is that there is exactly **one authoritative transport for everything VM-local**: the kernel socket table. No part of guest networking opens a real host socket on its own. Guest `fetch()`, `node:http`, `node:net`, WASM TCP clients and servers, and host-into-guest requests (`vmFetch` / `rt.fetch`) all target the same listener table.
+The governing rule for TCP is that there is exactly **one authoritative transport for everything VM-local**: the kernel socket table. No untrusted guest code opens a host socket directly. Guest `fetch()`, `node:http`, TCP `node:net`, WASM TCP clients and servers, and host-into-guest requests (`vmFetch` / `rt.fetch`) all target the same listener table. The trusted sidecar implements `AF_UNIX` streams with a separate, per-VM private host transport while keeping pathname inodes and permissions authoritative in the guest VFS.
 
 ## The kernel socket table
 
@@ -20,6 +20,12 @@ The socket table is the floor of the stack and the only component that actually 
 - Connecting pairs two in-VM sockets and shuttles bytes between them. No host networking happens at this layer.
 
 Because every server is a kernel TCP listener, a client never needs to know whether the server it is talking to is JS, WASM, raw TCP, or HTTP. HTTP is layered on top of kernel TCP bytes, so every listener lives in the one table and is reachable identically.
+
+<Note>`AF_UNIX` `SOCK_STREAM` sockets follow Linux `sockaddr_un` rules: full-size pathname addresses stop at their first NUL, while a leading NUL selects the length-sensitive abstract namespace. Abstract names are losslessly encoded across the WASM boundary and mapped into a per-VM host namespace, so they cannot collide with another VM's sockets. Pathname sockets are real `S_IFSOCK` entries in the guest VFS and apply Linux directory, owner, group, mode, umask, symlink, rename, link, and unlink behavior. The transport files live under a unique host directory with mode `0700` and are removed with the VM.</Note>
+
+<Note>`AF_UNIX` has three explicit limits. Datagram and sequenced-packet Unix sockets return `ENOTSUP`; only streams are implemented. The current string-based VFS cannot represent invalid-UTF-8 filename bytes, so the WASM boundary returns `EILSEQ` instead of corrupting them (valid UTF-8 control characters are supported). Unix sockets on read-only host-backed mounts fail with `EROFS`, and sockets on writable host-backed mounts fail closed with `ENOTSUP`: host `bind(2)` and `connect(2)` have no descriptor-relative form that can preserve the mount confinement boundary. Symlinks into either kind of mount are rejected before a host socket is created.</Note>
+
+Blocking WASM `AF_UNIX` connect, accept, read/receive, and poll calls honor nonblocking mode and signals; accept and reads also honor `SO_RCVTIMEO`, returning Linux's `EAGAIN` when that socket timeout expires. Every blocking wait is additionally capped by `limits.resources.maxBlockingReadMs` (30 seconds by default); the runtime warns near the cap and returns `ETIMEDOUT` at the AgentOS safeguard. Raise that limit for workloads that intentionally wait longer.
 
 <Note>An earlier design carried two listener models at once: stream-mode listeners (`net.createServer`, WASM) on real kernel TCP sockets, and object-mode HTTP listeners (`http.createServer`) on a separate table that exchanged JSON request/response objects over stream events. A second guest process could not reach the object-mode table reliably, because the client expected byte-stream TCP semantics while the server only spoke object-mode dispatch. The current architecture removes the second model: everything is one socket table.</Note>
 

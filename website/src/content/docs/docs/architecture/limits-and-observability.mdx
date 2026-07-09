@@ -14,17 +14,16 @@ logging, and observability pieces fit together across the stack.
 
 ## Where limits live
 
-Limits are owned by **secure-exec** (the VM runtime) and **forwarded** by agentOS
-— the agentOS layer does not reimplement enforcement, it exposes the knobs and
-surfaces the signals.
+Limits are owned and enforced by the **agentOS kernel and sidecar**. The client
+exposes the typed knobs and surfaces their signals.
 
 | Layer | Responsibility |
 | --- | --- |
-| secure-exec kernel | Enforces per-VM resource caps (memory/heap, CPU time, fds, processes, sockets, filesystem bytes, …). |
-| secure-exec sidecar | Owns the bounded queues between the guest, the runtime, and the host; applies backpressure; tracks usage. |
+| agentOS kernel | Enforces per-VM resource caps (memory/heap, CPU time, fds, processes, sockets, filesystem bytes, …). |
+| agentOS sidecar | Owns the bounded queues between the guest, the runtime, and the host; applies backpressure or rejects at the documented boundary; tracks usage. |
 | agentOS client | Forwards `limits` config to the VM and surfaces limit signals to the caller. |
 
-## Three guarantees for every limit
+## Limit contract
 
 Every bound — a resource cap, a bounded queue, a timeout, a payload size —
 follows the same contract:
@@ -33,23 +32,23 @@ follows the same contract:
    at ~128 MiB per isolate (Cloudflare Workers parity), CPU is bounded, and every
    queue has a fixed capacity. Operators may *raise* a cap, but never get an
    unbounded default.
-2. **Warn on approach.** As usage crosses a threshold (default **≥80%** of
-   capacity), a structured warning is emitted — once per crossing, re-armed only
-   after it drains back below 50% (hysteresis), so a busy limit logs once, not on
-   every operation.
-3. **Clear, typed error on breach.** Exceeding a limit produces an error that
-   names the limit, the observed-vs-cap value, and the config path to raise it —
-   never a bare `EAGAIN`, a silent drop, or a crash.
+2. **Warn on approach where usage is measurable.** Resource and queue gauges emit
+   a structured warning as usage crosses a threshold (default **≥80%** of
+   capacity), once per crossing and re-armed only after recovery. Deadline-style
+   limits fail at their configured timeout instead of predicting future usage.
+3. **Clear failure on breach.** Guest kernel resources return the corresponding
+   POSIX errno; host-facing queue and runtime failures name the limit and the
+   config path to raise it. Neither path silently drops data or crashes the host.
 
 ## Backpressure, not catastrophe
 
 The path from guest code to the host is a **chain of bounded queues**: the V8
 runtime → a per-session frame channel → the V8→host event channel → the sidecar
-stdout frame queue → the host. When a queue fills (a slow host consumer, a chatty
-tool turn), the producer **blocks until the consumer drains a slot** — clean
-backpressure that flows all the way back to the guest. A full queue never
-destroys the session, silently drops data, or crashes the sidecar; a genuinely
-dead consumer surfaces as a typed terminal error instead.
+stdout frame queue → the host. Streaming channels apply backpressure where the
+producer can safely wait. Process/runtime delivery queues that cannot block
+reject the crossing event with an error naming `limits.process.pendingEventCount`
+or `limits.process.pendingEventBytes`. Neither path silently drops data or
+crashes the sidecar.
 
 Buffer capacities are sized so that *transient* bursts are absorbed without ever
 engaging backpressure; backpressure is the safety net for a genuinely stuck
@@ -57,10 +56,10 @@ consumer, not a normal-operation event.
 
 ## The limit registry
 
-All bounded limits register with a single in-process **limit registry**. Each
-registered limit tracks its live depth, high-water mark, and capacity, and emits
-the near-capacity warning described above. This gives the runtime one place to
-answer two questions:
+Live resource and queue gauges register with a single in-process **limit
+registry**. Each registered limit tracks its live depth, high-water mark, and
+capacity, and emits the near-capacity warning described above. This gives the
+runtime one place to answer two questions:
 
 - *Is a limit about to be hit?* — the registry fires the approach warning.
 - *What is the current usage of everything?* — a registry snapshot lists every
@@ -72,7 +71,7 @@ and config-wired?" is verified mechanically rather than by review.
 
 ## Logging & host visibility
 
-secure-exec logs to **stderr** (never stdout — stdout is the framed wire
+The agentOS sidecar logs to **stderr** (never stdout — stdout is the framed wire
 protocol). The default level is `WARN`, tunable with the `AGENTOS_LOG`
 environment variable (`error` to quiet, `debug` for per-limit usage snapshots).
 Near-limit warnings and backpressure events therefore show up in the sidecar's

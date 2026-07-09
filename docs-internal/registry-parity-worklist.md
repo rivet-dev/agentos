@@ -65,6 +65,20 @@ Status: worklist · Owner: registry · Last updated: 2026-07-08
 - **P2 — build/compile failures**: packages that can't be produced at all.
 - **P3 — disabled/absent coverage**: real behavior exists but no real test proves it.
 
+## Known CPU interval-timer boundary
+
+Disabled `ITIMER_VIRTUAL` and `ITIMER_PROF` timers now match Linux: `getitimer`
+returns a zero timer and `setitimer` accepts a zero value. Arming either timer
+still returns `ENOTSUP`. The concrete remaining wall is asynchronous delivery
+during pure guest computation: V8 executes a WASM call synchronously, and the
+runner has no per-instruction or safepoint callback through which it can deliver
+`SIGVTALRM`/`SIGPROF`. The runtime has a per-thread CPU clock for its outer V8
+watchdog, but it can only terminate the isolate; it cannot enter the guest's
+signal machinery at the exact CPU-time deadline. Polling at imported syscalls
+would silently fail for a tight WASM loop, so it is not presented as parity.
+Closing this gap requires a V8 interrupt/safepoint hook or instrumented WASM
+fuel checkpoints that distinguish user CPU from user-plus-system CPU.
+
 ---
 
 ## ⚠️ Cross-cutting #0 — Command provenance: replace reimplementations with real tools
@@ -118,6 +132,15 @@ external build (tracked separately in #9).
 
 **Objective:** replace each ❌ with a real/established implementation built to
 `wasm32-wasip1` and patched only where WASI forces it. The ✅ rows stay.
+
+**Networking — DONE.** Real curl and GNU Wget now terminate TLS in-guest with
+mbedTLS against the VM CA bundle, and Git links the same libcurl through a real
+`git-remote-http` helper. HTTPS certificate verification and trust overrides,
+curl's native exit taxonomy and compression, Wget HTTPS/FTPS, and Git smart-HTTP
+clone/fetch/push are covered by parity tests. OpenSSH separately provides direct
+SSH and git-over-SSH transport. See **`docs-internal/networking-parity-spec.md`**
+for the original design decisions and [TLS & SSL](../website/src/content/docs/docs/architecture/tls-ssl.mdx)
+for the current architecture.
 
 **Approach:** one command at a time, one jj rev each: swap our custom code for the
 established source (fetched + pinned like sqlite/duckdb), wire into the toolchain,
@@ -809,6 +832,11 @@ out-of-band) but stays essential; (3) a **long tail of project-specific CLIs**
 gpg 🟡, ffmpeg 🟡 (media transcode — heavy but headless), jj 🟢, dig 🟡,
 nslookup 🟡, less ⭐🟡 (pager), openssl ⭐🟡 (TLS/certs/keys/hashing).
 tail/head/cat are already in coreutils — confirm present.
+
+OpenSSH now carries a private, static OpenSSL 3.5.7 **libcrypto** dependency for
+its standard software crypto algorithms. The `openssl` command remains a future
+registry addition: libssl, providers/modules, and the CLI are not shipped, and
+curl/wget/git continue to use mbedTLS.
 
 **Text / stream:** less ⭐🟡, **perl** ⭐🟡 (ubiquitous `-pe`/`-ne` text munging —
 big C runtime but real; 563 uses in history), miller `mlr` 🟢 (CSV/JSON),
