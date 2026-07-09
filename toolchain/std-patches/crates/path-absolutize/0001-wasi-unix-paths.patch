@@ -1,0 +1,19 @@
+# path-absolutize 3.1.1 is by the same author as path-dedot and uses the identical
+# gate: its unix `absolutize`/`absolutize_virtually` impl (the `mod unix` at
+# src/lib.rs:439) is `any(unix, all(target_family = "wasm", feature =
+# "use_unix_paths_on_wasm"))`. On wasm32-wasip1 without that opt-in feature the unix
+# module vanishes and `absolutize_virtually` disappears -> codex-core fails to
+# compile (E0599 no method `absolutize_virtually`). The VM uses unix-style absolute
+# paths, so route ALL `target_family = "wasm"` to the unix impl. Sibling of
+# std-patches/crates/path-dedot. See path-dedot/wasi.md.
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -436,7 +436,7 @@
+ #[macro_use]
+ mod macros;
+
+-#[cfg(any(unix, all(target_family = "wasm", feature = "use_unix_paths_on_wasm")))]
++#[cfg(any(unix, target_family = "wasm"))]
+ mod unix;
+
+ #[cfg(windows)]
