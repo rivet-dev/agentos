@@ -29,9 +29,7 @@ npm install @rivet-dev/agentos-core
 
 ## Boot a VM
 
-Define the actor on the server:
-
-Then drive it from a typed client:
+Create a VM and drive it directly — no actor runtime, no client/server split. `AgentOs.create()` boots the VM in-process and returns a handle you call directly:
 
 ## Sidecar process
 
@@ -45,19 +43,21 @@ For advanced cases the core package exposes explicit sidecar handles so you can 
 
 ## Processes
 
-Long-running process output is delivered over the live `processOutput` / `processExit` events on a connection rather than per-pid callbacks:
+Long-running process output is delivered through the `onStdout`/`onStderr` callbacks you pass to `spawn`, and exit through `onProcessExit(pid, …)`:
 
 ## Agent sessions
 
-`createSession` returns a session record. All session operations take its `sessionId`. Session events and permission requests are delivered over the live connection (`sessionEvent` / `permissionRequest`):
+`createSession` resolves to a session record; all session operations take its `sessionId`. Session events and permission requests are delivered through per-session callbacks (`onSessionEvent` / `onPermissionRequest`):
 
-Subscribe to `sessionEvent` before sending a prompt so you do not miss the live stream. Persisted history can be read back later with `getSessionEvents()`.
+Register `onSessionEvent` right after `createSession` so you do not miss the live stream — core session events are live-only and are not replayed.
 
 ## Networking
 
+`fetch(port, request)` reaches a server running inside the VM:
+
 ## Cron jobs
 
-Cron jobs run an `"exec"` command or a `"session"` prompt on a schedule. Fired jobs are surfaced over the live `cronEvent` connection:
+Cron jobs run an `"exec"` command or a `"session"` prompt on a schedule. Fired jobs are surfaced through the `onCronEvent` callback:
 
 ## Mounts
 
@@ -66,21 +66,16 @@ Configure filesystem backends at boot time.
 Native mount plugins (host directories, S3, etc.) are passed via `plugin`, each
 identified by an `id` and a `config` object.
 
-## `agentOS()` configuration reference
+## Configuration reference
 
-When you use the [`agentOS()` actor](/docs/quickstart), all VM configuration is passed to the factory as a single flat object. This is the consolidated config block to copy and adapt:
+All VM configuration is passed to `AgentOs.create()` as a single flat object. This is the consolidated config block to copy and adapt. The [`agentOS()` actor](/docs/quickstart) accepts the same options and layers persistence, sleep/wake, and preview URLs on top:
 
-The top-level fields are documented inline above. See [Mounts](#mounts), [Software](/docs/software), and (for the hooks) [Approvals](/docs/approvals).
+The top-level fields are documented inline above. See [Mounts](#mounts) and [Software](/docs/software).
 
-### Lifecycle hooks
+### Session events
 
-`onPermissionRequest(sessionId, request)` fires when an agent requests permission. `onSessionEvent(sessionId, event)` is a server-side hook called once for every session event: unlike the client-side `sessionEvent` connection subscription, it runs in the actor for every event regardless of connected clients, making it the place for server-side logging, persistence, or side effects.
+With the core package, session events and permission requests are observed per-session on the `AgentOs` instance. `onSessionEvent(sessionId, event)` fires once for every session event; `onPermissionRequest(sessionId, request)` fires when an agent requests permission. Both are live-only callbacks — register them right after `createSession`:
 
-### Timeouts
+### Timeouts and sleep
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Action timeout | 15 minutes | Maximum time for any single action |
-| Sleep grace period | 15 minutes | Time before sleeping after all activity stops |
-
-These are set internally by the `agentOS()` factory and cannot be overridden per-call. See [Persistence & Sleep](/docs/persistence) for details on the sleep lifecycle.
+Action timeouts and automatic sleep/wake are features of the [`agentOS()` actor](/docs/quickstart), not the core package. A core VM stays alive until you call `dispose()`. See [Persistence & Sleep](/docs/persistence) for the actor's sleep lifecycle.

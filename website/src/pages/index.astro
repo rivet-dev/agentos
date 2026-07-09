@@ -147,68 +147,31 @@ echo "Done:" && ls -lh /home/agentos/backups/
 const result = await agent.exec("bash /home/agentos/backup.sh");
 console.log(result.stdout);` },
 
-	{ key: 's3-filesystem', fileName: 's3-filesystem.ts', code: `// server.ts
-import { agentOS, setup } from "@rivet-dev/agentos";
-
-// Mount an S3 bucket as a filesystem with the built-in "s3" plugin
-const vm = agentOS({
-  mounts: [
-    {
-      path: "/home/agentos/data",
-      plugin: {
-        id: "s3",
-        config: { bucket: process.env.S3_BUCKET!, region: "us-east-1" },
-      },
-    },
-  ],
-});
-export const registry = setup({ use: { vm } });
-registry.start();
-
-// client.ts
-import { createClient } from "@rivet-dev/agentos/client";
+	{ key: 'python', fileName: 'python.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
 const client = createClient<typeof registry>("http://localhost:6420");
 const agent = client.vm.getOrCreate("my-agent");
 
-await agent.writeFile("/home/agentos/data/notes.txt", "Hello from agentOS!");
-const content = await agent.readFile("/home/agentos/data/notes.txt");
-console.log(new TextDecoder().decode(content));` },
+// CPython 3.13: python and python3 are on the PATH
+await agent.exec('python -c "print(40 + 2)"');
 
-	{ key: 'cron', fileName: 'cron.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
+// pip installs persist on the VM filesystem across runs
+await agent.exec("pip install requests");
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate("my-agent");
+// Write and run a script like any other file in the VM
+await agent.writeFile("/home/agentos/summary.py", \`
+import csv, statistics
 
-// Heartbeat: wake the agent every 30 minutes to check on issues
-await agent.scheduleCron({
-  schedule: "*/30 * * * *",
-  action: {
-    type: "session",
-    agentType: "pi",
-    prompt: "Check the status of open issues and take any necessary action",
-  },
-});` },
+with open("/home/agentos/data.csv") as f:
+    rows = [float(row["value"]) for row in csv.DictReader(f)]
 
-	{ key: 'webhooks', fileName: 'webhooks.ts', code: `import { Hono } from "hono";
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
+print("count:", len(rows), "mean:", statistics.mean(rows))
+\`);
 
-const app = new Hono();
-const client = createClient<typeof registry>("http://localhost:6420");
-
-app.post("/slack/events", async (c) => {
-  const { team_id, text, user } = (await c.req.json()).event;
-
-  // Each workspace gets its own persistent agent
-  const agent = client.vm.getOrCreate([team_id]);
-  const session = await agent.createSession("pi");
-  await agent.sendPrompt(session.sessionId, \`Message from \${user}: \${text}\`);
-
-  return c.json({ ok: true });
-});` },
+await agent.writeFile("/home/agentos/data.csv", "value\\n12\\n18\\n7\\n41\\n");
+const result = await agent.exec("python /home/agentos/summary.py");
+console.log(result.stdout);` },
 
 	{ key: 'multiplayer', fileName: 'multiplayer.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
@@ -270,60 +233,6 @@ await handle.send("fixBug", {
   issue: "Fix the login redirect bug",
 });` },
 
-	{ key: 'git', fileName: 'git.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate("my-agent");
-
-// Initialize a repo, commit, and branch
-await agent.exec("git init /home/agentos/repo");
-await agent.writeFile("/home/agentos/repo/README.md", "# My Project");
-await agent.exec("git -C /home/agentos/repo add README.md");
-await agent.exec("git -C /home/agentos/repo commit -m 'initial commit'");
-
-// Create a feature branch
-await agent.exec("git -C /home/agentos/repo checkout -b feature");
-await agent.writeFile("/home/agentos/repo/feature.txt", "new feature");
-await agent.exec("git -C /home/agentos/repo add feature.txt");
-await agent.exec("git -C /home/agentos/repo commit -m 'add feature'");
-
-const content = await agent.readFile("/home/agentos/repo/feature.txt");
-console.log(new TextDecoder().decode(content));` },
-
-	{ key: 'sandbox', fileName: 'sandbox.ts', code: `// server.ts
-import { agentOS, setup } from "@rivet-dev/agentos";
-import { createSandboxFs, createSandboxBindings } from "@rivet-dev/agentos-sandbox";
-import { SandboxAgent } from "sandbox-agent";
-import { docker } from "sandbox-agent/docker";
-
-// Start a Docker-backed sandbox
-const sandbox = await SandboxAgent.start({ sandbox: docker() });
-
-// Mount its filesystem and register the sandbox bindings
-const vm = agentOS({
-  mounts: [{ path: "/home/agentos/sandbox", plugin: createSandboxFs({ client: sandbox }) }],
-  bindings: [createSandboxBindings({ client: sandbox })],
-});
-export const registry = setup({ use: { vm } });
-registry.start();
-
-// client.ts
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate("my-agent");
-
-// Write a file through the mounted sandbox filesystem
-await agent.writeFile("/home/agentos/sandbox/hello.txt", "Hello from agentOS!");
-const content = await agent.readFile("/home/agentos/sandbox/hello.txt");
-console.log(new TextDecoder().decode(content));
-
-// Run a command inside the Docker sandbox via the mounted toolkit
-const result = await agent.exec("agentos-sandbox run-command --command echo --json '{\\"args\\": [\\"hello from Docker\\"]}'");
-console.log(result.stdout);` },
-
 	{ key: 'permissions', fileName: 'permissions.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
@@ -360,8 +269,8 @@ const heroTabs = await Promise.all(
 ---
 
 <Layout
-  title="agentOS — A faster, lighter, cheaper alternative to sandboxes"
-  description="A portable open-source operating system for agents. Stateful runtime, universal agent interface, and secure code execution. One SDK, deploy anywhere."
+  title="agentOS — The virtual operating system for agents"
+  description="agentOS gives every agent an isolated operating system inside your backend: a file system, code execution, integrations, and human review. ~6 ms cold starts and megabytes per agent instead of a full sandbox."
   ogImage="https://agentos-sdk.dev/og.png"
 >
   <Navigation revealLogoOnScroll client:load />

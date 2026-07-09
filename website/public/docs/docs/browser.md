@@ -36,6 +36,4 @@ browse cloud sessions list               # list cloud browser sessions
 browse cloud projects list               # list Browserbase projects
 ```
 
-## Interactive browsing
-
-`browse` also has an [interactive driver mode](https://docs.browserbase.com/integrations/skills/browse-cli) (`browse open`, `browse click`, `browse fill`, …) that keeps a daemon running between commands. For interactive automation, run `browse` (or Playwright/Puppeteer) inside a sandbox via [Sandbox Mounting](/docs/sandbox).
+The [interactive driver mode](https://docs.browserbase.com/integrations/skills/browse-cli) (`browse open`, `browse click`, …) is not supported inside the VM yet ([#1631](https://github.com/rivet-dev/agentos/issues/1631)). For interactive automation, run `browse` inside a sandbox via [Sandbox Mounting](/docs/sandbox).

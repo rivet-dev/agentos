@@ -3,38 +3,35 @@
 import { useId, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
 	ArrowRight,
-	Terminal,
 	FolderOpen,
 	Layers,
 	Globe,
 	Bot,
 	ListChecks,
 	Wrench,
-	CalendarClock,
 	ExternalLink,
 	Activity,
 	HardDrive,
-	Cpu,
 	Users,
-	Webhook,
 	Workflow,
 	ChevronLeft,
 	ChevronRight,
 	Copy,
 	Check,
-	Chrome,
-	GitBranch,
-	Container,
+	X,
 	ShieldCheck,
-	Hexagon,
 	Package,
 	Server,
 } from 'lucide-react';
-import { AnimatePresence, motion, useMotionTemplate, useMotionValue, useReducedMotion, useScroll, useSpring, useTransform, type MotionValue } from 'framer-motion';
+import { AnimatePresence, motion, useMotionValue, useReducedMotion, useSpring, useTransform, type MotionValue } from 'framer-motion';
 import { InkPanel } from '../editorial/InkPanel';
 import { registry } from '../../../data/registry';
 import { REGISTRY_ICONS } from '../../../data/registry-icons';
 import { AGENT_PROMPT } from '../agentPrompt';
+import { HERO_H1_CLASS, SectionHeading } from '../typography';
+import { AgentOsTopologyCell, SandboxTopologyCell } from '../diagrams/TopologyCells';
+import { ColdStartTimeline } from '../diagrams/ColdStartTimeline';
+import { Reveal } from '../motion';
 
 // Premium porcelain card surface, shared by the architecture cards and the
 // feature bento: a single top-down gradient, a hairline ring, an inset top
@@ -254,210 +251,6 @@ export const AnimatedAgentOSLogo = ({ className, displayedAgent, drawDurationSec
 	);
 };
 
-// --- Hero Image Data ---
-interface HeroImage {
-	src: string;
-	title: string;
-	caption: string;
-}
-
-const heroImages: HeroImage[] = [
-	// Human work
-	{
-		src: 'https://assets.rivet.dev/website/public/images/agent-os/division-classification-cataloging.jpg',
-		title: 'Division of Classification and Cataloging',
-		caption: 'Manual human labor at scale',
-	},
-	{
-		src: 'https://assets.rivet.dev/website/public/images/agent-os/crowded-office-space.jpg',
-		title: 'Crowded Office Space',
-		caption: 'Rooms full of human operators',
-	},
-	// Automation with computers
-	{
-		src: 'https://assets.rivet.dev/website/public/images/agent-os/early-computer-room.jpg',
-		title: 'Early Computer Room',
-		caption: 'The first machines',
-	},
-	{
-		src: 'https://assets.rivet.dev/website/public/images/agent-os/unix-timesharing-uw-madison-1978.jpg',
-		title: 'Unix Timesharing',
-		caption: 'UW-Madison, 1978',
-	},
-	{
-		src: 'https://assets.rivet.dev/website/public/images/agent-os/early-computing-workstation.jpg',
-		title: 'Early Computing Workstation',
-		caption: 'Humans operating computers',
-	},
-	{
-		src: 'https://assets.rivet.dev/website/public/images/agent-os/apollo-14-mission-control.jpg',
-		title: 'Apollo 14: Mission Control Center',
-		caption: 'Computers in mission-critical work',
-	},
-	// Modern work
-	{
-		src: 'https://assets.rivet.dev/website/public/images/agent-os/modern-office.jpg',
-		title: 'Modern Office',
-		caption: "Today's human operators",
-	},
-	// AI agents of tomorrow
-	{
-		src: 'https://assets.rivet.dev/website/public/images/agent-os/data-flock.jpg',
-		title: 'Data Flock (digits)',
-		caption: 'The agent era',
-	},
-];
-
-// --- Image Cycler (adapted from landing page) ---
-const ImageCycler = ({ images }: { images: HeroImage[] }) => {
-	const [currentIndex, setCurrentIndex] = useState(0);
-	const [showFan, setShowFan] = useState(false);
-	const [leavingCards, setLeavingCards] = useState<Array<{ id: string; image: HeroImage }>>([]);
-
-	useEffect(() => {
-		const preloadAhead = Math.min(4, images.length - 1);
-		for (let i = 1; i <= preloadAhead; i++) {
-			const next = images[(currentIndex + i) % images.length];
-			const img = new window.Image();
-			img.src = next.src;
-		}
-	}, [currentIndex, images]);
-
-	const handleClick = () => {
-		const leavingImage = images[currentIndex];
-		setLeavingCards((prev) => [...prev, { id: `${leavingImage.src}-${Date.now()}`, image: leavingImage }]);
-		setCurrentIndex((prev) => (prev + 1) % images.length);
-	};
-
-	const getStackIndices = (count: number) => {
-		const indices = [];
-		for (let i = 0; i < count; i++) {
-			indices.push((currentIndex + i) % images.length);
-		}
-		return indices;
-	};
-
-	const getStackPose = (position: number, expanded: boolean) => {
-		const basePoses = [
-			{ x: 0, y: 0, rotate: -0.7, scale: 1 },
-			{ x: 5, y: 2, rotate: 1.2, scale: 0.985 },
-			{ x: 10, y: 4, rotate: 2.4, scale: 0.97 },
-		];
-
-		const expandedOffsets = [
-			{ x: -6, y: 0, rotate: -0.8 },
-			{ x: 8, y: -4, rotate: 1.1 },
-			{ x: 16, y: -8, rotate: 1.7 },
-		];
-
-		const idx = Math.min(position, basePoses.length - 1);
-		const base = basePoses[idx];
-		const expand = expanded ? expandedOffsets[idx] : { x: 0, y: 0, rotate: 0 };
-
-		if (!expanded) {
-			return { x: 0, y: 0, rotate: 0, scale: 1 };
-		}
-
-		return {
-			x: base.x + expand.x,
-			y: base.y + expand.y,
-			rotate: base.rotate + expand.rotate,
-			scale: base.scale,
-		};
-	};
-
-	const stackCards = getStackIndices(Math.min(3, images.length));
-	const currentImage = images[currentIndex];
-
-	return (
-		<div
-			className='relative w-[280px] h-[350px] sm:w-[400px] sm:h-[500px] cursor-pointer'
-			onClick={handleClick}
-			onMouseEnter={() => setShowFan(true)}
-			onMouseLeave={() => setShowFan(false)}
-		>
-			<div
-				className={`pointer-events-none absolute -inset-3 rounded-xl bg-black/20 blur-2xl transition-all duration-300 ease-out ${
-					showFan ? 'opacity-100 scale-105' : 'opacity-0 scale-100'
-				}`}
-				style={{ zIndex: 0 }}
-			/>
-
-			{stackCards.map((imageIndex, stackPosition) => {
-				const pose = getStackPose(stackPosition, showFan);
-				const image = images[imageIndex];
-				const isTopCard = stackPosition === 0;
-
-				return (
-					<motion.div
-						key={image.src}
-						className={`absolute inset-0 rounded-lg overflow-hidden border ${
-							showFan ? 'border-black/20' : 'border-black/0'
-						} ${isTopCard ? 'shadow-2xl' : 'shadow-xl'}`}
-						style={{
-							zIndex: 20 - stackPosition,
-							boxShadow: isTopCard && showFan ? '0 28px 70px rgba(0, 0, 0, 0.15)' : undefined,
-						}}
-						initial={false}
-						animate={{ ...pose, opacity: isTopCard || showFan ? 1 : 0 }}
-						transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-					>
-						<img
-							src={image.src}
-							alt={image.title}
-							loading={isTopCard && currentIndex === 0 ? 'eager' : 'lazy'}
-							decoding='async'
-							className='w-full h-full object-cover select-none pointer-events-none'
-						/>
-						{isTopCard ? <div className='absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent' /> : null}
-					</motion.div>
-				);
-			})}
-
-			<AnimatePresence initial={false}>
-				{leavingCards.map((card) => {
-					const topPose = getStackPose(0, showFan);
-
-					return (
-						<motion.div
-							key={card.id}
-							className={`pointer-events-none absolute inset-0 rounded-lg overflow-hidden border ${
-								showFan ? 'border-black/20' : 'border-black/0'
-							} shadow-2xl`}
-							style={{ zIndex: 30 }}
-							initial={{ ...topPose, opacity: 1 }}
-							animate={{ x: topPose.x - 36, y: topPose.y - 2, rotate: topPose.rotate - 7, scale: 0.985, opacity: 0 }}
-							transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-							onAnimationComplete={() =>
-								setLeavingCards((prev) => prev.filter((prevCard) => prevCard.id !== card.id))
-							}
-						>
-							<img
-								src={card.image.src}
-								alt={card.image.title}
-								loading='lazy'
-								decoding='async'
-								className='w-full h-full object-cover select-none pointer-events-none'
-							/>
-							<div className='absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent' />
-						</motion.div>
-					);
-				})}
-			</AnimatePresence>
-
-			<div
-				className={`pointer-events-none absolute left-0 right-0 top-full mt-3 text-center transition-all duration-200 ${
-					showFan ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-1'
-				}`}
-				style={{ zIndex: 20 }}
-			>
-				<p className='text-sm font-medium text-ink'>{currentImage.title}</p>
-				<p className='text-xs text-ink-faint'>{currentImage.caption}</p>
-			</div>
-		</div>
-	);
-};
-
 // --- Set up with your agent (copies the agent prompt) ---
 const SetupWithAgent = () => {
 	const [copied, setCopied] = useState(false);
@@ -483,63 +276,11 @@ const SetupWithAgent = () => {
 	);
 };
 
-// --- Handwriting Text ---
-const HandwrittenText = ({ text, className }: { text: string; className?: string }) => {
-	const textRef = useRef<SVGTextElement>(null);
-	const [measured, setMeasured] = useState<{ width: number; height: number } | null>(null);
-
-	useEffect(() => {
-		const doMeasure = () => {
-			const el = textRef.current;
-			if (!el) return;
-			const box = el.getBBox();
-			if (box.width > 0) {
-				setMeasured({ width: box.width + 20, height: box.height + 20 });
-			}
-		};
-
-		if (document.fonts) {
-			document.fonts.ready.then(() => {
-				requestAnimationFrame(() => {
-					requestAnimationFrame(doMeasure);
-				});
-			});
-		} else {
-			setTimeout(doMeasure, 500);
-		}
-	}, []);
-
-	return (
-		<svg
-			viewBox={measured ? `0 0 ${measured.width} ${measured.height}` : '0 0 800 120'}
-			className={className}
-			style={{ overflow: 'visible' }}
-			preserveAspectRatio='xMidYMid meet'
-		>
-			<text
-				ref={textRef}
-				x='10'
-				y={measured ? measured.height * 0.75 : 90}
-				style={{
-					fontFamily: '"Gloria Hallelujah", cursive',
-					fontSize: '72px',
-					fontWeight: 400,
-					fill: '#1B1916',
-					stroke: '#1B1916',
-					strokeWidth: 1,
-					paintOrder: 'stroke fill',
-				}}
-			>
-				{text}
-			</text>
-		</svg>
-	);
-};
-
 // --- Hero Tabs (scrollable with fade + arrows) ---
 interface HeroTabEntry {
 	key: string;
 	icon?: typeof Bot;
+	iconSrc?: string;
 	label: string;
 	docsHref: string;
 	fileName?: string;
@@ -551,6 +292,9 @@ const HeroTabs = ({ tabs, activeTab, onTabChange }: { tabs: HeroTabEntry[]; acti
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [canScrollLeft, setCanScrollLeft] = useState(false);
 	const [canScrollRight, setCanScrollRight] = useState(false);
+	// The page renders more than one tab strip; a per-instance layoutId keeps
+	// each strip's active-pill animation from jumping to the other strip.
+	const indicatorLayoutId = useId();
 
 	const checkOverflow = useCallback(() => {
 		const el = scrollRef.current;
@@ -620,13 +364,17 @@ const HeroTabs = ({ tabs, activeTab, onTabChange }: { tabs: HeroTabEntry[]; acti
 							>
 								{activeTab === idx && (
 									<motion.div
-										layoutId='heroTabIndicator'
+										layoutId={indicatorLayoutId}
 										className='absolute inset-0 rounded-lg bg-ink/[0.07]'
 										transition={{ type: 'spring', bounce: 0.2, duration: 0.4 }}
 									/>
 								)}
 								<span className={`relative z-10 flex items-center gap-2 ${activeTab === idx ? 'font-medium text-ink' : 'text-ink-soft hover:text-ink'}`}>
-									{LucideIcon ? <LucideIcon className='h-4 w-4' /> : null}
+									{tab.iconSrc ? (
+										<img src={tab.iconSrc} alt='' aria-hidden='true' className='h-4 w-4 object-contain' />
+									) : LucideIcon ? (
+										<LucideIcon className='h-4 w-4' />
+									) : null}
 									{tab.label}
 								</span>
 							</button>
@@ -656,29 +404,53 @@ const HeroTabs = ({ tabs, activeTab, onTabChange }: { tabs: HeroTabEntry[]; acti
 
 // --- Hero ---
 const agents = [
-	{ src: '/images/agent-logos/pi.svg', name: 'Pi', comingSoon: false },
-	{ src: '/images/agent-logos/claude-code.svg', name: 'Claude Code', comingSoon: true },
-	{ src: '/images/agent-logos/codex.svg', name: 'Codex', comingSoon: true },
-	{ src: '/images/agent-logos/opencode.svg', name: 'OpenCode', comingSoon: true },
+	{ src: '/images/agent-logos/pi.svg', name: 'Pi' },
+	{ src: '/images/agent-logos/claude-code.svg', name: 'Claude Code' },
+	{ src: '/images/agent-logos/codex.svg', name: 'Codex' },
+	{ src: '/images/agent-logos/opencode.svg', name: 'OpenCode' },
 ];
-// Ordered orchestration-first: the tabs that show agents coordinating other
-// agents, sessions, workflows, and schedules lead, then the broader runtime
-// surface (processes, filesystem, sandboxing, permissions).
-const heroTabMeta: Array<{ key: string; icon?: typeof Bot; label: string; docsHref: string }> = [
+
+// Frameworks agentOS works with, shown as a quiet second works-with row under
+// the harness stack. Eve's mark is its wordmark, so its chip renders the logo
+// alone; the others pair a square mark with the name.
+const frameworks = [
+	{ src: '/images/frameworks/eve.svg', name: 'Eve', wordmark: true, href: 'https://vercel.com/eve' },
+	{ src: '/images/frameworks/flue.svg', name: 'Flue', href: 'https://flueframework.com' },
+	{ src: '/rivet-icon.svg', name: 'RivetKit', href: 'https://rivet.dev' },
+];
+// Tab metadata for the two code panels. Orchestration leads with agents
+// coordinating other agents; execution shows the three runtimes. Both filter
+// the single highlighted-snippet array passed from index.astro by key.
+interface HeroTabMeta {
+	key: string;
+	icon?: typeof Bot;
+	iconSrc?: string;
+	label: string;
+	docsHref: string;
+}
+
+const orchestrationTabMeta: HeroTabMeta[] = [
 	{ key: 'agents', icon: Bot, label: 'Agents', docsHref: '/docs/sessions' },
 	{ key: 'agent-agent', icon: Layers, label: 'Agent-Agent', docsHref: '/docs/agent-to-agent' },
 	{ key: 'workflows', icon: Workflow, label: 'Workflows', docsHref: '/docs/workflows' },
-	{ key: 'cron', icon: CalendarClock, label: 'Cron', docsHref: '/docs/cron' },
 	{ key: 'multiplayer', icon: Users, label: 'Multiplayer', docsHref: '/docs/multiplayer' },
-	{ key: 'webhooks', icon: Webhook, label: 'Webhooks', docsHref: '/docs/webhooks' },
 	{ key: 'tools', icon: Wrench, label: 'Bindings', docsHref: '/docs/bindings' },
-	{ key: 's3-filesystem', icon: HardDrive, label: 'S3 File System', docsHref: '/docs/filesystem' },
-	{ key: 'nodejs', icon: Hexagon, label: 'Node.js', docsHref: '/docs/processes' },
-	{ key: 'bash', icon: Terminal, label: 'Bash', docsHref: '/docs/processes' },
-	{ key: 'git', icon: GitBranch, label: 'Git', docsHref: '/docs/processes' },
-	{ key: 'sandbox', icon: Container, label: 'Sandbox Mounting', docsHref: '/docs/sandbox' },
 	{ key: 'permissions', icon: ShieldCheck, label: 'Permissions', docsHref: '/docs/permissions' },
 ];
+
+const executionTabMeta: HeroTabMeta[] = [
+	{ key: 'nodejs', iconSrc: '/images/registry/nodejs.svg', label: 'Node.js', docsHref: '/docs/nodejs-runtime' },
+	{ key: 'python', iconSrc: '/images/registry/python.svg', label: 'Python', docsHref: '/docs/python-runtime' },
+	{ key: 'bash', iconSrc: '/images/registry/linux.svg', label: 'Bash', docsHref: '/docs/processes' },
+];
+
+// Joins tab metadata with the highlighted snippets rendered at Astro build
+// time, dropping any tab whose snippet is missing.
+const joinTabs = (meta: HeroTabMeta[], heroTabs: HeroTabCode[]) =>
+	meta.flatMap((tab) => {
+		const snippet = heroTabs.find((heroTab) => heroTab.key === tab.key);
+		return snippet ? [{ ...tab, ...snippet }] : [];
+	});
 
 const Hero = () => {
 	const [hoveredAgent, setHoveredAgent] = useState<{ src: string; name: string } | null>(null);
@@ -686,10 +458,12 @@ const Hero = () => {
 	const [autoPlayComplete, setAutoPlayComplete] = useState(false);
 
 	// Highlight stats — best-case "up to" figures, sourced from bench.ts.
+	// Median and mid-range figures, not best-case tails: the chart a chip links
+	// to must show the same number the chip claims.
 	const heroStats = [
-		{ value: `${Math.round(benchColdStart[2].sandbox / benchColdStart[2].agentOS)}×`, label: 'faster cold starts', sub: 'vs. fastest sandbox', href: '#bench-cold-start' },
-		{ value: `${benchWorkloads.agent.memory.multiplier.split('x')[0]}×`, label: 'less memory', sub: 'per agent · vs. sandbox', href: '#bench-memory' },
-		{ value: `${Math.max(...benchWorkloads.agent.cost.map((t) => t.ratio))}×`, label: 'cheaper to run', sub: 'per agent · vs. cheapest sandbox', href: '#bench-cost' },
+		{ value: `${Math.round(benchColdStart[0].sandbox / benchColdStart[0].agentOS)}×`, label: 'faster cold starts', sub: `p50 · vs. ${SANDBOX_COLDSTART_PROVIDER}`, href: '#bench-cold-start' },
+		{ value: `${benchWorkloads.agent.memory.multiplier.split('x')[0]}×`, label: 'less memory', sub: 'vs. 1 GiB sandbox minimum', href: '#bench-memory' },
+		{ value: `${benchWorkloads.agent.cost.find((tier) => tier.label === 'AWS ARM')?.ratio ?? Math.min(...benchWorkloads.agent.cost.map((tier) => tier.ratio))}×`, label: 'cheaper per agent', sub: `self-hosted vs. ${SANDBOX_COST_PROVIDER}`, href: '#bench-cost' },
 	];
 
 	// Auto-cycle through agents starting 2.5s before stroke animation ends
@@ -722,7 +496,9 @@ const Hero = () => {
 	const displayedAgent = autoPlayComplete ? hoveredAgent : autoPlayAgent;
 
 	return (
-		<section className='relative flex min-h-[100svh] flex-col justify-center px-6 pt-28 pb-8 md:pt-32'>
+		// 92svh, not full height: the code panel's top edge should enter the first
+		// viewport as a visible invitation to scroll rather than a stray sliver.
+		<section className='relative flex min-h-[92svh] flex-col justify-center px-6 pt-28 pb-8 md:pt-32'>
 			<div className='mx-auto flex w-full max-w-3xl flex-col items-center text-center'>
 				{/* Centered single-column hero */}
 				<div className='flex w-full flex-col items-center text-center'>
@@ -742,9 +518,9 @@ const Hero = () => {
 						initial={{ opacity: 0, y: 20 }}
 						animate={{ opacity: 1, y: 0 }}
 						transition={{ duration: 0.5, delay: 0.1 }}
-						className='mb-4 max-w-xl text-balance text-3xl font-medium tracking-[-0.02em] text-ink md:text-[2.75rem] md:leading-[1.05]'
+						className={`mb-4 max-w-2xl ${HERO_H1_CLASS}`}
 					>
-						A faster, lighter, cheaper alternative to sandboxes.
+						The virtual operating system for agents.
 					</motion.h1>
 
 					{/* Description */}
@@ -752,9 +528,10 @@ const Hero = () => {
 						initial={{ opacity: 0, y: 20 }}
 						animate={{ opacity: 1, y: 0 }}
 						transition={{ duration: 0.5, delay: 0.13 }}
-						className='mb-7 max-w-md text-base leading-relaxed text-ink-soft md:text-lg'
+						className='mb-7 max-w-xl text-base leading-relaxed text-ink-soft md:text-lg'
 					>
-						Run any coding agent inside an isolated Linux VM, with agent orchestration built in.
+						An isolated operating system for every agent, embedded in the backend you already
+						run: a file system, code execution, tools, and human review.
 					</motion.p>
 
 					{/* Benchmark highlights — proof for "faster, lighter, cheaper", linked to the benchmarks below */}
@@ -762,17 +539,20 @@ const Hero = () => {
 						initial={{ opacity: 0, y: 10 }}
 						animate={{ opacity: 1, y: 0 }}
 						transition={{ duration: 0.5, delay: 0.16 }}
-						className='mb-8 flex flex-wrap items-baseline justify-center gap-x-6 gap-y-2'
+						className='mb-8 flex flex-wrap items-start justify-center gap-x-8 gap-y-3'
 					>
 						{heroStats.map((stat) => (
 							<a
 								key={stat.label}
 								href={stat.href}
-								aria-label={`Up to ${stat.value} ${stat.label} — jump to the benchmark`}
-								className='group inline-flex items-baseline gap-1.5'
+								aria-label={`${stat.value} ${stat.label} (${stat.sub}) — jump to the benchmark`}
+								className='group inline-flex flex-col items-center gap-0.5'
 							>
-								<span className='text-xl font-medium text-pine md:text-2xl'>{stat.value}</span>
-								<span className='text-sm text-ink-soft transition-colors group-hover:text-ink md:text-base'>{stat.label}</span>
+								<span className='inline-flex items-baseline gap-1.5'>
+									<span className='text-xl font-medium text-pine md:text-2xl'>{stat.value}</span>
+									<span className='text-sm text-ink-soft transition-colors group-hover:text-ink md:text-base'>{stat.label}</span>
+								</span>
+								<span className='font-mono text-[11px] text-ink-faint'>{stat.sub}</span>
 							</a>
 						))}
 					</motion.div>
@@ -794,15 +574,15 @@ const Hero = () => {
 						</a>
 					</motion.div>
 
-					{/* Works with — supported agent harnesses */}
+					{/* Works with — supported agent harnesses, then frameworks */}
 					<motion.div
 						initial={{ opacity: 0, y: 20 }}
 						animate={{ opacity: 1, y: 0 }}
 						transition={{ duration: 0.5, delay: 0.22 }}
 						className='mt-7 flex flex-wrap items-center justify-center gap-3'
 					>
-						<span className='inline-flex items-center gap-2 font-mono text-sm uppercase tracking-[0.16em] text-ink-faint'>
-							agentOS runs
+						<span className='inline-flex items-center gap-2 font-mono text-sm text-ink-faint'>
+							runs
 						</span>
 						{/* Overlapping logo stack: a casually rotated pile (~30° fan) that
 						    spreads out and straightens on hover. Hovering a chip still drives
@@ -837,6 +617,43 @@ const Hero = () => {
 								);
 							})}
 						</motion.div>
+
+						{/* Frameworks agentOS works with: same fanned-stack treatment as the
+						    harness logos, names revealed below each tile on hover. */}
+						<span aria-hidden='true' className='font-mono text-sm text-ink-faint'>
+							&amp;
+						</span>
+						<motion.div className='flex items-center pl-1.5' initial='rest' whileHover='spread' animate='rest'>
+							{frameworks.map((framework, i) => {
+								const tilt = [-14, 6, 15][i] ?? 0;
+								return (
+									<motion.a
+										key={framework.name}
+										href={framework.href}
+										target='_blank'
+										rel='noopener noreferrer'
+										aria-label={framework.name}
+										variants={{
+											rest: { rotate: tilt, marginLeft: i === 0 ? 0 : -10 },
+											spread: { rotate: 0, marginLeft: i === 0 ? 0 : 4 },
+										}}
+										transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+										style={{ zIndex: i }}
+										className='group relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-ink/10 bg-white shadow-[0_2px_6px_-1px_rgba(20,20,22,0.12)]'
+									>
+										<img
+											src={framework.src}
+											alt={framework.name}
+											className={framework.wordmark ? 'w-6 object-contain' : 'h-5 w-5 object-contain'}
+										/>
+										{/* Name, revealed below this card on hover */}
+										<span className='pointer-events-none absolute left-1/2 top-full mt-2 -translate-x-1/2 whitespace-nowrap text-xs font-medium text-ink-soft opacity-0 transition-opacity duration-150 group-hover:opacity-100'>
+											{framework.name}
+										</span>
+									</motion.a>
+								);
+							})}
+						</motion.div>
 					</motion.div>
 				</div>
 			</div>
@@ -845,107 +662,118 @@ const Hero = () => {
 };
 
 
-// --- Agent Orchestration (the API surface, led by orchestration) ---
-// Bento layout under the code: Multiplayer is the headline 2×2 tile, the rest
-// pack around it. The span pattern (one 2×2 + two col-span-2 + four 1×1) tiles a
-// 4-column grid exactly with `grid-flow-row-dense`.
-const orchestrationFeatures = [
-	{ icon: Users, title: 'Multiplayer', description: 'Multiple humans and agents in one live session, collaborating in realtime.', docsHref: '/docs/multiplayer', featured: true, span: 'lg:col-span-2 lg:row-span-2' },
-	{ icon: ListChecks, title: 'Durable sessions', description: 'Every run is a managed session with its own state, history, and lifecycle. Pause, resume, and replay.', docsHref: '/docs/sessions' },
-	{ icon: Workflow, title: 'Workflows', description: 'Chain durable, multi-step workflows that survive restarts and pick up exactly where they left off.', docsHref: '/docs/workflows' },
-	{ icon: Layers, title: 'Agent-to-agent', description: 'Let agents delegate to other agents through host-brokered calls, under the same limits and permissions.', docsHref: '/docs/agent-to-agent' },
-	{ icon: Wrench, title: 'Tools, MCP & skills', description: 'Write tools as JavaScript functions on the host, connect any MCP server, and add skills the agent can call.', docsHref: '/docs/bindings' },
-	{ icon: ShieldCheck, title: 'Approvals & queue-in-loop', description: 'Gate sensitive actions behind human approval and queue work for review in the loop.', docsHref: '/docs/approvals', span: 'lg:col-span-2' },
-	{ icon: Activity, title: 'Observability', description: 'Stream every event, tool call, and state change for full visibility into what your agents are doing.', docsHref: '/docs/sessions#stream-responses', span: 'lg:col-span-2' },
-];
+// --- Code Panel (tab strip + window chrome, shared by both code sections) ---
+const CodePanel = ({ tabs }: { tabs: HeroTabEntry[] }) => {
+	const [activeTab, setActiveTab] = useState(0);
 
-// "Orchestrate fleets…" title that scrubs in (fade + blur + rise) as you scroll
-// past the hero, sitting just above the code box that demonstrates it.
-const OrchestrateTitle = () => {
-	const ref = useRef<HTMLDivElement>(null);
-	const reduce = useReducedMotion();
-	const { scrollYProgress } = useScroll({ target: ref, offset: ['start end', 'start center'] });
-	const opacity = useTransform(scrollYProgress, [0, 1], [0, 1]);
-	const blurPx = useTransform(scrollYProgress, [0, 1], [10, 0]);
-	const y = useTransform(scrollYProgress, [0, 1], [16, 0]);
-	const filter = useMotionTemplate`blur(${blurPx}px)`;
 	return (
-		<div ref={ref} className='border-t border-ink/10 px-6 pt-16 pb-6 md:pt-20 md:pb-8'>
-			<div className='mx-auto max-w-7xl'>
-				<motion.h2
-					style={reduce ? undefined : { opacity, filter, y }}
-					className='max-w-3xl text-2xl font-medium tracking-[-0.015em] text-ink md:text-3xl'
-				>
-					Orchestrate fleets of agents in a few lines of code.
-				</motion.h2>
+		<div>
+			<HeroTabs tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} />
+
+			<div className='overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50'>
+				<div className='flex items-center gap-2 border-b border-zinc-200 px-4 py-3'>
+					<div className='h-3 w-3 rounded-full bg-zinc-200' />
+					<div className='h-3 w-3 rounded-full bg-zinc-200' />
+					<div className='h-3 w-3 rounded-full bg-zinc-200' />
+					<span className='ml-2 text-xs text-zinc-600'>{tabs[activeTab]?.fileName ?? 'index.ts'}</span>
+				</div>
+				<div className='relative h-[420px] overflow-y-auto'>
+					<AnimatePresence mode='wait'>
+						<motion.div
+							key={activeTab}
+							initial={{ opacity: 0 }}
+							animate={{ opacity: 1 }}
+							exit={{ opacity: 0 }}
+							transition={{ duration: 0.2 }}
+							className='overflow-x-auto p-6 font-code text-sm leading-relaxed text-zinc-600 [&_.line]:break-all [&_.shiki]:!m-0 [&_.shiki]:!bg-transparent [&_.shiki]:!p-0 [&_.shiki]:font-code [&_.shiki]:text-sm [&_.shiki]:leading-relaxed [&_pre]:whitespace-pre-wrap'
+						>
+							<span
+								className='not-prose code'
+								// biome-ignore lint/security/noDangerouslySetInnerHtml: generated at Astro render time
+								dangerouslySetInnerHTML={{ __html: tabs[activeTab]?.highlightedCode ?? '' }}
+							/>
+						</motion.div>
+					</AnimatePresence>
+				</div>
 			</div>
 		</div>
 	);
 };
 
-// --- Code Showcase (tabs + syntax-highlighted code, sits right under the hero) ---
-const CodeShowcase = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
-	const [activeTab, setActiveTab] = useState(0);
+// --- Orchestration (heading + code showcase + capability row) ---
+// A single row of four tiles under the code; the OS-primitive tiles
+// (integrations, human-in-the-loop, persistence) live in the OS section.
+const orchestrationFeatures = [
+	{ icon: Users, title: 'Multiplayer', description: 'Multiple humans and agents in one live session, collaborating in realtime.', docsHref: '/docs/multiplayer' },
+	{ icon: ListChecks, title: 'Durable sessions', description: 'Every run is a managed session with its own state, history, and lifecycle. Pause, resume, and replay.', docsHref: '/docs/sessions' },
+	{ icon: Workflow, title: 'Workflows', description: 'Chain durable, multi-step workflows that survive restarts and pick up exactly where they left off.', docsHref: '/docs/workflows' },
+	{ icon: Activity, title: 'Observability', description: 'Stream every event, tool call, and state change for full visibility into what your agents are doing.', docsHref: '/docs/sessions#stream-responses' },
+];
 
-	const orchestrationTabs = heroTabMeta.map((tab) => ({
-		...tab,
-		...heroTabs.find((heroTab) => heroTab.key === tab.key),
-	}));
-
-	return (
-		// No top border/padding: the card sits flush under the shortened hero so its
-		// top peeks above the fold, inviting the scroll into the code.
-		<section className='px-6 pb-4 md:pb-6'>
-			<div className='mx-auto max-w-7xl'>
-				<motion.div
-					initial={{ opacity: 0, y: 20 }}
-					whileInView={{ opacity: 1, y: 0 }}
-					viewport={{ once: true }}
-					transition={{ duration: 0.5 }}
-				>
-					<HeroTabs tabs={orchestrationTabs} activeTab={activeTab} onTabChange={setActiveTab} />
-
-					<div className='overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50'>
-						<div className='flex items-center gap-2 border-b border-zinc-200 px-4 py-3'>
-							<div className='h-3 w-3 rounded-full bg-zinc-200' />
-							<div className='h-3 w-3 rounded-full bg-zinc-200' />
-							<div className='h-3 w-3 rounded-full bg-zinc-200' />
-							<span className='ml-2 text-xs text-zinc-600'>{orchestrationTabs[activeTab]?.fileName ?? 'index.ts'}</span>
-						</div>
-						<div className='relative h-[420px] overflow-y-auto'>
-							<AnimatePresence mode='wait'>
-								<motion.div
-									key={activeTab}
-									initial={{ opacity: 0 }}
-									animate={{ opacity: 1 }}
-									exit={{ opacity: 0 }}
-									transition={{ duration: 0.2 }}
-									className='overflow-x-auto p-6 font-code text-sm leading-relaxed text-zinc-600 [&_.line]:break-all [&_.shiki]:!m-0 [&_.shiki]:!bg-transparent [&_.shiki]:!p-0 [&_.shiki]:font-code [&_.shiki]:text-sm [&_.shiki]:leading-relaxed [&_pre]:whitespace-pre-wrap'
-								>
-									<span
-										className='not-prose code'
-										// biome-ignore lint/security/noDangerouslySetInnerHtml: generated at Astro render time
-										dangerouslySetInnerHTML={{ __html: orchestrationTabs[activeTab]?.highlightedCode ?? '' }}
-									/>
-								</motion.div>
-							</AnimatePresence>
-						</div>
-					</div>
-				</motion.div>
-			</div>
-		</section>
-	);
-};
-
-// --- Agent Orchestration (capability bento under the code) ---
-const AgentOrchestration = () => (
-	<section className='px-6 pt-2 pb-24 md:pt-4 md:pb-32'>
+const OrchestrationSection = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => (
+	<section className='border-t border-ink/10 px-6 py-16 md:py-32'>
 		<div className='mx-auto max-w-7xl'>
-			<div className='grid grid-flow-row-dense grid-cols-1 gap-4 sm:grid-cols-2 lg:auto-rows-fr lg:grid-cols-4'>
+			<Reveal>
+				<SectionHeading
+					title='Orchestrate fleets of agents in a few lines of code.'
+					subtitle='Durable sessions, multiplayer, and agent-to-agent delegation are built in, and every event streams back to your code.'
+					className='mb-10 max-w-3xl md:mb-12'
+				/>
+			</Reveal>
+			<Reveal>
+				<CodePanel tabs={joinTabs(orchestrationTabMeta, heroTabs)} />
+			</Reveal>
+			<div className='mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:auto-rows-fr lg:grid-cols-4'>
 				{orchestrationFeatures.map((feature) => (
 					<CapabilityCard key={feature.title} {...feature} />
 				))}
 			</div>
+		</div>
+	</section>
+);
+
+// --- Any execution layer (runtimes + code panel) ---
+// Three shipped runtimes, each grounded in its docs page. The full-Linux story
+// stays in the argument section's sandbox-mounting footnote.
+const executionLayers = [
+	{
+		imgSrc: '/images/registry/nodejs.svg',
+		title: 'JavaScript & TypeScript',
+		description: 'Node v22 compatible on native V8 isolates. node, npm, and npx on the PATH at full JIT speed.',
+		docsHref: '/docs/nodejs-runtime',
+	},
+	{
+		imgSrc: '/images/registry/python.svg',
+		title: 'Python',
+		description: 'CPython 3.13 with pip. Native wheels like numpy and pandas work.',
+		docsHref: '/docs/python-runtime',
+	},
+	{
+		imgSrc: '/images/registry/linux.svg',
+		title: 'Linux shell',
+		description: 'A POSIX userland with a process table, PTYs, TCP and UDP with DNS, and deny-by-default permissions.',
+		docsHref: '/docs/architecture',
+	},
+];
+
+const ExecutionLayersSection = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => (
+	<section className='border-t border-ink/10 px-6 py-16 md:py-32'>
+		<div className='mx-auto max-w-7xl'>
+			<Reveal>
+				<SectionHeading
+					title='Any execution layer.'
+					subtitle='Agents write JavaScript, Python, and shell. agentOS runs all three natively behind one exec API, so an agent can script its work in JavaScript as easily as in bash.'
+					className='mb-10 max-w-3xl md:mb-12'
+				/>
+			</Reveal>
+			<div className='mb-10 grid grid-cols-1 gap-4 sm:grid-cols-3'>
+				{executionLayers.map((layer) => (
+					<CapabilityCard key={layer.title} {...layer} />
+				))}
+			</div>
+			<Reveal>
+				<CodePanel tabs={joinTabs(executionTabMeta, heroTabs)} />
+			</Reveal>
 		</div>
 	</section>
 );
@@ -1004,6 +832,7 @@ const DocsLink = ({ href }: { href: string }) => {
 // scales up the icon, title, and copy so the larger tile reads as the headline.
 const CapabilityCard = ({
 	icon: Icon,
+	imgSrc,
 	title,
 	description,
 	docsHref,
@@ -1011,7 +840,8 @@ const CapabilityCard = ({
 	featured,
 	noIcon,
 }: {
-	icon: React.ComponentType<{ className?: string }>;
+	icon?: React.ComponentType<{ className?: string }>;
+	imgSrc?: string;
 	title: string;
 	description: string;
 	docsHref?: string;
@@ -1026,9 +856,13 @@ const CapabilityCard = ({
 		transition={{ duration: 0.5 }}
 		className={`group flex flex-col p-6 ${CARD_SURFACE} ${span ?? ''}`}
 	>
-		{!noIcon && (
+		{!noIcon && (imgSrc || Icon) && (
 			<div className={`mb-4 flex items-center justify-center rounded-xl bg-ink/5 ${featured ? 'h-14 w-14' : 'h-12 w-12'}`}>
-				<Icon className={featured ? 'h-6 w-6 text-ink-soft' : 'h-5 w-5 text-ink-soft'} />
+				{imgSrc ? (
+					<img src={imgSrc} alt='' aria-hidden='true' className={featured ? 'h-6 w-6 object-contain' : 'h-5 w-5 object-contain'} />
+				) : Icon ? (
+					<Icon className={featured ? 'h-6 w-6 text-ink-soft' : 'h-5 w-5 text-ink-soft'} />
+				) : null}
 			</div>
 		)}
 		<h3 className={`mb-2 font-medium tracking-[-0.015em] text-ink ${featured ? 'text-2xl md:text-3xl' : 'text-base'}`}>{title}</h3>
@@ -1041,20 +875,20 @@ const CapabilityCard = ({
 	</motion.div>
 );
 
-// --- Operating System section (inspector layout: visual + feature cards) ---
-// Six OS capabilities, distinct from the performance/architecture section below
-// (which already conveys the speed/memory/cost story). Each links to an existing
-// docs page.
+// --- Operating System section (the OS primitives agents actually use) ---
+// Maps the OS-needs list one-to-one: persistence, memory, integrations,
+// human-in-the-loop, and state previews, with execution covered by its own
+// section. Each tile links to an existing docs page.
 // Bento layout: "Any agent harness" leads as the headline tile. The span
-// pattern (one 2×2 + three col-span-2 + two 1×1) tiles a 4-column grid exactly
+// pattern (one 2×2 + two 1×1 + three col-span-2) tiles a 4-column grid exactly
 // with `grid-flow-row-dense`.
 const osFeatures = [
 	{ icon: Bot, title: 'Any agent harness', description: 'Claude Code, Codex, OpenCode, and Pi all run behind one unified API. Swap or add agents without touching your infrastructure.', docsHref: '/docs/sessions', featured: true, span: 'lg:col-span-2 lg:row-span-2' },
-	{ icon: FolderOpen, title: 'File system', description: 'Mount S3, GitHub, or a database as the agent’s file system. The host scopes access, so there are no per-agent credentials.', docsHref: '/docs/filesystem' },
-	{ icon: Globe, title: 'Preview deployments', description: 'Every app the agent runs gets its own unique preview URL, served straight from the VM.', docsHref: '/docs/networking' },
-	{ icon: Container, title: 'Sandbox mounting', description: 'agentOS handles most workloads — dev servers, CLIs, builds — in-process, and mounts a full sandbox when a job needs a real kernel, native binaries, or a GPU.', docsHref: '/docs/sandbox', span: 'lg:col-span-2' },
-	{ icon: CalendarClock, title: 'Cron jobs', description: 'Schedule recurring agent runs and background jobs inside the VM.', docsHref: '/docs/cron', span: 'lg:col-span-2' },
-	{ icon: Cpu, title: 'Resource limits', description: 'Per-agent CPU, memory, and network limits. One isolate can’t crash or starve the rest.', docsHref: '/docs/resource-limits', span: 'lg:col-span-2' },
+	{ icon: FolderOpen, title: 'Persistent file system', description: 'Mount a host directory, S3, Google Drive, or a custom JavaScript file system. State survives sleep and wake.', docsHref: '/docs/filesystem' },
+	{ icon: Globe, title: 'State previews', description: 'Every app the agent runs gets its own unique preview URL, served straight from the VM.', docsHref: '/docs/networking' },
+	{ icon: Wrench, title: 'Integrations', description: 'Bindings turn your JavaScript functions into CLI commands inside the VM. Connect MCP servers, skills, and other agents.', docsHref: '/docs/bindings', span: 'lg:col-span-2' },
+	{ icon: ShieldCheck, title: 'Human in the loop', description: 'Each tool call raises a permission request your app approves or denies, from a client UI or a server-side hook. Unanswered requests reject after 120 seconds, and interactive PTYs let a person take over.', docsHref: '/docs/approvals', span: 'lg:col-span-2' },
+	{ icon: HardDrive, title: 'Memory', description: 'Sessions persist automatically with replayable transcripts, and sqlite3 runs inside the VM for structured agent memory.', docsHref: '/docs/persistence', span: 'lg:col-span-2' },
 ];
 
 // --- Floating agent logos for the featured "Any agent harness" tile ---
@@ -1065,6 +899,8 @@ const FLOATING_AGENTS = [
 	{ src: '/images/registry/codex.svg', label: 'Codex', left: '83%', top: '43%', size: 64, depth: 17, float: 9, dur: 7.8, delay: 0.6, rot: 6 },
 	{ src: '/images/registry/opencode.svg', label: 'OpenCode', left: '64%', top: '65%', size: 80, depth: 20, float: 13, dur: 7.1, delay: 1.2, rot: -5 },
 	{ src: '/images/registry/pi.svg', label: 'PI', left: '16%', top: '59%', size: 74, depth: 23, float: 9, dur: 8.2, delay: 1.6, rot: 9 },
+	{ src: '/images/frameworks/eve.svg', label: 'Eve', left: '40%', top: '78%', size: 68, depth: 15, float: 10, dur: 7.4, delay: 0.9, rot: 7 },
+	{ src: '/images/frameworks/flue.svg', label: 'Flue', left: '90%', top: '74%', size: 58, depth: 21, float: 12, dur: 6.9, delay: 1.9, rot: -7 },
 ] as const;
 
 type FloatingAgent = (typeof FLOATING_AGENTS)[number];
@@ -1142,21 +978,13 @@ const FeaturedHarnessCard = ({ feature }: { feature: { title: string; descriptio
 const OperatingSystemSection = () => (
 	<section className='border-t border-ink/10 px-6 py-24 md:py-32'>
 		<div className='mx-auto max-w-7xl'>
-			<motion.div
-				initial={{ opacity: 0, y: 20 }}
-				whileInView={{ opacity: 1, y: 0 }}
-				viewport={{ once: true }}
-				transition={{ duration: 0.5 }}
-				className='mb-10 max-w-2xl md:mb-12'
-			>
-				<h2 className='mb-4 text-3xl font-medium tracking-[-0.015em] text-ink md:text-5xl'>
-					An operating system for your agents.
-				</h2>
-				<p className='text-base leading-relaxed text-ink-soft md:text-lg'>
-					A full file system, networking, scheduling, and resource control &mdash; everything the agent
-					needs to do real work, built into one npm package.
-				</p>
-			</motion.div>
+			<Reveal>
+				<SectionHeading
+					title='Everything your agent expects from an operating system.'
+					subtitle='A persistent file system, session memory, integrations, human oversight, and preview URLs, in a single npm package.'
+					className='mb-10 max-w-3xl md:mb-12'
+				/>
+			</Reveal>
 
 			<div className='grid grid-flow-row-dense grid-cols-1 gap-4 sm:grid-cols-2 lg:auto-rows-fr lg:grid-cols-4'>
 				{osFeatures.map((feature) =>
@@ -1180,11 +1008,11 @@ const REGISTRY_TYPE_LABELS: Record<string, string> = {
   tool: 'Tool',
 };
 
-// Two marquee rows of registry apps, logo-bearing entries split into
-// opposing-direction tracks. Pulled live from the registry so titles, icons,
-// and status stay in sync.
-const REGISTRY_ROW_A = ['pi', 's3', 'google-drive', 'postgres', 'docker', 'e2b', 'modal', 'vercel'];
-const REGISTRY_ROW_B = ['claude-code', 'codex', 'opencode', 'sqlite', 'daytona', 'browserbase', 'computesdk'];
+// Two marquee rows of registry apps, split into opposing-direction tracks:
+// software tools first, then file systems, browsers, and sandboxes. Pulled
+// live from the registry so titles, icons, and status stay in sync.
+const REGISTRY_ROW_A = ['git', 'ripgrep', 'jq', 'sqlite3', 'duckdb', 'curl', 'vim', 'wget'];
+const REGISTRY_ROW_B = ['browserbase', 's3', 'google-drive', 'docker', 'e2b', 'daytona', 'modal', 'pi'];
 const pickRegistry = (slugs: string[]) =>
   slugs
     .map((slug) => registry.find((entry) => entry.slug === slug))
@@ -1263,10 +1091,11 @@ const RegistryCallout = () => (
       >
         <div className='mb-8 max-w-2xl'>
           <h3 className='mb-2 text-2xl font-medium tracking-[-0.015em] text-ink md:text-3xl'>
-            agentOS Registry
+            Supports the tools you&apos;d expect.
           </h3>
           <p className='text-base leading-relaxed text-ink-soft'>
-            A marketplace for agent capabilities. Browse and install pre-built tools, integrations, file systems, databases, and sandboxes &mdash; one command away.
+            git, curl, ripgrep, jq, and SQLite run inside the VM. Browsers, file system mounts,
+            and sandboxes install the same way from the registry.
           </p>
         </div>
 
@@ -1502,7 +1331,8 @@ function BenchCard({
 
 function BenchColdStartChart() {
 	const groups = benchColdStart;
-	const [active, setActive] = useState(2);
+	// Default to p50 so the hero chip's claim and this card's first-shown number agree.
+	const [active, setActive] = useState(0);
 	const g = groups[active];
 
 	return (
@@ -1574,7 +1404,8 @@ function BenchMemoryBar({ workload }: { workload: WorkloadKey }) {
 function BenchCostChart({ workload }: { workload: WorkloadKey }) {
 	const tiers = benchWorkloads[workload].cost;
 	const sandboxCost = benchWorkloads[workload].sandboxCost;
-	const [active, setActive] = useState(0);
+	// Default to AWS ARM so the hero chip's claim and this card's first-shown number agree.
+	const [active, setActive] = useState(() => Math.max(0, tiers.findIndex((tier) => tier.label === 'AWS ARM')));
 	const t = tiers[active];
 	const [costMult, costVerb] = t.multiplier.split(' ');
 
@@ -1621,15 +1452,6 @@ function BenchmarkSection() {
 			viewport={{ once: true }}
 			transition={{ duration: 0.5 }}
 		>
-			<div className='mb-8'>
-				<h3 className='mb-2 text-2xl font-medium tracking-[-0.015em] text-ink md:text-3xl'>
-					Performance benchmarks
-				</h3>
-				<p className='text-base leading-relaxed text-ink-soft'>
-					agentOS vs. traditional sandboxes.
-				</p>
-			</div>
-
 			<div className='mb-6 flex items-center justify-between max-sm:flex-col max-sm:items-stretch max-sm:gap-2'>
 				<p className='text-xs text-ink-faint max-sm:order-2 max-sm:px-1 max-sm:leading-relaxed'>
 					Workload:{' '}
@@ -1699,55 +1521,172 @@ function BenchmarkSection() {
 	);
 }
 
-const TechnologyAndBenchmarks = () => (
-	<section className='border-t border-ink/10 py-16 md:py-32'>
-		<div className='mx-auto max-w-7xl px-6'>
-			{/* Technology intro */}
-			<motion.div
-				initial={{ opacity: 0, y: 20 }}
-				whileInView={{ opacity: 1, y: 0 }}
-				viewport={{ once: true }}
-				transition={{ duration: 0.5 }}
-				className='mb-16'
-			>
-				<h2 className='mb-4 text-3xl font-medium tracking-[-0.015em] text-ink md:text-5xl'>
-					A new architecture.
-				</h2>
-				<p className='mb-6 max-w-3xl text-base leading-relaxed text-ink-soft md:text-lg'>
-					Built from the ground up for lightweight agents. agentOS provides the flexibility of Linux with lower overhead than sandboxes.
-				</p>
-				<div className='grid gap-6 md:grid-cols-2'>
-					<div className={`group relative overflow-hidden p-6 ${CARD_SURFACE}`}>
-						<div className='mb-3 flex items-center gap-3'>
-							<div className='flex h-11 w-11 items-center justify-center rounded-xl bg-ink ring-1 ring-ink/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.10),0_1px_2px_rgba(20,20,22,0.18)]'>
-								<img src='/images/agent-os/webassembly-logo.svg' alt='WebAssembly' className='h-6 w-6' />
-							</div>
-							<h3 className='text-lg font-medium text-ink'>WebAssembly + V8 Isolates</h3>
-						</div>
-						<p className='text-sm leading-relaxed text-ink-soft'>
-							High-performance virtualization without specialized infrastructure. The same battle-hardened isolation technology that powers Google Chrome.
-						</p>
-					</div>
-					<div className={`group relative overflow-hidden p-6 ${CARD_SURFACE}`}>
-						<div className='mb-3 flex items-center gap-3'>
-							<div className='flex h-11 w-11 items-center justify-center rounded-xl bg-ink ring-1 ring-ink/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.10),0_1px_2px_rgba(20,20,22,0.18)]'>
-								<Chrome className='h-5 w-5 text-cream' strokeWidth={1.75} aria-hidden='true' />
-							</div>
-							<h3 className='text-lg font-medium text-ink'>Battle-tested technology</h3>
-						</div>
-						<p className='text-sm leading-relaxed text-ink-soft'>
-							You&apos;re probably using this technology right now to view this page. Bring the same power to your agents. No VMs, no containers, no overhead.
-						</p>
-					</div>
-				</div>
-			</motion.div>
+// --- Argument (why an OS, not a sandbox) ---
+// The narrative pivot right under the hero: what sandboxes provide, what agents
+// actually use, and why that set ships better as a library. Rows come from
+// docs/versus-sandbox.mdx; keep the two in sync.
+const SANDBOX_COMPARISON = [
+	{ label: 'Cost', agentOS: 'Very low. Runs in your process.', sandbox: 'Pay per second of uptime.' },
+	{ label: 'Startup', agentOS: 'Near-zero cold start (~6 ms).', sandbox: 'Seconds to spin up.' },
+	{ label: 'Backend integration', agentOS: 'Bindings call your functions directly.', sandbox: 'Network calls back to your backend.' },
+	{ label: 'Virtualization', agentOS: 'V8 isolates and WebAssembly: a kernel virtualized inside your process, nothing to boot.', sandbox: 'MicroVMs booted per agent on separate hosts.' },
+	{ label: 'Isolation', agentOS: 'One VM per customer or job. VMs share no file system, memory, or crash fate.', sandbox: 'One container or microVM per agent.' },
+	{
+		label: 'Heavy workloads',
+		agentOS: (
+			<>
+				Mount a Docker, E2B, or Daytona{' '}
+				<a href='/docs/sandbox' className='underline underline-offset-2 hover:text-ink/80'>
+					sandbox
+				</a>{' '}
+				into the same file system when a job needs native binaries, file watching, or a GPU.
+			</>
+		),
+		sandbox: 'Native.',
+	},
+	{ label: 'Credentials', agentOS: 'Stay on the host. Bindings run your functions server-side; agents see only inputs and outputs.', sandbox: 'Injected into the sandbox environment.' },
+	{ label: 'Permissions', agentOS: 'Granular and deny-by-default.', sandbox: 'Coarse, container-level.' },
+	{ label: 'Infrastructure', agentOS: 'npm install', sandbox: 'Vendor account and API keys.' },
+];
 
-			{/* Benchmarks */}
-			<BenchmarkSection />
+// Modal wrapper for the cold-start timeline, opened from the table's Startup
+// row. Mounting the timeline on open replays its sequence each time.
+const ColdStartModal = ({ open, onClose }: { open: boolean; onClose: () => void }) => {
+	useEffect(() => {
+		if (!open) return;
+		const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+		document.addEventListener('keydown', onKey);
+		const prevOverflow = document.body.style.overflow;
+		document.body.style.overflow = 'hidden';
+		return () => {
+			document.removeEventListener('keydown', onKey);
+			document.body.style.overflow = prevOverflow;
+		};
+	}, [open, onClose]);
+
+	return (
+		<AnimatePresence>
+			{open && (
+				<motion.div
+					initial={{ opacity: 0 }}
+					animate={{ opacity: 1 }}
+					exit={{ opacity: 0 }}
+					transition={{ duration: 0.2 }}
+					className='fixed inset-0 z-[60] flex items-center justify-center bg-ink/40 p-4 backdrop-blur-[2px] md:p-8'
+					onClick={onClose}
+				>
+					<motion.div
+						role='dialog'
+						aria-modal='true'
+						aria-label='Cold-start timeline'
+						initial={{ opacity: 0, y: 14, scale: 0.98 }}
+						animate={{ opacity: 1, y: 0, scale: 1 }}
+						exit={{ opacity: 0, y: 10, scale: 0.98 }}
+						transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+						onClick={(e) => e.stopPropagation()}
+						className='relative max-h-full w-full max-w-3xl overflow-y-auto rounded-2xl bg-paper p-5 shadow-[0_24px_70px_-20px_rgba(20,20,22,0.45)] ring-1 ring-ink/10 md:p-8'
+					>
+						<button
+							type='button'
+							onClick={onClose}
+							aria-label='Close'
+							className='absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-ink/[0.05] hover:text-ink'
+						>
+							<X className='h-4 w-4' />
+						</button>
+						<ColdStartTimeline />
+					</motion.div>
+				</motion.div>
+			)}
+		</AnimatePresence>
+	);
+};
+
+const ArgumentSection = () => {
+	const [showColdStart, setShowColdStart] = useState(false);
+
+	return (
+	<section className='border-t border-ink/10 px-6 py-16 md:py-32'>
+		<div className='mx-auto max-w-7xl'>
+			<Reveal>
+				<SectionHeading
+					title='The benefits of a sandbox, without the sandbox.'
+					subtitle={
+						<>
+							Sandbox providers give every agent a full VM across a network gap and leave
+							orchestration to you. agentOS runs each agent in its own VM inside your backend,
+							with sessions, workflows, and approvals built in. Speed and footprint are measured
+							below.
+						</>
+					}
+					className='mb-10 max-w-3xl md:mb-12'
+				/>
+			</Reveal>
+
+			{/* Comparison ledger, from docs/versus-sandbox.mdx. Its first row is
+			    the topology picture the data rows annotate: agents inside your
+			    backend vs a fleet across a network gap. */}
+			<Reveal>
+				<div className={`overflow-hidden p-6 md:p-8 ${CARD_SURFACE}`}>
+					<div className='grid grid-cols-2 gap-x-6 gap-y-1 border-b border-ink/10 pb-3 sm:grid-cols-[minmax(0,0.7fr),1fr,1fr]'>
+						<span className='hidden sm:block' aria-hidden='true' />
+						<span className='text-sm font-medium text-pine'>agentOS</span>
+						<span className='text-sm font-medium text-ink-faint'>Full sandbox</span>
+					</div>
+					<div className='grid grid-cols-2 gap-x-6 border-b border-ink/[0.06] py-4 sm:grid-cols-[minmax(0,0.7fr),1fr,1fr]'>
+						<span className='hidden self-center text-sm text-ink-faint sm:block'>Where agents run</span>
+						<AgentOsTopologyCell />
+						<SandboxTopologyCell />
+					</div>
+					{SANDBOX_COMPARISON.map((row) => (
+						<div
+							key={row.label}
+							className='grid grid-cols-2 gap-x-6 gap-y-1 border-b border-ink/[0.06] py-3 last:border-b-0 last:pb-0 sm:grid-cols-[minmax(0,0.7fr),1fr,1fr]'
+						>
+							<span className='col-span-2 text-sm text-ink-faint sm:col-span-1 sm:self-center'>
+								{row.label}
+							</span>
+							<span className='text-sm leading-relaxed text-ink'>
+								{row.agentOS}
+								{row.label === 'Startup' && (
+									<button
+										type='button'
+										onClick={() => setShowColdStart(true)}
+										aria-label='See the cold-start timeline'
+										className='ml-2 inline-flex h-5 w-5 -translate-y-px items-center justify-center rounded-full border border-ink/20 align-middle text-[11px] leading-none text-ink-faint transition-colors hover:border-ink/45 hover:text-ink'
+									>
+										?
+									</button>
+								)}
+							</span>
+							<span className='text-sm leading-relaxed text-ink-faint'>{row.sandbox}</span>
+						</div>
+					))}
+				</div>
+			</Reveal>
+
+			{/* The measurements behind the table's claims, same section: one proof
+			    block instead of a second comparison section. */}
+			<div className='mt-14 md:mt-20'>
+				<Reveal>
+					<div className='mb-8 max-w-2xl'>
+						<h3 className='mb-2 text-2xl font-medium tracking-[-0.015em] text-ink md:text-3xl'>
+							Faster starts, less memory, lower cost.
+						</h3>
+						<p className='text-base leading-relaxed text-ink-soft'>
+							{`Measured against ${SANDBOX_COLDSTART_PROVIDER}, the fastest mainstream sandbox cold start, and ${SANDBOX_COST_PROVIDER}, the cheapest per-second sandbox, as of ${BENCHMARK_DATE}.`}
+						</p>
+					</div>
+				</Reveal>
+				<BenchmarkSection />
+			</div>
 
 		</div>
+
+		<ColdStartModal open={showColdStart} onClose={() => setShowColdStart(false)} />
 	</section>
-);
+	);
+};
 
 // --- Deployment ---
 // Mirrors the "Start local. Scale to millions." hosting section from rivet.dev:
@@ -1794,7 +1733,9 @@ const DeploymentSection = () => (
 					transition={{ duration: 0.5, delay: 0.1 }}
 					className='max-w-xl text-base leading-relaxed text-ink-soft'
 				>
-					A library in development, a platform in production. agentOS runs in your process locally and deploys wherever you already ship &mdash; the same SDK, no rewrites.
+					agentOS runs as Rivet Actors, so agents live next to their state and deploy wherever you
+					already ship. The same SDK runs as a library in development and as a platform in
+					production.
 				</motion.p>
 			</div>
 
@@ -1882,19 +1823,61 @@ const DeploymentSection = () => (
 	</section>
 );
 
+// --- Closing band ---
+// The page opens with the argument (an OS, not a sandbox) and closes with the
+// action. Repeats the hero CTAs so the reader never scrolls back up to act.
+const ClosingCta = () => (
+	<section className='border-t border-ink/10 px-6 py-24 md:py-32'>
+		<div className='mx-auto max-w-7xl'>
+			<Reveal>
+				<InkPanel>
+					<div className='flex flex-col items-center px-6 py-16 text-center md:py-24'>
+						<h2 className='mb-3 max-w-2xl text-balance text-3xl font-medium tracking-[-0.015em] text-cream md:text-5xl'>
+							Give your agents an OS.
+						</h2>
+						<p className='mb-8 text-base leading-relaxed text-cream/70'>
+							agentOS is open source under Apache 2.0. Install it from npm and run it inside your
+							existing backend.
+						</p>
+						<div className='flex flex-col flex-wrap items-center gap-x-4 gap-y-3 sm:flex-row sm:justify-center'>
+							<SetupWithAgent />
+							<a
+								href='/docs'
+								className='inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-md border border-cream/25 px-4 py-2 text-sm font-medium text-cream transition-colors hover:border-cream/50 hover:bg-cream/[0.04] sm:w-auto'
+							>
+								Read the Docs
+								<ArrowRight className='h-4 w-4' />
+							</a>
+							<a
+								href='https://github.com/rivet-dev/agentos'
+								target='_blank'
+								rel='noopener noreferrer'
+								className='inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-md border border-cream/25 px-4 py-2 text-sm font-medium text-cream transition-colors hover:border-cream/50 hover:bg-cream/[0.04] sm:w-auto'
+							>
+								View on GitHub
+								<ExternalLink className='h-4 w-4' />
+							</a>
+						</div>
+					</div>
+				</InkPanel>
+			</Reveal>
+		</div>
+	</section>
+);
+
 // --- Main Page ---
 export default function AgentOSPage({ heroTabs }: AgentOSPageProps) {
 	return (
 		<div className='paper-grain min-h-screen font-sans text-ink-soft' style={{ overflowX: 'clip' }}>
 			<main>
 				<Hero />
-				<TechnologyAndBenchmarks />
+				<ArgumentSection />
+				<ExecutionLayersSection heroTabs={heroTabs} />
 				<OperatingSystemSection />
-				<OrchestrateTitle />
-				<CodeShowcase heroTabs={heroTabs} />
-				<AgentOrchestration />
 				<RegistryCallout />
+				<OrchestrationSection heroTabs={heroTabs} />
 				<DeploymentSection />
+				<ClosingCta />
 			</main>
 		</div>
 	);
