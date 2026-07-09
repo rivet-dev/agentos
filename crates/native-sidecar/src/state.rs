@@ -357,6 +357,15 @@ pub(crate) struct VmState {
     /// packages ship no `agentos-package.json`, so agent enumeration and
     /// resolution read this instead of the guest filesystem.
     pub(crate) projected_agent_launch: BTreeMap<String, ProjectedAgentLaunch>,
+    /// Guest paths that were present in the VM shadow root during the last
+    /// shadow->kernel sync walk. The next walk diffs the current shadow tree
+    /// against this set so guest deletions performed directly on the shadow
+    /// (host-side runtimes, WASI passthrough writes) propagate into the kernel
+    /// VFS instead of being resurrected by the otherwise additive sync.
+    /// Memory is bounded by the shadow tree itself, which is capped by the
+    /// kernel filesystem inode/byte resource limits that bound what the walk
+    /// can materialize.
+    pub(crate) shadow_sync_inventory: BTreeSet<String>,
 }
 
 /// Launch parameters for one projected agent package.

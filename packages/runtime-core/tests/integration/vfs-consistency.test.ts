@@ -109,4 +109,67 @@ describeIf(!skipReason, 'cross-runtime VFS consistency', () => {
     );
     expect(nodeResult.exitCode).not.toBe(0);
   });
+
+  // Guest deletions must propagate into the kernel VFS instead of being
+  // resurrected by the (otherwise additive) shadow->kernel sync. This is the
+  // failure mode behind git's failed-clone junk surviving `remove_junk`.
+  it('guest rm -r removes the tree from the kernel VFS', async () => {
+    ctx = await createIntegrationKernel();
+
+    const create = await ctx.kernel.exec(
+      'sh -c "mkdir -p /tmp/doomed/nested && echo payload > /tmp/doomed/nested/file.txt"',
+    );
+    expect(create.exitCode).toBe(0);
+    expect(await ctx.vfs.exists('/tmp/doomed/nested/file.txt')).toBe(true);
+
+    const remove = await ctx.kernel.exec('rm -r /tmp/doomed');
+    expect(remove.exitCode).toBe(0);
+
+    expect(await ctx.vfs.exists('/tmp/doomed/nested/file.txt')).toBe(false);
+    expect(await ctx.vfs.exists('/tmp/doomed/nested')).toBe(false);
+    expect(await ctx.vfs.exists('/tmp/doomed')).toBe(false);
+
+    const ls = await ctx.kernel.exec('ls /tmp/doomed');
+    expect(ls.exitCode).not.toBe(0);
+  });
+
+  it('guest rmdir on an empty directory succeeds and propagates', async () => {
+    ctx = await createIntegrationKernel();
+
+    const mkdir = await ctx.kernel.exec('mkdir /tmp/empty-dir');
+    expect(mkdir.exitCode).toBe(0);
+    expect(await ctx.vfs.exists('/tmp/empty-dir')).toBe(true);
+
+    const rmdir = await ctx.kernel.exec('rmdir /tmp/empty-dir');
+    expect(rmdir.exitCode, rmdir.stderr).toBe(0);
+    expect(await ctx.vfs.exists('/tmp/empty-dir')).toBe(false);
+  });
+
+  it('guest unlink removes a dangling symlink so its directory can be emptied', async () => {
+    // git's symlink-support probe: create `tXXXXXX -> testing` (dangling),
+    // lstat it, unlink it, then remove the directory. unlink(2) must not
+    // resolve the symlink leaf, and rmdir must not report EIO afterwards.
+    ctx = await createIntegrationKernel();
+
+    const probe = await ctx.kernel.exec(
+      'sh -c "mkdir /tmp/probe-dir && ln -s missing-target /tmp/probe-dir/probe && rm /tmp/probe-dir/probe && rmdir /tmp/probe-dir"',
+    );
+    expect(probe.exitCode, probe.stderr).toBe(0);
+    expect(await ctx.vfs.exists('/tmp/probe-dir')).toBe(false);
+  });
+
+  it('guest rmdir on a non-empty directory reports ENOTEMPTY, not EIO', async () => {
+    ctx = await createIntegrationKernel();
+
+    const setup = await ctx.kernel.exec(
+      'sh -c "mkdir /tmp/full-dir && echo keep > /tmp/full-dir/keep.txt"',
+    );
+    expect(setup.exitCode).toBe(0);
+
+    const rmdir = await ctx.kernel.exec('rmdir /tmp/full-dir');
+    expect(rmdir.exitCode).not.toBe(0);
+    expect(rmdir.stderr.toLowerCase()).toContain('not empty');
+    expect(rmdir.stderr.toLowerCase()).not.toContain('i/o error');
+    expect(await ctx.vfs.exists('/tmp/full-dir/keep.txt')).toBe(true);
+  });
 });

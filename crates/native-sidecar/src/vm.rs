@@ -373,6 +373,7 @@ where
                 signal_states: BTreeMap::new(),
                 packages_staging_root: None,
                 projected_agent_launch: BTreeMap::new(),
+                shadow_sync_inventory: BTreeSet::new(),
             },
         );
 

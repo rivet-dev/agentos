@@ -9939,8 +9939,7 @@ pub(crate) fn sync_active_process_host_writes_to_kernel(
     vm: &mut VmState,
 ) -> Result<(), SidecarError> {
     if vm.root_filesystem_mode != RootFilesystemMode::ReadOnly {
-        let shadow_root = vm.cwd.clone();
-        sync_host_directory_tree_to_kernel(vm, &shadow_root, "/")?;
+        sync_vm_shadow_root_to_kernel(vm)?;
     }
 
     let normalized_vm_root = normalize_host_path(&vm.cwd);
@@ -9950,6 +9949,90 @@ pub(crate) fn sync_active_process_host_writes_to_kernel(
     }
 
     Ok(())
+}
+
+/// Syncs the VM shadow root into the kernel VFS and reconciles deletions.
+///
+/// The walk itself is additive (it copies shadow entries into the kernel), so
+/// on its own it can never express a guest deletion performed directly on the
+/// shadow tree — a removed file would be resurrected forever. To get real
+/// Linux semantics the walk records every guest path it sees and diffs that
+/// set against the previous walk's inventory: paths that were present in the
+/// shadow before and are gone now are removed from the kernel VFS as well.
+///
+/// Deletion propagation is scoped to the guest-writable shadow region: it only
+/// runs for the VM shadow root walk (never for external host roots), re-checks
+/// the protected/mount skip list, never touches the POSIX bootstrap skeleton,
+/// and removes directories non-recursively so a kernel directory that still
+/// has kernel-only content (for example a mount point or a path that was never
+/// materialized into the shadow) is left in place with a warning.
+fn sync_vm_shadow_root_to_kernel(vm: &mut VmState) -> Result<(), SidecarError> {
+    let shadow_root = normalize_host_path(&vm.cwd);
+    if host_sync_root_is_filesystem_root(&shadow_root) {
+        tracing::warn!("skipping host shadow sync rooted at the host filesystem root");
+        return Ok(());
+    }
+    let mut synced_file_times = BTreeMap::new();
+    let mut inventory = BTreeSet::new();
+    sync_host_directory_tree_to_kernel_inner(
+        vm,
+        &shadow_root,
+        &shadow_root,
+        "/",
+        &mut synced_file_times,
+        Some(&mut inventory),
+    )?;
+    propagate_shadow_deletions_to_kernel(vm, &inventory);
+    vm.shadow_sync_inventory = inventory;
+    Ok(())
+}
+
+/// Removes kernel paths whose shadow copy disappeared since the last walk.
+///
+/// Best-effort by design: a failure to reconcile one stale path must not
+/// poison the guest filesystem operation that triggered the sync, so failures
+/// are surfaced as host-visible warnings instead of errors. Children sort
+/// after their parents in the `BTreeSet`, so the reverse iteration removes
+/// leaves before the directories that contain them.
+fn propagate_shadow_deletions_to_kernel(vm: &mut VmState, current: &BTreeSet<String>) {
+    if vm.shadow_sync_inventory.is_empty() {
+        return;
+    }
+    let stale: Vec<String> = vm
+        .shadow_sync_inventory
+        .iter()
+        .rev()
+        .filter(|path| !current.contains(*path))
+        .cloned()
+        .collect();
+    for path in stale {
+        if path == "/"
+            || should_skip_shadow_sync_path(vm, &path)
+            || is_shadow_bootstrap_dir(&path)
+        {
+            continue;
+        }
+        let stat = match vm.kernel.lstat(&path) {
+            Ok(stat) => stat,
+            // Already gone (for example removed through the kernel-direct
+            // guest fs path, which mirrors deletions into the shadow itself).
+            Err(_) => continue,
+        };
+        let result = if stat.is_directory && !stat.is_symbolic_link {
+            vm.kernel.remove_dir(&path)
+        } else {
+            vm.kernel.remove_file(&path)
+        };
+        if let Err(error) = result {
+            if error.code() != "ENOENT" {
+                tracing::warn!(
+                    path = %path,
+                    error = %error,
+                    "failed to propagate guest shadow deletion into the kernel VFS"
+                );
+            }
+        }
+    }
 }
 
 fn collect_active_process_host_sync_roots(
@@ -9998,8 +10081,7 @@ fn sync_process_host_roots_to_kernel(
     process_guest_cwd: &str,
 ) -> Result<(), SidecarError> {
     if vm.root_filesystem_mode != RootFilesystemMode::ReadOnly {
-        let shadow_root = vm.cwd.clone();
-        sync_host_directory_tree_to_kernel(vm, &shadow_root, "/")?;
+        sync_vm_shadow_root_to_kernel(vm)?;
     }
 
     if !path_is_within_root(
@@ -10038,6 +10120,7 @@ fn sync_host_directory_tree_to_kernel(
         &normalized_host_root,
         &normalized_guest_root,
         &mut synced_file_times,
+        None,
     )
 }
 
@@ -10047,6 +10130,7 @@ fn sync_host_directory_tree_to_kernel_inner(
     current_host_dir: &Path,
     guest_root: &str,
     synced_file_times: &mut BTreeMap<(u64, u64), (u64, u64)>,
+    mut inventory: Option<&mut BTreeSet<String>>,
 ) -> Result<(), SidecarError> {
     let entries = match fs::read_dir(current_host_dir) {
         Ok(entries) => entries,
@@ -10108,6 +10192,15 @@ fn sync_host_directory_tree_to_kernel_inner(
             continue;
         }
 
+        // Record every shadow entry we can represent in the kernel (dirs,
+        // files, symlinks) so the deletion reconcile can tell "was in the
+        // shadow, now gone" apart from "never came from the shadow".
+        if let Some(inventory) = inventory.as_deref_mut() {
+            if file_type.is_dir() || file_type.is_file() || file_type.is_symlink() {
+                inventory.insert(guest_path.clone());
+            }
+        }
+
         if file_type.is_dir() {
             let metadata = entry.metadata().map_err(|error| {
                 SidecarError::Io(format!(
@@ -10143,6 +10236,7 @@ fn sync_host_directory_tree_to_kernel_inner(
                 &host_path,
                 guest_root,
                 synced_file_times,
+                inventory.as_deref_mut(),
             )?;
             continue;
         }

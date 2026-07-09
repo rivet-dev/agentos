@@ -40,6 +40,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
   const __agentOSWasiErrnoNoent = 44;
   const __agentOSWasiErrnoNosys = 52;
   const __agentOSWasiErrnoNotdir = 54;
+  const __agentOSWasiErrnoNotempty = 55;
   const __agentOSWasiErrnoPipe = 64;
   const __agentOSWasiErrnoRofs = 69;
   const __agentOSWasiErrnoNotcapable = 76;
@@ -799,6 +800,8 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
           return __agentOSWasiErrnoNoent;
         case "ENOTDIR":
           return __agentOSWasiErrnoNotdir;
+        case "ENOTEMPTY":
+          return __agentOSWasiErrnoNotempty;
         case "EEXIST":
           return __agentOSWasiErrnoExist;
         case "EINVAL":
