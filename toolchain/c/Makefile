@@ -68,7 +68,7 @@ COMMANDS_DIR ?= ../target/wasm32-wasip1/release/commands
 
 # Fast real commands installed by the default software gate. Slow/heavy commands
 # (duckdb, vim) remain available through explicit parent `make cmd/<name>`.
-COMMANDS := zip unzip envsubst sqlite3 curl wget grep git git-remote-http tree
+COMMANDS := zip unzip envsubst sqlite3 curl wget grep git git-remote-http tree ssh
 
 # Programs requiring patched sysroot (Tier 2+ custom host imports)
 PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler dns_lookup sqlite3 curl wget grep tree zip unzip fs_probe
@@ -192,6 +192,11 @@ GIT_VERSION := 2.55.0
 GIT_URL := https://www.kernel.org/pub/software/scm/git/git-$(GIT_VERSION).tar.xz
 GIT_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/git-upstream
 GIT_PATCH_DIR := patches/git
+# OpenSSH portable — real upstream ssh client (batch/key-based), built
+# --without-openssl (internal ed25519/curve25519/chacha20-poly1305 crypto).
+OPENSSH_VERSION := 10.4p1
+OPENSSH_URL := https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-$(OPENSSH_VERSION).tar.gz
+OPENSSH_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/ssh-upstream
 GREP_VERSION := 3.12
 GREP_URL := https://ftp.gnu.org/gnu/grep/grep-$(GREP_VERSION).tar.xz
 GREP_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/grep-upstream
@@ -774,6 +779,24 @@ $(BUILD_DIR)/git: scripts/build-git-upstream.sh $(CURL_LIBCURL_ARTIFACT) $(MBEDT
 # git-remote-http is produced by the same git build invocation.
 $(BUILD_DIR)/git-remote-http: $(BUILD_DIR)/git
 	@test -f $@ || { echo "Error: git-remote-http missing at $@ (git build did not produce it)"; exit 1; }
+
+# ssh: upstream OpenSSH client built --without-openssl against the patched
+# sysroot (closefrom/socketpair stubs live in wasi-libc-overrides). Also
+# lights up git-over-ssh: git's connect.c execs `ssh` from PATH.
+$(BUILD_DIR)/ssh: scripts/build-ssh-upstream.sh $(ZLIB_BUILD_DIR)/libz.a $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+	@mkdir -p $(BUILD_DIR)
+	bash scripts/build-ssh-upstream.sh \
+		--version "$(OPENSSH_VERSION)" \
+		--url "$(OPENSSH_URL)" \
+		--cache-dir "$(abspath $(LIBS_CACHE))" \
+		--build-dir "$(abspath $(OPENSSH_UPSTREAM_BUILD_DIR))" \
+		--zlib-include "$(abspath $(LIBS_CACHE)/zlib-$(ZLIB_VERSION))" \
+		--zlib-libdir "$(abspath $(ZLIB_BUILD_DIR))" \
+		--overlay-include-dir "$(abspath include)" \
+		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
+		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
+		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
+		--output "$(abspath $@)"
 
 # curl_test: links libcurl (HTTP/HTTPS build for WASM via host_net + host_tls)
 CURL_SRCS := $(wildcard libs/curl/lib/*.c) $(wildcard libs/curl/lib/vauth/*.c) \

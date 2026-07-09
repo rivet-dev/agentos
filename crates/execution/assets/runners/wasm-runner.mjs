@@ -3065,6 +3065,21 @@ const HOST_NET_SO_ERROR = 4;
 const HOST_NET_SO_RCVTIMEO_64 = 20;
 const HOST_NET_SO_RCVTIMEO_32 = 66;
 const HOST_NET_TIMEVAL_BYTES = 16;
+// Performance/QoS socket options that guests may set but the host transport
+// neither needs nor can honor per-socket: Node's net sockets already run
+// with sensible defaults, and DSCP/traffic-class marking is not observable
+// through the adapter. Accepted and ignored (values from the patched
+// wasi-libc headers, matching Linux): setsockopt(2) succeeds, matching a
+// Linux host where these are best-effort hints. OpenSSH sets all four on
+// every connection (ssh_packet_set_tos / set_nodelay in opacket/misc) and
+// treats failure as per-connection stderr noise.
+const HOST_NET_SO_KEEPALIVE = 9; // SOL_SOCKET, socket(7)
+const HOST_NET_IPPROTO_IP = 0;
+const HOST_NET_IP_TOS = 1; // ip(7)
+const HOST_NET_IPPROTO_TCP = 6;
+const HOST_NET_TCP_NODELAY = 1; // tcp(7)
+const HOST_NET_IPPROTO_IPV6 = 41;
+const HOST_NET_IPV6_TCLASS = 67; // ipv6(7)
 
 function hostNetSocketBaseType(socket) {
   return Number(socket?.sockType ?? 0) & HOST_NET_SOCKET_TYPE_MASK;
@@ -3074,6 +3089,35 @@ function hostNetSockoptKind(level, optname, optvalLen) {
   const normalizedLevel = Number(level) >>> 0;
   const normalizedOptname = Number(optname) >>> 0;
   const normalizedOptvalLen = Number(optvalLen) >>> 0;
+  // Accept-and-ignore QoS/keepalive/nagle hints (see constant block above).
+  // Option values are plain ints; accept any sane small buffer.
+  if (normalizedOptvalLen >= 1 && normalizedOptvalLen <= 16) {
+    if (
+      (normalizedLevel === HOST_NET_SOL_SOCKET ||
+        normalizedLevel === HOST_NET_WASI_SOL_SOCKET) &&
+      normalizedOptname === HOST_NET_SO_KEEPALIVE
+    ) {
+      return 'ignore';
+    }
+    if (
+      normalizedLevel === HOST_NET_IPPROTO_TCP &&
+      normalizedOptname === HOST_NET_TCP_NODELAY
+    ) {
+      return 'ignore';
+    }
+    if (
+      normalizedLevel === HOST_NET_IPPROTO_IP &&
+      normalizedOptname === HOST_NET_IP_TOS
+    ) {
+      return 'ignore';
+    }
+    if (
+      normalizedLevel === HOST_NET_IPPROTO_IPV6 &&
+      normalizedOptname === HOST_NET_IPV6_TCLASS
+    ) {
+      return 'ignore';
+    }
+  }
   if (
     normalizedLevel !== HOST_NET_SOL_SOCKET &&
     normalizedLevel !== HOST_NET_WASI_SOL_SOCKET
@@ -3897,6 +3941,9 @@ const hostNetImport = {
     const sockoptKind = hostNetSockoptKind(level, optname, optvalLen);
     if (sockoptKind == null) {
       return WASI_ERRNO_INVAL;
+    }
+    if (sockoptKind === 'ignore') {
+      return WASI_ERRNO_SUCCESS;
     }
     try {
       const timeoutMs = parseHostNetTimevalMs(readGuestBytes(optvalPtr, optvalLen));

@@ -32,6 +32,9 @@ const hasHostGit = spawnSync('git', ['--version'], { stdio: 'ignore' }).status =
 // git-remote-https aliases to it.
 const hasGitHttpHelper =
   hasGit && existsSync(resolve(COMMANDS_DIR, 'git-remote-http'));
+// The real OpenSSH client (software/ssh) lights up git-over-ssh; its presence
+// changes how ssh:// remotes fail when unreachable.
+const hasSshClient = existsSync(resolve(COMMANDS_DIR, 'ssh'));
 
 const gitConfig = [
   '-c safe.directory=*',
@@ -428,12 +431,22 @@ describeIf(hasGit, 'git command', () => {
     expect(result.stderr).not.toContain('GitSubcommandUnsupported');
   });
 
-  it('clone rejects SSH-style remotes with a real Git spawn failure', async () => {
+  it('clone over ssh:// reaches the real ssh client and surfaces its transport error', async () => {
     ({ kernel, dispose } = await createGitKernel());
 
-    const result = await kernel.exec(git('clone git@github.com:rivet-dev/agentos.git /tmp/clone'));
+    // Port 1 on loopback is never exempted for this kernel, so the real
+    // OpenSSH client (now on PATH — git connect.c execs `ssh`) fails with a
+    // genuine connection error instead of a spawn failure. Full git-over-ssh
+    // success coverage lives in software/ssh/test/ssh.test.ts.
+    const result = await kernel.exec(git('clone ssh://git@127.0.0.1:1/repo.git /tmp/clone'));
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toMatch(/cannot run ssh|unable to fork|ssh|fatal/i);
+    if (hasSshClient) {
+      // The error must come from ssh's transport, proving git spawned it.
+      expect(result.stderr).toMatch(/ssh:|Connection closed|Could not read from remote repository/i);
+      expect(result.stderr).not.toMatch(/cannot run ssh|unable to fork/i);
+    } else {
+      expect(result.stderr).toMatch(/cannot run ssh|unable to fork|ssh|fatal/i);
+    }
     expect(result.stderr).not.toContain('GitSubcommandUnsupported');
   });
 
