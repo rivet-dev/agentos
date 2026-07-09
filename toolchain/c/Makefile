@@ -68,7 +68,7 @@ COMMANDS_DIR ?= ../target/wasm32-wasip1/release/commands
 
 # Fast real commands installed by the default software gate. Slow/heavy commands
 # (duckdb, vim) remain available through explicit parent `make cmd/<name>`.
-COMMANDS := zip unzip envsubst sqlite3 curl wget grep git tree
+COMMANDS := zip unzip envsubst sqlite3 curl wget grep git git-remote-http tree
 
 # Programs requiring patched sysroot (Tier 2+ custom host imports)
 PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler dns_lookup sqlite3 curl wget grep tree zip unzip fs_probe
@@ -148,6 +148,10 @@ CURL_RELEASE_VERSION := 8.11.1
 CURL_RELEASE_TAG := 8_11_1
 CURL_RELEASE_URL := https://github.com/curl/curl/releases/download/curl-$(CURL_RELEASE_TAG)/curl-$(CURL_RELEASE_VERSION).tar.xz
 CURL_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/curl-upstream
+# Reusable libcurl artifact (headers + libcurl.a) installed by the curl build so
+# git's git-remote-http links the same overlaid, mbedTLS-linked libcurl.
+CURL_LIBCURL_PREFIX := $(CURL_UPSTREAM_BUILD_DIR)/install
+CURL_LIBCURL_ARTIFACT := $(CURL_LIBCURL_PREFIX)/lib/libcurl.a
 CURL_UPSTREAM_OVERLAY_DIR := ../../software/curl/native/c/overlay
 CURL_UPSTREAM_OVERLAY_FILES := $(wildcard $(CURL_UPSTREAM_OVERLAY_DIR)/lib/*.c $(CURL_UPSTREAM_OVERLAY_DIR)/lib/*.h $(CURL_UPSTREAM_OVERLAY_DIR)/lib/vtls/*.c $(CURL_UPSTREAM_OVERLAY_DIR)/lib/vtls/*.h)
 ZLIB_VERSION := 1.3.1
@@ -742,7 +746,7 @@ $(BUILD_DIR)/unzip: scripts/build-infozip-upstream.sh $(PATCHED_SYSROOT)/lib/was
 		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
 		--output "$(abspath $@)"
 
-$(BUILD_DIR)/git: scripts/build-git-upstream.sh $(ZLIB_BUILD_DIR)/libz.a $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+$(BUILD_DIR)/git: scripts/build-git-upstream.sh $(CURL_LIBCURL_ARTIFACT) $(MBEDTLS_LIBS) $(BROTLI_LIBS) $(ZSTD_LIB) $(ZLIB_BUILD_DIR)/libz.a $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
 	bash scripts/build-git-upstream.sh \
 		--version "$(GIT_VERSION)" \
@@ -752,11 +756,20 @@ $(BUILD_DIR)/git: scripts/build-git-upstream.sh $(ZLIB_BUILD_DIR)/libz.a $(PATCH
 		--patch-dir "$(abspath $(GIT_PATCH_DIR))" \
 		--zlib-dir "$(abspath $(LIBS_CACHE)/zlib-$(ZLIB_VERSION))" \
 		--zlib-build-dir "$(abspath $(ZLIB_BUILD_DIR))" \
+		--curl-prefix "$(abspath $(CURL_LIBCURL_PREFIX))" \
+		--mbedtls-libdir "$(abspath $(MBEDTLS_BUILD_DIR))" \
+		--brotli-libdir "$(abspath $(BROTLI_BUILD_DIR))" \
+		--zstd-libdir "$(abspath $(ZSTD_BUILD_DIR))" \
 		--cc "$(abspath $(CC))" \
 		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
 		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
 		--sysroot "$(abspath $(SYSROOT))" \
+		--remote-http-output "$(abspath $(BUILD_DIR)/git-remote-http)" \
 		--output "$(abspath $@)"
+
+# git-remote-http is produced by the same git build invocation.
+$(BUILD_DIR)/git-remote-http: $(BUILD_DIR)/git
+	@test -f $@ || { echo "Error: git-remote-http missing at $@ (git build did not produce it)"; exit 1; }
 
 # curl_test: links libcurl (HTTP/HTTPS build for WASM via host_net + host_tls)
 CURL_SRCS := $(wildcard libs/curl/lib/*.c) $(wildcard libs/curl/lib/vauth/*.c) \
@@ -786,7 +799,13 @@ $(BUILD_DIR)/curl: scripts/build-curl-upstream.sh $(CURL_UPSTREAM_OVERLAY_FILES)
 		--zstd-include "$(abspath $(ZSTD_INCLUDE_DIR))" \
 		--zstd-libdir "$(abspath $(ZSTD_BUILD_DIR))" \
 		--ca-bundle "/etc/ssl/certs/ca-certificates.crt" \
+		--install-prefix "$(abspath $(CURL_LIBCURL_PREFIX))" \
 		--output "$(abspath $@)"
+
+# The libcurl install artifact is produced as a side effect of the curl build.
+# Declare it so git can depend on it; verify it exists after the curl target ran.
+$(CURL_LIBCURL_ARTIFACT): $(BUILD_DIR)/curl
+	@test -f $@ || { echo "Error: libcurl artifact missing at $@ (curl build did not install it)"; exit 1; }
 
 $(BUILD_DIR)/wget: scripts/build-wget-upstream.sh $(WGET_UPSTREAM_OVERLAY_FILES) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
@@ -863,11 +882,17 @@ install:
 		fi; \
 	done; \
 	echo "Installed $$INSTALLED C command(s) to $(COMMANDS_DIR)"
-	@# Create symlinks for Git helper entry points used by upstream Git.
+	@# Git helper entry points. upload-pack/receive-pack/upload-archive ARE git
+	@# builtins, so they alias the git binary. The HTTPS transport lives in the
+	@# real git-remote-http binary (libcurl in-process); git-remote-https is an
+	@# alias to it (same binary, ftp/ftps schemes unsupported and unused).
 	@if [ -f "$(COMMANDS_DIR)/git" ]; then \
-		for alias in git-remote-http git-remote-https git-upload-pack git-receive-pack git-upload-archive; do \
+		for alias in git-upload-pack git-receive-pack git-upload-archive; do \
 			ln -sf git "$(COMMANDS_DIR)/$$alias"; \
 		done; \
+	fi
+	@if [ -f "$(COMMANDS_DIR)/git-remote-http" ]; then \
+		ln -sf git-remote-http "$(COMMANDS_DIR)/git-remote-https"; \
 	fi
 
 # --- Clean ---

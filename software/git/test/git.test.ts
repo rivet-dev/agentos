@@ -6,11 +6,11 @@
  */
 
 import { describe, it, expect, afterEach, beforeAll, afterAll, vi } from 'vitest';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createServer, type Server as HttpServer } from 'node:http';
-import { spawn, spawnSync } from 'node:child_process';
+import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
+import { spawn, spawnSync, execSync } from 'node:child_process';
 import { createWasmVmRuntime } from '@agentos/test-harness';
 import {
   allowAll,
@@ -27,8 +27,11 @@ vi.setConfig({ testTimeout: 30_000 });
 /** Check git binary exists in addition to base WASM binaries */
 const hasGit = hasWasmBinaries && existsSync(resolve(COMMANDS_DIR, 'git'));
 const hasHostGit = spawnSync('git', ['--version'], { stdio: 'ignore' }).status === 0;
-// Smart HTTP needs Git's libcurl-backed remote helpers; this WASM build is NO_CURL.
-const hasGitHttpHelper = false;
+// Smart HTTP needs Git's libcurl-backed remote helper. It is now a real second
+// WASM binary (git-remote-http links the overlaid mbedTLS libcurl in-process);
+// git-remote-https aliases to it.
+const hasGitHttpHelper =
+  hasGit && existsSync(resolve(COMMANDS_DIR, 'git-remote-http'));
 
 const gitConfig = [
   '-c safe.directory=*',
@@ -53,7 +56,7 @@ async function createGitKernel() {
   return { kernel, vfs, dispose: () => kernel.dispose() };
 }
 
-async function createGitKernelWithNet(loopbackExemptPorts: number[]) {
+async function createGitKernelWithNet(loopbackExemptPorts: number[], seededCaPem?: string) {
   const vfs = createInMemoryFileSystem();
   await (vfs as any).chmod('/', 0o1777);
   await vfs.mkdir('/tmp', { recursive: true });
@@ -65,7 +68,46 @@ async function createGitKernelWithNet(loopbackExemptPorts: number[]) {
     syncFilesystemOnDispose: false,
   });
   await kernel.mount(createWasmVmRuntime({ commandDirs: [COMMANDS_DIR] }));
+  // Seed the Debian-shaped trust store the way the native VM bootstrap does, so
+  // libcurl's compile-time default CA bundle (/etc/ssl/certs/ca-certificates.crt)
+  // resolves in-guest for git-remote-http's mbedTLS backend.
+  if (seededCaPem) {
+    await vfs.mkdir('/etc/ssl/certs', { recursive: true });
+    await kernel.writeFile('/etc/ssl/certs/ca-certificates.crt', seededCaPem);
+  }
   return { kernel, vfs, dispose: () => kernel.dispose() };
+}
+
+// Build a real CA and a leaf server certificate signed by it, with a SAN that
+// covers the 127.0.0.1 loopback endpoint the VM connects to. This lets
+// git-remote-http's mbedTLS backend perform genuine chain + hostname
+// verification, exactly like Linux git against a private CA.
+function makeCaSignedCert(caCommonName: string): {
+  caPem: string;
+  serverKey: string;
+  serverCert: string;
+} {
+  const dir = mkdtempSync(join(tmpdir(), 'git-ca-'));
+  try {
+    execSync(`openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "${dir}/ca.key" 2>/dev/null`);
+    execSync(
+      `openssl req -x509 -new -key "${dir}/ca.key" -days 3650 -subj "/CN=${caCommonName}" -out "${dir}/ca.crt" 2>/dev/null`,
+    );
+    execSync(`openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "${dir}/srv.key" 2>/dev/null`);
+    execSync(`openssl req -new -key "${dir}/srv.key" -subj "/CN=localhost" -out "${dir}/srv.csr" 2>/dev/null`);
+    writeFileSync(`${dir}/ext.cnf`, 'subjectAltName=DNS:localhost,IP:127.0.0.1\n');
+    execSync(
+      `openssl x509 -req -in "${dir}/srv.csr" -CA "${dir}/ca.crt" -CAkey "${dir}/ca.key" ` +
+      `-CAcreateserial -days 3650 -extfile "${dir}/ext.cnf" -out "${dir}/srv.crt" 2>/dev/null`,
+    );
+    return {
+      caPem: readFileSync(`${dir}/ca.crt`, 'utf8'),
+      serverKey: readFileSync(`${dir}/srv.key`, 'utf8'),
+      serverCert: readFileSync(`${dir}/srv.crt`, 'utf8'),
+    };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function runHostGit(args: string[], cwd?: string) {
@@ -395,64 +437,30 @@ describeIf(hasGit, 'git command', () => {
     expect(result.stderr).not.toContain('GitSubcommandUnsupported');
   });
 
-  it('clone rejects HTTPS remotes until Git is linked with libcurl remote helpers', async () => {
-    ({ kernel, dispose } = await createGitKernel());
-
-    const result = await kernel.exec(
-      git('clone https://private@example.com/owner/repo.git /tmp/clone'),
-      { env: { GIT_AUTH_TOKEN: 'test-token' } },
-    );
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toMatch(/remote-https|remote helper|fatal|unable/i);
-    expect(result.stderr).not.toContain('GitSubcommandUnsupported');
-  });
-
-  describeIf(hasHostGit && hasGitHttpHelper, 'remote clone over smart HTTP', () => {
+  // Real smart-HTTP over TLS: git-remote-http (libcurl + in-guest mbedTLS)
+  // clones/fetches/pushes against `git http-backend` behind a Node HTTPS
+  // endpoint. Certificate trust comes from a private CA seeded into the guest's
+  // /etc/ssl/certs bundle (the "trusted" server) — exactly the Debian trust
+  // path — while a second server signed by a CA absent from the bundle exercises
+  // verify-fail, http.sslVerify=false, GIT_SSL_NO_VERIFY, and http.sslCAInfo.
+  describeIf(hasHostGit && hasGitHttpHelper, 'smart-HTTP clone/fetch/push over TLS', () => {
     let repoRoot: string;
-    let httpServer: HttpServer;
-    let httpPort: number;
+    let trustedServer: HttpsServer;
+    let untrustedServer: HttpsServer;
+    let trustedPort: number;
+    let untrustedPort: number;
+    let trustedCaPem = '';
+    let untrustedCaPem = '';
 
-    beforeAll(async () => {
-      repoRoot = mkdtempSync(join(tmpdir(), 'agentos-git-http-'));
-      const worktree = join(repoRoot, 'worktree');
-      const origin = join(repoRoot, 'origin.git');
-
-      runHostGit(['-c', 'init.defaultBranch=main', 'init', worktree]);
-      writeFileSync(join(worktree, 'README.md'), 'remote smart clone\n');
-      runHostGit(['-C', worktree, 'add', 'README.md']);
-      runHostGit([
-        '-C', worktree,
-        '-c', 'user.name=secure-exec',
-        '-c', 'user.email=agent@example.com',
-        'commit',
-        '-m',
-        'seed',
-      ]);
-
-      runHostGit(['-C', worktree, 'checkout', '-b', 'feature/deep']);
-      writeFileSync(join(worktree, 'feature.txt'), 'remote branch payload\n');
-      runHostGit(['-C', worktree, 'add', 'feature.txt']);
-      runHostGit([
-        '-C', worktree,
-        '-c', 'user.name=secure-exec',
-        '-c', 'user.email=agent@example.com',
-        'commit',
-        '-m',
-        'feature branch',
-      ]);
-
-      runHostGit(['-C', worktree, 'checkout', 'main']);
-      runHostGit(['clone', '--bare', worktree, origin]);
-      runHostGit(['-C', origin, 'repack', '-a', '-d', '-f', '--depth=50', '--window=50']);
-
-      httpServer = createServer((req, res) => {
-        const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    // A CGI bridge to `git http-backend`. receive-pack is enabled on the origin
+    // (below) so pushes are accepted; GIT_HTTP_EXPORT_ALL allows anonymous read.
+    function makeBackendHandler() {
+      return (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => {
+        const url = new URL(req.url ?? '/', 'https://127.0.0.1');
         const bodyChunks: Buffer[] = [];
-
         req.on('data', (chunk) => {
           bodyChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
         });
-
         req.on('end', () => {
           const requestBody = Buffer.concat(bodyChunks);
           const gitProtocol = req.headers['git-protocol'];
@@ -473,7 +481,6 @@ describeIf(hasGit, 'git command', () => {
           const child = spawn('git', ['http-backend'], { env });
           const stdout: Buffer[] = [];
           const stderr: Buffer[] = [];
-
           child.stdout.on('data', (chunk) => {
             stdout.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
           });
@@ -490,24 +497,20 @@ describeIf(hasGit, 'git command', () => {
             const altSep = output.indexOf(Buffer.from('\n\n'));
             const sepIndex = headerSep >= 0 ? headerSep : altSep;
             const sepLen = headerSep >= 0 ? 4 : altSep >= 0 ? 2 : 0;
-
             if (code !== 0 && sepIndex === -1) {
               res.writeHead(500, { 'Content-Type': 'text/plain' });
               res.end(Buffer.concat(stderr));
               return;
             }
-
             if (sepIndex === -1) {
               res.writeHead(500, { 'Content-Type': 'text/plain' });
               res.end(output);
               return;
             }
-
             const headerText = output.subarray(0, sepIndex).toString('utf8');
             const responseBody = output.subarray(sepIndex + sepLen);
             let status = 200;
             const headers: Record<string, string> = {};
-
             for (const line of headerText.split(/\r?\n/)) {
               if (!line) continue;
               const colon = line.indexOf(':');
@@ -520,34 +523,84 @@ describeIf(hasGit, 'git command', () => {
                 headers[name] = value;
               }
             }
-
             res.writeHead(status, headers);
             res.end(responseBody);
           });
-
           child.stdin.end(requestBody);
         });
-      });
+      };
+    }
 
-      await new Promise<void>((resolveListen) => {
-        httpServer.listen(0, '127.0.0.1', resolveListen);
-      });
-      httpPort = (httpServer.address() as import('node:net').AddressInfo).port;
+    async function listen(server: HttpsServer): Promise<number> {
+      await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+      return (server.address() as import('node:net').AddressInfo).port;
+    }
+
+    beforeAll(async () => {
+      repoRoot = mkdtempSync(join(tmpdir(), 'agentos-git-https-'));
+      const worktree = join(repoRoot, 'worktree');
+      const origin = join(repoRoot, 'origin.git');
+
+      runHostGit(['-c', 'init.defaultBranch=main', 'init', worktree]);
+      writeFileSync(join(worktree, 'README.md'), 'remote smart clone\n');
+      runHostGit(['-C', worktree, 'add', 'README.md']);
+      runHostGit([
+        '-C', worktree,
+        '-c', 'user.name=secure-exec', '-c', 'user.email=agent@example.com',
+        'commit', '-m', 'seed',
+      ]);
+      runHostGit(['-C', worktree, 'checkout', '-b', 'feature/deep']);
+      writeFileSync(join(worktree, 'feature.txt'), 'remote branch payload\n');
+      runHostGit(['-C', worktree, 'add', 'feature.txt']);
+      runHostGit([
+        '-C', worktree,
+        '-c', 'user.name=secure-exec', '-c', 'user.email=agent@example.com',
+        'commit', '-m', 'feature branch',
+      ]);
+      runHostGit(['-C', worktree, 'checkout', 'main']);
+      runHostGit(['clone', '--bare', worktree, origin]);
+      runHostGit(['-C', origin, 'repack', '-a', '-d', '-f', '--depth=50', '--window=50']);
+      // Accept anonymous pushes over smart HTTP.
+      runHostGit(['-C', origin, 'config', 'http.receivepack', 'true']);
+
+      const trusted = makeCaSignedCert('AgentOS Git Test Root CA');
+      trustedCaPem = trusted.caPem;
+      trustedServer = createHttpsServer(
+        { key: trusted.serverKey, cert: trusted.serverCert },
+        makeBackendHandler(),
+      );
+      trustedPort = await listen(trustedServer);
+
+      const untrusted = makeCaSignedCert('AgentOS Git Untrusted CA');
+      untrustedCaPem = untrusted.caPem;
+      untrustedServer = createHttpsServer(
+        { key: untrusted.serverKey, cert: untrusted.serverCert },
+        makeBackendHandler(),
+      );
+      untrustedPort = await listen(untrustedServer);
     });
 
     afterAll(async () => {
-      await new Promise<void>((resolveClose) => httpServer.close(() => resolveClose()));
+      if (trustedServer) await new Promise<void>((r) => trustedServer.close(() => r()));
+      if (untrustedServer) await new Promise<void>((r) => untrustedServer.close(() => r()));
       rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('clone fetches refs and worktree contents from a smart HTTP remote', async () => {
-      ({ kernel, vfs, dispose } = await createGitKernelWithNet([httpPort]));
+    const trustedUrl = () => `https://127.0.0.1:${trustedPort}/origin.git`;
+    const untrustedUrl = () => `https://127.0.0.1:${untrustedPort}/origin.git`;
 
-      await run(kernel, git(`clone http://127.0.0.1:${httpPort}/origin.git /tmp/clone`));
+    it('clone fetches refs and worktree contents over HTTPS with a trusted CA', async () => {
+      ({ kernel, vfs, dispose } = await createGitKernelWithNet([trustedPort], trustedCaPem));
+
+      const res = await kernel.exec(git(`clone ${trustedUrl()} /tmp/clone`), {
+        env: { GIT_CURL_VERBOSE: '1' },
+      });
+      expect(res.exitCode).toBe(0);
+      // Proof a real TLS handshake happened in-guest (mbedTLS via libcurl).
+      expect(res.stderr).toMatch(/SSL connection|TLS|SSL certificate|CAfile/i);
 
       const head = new TextDecoder().decode(await kernel.readFile('/tmp/clone/.git/HEAD'));
       expect(head.trim()).toBe('ref: refs/heads/main');
-
       const readme = new TextDecoder().decode(await kernel.readFile('/tmp/clone/README.md'));
       expect(readme).toBe('remote smart clone\n');
       await expectGitRef(kernel, '/tmp/clone', 'refs/remotes/origin/feature/deep');
@@ -555,6 +608,112 @@ describeIf(hasGit, 'git command', () => {
       await run(kernel, git('-C /tmp/clone checkout feature/deep'));
       const feature = new TextDecoder().decode(await kernel.readFile('/tmp/clone/feature.txt'));
       expect(feature).toBe('remote branch payload\n');
+    });
+
+    it('fetch picks up a new remote branch over HTTPS', async () => {
+      ({ kernel, vfs, dispose } = await createGitKernelWithNet([trustedPort], trustedCaPem));
+      await run(kernel, git(`clone ${trustedUrl()} /tmp/clone`));
+
+      // Add a new branch on the origin (host side), then fetch it in-guest.
+      const bareBranch = 'fetched-branch';
+      runHostGit(['-C', join(repoRoot, 'origin.git'), 'branch', bareBranch, 'main']);
+
+      await run(kernel, git('-C /tmp/clone fetch origin'));
+      await expectGitRef(kernel, '/tmp/clone', `refs/remotes/origin/${bareBranch}`);
+    });
+
+    it('push sends a small commit over HTTPS smart-HTTP', async () => {
+      ({ kernel, vfs, dispose } = await createGitKernelWithNet([trustedPort], trustedCaPem));
+      await run(kernel, git(`clone ${trustedUrl()} /tmp/clone`));
+
+      await kernel.writeFile('/tmp/clone/pushed.txt', 'pushed over https\n');
+      await run(kernel, git('-C /tmp/clone add pushed.txt'));
+      await run(kernel, git("-C /tmp/clone commit -m 'push small'"));
+      const pushed = await kernel.exec(git('-C /tmp/clone push origin HEAD:refs/heads/small-push'));
+      expect(pushed.exitCode).toBe(0);
+
+      // Verify the ref really landed in the origin bare repo (host side).
+      const originRef = spawnSync(
+        'git',
+        ['-C', join(repoRoot, 'origin.git'), 'rev-parse', '--verify', 'refs/heads/small-push'],
+        { encoding: 'utf8' },
+      );
+      expect(originRef.status).toBe(0);
+      expect(originRef.stdout.trim()).toMatch(/^[0-9a-f]{40,64}$/);
+    });
+
+    it('push streams a >1 MiB commit over HTTPS (chunked POST)', async () => {
+      ({ kernel, vfs, dispose } = await createGitKernelWithNet([trustedPort], trustedCaPem));
+      await run(kernel, git(`clone ${trustedUrl()} /tmp/clone`));
+
+      // Incompressible >1 MiB payload so the pack exceeds http.postBuffer (1 MiB)
+      // and libcurl must use chunked Transfer-Encoding + Expect: 100-continue.
+      const { randomBytes } = await import('node:crypto');
+      const big = randomBytes(2 * 1024 * 1024);
+      await kernel.writeFile('/tmp/clone/big.bin', big);
+      await run(kernel, git('-C /tmp/clone add big.bin'));
+      await run(kernel, git("-C /tmp/clone commit -m 'push large'"));
+      const pushed = await kernel.exec(git('-C /tmp/clone push origin HEAD:refs/heads/large-push'));
+      expect(pushed.exitCode).toBe(0);
+
+      const originRef = spawnSync(
+        'git',
+        ['-C', join(repoRoot, 'origin.git'), 'rev-parse', '--verify', 'refs/heads/large-push'],
+        { encoding: 'utf8' },
+      );
+      expect(originRef.status).toBe(0);
+      // Confirm the large object is actually present in the origin object store.
+      const cat = spawnSync(
+        'git',
+        ['-C', join(repoRoot, 'origin.git'), 'cat-file', '-s', `${originRef.stdout.trim()}^{tree}`],
+        { encoding: 'utf8' },
+      );
+      expect(cat.status).toBe(0);
+    });
+
+    it('clone fails with a real certificate-verification error on an untrusted CA', async () => {
+      // Only the trusted CA is seeded; the untrusted server's CA is absent.
+      ({ kernel, vfs, dispose } = await createGitKernelWithNet([untrustedPort], trustedCaPem));
+
+      const res = await kernel.exec(git(`clone ${untrustedUrl()} /tmp/clone`));
+      expect(res.exitCode).not.toBe(0);
+      expect(res.stderr).toMatch(/certificate|SSL|TLS|verify|CAfile|unable to (access|get local)/i);
+      expect(res.stderr).not.toContain('GitSubcommandUnsupported');
+      expect(await vfs.exists('/tmp/clone/.git')).toBe(false);
+    });
+
+    it('http.sslVerify=false bypasses verification for an untrusted CA', async () => {
+      ({ kernel, vfs, dispose } = await createGitKernelWithNet([untrustedPort], trustedCaPem));
+
+      const res = await kernel.exec(git(`-c http.sslVerify=false clone ${untrustedUrl()} /tmp/clone`));
+      expect(res.exitCode).toBe(0);
+      const readme = new TextDecoder().decode(await kernel.readFile('/tmp/clone/README.md'));
+      expect(readme).toBe('remote smart clone\n');
+    });
+
+    it('GIT_SSL_NO_VERIFY bypasses verification for an untrusted CA', async () => {
+      ({ kernel, vfs, dispose } = await createGitKernelWithNet([untrustedPort], trustedCaPem));
+
+      const res = await kernel.exec(git(`clone ${untrustedUrl()} /tmp/clone`), {
+        env: { GIT_SSL_NO_VERIFY: '1' },
+      });
+      expect(res.exitCode).toBe(0);
+      expect(await vfs.exists('/tmp/clone/.git/HEAD')).toBe(true);
+    });
+
+    it('http.sslCAInfo trusts an explicitly supplied CA bundle', async () => {
+      // Seed only the trusted CA in the default bundle; supply the untrusted
+      // server's CA via a VFS file referenced with http.sslCAInfo.
+      ({ kernel, vfs, dispose } = await createGitKernelWithNet([untrustedPort], trustedCaPem));
+      await vfs.mkdir('/tmp/ca', { recursive: true });
+      await kernel.writeFile('/tmp/ca/untrusted.pem', untrustedCaPem);
+
+      const res = await kernel.exec(
+        git(`-c http.sslCAInfo=/tmp/ca/untrusted.pem clone ${untrustedUrl()} /tmp/clone`),
+      );
+      expect(res.exitCode).toBe(0);
+      const readme = new TextDecoder().decode(await kernel.readFile('/tmp/clone/README.md'));
+      expect(readme).toBe('remote smart clone\n');
     });
   });
 });
