@@ -153,6 +153,28 @@ CURL_UPSTREAM_OVERLAY_FILES := $(wildcard $(CURL_UPSTREAM_OVERLAY_DIR)/lib/*.c $
 ZLIB_VERSION := 1.3.1
 ZLIB_URL := https://zlib.net/zlib-$(ZLIB_VERSION).tar.gz
 ZLIB_BUILD_DIR := $(BUILD_DIR)/zlib
+# mbedTLS 3.6 LTS — in-guest TLS for curl/wget/git (see
+# docs-internal/networking-parity-spec.md). Use the prepared release tarball
+# (`mbedtls-<ver>.tar.bz2`), which bundles the generated sources and the
+# `framework` submodule; the bare GitHub source archive does not. Everything
+# ships under library/ in the 3.6 LTS line (crypto is not yet split into a
+# separate tf-psa-crypto tree as on 4.x/master), so `make lib` needs no
+# submodule fetch. We cross-compile every library/*.c against the wasi-sdk
+# sysroot, mirroring the zlib rule, plus a getentropy() entropy shim.
+MBEDTLS_VERSION := 3.6.2
+MBEDTLS_URL := https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-$(MBEDTLS_VERSION)/mbedtls-$(MBEDTLS_VERSION).tar.bz2
+# Deferred `=`: LIBS_CACHE is defined further down, so expand it lazily.
+MBEDTLS_SRC_DIR = $(LIBS_CACHE)/mbedtls-$(MBEDTLS_VERSION)
+MBEDTLS_BUILD_DIR := $(BUILD_DIR)/mbedtls
+MBEDTLS_CONFIG_DIR := mbedtls
+MBEDTLS_LIBS := $(MBEDTLS_BUILD_DIR)/libmbedtls.a $(MBEDTLS_BUILD_DIR)/libmbedx509.a $(MBEDTLS_BUILD_DIR)/libmbedcrypto.a
+# Mozilla CA bundle (the set Debian's ca-certificates produces) shipped in the
+# VM at /etc/ssl/certs/ca-certificates.crt. Pinned URL + fetch rule only; the
+# ~230 KB PEM blob is never committed (the sidecar stages it via build.rs into
+# OUT_DIR, falling back to an empty placeholder when absent — see
+# crates/native-sidecar/build.rs). `make ca-certificates` populates the asset.
+CACERT_URL := https://curl.se/ca/cacert.pem
+CACERT_ASSET := ../../crates/native-sidecar/assets/ca-certificates.crt
 WGET_VERSION := 1.24.5
 WGET_URL := https://ftp.gnu.org/gnu/wget/wget-$(WGET_VERSION).tar.gz
 WGET_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/wget-upstream
@@ -544,6 +566,59 @@ $(ZLIB_BUILD_DIR)/libz.a: $(LIBS_CACHE)/zlib-$(ZLIB_VERSION)/zlib.h $(PATCHED_SY
 			-o "$(ZLIB_BUILD_DIR)/$${src%.c}.o"; \
 	done
 	$(WASI_SDK_DIR)/bin/llvm-ar rcs $@ $(ZLIB_BUILD_DIR)/*.o
+
+# --- mbedTLS 3.6 LTS for wasm32-wasip1 ---
+# Fetch/extract the prepared release tarball, then cross-compile every
+# library/*.c (plus the getentropy entropy shim) against the wasi-sdk sysroot,
+# splitting objects into the three canonical archives by filename the same way
+# mbedTLS's own Makefile does (crypto / x509 / tls). Single-threaded; entropy
+# via getentropy() (MBEDTLS_ENTROPY_HARDWARE_ALT); TLS 1.3 on (default in 3.6).
+$(MBEDTLS_SRC_DIR)/library/ssl_tls.c:
+	@echo "Fetching mbedTLS $(MBEDTLS_VERSION)..."
+	@mkdir -p $(LIBS_CACHE)
+	@curl -fSL "$(MBEDTLS_URL)" -o "$(LIBS_CACHE)/mbedtls-$(MBEDTLS_VERSION).tar.bz2"
+	@rm -rf "$(MBEDTLS_SRC_DIR)"
+	@tar -xjf "$(LIBS_CACHE)/mbedtls-$(MBEDTLS_VERSION).tar.bz2" -C "$(LIBS_CACHE)"
+
+.PHONY: mbedtls
+mbedtls: $(MBEDTLS_LIBS)
+
+$(MBEDTLS_LIBS): $(MBEDTLS_SRC_DIR)/library/ssl_tls.c \
+                $(MBEDTLS_CONFIG_DIR)/wasi_user_config.h \
+                $(MBEDTLS_CONFIG_DIR)/mbedtls_wasi_entropy.c \
+                $(WASI_SDK_DIR)/bin/clang
+	@echo "=== Building mbedTLS $(MBEDTLS_VERSION) for wasm32-wasip1 ==="
+	@mkdir -p $(MBEDTLS_BUILD_DIR)/crypto $(MBEDTLS_BUILD_DIR)/x509 $(MBEDTLS_BUILD_DIR)/tls
+	@for src in $(MBEDTLS_SRC_DIR)/library/*.c $(MBEDTLS_CONFIG_DIR)/mbedtls_wasi_entropy.c; do \
+		name=$$(basename "$${src%.c}"); \
+		case "$$name" in \
+			x509*|pkcs7) grp=x509 ;; \
+			ssl_*|ssl|mps_*|debug|net_sockets) grp=tls ;; \
+			*) grp=crypto ;; \
+		esac; \
+		$(CC) --target=wasm32-wasip1 --sysroot=$(SYSROOT) -O2 \
+			-I$(MBEDTLS_SRC_DIR)/include -I$(MBEDTLS_CONFIG_DIR) \
+			-DMBEDTLS_USER_CONFIG_FILE='"wasi_user_config.h"' \
+			-c "$$src" -o "$(MBEDTLS_BUILD_DIR)/$$grp/$$name.o" || exit 1; \
+	done
+	@rm -f $(MBEDTLS_LIBS)
+	$(WASI_SDK_DIR)/bin/llvm-ar rcs $(MBEDTLS_BUILD_DIR)/libmbedcrypto.a $(MBEDTLS_BUILD_DIR)/crypto/*.o
+	$(WASI_SDK_DIR)/bin/llvm-ar rcs $(MBEDTLS_BUILD_DIR)/libmbedx509.a $(MBEDTLS_BUILD_DIR)/x509/*.o
+	$(WASI_SDK_DIR)/bin/llvm-ar rcs $(MBEDTLS_BUILD_DIR)/libmbedtls.a $(MBEDTLS_BUILD_DIR)/tls/*.o
+	@echo "=== mbedTLS libs built ==="
+	@ls -l $(MBEDTLS_LIBS)
+
+# --- CA bundle (Mozilla / Debian ca-certificates) ---
+# Fetch the pinned Mozilla CA bundle into the sidecar asset staged by build.rs.
+# The blob is gitignored; run this once to enable real HTTPS verification.
+.PHONY: ca-certificates
+ca-certificates: $(CACERT_ASSET)
+
+$(CACERT_ASSET):
+	@echo "Fetching Mozilla CA bundle from $(CACERT_URL)..."
+	@mkdir -p $(dir $(CACERT_ASSET))
+	@curl -fSL "$(CACERT_URL)" -o "$(CACERT_ASSET)"
+	@echo "CA bundle staged at $(CACERT_ASSET) ($$(wc -c < $(CACERT_ASSET)) bytes)"
 
 $(NATIVE_DIR)/sqlite3_cli: $(NATIVE_DIR)/sqlite3
 	cp $< $@
