@@ -1,21 +1,21 @@
 'use client';
 
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { RotateCcw, SquarePen } from 'lucide-react';
+import { useEffect, useMemo, useLayoutEffect, useRef, useState } from 'react';
+import { FileCode2, FileText, Play, RotateCcw, SquarePen } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { InkPanel } from '../editorial/InkPanel';
 
 // ---------------------------------------------------------------------------
 // Recorded agent coding sessions, played back line by line inside an ink
-// terminal. They replace the runtime SDK snippets in the "Any execution
-// layer" section: instead of showing the exec API, each tab shows an agent
-// using it on the same task, writing that tab's language. The script is the
-// hero: it lands whole and syntax-lit while the transcript around it types at
-// human-ish speed, so the takeaway reads as "the agent writes one program and
-// the OS runs it", not a pile of tool calls.
+// terminal. The three runtime cards double as the tabs: picking a runtime
+// replays the same task with the agent writing that language. A filesystem
+// rail on the right shows /home/agentos changing as the session runs, so the
+// script visibly works against a whole OS rather than a chat box. The Python
+// session runs the interpreter natively (no shell lines); Node and bash keep
+// their commands.
 // ---------------------------------------------------------------------------
 
-type SessionLineKind = 'user' | 'agent' | 'cmd' | 'out' | 'script';
+type SessionLineKind = 'user' | 'agent' | 'cmd' | 'run' | 'out' | 'script';
 
 interface SessionLine {
 	kind: SessionLineKind;
@@ -24,12 +24,24 @@ interface SessionLine {
 
 type ScriptLang = 'js' | 'python' | 'bash';
 
+interface SessionFile {
+	name: string;
+	size: string;
+	kind: 'code' | 'data';
+	// Session line index that creates this file; it appears in the rail once
+	// that line has finished playing.
+	afterIndex: number;
+}
+
 interface SessionTab {
 	key: string;
-	label: string;
+	title: string;
+	description: string;
+	docsHref: string;
 	iconSrc: string;
 	script: { fileName: string; lang: ScriptLang; code: string };
 	session: SessionLine[];
+	files: SessionFile[];
 }
 
 // One task, three languages: fetch last week's issues, roll them up, write
@@ -62,7 +74,9 @@ counts = Counter(l["name"] for i in issues for l in i["labels"])
 
 lines = [f"# Issues, last 7 days: {len(issues)}"]
 lines += [f"- {label}: {n}" for label, n in counts.most_common()]
-open("report.md", "w").write("\\n".join(lines))`;
+report = "\\n".join(lines)
+open("report.md", "w").write(report)
+print(report)`;
 
 const REPORT_SH = `#!/bin/bash
 set -euo pipefail
@@ -77,7 +91,9 @@ curl -s "$url" > issues.json
          | .[] | "- \\(.[0]): \\(length)"' issues.json
 } > report.md`;
 
-const reportSession = (runCmd: string, reportLines: string[]): SessionLine[] => [
+const REPORT_OUT = ['- bug: 9', '- api: 6', '- ui: 5', '- docs: 3'];
+
+const shellSession = (runCmd: string, reportLines: string[]): SessionLine[] => [
 	{ kind: 'user', text: "generate a report of last week's issues" },
 	{ kind: 'agent', text: 'Writing a script to fetch them and build the report.' },
 	{ kind: 'script', text: '' },
@@ -88,27 +104,58 @@ const reportSession = (runCmd: string, reportLines: string[]): SessionLine[] => 
 	{ kind: 'agent', text: '23 issues last week; bug reports lead with 9.' },
 ];
 
+// Python runs on the native interpreter: the run step replaces shell lines
+// and the script prints the report it just wrote.
+const pythonSession: SessionLine[] = [
+	{ kind: 'user', text: "generate a report of last week's issues" },
+	{ kind: 'agent', text: 'Writing a script to fetch them and build the report.' },
+	{ kind: 'script', text: '' },
+	{ kind: 'run', text: 'Run report.py' },
+	{ kind: 'out', text: '# Issues, last 7 days: 23' },
+	...REPORT_OUT.map((text): SessionLine => ({ kind: 'out', text })),
+	{ kind: 'agent', text: '23 issues last week; bug reports lead with 9.' },
+];
+
 const TABS: SessionTab[] = [
 	{
 		key: 'nodejs',
-		label: 'Node.js',
+		title: 'JavaScript & TypeScript',
+		description: 'Node v22 compatible on native V8 isolates. node, npm, and npx on the PATH at full JIT speed.',
+		docsHref: '/docs/nodejs-runtime',
 		iconSrc: '/images/registry/nodejs.svg',
 		script: { fileName: 'report.mjs', lang: 'js', code: REPORT_JS },
-		session: reportSession('node report.mjs', ['- bug: 9', '- api: 6', '- ui: 5', '- docs: 3']),
+		session: shellSession('node report.mjs', REPORT_OUT),
+		files: [
+			{ name: 'report.mjs', size: '486 B', kind: 'code', afterIndex: 2 },
+			{ name: 'report.md', size: '96 B', kind: 'data', afterIndex: 3 },
+		],
 	},
 	{
 		key: 'python',
-		label: 'Python',
+		title: 'Python',
+		description: 'CPython 3.13 with pip. Native wheels like numpy and pandas work.',
+		docsHref: '/docs/python-runtime',
 		iconSrc: '/images/registry/python.svg',
 		script: { fileName: 'report.py', lang: 'python', code: REPORT_PY },
-		session: reportSession('python report.py', ['- bug: 9', '- api: 6', '- ui: 5', '- docs: 3']),
+		session: pythonSession,
+		files: [
+			{ name: 'report.py', size: '451 B', kind: 'code', afterIndex: 2 },
+			{ name: 'report.md', size: '96 B', kind: 'data', afterIndex: 3 },
+		],
 	},
 	{
 		key: 'bash',
-		label: 'Bash',
+		title: 'Linux shell',
+		description: 'A POSIX userland with a process table, PTYs, TCP and UDP with DNS, and deny-by-default permissions.',
+		docsHref: '/docs/architecture',
 		iconSrc: '/images/registry/linux.svg',
 		script: { fileName: 'report.sh', lang: 'bash', code: REPORT_SH },
-		session: reportSession('bash report.sh', ['- api: 6', '- bug: 9', '- docs: 3', '- ui: 5']),
+		session: shellSession('bash report.sh', ['- api: 6', '- bug: 9', '- docs: 3', '- ui: 5']),
+		files: [
+			{ name: 'report.sh', size: '338 B', kind: 'code', afterIndex: 2 },
+			{ name: 'issues.json', size: '18 KB', kind: 'data', afterIndex: 3 },
+			{ name: 'report.md', size: '96 B', kind: 'data', afterIndex: 3 },
+		],
 	},
 ];
 
@@ -169,12 +216,12 @@ const tokenizeScript = (code: string, lang: ScriptLang): Token[][] => {
 
 // --- Playback --------------------------------------------------------------
 // Pacing in clock ms. `user` and `cmd` lines type per character; the rest
-// appear whole after their lead-in. The script gets the longest pause both
-// before and after (via the next line's lead), so the eye can land on it.
-const START_DELAY = 400;
-const RUN_DELAY = 520;
-const LEAD: Record<SessionLineKind, number> = { user: 300, agent: 950, cmd: 900, out: 90, script: 1100 };
-const CHAR_MS: Partial<Record<SessionLineKind, number>> = { user: 26, cmd: 13 };
+// appear whole after their lead-in. The script keeps the longest pause so the
+// eye can land on it; everything else is brisk.
+const START_DELAY = 250;
+const RUN_DELAY = 350;
+const LEAD: Record<SessionLineKind, number> = { user: 200, agent: 550, cmd: 480, run: 600, out: 60, script: 700 };
+const CHAR_MS: Partial<Record<SessionLineKind, number>> = { user: 17, cmd: 8 };
 
 interface ScheduledLine extends SessionLine {
 	start: number;
@@ -184,7 +231,8 @@ interface ScheduledLine extends SessionLine {
 const buildSchedule = (lines: SessionLine[]): { schedule: ScheduledLine[]; total: number } => {
 	let t = START_DELAY;
 	const schedule = lines.map((line, i) => {
-		const lead = line.kind === 'out' && lines[i - 1]?.kind === 'cmd' ? RUN_DELAY : LEAD[line.kind];
+		const prev = lines[i - 1]?.kind;
+		const lead = line.kind === 'out' && (prev === 'cmd' || prev === 'run') ? RUN_DELAY : LEAD[line.kind];
 		const start = t + lead;
 		const dur = (CHAR_MS[line.kind] ?? 0) * line.text.length;
 		t = start + dur;
@@ -260,6 +308,15 @@ const ScriptBlock = ({ fileName, tokenLines }: { fileName: string; tokenLines: T
 	</div>
 );
 
+// A native tool step ("Run report.py"): the interpreter runs in the VM
+// directly, so there is no shell line to type.
+const RunBlock = ({ text }: { text: string }) => (
+	<div className='my-1.5 ml-[1.35rem] flex w-fit items-center gap-1.5 rounded-lg border border-cream/[0.14] bg-cream/[0.045] px-3 py-1.5 text-[11px] text-cream/60'>
+		<Play aria-hidden='true' className='h-3 w-3 text-sage' />
+		{text}
+	</div>
+);
+
 // One transcript row. Typed rows render a partial slice with the cursor at
 // the write head; whole rows fade in on mount.
 const SessionRow = ({
@@ -310,6 +367,8 @@ const SessionRow = ({
 						{typing && <Cursor />}
 					</span>
 				);
+			case 'run':
+				return <RunBlock text={line.text} />;
 			case 'out':
 				return <span className='block whitespace-pre-wrap pl-[1.35rem] text-cream/45'>{text}</span>;
 			case 'script':
@@ -325,35 +384,90 @@ const SessionRow = ({
 	);
 };
 
-// Same pill treatment as the code panels' HeroTabs, minus the scroll-overflow
-// machinery three tabs never need.
-const SessionTabs = ({ active, onChange }: { active: number; onChange: (idx: number) => void }) => {
-	const indicatorLayoutId = useId();
+// The filesystem rail: /home/agentos, updated as the session writes files.
+// Files created this session carry a sage dot, the way an editor marks fresh
+// changes.
+const FileRail = ({ files, schedule, clock }: { files: SessionFile[]; schedule: ScheduledLine[]; clock: number }) => {
+	const visibleFiles = files.filter((file) => {
+		const line = schedule[file.afterIndex];
+		return line ? clock >= line.start + line.dur + 120 : false;
+	});
 	return (
-		<div className='mb-4 flex flex-wrap items-center gap-1'>
-			{TABS.map((tab, idx) => (
-				<button
-					key={tab.key}
-					type='button'
-					onClick={() => onChange(idx)}
-					className='relative inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 font-sans text-xs transition-colors md:px-4'
-				>
-					{active === idx && (
-						<motion.div
-							layoutId={indicatorLayoutId}
-							className='absolute inset-0 rounded-lg bg-ink/[0.07]'
-							transition={{ type: 'spring', bounce: 0.2, duration: 0.4 }}
-						/>
-					)}
-					<span className={`relative z-10 flex items-center gap-2 ${active === idx ? 'font-medium text-ink' : 'text-ink-soft hover:text-ink'}`}>
-						<img src={tab.iconSrc} alt='' aria-hidden='true' className='h-4 w-4 object-contain' />
-						{tab.label}
-					</span>
-				</button>
-			))}
-		</div>
+		<aside className='hidden border-l border-cream/10 md:block'>
+			<div className='border-b border-cream/10 px-4 py-2.5 font-mono text-[11px] text-cream/45'>/home/agentos</div>
+			<div className='flex flex-col gap-0.5 p-3'>
+				<div className='flex items-center gap-2 rounded-md px-2 py-1.5 text-[12px] text-cream/35'>
+					<FileText aria-hidden='true' className='h-3.5 w-3.5 shrink-0' />
+					<span className='truncate font-mono'>.profile</span>
+				</div>
+				{visibleFiles.map((file) => (
+					<motion.div
+						key={file.name}
+						initial={{ opacity: 0, x: 6 }}
+						animate={{ opacity: 1, x: 0 }}
+						transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+						className='flex items-center gap-2 rounded-md bg-cream/[0.04] px-2 py-1.5 text-[12px] text-cream/80'
+					>
+						{file.kind === 'code' ? (
+							<FileCode2 aria-hidden='true' className='h-3.5 w-3.5 shrink-0 text-sage' />
+						) : (
+							<FileText aria-hidden='true' className='h-3.5 w-3.5 shrink-0 text-cream/50' />
+						)}
+						<span className='truncate font-mono'>{file.name}</span>
+						<span className='ml-auto shrink-0 font-mono text-[10px] text-cream/40'>{file.size}</span>
+						<span aria-hidden='true' className='h-1.5 w-1.5 shrink-0 rounded-full bg-sage/80' />
+					</motion.div>
+				))}
+			</div>
+		</aside>
 	);
 };
+
+// The runtime cards are the tabs: picking a runtime replays the session in
+// that language. Cards keep their Docs links (clicks on the link don't switch
+// tabs, they navigate).
+const RuntimeCardTabs = ({ active, onChange }: { active: number; onChange: (idx: number) => void }) => (
+	<div role='tablist' aria-label='Execution runtimes' className='mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3'>
+		{TABS.map((tab, idx) => {
+			const selected = active === idx;
+			return (
+				<div
+					key={tab.key}
+					role='tab'
+					aria-selected={selected}
+					tabIndex={0}
+					onClick={() => onChange(idx)}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							onChange(idx);
+						}
+					}}
+					className={`group flex cursor-pointer flex-col rounded-2xl bg-gradient-to-b from-white to-[#f9f9fa] p-5 transition-[box-shadow,--tw-ring-color] duration-300 motion-reduce:transition-none ${
+						selected
+							? 'ring-2 ring-ink/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.95),0_2px_4px_-1px_rgba(20,20,22,0.12),0_12px_30px_-12px_rgba(20,20,22,0.26)]'
+							: 'ring-1 ring-ink/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_2px_-1px_rgba(20,20,22,0.10),0_8px_24px_-14px_rgba(20,20,22,0.20)] hover:ring-ink/[0.16]'
+					}`}
+				>
+					<div className='mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-ink/5'>
+						<img src={tab.iconSrc} alt='' aria-hidden='true' className='h-5 w-5 object-contain' />
+					</div>
+					<h3 className='mb-1.5 text-base font-medium tracking-[-0.015em] text-ink'>{tab.title}</h3>
+					<p className='text-sm leading-relaxed text-ink-soft'>{tab.description}</p>
+					<div className='mt-auto pt-3'>
+						<a
+							href={tab.docsHref}
+							onClick={(e) => e.stopPropagation()}
+							className='text-sm text-ink-soft hover:text-ink'
+						>
+							Docs <span aria-hidden='true'>→</span>
+						</a>
+					</div>
+				</div>
+			);
+		})}
+	</div>
+);
 
 export const AgentSessionDemo = () => {
 	const reduced = useReducedMotion() ?? false;
@@ -391,9 +505,9 @@ export const AgentSessionDemo = () => {
 		<motion.div
 			onViewportEnter={() => setStarted(true)}
 			viewport={{ once: true, margin: '-20% 0px' }}
-			className='mx-auto max-w-3xl'
+			className='mx-auto max-w-5xl'
 		>
-			<SessionTabs active={active} onChange={handleTabChange} />
+			<RuntimeCardTabs active={active} onChange={handleTabChange} />
 
 			<InkPanel caption={CAPTION} captionAside={CAPTION_ASIDE}>
 				<div className='flex items-center gap-2 border-b border-cream/10 px-4 py-3'>
@@ -413,36 +527,43 @@ export const AgentSessionDemo = () => {
 					)}
 				</div>
 
-				{/* Tall enough on desktop to hold a whole session, script and all; if
-				    wrapped lines overflow on small screens the auto-scroll keeps the
-				    newest line in view. Ligatures off: a terminal shows `--` and
-				    `->` as raw ASCII. */}
-				<div ref={scrollRef} className='h-[480px] overflow-y-auto p-6 font-code text-[13px] leading-[1.75] [font-variant-ligatures:none] md:h-[712px]'>
-					<div className='flex flex-col gap-0.5'>
-						{visible.map((line, i) => {
-							const typing = line.dur > 0 && clock < line.start + line.dur;
-							const chars = line.dur > 0 ? Math.ceil(((clock - line.start) / line.dur) * line.text.length) : line.text.length;
-							return (
-								<SessionRow
-									key={`${tab.key}-${i}`}
-									line={line}
-									chars={Math.min(chars, line.text.length)}
-									typing={typing}
-									script={tab.script}
-									tokenLines={tokenLines}
-								/>
-							);
-						})}
-						{/* Idle prompt once the session finishes: the machine is still there. */}
-						{done && !reduced && (
-							<motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.18, delay: 0.5 }}>
-								<span aria-hidden='true' className='mr-2.5 select-none text-sage'>
-									$
-								</span>
-								<Cursor blink />
-							</motion.div>
-						)}
+				<div className='md:grid md:grid-cols-[minmax(0,1fr),240px]'>
+					{/* Tall enough on desktop to hold a whole session, script and all; if
+					    wrapped lines overflow on small screens the auto-scroll keeps the
+					    newest line in view. Ligatures off: a terminal shows `--` and
+					    `->` as raw ASCII. */}
+					<div
+						ref={scrollRef}
+						className='h-[480px] overflow-y-auto p-6 font-code text-[13px] leading-[1.75] [font-variant-ligatures:none] md:h-[640px]'
+					>
+						<div className='flex flex-col gap-0.5'>
+							{visible.map((line, i) => {
+								const typing = line.dur > 0 && clock < line.start + line.dur;
+								const chars = line.dur > 0 ? Math.ceil(((clock - line.start) / line.dur) * line.text.length) : line.text.length;
+								return (
+									<SessionRow
+										key={`${tab.key}-${i}`}
+										line={line}
+										chars={Math.min(chars, line.text.length)}
+										typing={typing}
+										script={tab.script}
+										tokenLines={tokenLines}
+									/>
+								);
+							})}
+							{/* Idle prompt once the session finishes: the machine is still there. */}
+							{done && !reduced && (
+								<motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.18, delay: 0.5 }}>
+									<span aria-hidden='true' className='mr-2.5 select-none text-sage'>
+										$
+									</span>
+									<Cursor blink />
+								</motion.div>
+							)}
+						</div>
 					</div>
+
+					<FileRail files={tab.files} schedule={schedule} clock={clock} />
 				</div>
 			</InkPanel>
 		</motion.div>

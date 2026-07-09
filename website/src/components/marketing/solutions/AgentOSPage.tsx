@@ -730,29 +730,9 @@ const OrchestrationSection = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => (
 );
 
 // --- Any execution layer (runtimes + recorded agent session) ---
-// Three shipped runtimes, each grounded in its docs page. The full-Linux story
+// The three runtime cards live inside AgentSessionDemo as its tabs: picking a
+// runtime replays the recorded session in that language. The full-Linux story
 // stays in the argument section's sandbox-mounting footnote.
-const executionLayers = [
-	{
-		imgSrc: '/images/registry/nodejs.svg',
-		title: 'JavaScript & TypeScript',
-		description: 'Node v22 compatible on native V8 isolates. node, npm, and npx on the PATH at full JIT speed.',
-		docsHref: '/docs/nodejs-runtime',
-	},
-	{
-		imgSrc: '/images/registry/python.svg',
-		title: 'Python',
-		description: 'CPython 3.13 with pip. Native wheels like numpy and pandas work.',
-		docsHref: '/docs/python-runtime',
-	},
-	{
-		imgSrc: '/images/registry/linux.svg',
-		title: 'Linux shell',
-		description: 'A POSIX userland with a process table, PTYs, TCP and UDP with DNS, and deny-by-default permissions.',
-		docsHref: '/docs/architecture',
-	},
-];
-
 const ExecutionLayersSection = () => (
 	<section className='border-t border-ink/10 px-6 py-16 md:py-32'>
 		<div className='mx-auto max-w-7xl'>
@@ -763,15 +743,6 @@ const ExecutionLayersSection = () => (
 					className='mb-10 max-w-3xl md:mb-12'
 				/>
 			</Reveal>
-			<div className='mb-10 grid grid-cols-1 gap-4 sm:grid-cols-3'>
-				{executionLayers.map((layer) => (
-					<CapabilityCard key={layer.title} {...layer} />
-				))}
-			</div>
-			{/* Recorded agent sessions instead of SDK snippets: each runtime tab
-			    replays the same task with the agent writing that language, so the
-			    demo shows an agent using the exec API rather than client code
-			    calling it. */}
 			<Reveal>
 				<AgentSessionDemo />
 			</Reveal>
@@ -1616,8 +1587,7 @@ const ArgumentSection = () => {
 						<>
 							Sandbox providers give every agent a full VM across a network gap and leave
 							orchestration to you. agentOS runs each agent in its own VM inside your backend,
-							with sessions, workflows, and approvals built in. Speed and footprint are measured
-							below.
+							with sessions, workflows, and approvals built in.
 						</>
 					}
 					className='mb-10 max-w-3xl md:mb-12'
@@ -1864,7 +1834,10 @@ const ClosingCta = () => (
 // --- Main Page ---
 export default function AgentOSPage({ heroTabs }: AgentOSPageProps) {
 	return (
-		<div className='paper-grain min-h-screen font-sans text-ink-soft' style={{ overflowX: 'clip' }}>
+		// The page reads best at ~90% browser zoom, so it ships that density:
+		// zoom scales layout (unlike transform), and browsers without support
+		// simply render at 100%.
+		<div className='paper-grain min-h-screen font-sans text-ink-soft' style={{ overflowX: 'clip', zoom: 0.9 }}>
 			<main>
 				<Hero />
 				<ArgumentSection />
