@@ -51,6 +51,13 @@ int pipe2(int [2], int);
 int pipe(int [2]);
 int close(int);
 int posix_close(int, int);
+/* closefrom(2) as on Solaris/FreeBSD/OpenBSD (close all fds >= lowfd) and
+ * glibc >= 2.34. Declared unconditionally in the agentOS sysroot; the
+ * definition (std-patches/wasi-libc-overrides/openssh_compat.c) is a
+ * deliberate NO-OP because WASI preopened directory capabilities start at
+ * fd 3 and closing them would sever all path resolution. See OpenSSH
+ * ssh.c:main() which calls closefrom(STDERR_FILENO + 1) at startup. */
+void closefrom(int);
 int dup(int);
 int dup2(int, int);
 #ifdef __wasilibc_unmodified_upstream /* WASI has no dup3 */
@@ -154,6 +161,7 @@ pid_t getppid(void);
 pid_t getpgrp(void);
 pid_t setsid(void);
 pid_t getpgid(pid_t);
+pid_t getsid(pid_t);
 #ifdef __wasilibc_unmodified_upstream /* WASI has no full process groups */
 pid_t getpgid(pid_t);
 int setpgid(pid_t, pid_t);
@@ -173,12 +181,18 @@ gid_t getgid(void);
 gid_t getegid(void);
 int getgroups(int, gid_t []);
 
-#ifdef __wasilibc_unmodified_upstream /* WASI has no setuid etc. */
+/* Declared for the agentOS sysroot. Guest process identity is fixed by the
+ * kernel (uid/gid come from the host_user import; see
+ * std-patches/wasi-libc/0005-user-identity.patch), so the definitions in
+ * std-patches/wasi-libc-overrides/openssh_compat.c implement the
+ * unprivileged-process subset of POSIX setuid(3p)/setgid(3p): setting an id
+ * to a value the process already holds succeeds (no-op), anything else fails
+ * with EPERM. Ported tools (e.g. OpenSSH uidswap.c) call
+ * setuid(getuid())-style self-assignments to drop privileges they never had. */
 int setuid(uid_t);
 int seteuid(uid_t);
 int setgid(gid_t);
 int setegid(gid_t);
-#endif
 
 char *getlogin(void);
 int getlogin_r(char *, size_t);
@@ -199,10 +213,10 @@ size_t confstr(int, char *, size_t);
 #define F_LOCK  1
 #define F_TLOCK 2
 #define F_TEST  3
-#ifdef __wasilibc_unmodified_upstream /* WASI has no setreuid */
+/* See the setuid() comment above: same fixed-identity EPERM semantics
+ * (POSIX setreuid(3p)); defined in wasi-libc-overrides/openssh_compat.c. */
 int setreuid(uid_t, uid_t);
 int setregid(gid_t, gid_t);
-#endif
 #ifdef __wasilibc_unmodified_upstream /* WASI has no POSIX file locking */
 int lockf(int, int, off_t);
 #endif
@@ -259,12 +273,15 @@ extern int optreset;
 
 #ifdef _GNU_SOURCE
 extern char **environ;
-#ifdef __wasilibc_unmodified_upstream /* WASI has no get/setresuid */
+/* See the setuid() comment above: setresuid/setresgid (Linux
+ * setresuid(2)) follow the same fixed-identity semantics (-1 keeps a field,
+ * self-assignment succeeds, everything else is EPERM); getresuid/getresgid
+ * report the single kernel identity for all three ids. Defined in
+ * wasi-libc-overrides/openssh_compat.c. */
 int setresuid(uid_t, uid_t, uid_t);
 int setresgid(gid_t, gid_t, gid_t);
 int getresuid(uid_t *, uid_t *, uid_t *);
 int getresgid(gid_t *, gid_t *, gid_t *);
-#endif
 #ifdef __wasilibc_unmodified_upstream /* WASI has no cwd */
 char *get_current_dir_name(void);
 #endif

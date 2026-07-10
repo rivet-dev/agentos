@@ -160,6 +160,44 @@ int getservbyname_r(const char *, const char *, struct servent *, char *, size_t
 #endif
 
 
+
+/* OpenBSD getrrsetbyname(3) surface (also on FreeBSD/NetBSD libc): DNS RRset
+ * query API used by OpenSSH's dns.c for SSHFP host-key verification
+ * (VerifyHostKeyDNS, RFC 4255). Struct layout and constants match OpenBSD
+ * <netdb.h>. The agentOS sysroot has no DNS resolver library (lookups route
+ * through the host getaddrinfo import), so the libc definition
+ * (std-patches/wasi-libc-overrides/openssh_compat.c) always fails with
+ * ERRSET_FAIL and callers degrade to a normal "DNS lookup error" path. */
+struct rdatainfo {
+	unsigned int		rdi_length;	/* length of data */
+	unsigned char		*rdi_data;	/* record data */
+};
+
+struct rrsetinfo {
+	unsigned int		rri_flags;	/* RRSET_VALIDATED... */
+	unsigned int		rri_rdclass;	/* class number */
+	unsigned int		rri_rdtype;	/* RR type number */
+	unsigned int		rri_ttl;	/* time to live */
+	unsigned int		rri_nrdatas;	/* size of rdatas array */
+	unsigned int		rri_nsigs;	/* size of sigs array */
+	char			*rri_name;	/* canonical name */
+	struct rdatainfo	*rri_rdatas;	/* individual records */
+	struct rdatainfo	*rri_sigs;	/* individual signatures */
+};
+
+#define RRSET_VALIDATED		1	/* DNSSEC AD bit was set in the reply */
+
+#define ERRSET_SUCCESS		0
+#define ERRSET_NOMEMORY		1
+#define ERRSET_FAIL		2
+#define ERRSET_INVAL		3
+#define ERRSET_NONAME		4
+#define ERRSET_NODATA		5
+
+int getrrsetbyname(const char *, unsigned int, unsigned int, unsigned int,
+    struct rrsetinfo **);
+void freerrset(struct rrsetinfo *);
+
 #ifdef __cplusplus
 }
 #endif

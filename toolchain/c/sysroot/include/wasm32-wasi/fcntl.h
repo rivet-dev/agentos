@@ -51,6 +51,13 @@ int posix_fallocate(int, off_t, off_t);
 #define O_TEXT 0
 #endif
 
+#ifndef O_PATH
+/* WASI O_SEARCH is the descriptor-only path capability corresponding to
+ * Linux O_PATH for directory-relative lookups.
+ * https://man7.org/linux/man-pages/man2/open.2.html */
+#define O_PATH O_SEARCH
+#endif
+
 #ifndef F_RDLCK
 #define F_RDLCK 0
 #endif

@@ -841,20 +841,22 @@ above).
 
 **Session:** tmux/screen 🟡 (PTY).
 
-**Process management (add — real procps-ng + psmisc, C; ps/pkill/pgrep ≈ 3K uses):**
-- **Need the `/proc` prerequisite (below):** ps, pgrep, pkill, pidof, pstree,
-  killall, uptime, free, vmstat, w, pwdx, pmap 🟡.
+**Process management (real procps-ng + psmisc, C; ps/pkill/pgrep ≈ 3K uses):**
+- **Shipped:** procps-ng 4.0.6 `ps`, `pgrep`, `pkill`; psmisc 23.7 `pstree`,
+  `killall`, `prtstat` ✅.
+- **Still available to add from these suites:** pidof, uptime, free, vmstat, w,
+  pwdx, pmap 🟡.
 - **Signal-only — already work via the kernel (no /proc):** kill, killall-by-PID.
   (kill, sleep, timeout, env, nohup, nproc, nice/renice are coreutils — confirm
   they're shipped via uutils rather than re-adding.)
 
-**✅ Runtime prerequisite — `/proc` surface complete; consumers next.** The
+**✅ `/proc` runtime and first real consumers complete.** The
 process-table-backed procfs now includes per-PID `stat`, `status`, `comm`,
 `cmdline`, `environ`, `cwd`, and `fd`, plus `/proc/stat` and the prior system
 files. The emitters cite `proc(5)`, Linux `fs/proc/array.c`, and procps-ng; a
-captured Linux 6.1 fixture proves raw/escaped task-name behavior. The remaining
-deliverable is packaging real procps-ng/psmisc and unskipped VM e2e for at least
-`ps`, `pgrep`, and `pkill`; unit tests alone are not the final acceptance proof.
+captured Linux 6.1 fixture proves raw/escaped task-name behavior. Unskipped live
+VM e2e covers all six shipped procps-ng/psmisc commands, including name-based
+signals terminating real guest processes.
 
 **Excluded — not worth it / not possible here:**
 - **TUI / visual-only:** gitui, lazygit, eza, dust, ncdu, bat, delta, broot, k9s,

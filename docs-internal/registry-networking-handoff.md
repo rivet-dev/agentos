@@ -10,9 +10,9 @@ Linux semantics**, make the **codex build reproducible**, and then continue into
 - ssh is built and its default suite is **8/8 green**, including real
   git-over-SSH clone + push through the runtime's synthetic-pipe/host-net poll
   path (§4).
-- the kernel procfs runtime surface is complete and backed by authoritative
-  citations plus a captured real-Linux task-name fixture. Real procps-ng/psmisc
-  packages and `ps`/`pgrep`/`pkill` e2e remain next (§5).
+- the kernel procfs runtime surface and real procps-ng/psmisc consumers are
+  complete. `ps`, `pgrep`, `pkill`, `pstree`, `killall`, and `prtstat` pass live
+  guest-process e2e against the pinned upstream builds (§5).
 - the Node replacement spec is ready in the separate `node-stdlib` workspace;
   its final backend decision is real OpenSSL 3.5.5 wasm, not an invented
   mbedTLS-backed OpenSSL façade (§5).
@@ -168,11 +168,12 @@ pnpm --dir software/ssh test           # with AGENTOS_SIDECAR_BIN pinned (see §
    procps-ng; a Linux 6.1 fixture and regeneration script cover raw `comm` edge
    cases. Full kernel crate proof:
    `~/progress/agent-os/2026-07-09-registry-networking/2026-07-09T17-18-40-0700-proc-full-kernel-suite.log`.
-3. **Prove and ship the consumers:** add a captured real-Linux golden fixture and
-   regeneration script; build real upstream procps-ng + psmisc with the patched
-   sysroot; ship `ps`, `pgrep`, `pkill` (plus directly unlocked commands); run
-   those real commands against live guest processes. Unit tests alone do not
-   satisfy this item.
+3. **DONE — prove and ship the consumers:** pinned procps-ng 4.0.6 and psmisc
+   23.7 build against the owned sysroot and ship `ps`, `pgrep`, `pkill`,
+   `pstree`, `killall`, and `prtstat`. A captured Linux fixture has a regeneration
+   script. Live VM e2e proves process inspection and signaling through every
+   shipped command:
+   `~/progress/agent-os/2026-07-09-registry-networking/2026-07-09T18-09-17-0700-proc-consumer-live-e2e-program-name.log`.
 4. Keep the handoff/worklist status current after every rev, audit for build
    artifact leakage, and `forklift submit -y` each clean change before leaving
    this workspace.
@@ -264,11 +265,10 @@ make the shim future `Send` or cfg-gate rmcp oauth off wasi).
 
 ## 8. Immediate next steps for the picking-up agent
 
-1. Complete and prove `/proc`, then ship real procps-ng/psmisc commands.
-2. Forklift each completed reg-tests revision and keep this status current.
-3. Switch to the existing `node-stdlib` workspace without moving `reg-tests`'s
+1. Forklift the completed procps-ng/psmisc revision.
+2. Switch to the existing `node-stdlib` workspace without moving `reg-tests`'s
    `@`; execute the Node spec M0→M5 with the shared real-OpenSSL decision.
-4. Optional after the ordered work: git credential-cache note and the codex
+3. Optional after the ordered work: git credential-cache note and the codex
    `rmcp` OAuth `Send` blocker.
 
 Everything real-tool must stay **real upstream, patch the sysroot not the app**

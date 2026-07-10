@@ -1,0 +1,41 @@
+Initialize the GNU/BSD program-name globals from the WASI argv vector.
+
+WASI commands bypass musl's __libc_start_main, which normally initializes
+__progname and its program_invocation_* aliases.  Populate them in the WASI
+argument startup path so real multi-call binaries can select behavior from
+argv[0], as they do on Linux.
+
+--- a/libc-bottom-half/sources/__main_void.c
++++ b/libc-bottom-half/sources/__main_void.c
+@@ -11,6 +11,9 @@
+ __attribute__((__weak__))
+ int __main_argc_argv(int argc, char *argv[]);
+ 
++extern char *__progname;
++extern char *__progname_full;
++
+ // If the user's `main` function expects arguments, the compiler will rename
+ // it to `__main_argc_argv`, and this version will get linked in, which
+ // initializes the argument data and calls `__main_argc_argv`.
+@@ -50,6 +53,21 @@ int __main_void(void) {
+         _Exit(EX_OSERR);
+     }
+ 
++    /* musl normally initializes these aliases in __libc_start_main, but WASI
++     * commands enter through __main_void instead. Keep both the full argv[0]
++     * and its final path component for program_invocation_name(3) consumers.
++     * https://man7.org/linux/man-pages/man3/program_invocation_name.3.html
++     * https://git.musl-libc.org/cgit/musl/tree/src/env/__libc_start_main.c */
++    if (argc != 0 && argv[0] != NULL) {
++        __progname_full = argv[0];
++        __progname = argv[0];
++        for (char *cursor = argv[0]; *cursor != '\0'; ++cursor) {
++            if (*cursor == '/') {
++                __progname = cursor + 1;
++            }
++        }
++    }
++
+     // Call `__main_argc_argv` with the arguments!
+     return __main_argc_argv(argc, argv);
+ }

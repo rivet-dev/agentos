@@ -63,6 +63,80 @@ typedef struct sigaltstack stack_t;
 #include <bits/signal.h>
 
 #ifndef __wasilibc_unmodified_upstream
+/* POSIX.1-2024 <signal.h> sigval/siginfo_t surface. The layout follows
+ * musl's Linux ABI definition below. AgentOS currently delivers only the
+ * signal number, but upstream tools may construct siginfo_t before an
+ * optional sigqueue/pidfd probe that returns ENOSYS.
+ * https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/signal.h.html */
+#define __NEED_uid_t
+#define __NEED_clock_t
+#include <bits/alltypes.h>
+
+#define SI_QUEUE (-1)
+/* Linux reserves 32..64 for real-time signals; AgentOS exposes the same
+ * 64-signal namespace. https://man7.org/linux/man-pages/man7/signal.7.html */
+#define SIGRTMIN 32
+#define SIGRTMAX 64
+
+union sigval {
+	int sival_int;
+	void *sival_ptr;
+};
+
+typedef struct {
+#ifdef __SI_SWAP_ERRNO_CODE
+	int si_signo, si_code, si_errno;
+#else
+	int si_signo, si_errno, si_code;
+#endif
+	union {
+		char __pad[128 - 2*sizeof(int) - sizeof(long)];
+		struct {
+			union {
+				struct {
+					pid_t si_pid;
+					uid_t si_uid;
+				} __piduid;
+				struct {
+					int si_timerid;
+					int si_overrun;
+				} __timer;
+			} __first;
+			union {
+				union sigval si_value;
+				struct {
+					int si_status;
+					clock_t si_utime, si_stime;
+				} __sigchld;
+			} __second;
+		} __si_common;
+		struct {
+			void *si_addr;
+			short si_addr_lsb;
+		} __sigfault;
+		struct {
+			long si_band;
+			int si_fd;
+		} __sigpoll;
+	} __si_fields;
+} siginfo_t;
+#define si_pid     __si_fields.__si_common.__first.__piduid.si_pid
+#define si_uid     __si_fields.__si_common.__first.__piduid.si_uid
+#define si_status  __si_fields.__si_common.__second.__sigchld.si_status
+#define si_utime   __si_fields.__si_common.__second.__sigchld.si_utime
+#define si_stime   __si_fields.__si_common.__second.__sigchld.si_stime
+#define si_value   __si_fields.__si_common.__second.si_value
+#define si_addr    __si_fields.__sigfault.si_addr
+#define si_addr_lsb __si_fields.__sigfault.si_addr_lsb
+#define si_band    __si_fields.__sigpoll.si_band
+#define si_fd      __si_fields.__sigpoll.si_fd
+#define si_timerid __si_fields.__si_common.__first.__timer.si_timerid
+#define si_overrun __si_fields.__si_common.__first.__timer.si_overrun
+#define si_ptr     si_value.sival_ptr
+#define si_int     si_value.sival_int
+#endif
+
+#ifndef __wasilibc_unmodified_upstream
 struct sigaction {
 	union {
 		void (*sa_handler)(int);
@@ -266,6 +340,7 @@ int sigdelset(sigset_t *, int);
 int sigismember(const sigset_t *, int);
 int sigaction(int, const struct sigaction *__restrict, struct sigaction *__restrict);
 int sigprocmask(int, const sigset_t *__restrict, sigset_t *__restrict);
+int sigqueue(pid_t, int, union sigval);
 
 #ifdef __wasilibc_unmodified_upstream /* WASI has no signal sets */
 int sigsuspend(const sigset_t *);

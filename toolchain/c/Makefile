@@ -68,10 +68,10 @@ COMMANDS_DIR ?= ../target/wasm32-wasip1/release/commands
 
 # Fast real commands installed by the default software gate. Slow/heavy commands
 # (duckdb, vim) remain available through explicit parent `make cmd/<name>`.
-COMMANDS := zip unzip envsubst sqlite3 curl wget grep git git-remote-http tree ssh
+COMMANDS := zip unzip envsubst sqlite3 curl wget grep git git-remote-http tree ssh ps pgrep pkill pstree killall prtstat
 
 # Programs requiring patched sysroot (Tier 2+ custom host imports)
-PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler dns_lookup sqlite3 curl wget grep tree zip unzip fs_probe
+PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler dns_lookup sqlite3 curl wget grep tree zip unzip ps pgrep pkill pstree killall prtstat fs_probe
 
 # Discover all package command and test-program C source files.
 ALL_SOURCES := $(foreach dir,$(C_SOURCE_DIRS),$(wildcard $(dir)/*.c))
@@ -89,7 +89,7 @@ endif
 ifeq ($(wildcard $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a),)
   CUSTOM_WASM_PROG_NAMES :=
 else
-  CUSTOM_WASM_PROG_NAMES := curl wget grep sqlite3 tree zip unzip
+  CUSTOM_WASM_PROG_NAMES := curl wget grep sqlite3 tree zip unzip ps pgrep pkill pstree killall prtstat
 endif
 
 WASM_PROG_NAMES := $(sort $(basename $(notdir $(SOURCES))) $(CUSTOM_WASM_PROG_NAMES))
@@ -197,6 +197,15 @@ GIT_PATCH_DIR := patches/git
 OPENSSH_VERSION := 10.4p1
 OPENSSH_URL := https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-$(OPENSSH_VERSION).tar.gz
 OPENSSH_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/ssh-upstream
+PROCPS_VERSION := 4.0.6
+PROCPS_URL := https://downloads.sourceforge.net/project/procps-ng/Production/procps-ng-$(PROCPS_VERSION).tar.xz
+PROCPS_SHA256 := 67bea6fbc3a42a535a0230c9e891e5ddfb4d9d39422d46565a2990d1ace15216
+PROCPS_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/procps-upstream
+PSMISC_VERSION := 23.7
+PSMISC_URL := https://downloads.sourceforge.net/project/psmisc/psmisc/psmisc-$(PSMISC_VERSION).tar.xz
+PSMISC_SHA256 := 58c55d9c1402474065adae669511c191de374b0871eec781239ab400b907c327
+PSMISC_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/psmisc-upstream
+PSMISC_PATCH_DIR := patches/psmisc
 GREP_VERSION := 3.12
 GREP_URL := https://ftp.gnu.org/gnu/grep/grep-$(GREP_VERSION).tar.xz
 GREP_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/grep-upstream
@@ -474,6 +483,12 @@ $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a: wasi-sdk ../scripts/patch-wasi-libc.s
 	../scripts/patch-wasi-libc.sh
 
 sysroot: $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a
+
+# psmisc's upstream configure requires the conventional terminfo link name.
+# The owned compatibility symbols live in libc; create the empty marker archive
+# on demand so generated sysroot archives do not need to be committed.
+$(PATCHED_SYSROOT)/lib/wasm32-wasi/libtinfo.a: $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/llvm-ar
+	$(WASI_SDK_DIR)/bin/llvm-ar rcs $@
 
 # --- wasm-opt check ---
 
@@ -797,6 +812,45 @@ $(BUILD_DIR)/ssh: scripts/build-ssh-upstream.sh $(ZLIB_BUILD_DIR)/libz.a $(PATCH
 		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
 		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
 		--output "$(abspath $@)"
+
+# procps-ng: process-table consumers backed by the kernel's Linux-shaped /proc.
+$(BUILD_DIR)/ps: scripts/build-procps-upstream.sh $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+	@mkdir -p $(BUILD_DIR)
+	bash scripts/build-procps-upstream.sh \
+		--version "$(PROCPS_VERSION)" \
+		--url "$(PROCPS_URL)" \
+		--sha256 "$(PROCPS_SHA256)" \
+		--cache-dir "$(abspath $(LIBS_CACHE))" \
+		--build-dir "$(abspath $(PROCPS_UPSTREAM_BUILD_DIR))" \
+		--overlay-include-dir "$(abspath include)" \
+		--cc "$(abspath $(CC))" \
+		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
+		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
+		--sysroot "$(abspath $(SYSROOT))" \
+		--output-dir "$(abspath $(BUILD_DIR))"
+
+$(BUILD_DIR)/pgrep $(BUILD_DIR)/pkill: $(BUILD_DIR)/ps
+	@test -f $@ || { echo "Error: $@ missing from procps-ng build"; exit 1; }
+
+# psmisc: non-TUI process tree, name-based signaling, and stat inspection.
+$(BUILD_DIR)/pstree: scripts/build-psmisc-upstream.sh $(wildcard $(PSMISC_PATCH_DIR)/*.patch) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(PATCHED_SYSROOT)/lib/wasm32-wasi/libtinfo.a $(WASI_SDK_DIR)/bin/clang
+	@mkdir -p $(BUILD_DIR)
+	bash scripts/build-psmisc-upstream.sh \
+		--version "$(PSMISC_VERSION)" \
+		--url "$(PSMISC_URL)" \
+		--sha256 "$(PSMISC_SHA256)" \
+		--cache-dir "$(abspath $(LIBS_CACHE))" \
+		--build-dir "$(abspath $(PSMISC_UPSTREAM_BUILD_DIR))" \
+		--patch-dir "$(abspath $(PSMISC_PATCH_DIR))" \
+		--overlay-include-dir "$(abspath include)" \
+		--cc "$(abspath $(CC))" \
+		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
+		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
+		--sysroot "$(abspath $(SYSROOT))" \
+		--output-dir "$(abspath $(BUILD_DIR))"
+
+$(BUILD_DIR)/killall $(BUILD_DIR)/prtstat: $(BUILD_DIR)/pstree
+	@test -f $@ || { echo "Error: $@ missing from psmisc build"; exit 1; }
 
 # curl_test: links libcurl (HTTP/HTTPS build for WASM via host_net + host_tls)
 CURL_SRCS := $(wildcard libs/curl/lib/*.c) $(wildcard libs/curl/lib/vauth/*.c) \

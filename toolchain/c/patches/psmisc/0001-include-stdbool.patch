@@ -1,0 +1,13 @@
+pstree uses bool even when both SELinux and AppArmor support are disabled.
+Include the standard C boolean header directly instead of relying on an
+optional security-library header to provide it.
+
+--- a/src/pstree.c
++++ b/src/pstree.c
+@@ -43,6 +43,7 @@
+ #include <limits.h>
+ #include <locale.h>
++#include <stdbool.h>
+ 
+ #include "i18n.h"
+ #include "comm.h"

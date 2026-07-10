@@ -179,6 +179,7 @@ fn procfs_exposes_linux_like_identity_and_system_files() {
     assert_eq!(status_fields["Name"], "identity-check");
     assert_eq!(status_fields["State"], "R (running)");
     assert_eq!(status_fields["Pid"], pid.to_string());
+    assert_eq!(status_fields["Tgid"], pid.to_string());
     assert_eq!(status_fields["PPid"], "0");
     assert_eq!(status_fields["Uid"], "501\t700\t700\t700");
     assert_eq!(status_fields["Gid"], "502\t701\t701\t701");

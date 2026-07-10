@@ -242,7 +242,7 @@ wasm: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std wasm-opt-ch
 #   codex     the codex fork build    (codex, codex-exec)
 # `just toolchain-cmd <name>` calls this. `make wasm` builds the fast
 # Rust set; `make -C c programs install` builds/installs the fast C set.
-C_COMMANDS := zip unzip envsubst sqlite3 curl wget grep git duckdb vim ssh
+C_COMMANDS := zip unzip envsubst sqlite3 curl wget grep git duckdb vim ssh ps pgrep pkill pstree killall prtstat
 
 .PHONY: cmd/%
 cmd/%:

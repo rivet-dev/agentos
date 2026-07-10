@@ -400,9 +400,13 @@ struct sockaddr_storage {
 
 int socket (int, int, int);
 
-#ifdef __wasilibc_unmodified_upstream /* WASI has no socketpair */
+/* Declared unconditionally for the agentOS sysroot: POSIX socketpair(3p)
+ * (POSIX.1-2024, XSH). The kernel has no socketpair syscall, so the libc
+ * definition (std-patches/wasi-libc-overrides/openssh_compat.c) fails with
+ * ENOSYS; the declaration exists so ported tools such as OpenSSH that
+ * reference socketpair() on cold paths (e.g. ProxyUseFdpass in sshconnect.c)
+ * compile and link against the honest ENOSYS stub. */
 int socketpair (int, int, int, int [2]);
-#endif
 
 int shutdown (int, int);
 

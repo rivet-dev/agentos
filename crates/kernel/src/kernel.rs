@@ -4340,8 +4340,15 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             ProcessStatus::Stopped => ('T', "stopped"),
             ProcessStatus::Exited => ('Z', "zombie"),
         };
+        // Linux emits both Tgid and Pid in /proc/<pid>/status. procps-ng's
+        // library/readproc.c treats Threads as proof of the modern format and
+        // then assigns its process id from Tgid, so omitting Tgid rewrites an
+        // otherwise valid PID to zero.
+        // https://man7.org/linux/man-pages/man5/proc_pid_status.5.html
+        // https://github.com/torvalds/linux/blob/master/fs/proc/array.c
+        // https://gitlab.com/procps-ng/procps/-/blob/master/library/readproc.c
         format!(
-            "Name:\t{name}\nState:\t{state_code} ({state_name})\nPid:\t{pid}\nPPid:\t{ppid}\nUid:\t{uid}\t{euid}\t{euid}\t{euid}\nGid:\t{gid}\t{egid}\t{egid}\t{egid}\nVmSize:\t{:>8} kB\nVmRSS:\t{:>9} kB\nThreads:\t1\n",
+            "Name:\t{name}\nState:\t{state_code} ({state_name})\nTgid:\t{pid}\nPid:\t{pid}\nPPid:\t{ppid}\nUid:\t{uid}\t{euid}\t{euid}\t{euid}\nGid:\t{gid}\t{egid}\t{egid}\t{egid}\nVmSize:\t{:>8} kB\nVmRSS:\t{:>9} kB\nThreads:\t1\n",
             0,
             0,
             name = proc_status_task_name(&entry.command),

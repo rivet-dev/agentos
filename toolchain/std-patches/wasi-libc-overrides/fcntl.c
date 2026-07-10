@@ -14,6 +14,7 @@
 #include <stdarg.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/file.h>
 #include <wasi/api.h>
 
 /* WASI headers omit F_DUPFD and F_DUPFD_CLOEXEC — define with Linux values */
@@ -171,5 +172,21 @@ int fcntl(int fd, int cmd, ...) {
     }
 
     va_end(ap);
-    return result;
+	return result;
+}
+
+/* flock(2) is specified in terms of whole-file advisory locks. Route it to
+ * the owned fcntl lock surface so callers observe the same VM semantics and
+ * LOCK_NB selects the nonblocking command.
+ * https://man7.org/linux/man-pages/man2/flock.2.html */
+int flock(int fd, int operation) {
+	struct flock lock = {
+		.l_type = (operation & LOCK_UN) ? F_UNLCK
+			: (operation & LOCK_EX) ? F_WRLCK
+			: F_RDLCK,
+		.l_whence = SEEK_SET,
+		.l_start = 0,
+		.l_len = 0,
+	};
+	return fcntl(fd, (operation & LOCK_NB) ? F_SETLK : F_SETLKW, &lock);
 }

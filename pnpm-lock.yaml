@@ -3287,6 +3287,12 @@ importers:
       '@agentos-software/jq':
         specifier: workspace:*
         version: link:../jq
+      '@agentos-software/procps':
+        specifier: workspace:*
+        version: link:../procps
+      '@agentos-software/psmisc':
+        specifier: workspace:*
+        version: link:../psmisc
       '@agentos-software/ripgrep':
         specifier: workspace:*
         version: link:../ripgrep
@@ -3580,6 +3586,48 @@ importers:
         version: 22.19.15
       typescript:
         specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/procps:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/psmisc:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
         version: 5.9.3
       vitest:
         specifier: ^2.1.9

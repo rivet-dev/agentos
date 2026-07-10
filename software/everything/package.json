@@ -44,6 +44,8 @@
 		"@agentos-software/ripgrep": "workspace:*",
 		"@agentos-software/fd": "workspace:*",
 		"@agentos-software/tree": "workspace:*",
+		"@agentos-software/procps": "workspace:*",
+		"@agentos-software/psmisc": "workspace:*",
 		"@agentos-software/file": "workspace:*",
 		"@agentos-software/yq": "workspace:*",
 		"@agentos-software/codex-cli": "workspace:*"
