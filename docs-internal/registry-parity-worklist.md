@@ -848,15 +848,13 @@ above).
   (kill, sleep, timeout, env, nohup, nproc, nice/renice are coreutils — confirm
   they're shipped via uutils rather than re-adding.)
 
-**⚙️ Runtime prerequisite — `/proc` is PARTIAL, not done.** The kernel already
-exposes a process-table-backed `/proc`, including per-PID `stat`, `status`,
-`cmdline`, `environ`, `cwd`, and `fd`, plus several system files. Completion
-still requires the procps-consumed gaps (`comm`, `/proc/stat`, and anything else
-demonstrated by the real parser), authoritative `proc(5)` + Linux
-`fs/proc/array.c` + procps-ng `readproc.c` citations at the emitters, a captured
-real-Linux golden fixture, and unskipped real procps-ng/psmisc e2e for at least
-`ps`, `pgrep`, and `pkill`. Unit tests of the synthetic files are necessary but
-not sufficient. Finish the runtime surface before packaging the consumers.
+**✅ Runtime prerequisite — `/proc` surface complete; consumers next.** The
+process-table-backed procfs now includes per-PID `stat`, `status`, `comm`,
+`cmdline`, `environ`, `cwd`, and `fd`, plus `/proc/stat` and the prior system
+files. The emitters cite `proc(5)`, Linux `fs/proc/array.c`, and procps-ng; a
+captured Linux 6.1 fixture proves raw/escaped task-name behavior. The remaining
+deliverable is packaging real procps-ng/psmisc and unskipped VM e2e for at least
+`ps`, `pgrep`, and `pkill`; unit tests alone are not the final acceptance proof.
 
 **Excluded — not worth it / not possible here:**
 - **TUI / visual-only:** gitui, lazygit, eza, dust, ncdu, bat, delta, broot, k9s,

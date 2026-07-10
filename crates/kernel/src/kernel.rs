@@ -426,12 +426,14 @@ enum ProcNode {
     CpuInfoFile,
     MemInfoFile,
     LoadAvgFile,
+    StatFile,
     UptimeFile,
     VersionFile,
     SelfLink { pid: u32 },
     PidDir { pid: u32 },
     PidFdDir { pid: u32 },
     PidCmdline { pid: u32 },
+    PidComm { pid: u32 },
     PidEnviron { pid: u32 },
     PidCwdLink { pid: u32 },
     PidStatFile { pid: u32 },
@@ -3767,15 +3769,20 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             self.filesystem
                 .check_virtual_path(FsOperation::Read, path)
                 .map_err(KernelError::from)?;
-            return Ok(self
-                .proc_read_dir(current_pid, &proc_node)?
-                .into_iter()
-                .map(|name| VirtualDirEntry {
+            let mut typed = Vec::new();
+            for name in self.proc_read_dir(current_pid, &proc_node)? {
+                let child_path = join_child_path(&normalize_path(path), &name);
+                let child = self
+                    .resolve_proc_node(&child_path, current_pid)?
+                    .ok_or_else(|| proc_not_found_error(&child_path))?;
+                let filetype = proc_filetype(&child);
+                typed.push(VirtualDirEntry {
                     name,
-                    is_directory: false,
-                    is_symbolic_link: false,
-                })
-                .collect());
+                    is_directory: filetype == FILETYPE_DIRECTORY,
+                    is_symbolic_link: filetype == FILETYPE_SYMBOLIC_LINK,
+                });
+            }
+            return Ok(typed);
         }
 
         Ok(self.filesystem.read_dir_with_types(path)?)
@@ -3819,6 +3826,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             ["cpuinfo"] => Some(ProcNode::CpuInfoFile),
             ["meminfo"] => Some(ProcNode::MemInfoFile),
             ["loadavg"] => Some(ProcNode::LoadAvgFile),
+            ["stat"] => Some(ProcNode::StatFile),
             ["uptime"] => Some(ProcNode::UptimeFile),
             ["version"] => Some(ProcNode::VersionFile),
             _ => None,
@@ -3840,6 +3848,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             [_pid] => ProcNode::PidDir { pid },
             [_pid, "fd"] => ProcNode::PidFdDir { pid },
             [_pid, "cmdline"] => ProcNode::PidCmdline { pid },
+            [_pid, "comm"] => ProcNode::PidComm { pid },
             [_pid, "environ"] => ProcNode::PidEnviron { pid },
             [_pid, "cwd"] => ProcNode::PidCwdLink { pid },
             [_pid, "stat"] => ProcNode::PidStatFile { pid },
@@ -3887,9 +3896,11 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             ProcNode::CpuInfoFile => Ok(self.proc_cpuinfo_bytes()),
             ProcNode::MemInfoFile => Ok(self.proc_meminfo_bytes()),
             ProcNode::LoadAvgFile => Ok(self.proc_loadavg_bytes()),
+            ProcNode::StatFile => Ok(self.proc_system_stat_bytes()),
             ProcNode::UptimeFile => Ok(self.proc_uptime_bytes()),
             ProcNode::VersionFile => Ok(self.proc_version_bytes()),
             ProcNode::PidCmdline { pid } => Ok(self.proc_cmdline_bytes(*pid)),
+            ProcNode::PidComm { pid } => Ok(self.proc_comm_bytes(*pid)),
             ProcNode::PidEnviron { pid } => Ok(self.proc_environ_bytes(*pid)),
             ProcNode::PidStatFile { pid } => Ok(self.proc_stat_bytes(*pid)),
             ProcNode::PidStatusFile { pid } => Ok(self.proc_status_bytes(*pid)),
@@ -3942,6 +3953,10 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 proc_inode(node),
                 self.proc_loadavg_bytes().len() as u64,
             )),
+            ProcNode::StatFile => Ok(proc_file_stat(
+                proc_inode(node),
+                self.proc_system_stat_bytes().len() as u64,
+            )),
             ProcNode::UptimeFile => Ok(proc_file_stat(
                 proc_inode(node),
                 self.proc_uptime_bytes().len() as u64,
@@ -3953,6 +3968,10 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             ProcNode::PidCmdline { pid } => Ok(proc_file_stat(
                 proc_inode(node),
                 self.proc_cmdline_bytes(*pid).len() as u64,
+            )),
+            ProcNode::PidComm { pid } => Ok(proc_file_stat(
+                proc_inode(node),
+                self.proc_comm_bytes(*pid).len() as u64,
             )),
             ProcNode::PidEnviron { pid } => Ok(proc_file_stat(
                 proc_inode(node),
@@ -4014,6 +4033,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 entries.push(String::from("meminfo"));
                 entries.push(String::from("mounts"));
                 entries.push(String::from("self"));
+                entries.push(String::from("stat"));
                 entries.push(String::from("uptime"));
                 entries.push(String::from("version"));
                 entries.sort();
@@ -4021,6 +4041,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             }
             ProcNode::PidDir { .. } => Ok(vec![
                 String::from("cmdline"),
+                String::from("comm"),
                 String::from("cwd"),
                 String::from("environ"),
                 String::from("fd"),
@@ -4080,12 +4101,14 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             ProcNode::CpuInfoFile => String::from("/proc/cpuinfo"),
             ProcNode::MemInfoFile => String::from("/proc/meminfo"),
             ProcNode::LoadAvgFile => String::from("/proc/loadavg"),
+            ProcNode::StatFile => String::from("/proc/stat"),
             ProcNode::UptimeFile => String::from("/proc/uptime"),
             ProcNode::VersionFile => String::from("/proc/version"),
             ProcNode::SelfLink { pid } => format!("/proc/{pid}"),
             ProcNode::PidDir { pid } => format!("/proc/{pid}"),
             ProcNode::PidFdDir { pid } => format!("/proc/{pid}/fd"),
             ProcNode::PidCmdline { pid } => format!("/proc/{pid}/cmdline"),
+            ProcNode::PidComm { pid } => format!("/proc/{pid}/comm"),
             ProcNode::PidEnviron { pid } => format!("/proc/{pid}/environ"),
             ProcNode::PidCwdLink { pid } => format!("/proc/{pid}/cwd"),
             ProcNode::PidStatFile { pid } => format!("/proc/{pid}/stat"),
@@ -4118,24 +4141,86 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         )
     }
 
+    fn proc_comm_bytes(&self, pid: u32) -> Vec<u8> {
+        let entry = self
+            .processes
+            .get(pid)
+            .expect("process must exist while procfs path is resolved");
+        let mut bytes = proc_task_comm(&entry.command).into_bytes();
+        bytes.push(b'\n');
+        bytes
+    }
+
     fn proc_stat_bytes(&self, pid: u32) -> Vec<u8> {
         let entry = self
             .processes
             .get(pid)
             .expect("process must exist while procfs path is resolved");
-        let command = entry.command.replace(')', "]");
+        let command = proc_task_comm(&entry.command);
         let state = match entry.status {
             ProcessStatus::Running => 'R',
             ProcessStatus::Stopped => 'T',
             ProcessStatus::Exited => 'Z',
         };
-        format!(
-            "{pid} ({command}) {state} {ppid} {pgid} {sid} 0 0 0 0 0 0 0 0 0 0 20 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0",
-            ppid = entry.ppid,
-            pgid = entry.pgid,
-            sid = entry.sid,
-        )
-        .into_bytes()
+        // Linux's exact field order and unescaped parenthesized comm come from
+        // proc_pid_stat(5) and fs/proc/array.c::do_task_stat(). procps-ng's
+        // library/readproc.c consumes this positionally and finds the final
+        // ") " delimiter, so rewriting ')' inside comm corrupts real names.
+        // https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html
+        // https://github.com/torvalds/linux/blob/master/fs/proc/array.c
+        // https://gitlab.com/procps-ng/procps/-/blob/master/library/readproc.c
+        let tail = [
+            entry.ppid.to_string(),                   // 4 ppid
+            entry.pgid.to_string(),                   // 5 pgrp
+            entry.sid.to_string(),                    // 6 session
+            String::from("0"),                        // 7 tty_nr
+            String::from("-1"),                       // 8 tpgid
+            String::from("0"),                        // 9 flags
+            String::from("0"),                        // 10 minflt
+            String::from("0"),                        // 11 cminflt
+            String::from("0"),                        // 12 majflt
+            String::from("0"),                        // 13 cmajflt
+            String::from("0"),                        // 14 utime
+            String::from("0"),                        // 15 stime
+            String::from("0"),                        // 16 cutime
+            String::from("0"),                        // 17 cstime
+            String::from("20"),                       // 18 priority
+            String::from("0"),                        // 19 nice
+            String::from("1"),                        // 20 num_threads
+            String::from("0"),                        // 21 itrealvalue
+            String::from("0"),                        // 22 starttime
+            String::from("0"),                        // 23 vsize
+            String::from("0"),                        // 24 rss
+            String::from("0"),                        // 25 rsslim
+            String::from("0"),                        // 26 startcode
+            String::from("0"),                        // 27 endcode
+            String::from("0"),                        // 28 startstack
+            String::from("0"),                        // 29 kstkesp
+            String::from("0"),                        // 30 kstkeip
+            String::from("0"),                        // 31 signal
+            String::from("0"),                        // 32 blocked
+            String::from("0"),                        // 33 sigignore
+            String::from("0"),                        // 34 sigcatch
+            String::from("0"),                        // 35 wchan
+            String::from("0"),                        // 36 nswap
+            String::from("0"),                        // 37 cnswap
+            String::from("17"),                       // 38 exit_signal (SIGCHLD)
+            String::from("0"),                        // 39 processor
+            String::from("0"),                        // 40 rt_priority
+            String::from("0"),                        // 41 policy
+            String::from("0"),                        // 42 delayacct_blkio_ticks
+            String::from("0"),                        // 43 guest_time
+            String::from("0"),                        // 44 cguest_time
+            String::from("0"),                        // 45 start_data
+            String::from("0"),                        // 46 end_data
+            String::from("0"),                        // 47 start_brk
+            String::from("0"),                        // 48 arg_start
+            String::from("0"),                        // 49 arg_end
+            String::from("0"),                        // 50 env_start
+            String::from("0"),                        // 51 env_end
+            entry.exit_code.unwrap_or(0).to_string(), // 52 exit_code
+        ];
+        format!("{pid} ({command}) {state} {}\n", tail.join(" ")).into_bytes()
     }
 
     fn proc_mounts_bytes(&self) -> Vec<u8> {
@@ -4207,6 +4292,31 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         format!("0.00 0.00 0.00 {running}/{total} {last_pid}\n").into_bytes()
     }
 
+    fn proc_system_stat_bytes(&self) -> Vec<u8> {
+        // proc_stat(5) defines USER_HZ CPU columns, btime, process counters,
+        // and runnable/blocked counts. procps consumes these labels directly.
+        // https://man7.org/linux/man-pages/man5/proc_stat.5.html
+        // https://gitlab.com/procps-ng/procps/-/blob/master/library/stat.c
+        let cpu_count = self.proc_cpu_count();
+        let idle_ticks = (self.boot_instant.elapsed().as_secs_f64() * 100.0) as u64;
+        let aggregate_idle = idle_ticks.saturating_mul(cpu_count as u64);
+        let processes = self.processes.list_processes();
+        let running = processes
+            .values()
+            .filter(|process| process.status == ProcessStatus::Running)
+            .count();
+        let mut body = format!("cpu  0 0 0 {aggregate_idle} 0 0 0 0 0 0\n");
+        for cpu in 0..cpu_count {
+            body.push_str(&format!("cpu{cpu} 0 0 0 {idle_ticks} 0 0 0 0 0 0\n"));
+        }
+        body.push_str(&format!(
+            "intr 0\nctxt 0\nbtime {}\nprocesses {}\nprocs_running {running}\nprocs_blocked 0\nsoftirq 0 0 0 0 0 0 0 0 0 0 0\n",
+            self.boot_time_ms / 1000,
+            processes.len(),
+        ));
+        body.into_bytes()
+    }
+
     fn proc_uptime_bytes(&self) -> Vec<u8> {
         let uptime = self.boot_instant.elapsed().as_secs_f64();
         format!("{uptime:.2} {uptime:.2}\n").into_bytes()
@@ -4234,7 +4344,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             "Name:\t{name}\nState:\t{state_code} ({state_name})\nPid:\t{pid}\nPPid:\t{ppid}\nUid:\t{uid}\t{euid}\t{euid}\t{euid}\nGid:\t{gid}\t{egid}\t{egid}\t{egid}\nVmSize:\t{:>8} kB\nVmRSS:\t{:>9} kB\nThreads:\t1\n",
             0,
             0,
-            name = entry.command,
+            name = proc_status_task_name(&entry.command),
             ppid = entry.ppid,
             uid = entry.identity.uid,
             euid = entry.identity.euid,
@@ -5101,9 +5211,11 @@ fn proc_filetype(node: &ProcNode) -> u8 {
         | ProcNode::CpuInfoFile
         | ProcNode::MemInfoFile
         | ProcNode::LoadAvgFile
+        | ProcNode::StatFile
         | ProcNode::UptimeFile
         | ProcNode::VersionFile
         | ProcNode::PidCmdline { .. }
+        | ProcNode::PidComm { .. }
         | ProcNode::PidEnviron { .. }
         | ProcNode::PidStatFile { .. }
         | ProcNode::PidStatusFile { .. } => FILETYPE_REGULAR_FILE,
@@ -5117,18 +5229,35 @@ fn proc_inode(node: &ProcNode) -> u64 {
         ProcNode::CpuInfoFile => 0xfffe_0003,
         ProcNode::MemInfoFile => 0xfffe_0004,
         ProcNode::LoadAvgFile => 0xfffe_0005,
-        ProcNode::UptimeFile => 0xfffe_0006,
-        ProcNode::VersionFile => 0xfffe_0007,
+        ProcNode::StatFile => 0xfffe_0006,
+        ProcNode::UptimeFile => 0xfffe_0007,
+        ProcNode::VersionFile => 0xfffe_0008,
         ProcNode::SelfLink { pid } => 0xfffe_1000 + u64::from(*pid),
         ProcNode::PidDir { pid } => 0xfffe_2000 + u64::from(*pid),
         ProcNode::PidFdDir { pid } => 0xfffe_3000 + u64::from(*pid),
         ProcNode::PidCmdline { pid } => 0xfffe_4000 + u64::from(*pid),
-        ProcNode::PidEnviron { pid } => 0xfffe_5000 + u64::from(*pid),
-        ProcNode::PidCwdLink { pid } => 0xfffe_6000 + u64::from(*pid),
-        ProcNode::PidStatFile { pid } => 0xfffe_7000 + u64::from(*pid),
-        ProcNode::PidStatusFile { pid } => 0xfffe_8000 + u64::from(*pid),
+        ProcNode::PidComm { pid } => 0xfffe_5000 + u64::from(*pid),
+        ProcNode::PidEnviron { pid } => 0xfffe_6000 + u64::from(*pid),
+        ProcNode::PidCwdLink { pid } => 0xfffe_7000 + u64::from(*pid),
+        ProcNode::PidStatFile { pid } => 0xfffe_8000 + u64::from(*pid),
+        ProcNode::PidStatusFile { pid } => 0xfffe_9000 + u64::from(*pid),
         ProcNode::PidFdLink { pid, fd } => 0xffff_0000 + ((u64::from(*pid)) << 8) + u64::from(*fd),
     }
+}
+
+fn proc_task_comm(command: &str) -> String {
+    let basename = command.rsplit('/').next().unwrap_or(command);
+    let mut end = basename.len().min(15);
+    while !basename.is_char_boundary(end) {
+        end -= 1;
+    }
+    basename[..end].to_owned()
+}
+
+fn proc_status_task_name(command: &str) -> String {
+    proc_task_comm(command)
+        .replace('\\', "\\\\")
+        .replace('\n', "\\n")
 }
 
 fn null_separated_bytes(parts: Vec<String>) -> Vec<u8> {

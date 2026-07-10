@@ -10,10 +10,9 @@ Linux semantics**, make the **codex build reproducible**, and then continue into
 - ssh is built and its default suite is **8/8 green**, including real
   git-over-SSH clone + push through the runtime's synthetic-pipe/host-net poll
   path (§4).
-- the kernel already has a **partial synthetic procfs**, but it has not met this
-  program's acceptance bar: no authoritative-format citations at the emitters,
-  no real-Linux golden fixture, no real procps-ng/psmisc packages, and no real
-  `ps`/`pgrep`/`pkill` e2e (§5).
+- the kernel procfs runtime surface is complete and backed by authoritative
+  citations plus a captured real-Linux task-name fixture. Real procps-ng/psmisc
+  packages and `ps`/`pgrep`/`pkill` e2e remain next (§5).
 - the Node replacement spec is ready in the separate `node-stdlib` workspace;
   its final backend decision is real OpenSSL 3.5.5 wasm, not an invented
   mbedTLS-backed OpenSSL façade (§5).
@@ -162,12 +161,13 @@ pnpm --dir software/ssh test           # with AGENTOS_SIDECAR_BIN pinned (see §
 1. **DONE — close git-over-SSH:** the runtime synthetic-pipe + host-net poll/flush
    bug is fixed, `AGENTOS_SSH_GIT_E2E` is removed, and real clone + push pass by
    default with a pinned `AGENTOS_SIDECAR_BIN` (§4).
-2. **Finish `/proc` from the existing partial implementation:** retain the
-   process-table-backed design in `crates/kernel/src/kernel.rs`, then add the
-   missing consumer surface (`/proc/<pid>/comm`, `/proc/stat`, and any further
-   fields/files demonstrated necessary by procps-ng), correct `stat` field order
-   and `comm` escaping, and cite `proc(5)`, Linux `fs/proc/array.c`, and procps-ng
-   `readproc.c` at the emitters.
+2. **DONE — finish `/proc` from the existing partial implementation:** the
+   process-table-backed design now provides `/proc/<pid>/comm`, `/proc/stat`,
+   typed directory entries, all 52 `stat` fields in order, and Linux-compatible
+   task-name escaping. Emitters cite `proc(5)`, Linux `fs/proc/array.c`, and
+   procps-ng; a Linux 6.1 fixture and regeneration script cover raw `comm` edge
+   cases. Full kernel crate proof:
+   `~/progress/agent-os/2026-07-09-registry-networking/2026-07-09T17-18-40-0700-proc-full-kernel-suite.log`.
 3. **Prove and ship the consumers:** add a captured real-Linux golden fixture and
    regeneration script; build real upstream procps-ng + psmisc with the patched
    sysroot; ship `ps`, `pgrep`, `pkill` (plus directly unlocked commands); run
