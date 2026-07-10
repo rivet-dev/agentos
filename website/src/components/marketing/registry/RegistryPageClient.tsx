@@ -186,14 +186,42 @@ function Shelf({
 }) {
 	const [expanded, setExpanded] = useState(false);
 	const collapsible = entries.length > MAX_SHELF_ITEMS;
-	const visible = expanded ? entries : entries.slice(0, MAX_SHELF_ITEMS);
 
-	// Column-major chunking (1, 2, 3 down the left column like App Store
-	// charts); CSS grid flow would order rows left-to-right instead.
-	const split = Math.ceil(visible.length / 2);
-	const columns = [visible.slice(0, split), visible.slice(split)].filter(
-		(column) => column.length > 0,
-	);
+	// The first MAX_SHELF_ITEMS stay mounted in a fixed column-major layout;
+	// the remainder animate open/closed below. Splitting once (rather than
+	// re-splitting on expand) keeps rows from jumping between columns as the
+	// extra section reveals. Column-major chunking mirrors App Store charts —
+	// 1, 2, 3 down the left column — where CSS grid flow would order rows
+	// left-to-right instead.
+	const base = entries.slice(0, MAX_SHELF_ITEMS);
+	const extra = collapsible ? entries.slice(MAX_SHELF_ITEMS) : [];
+
+	const renderColumns = (list: RegistryCardEntry[], seam: boolean) => {
+		const split = Math.ceil(list.length / 2);
+		const columns = [list.slice(0, split), list.slice(split)].filter(
+			(column) => column.length > 0,
+		);
+		return (
+			<div className="grid gap-x-10 sm:grid-cols-2">
+				{columns.map((column, columnIndex) => (
+					<div
+						key={columnIndex}
+						className={`flex flex-col divide-y divide-ink/[0.07] ${
+							// Keep a hairline where the extra section meets the base rows,
+							// and where columns stack on mobile.
+							seam || columnIndex > 0
+								? "border-t border-ink/[0.07]"
+								: ""
+						} ${columnIndex > 0 && !seam ? "sm:border-t-0" : ""}`}
+					>
+						{column.map((entry) => (
+							<AppRow key={entry.slug} entry={entry} hrefBase={hrefBase} />
+						))}
+					</div>
+				))}
+			</div>
+		);
+	};
 
 	return (
 		<section className="mb-14 border-t border-ink/[0.08] pt-10">
@@ -210,27 +238,31 @@ function Shelf({
 					<button
 						type="button"
 						onClick={() => setExpanded((value) => !value)}
+						aria-expanded={expanded}
 						className="shrink-0 pb-0.5 text-sm font-medium text-pine transition-colors hover:text-ink"
 					>
 						{expanded ? "Show Less" : `See All (${entries.length})`}
 					</button>
 				)}
 			</div>
-			<div className="grid gap-x-10 sm:grid-cols-2">
-				{columns.map((column, columnIndex) => (
+			{renderColumns(base, false)}
+			{collapsible && (
+				<div
+					// grid-rows 0fr → 1fr animates to the content's natural height with
+					// no measurement, so it stays smooth across viewport widths.
+					className="grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none"
+					style={{ gridTemplateRows: expanded ? "1fr" : "0fr" }}
+				>
 					<div
-						key={columnIndex}
-						className={`flex flex-col divide-y divide-ink/[0.07] ${
-							// When the columns stack on mobile, keep a hairline at the seam.
-							columnIndex > 0 ? "border-t border-ink/[0.07] sm:border-t-0" : ""
+						className={`overflow-hidden transition-opacity duration-300 ease-out motion-reduce:transition-none ${
+							expanded ? "opacity-100" : "opacity-0"
 						}`}
+						aria-hidden={!expanded}
 					>
-						{column.map((entry) => (
-							<AppRow key={entry.slug} entry={entry} hrefBase={hrefBase} />
-						))}
+						{renderColumns(extra, true)}
 					</div>
-				))}
-			</div>
+				</div>
+			)}
 		</section>
 	);
 }

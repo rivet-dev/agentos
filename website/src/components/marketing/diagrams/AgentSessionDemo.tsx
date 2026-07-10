@@ -489,7 +489,7 @@ const RuntimeTabs = ({ active, onChange }: { active: number; onChange: (idx: num
 						{tab.description}{' '}
 						<a
 							href={tab.docsHref}
-							className='whitespace-nowrap text-ink underline underline-offset-2 transition-colors hover:text-ink/80'
+							className='whitespace-nowrap text-accent-deep underline underline-offset-2 transition-colors hover:text-accent'
 						>
 							{tab.docsLabel} <span aria-hidden='true'>→</span>
 						</a>

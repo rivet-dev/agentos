@@ -1117,7 +1117,7 @@ function BenchInfoTooltip({ children }: { children: React.ReactNode }) {
 			>
 				<path d='M8 0a8 8 0 100 16A8 8 0 008 0zm1 12H7V7h2v5zm-1-6a1 1 0 110-2 1 1 0 010 2z' />
 			</svg>
-			<span className='pointer-events-none absolute inset-x-3 bottom-12 z-50 rounded-lg border border-cream/15 bg-ink p-3 text-left text-[11px] leading-relaxed text-cream/80 opacity-0 shadow-xl transition-opacity duration-200 group-hover/tip:pointer-events-auto group-hover/tip:opacity-100 [&_a]:text-cream [&_a]:underline [&_a]:underline-offset-2 [&_strong]:font-medium [&_strong]:text-cream'>
+			<span className='pointer-events-none absolute inset-x-3 bottom-12 z-50 rounded-lg border border-cream/15 bg-ink p-3 text-left text-[11px] leading-relaxed text-cream/80 opacity-0 shadow-xl transition-opacity duration-200 group-hover/tip:pointer-events-auto group-hover/tip:opacity-100 [&_a]:text-accent [&_a]:underline [&_a]:underline-offset-2 [&_strong]:font-medium [&_strong]:text-cream'>
 				{children}
 			</span>
 		</span>
@@ -1493,7 +1493,7 @@ function BenchmarkSection() {
 				Measured on Intel i7-12700KF. Cold start baseline: {SANDBOX_COLDSTART_PROVIDER}, the fastest mainstream sandbox provider as of {BENCHMARK_DATE}. Cost baseline: {SANDBOX_COST_PROVIDER}, the cheapest mainstream sandbox provider as of {BENCHMARK_DATE} (1 vCPU + 1 GiB default). Cost assumes 70% utilization on self-hosted hardware vs. per-second sandbox billing.{' '}
 				<a
 					href='/docs/benchmarks'
-					className='inline-flex items-center gap-1 text-ink-soft underline underline-offset-2 transition-colors hover:text-ink'
+					className='inline-flex items-center gap-1 text-accent-deep underline underline-offset-2 transition-colors hover:text-accent'
 				>
 					Benchmark document
 					<ExternalLink className='h-3 w-3' />
@@ -1520,7 +1520,8 @@ const WhatItIsSection = () => (
 								for each agent VM you run: a virtual kernel with a file system, processes,
 								networking, and deny-by-default permissions, inside your backend. Agents like
 								Pi, Claude Code, Codex, and OpenCode run in it, and your code, or a framework
-								like Eve or Flue, drives them through sessions, bindings, and workflows.
+								like Eve or Flue, drives them through sessions, bindings, and workflows. Each
+								VM runs as a Rivet Actor, so it sleeps and wakes with durable state.
 							</>
 						}
 					/>
@@ -1553,7 +1554,7 @@ const SANDBOX_COMPARISON = [
 		agentOS: (
 			<>
 				Mount a Docker, E2B, or Daytona{' '}
-				<a href='/docs/sandbox' className='underline underline-offset-2 hover:text-ink/80'>
+				<a href='/docs/sandbox' className='text-accent-deep underline underline-offset-2 transition-colors hover:text-accent'>
 					sandbox
 				</a>{' '}
 				into the same file system when a job needs native binaries, file watching, or a GPU.
@@ -1682,7 +1683,7 @@ const ArgumentSection = () => {
 							<button
 								type='button'
 								onClick={() => setShowColdStart(true)}
-								className='text-ink underline underline-offset-2 transition-colors hover:text-ink/80'
+								className='text-accent-deep underline underline-offset-2 transition-colors hover:text-accent'
 							>
 								Watch how a cold start breaks down
 							</button>
