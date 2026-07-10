@@ -1,6 +1,6 @@
 # Registry Linux-Parity Worklist
 
-Status: worklist · Owner: registry · Last updated: 2026-07-08
+Status: worklist · Owner: registry · Last updated: 2026-07-09 (PST)
 
 ## Goal (hand this to the driver agent)
 
@@ -118,6 +118,15 @@ external build (tracked separately in #9).
 
 **Objective:** replace each ❌ with a real/established implementation built to
 `wasm32-wasip1` and patched only where WASI forces it. The ✅ rows stay.
+
+**✅ Original networking gap is closed; final backend convergence remains.**
+curl/wget/git now perform real in-guest HTTPS with mbedTLS, the VM CA bundle,
+decompression, and smart-HTTP clone/fetch/push. The Node-stdlib program later
+selected one real OpenSSL 3.5.5 wasm build as the final backend for Node and the
+registry consumers. Preserve the green mbedTLS proof while migrating forward;
+do not reintroduce host-brokered TLS or retain mbedTLS as a second final backend.
+Current status, proof, and normative order are in
+`docs-internal/registry-networking-handoff.md`.
 
 **Approach:** one command at a time, one jj rev each: swap our custom code for the
 established source (fetched + pinned like sqlite/duckdb), wire into the toolchain,
@@ -805,7 +814,7 @@ breadth; (2) `git` is **rare inside agent turns** (harnesses extract the diff
 out-of-band) but stays essential; (3) a **long tail of project-specific CLIs**
 (`dvc`, `sqlglot`, `sanic`, …) comes from pip/npm install, not the registry.
 
-**Requested (add):** ssh 🟡, rsync 🟡, tmux/screen 🟡 (PTY — session persistence),
+**Requested (add):** ssh ✅, rsync 🟡, tmux/screen 🟡 (PTY — session persistence),
 gpg 🟡, ffmpeg 🟡 (media transcode — heavy but headless), jj 🟢, dig 🟡,
 nslookup 🟡, less ⭐🟡 (pager), openssl ⭐🟡 (TLS/certs/keys/hashing).
 tail/head/cat are already in coreutils — confirm present.
@@ -814,7 +823,7 @@ tail/head/cat are already in coreutils — confirm present.
 big C runtime but real; 563 uses in history), miller `mlr` 🟢 (CSV/JSON),
 xmlstarlet 🟢, pcre2grep 🟢. (jq/yq/sed/awk/grep/head/tail already covered.)
 
-**Networking (host TCP/DNS bridge only):** openssl ⭐🟡, ssh 🟡, nc/netcat 🟡
+**Networking (host TCP/DNS bridge only):** openssl ⭐🟡, ssh ✅, nc/netcat 🟡
 (TCP/UDP), socat 🟡, whois 🟢, dig/nslookup 🟡, redis-cli / psql client 🟡,
 aria2 🟡 (C++ downloader), sshpass 🟢 (ssh password helper).
 
@@ -832,21 +841,22 @@ above).
 
 **Session:** tmux/screen 🟡 (PTY).
 
-**Process management (add — real procps-ng + psmisc, C; ps/pkill/pgrep ≈ 3K uses):**
-- **Need the `/proc` prerequisite (below):** ps, pgrep, pkill, pidof, pstree,
-  killall, uptime, free, vmstat, w, pwdx, pmap 🟡.
+**Process management (real procps-ng + psmisc, C; ps/pkill/pgrep ≈ 3K uses):**
+- **Shipped:** procps-ng 4.0.6 `ps`, `pgrep`, `pkill`; psmisc 23.7 `pstree`,
+  `killall`, `prtstat` ✅.
+- **Still available to add from these suites:** pidof, uptime, free, vmstat, w,
+  pwdx, pmap 🟡.
 - **Signal-only — already work via the kernel (no /proc):** kill, killall-by-PID.
   (kill, sleep, timeout, env, nohup, nproc, nice/renice are coreutils — confirm
   they're shipped via uutils rather than re-adding.)
 
-**⚙️ Runtime prerequisite — implement `/proc` (process-table-backed):** procps
-reads `/proc/<pid>/{stat,cmdline,status,comm}` and enumerates `/proc/<pid>/`. The
-**kernel already owns the process table** (`crates/kernel/src/process_table.rs`),
-so expose a read-only procfs view of it to the guest (per-PID stat/cmdline/status
-+ directory enumeration). Scope it minimal — just the fields procps parses, backed
-by the existing process table, not a full Linux procfs. Unlocks the whole
-ps/pkill/pgrep family (and top/htop later if ever wanted). **This is a runtime/VFS
-item, do it before the procps packages.**
+**✅ `/proc` runtime and first real consumers complete.** The
+process-table-backed procfs now includes per-PID `stat`, `status`, `comm`,
+`cmdline`, `environ`, `cwd`, and `fd`, plus `/proc/stat` and the prior system
+files. The emitters cite `proc(5)`, Linux `fs/proc/array.c`, and procps-ng; a
+captured Linux 6.1 fixture proves raw/escaped task-name behavior. Unskipped live
+VM e2e covers all six shipped procps-ng/psmisc commands, including name-based
+signals terminating real guest processes.
 
 **Excluded — not worth it / not possible here:**
 - **TUI / visual-only:** gitui, lazygit, eza, dust, ncdu, bat, delta, broot, k9s,

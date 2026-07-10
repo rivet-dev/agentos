@@ -159,6 +159,7 @@ fn procfs_exposes_linux_like_identity_and_system_files() {
     assert!(proc_entries.contains(&String::from("meminfo")));
     assert!(proc_entries.contains(&String::from("mounts")));
     assert!(proc_entries.contains(&String::from("self")));
+    assert!(proc_entries.contains(&String::from("stat")));
     assert!(proc_entries.contains(&String::from("uptime")));
     assert!(proc_entries.contains(&String::from("version")));
     assert!(proc_entries.contains(&pid.to_string()));
@@ -167,6 +168,7 @@ fn procfs_exposes_linux_like_identity_and_system_files() {
         .read_dir(&format!("/proc/{pid}"))
         .expect("read /proc/<pid>");
     assert!(pid_entries.contains(&String::from("status")));
+    assert!(pid_entries.contains(&String::from("comm")));
 
     let status = read_utf8(&mut kernel, &format!("/proc/{pid}/status"));
     let self_status =
@@ -177,6 +179,7 @@ fn procfs_exposes_linux_like_identity_and_system_files() {
     assert_eq!(status_fields["Name"], "identity-check");
     assert_eq!(status_fields["State"], "R (running)");
     assert_eq!(status_fields["Pid"], pid.to_string());
+    assert_eq!(status_fields["Tgid"], pid.to_string());
     assert_eq!(status_fields["PPid"], "0");
     assert_eq!(status_fields["Uid"], "501\t700\t700\t700");
     assert_eq!(status_fields["Gid"], "502\t701\t701\t701");
@@ -213,4 +216,57 @@ fn procfs_exposes_linux_like_identity_and_system_files() {
         .stat(&format!("/proc/{pid}/status"))
         .expect("stat proc status");
     assert_eq!(status_stat.size, status.len() as u64);
+
+    let system_stat = read_utf8(&mut kernel, "/proc/stat");
+    assert!(system_stat.starts_with("cpu  "));
+    assert!(system_stat.contains("\ncpu0 "));
+    assert!(system_stat.contains("\nbtime "));
+    assert!(system_stat.contains("\nprocs_running 1\n"));
+}
+
+#[test]
+fn procfs_task_names_match_captured_real_linux_fixture() {
+    // Captured by fixtures/procfs/generate_linux_task_name.py on the real-Linux
+    // host named in the fixture. This covers fs/proc/array.c's intentionally
+    // different escaping rules for comm, stat, and status.
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/procfs/linux-6.1-task-name.json"))
+            .expect("parse captured Linux procfs fixture");
+    let task_name = fixture["task_name_input"]
+        .as_str()
+        .expect("fixture task name");
+    let mut kernel = configured_kernel();
+    let process = kernel
+        .create_virtual_process(
+            "identity-driver",
+            "identity-driver",
+            task_name,
+            Vec::new(),
+            VirtualProcessOptions::default(),
+        )
+        .expect("create fixture-named process");
+    let pid = process.pid();
+
+    assert_eq!(
+        read_utf8(&mut kernel, &format!("/proc/{pid}/comm")),
+        fixture["comm"].as_str().expect("fixture comm")
+    );
+    let stat = read_utf8(&mut kernel, &format!("/proc/{pid}/stat"));
+    let (stat_comm, stat_tail) = stat
+        .strip_prefix(&format!("{pid} ("))
+        .and_then(|body| body.rsplit_once(") "))
+        .expect("parse emitted stat comm");
+    assert_eq!(
+        stat_comm,
+        fixture["stat_comm"].as_str().expect("fixture stat comm")
+    );
+    assert_eq!(stat_tail.split_whitespace().count(), 50);
+
+    let status = read_utf8(&mut kernel, &format!("/proc/{pid}/status"));
+    assert_eq!(
+        parse_status_fields(&status)["Name"],
+        fixture["status_name"]
+            .as_str()
+            .expect("fixture status name")
+    );
 }

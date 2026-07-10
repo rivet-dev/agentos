@@ -1,10 +1,10 @@
 {
 	"commands": [
-		"git"
+		"git",
+		"git-remote-http"
 	],
 	"aliases": {
-		"git-remote-http": "git",
-		"git-remote-https": "git",
+		"git-remote-https": "git-remote-http",
 		"git-upload-pack": "git",
 		"git-receive-pack": "git",
 		"git-upload-archive": "git"

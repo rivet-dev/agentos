@@ -83,4 +83,12 @@
 #define EOPNOTSUPP ENOTSUP
 #define EWOULDBLOCK EAGAIN
 
+/* Linux-compat errno constant for ported tools (agentOS sysroot). errno(3):
+ * "EPFNOSUPPORT 96 Protocol family not supported". No WASI errno maps to it
+ * and the kernel never raises it; it exists so upstream code that tests for
+ * it (e.g. OpenSSH openbsd-compat/bindresvport.c) compiles. It gets a
+ * distinct value (Linux's 96, above the WASI errno range) rather than an
+ * alias of EAFNOSUPPORT so duplicate switch-case labels stay legal. */
+#define EPFNOSUPPORT 96
+
 #endif

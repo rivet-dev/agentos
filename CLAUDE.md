@@ -95,6 +95,15 @@ custom host-syscall imports. Treat that target as **native POSIX**;
   kernel/VFS syscalls, or the patched sysroot/libc. Do **not** paper over a
   Linux-deviating behavior in the package, its wrapper, or its test — chase it
   down into whichever runtime layer owns it and make that layer match Linux.
+- **Cite the authoritative spec at the implementation site.** When you implement
+  against an external spec or wire/file format — `/proc`, network protocols,
+  syscall ABIs, on-disk layouts, TLS/crypto — put the reference **in a code
+  comment right where the format is emitted or parsed**: the man-page section
+  (e.g. `proc(5)`), the kernel source path (e.g. `fs/proc/array.c`), the RFC
+  (e.g. RFC 4253 for SSH transport), and/or the consumer's parser we must satisfy
+  (e.g. procps-ng `readproc.c`). A format emitter or protocol handler without a
+  doc link is incomplete. Conformance tests should name the captured real-Linux
+  fixture they validate against, so the chain spec → impl → test is explicit.
 
 ## Publishing
 

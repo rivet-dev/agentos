@@ -109,6 +109,21 @@ const SHADOW_ROOT_BOOTSTRAP_DIRS: &[(&str, u32)] = &[
     ("/workspace", 0o755),
 ];
 
+/// Mozilla CA bundle (the set Debian's `ca-certificates` produces), staged by
+/// `build.rs` into `OUT_DIR`. It is empty when the `assets/ca-certificates.crt`
+/// blob was absent at build time (fresh checkout / offline publish verify — run
+/// `make -C toolchain/c ca-certificates` to populate it); an empty bundle is
+/// simply not seeded. When present it is written into the VM shadow tree so
+/// in-guest TLS (curl/wget's mbedTLS backend) resolves trust the Debian way via
+/// `/etc/ssl/certs/ca-certificates.crt`.
+const CA_CERTIFICATES_BUNDLE: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/ca-certificates.crt"));
+const CA_CERTIFICATES_GUEST_PATH: &str = "/etc/ssl/certs/ca-certificates.crt";
+/// Conventional `/etc/ssl/cert.pem` -> `certs/ca-certificates.crt` symlink that
+/// OpenSSL's default `OPENSSLDIR` layout expects.
+const CA_CERTIFICATES_SYMLINK_PATH: &str = "/etc/ssl/cert.pem";
+const CA_CERTIFICATES_SYMLINK_TARGET: &str = "certs/ca-certificates.crt";
+
 fn send_kernel_socket_readiness_event(
     target: KernelSocketReadinessTarget,
     readiness: SocketReadiness,
@@ -358,6 +373,7 @@ where
                 signal_states: BTreeMap::new(),
                 packages_staging_root: None,
                 projected_agent_launch: BTreeMap::new(),
+                shadow_sync_inventory: BTreeSet::new(),
             },
         );
 
@@ -1753,6 +1769,49 @@ fn bootstrap_shadow_root(root: &Path) -> Result<(), SidecarError> {
             ))
         })?;
     }
+    seed_ca_certificates_bundle(root)?;
+    Ok(())
+}
+
+/// Seed the Mozilla CA bundle into the shadow root at
+/// `/etc/ssl/certs/ca-certificates.crt` (plus the conventional
+/// `/etc/ssl/cert.pem` symlink) so guest TLS clients resolve trust the standard
+/// Debian way. No-op when the bundle was not staged at build time.
+fn seed_ca_certificates_bundle(root: &Path) -> Result<(), SidecarError> {
+    if CA_CERTIFICATES_BUNDLE.is_empty() {
+        return Ok(());
+    }
+
+    let bundle_path = shadow_path_for_guest(root, CA_CERTIFICATES_GUEST_PATH);
+    if let Some(parent) = bundle_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            SidecarError::Io(format!(
+                "failed to create shadow CA certs directory {}: {error}",
+                parent.display()
+            ))
+        })?;
+    }
+    fs::write(&bundle_path, CA_CERTIFICATES_BUNDLE).map_err(|error| {
+        SidecarError::Io(format!(
+            "failed to seed CA bundle {}: {error}",
+            bundle_path.display()
+        ))
+    })?;
+    fs::set_permissions(&bundle_path, fs::Permissions::from_mode(0o644)).map_err(|error| {
+        SidecarError::Io(format!(
+            "failed to set CA bundle mode on {}: {error}",
+            bundle_path.display()
+        ))
+    })?;
+
+    let symlink_path = shadow_path_for_guest(root, CA_CERTIFICATES_SYMLINK_PATH);
+    let _ = fs::remove_file(&symlink_path);
+    std::os::unix::fs::symlink(CA_CERTIFICATES_SYMLINK_TARGET, &symlink_path).map_err(|error| {
+        SidecarError::Io(format!(
+            "failed to seed CA bundle symlink {}: {error}",
+            symlink_path.display()
+        ))
+    })?;
     Ok(())
 }
 
@@ -2150,8 +2209,11 @@ mod tests {
     use super::{
         bootstrap_native_root_filesystem, bootstrap_shadow_root,
         materialize_shadow_root_snapshot_entries, native_root_plugin_from_config,
-        prune_kernel_command_stub, shadow_path_for_guest, KERNEL_COMMAND_STUB,
+        prune_kernel_command_stub, shadow_path_for_guest, CA_CERTIFICATES_BUNDLE,
+        CA_CERTIFICATES_GUEST_PATH, CA_CERTIFICATES_SYMLINK_PATH, CA_CERTIFICATES_SYMLINK_TARGET,
+        KERNEL_COMMAND_STUB,
     };
+    use std::path::Path;
     use crate::plugins::chunked_local::ChunkedLocalMountPlugin;
     use crate::protocol::{
         RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemEntryKind,
@@ -2203,6 +2265,44 @@ mod tests {
             0o1777,
             "/tmp should preserve its sticky-bit mode in the shadow root"
         );
+
+        fs::remove_dir_all(&root).expect("temp shadow root should be removed");
+    }
+
+    #[test]
+    fn bootstrap_shadow_root_seeds_ca_bundle_when_present() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic")
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("agentos-native-sidecar-ca-test-{unique}"));
+        fs::create_dir_all(&root).expect("temp shadow root should be created");
+
+        bootstrap_shadow_root(&root).expect("shadow bootstrap should succeed");
+
+        let bundle = shadow_path_for_guest(&root, CA_CERTIFICATES_GUEST_PATH);
+        let symlink = shadow_path_for_guest(&root, CA_CERTIFICATES_SYMLINK_PATH);
+
+        if CA_CERTIFICATES_BUNDLE.is_empty() {
+            // No asset staged at build time — seeding is intentionally skipped.
+            assert!(
+                !bundle.exists(),
+                "CA bundle must not be seeded when the build asset is absent"
+            );
+        } else {
+            let seeded = fs::read(&bundle).expect("CA bundle should be seeded");
+            assert_eq!(
+                seeded, CA_CERTIFICATES_BUNDLE,
+                "seeded CA bundle should match the embedded asset"
+            );
+            let target = fs::read_link(&symlink).expect("cert.pem symlink should be seeded");
+            assert_eq!(
+                target,
+                Path::new(CA_CERTIFICATES_SYMLINK_TARGET),
+                "cert.pem should point at certs/ca-certificates.crt"
+            );
+        }
 
         fs::remove_dir_all(&root).expect("temp shadow root should be removed");
     }

@@ -19,6 +19,8 @@ import jq from "@agentos-software/jq";
 import ripgrep from "@agentos-software/ripgrep";
 import fd from "@agentos-software/fd";
 import tree from "@agentos-software/tree";
+import procps from "@agentos-software/procps";
+import psmisc from "@agentos-software/psmisc";
 import file from "@agentos-software/file";
 import yq from "@agentos-software/yq";
 import codex from "@agentos-software/codex-cli";
@@ -45,6 +47,8 @@ const everything = [
 	ripgrep,
 	fd,
 	tree,
+	procps,
+	psmisc,
 	file,
 	yq,
 	codex,
@@ -73,6 +77,8 @@ export {
 	ripgrep,
 	fd,
 	tree,
+	procps,
+	psmisc,
 	file,
 	yq,
 	codex,

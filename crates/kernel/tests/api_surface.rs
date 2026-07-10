@@ -1023,6 +1023,16 @@ fn proc_filesystem_exposes_live_process_metadata_and_fd_symlinks() {
     assert!(proc_entries.contains(&String::from("mounts")));
     assert!(proc_entries.contains(&process.pid().to_string()));
 
+    let proc_typed = kernel
+        .read_dir_with_types_for_process("shell", process.pid(), "/proc")
+        .expect("read typed /proc");
+    assert!(proc_typed
+        .iter()
+        .any(|entry| { entry.name == process.pid().to_string() && entry.is_directory }));
+    assert!(proc_typed
+        .iter()
+        .any(|entry| entry.name == "self" && entry.is_symbolic_link));
+
     assert_eq!(
         kernel
             .read_link_for_process("shell", process.pid(), "/proc/self")

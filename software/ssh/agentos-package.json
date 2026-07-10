@@ -1,0 +1,12 @@
+{
+	"commands": [
+		"ssh"
+	],
+	"registry": {
+		"title": "ssh",
+		"description": "OpenSSH client for remote command execution and git-over-ssh.",
+		"priority": 55,
+		"image": "/images/registry/ssh.svg",
+		"category": "networking"
+	}
+}

@@ -357,6 +357,15 @@ pub(crate) struct VmState {
     /// packages ship no `agentos-package.json`, so agent enumeration and
     /// resolution read this instead of the guest filesystem.
     pub(crate) projected_agent_launch: BTreeMap<String, ProjectedAgentLaunch>,
+    /// Guest paths that were present in the VM shadow root during the last
+    /// shadow->kernel sync walk. The next walk diffs the current shadow tree
+    /// against this set so guest deletions performed directly on the shadow
+    /// (host-side runtimes, WASI passthrough writes) propagate into the kernel
+    /// VFS instead of being resurrected by the otherwise additive sync.
+    /// Memory is bounded by the shadow tree itself, which is capped by the
+    /// kernel filesystem inode/byte resource limits that bound what the walk
+    /// can materialize.
+    pub(crate) shadow_sync_inventory: BTreeSet<String>,
 }
 
 /// Launch parameters for one projected agent package.
@@ -449,11 +458,49 @@ impl Default for VmListenPolicy {
 // Active process state
 // ---------------------------------------------------------------------------
 
+/// Stdin bytes accepted from a parent's `child_process.write_stdin` but not
+/// yet written into the child's kernel stdin pipe. The kernel pipe holds at
+/// most `MAX_PIPE_BUFFER_BYTES` (64 KiB) and `fd_write` reports partial
+/// writes with POSIX pipe semantics, so multi-buffer stdin payloads (for
+/// example git's spooled pack fed to `index-pack --stdin`) must be queued
+/// host-side and flushed as the child drains its pipe. `close_requested`
+/// defers the writer-fd close until the backlog fully drains so the child
+/// never observes an early EOF.
+#[derive(Default)]
+pub(crate) struct PendingKernelStdin {
+    pub(crate) chunks: VecDeque<Vec<u8>>,
+    /// Bytes of the front chunk already written into the pipe.
+    pub(crate) front_offset: usize,
+    /// Total unwritten bytes across all queued chunks.
+    pub(crate) total: usize,
+    pub(crate) close_requested: bool,
+}
+
+impl PendingKernelStdin {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.chunks.is_empty()
+    }
+
+    pub(crate) fn push(&mut self, chunk: &[u8]) {
+        self.total += chunk.len();
+        self.chunks.push_back(chunk.to_vec());
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.chunks.clear();
+        self.front_offset = 0;
+        self.total = 0;
+    }
+}
+
 #[allow(dead_code)]
 pub(crate) struct ActiveProcess {
     pub(crate) kernel_pid: u32,
     pub(crate) kernel_handle: KernelProcessHandle,
     pub(crate) kernel_stdin_writer_fd: Option<u32>,
+    /// Backlog for pipe-backed kernel stdin awaiting pipe capacity; see
+    /// [`PendingKernelStdin`].
+    pub(crate) pending_kernel_stdin: PendingKernelStdin,
     /// For a TTY (PTY-backed) process, the master-end fd whose output buffer
     /// carries cooked-mode echo plus ONLCR-processed guest output. When set,
     /// this master output is the single ordered output stream surfaced to the

@@ -119,6 +119,12 @@ struct itimerspec {
 #define CLOCK_TAI               11
 
 #define TIMER_ABSTIME 1
+#else
+/* Linux clock_gettime(2) includes suspended time in CLOCK_BOOTTIME. AgentOS
+ * VMs have no distinct system-suspend interval, so its owned POSIX clock maps
+ * to the WASI monotonic clock.
+ * https://man7.org/linux/man-pages/man2/clock_gettime.2.html */
+#define CLOCK_BOOTTIME CLOCK_MONOTONIC
 #endif
 
 int nanosleep (const struct timespec *, struct timespec *);

@@ -583,6 +583,15 @@ impl ProcessFdTable {
         child.next_fd = self.next_fd;
 
         for (fd, entry) in &self.entries {
+            // Kernel process creation is spawn (fork + exec combined), so
+            // close-on-exec descriptors must not leak into the child. This
+            // matters for pipe write ends: an inherited writer keeps the
+            // pipe's writer refcount above zero forever, so a blocked reader
+            // (for example a grandchild sharing the parent's stdin pipe)
+            // would never observe EOF.
+            if entry.fd_flags & FD_CLOEXEC != 0 {
+                continue;
+            }
             entry.description.increment_ref_count();
             child.entries.insert(
                 *fd,

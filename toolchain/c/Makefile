@@ -68,10 +68,10 @@ COMMANDS_DIR ?= ../target/wasm32-wasip1/release/commands
 
 # Fast real commands installed by the default software gate. Slow/heavy commands
 # (duckdb, vim) remain available through explicit parent `make cmd/<name>`.
-COMMANDS := zip unzip envsubst sqlite3 curl wget grep git tree
+COMMANDS := zip unzip envsubst sqlite3 curl wget grep git git-remote-http tree ssh ps pgrep pkill pstree killall prtstat
 
 # Programs requiring patched sysroot (Tier 2+ custom host imports)
-PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler dns_lookup sqlite3 curl wget grep tree zip unzip fs_probe
+PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler dns_lookup sqlite3 curl wget grep tree zip unzip ps pgrep pkill pstree killall prtstat fs_probe
 
 # Discover all package command and test-program C source files.
 ALL_SOURCES := $(foreach dir,$(C_SOURCE_DIRS),$(wildcard $(dir)/*.c))
@@ -89,7 +89,7 @@ endif
 ifeq ($(wildcard $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a),)
   CUSTOM_WASM_PROG_NAMES :=
 else
-  CUSTOM_WASM_PROG_NAMES := curl wget grep sqlite3 tree zip unzip
+  CUSTOM_WASM_PROG_NAMES := curl wget grep sqlite3 tree zip unzip ps pgrep pkill pstree killall prtstat
 endif
 
 WASM_PROG_NAMES := $(sort $(basename $(notdir $(SOURCES))) $(CUSTOM_WASM_PROG_NAMES))
@@ -148,20 +148,64 @@ CURL_RELEASE_VERSION := 8.11.1
 CURL_RELEASE_TAG := 8_11_1
 CURL_RELEASE_URL := https://github.com/curl/curl/releases/download/curl-$(CURL_RELEASE_TAG)/curl-$(CURL_RELEASE_VERSION).tar.xz
 CURL_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/curl-upstream
+# Reusable libcurl artifact (headers + libcurl.a) installed by the curl build so
+# git's git-remote-http links the same overlaid, mbedTLS-linked libcurl.
+CURL_LIBCURL_PREFIX := $(CURL_UPSTREAM_BUILD_DIR)/install
+CURL_LIBCURL_ARTIFACT := $(CURL_LIBCURL_PREFIX)/lib/libcurl.a
 CURL_UPSTREAM_OVERLAY_DIR := ../../software/curl/native/c/overlay
 CURL_UPSTREAM_OVERLAY_FILES := $(wildcard $(CURL_UPSTREAM_OVERLAY_DIR)/lib/*.c $(CURL_UPSTREAM_OVERLAY_DIR)/lib/*.h $(CURL_UPSTREAM_OVERLAY_DIR)/lib/vtls/*.c $(CURL_UPSTREAM_OVERLAY_DIR)/lib/vtls/*.h)
 ZLIB_VERSION := 1.3.1
 ZLIB_URL := https://zlib.net/zlib-$(ZLIB_VERSION).tar.gz
 ZLIB_BUILD_DIR := $(BUILD_DIR)/zlib
+# mbedTLS 3.6 LTS — in-guest TLS for curl/wget/git (see
+# docs-internal/networking-parity-spec.md). Use the prepared release tarball
+# (`mbedtls-<ver>.tar.bz2`), which bundles the generated sources and the
+# `framework` submodule; the bare GitHub source archive does not. Everything
+# ships under library/ in the 3.6 LTS line (crypto is not yet split into a
+# separate tf-psa-crypto tree as on 4.x/master), so `make lib` needs no
+# submodule fetch. We cross-compile every library/*.c against the wasi-sdk
+# sysroot, mirroring the zlib rule, plus a getentropy() entropy shim.
+MBEDTLS_VERSION := 3.6.2
+MBEDTLS_URL := https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-$(MBEDTLS_VERSION)/mbedtls-$(MBEDTLS_VERSION).tar.bz2
+# Deferred `=`: LIBS_CACHE is defined further down, so expand it lazily.
+MBEDTLS_SRC_DIR = $(LIBS_CACHE)/mbedtls-$(MBEDTLS_VERSION)
+MBEDTLS_BUILD_DIR := $(BUILD_DIR)/mbedtls
+MBEDTLS_CONFIG_DIR := mbedtls
+MBEDTLS_LIBS := $(MBEDTLS_BUILD_DIR)/libmbedtls.a $(MBEDTLS_BUILD_DIR)/libmbedx509.a $(MBEDTLS_BUILD_DIR)/libmbedcrypto.a
+# Mozilla CA bundle (the set Debian's ca-certificates produces) shipped in the
+# VM at /etc/ssl/certs/ca-certificates.crt. Pinned URL + fetch rule only; the
+# ~230 KB PEM blob is never committed (the sidecar stages it via build.rs into
+# OUT_DIR, falling back to an empty placeholder when absent — see
+# crates/native-sidecar/build.rs). `make ca-certificates` populates the asset.
+CACERT_URL := https://curl.se/ca/cacert.pem
+CACERT_ASSET := ../../crates/native-sidecar/assets/ca-certificates.crt
 WGET_VERSION := 1.24.5
 WGET_URL := https://ftp.gnu.org/gnu/wget/wget-$(WGET_VERSION).tar.gz
 WGET_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/wget-upstream
 WGET_UPSTREAM_OVERLAY_INCLUDE_DIR := overlays/wget/include
-WGET_UPSTREAM_OVERLAY_FILES := $(wildcard $(WGET_UPSTREAM_OVERLAY_INCLUDE_DIR)/*.h)
+# mbedTLS backend overlay (mirrors the curl overlay layout): src/wasi_ssl.c
+# is copied into the wget source tree at configure time.
+WGET_UPSTREAM_OVERLAY_DIR := ../../software/wget/native/c/overlay
+WGET_UPSTREAM_OVERLAY_FILES := $(wildcard $(WGET_UPSTREAM_OVERLAY_INCLUDE_DIR)/*.h) \
+                               $(shell find $(WGET_UPSTREAM_OVERLAY_DIR) -type f 2>/dev/null)
 GIT_VERSION := 2.55.0
 GIT_URL := https://www.kernel.org/pub/software/scm/git/git-$(GIT_VERSION).tar.xz
 GIT_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/git-upstream
 GIT_PATCH_DIR := patches/git
+# OpenSSH portable — real upstream ssh client (batch/key-based), built
+# --without-openssl (internal ed25519/curve25519/chacha20-poly1305 crypto).
+OPENSSH_VERSION := 10.4p1
+OPENSSH_URL := https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-$(OPENSSH_VERSION).tar.gz
+OPENSSH_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/ssh-upstream
+PROCPS_VERSION := 4.0.6
+PROCPS_URL := https://downloads.sourceforge.net/project/procps-ng/Production/procps-ng-$(PROCPS_VERSION).tar.xz
+PROCPS_SHA256 := 67bea6fbc3a42a535a0230c9e891e5ddfb4d9d39422d46565a2990d1ace15216
+PROCPS_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/procps-upstream
+PSMISC_VERSION := 23.7
+PSMISC_URL := https://downloads.sourceforge.net/project/psmisc/psmisc/psmisc-$(PSMISC_VERSION).tar.xz
+PSMISC_SHA256 := 58c55d9c1402474065adae669511c191de374b0871eec781239ab400b907c327
+PSMISC_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/psmisc-upstream
+PSMISC_PATCH_DIR := patches/psmisc
 GREP_VERSION := 3.12
 GREP_URL := https://ftp.gnu.org/gnu/grep/grep-$(GREP_VERSION).tar.xz
 GREP_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/grep-upstream
@@ -440,6 +484,12 @@ $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a: wasi-sdk ../scripts/patch-wasi-libc.s
 
 sysroot: $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a
 
+# psmisc's upstream configure requires the conventional terminfo link name.
+# The owned compatibility symbols live in libc; create the empty marker archive
+# on demand so generated sysroot archives do not need to be committed.
+$(PATCHED_SYSROOT)/lib/wasm32-wasi/libtinfo.a: $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/llvm-ar
+	$(WASI_SDK_DIR)/bin/llvm-ar rcs $@
+
 # --- wasm-opt check ---
 
 wasm-opt-check:
@@ -545,6 +595,143 @@ $(ZLIB_BUILD_DIR)/libz.a: $(LIBS_CACHE)/zlib-$(ZLIB_VERSION)/zlib.h $(PATCHED_SY
 	done
 	$(WASI_SDK_DIR)/bin/llvm-ar rcs $@ $(ZLIB_BUILD_DIR)/*.o
 
+# --- mbedTLS 3.6 LTS for wasm32-wasip1 ---
+# Fetch/extract the prepared release tarball, then cross-compile every
+# library/*.c (plus the getentropy entropy shim) against the wasi-sdk sysroot,
+# splitting objects into the three canonical archives by filename the same way
+# mbedTLS's own Makefile does (crypto / x509 / tls). Single-threaded; entropy
+# via getentropy() (MBEDTLS_ENTROPY_HARDWARE_ALT); TLS 1.3 on (default in 3.6).
+$(MBEDTLS_SRC_DIR)/library/ssl_tls.c:
+	@echo "Fetching mbedTLS $(MBEDTLS_VERSION)..."
+	@mkdir -p $(LIBS_CACHE)
+	@curl -fSL "$(MBEDTLS_URL)" -o "$(LIBS_CACHE)/mbedtls-$(MBEDTLS_VERSION).tar.bz2"
+	@rm -rf "$(MBEDTLS_SRC_DIR)"
+	@tar -xjf "$(LIBS_CACHE)/mbedtls-$(MBEDTLS_VERSION).tar.bz2" -C "$(LIBS_CACHE)"
+
+.PHONY: mbedtls
+mbedtls: $(MBEDTLS_LIBS)
+
+$(MBEDTLS_LIBS): $(MBEDTLS_SRC_DIR)/library/ssl_tls.c \
+                $(MBEDTLS_CONFIG_DIR)/wasi_user_config.h \
+                $(MBEDTLS_CONFIG_DIR)/mbedtls_wasi_entropy.c \
+                $(WASI_SDK_DIR)/bin/clang
+	@echo "=== Building mbedTLS $(MBEDTLS_VERSION) for wasm32-wasip1 ==="
+	@mkdir -p $(MBEDTLS_BUILD_DIR)/crypto $(MBEDTLS_BUILD_DIR)/x509 $(MBEDTLS_BUILD_DIR)/tls
+	@for src in $(MBEDTLS_SRC_DIR)/library/*.c $(MBEDTLS_CONFIG_DIR)/mbedtls_wasi_entropy.c; do \
+		name=$$(basename "$${src%.c}"); \
+		case "$$name" in \
+			x509*|pkcs7) grp=x509 ;; \
+			ssl_*|ssl|mps_*|debug|net_sockets) grp=tls ;; \
+			*) grp=crypto ;; \
+		esac; \
+		$(CC) --target=wasm32-wasip1 --sysroot=$(SYSROOT) -O2 \
+			-I$(MBEDTLS_SRC_DIR)/include -I$(MBEDTLS_CONFIG_DIR) \
+			-DMBEDTLS_USER_CONFIG_FILE='"wasi_user_config.h"' \
+			-c "$$src" -o "$(MBEDTLS_BUILD_DIR)/$$grp/$$name.o" || exit 1; \
+	done
+	@rm -f $(MBEDTLS_LIBS)
+	$(WASI_SDK_DIR)/bin/llvm-ar rcs $(MBEDTLS_BUILD_DIR)/libmbedcrypto.a $(MBEDTLS_BUILD_DIR)/crypto/*.o
+	$(WASI_SDK_DIR)/bin/llvm-ar rcs $(MBEDTLS_BUILD_DIR)/libmbedx509.a $(MBEDTLS_BUILD_DIR)/x509/*.o
+	$(WASI_SDK_DIR)/bin/llvm-ar rcs $(MBEDTLS_BUILD_DIR)/libmbedtls.a $(MBEDTLS_BUILD_DIR)/tls/*.o
+	@echo "=== mbedTLS libs built ==="
+	@ls -l $(MBEDTLS_LIBS)
+
+# --- brotli 1.1.0 (decoder) for wasm32-wasip1 ---
+# curl's --compressed brotli decode. Only the dependency-free portable C
+# `common` + `dec` sources are needed (no encoder). Mirrors the zlib rule:
+# cross-compile each .c against the wasi-sdk sysroot and archive into the two
+# canonical libs (libbrotlicommon.a, libbrotlidec.a; dec depends on common).
+BROTLI_VERSION := 1.1.0
+BROTLI_URL := https://github.com/google/brotli/archive/refs/tags/v$(BROTLI_VERSION).tar.gz
+BROTLI_SRC_DIR = $(LIBS_CACHE)/brotli-$(BROTLI_VERSION)
+BROTLI_BUILD_DIR := $(BUILD_DIR)/brotli
+BROTLI_INCLUDE_DIR = $(BROTLI_SRC_DIR)/c/include
+BROTLI_COMMON_SRCS := constants.c context.c dictionary.c platform.c shared_dictionary.c transform.c
+BROTLI_DEC_SRCS := bit_reader.c decode.c huffman.c state.c
+BROTLI_LIBS := $(BROTLI_BUILD_DIR)/libbrotlidec.a $(BROTLI_BUILD_DIR)/libbrotlicommon.a
+
+$(BROTLI_SRC_DIR)/c/dec/decode.c:
+	@echo "Fetching brotli $(BROTLI_VERSION)..."
+	@mkdir -p $(LIBS_CACHE)
+	@curl -fSL "$(BROTLI_URL)" -o "$(LIBS_CACHE)/brotli-$(BROTLI_VERSION).tar.gz"
+	@rm -rf "$(BROTLI_SRC_DIR)"
+	@tar -xzf "$(LIBS_CACHE)/brotli-$(BROTLI_VERSION).tar.gz" -C "$(LIBS_CACHE)"
+
+.PHONY: brotli
+brotli: $(BROTLI_LIBS)
+
+$(BROTLI_LIBS): $(BROTLI_SRC_DIR)/c/dec/decode.c $(WASI_SDK_DIR)/bin/clang
+	@echo "=== Building brotli $(BROTLI_VERSION) (dec) for wasm32-wasip1 ==="
+	@mkdir -p $(BROTLI_BUILD_DIR)/common $(BROTLI_BUILD_DIR)/dec
+	@for src in $(BROTLI_COMMON_SRCS); do \
+		$(CC) --target=wasm32-wasip1 --sysroot=$(SYSROOT) -O2 \
+			-I$(BROTLI_INCLUDE_DIR) \
+			-c "$(BROTLI_SRC_DIR)/c/common/$$src" \
+			-o "$(BROTLI_BUILD_DIR)/common/$${src%.c}.o" || exit 1; \
+	done
+	@for src in $(BROTLI_DEC_SRCS); do \
+		$(CC) --target=wasm32-wasip1 --sysroot=$(SYSROOT) -O2 \
+			-I$(BROTLI_INCLUDE_DIR) \
+			-c "$(BROTLI_SRC_DIR)/c/dec/$$src" \
+			-o "$(BROTLI_BUILD_DIR)/dec/$${src%.c}.o" || exit 1; \
+	done
+	@rm -f $(BROTLI_LIBS)
+	$(WASI_SDK_DIR)/bin/llvm-ar rcs $(BROTLI_BUILD_DIR)/libbrotlicommon.a $(BROTLI_BUILD_DIR)/common/*.o
+	$(WASI_SDK_DIR)/bin/llvm-ar rcs $(BROTLI_BUILD_DIR)/libbrotlidec.a $(BROTLI_BUILD_DIR)/dec/*.o
+	@echo "=== brotli libs built ==="
+	@ls -l $(BROTLI_LIBS)
+
+# --- zstd 1.5.6 (decoder) for wasm32-wasip1 ---
+# curl's --compressed zstd decode. Single-threaded (ZSTD_MULTITHREAD off),
+# ZSTD_DISABLE_ASM=1 so the portable C huffman path is used instead of the
+# amd64 .S. Only lib/common + lib/decompress are needed for ZSTD_*DStream.
+ZSTD_VERSION := 1.5.6
+ZSTD_URL := https://github.com/facebook/zstd/releases/download/v$(ZSTD_VERSION)/zstd-$(ZSTD_VERSION).tar.gz
+ZSTD_SRC_DIR = $(LIBS_CACHE)/zstd-$(ZSTD_VERSION)
+ZSTD_BUILD_DIR := $(BUILD_DIR)/zstd
+ZSTD_INCLUDE_DIR = $(ZSTD_SRC_DIR)/lib
+ZSTD_LIB := $(ZSTD_BUILD_DIR)/libzstd.a
+# NB: leave ZSTD_MULTITHREAD *undefined* (not =0). zstd's threading.h keys the
+# pthread path off `#if defined(ZSTD_MULTITHREAD)`, so even =0 pulls in
+# pthread_create/join, which wasi-libc static-asserts away without threads.
+ZSTD_CFLAGS := -O2 -DZSTD_DISABLE_ASM=1 \
+               -I$(ZSTD_SRC_DIR)/lib -I$(ZSTD_SRC_DIR)/lib/common
+
+$(ZSTD_SRC_DIR)/lib/zstd.h:
+	@echo "Fetching zstd $(ZSTD_VERSION)..."
+	@mkdir -p $(LIBS_CACHE)
+	@curl -fSL "$(ZSTD_URL)" -o "$(LIBS_CACHE)/zstd-$(ZSTD_VERSION).tar.gz"
+	@rm -rf "$(ZSTD_SRC_DIR)"
+	@tar -xzf "$(LIBS_CACHE)/zstd-$(ZSTD_VERSION).tar.gz" -C "$(LIBS_CACHE)"
+
+.PHONY: zstd
+zstd: $(ZSTD_LIB)
+
+$(ZSTD_LIB): $(ZSTD_SRC_DIR)/lib/zstd.h $(WASI_SDK_DIR)/bin/clang
+	@echo "=== Building zstd $(ZSTD_VERSION) (decompress) for wasm32-wasip1 ==="
+	@mkdir -p $(ZSTD_BUILD_DIR)/obj
+	@for src in $(ZSTD_SRC_DIR)/lib/common/*.c $(ZSTD_SRC_DIR)/lib/decompress/*.c; do \
+		name=$$(basename "$${src%.c}"); \
+		$(CC) --target=wasm32-wasip1 --sysroot=$(SYSROOT) $(ZSTD_CFLAGS) \
+			-c "$$src" -o "$(ZSTD_BUILD_DIR)/obj/$$name.o" || exit 1; \
+	done
+	@rm -f $(ZSTD_LIB)
+	$(WASI_SDK_DIR)/bin/llvm-ar rcs $(ZSTD_LIB) $(ZSTD_BUILD_DIR)/obj/*.o
+	@echo "=== zstd lib built ==="
+	@ls -l $(ZSTD_LIB)
+
+# --- CA bundle (Mozilla / Debian ca-certificates) ---
+# Fetch the pinned Mozilla CA bundle into the sidecar asset staged by build.rs.
+# The blob is gitignored; run this once to enable real HTTPS verification.
+.PHONY: ca-certificates
+ca-certificates: $(CACERT_ASSET)
+
+$(CACERT_ASSET):
+	@echo "Fetching Mozilla CA bundle from $(CACERT_URL)..."
+	@mkdir -p $(dir $(CACERT_ASSET))
+	@curl -fSL "$(CACERT_URL)" -o "$(CACERT_ASSET)"
+	@echo "CA bundle staged at $(CACERT_ASSET) ($$(wc -c < $(CACERT_ASSET)) bytes)"
+
 $(NATIVE_DIR)/sqlite3_cli: $(NATIVE_DIR)/sqlite3
 	cp $< $@
 
@@ -583,7 +770,7 @@ $(BUILD_DIR)/unzip: scripts/build-infozip-upstream.sh $(PATCHED_SYSROOT)/lib/was
 		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
 		--output "$(abspath $@)"
 
-$(BUILD_DIR)/git: scripts/build-git-upstream.sh $(ZLIB_BUILD_DIR)/libz.a $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+$(BUILD_DIR)/git: scripts/build-git-upstream.sh $(CURL_LIBCURL_ARTIFACT) $(MBEDTLS_LIBS) $(BROTLI_LIBS) $(ZSTD_LIB) $(ZLIB_BUILD_DIR)/libz.a $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
 	bash scripts/build-git-upstream.sh \
 		--version "$(GIT_VERSION)" \
@@ -593,11 +780,77 @@ $(BUILD_DIR)/git: scripts/build-git-upstream.sh $(ZLIB_BUILD_DIR)/libz.a $(PATCH
 		--patch-dir "$(abspath $(GIT_PATCH_DIR))" \
 		--zlib-dir "$(abspath $(LIBS_CACHE)/zlib-$(ZLIB_VERSION))" \
 		--zlib-build-dir "$(abspath $(ZLIB_BUILD_DIR))" \
+		--curl-prefix "$(abspath $(CURL_LIBCURL_PREFIX))" \
+		--mbedtls-libdir "$(abspath $(MBEDTLS_BUILD_DIR))" \
+		--brotli-libdir "$(abspath $(BROTLI_BUILD_DIR))" \
+		--zstd-libdir "$(abspath $(ZSTD_BUILD_DIR))" \
 		--cc "$(abspath $(CC))" \
 		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
 		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
 		--sysroot "$(abspath $(SYSROOT))" \
+		--remote-http-output "$(abspath $(BUILD_DIR)/git-remote-http)" \
 		--output "$(abspath $@)"
+
+# git-remote-http is produced by the same git build invocation.
+$(BUILD_DIR)/git-remote-http: $(BUILD_DIR)/git
+	@test -f $@ || { echo "Error: git-remote-http missing at $@ (git build did not produce it)"; exit 1; }
+
+# ssh: upstream OpenSSH client built --without-openssl against the patched
+# sysroot (closefrom/socketpair stubs live in wasi-libc-overrides). Also
+# lights up git-over-ssh: git's connect.c execs `ssh` from PATH.
+$(BUILD_DIR)/ssh: scripts/build-ssh-upstream.sh $(ZLIB_BUILD_DIR)/libz.a $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+	@mkdir -p $(BUILD_DIR)
+	bash scripts/build-ssh-upstream.sh \
+		--version "$(OPENSSH_VERSION)" \
+		--url "$(OPENSSH_URL)" \
+		--cache-dir "$(abspath $(LIBS_CACHE))" \
+		--build-dir "$(abspath $(OPENSSH_UPSTREAM_BUILD_DIR))" \
+		--zlib-include "$(abspath $(LIBS_CACHE)/zlib-$(ZLIB_VERSION))" \
+		--zlib-libdir "$(abspath $(ZLIB_BUILD_DIR))" \
+		--overlay-include-dir "$(abspath include)" \
+		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
+		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
+		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
+		--output "$(abspath $@)"
+
+# procps-ng: process-table consumers backed by the kernel's Linux-shaped /proc.
+$(BUILD_DIR)/ps: scripts/build-procps-upstream.sh $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+	@mkdir -p $(BUILD_DIR)
+	bash scripts/build-procps-upstream.sh \
+		--version "$(PROCPS_VERSION)" \
+		--url "$(PROCPS_URL)" \
+		--sha256 "$(PROCPS_SHA256)" \
+		--cache-dir "$(abspath $(LIBS_CACHE))" \
+		--build-dir "$(abspath $(PROCPS_UPSTREAM_BUILD_DIR))" \
+		--overlay-include-dir "$(abspath include)" \
+		--cc "$(abspath $(CC))" \
+		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
+		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
+		--sysroot "$(abspath $(SYSROOT))" \
+		--output-dir "$(abspath $(BUILD_DIR))"
+
+$(BUILD_DIR)/pgrep $(BUILD_DIR)/pkill: $(BUILD_DIR)/ps
+	@test -f $@ || { echo "Error: $@ missing from procps-ng build"; exit 1; }
+
+# psmisc: non-TUI process tree, name-based signaling, and stat inspection.
+$(BUILD_DIR)/pstree: scripts/build-psmisc-upstream.sh $(wildcard $(PSMISC_PATCH_DIR)/*.patch) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(PATCHED_SYSROOT)/lib/wasm32-wasi/libtinfo.a $(WASI_SDK_DIR)/bin/clang
+	@mkdir -p $(BUILD_DIR)
+	bash scripts/build-psmisc-upstream.sh \
+		--version "$(PSMISC_VERSION)" \
+		--url "$(PSMISC_URL)" \
+		--sha256 "$(PSMISC_SHA256)" \
+		--cache-dir "$(abspath $(LIBS_CACHE))" \
+		--build-dir "$(abspath $(PSMISC_UPSTREAM_BUILD_DIR))" \
+		--patch-dir "$(abspath $(PSMISC_PATCH_DIR))" \
+		--overlay-include-dir "$(abspath include)" \
+		--cc "$(abspath $(CC))" \
+		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
+		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
+		--sysroot "$(abspath $(SYSROOT))" \
+		--output-dir "$(abspath $(BUILD_DIR))"
+
+$(BUILD_DIR)/killall $(BUILD_DIR)/prtstat: $(BUILD_DIR)/pstree
+	@test -f $@ || { echo "Error: $@ missing from psmisc build"; exit 1; }
 
 # curl_test: links libcurl (HTTP/HTTPS build for WASM via host_net + host_tls)
 CURL_SRCS := $(wildcard libs/curl/lib/*.c) $(wildcard libs/curl/lib/vauth/*.c) \
@@ -606,7 +859,7 @@ CURL_SRCS := $(wildcard libs/curl/lib/*.c) $(wildcard libs/curl/lib/vauth/*.c) \
 CURL_INCLUDES := -Ilibs/curl/include -Ilibs/curl/lib -include libs/curl/lib/curl_setup.h -include libs/curl/lib/curl_printf.h
 CURL_LIB_DEFS := -DHAVE_CONFIG_H -DBUILDING_LIBCURL -D_WASI_EMULATED_SIGNAL -DHAVE_BASENAME -DHAVE_LIBGEN_H
 
-$(BUILD_DIR)/curl: scripts/build-curl-upstream.sh $(CURL_UPSTREAM_OVERLAY_FILES) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+$(BUILD_DIR)/curl: scripts/build-curl-upstream.sh $(CURL_UPSTREAM_OVERLAY_FILES) $(MBEDTLS_LIBS) $(ZLIB_BUILD_DIR)/libz.a $(BROTLI_LIBS) $(ZSTD_LIB) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
 	bash scripts/build-curl-upstream.sh \
 		--version "$(CURL_RELEASE_VERSION)" \
@@ -618,9 +871,24 @@ $(BUILD_DIR)/curl: scripts/build-curl-upstream.sh $(CURL_UPSTREAM_OVERLAY_FILES)
 		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
 		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
 		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
+		--mbedtls-include "$(abspath $(MBEDTLS_SRC_DIR)/include)" \
+		--mbedtls-libdir "$(abspath $(MBEDTLS_BUILD_DIR))" \
+		--zlib-include "$(abspath $(LIBS_CACHE)/zlib-$(ZLIB_VERSION))" \
+		--zlib-libdir "$(abspath $(ZLIB_BUILD_DIR))" \
+		--brotli-include "$(abspath $(BROTLI_INCLUDE_DIR))" \
+		--brotli-libdir "$(abspath $(BROTLI_BUILD_DIR))" \
+		--zstd-include "$(abspath $(ZSTD_INCLUDE_DIR))" \
+		--zstd-libdir "$(abspath $(ZSTD_BUILD_DIR))" \
+		--ca-bundle "/etc/ssl/certs/ca-certificates.crt" \
+		--install-prefix "$(abspath $(CURL_LIBCURL_PREFIX))" \
 		--output "$(abspath $@)"
 
-$(BUILD_DIR)/wget: scripts/build-wget-upstream.sh $(WGET_UPSTREAM_OVERLAY_FILES) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+# The libcurl install artifact is produced as a side effect of the curl build.
+# Declare it so git can depend on it; verify it exists after the curl target ran.
+$(CURL_LIBCURL_ARTIFACT): $(BUILD_DIR)/curl
+	@test -f $@ || { echo "Error: libcurl artifact missing at $@ (curl build did not install it)"; exit 1; }
+
+$(BUILD_DIR)/wget: scripts/build-wget-upstream.sh $(WGET_UPSTREAM_OVERLAY_FILES) $(MBEDTLS_LIBS) $(ZLIB_BUILD_DIR)/libz.a $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
 	bash scripts/build-wget-upstream.sh \
 		--version "$(WGET_VERSION)" \
@@ -628,6 +896,11 @@ $(BUILD_DIR)/wget: scripts/build-wget-upstream.sh $(WGET_UPSTREAM_OVERLAY_FILES)
 		--cache-dir "$(abspath $(LIBS_CACHE))" \
 		--build-dir "$(abspath $(WGET_UPSTREAM_BUILD_DIR))" \
 		--overlay-include-dir "$(abspath $(WGET_UPSTREAM_OVERLAY_INCLUDE_DIR))" \
+		--overlay-dir "$(abspath $(WGET_UPSTREAM_OVERLAY_DIR))" \
+		--mbedtls-include "$(abspath $(MBEDTLS_SRC_DIR)/include)" \
+		--mbedtls-libdir "$(abspath $(MBEDTLS_BUILD_DIR))" \
+		--zlib-include "$(abspath $(LIBS_CACHE)/zlib-$(ZLIB_VERSION))" \
+		--zlib-libdir "$(abspath $(ZLIB_BUILD_DIR))" \
 		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
 		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
 		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
@@ -695,11 +968,17 @@ install:
 		fi; \
 	done; \
 	echo "Installed $$INSTALLED C command(s) to $(COMMANDS_DIR)"
-	@# Create symlinks for Git helper entry points used by upstream Git.
+	@# Git helper entry points. upload-pack/receive-pack/upload-archive ARE git
+	@# builtins, so they alias the git binary. The HTTPS transport lives in the
+	@# real git-remote-http binary (libcurl in-process); git-remote-https is an
+	@# alias to it (same binary, ftp/ftps schemes unsupported and unused).
 	@if [ -f "$(COMMANDS_DIR)/git" ]; then \
-		for alias in git-remote-http git-remote-https git-upload-pack git-receive-pack git-upload-archive; do \
+		for alias in git-upload-pack git-receive-pack git-upload-archive; do \
 			ln -sf git "$(COMMANDS_DIR)/$$alias"; \
 		done; \
+	fi
+	@if [ -f "$(COMMANDS_DIR)/git-remote-http" ]; then \
+		ln -sf git-remote-http "$(COMMANDS_DIR)/git-remote-https"; \
 	fi
 
 # --- Clean ---

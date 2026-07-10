@@ -1,0 +1,9 @@
+{
+	"commands": ["pstree", "killall", "prtstat"],
+	"registry": {
+		"title": "psmisc",
+		"description": "Display process trees, inspect process state, and signal by name.",
+		"priority": 61,
+		"category": "core"
+	}
+}

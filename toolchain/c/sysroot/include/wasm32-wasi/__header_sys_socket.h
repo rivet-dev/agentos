@@ -143,6 +143,14 @@
 #define AF_INET PF_INET
 #define AF_INET6 PF_INET6
 #define AF_UNIX 3
+/* POSIX <sys/socket.h> spells the constants AF_*; the PF_* names are the
+ * historical BSD "protocol family" aliases (4.4BSD; on Linux and musl
+ * PF_UNIX == AF_UNIX, PF_LOCAL/AF_LOCAL are additional POSIX.1-2008 spellings
+ * of the same family). Ported tools still use them (e.g. OpenSSH misc.c's
+ * unix_listener uses PF_UNIX), so alias them to the AF_* values above. */
+#define AF_LOCAL AF_UNIX
+#define PF_UNIX AF_UNIX
+#define PF_LOCAL AF_UNIX
 
 #ifdef __cplusplus
 extern "C" {

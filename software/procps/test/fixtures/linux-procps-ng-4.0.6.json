@@ -1,0 +1,26 @@
+{
+  "captured_at_pst": "2026-07-09T18:12:25.441793-07:00",
+  "linux": {
+    "system": "Linux",
+    "node": "nathan-dev",
+    "release": "6.1.0-41-amd64",
+    "version": "#1 SMP PREEMPT_DYNAMIC Debian 6.1.158-1 (2025-11-09)",
+    "machine": "x86_64",
+    "processor": ""
+  },
+  "procps_version": "ps from procps-ng 4.0.2",
+  "psmisc_version": "pstree (PSmisc) 23.6",
+  "ps_command": "ps -o pid,ppid,stat,comm,args -p <pid>",
+  "ps_header": "    PID    PPID STAT COMMAND         COMMAND",
+  "ps_row": "2562887 2562885 S    aos-procfx      /tmp/tmpzgarw79f/aos-procfx 30",
+  "pgrep_command": "pgrep -x aos-procfx",
+  "pgrep_pids": [
+    2562887
+  ],
+  "target_pid": 2562887,
+  "target_found": true,
+  "pstree_command": "pstree -p <pid>",
+  "pstree_output": "aos-procfx(2562887)",
+  "prtstat_command": "prtstat <pid>",
+  "prtstat_output": "Process: aos-procfx    \t\tState: S (sleeping)\n  CPU#:  2  \t\tTTY: 0:0\tThreads: 1\nProcess, Group and Session IDs\n  Process ID: 2562887\t\t  Parent ID: 2562885\n    Group ID: 2562882\t\t Session ID: 2562882\n  T Group ID: -1\n\nPage Faults\n  This Process    (minor major):       77         0\n  Child Processes (minor major):        0         0\nCPU Times\n  This Process    (user system guest blkio):   0.00   0.00   0.00   0.00\n  Child processes (user system guest):         0.00   0.00   0.00\nMemory\n  Vsize:       6033 kB   \n  RSS:         946 kB     \t\t RSS Limit: 18446744073709 MB\n  Code Start:  0x55ee56cb2000\t\t Code Stop:  0x55ee56cb6609\n  Stack Start: 0x7ffed5c84910\n  Stack Pointer (ESP):          0\t Inst Pointer (EIP):          0\nScheduling\n  Policy: normal\n  Nice:   0 \t\t RT Priority: 0 (non RT)"
+}

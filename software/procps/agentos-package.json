@@ -1,0 +1,9 @@
+{
+	"commands": ["ps", "pgrep", "pkill"],
+	"registry": {
+		"title": "procps",
+		"description": "Inspect and signal live VM processes with upstream procps-ng.",
+		"priority": 60,
+		"category": "core"
+	}
+}

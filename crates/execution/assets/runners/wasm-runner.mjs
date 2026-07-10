@@ -32,11 +32,13 @@ const WASI_FILETYPE_UNKNOWN = 0;
 const WASI_FILETYPE_CHARACTER_DEVICE = 2;
 const WASI_FILETYPE_DIRECTORY = 3;
 const WASI_FILETYPE_REGULAR_FILE = 4;
+const WASI_FILETYPE_SOCKET_STREAM = 6;
 const WASI_OFLAGS_CREAT = 1;
 const WASI_OFLAGS_DIRECTORY = 2;
 const WASI_OFLAGS_EXCL = 4;
 const WASI_OFLAGS_TRUNC = 8;
 const WASI_FDFLAGS_APPEND = 1;
+const WASI_FDFLAGS_NONBLOCK = 4;
 const WASI_WHENCE_SET = 0;
 const WASI_WHENCE_CUR = 1;
 const WASI_WHENCE_END = 2;
@@ -1414,7 +1416,12 @@ function seekGuestFileHandle(handle, offset, whence) {
   } else if (numericWhence === WASI_WHENCE_CUR) {
     base = BigInt(handle.position ?? 0);
   } else if (numericWhence === WASI_WHENCE_END) {
-    base = BigInt(Number(fsModule.fstatSync(handle.targetFd).size ?? 0));
+    // Passthrough (read-only delegate) handles keep the real host fd in ioFd;
+    // targetFd is only a synthetic guest fd number and fstat'ing it reports
+    // size 0. Prefer ioFd so SEEK_END returns the true file size (e.g. mbedTLS
+    // sizing a CA bundle via fseek(SEEK_END)+ftell before reading it).
+    const sizeFd = typeof handle.ioFd === 'number' ? handle.ioFd : handle.targetFd;
+    base = BigInt(Number(fsModule.fstatSync(sizeFd).size ?? 0));
   } else {
     return null;
   }
@@ -2826,7 +2833,14 @@ function callSyncRpc(method, args = []) {
 }
 
 const hostNetSockets = new Map();
-let nextHostNetSocketFd = 4096;
+// Host-net socket fds must stay BELOW the guests' FD_SETSIZE (1024 in the
+// wasi-libc sysroot): libcurl's select-based Curl_poll / curl_multi_fdset
+// guard every socket with `s < FD_SETSIZE` and silently drop larger fds from
+// the pollset, which stalls any transfer that has to WAIT for socket
+// readiness (non-blocking TLS handshakes, >16 KiB uploads). Real WASI fds are
+// small integers and the synthetic fd space starts at 1 << 20, so a 600+ base
+// keeps the ranges disjoint in practice while staying select()-compatible.
+let nextHostNetSocketFd = 600;
 const HOST_NET_TIMEOUT_SENTINEL = '__agentos_net_timeout__';
 const HOST_NET_MSG_PEEK = 0x0001;
 
@@ -3042,12 +3056,30 @@ const HOST_NET_AF_INET = 2;
 const HOST_NET_AF_INET6 = 10;
 const HOST_NET_SOCK_DGRAM = 5;
 const HOST_NET_SOCKET_TYPE_MASK = 0xf;
+// wasi-libc <sys/socket.h>: SOCK_NONBLOCK / SOCK_CLOEXEC bits OR'd into the
+// socket(2) type argument (Linux-style socket(..., SOCK_STREAM | SOCK_NONBLOCK)).
+const HOST_NET_SOCK_NONBLOCK = 0x4000;
 const HOST_NET_SOL_SOCKET = 1;
 const HOST_NET_WASI_SOL_SOCKET = 0x7fffffff;
 const HOST_NET_SO_ERROR = 4;
 const HOST_NET_SO_RCVTIMEO_64 = 20;
 const HOST_NET_SO_RCVTIMEO_32 = 66;
 const HOST_NET_TIMEVAL_BYTES = 16;
+// Performance/QoS socket options that guests may set but the host transport
+// neither needs nor can honor per-socket: Node's net sockets already run
+// with sensible defaults, and DSCP/traffic-class marking is not observable
+// through the adapter. Accepted and ignored (values from the patched
+// wasi-libc headers, matching Linux): setsockopt(2) succeeds, matching a
+// Linux host where these are best-effort hints. OpenSSH sets all four on
+// every connection (ssh_packet_set_tos / set_nodelay in opacket/misc) and
+// treats failure as per-connection stderr noise.
+const HOST_NET_SO_KEEPALIVE = 9; // SOL_SOCKET, socket(7)
+const HOST_NET_IPPROTO_IP = 0;
+const HOST_NET_IP_TOS = 1; // ip(7)
+const HOST_NET_IPPROTO_TCP = 6;
+const HOST_NET_TCP_NODELAY = 1; // tcp(7)
+const HOST_NET_IPPROTO_IPV6 = 41;
+const HOST_NET_IPV6_TCLASS = 67; // ipv6(7)
 
 function hostNetSocketBaseType(socket) {
   return Number(socket?.sockType ?? 0) & HOST_NET_SOCKET_TYPE_MASK;
@@ -3057,6 +3089,35 @@ function hostNetSockoptKind(level, optname, optvalLen) {
   const normalizedLevel = Number(level) >>> 0;
   const normalizedOptname = Number(optname) >>> 0;
   const normalizedOptvalLen = Number(optvalLen) >>> 0;
+  // Accept-and-ignore QoS/keepalive/nagle hints (see constant block above).
+  // Option values are plain ints; accept any sane small buffer.
+  if (normalizedOptvalLen >= 1 && normalizedOptvalLen <= 16) {
+    if (
+      (normalizedLevel === HOST_NET_SOL_SOCKET ||
+        normalizedLevel === HOST_NET_WASI_SOL_SOCKET) &&
+      normalizedOptname === HOST_NET_SO_KEEPALIVE
+    ) {
+      return 'ignore';
+    }
+    if (
+      normalizedLevel === HOST_NET_IPPROTO_TCP &&
+      normalizedOptname === HOST_NET_TCP_NODELAY
+    ) {
+      return 'ignore';
+    }
+    if (
+      normalizedLevel === HOST_NET_IPPROTO_IP &&
+      normalizedOptname === HOST_NET_IP_TOS
+    ) {
+      return 'ignore';
+    }
+    if (
+      normalizedLevel === HOST_NET_IPPROTO_IPV6 &&
+      normalizedOptname === HOST_NET_IPV6_TCLASS
+    ) {
+      return 'ignore';
+    }
+  }
   if (
     normalizedLevel !== HOST_NET_SOL_SOCKET &&
     normalizedLevel !== HOST_NET_WASI_SOL_SOCKET
@@ -3238,14 +3299,16 @@ const hostNetImport = {
   net_poll(fdsPtr, nfds, timeoutMs, retReadyPtr) {
     const n = Number(nfds) >>> 0;
     const base0 = Number(fdsPtr) >>> 0;
-    // The patched wasi sysroot's effective poll bits (bits/poll.h): POLLIN=POLLRDNORM=0x1,
-    // POLLOUT=POLLWRNORM=0x2 (NOT the 0x004 in legacy poll.h). Guests (X server + libxcb) use
-    // these, so net_poll must match or POLLOUT readiness is never reported and writers block.
+    // Match the owned sysroot ABI in __header_poll.h exactly. Its WASI event
+    // representation uses POLLIN=0x1, POLLOUT=0x2 and the widened exceptional
+    // bits below, rather than Linux's numeric values. poll(2) defines the
+    // behavior; the sysroot header defines the guest-visible wire values.
+    // https://man7.org/linux/man-pages/man2/poll.2.html
     const POLLIN = 0x001;
     const POLLOUT = 0x002;
-    const POLLERR = 0x008;
-    const POLLHUP = 0x010;
-    const POLLNVAL = 0x020;
+    const POLLERR = 0x1000;
+    const POLLHUP = 0x2000;
+    const POLLNVAL = 0x4000;
     const t = Number(timeoutMs) | 0;
     const deadline = t < 0 ? null : Date.now() + Math.max(0, t);
     const kernelManagedStdio =
@@ -3261,6 +3324,7 @@ const hostNetImport = {
         // comes from a batched __kernel_poll below, which doubles as the wait slice.
         const kernelTargets = [];
         const kernelEntries = [];
+        let hasHostNetWaitTarget = false;
         for (let i = 0; i < n; i++) {
           const base = base0 + i * 8;
           const fd = view.getInt32(base, true);
@@ -3269,6 +3333,7 @@ const hostNetImport = {
           const socket = getHostNetSocket(fd);
           const handle = fd >= 0 ? lookupFdHandle(fd >>> 0) : undefined;
           if (socket && !socket.closed) {
+            hasHostNetWaitTarget = true;
             if (socket.serverId) {
               if (events & POLLIN) {
                 // Report the listener readable only when a connection is actually pending.
@@ -3283,6 +3348,16 @@ const hostNetImport = {
               if (events & POLLIN && socket.readChunks && socket.readChunks.length > 0) {
                 revents |= POLLIN;
               }
+              // poll(2) reports peer shutdown as POLLHUP even when it was not
+              // requested, and a read after the queued data drains must return
+              // EOF without blocking. OpenSSH waits on this transition before
+              // exiting after the remote command closes its connection.
+              // https://man7.org/linux/man-pages/man2/poll.2.html
+              if (socket.readableEnded) {
+                revents |= POLLHUP;
+                if (events & POLLIN) revents |= POLLIN;
+              }
+              if (socket.lastError) revents |= POLLERR;
               if (events & POLLOUT) revents |= POLLOUT;
             }
           } else if (handle?.kind === 'pipe-read') {
@@ -3299,21 +3374,28 @@ const hostNetImport = {
             }
           } else if (handle?.kind === 'pipe-write') {
             if (events & POLLOUT) revents |= POLLOUT;
-          } else if (
-            fd >= 0 &&
-            fd <= 2 &&
-            kernelManagedStdio &&
-            (!handle || (handle.kind === 'passthrough' && handle.targetFd === fd))
-          ) {
-            // Kernel-managed stdio (PTY slave / stdio pipes): ask the kernel, like a
-            // native poll(2) on the terminal fd.
+          } else if (fd >= 0 && kernelManagedStdio && (
+            (!handle && fd <= 2) ||
+            (handle?.kind === 'passthrough' && Number(handle.targetFd) >= 0 &&
+              Number(handle.targetFd) <= 2)
+          )) {
+            // poll(2): readiness means the requested operation will not block.
+            // https://man7.org/linux/man-pages/man2/poll.2.html
+            // Kernel-managed stdio (PTY slave / stdio pipes), including dup'd
+            // aliases: ask the kernel instead of treating a high alias like a
+            // regular file that is always ready. A false POLLIN here makes a
+            // guest block on an empty stdin pipe before it services another
+            // ready fd (for example OpenSSH flushing an exec request).
+            const kernelFd = handle?.kind === 'passthrough'
+              ? Number(handle.targetFd) >>> 0
+              : fd;
             kernelTargets.push({
-              fd,
+              fd: kernelFd,
               events:
                 ((events & POLLIN) !== 0 ? KERNEL_POLLIN : 0) |
                 ((events & POLLOUT) !== 0 ? KERNEL_POLLOUT : 0),
             });
-            kernelEntries.push({ base, fd, events });
+            kernelEntries.push({ base, fd, kernelFd, events });
           } else if (handle) {
             // Regular files / other VFS-backed fds: always ready, as on Linux.
             revents |= events & (POLLIN | POLLOUT);
@@ -3330,10 +3412,13 @@ const hostNetImport = {
 
         if (kernelTargets.length > 0) {
           // If something is already ready (or this is a non-blocking poll), probe the
-          // kernel without waiting; otherwise let the kernel wait one slice for us.
+          // kernel without waiting. Mixed host-net + kernel polls must also keep
+          // this probe nonblocking: __kernel_poll cannot wake for a host socket,
+          // so sleeping here starves each queued SSH packet for a full 10s slice.
+          // The socket pump below supplies the bounded wait in that case.
           const remaining = deadline == null ? Infinity : deadline - Date.now();
           const sliceMs =
-            ready > 0 || t === 0
+            ready > 0 || t === 0 || hasHostNetWaitTarget
               ? 0
               : Math.max(0, Math.min(KERNEL_WAIT_SLICE_MS, remaining));
           let response = null;
@@ -3345,7 +3430,7 @@ const hostNetImport = {
           const responseEntries = Array.isArray(response?.fds) ? response.fds : [];
           for (const entry of kernelEntries) {
             const responseEntry = responseEntries.find(
-              (item) => (Number(item?.fd) >>> 0) === (entry.fd >>> 0),
+              (item) => (Number(item?.fd) >>> 0) === (entry.kernelFd >>> 0),
             );
             const kernelRevents = Number(responseEntry?.revents) >>> 0;
             let revents = 0;
@@ -3406,6 +3491,13 @@ const hostNetImport = {
         readableEnded: false,
         closed: false,
         lastError: null,
+        // Honor Linux-style socket(..., type | SOCK_NONBLOCK): guests like
+        // libcurl rely on O_NONBLOCK semantics (EAGAIN instead of blocking
+        // reads) to interleave send/recv on one connection. Dropping this bit
+        // deadlocks any upload larger than one TLS record: curl checks for an
+        // early server response mid-upload, and a blocking recv() waits on a
+        // server that is itself waiting for the rest of the request body.
+        nonblock: (numericType & HOST_NET_SOCK_NONBLOCK) !== 0,
       });
       return writeGuestUint32(retFdPtr, fd);
     } catch {
@@ -3873,6 +3965,9 @@ const hostNetImport = {
     const sockoptKind = hostNetSockoptKind(level, optname, optvalLen);
     if (sockoptKind == null) {
       return WASI_ERRNO_INVAL;
+    }
+    if (sockoptKind === 'ignore') {
+      return WASI_ERRNO_SUCCESS;
     }
     try {
       const timeoutMs = parseHostNetTimevalMs(readGuestBytes(optvalPtr, optvalLen));
@@ -5186,11 +5281,14 @@ wasiImport.fd_read = (fd, iovs, iovsLen, nreadPtr) => {
   }
 
   if (
-    numericFd === 0 &&
     handle?.kind === 'passthrough' &&
-    handle.targetFd === 0 &&
-    passthroughHandles.get(0) === handle
+    handle.targetFd === 0
   ) {
+    // dup(2) aliases share the same open file description as fd 0. In a
+    // sidecar-managed process they must therefore read the kernel stdin pipe,
+    // not the runner process's unrelated host stdin. OpenSSH duplicates stdin
+    // before its poll/read loop, so splitting these paths loses pipe EOF.
+    // https://man7.org/linux/man-pages/man2/dup.2.html
     const sidecarManagedProcess =
       typeof process?.env?.AGENTOS_SANDBOX_ROOT === 'string' &&
       process.env.AGENTOS_SANDBOX_ROOT.length > 0;
@@ -5476,6 +5574,26 @@ wasiImport.fd_tell = (fd, offsetPtr) => {
 };
 
 wasiImport.fd_fdstat_get = (fd, statPtr) => {
+  // Host-net sockets (curl/wget/git TLS transports): report a stream-socket
+  // fdstat with the current O_NONBLOCK state so guest fcntl(F_GETFL) works.
+  // Without this, fcntl-based non-blocking setup fails with EBADF and guests
+  // that expect EAGAIN semantics (libcurl mid-upload reads) block forever.
+  {
+    const hostNetSocket = getHostNetSocket(fd);
+    if (hostNetSocket && !hostNetSocket.closed) {
+      return writeGuestFdstat(
+        statPtr,
+        WASI_FILETYPE_SOCKET_STREAM,
+        hostNetSocket.nonblock ? WASI_FDFLAGS_NONBLOCK : 0,
+        WASI_RIGHT_FD_READ |
+          WASI_RIGHT_FD_WRITE |
+          WASI_RIGHT_FD_FDSTAT_SET_FLAGS |
+          WASI_RIGHT_FD_FILESTAT_GET |
+          WASI_RIGHT_POLL_FD_READWRITE,
+        0n,
+      );
+    }
+  }
   const handle = __agentOSWasiMeasurePhase('fd_fdstat_get', 'lookup_handle', () =>
     lookupFdHandle(fd)
   );
@@ -5601,6 +5719,16 @@ wasiImport.fd_fdstat_get = (fd, statPtr) => {
 };
 
 wasiImport.fd_fdstat_set_flags = (fd, flags) => {
+  // Host-net sockets: honor O_NONBLOCK (guest fcntl F_SETFL). net_recv/net_send
+  // consult `socket.nonblock` to return EAGAIN instead of blocking, which
+  // non-blocking clients like libcurl rely on to interleave send/recv.
+  {
+    const hostNetSocket = getHostNetSocket(fd);
+    if (hostNetSocket && !hostNetSocket.closed) {
+      hostNetSocket.nonblock = (Number(flags) & WASI_FDFLAGS_NONBLOCK) !== 0;
+      return WASI_ERRNO_SUCCESS;
+    }
+  }
   const handle = lookupFdHandle(fd);
   if (handle && handle.kind !== 'passthrough') {
     return WASI_ERRNO_BADF;

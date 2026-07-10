@@ -463,6 +463,171 @@ mod shadow_root {
         }
     }
 
+    fn base_guest_filesystem_request(
+        operation: GuestFilesystemOperation,
+        path: &str,
+    ) -> GuestFilesystemCallRequest {
+        GuestFilesystemCallRequest {
+            operation,
+            path: String::from(path),
+            destination_path: None,
+            target: None,
+            content: None,
+            encoding: None,
+            recursive: false,
+            max_depth: None,
+            mode: None,
+            uid: None,
+            gid: None,
+            atime_ms: None,
+            mtime_ms: None,
+            len: None,
+            offset: None,
+        }
+    }
+
+    fn guest_path_exists(
+        sidecar: &mut agentos_native_sidecar::NativeSidecar<RecordingBridge>,
+        connection_id: &str,
+        session_id: &str,
+        vm_id: &str,
+        request_id: i64,
+        path: &str,
+    ) -> bool {
+        let response = sidecar
+            .dispatch_wire_blocking(wire_request(
+                request_id,
+                wire_vm(connection_id, session_id, vm_id),
+                RequestPayload::GuestFilesystemCallRequest(base_guest_filesystem_request(
+                    GuestFilesystemOperation::Exists,
+                    path,
+                )),
+            ))
+            .expect("dispatch guest filesystem exists");
+        match response.response.payload {
+            ResponsePayload::GuestFilesystemResultResponse(result) => {
+                result.exists.unwrap_or(false)
+            }
+            other => panic!("expected guest_filesystem_result response, got {other:?}"),
+        }
+    }
+
+    /// Deleting a path directly from the VM shadow root (the way host-side
+    /// guest runtimes delete files, without a kernel-direct unlink) must
+    /// propagate into the kernel VFS on the next shadow sync walk instead of
+    /// being resurrected by the additive copy-in.
+    #[test]
+    fn shadow_direct_deletions_propagate_into_kernel_vfs() {
+        let mut sidecar = create_test_sidecar();
+        let (connection_id, session_id) = authenticate_and_open_session(&mut sidecar);
+        // Guest filesystem calls need no command mounts; create the VM bare so
+        // this regression test runs even without built registry commands.
+        let cwd = temp_dir("filesystem-shadow-reconcile-cwd");
+        let (vm_id, _) = create_vm_wire(
+            &mut sidecar,
+            3,
+            &connection_id,
+            &session_id,
+            GuestRuntimeKind::JavaScript,
+            &cwd,
+        );
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let doomed_root = format!("/workspace/reconcile-{nonce}");
+        let doomed_dir = format!("{doomed_root}/nested");
+        let doomed_file = format!("{doomed_dir}/probe.txt");
+        let survivor_file = format!("/workspace/reconcile-survivor-{nonce}.txt");
+
+        let mut mkdir =
+            base_guest_filesystem_request(GuestFilesystemOperation::CreateDir, &doomed_dir);
+        mkdir.recursive = true;
+        guest_filesystem_call(&mut sidecar, &connection_id, &session_id, &vm_id, 20, mkdir);
+
+        let mut write =
+            base_guest_filesystem_request(GuestFilesystemOperation::WriteFile, &doomed_file);
+        write.content = Some(String::from("doomed\n"));
+        write.encoding = Some(RootFilesystemEntryEncoding::Utf8);
+        guest_filesystem_call(&mut sidecar, &connection_id, &session_id, &vm_id, 21, write);
+
+        let mut survivor =
+            base_guest_filesystem_request(GuestFilesystemOperation::WriteFile, &survivor_file);
+        survivor.content = Some(String::from("survivor\n"));
+        survivor.encoding = Some(RootFilesystemEntryEncoding::Utf8);
+        guest_filesystem_call(&mut sidecar, &connection_id, &session_id, &vm_id, 22, survivor);
+
+        // This read-side call walks the shadow tree and records the inventory
+        // the deletion reconcile diffs against.
+        assert!(guest_path_exists(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            23,
+            &doomed_file,
+        ));
+
+        // Locate this VM's shadow root through the mirrored unique file, then
+        // delete the subtree exactly as a host-side guest runtime would: on
+        // the shadow filesystem only, with no kernel-direct unlink.
+        let marker_rel = format!(
+            "workspace/reconcile-{nonce}/nested/probe.txt"
+        );
+        let shadow_root = std::fs::read_dir(std::env::temp_dir())
+            .expect("list temp dir")
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .find(|candidate| {
+                candidate
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("agentos-native-sidecar-shadow-"))
+                    && candidate.join(&marker_rel).is_file()
+            })
+            .expect("locate VM shadow root through mirrored probe file");
+        fs::remove_dir_all(shadow_root.join(format!("workspace/reconcile-{nonce}")))
+            .expect("delete subtree from the shadow root");
+
+        // The next host filesystem call re-walks the shadow; the kernel must
+        // drop the deleted subtree instead of resurrecting it forever.
+        assert!(
+            !guest_path_exists(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                24,
+                &doomed_file,
+            ),
+            "kernel resurrected a file deleted from the shadow root"
+        );
+        assert!(
+            !guest_path_exists(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                25,
+                &doomed_root,
+            ),
+            "kernel resurrected a directory deleted from the shadow root"
+        );
+        assert!(
+            guest_path_exists(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                26,
+                &survivor_file,
+            ),
+            "deletion reconcile must not remove shadow-backed paths that still exist"
+        );
+
+        dispose_vm_and_close_session(&mut sidecar, &connection_id, &session_id, &vm_id);
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn execute_command(
         sidecar: &mut agentos_native_sidecar::NativeSidecar<RecordingBridge>,

@@ -64,7 +64,6 @@
 #include "mbedtls.h"        /* mbedTLS versions */
 #include "bearssl.h"        /* BearSSL versions */
 #include "rustls.h"         /* Rustls versions */
-#include "wasi_tls.h"       /* WASI host TLS */
 
 #include "slist.h"
 #include "sendf.h"
@@ -1380,8 +1379,6 @@ static const struct Curl_ssl Curl_ssl_multi = {
 const struct Curl_ssl *Curl_ssl =
 #if defined(CURL_WITH_MULTI_SSL)
   &Curl_ssl_multi;
-#elif defined(USE_WASI_TLS)
-  &Curl_ssl_wasi_tls;
 #elif defined(USE_WOLFSSL)
   &Curl_ssl_wolfssl;
 #elif defined(USE_GNUTLS)
@@ -1426,9 +1423,6 @@ static const struct Curl_ssl *available_backends[] = {
 #endif
 #if defined(USE_RUSTLS)
   &Curl_ssl_rustls,
-#endif
-#if defined(USE_WASI_TLS)
-  &Curl_ssl_wasi_tls,
 #endif
   NULL
 };
