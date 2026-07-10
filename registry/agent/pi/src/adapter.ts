@@ -103,7 +103,20 @@ Object.defineProperty(process, "stdin", {
 
 type SessionManagerLike = {
 	inMemory(cwd?: string): unknown;
+	continueRecent(cwd: string, sessionDir: string): unknown;
 };
+
+/** Select persistent Pi sessions only when the adapter is explicitly configured. */
+export function resolveSessionManager(
+	SessionManager: SessionManagerLike,
+	cwd: string,
+	env: Record<string, string | undefined> = process.env,
+): unknown {
+	const sessionDir = env.PI_SESSION_DIR?.trim();
+	return sessionDir
+		? SessionManager.continueRecent(cwd, sessionDir)
+		: SessionManager.inMemory(cwd);
+}
 
 type ModelLike = {
 	id: string;
@@ -873,7 +886,7 @@ export class PiSdkAgent implements Agent {
 		const { session } = await __trace.span("createAgentSession", () =>
 			createAgentSession({
 				cwd: params.cwd,
-				sessionManager: SessionManager.inMemory(params.cwd),
+				sessionManager: resolveSessionManager(SessionManager, params.cwd),
 				resourceLoader,
 				tools: this.wrapTools(
 					createCodingTools(params.cwd, {

@@ -15,6 +15,13 @@ Set the relevant variable on the session's `env`, sourced from your server's env
 
 See [LLM Credentials](/docs/llm-credentials), and Pi's [providers docs](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/providers.md) for the full list.
 
+## Persistent Pi sessions
+
+Pi keeps its own conversation state in memory by default. To preserve and resume
+the most recent Pi session after the adapter restarts, set `PI_SESSION_DIR` in the
+session's `env` to a directory on durable VM storage. Pi writes its session JSONL
+files there; an unset or blank value retains the in-memory default.
+
 ## Skills
 
 Pi discovers `SKILL.md` files from its skills directory. Write the skill into the VM before creating a session and Pi loads it automatically.

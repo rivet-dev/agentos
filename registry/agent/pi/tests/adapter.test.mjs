@@ -6,7 +6,9 @@ import { resolve as resolvePath } from "node:path";
 // testing; newSession needs the real Pi SDK, so these drive the translation /
 // lifecycle logic directly with a mock ACP connection + a fake session.
 const packageDir = resolvePath(import.meta.dirname, "..");
-const { PiSdkAgent } = await import(resolvePath(packageDir, "dist", "adapter.js"));
+const { PiSdkAgent, resolveSessionManager } = await import(
+	resolvePath(packageDir, "dist", "adapter.js")
+);
 
 function makeConn(overrides = {}) {
 	return {
@@ -25,6 +27,53 @@ function fakeSession(overrides = {}) {
 		...overrides,
 	};
 }
+
+test("PI_SESSION_DIR persists and resumes the most recent Pi session", () => {
+	const calls = [];
+	const manager = {
+		inMemory(cwd) {
+			calls.push(["inMemory", cwd]);
+			return "memory";
+		},
+		continueRecent(cwd, sessionDir) {
+			calls.push(["continueRecent", cwd, sessionDir]);
+			return "persistent";
+		},
+	};
+
+	assert.equal(
+		resolveSessionManager(manager, "/workspace", {
+			PI_SESSION_DIR: " /data/pi-sessions ",
+		}),
+		"persistent",
+	);
+	assert.deepEqual(calls, [
+		["continueRecent", "/workspace", "/data/pi-sessions"],
+	]);
+});
+
+test("Pi sessions remain in memory when PI_SESSION_DIR is unset or blank", () => {
+	const calls = [];
+	const manager = {
+		inMemory(cwd) {
+			calls.push(["inMemory", cwd]);
+			return "memory";
+		},
+		continueRecent() {
+			throw new Error("continueRecent should not be called");
+		},
+	};
+
+	assert.equal(resolveSessionManager(manager, "/workspace", {}), "memory");
+	assert.equal(
+		resolveSessionManager(manager, "/workspace", { PI_SESSION_DIR: "  " }),
+		"memory",
+	);
+	assert.deepEqual(calls, [
+		["inMemory", "/workspace"],
+		["inMemory", "/workspace"],
+	]);
+});
 
 // ── Fix #3: editSnapshots is cleared each turn (no unbounded leak) ──
 test("pi #3: prompt() clears leaked edit snapshots from a prior aborted turn", async () => {
