@@ -279,6 +279,18 @@ var moduleModule = Object.assign(Module, {
 exposeCustomGlobal("_moduleModule", moduleModule);
 function requireFrom(request, parentDir) {
   const parentPath = typeof parentDir === "string" ? parentDir : "/";
+  const realStdlib = globalThis.__agentOSNodeStdlib;
+  if (realStdlib && typeof realStdlib.requireBuiltin === "function") {
+    if (Module.isBuiltin(request)) {
+      rejectRestrictedBuiltinRequest(request);
+      return realStdlib.requireBuiltin(request.replace(/^node:/, ""));
+    }
+    const realModule = realStdlib.requireBuiltin("module");
+    const parentFilename = parentPath.endsWith("/")
+      ? parentPath + "__agentos_require__.cjs"
+      : parentPath + "/__agentos_require__.cjs";
+    return realModule.createRequire(parentFilename)(request);
+  }
   if (Module.isBuiltin(request)) {
     try {
       return loadBuiltinModule(request);

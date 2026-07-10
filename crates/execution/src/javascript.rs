@@ -3393,7 +3393,10 @@ fn spawn_v8_event_bridge(
                             raw_bytes_args.insert(1, bytes);
                         }
                     }
-                    if method == "_fsReadRaw" {
+                    if matches!(
+                        method.as_str(),
+                        "_fsReadRaw" | "_fsReadIntoRaw" | "_fsReadFileRaw"
+                    ) {
                         raw_bytes_args.insert(usize::MAX, Vec::new());
                     }
                     record_sync_bridge_phase(

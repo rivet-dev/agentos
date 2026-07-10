@@ -119,6 +119,7 @@
 			"returnType": "unknown",
 			"names": [
 				"_fsReadFile",
+				"_fsReadFileRaw",
 				"_fsWriteFile",
 				"_fsReadFileBinary",
 				"_fsWriteFileBinary",
@@ -143,11 +144,17 @@
 				"fs.closeSync",
 				"fs.readSync",
 				"_fsReadRaw",
+				"_fsReadIntoRaw",
 				"fs.writeSync",
 				"_fsWriteRaw",
 				"_fsWritevRaw",
 				"fs.fstatSync",
-				"fs.futimesSync"
+				"fs.futimesSync",
+				"fs.fchmodSync",
+				"fs.fchownSync",
+				"fs.ftruncateSync",
+				"fs.fsyncSync",
+				"fs.fdatasyncSync"
 			]
 		},
 		{
@@ -217,6 +224,7 @@
 				"process.memoryUsage",
 				"process.resourceUsage",
 				"process.versions",
+				"_compileFunctionForCJSLoader",
 				"_vmCreateContext",
 				"_vmRunInContext",
 				"_vmRunInThisContext",
@@ -611,6 +619,10 @@
 			"translateArgs": false
 		},
 		"_fsReadFile": {
+			"method": "fs.readFileSync",
+			"translateArgs": false
+		},
+		"_fsReadFileRaw": {
 			"method": "fs.readFileSync",
 			"translateArgs": false
 		},
@@ -1062,6 +1074,26 @@
 			"method": "fs.fstatSync",
 			"translateArgs": false
 		},
+		"fs.fchmodSync": {
+			"method": "fs.fchmodSync",
+			"translateArgs": false
+		},
+		"fs.fchownSync": {
+			"method": "fs.fchownSync",
+			"translateArgs": false
+		},
+		"fs.ftruncateSync": {
+			"method": "fs.ftruncateSync",
+			"translateArgs": false
+		},
+		"fs.fsyncSync": {
+			"method": "fs.fsyncSync",
+			"translateArgs": false
+		},
+		"fs.fdatasyncSync": {
+			"method": "fs.fdatasyncSync",
+			"translateArgs": false
+		},
 		"fs.futimesSync": {
 			"method": "fs.futimesSync",
 			"translateArgs": false
@@ -1075,6 +1107,10 @@
 			"translateArgs": false
 		},
 		"_fsReadRaw": {
+			"method": "fs.readSync",
+			"translateArgs": false
+		},
+		"_fsReadIntoRaw": {
 			"method": "fs.readSync",
 			"translateArgs": false
 		},

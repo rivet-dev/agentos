@@ -1,8 +1,8 @@
 'use strict';
 
-// M0 bootstraps Node's real realm and compiles every public builtin while the
-// native bindings are still inert. Later milestones replace these property-
-// readable adapters with real HOST/BRIDGE/WASM providers one binding at a time.
+// Bootstrap Node's pinned realm in the guest context. Bindings not yet owned by
+// the active migration milestone remain property-readable inert adapters; M1's
+// filesystem and CJS-loader dependencies below are live bridge/HOST providers.
 (function installAgentOSNodeRealm(global) {
   try {
   const globalDescriptors = Object.getOwnPropertyDescriptors(global);
@@ -178,6 +178,14 @@
     '--preserve-symlinks': false,
     '--preserve-symlinks-main': false,
     '--pending-deprecation': false,
+    '--network-family-autoselection': true,
+    '--network-family-autoselection-attempt-timeout': 250,
+    '--experimental-detect-module': false,
+    '--inspect-brk': false,
+    '--inspect-wait': false,
+    '--experimental-transform-types': false,
+    '--experimental-strip-types': false,
+    '--experimental-import-meta-resolve': false,
   });
   const options = {
     getCLIOptionsValues: () => cliOptions,
@@ -378,12 +386,81 @@
     isAscii: (input) => input.every((byte) => byte < 0x80),
     isUtf8: () => true,
   };
+  const decoderState = new WeakMap();
+  const stringDecoderBinding = {
+    encodings: ['ascii', 'utf8', 'base64', 'utf16le', 'latin1', 'hex', 'buffer', 'base64url'],
+    kIncompleteCharactersStart: 0,
+    kIncompleteCharactersEnd: 4,
+    kMissingBytes: 4,
+    kBufferedBytes: 5,
+    kEncodingField: 6,
+    kNumFields: 7,
+    kSize: 7,
+    decode(state, input) {
+      const encoding = state[6];
+      if (encoding === 1) {
+        let decoder = decoderState.get(state);
+        if (!decoder) {
+          decoder = new TextDecoder('utf-8', { fatal: false });
+          decoderState.set(state, decoder);
+        }
+        return decoder.decode(input, { stream: true });
+      }
+      if (encoding === 0) return bufferBinding.asciiSlice(input, 0, input.length);
+      if (encoding === 2) return bufferBinding.base64Slice(input, 0, input.length);
+      if (encoding === 3) return bufferBinding.ucs2Slice(input, 0, input.length);
+      if (encoding === 4) return bufferBinding.latin1Slice(input, 0, input.length);
+      if (encoding === 5) return bufferBinding.hexSlice(input, 0, input.length);
+      if (encoding === 7) return bufferBinding.base64urlSlice(input, 0, input.length);
+      return bufferBinding.utf8Slice(input, 0, input.length);
+    },
+    flush(state) {
+      const decoder = decoderState.get(state);
+      decoderState.delete(state);
+      return decoder ? decoder.decode() : '';
+    },
+  };
   const util = {
     constants: { ALL_PROPERTIES: 0, ONLY_WRITABLE: 1, ONLY_ENUMERABLE: 2, ONLY_CONFIGURABLE: 4,
-      SKIP_STRINGS: 8, SKIP_SYMBOLS: 16 },
+      SKIP_STRINGS: 8, SKIP_SYMBOLS: 16, kPending: 0, kRejected: 1 },
     privateSymbols,
-    getOwnNonIndexProperties: (value) => Object.getOwnPropertyNames(value),
+    getOwnNonIndexProperties(value, filter = 0) {
+      const isArrayIndex = (property) => {
+        if (typeof property !== 'string' || property === '') return false;
+        const number = Number(property);
+        return Number.isInteger(number) && number >= 0 && number < 0xffff_ffff && String(number) === property;
+      };
+      return Reflect.ownKeys(value).filter((property) => {
+        if (isArrayIndex(property) || property === 'length') return false;
+        if (typeof property === 'string' && (filter & 8) !== 0) return false;
+        if (typeof property === 'symbol' && (filter & 16) !== 0) return false;
+        const descriptor = Object.getOwnPropertyDescriptor(value, property);
+        if (!descriptor) return false;
+        if ((filter & 1) !== 0 && descriptor.writable !== true) return false;
+        if ((filter & 2) !== 0 && descriptor.enumerable !== true) return false;
+        if ((filter & 4) !== 0 && descriptor.configurable !== true) return false;
+        return true;
+      });
+    },
     isInsideNodeModules: () => false,
+    getPromiseDetails: () => undefined,
+    getProxyDetails: () => undefined,
+    previewEntries: () => [[], false],
+    getConstructorName: (value) => value?.constructor?.name,
+    getExternalValue: () => undefined,
+    guessHandleType: () => 'UNKNOWN',
+    sleep() {},
+    getCallerLocation: () => undefined,
+    getCallSites: (frameCount = 10) => Array.from({ length: frameCount }, () => ({
+      functionName: '',
+      scriptName: '<agentos>',
+      lineNumber: 0,
+      columnNumber: 0,
+      isAsync: false,
+      isEval: false,
+      isNative: false,
+      isConstructor: false,
+    })),
     constructSharedArrayBuffer: (size) => new SharedArrayBuffer(size),
     defineLazyProperties(target, id, keys, enumerable = true) {
       for (const key of keys) Object.defineProperty(target, key, {
@@ -417,22 +494,370 @@
     get(target, property) { return Reflect.has(target, property) ? target[property] : 0; },
   });
   const constants = {
-    fs: numericConstants(),
+    fs: global._fsModule?.constants ?? numericConstants(),
     os: numericConstants(),
     crypto: numericConstants(),
     zlib: numericConstants({ BROTLI_PARAM_MODE: 0 }),
   };
 
+  const UV_ERRNO = Object.freeze({
+    EACCES: -13, EBADF: -9, EEXIST: -17, EINVAL: -22, EISDIR: -21,
+    ENOENT: -2, ENOTDIR: -20, ENOTEMPTY: -39, EPERM: -1,
+  });
+
+  function statArray(value, bigint = false) {
+    const milliseconds = (name) => Number(value[`${name}Ms`] ?? value[name]?.getTime?.() ?? 0);
+    const time = (name) => {
+      const ms = milliseconds(name);
+      return [Math.trunc(ms / 1000), Math.trunc((ms % 1000) * 1_000_000)];
+    };
+    const fields = [
+      value.dev ?? 0, value.mode ?? 0, value.nlink ?? 0, value.uid ?? 0,
+      value.gid ?? 0, value.rdev ?? 0, value.blksize ?? 4096, value.ino ?? 0,
+      value.size ?? 0, value.blocks ?? Math.ceil(Number(value.size ?? 0) / 512),
+      ...time('atime'), ...time('mtime'), ...time('ctime'), ...time('birthtime'),
+    ];
+    return bigint
+      ? BigInt64Array.from(fields, (entry) => BigInt(Math.trunc(Number(entry))))
+      : Float64Array.from(fields, Number);
+  }
+
+  function statFsArray(value, bigint = false) {
+    const fields = [
+      value.type ?? 0, value.bsize ?? 4096, value.blocks ?? 0,
+      value.bfree ?? 0, value.bavail ?? 0, value.files ?? 0, value.ffree ?? 0,
+    ];
+    return bigint
+      ? BigInt64Array.from(fields, (entry) => BigInt(Math.trunc(Number(entry))))
+      : Float64Array.from(fields, Number);
+  }
+
+  class FSReqCallback {
+    constructor(bigint = false) {
+      this.bigint = Boolean(bigint);
+      this.oncomplete = null;
+      this.context = undefined;
+    }
+  }
+  const kUsePromises = Symbol('agentos.fs.promises');
+
+  function wrapFsOperations(operations) {
+    const binding = Object.create(null);
+    for (const [name, operation] of Object.entries(operations)) {
+      binding[name] = function agentOSFsBindingOperation(...args) {
+        const requestIndex = args.findIndex(
+          (value) => value === kUsePromises || value instanceof FSReqCallback,
+        );
+        if (requestIndex === -1) return operation(...args);
+        const request = args[requestIndex];
+        args[requestIndex] = undefined;
+        if (request === kUsePromises) {
+          return new Promise((resolve, reject) => queueMicrotask(() => {
+            try { resolve(operation(...args)); } catch (error) { reject(error); }
+          }));
+        }
+        queueMicrotask(() => {
+          try {
+            const result = operation(...args);
+            if (result === undefined) request.oncomplete.call(request, null);
+            else request.oncomplete.call(request, null, result);
+          }
+          catch (error) { request.oncomplete.call(request, error); }
+        });
+        return undefined;
+      };
+    }
+    binding.FSReqCallback = FSReqCallback;
+    binding.kUsePromises = kUsePromises;
+    binding.statValues = new Float64Array(36);
+    binding.bigintStatValues = new BigInt64Array(36);
+    return binding;
+  }
+
+  function makeFsBinding() {
+    const fs = global._fsModule;
+    if (!fs) return Object.create(makeInert());
+    const fdValue = (fd) => {
+      if (typeof fd === 'number') return fd;
+      let received;
+      if (fd == null) received = ` Received ${fd}`;
+      else if (typeof fd === 'object') received = ` Received an instance of ${fd.constructor?.name ?? 'Object'}`;
+      else {
+        const inspected = typeof fd === 'string' ? `'${fd}'` : String(fd);
+        received = ` Received type ${typeof fd} (${inspected})`;
+      }
+      const error = new TypeError(`The "fd" argument must be of type number.${received}`);
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    };
+    const operations = {
+      access: (path, mode) => fs.accessSync(path, mode),
+      chmod: (path, mode) => fs.chmodSync(path, mode),
+      chown: (path, uid, gid) => fs.chownSync(path, uid, gid),
+      close: (fd) => fs.closeSync(fdValue(fd)),
+      copyFile: (source, destination, mode) => fs.copyFileSync(source, destination, mode),
+      existsSync: (path) => fs.existsSync(path),
+      fchmod: (fd, mode) => fs.fchmodSync(fdValue(fd), mode),
+      fchown: (fd, uid, gid) => fs.fchownSync(fdValue(fd), uid, gid),
+      fdatasync: (fd) => fs.fdatasyncSync(fdValue(fd)),
+      fstat: (fd, bigint) => statArray(fs.fstatSync(fdValue(fd)), bigint),
+      fsync: (fd) => fs.fsyncSync(fdValue(fd)),
+      ftruncate: (fd, length) => fs.ftruncateSync(fdValue(fd), length),
+      futimes: (fd, atime, mtime) => fs.futimesSync(fdValue(fd), atime, mtime),
+      lchown: (path, uid, gid) => fs.lchownSync(path, uid, gid),
+      link: (existingPath, newPath) => fs.linkSync(existingPath, newPath),
+      lstat: (path, bigint, _request, throwIfNoEntry = true) => {
+        try { return statArray(fs.lstatSync(path), bigint); }
+        catch (error) { if (!throwIfNoEntry && error?.code === 'ENOENT') return undefined; throw error; }
+      },
+      lutimes: (path, atime, mtime) => fs.lutimesSync(path, atime, mtime),
+      mkdir: (path, mode, recursive) => fs.mkdirSync(path, { mode, recursive: Boolean(recursive) }),
+      mkdtemp: (prefix, encoding) => fs.mkdtempSync(prefix, { encoding: encoding || 'utf8' }),
+      open: (path, flags, mode) => fs.openSync(path, flags, mode),
+      read: (fd, buffer, offset, length, position) => fs.readSync(fdValue(fd), buffer, offset, length, position),
+      readBuffers: (fd, buffers, position) => fs.readvSync(fdValue(fd), buffers, position),
+      readFileUtf8: (pathOrFd, flags) => fs.readFileSync(pathOrFd, { encoding: 'utf8', flag: flags }),
+      readdir: (path, encoding, withFileTypes) => {
+        const entries = fs.readdirSync(path, { encoding: encoding || 'utf8', withFileTypes: true });
+        const names = entries.map((entry) => entry.name);
+        if (!withFileTypes) return names;
+        return [names, entries.map((entry) => entry.isDirectory() ? 2 : entry.isSymbolicLink() ? 3 : 1)];
+      },
+      readlink: (path, encoding) => fs.readlinkSync(path, { encoding: encoding || 'utf8' }),
+      realpath: (path, encoding) => fs.realpathSync(path, { encoding: encoding || 'utf8' }),
+      rename: (oldPath, newPath) => fs.renameSync(oldPath, newPath),
+      rmSync: (path, maxRetries, recursive, retryDelay) =>
+        fs.rmSync(path, { force: true, maxRetries, recursive: Boolean(recursive), retryDelay }),
+      rmdir: (path) => fs.rmdirSync(path),
+      stat: (path, bigint, _request, throwIfNoEntry = true) => {
+        try { return statArray(fs.statSync(path), bigint); }
+        catch (error) { if (!throwIfNoEntry && error?.code === 'ENOENT') return undefined; throw error; }
+      },
+      statfs: (path, bigint) => statFsArray(fs.statfsSync(path), bigint),
+      symlink: (target, path, type) => fs.symlinkSync(target, path, type),
+      unlink: (path) => fs.unlinkSync(path),
+      utimes: (path, atime, mtime) => fs.utimesSync(path, atime, mtime),
+      writeBuffer: (fd, buffer, offset, length, position) =>
+        fs.writeSync(fdValue(fd), buffer, offset, length, position),
+      writeBuffers: (fd, buffers, position) => fs.writevSync(fdValue(fd), buffers, position),
+      writeFileUtf8: (pathOrFd, data, flags, mode) =>
+        fs.writeFileSync(pathOrFd, data, { encoding: 'utf8', flag: flags, mode }),
+      writeString: (fd, value, position, encoding) => fs.writeSync(fdValue(fd), value, position, encoding),
+      internalModuleStat(path) {
+        try { return fs.statSync(path).isDirectory() ? 1 : 0; }
+        catch (error) { return UV_ERRNO[error?.code] ?? -4094; }
+      },
+      internalModuleReadJSON(path) {
+        try { return [fs.readFileSync(path, 'utf8'), false]; }
+        catch { return []; }
+      },
+    };
+    const binding = wrapFsOperations(operations);
+    const close = binding.close;
+    binding.close = (fd, request) => {
+      fdValue(fd);
+      return close(fd, request);
+    };
+    binding.openFileHandle = (path, flags, mode, request) => {
+      if (request !== kUsePromises) throw new TypeError('openFileHandle requires kUsePromises');
+      return binding.open(path, flags, mode, request).then((fd) => ({
+        fd,
+        close: () => binding.close(fd, kUsePromises),
+        closeSync: () => operations.close(fd),
+        getAsyncId: () => 0,
+      }));
+    };
+    return binding;
+  }
+
+  function makeFsDirBinding() {
+    const fs = global._fsModule;
+    if (!fs) return Object.create(makeInert());
+    const opendirSync = (path) => {
+      const entries = fs.readdirSync(path, { withFileTypes: true });
+      let offset = 0;
+      let closed = false;
+      return {
+        read(_encoding, bufferSize, request) {
+          const operation = () => {
+            if (closed || offset >= entries.length) return null;
+            const result = [];
+            for (const entry of entries.slice(offset, offset + bufferSize)) {
+              result.push(entry.name, entry.isDirectory() ? 2 : entry.isSymbolicLink() ? 3 : 1);
+            }
+            offset += bufferSize;
+            return result;
+          };
+          if (!(request instanceof FSReqCallback)) return operation();
+          queueMicrotask(() => {
+            try { request.oncomplete.call(request, null, operation()); }
+            catch (error) { request.oncomplete.call(request, error); }
+          });
+          return undefined;
+        },
+        close(request) {
+          const operation = () => { closed = true; };
+          if (!(request instanceof FSReqCallback)) return operation();
+          queueMicrotask(() => { operation(); request.oncomplete.call(request, null); });
+          return undefined;
+        },
+      };
+    };
+    return {
+      opendirSync,
+      opendir(path, _encoding, request) {
+        queueMicrotask(() => {
+          try { request.oncomplete.call(request, null, opendirSync(path)); }
+          catch (error) { request.oncomplete.call(request, error); }
+        });
+      },
+    };
+  }
+
+  const fsBinding = makeFsBinding();
+  const fsDirBinding = makeFsDirBinding();
+
+  function makeModulesBinding() {
+    const fs = global._fsModule;
+    const filePath = (value) => {
+      const string = String(value);
+      if (!string.startsWith('file:')) return string;
+      return decodeURIComponent(new URL(string).pathname);
+    };
+    const dirname = (value) => {
+      const normalized = filePath(value).replace(/\/+$/, '');
+      const slash = normalized.lastIndexOf('/');
+      return slash <= 0 ? '/' : normalized.slice(0, slash);
+    };
+    const serializePackage = (path) => {
+      if (!fs?.existsSync(path)) return undefined;
+      let data;
+      try { data = JSON.parse(fs.readFileSync(path, 'utf8')); }
+      catch { return undefined; }
+      const serializeMap = (value) => {
+        if (value === undefined) return null;
+        return typeof value === 'string' ? value : JSON.stringify(value);
+      };
+      return [
+        data.name ?? null,
+        data.main ?? null,
+        data.type ?? null,
+        serializeMap(data.imports),
+        serializeMap(data.exports),
+        path,
+      ];
+    };
+    const nearest = (value) => {
+      let current = dirname(value);
+      while (true) {
+        const path = `${current === '/' ? '' : current}/package.json`;
+        const packageData = serializePackage(path);
+        if (packageData !== undefined) return packageData;
+        if (current === '/') return undefined;
+        current = dirname(current);
+      }
+    };
+    return {
+      readPackageJSON: (path) => serializePackage(filePath(path)),
+      getNearestParentPackageJSON: nearest,
+      getNearestParentPackageJSONType: (path) => nearest(path)?.[2] ?? 'none',
+      getPackageScopeConfig: nearest,
+      getPackageType: (url) => nearest(url)?.[2] ?? 'none',
+      enableCompileCache: () => 0,
+      getCompileCacheDir: () => undefined,
+      compileCacheStatus: Object.freeze({ FAILED: 0, ENABLED: 1, ALREADY_ENABLED: 2, DISABLED: 3 }),
+      flushCompileCache() {},
+      getCompileCacheEntry: () => undefined,
+      saveCompileCacheEntry() {},
+      cachedCodeTypes: Object.freeze({
+        kStrippedTypeScript: 0,
+        kTransformedTypeScript: 1,
+        kTransformedTypeScriptWithSourceMaps: 2,
+      }),
+      moduleFormats: Object.freeze(['builtin', 'commonjs', 'json', 'module', 'wasm']),
+      setLazyPathHelpers() {},
+    };
+  }
+
+  const modulesBinding = makeModulesBinding();
+
+  const moduleWrapEvaluated = Symbol('module_wrap.kEvaluated');
   const concreteBindings = {
     builtins,
-    module_wrap: { ModuleWrap },
+    module_wrap: {
+      ModuleWrap,
+      kEvaluated: moduleWrapEvaluated,
+      createRequiredModuleFacade: (namespace) => namespace,
+    },
     errors,
     config,
     options,
     symbols: perIsolateSymbols,
     types,
     buffer: bufferBinding,
+    string_decoder: stringDecoderBinding,
     util,
+    fs: fsBinding,
+    fs_dir: fsDirBinding,
+    uv: {
+      getErrorMap: () => new Map(Object.entries(UV_ERRNO).map(([code, errno]) => [errno, [code, code]])),
+      errname: (errno) => Object.entries(UV_ERRNO).find(([, value]) => value === errno)?.[0] ?? `UNKNOWN(${errno})`,
+      ...Object.fromEntries(Object.entries(UV_ERRNO).map(([code, errno]) => [`UV_${code}`, errno])),
+    },
+    permission: { isEnabled: () => false, has: () => true },
+    credentials: { safeGetenv: (name) => process.env[name], getTempDir: () => process.env.TMPDIR || '/tmp' },
+    contextify: (() => {
+      const contexts = new WeakSet();
+      class ContextifyScript {
+        constructor(source, filename = 'evalmachine.<anonymous>') {
+          this.source = String(source);
+          this.filename = String(filename);
+          this.sourceMapURL = undefined;
+          this.sourceURL = undefined;
+        }
+        runInContext() {
+          return (0, eval)(`${this.source}\n//# sourceURL=${this.filename}`);
+        }
+        createCachedData() { return new Uint8Array(0); }
+      }
+      const compileFunctionForCJSLoader = (source, filename, isSeaMain, shouldDetectModule) =>
+        typeof global._compileFunctionForCJSLoader === 'function'
+          ? global._compileFunctionForCJSLoader(source, filename, isSeaMain, shouldDetectModule)
+          : ({
+              function: new Function(
+                'exports', 'require', 'module', '__filename', '__dirname',
+                `${source}\n//# sourceURL=${filename}`,
+              ),
+              sourceMapURL: undefined,
+              sourceURL: undefined,
+              canParseAsESM: false,
+            });
+      return {
+      ContextifyScript,
+      compileFunction: (source, _filename, _lineOffset, _columnOffset, _cachedData,
+        _produceCachedData, _parsingContext, _contextExtensions, params = []) => ({
+        function: new Function(...params, source),
+      }),
+      containsModuleSyntax: () => false,
+      compileFunctionForCJSLoader,
+      makeContext: (context) => {
+        contexts.add(context);
+        context[privateSymbols.contextify_context_private_symbol] = context;
+        return context;
+      },
+      isContext: (context) => contexts.has(context),
+      constants: Object.freeze({
+        measureMemory: Object.freeze({
+          mode: Object.freeze({ SUMMARY: 0, DETAILED: 1 }),
+          execution: Object.freeze({ DEFAULT: 0, EAGER: 1 }),
+        }),
+      }),
+      measureMemory: () => Promise.resolve({
+        total: { jsMemoryEstimate: 0, jsMemoryRange: [0, 0] },
+      }),
+      };
+    })(),
+    modules: modulesBinding,
     serdes: { Serializer, Deserializer },
     constants,
     async_wrap: asyncWrap,
@@ -480,9 +905,22 @@
     EventEmitter.call(process);
   }
   requireBuiltin('internal/util/debuglog').initializeDebugEnv(process.env.NODE_DEBUG);
-  if (global.__agentOSNodeLoadAll === true) {
-    requireBuiltin('internal/modules/cjs/loader').initializeCJS();
-  }
+  requireBuiltin('internal/modules/cjs/loader').initializeCJS();
+
+  const publicFs = requireBuiltin('fs');
+  const upstreamReadFileSync = publicFs.readFileSync;
+  const NodeBuffer = requireBuiltin('buffer').Buffer;
+  publicFs.readFileSync = function agentOSReadFileSync(path, options) {
+    const flag = options && typeof options === 'object' ? options.flag : undefined;
+    const encoding = typeof options === 'string' ? options : options?.encoding;
+    if (process.env.AGENTOS_BENCH_FS_READFILE_FAST_PATH === '0' ||
+        typeof path !== 'string' || path.includes('\0') ||
+        (flag !== undefined && flag !== 'r') || encoding != null) {
+      return upstreamReadFileSync.call(this, path, options);
+    }
+    const bytes = global._fsReadFileRaw(path);
+    return NodeBuffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  };
 
   const excluded = new Set(['quic', 'sqlite']);
   const publicIds = builtinIds.filter((id) => !id.startsWith('internal/') && !excluded.has(id));
@@ -502,10 +940,9 @@
     }
   }
 
-  // M0's sanctioned dual-loader window must not let Node's realm bootstrap
-  // replace the legacy bridge's live process methods. The real builtin loader
-  // retains its closure over this process object, while the guest-facing
-  // process surface is restored byte-for-byte for legacy execution.
+  // Node's realm bootstrap must not replace the bridge's live process methods.
+  // The builtin loader retains its closure over this process object, while the
+  // guest-facing process surface is restored byte-for-byte after installation.
   for (const key of Reflect.ownKeys(process)) {
     if (!Object.prototype.hasOwnProperty.call(processDescriptors, key)) {
       Reflect.deleteProperty(process, key);

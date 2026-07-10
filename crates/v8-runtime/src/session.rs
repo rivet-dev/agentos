@@ -1673,28 +1673,44 @@ fn session_thread(
                             );
                         }
 
-                        // M0's sanctioned dual-loader window boots the inert real
-                        // stdlib in an isolated realm. This proves the eager graph
-                        // without letting Node's realm bootstrap mutate the legacy
-                        // user-execution context; M1 replaces this with the real CJS
-                        // loader and removes the isolation exception.
+                        // The real stdlib must live in the user-execution context so
+                        // Node's own CJS loader and builtin cache are the ones user
+                        // code observes. The bootstrap snapshots/restores the legacy
+                        // bridge globals it temporarily mutates while installing the
+                        // pinned realm, then publishes __agentOSNodeStdlib here.
                         if stdlib_flavor == StdlibFlavor::Real {
-                            let stdlib_context = isolate::create_context(iso);
                             let scope = &mut v8::HandleScope::new(iso);
-                            let ctx = v8::Local::new(scope, &stdlib_context);
+                            let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
-                            let fresh_bootstrap;
-                            let stdlib_bootstrap = if from_snapshot {
-                                agentos_node_stdlib::REAL_STDLIB_BOOTSTRAP_SOURCE
-                            } else {
-                                fresh_bootstrap = format!(
-                                    "{}\n{}\n{}",
-                                    agentos_node_stdlib::PROCESS_BOOTSTRAP_SOURCE,
-                                    agentos_node_stdlib::INERT_BINDING_BOOTSTRAP_SOURCE,
-                                    agentos_node_stdlib::REAL_STDLIB_BOOTSTRAP_SOURCE,
-                                );
-                                &fresh_bootstrap
-                            };
+                            // A restored snapshot already contains the bridge IIFE.
+                            // Fresh fallback contexts must install it before the Node
+                            // adapter so live fd facades are available during realm
+                            // bootstrap. Do not run it again with user code below.
+                            if !from_snapshot {
+                                let (bridge_code, bridge_error) =
+                                    execution::run_init_script(scope, &snapshot_bridge_code);
+                                if bridge_code != 0 {
+                                    let result_frame = RuntimeEvent::ExecutionResult {
+                                        session_id,
+                                        exit_code: bridge_code,
+                                        exports: None,
+                                        error: bridge_error.map(|error| ExecutionErrorBin {
+                                            error_type: error.error_type,
+                                            message: error.message,
+                                            stack: error.stack,
+                                            code: error.code.unwrap_or_default(),
+                                        }),
+                                    };
+                                    send_event_with_generation(
+                                        &event_tx,
+                                        output_generation,
+                                        result_frame,
+                                    );
+                                    continue;
+                                }
+                            }
+                            let stdlib_bootstrap =
+                                agentos_node_stdlib::REAL_STDLIB_BOOTSTRAP_SOURCE;
                             let (stdlib_code, stdlib_error) =
                                 execution::run_init_script(scope, stdlib_bootstrap);
                             if stdlib_code != 0 {
@@ -1898,11 +1914,12 @@ fn session_thread(
                         // On snapshot-restored context, skip bridge IIFE (already in
                         // snapshot) and run user code only. On fresh context, run full
                         // bridge code + user code as before.
-                        let bridge_code_for_exec = if from_snapshot {
-                            Cow::Borrowed("")
-                        } else {
-                            snapshot_bridge_code
-                        };
+                        let bridge_code_for_exec =
+                            if from_snapshot || stdlib_flavor == StdlibFlavor::Real {
+                                Cow::Borrowed("")
+                            } else {
+                                snapshot_bridge_code
+                            };
                         let file_path_opt = if file_path.is_empty() {
                             None
                         } else {

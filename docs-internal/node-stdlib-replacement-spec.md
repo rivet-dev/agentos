@@ -993,6 +993,25 @@ Cutover track:
 | **M4** | crypto + TLS adapters over the **one shared OpenSSL 3.5.x wasm build (Decision 2)**, real `versions.openssl`, entropy host import, shared VM CA; migrate registry C consumers and delete per-tool TLS adapters; zlib/brotli/zstd (wasm, new encoder rules); child_process + **guest `node` command / self-spawn (Decision 3)**; os/process_methods, sqlite, nghttp2-wasm | respective categories preserve the complete legacy-passing set and ratchet native passes (§10.1); cross-runtime shared-TLS e2e green; crypto-blob + lazy-instantiation budgets met |
 | **M5** | ESM loader + vm/contextify completeness; native-V8 platform-tiering bootstrap profiles; flag default→real only after legacy functional/perf parity, then **flag removed**; **native deletion inventory executed** (incl. split-file surgery + `_crypto*`, host TLS, and host trust-store removal §12.1); bridge-call census (§8.2); final same-machine before/after report; docs/clients lockstep | §12.5 "done" |
 
+### 13.1 M1 implementation evidence (2026-07-10 PST)
+
+- The exact non-watch filesystem slice is 77 pass / 100 fail-accepted / 40
+  skip (217 total), up from 18 real passes at M0 with no ratcheted filesystem
+  pass lost. The public user-loader surface is 71/71 pass.
+- The fd-level transport writes raw read responses into the parked guest
+  backing store and passes the 1,000-iteration allocation/detach/shared/
+  resizable stress gate. The published five-run A/B is
+  `packages/runtime-benchmarks/results/node-stdlib-m1-fs-transport.json`.
+- The one-call raw-byte `readFileSync` path removes base64 and fd-RPC
+  chattiness, but its measured 0.07ms / 0.58ms p50 remains above the
+  0.03ms / 0.42ms native-floor budgets. Those two misses are explicit in
+  `node-stdlib-regression-ledger.json`; targets were not moved.
+- A diagnostic full 3,950-test sweep produced 900 passes (+431 newly passing,
+  230 earlier shim-backed passes awaiting their M2-M4 bindings), 1,762
+  accepted failures, and 1,288 policy/resource skips. The full ledger refuses
+  to ratchet those later-category passes backward; this sweep is the ordered
+  restoration worklist for M2-M4, not an M1 ledger update.
+
 Browser (Decision 4): source is retained but disabled from CI, release, and
 publish in M0. It has no migration deliverable or acceptance gate in this
 program and cannot block any milestone.

@@ -1,128 +1,128 @@
 {
   "schema": 1,
   "node": "24.15.0",
-  "scope": "M0 guest user-loader compatibility ledger; the isolated real realm require-all gate is separately 71/71",
-  "generated_at_pst": "2026-07-09T19:36:00-07:00",
+  "scope": "M1 guest user-loader compatibility ledger; real CJS loader requires every pinned public builtin (scheme-only modules via node:)",
+  "generated_at_pst": "2026-07-10T00:40:00-07:00",
   "cases": [
     {
       "id": "_http_agent",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "_http_client",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "_http_common",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "_http_incoming",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "_http_outgoing",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "_http_server",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "_stream_duplex",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "_stream_passthrough",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "_stream_readable",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "_stream_transform",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "_stream_wrap",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "_stream_writable",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "_tls_common",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "_tls_wrap",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "assert/strict",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "assert",
@@ -152,9 +152,9 @@
       "id": "cluster",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "console",
@@ -202,9 +202,9 @@
       "id": "domain",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "events",
@@ -246,17 +246,17 @@
       "id": "inspector/promises",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "inspector",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "module",
@@ -322,9 +322,9 @@
       "id": "readline/promises",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "readline",
@@ -336,17 +336,17 @@
       "id": "repl",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "sea",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "stream/consumers",
@@ -388,17 +388,17 @@
       "id": "test/reporters",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "test",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "timers/promises",
@@ -422,9 +422,9 @@
       "id": "trace_events",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "tty",
@@ -466,9 +466,9 @@
       "id": "wasi",
       "category": "public-builtin",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
-      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
-      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+      "real": "pass",
+      "reason": "Legacy user loader does not expose the full pinned Node public surface; the M1 real CJS loader is authoritative",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M5"
     },
     {
       "id": "worker_threads",

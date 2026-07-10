@@ -16,7 +16,7 @@ use crate::service::{
     log_stale_process_event, normalize_host_path, normalize_path, path_is_within_root,
 };
 use crate::state::{
-    ActiveExecutionEvent, ActiveProcess, BridgeError, SidecarKernel, VmState,
+    ActiveExecutionEvent, ActiveMappedHostFd, ActiveProcess, BridgeError, SidecarKernel, VmState,
     EXECUTION_DRIVER_NAME, EXECUTION_SANDBOX_ROOT_ENV, PYTHON_VFS_RPC_GUEST_ROOT,
 };
 use crate::{DispatchResult, NativeSidecar, NativeSidecarBridge, SidecarError};
@@ -44,6 +44,7 @@ use agentos_native_sidecar_core::{
 };
 use nix::sys::stat::{utimensat, Mode, UtimensatFlags};
 use nix::sys::time::TimeSpec;
+use nix::unistd::{Gid, Uid};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -164,11 +165,6 @@ impl AnchoredFd {
             Mode::from_bits_truncate(mode as nix::libc::mode_t),
         )
         .map_err(errno_to_io)
-    }
-
-    /// `futimens` the resolved object.
-    fn set_times(&self, atime: &TimeSpec, mtime: &TimeSpec) -> std::io::Result<()> {
-        nix::sys::stat::futimens(self.as_raw_fd(), atime, mtime).map_err(errno_to_io)
     }
 
     /// Consume the handle, yielding the owned fd (e.g. to build a persistent
@@ -1253,6 +1249,35 @@ pub(crate) fn service_javascript_fs_read_sync_rpc(
     .map_err(kernel_error)
 }
 
+pub(crate) fn service_javascript_fs_read_file_raw_sync_rpc(
+    kernel: &mut SidecarKernel,
+    process: &ActiveProcess,
+    kernel_pid: u32,
+    request: &JavascriptSyncRpcRequest,
+) -> Result<Vec<u8>, SidecarError> {
+    let path = javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem readFile path")?;
+    let path = path.as_str();
+    if let Some(mapped_host) = mapped_runtime_host_path_for_read(process, path) {
+        materialize_mapped_host_path_from_kernel(kernel, kernel_pid, path, &mapped_host)?;
+        let opened = open_mapped_runtime_beneath(
+            &mapped_host,
+            "fs.readFile",
+            OFlag::O_RDONLY,
+            Mode::empty(),
+        )?;
+        return opened.handle.read_bytes().map_err(|error| {
+            SidecarError::Io(format!(
+                "failed to read mapped guest file {} -> {}: {error}",
+                path,
+                opened.host_path.display()
+            ))
+        });
+    }
+    kernel
+        .read_file_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path)
+        .map_err(kernel_error)
+}
+
 pub(crate) fn service_javascript_fs_sync_rpc(
     kernel: &mut SidecarKernel,
     process: &mut ActiveProcess,
@@ -1489,6 +1514,70 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .map(javascript_sync_rpc_stat_value)
                 .map_err(kernel_error)
         }
+        "fs.fchmodSync" => {
+            let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem fchmod fd")?;
+            let mode = javascript_sync_rpc_arg_u32(&request.args, 1, "filesystem fchmod mode")?;
+            if let Some(mapped) = process.mapped_host_fd(fd) {
+                nix::sys::stat::fchmod(
+                    mapped.file.as_raw_fd(),
+                    Mode::from_bits_truncate(mode as libc::mode_t),
+                )
+                .map_err(|error| {
+                    SidecarError::Io(format!(
+                        "failed to chmod mapped guest fd {fd} -> {}: {error}",
+                        mapped.path.display()
+                    ))
+                })?;
+                if let Some(path) = mapped.guest_path.as_deref() {
+                    match kernel.chmod(path, mode) {
+                        Ok(()) => {}
+                        Err(error) if error.code() == "ENOENT" => {}
+                        Err(error) => return Err(kernel_error(error)),
+                    }
+                }
+                return Ok(Value::Null);
+            }
+            let path = kernel
+                .fd_path(EXECUTION_DRIVER_NAME, kernel_pid, fd)
+                .map_err(kernel_error)?;
+            kernel
+                .chmod(&path, mode)
+                .map(|()| Value::Null)
+                .map_err(kernel_error)
+        }
+        "fs.fchownSync" => {
+            let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem fchown fd")?;
+            let uid = javascript_sync_rpc_arg_u32(&request.args, 1, "filesystem fchown uid")?;
+            let gid = javascript_sync_rpc_arg_u32(&request.args, 2, "filesystem fchown gid")?;
+            if let Some(mapped) = process.mapped_host_fd(fd) {
+                nix::unistd::fchown(
+                    mapped.file.as_raw_fd(),
+                    (uid != u32::MAX).then(|| Uid::from_raw(uid)),
+                    (gid != u32::MAX).then(|| Gid::from_raw(gid)),
+                )
+                .map_err(|error| {
+                    SidecarError::Io(format!(
+                        "failed to chown mapped guest fd {fd} -> {}: {error}",
+                        mapped.path.display()
+                    ))
+                })?;
+                if let Some(path) = mapped.guest_path.as_deref() {
+                    match kernel.chown(path, uid, gid) {
+                        Ok(()) => {}
+                        Err(error) if error.code() == "ENOENT" => {}
+                        Err(error) => return Err(kernel_error(error)),
+                    }
+                }
+                return Ok(Value::Null);
+            }
+            let path = kernel
+                .fd_path(EXECUTION_DRIVER_NAME, kernel_pid, fd)
+                .map_err(kernel_error)?;
+            kernel
+                .chown(&path, uid, gid)
+                .map(|()| Value::Null)
+                .map_err(kernel_error)
+        }
         "fs.fsyncSync" | "fs.fdatasyncSync" => {
             let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem sync fd")?;
             if let Some(mapped) = process.mapped_host_fd(fd) {
@@ -1531,11 +1620,6 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                          {MAX_MAPPED_TRUNCATE_BYTES} for mapped guest fd {fd}"
                     )));
                 }
-                if let Some(guest_path) = mapped_guest_path.as_deref() {
-                    kernel
-                        .truncate(guest_path, length)
-                        .map_err(|error| kernel_path_error("fs.ftruncate", guest_path, error))?;
-                }
                 let mapped = process.mapped_host_fd_mut(fd).ok_or_else(|| {
                     SidecarError::Io(format!("mapped guest fd {fd} disappeared during ftruncate"))
                 })?;
@@ -1543,7 +1627,20 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     SidecarError::Io(format!("failed to truncate mapped guest fd {fd}: {error}"))
                 })?;
                 if let Some(guest_path) = mapped_guest_path.as_deref() {
-                    mirror_kernel_path_to_process_shadow(kernel, process, kernel_pid, guest_path)?;
+                    // A file created through this mapped fd may not have a kernel
+                    // mirror until close/exit sync. Update a mirror when present;
+                    // the descriptor-backed host file remains authoritative.
+                    if kernel
+                        .exists_for_process(EXECUTION_DRIVER_NAME, kernel_pid, guest_path)
+                        .map_err(kernel_error)?
+                    {
+                        kernel.truncate(guest_path, length).map_err(|error| {
+                            kernel_path_error("fs.ftruncate", guest_path, error)
+                        })?;
+                        mirror_kernel_path_to_process_shadow(
+                            kernel, process, kernel_pid, guest_path,
+                        )?;
+                    }
                 }
                 return Ok(Value::Null);
             }
@@ -2245,6 +2342,23 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem futimes fd")?;
             let atime = parse_utime_arg(&request.args, 1, "filesystem futimes atime")?;
             let mtime = parse_utime_arg(&request.args, 2, "filesystem futimes mtime")?;
+            if let Some(mapped) = process.mapped_host_fd(fd) {
+                let guest_path = mapped.guest_path.clone();
+                apply_mapped_host_fd_utimens(
+                    mapped,
+                    atime,
+                    mtime,
+                    &format!("failed to update mapped guest fd {fd} times"),
+                )?;
+                if let Some(path) = guest_path {
+                    match kernel.utimes_spec(&path, atime, mtime) {
+                        Ok(()) => {}
+                        Err(error) if error.code() == "ENOENT" => {}
+                        Err(error) => return Err(kernel_error(error)),
+                    }
+                }
+                return Ok(Value::Null);
+            }
             kernel
                 .futimes(EXECUTION_DRIVER_NAME, kernel_pid, fd, atime, mtime)
                 .map(|()| Value::Null)
@@ -3119,9 +3233,30 @@ fn apply_anchored_fd_utimens(
     mtime: VirtualUtimeSpec,
     context: &str,
 ) -> Result<(), SidecarError> {
+    apply_raw_fd_utimens(handle.as_raw_fd(), atime, mtime, context)
+}
+
+/// Apply `futimens(3)` semantics to a persistent mapped guest fd. The open
+/// descriptor, not its remembered path, is authoritative so rename/unlink after
+/// open behaves like Linux: https://man7.org/linux/man-pages/man3/futimens.3.html
+fn apply_mapped_host_fd_utimens(
+    mapped: &ActiveMappedHostFd,
+    atime: VirtualUtimeSpec,
+    mtime: VirtualUtimeSpec,
+    context: &str,
+) -> Result<(), SidecarError> {
+    apply_raw_fd_utimens(mapped.file.as_raw_fd(), atime, mtime, context)
+}
+
+fn apply_raw_fd_utimens(
+    fd: RawFd,
+    atime: VirtualUtimeSpec,
+    mtime: VirtualUtimeSpec,
+    context: &str,
+) -> Result<(), SidecarError> {
     let existing = match (atime, mtime) {
         (VirtualUtimeSpec::Omit, _) | (_, VirtualUtimeSpec::Omit) => {
-            let stat = nix::sys::stat::fstat(handle.as_raw_fd())
+            let stat = nix::sys::stat::fstat(fd)
                 .map_err(|error| SidecarError::Io(format!("{context}: failed to stat: {error}")))?;
             Some((
                 VirtualTimeSpec {
@@ -3148,8 +3283,7 @@ fn apply_anchored_fd_utimens(
         resolve_host_utime(atime, existing_atime),
         resolve_host_utime(mtime, existing_mtime),
     ];
-    handle
-        .set_times(&times[0], &times[1])
+    nix::sys::stat::futimens(fd, &times[0], &times[1])
         .map_err(|error| SidecarError::Io(format!("{context}: failed to set times: {error}")))
 }
 
@@ -3883,6 +4017,7 @@ pub(crate) fn service_javascript_fs_readdir_entries(
         mapped_runtime_host_path(process, path, false)
     {
         let mut typed: BTreeMap<String, bool> = BTreeMap::new();
+        let mut directory_exists = false;
         match open_mapped_runtime_beneath(
             &mapped_host,
             "fs.readdir",
@@ -3890,6 +4025,7 @@ pub(crate) fn service_javascript_fs_readdir_entries(
             Mode::empty(),
         ) {
             Ok(directory) => {
+                directory_exists = true;
                 let entries =
                     crate::plugins::host_dir::confine::read_dir(directory.handle.fd.as_fd())
                         .map_err(|error| {
@@ -3926,17 +4062,28 @@ pub(crate) fn service_javascript_fs_readdir_entries(
                     .unwrap_or(false) => {}
             Err(error) => return Err(error),
         }
-        match kernel.read_dir_with_types_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path) {
-            Ok(entries) => {
-                for entry in entries {
-                    typed.entry(entry.name).or_insert(entry.is_directory);
+        let missing_kernel_directory_error =
+            match kernel.read_dir_with_types_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path) {
+                Ok(entries) => {
+                    directory_exists = true;
+                    for entry in entries {
+                        typed.entry(entry.name).or_insert(entry.is_directory);
+                    }
+                    None
                 }
-            }
-            Err(error) if matches!(error.code(), "ENOENT" | "ENOTDIR") => {}
-            Err(error) => return Err(kernel_error(error)),
-        }
+                Err(error) if matches!(error.code(), "ENOENT" | "ENOTDIR") => {
+                    Some(kernel_error(error))
+                }
+                Err(error) => return Err(kernel_error(error)),
+            };
         for name in mapped_runtime_child_mount_basenames(process, path) {
+            directory_exists = true;
             typed.entry(name).or_insert(true);
+        }
+        if !directory_exists {
+            return Err(missing_kernel_directory_error.expect(
+                "a missing mapped host directory must have a matching kernel directory error",
+            ));
         }
         return Ok(typed);
     }

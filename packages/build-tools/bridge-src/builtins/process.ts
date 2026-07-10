@@ -743,7 +743,7 @@ var process2 = {
   // Module info (will be set by createRequire)
   mainModule: void 0,
   // No-op methods for compatibility
-  emitWarning(warning) {
+  emitWarning(warning, typeOrOptions, code) {
     if (warning && typeof warning === "object") {
       if (typeof warning.message !== "string") {
         warning.message = String(warning.message ?? "");
@@ -754,9 +754,15 @@ var process2 = {
       _emit("warning", warning);
       return;
     }
+    const options = typeOrOptions && typeof typeOrOptions === "object"
+      ? typeOrOptions
+      : { type: typeOrOptions, code };
     _emit("warning", {
       message: String(warning ?? ""),
-      name: "Warning"
+      name: typeof options.type === "string" && options.type.length > 0
+        ? options.type
+        : "Warning",
+      ...(options.code === void 0 ? {} : { code: options.code })
     });
   },
   binding(_name) {

@@ -50,16 +50,15 @@ import { pathToFileURL } from "node:url";
 const RESULTS_DIR = new URL("../results/", import.meta.url).pathname;
 const ITERATIONS = Number(process.env.BENCH_ITERATIONS ?? 20);
 const WARMUP = Number(process.env.BENCH_WARMUP ?? 5);
-const FAMILY_FILTER = process.env.BENCH_FAMILIES
-	?.split(",")
+const FAMILY_FILTER = process.env.BENCH_FAMILIES?.split(",")
 	.map((family) => family.trim())
 	.filter(Boolean);
-const OP_FILTER = process.env.BENCH_OP_FILTER
-	?.split(",")
+const OP_FILTER = process.env.BENCH_OP_FILTER?.split(",")
 	.map((op) => op.trim())
 	.filter(Boolean);
 const COLD_MODE = process.env.BENCH_COLD === "1";
 const SHARED_VM_MODE = process.env.BENCH_SHARED_VM === "1";
+const WRITE_RESULTS = process.env.BENCH_NO_WRITE !== "1";
 
 interface LatencyMatrixRun {
 	results: LatencyResult[];
@@ -76,38 +75,59 @@ export async function runLatencyMatrix(): Promise<LatencyMatrixRun> {
 	const sidecar = resolveBenchSidecarProvenance();
 	console.error(formatSidecarProvenance(sidecar));
 	if (COLD_MODE) {
-		console.error("BENCH_COLD=1: VM prewarm is disabled; samples include first-use VM costs.");
+		console.error(
+			"BENCH_COLD=1: VM prewarm is disabled; samples include first-use VM costs.",
+		);
 	}
 	if (SHARED_VM_MODE) {
-		console.error("BENCH_SHARED_VM=1: reusing a VM where op-specific VM options are not required.");
+		console.error(
+			"BENCH_SHARED_VM=1: reusing a VM where op-specific VM options are not required.",
+		);
 	}
 	const wasmOptions = wasmLayerOptions();
 	if (!wasmOptions) {
-		console.error("vm-wasm lane disabled: native-baseline wasm artifact was not found");
+		console.error(
+			"vm-wasm lane disabled: native-baseline wasm artifact was not found",
+		);
 	}
 	const commandDirs = ecosystemWasmCommandDirs();
-	const baseVmOptions = mergeBenchVmOptions({}, {
-		mounts: wasmOptions?.mounts,
-		wasmCommandDirs: [
-			...(wasmOptions?.wasmCommandDirs ?? []),
-			...commandDirs,
-		],
-	});
-	const sharedVm = SHARED_VM_MODE ? await createBenchVm(baseVmOptions) : undefined;
+	const baseVmOptions = mergeBenchVmOptions(
+		{},
+		{
+			mounts: wasmOptions?.mounts,
+			wasmCommandDirs: [
+				...(wasmOptions?.wasmCommandDirs ?? []),
+				...commandDirs,
+			],
+		},
+	);
+	const sharedVm = SHARED_VM_MODE
+		? await createBenchVm(baseVmOptions)
+		: undefined;
 	try {
 		const results: LatencyResult[] = [];
 		const ops = FAMILY_FILTER
 			? allOps.filter((op) => FAMILY_FILTER.includes(op.family))
 			: allOps;
 		const filteredOps = OP_FILTER
-			? ops.filter((op) => OP_FILTER.includes(op.name) || OP_FILTER.includes(`${op.family}/${op.name}`))
+			? ops.filter(
+					(op) =>
+						OP_FILTER.includes(op.name) ||
+						OP_FILTER.includes(`${op.family}/${op.name}`),
+				)
 			: ops;
 		await primeMemoryBaselines(filteredOps);
 		await runIdleVmMemorySelfCheck(baseVmOptions);
 		for (const op of filteredOps) {
 			console.error(`latency ${op.family}/${op.name}`);
-			if (!("runHostCmd" in op) && op.nativeOp && supportsWasmLayer(op.nativeOp)) {
-				console.error("  wasm lane: guest JS measured first, wasm native-baseline after");
+			if (
+				!("runHostCmd" in op) &&
+				op.nativeOp &&
+				supportsWasmLayer(op.nativeOp)
+			) {
+				console.error(
+					"  wasm lane: guest JS measured first, wasm native-baseline after",
+				);
 			}
 			results.push(await runOneOp(op, baseVmOptions, sharedVm));
 		}
@@ -129,7 +149,9 @@ async function main(): Promise<void> {
 	const matrix = await runLatencyMatrix();
 	const latency = matrix.results;
 	const layerLatency = latency.filter(isLayerOpResult);
-	const nonPermissionsLatency = layerLatency.filter((result) => result.family !== "permissions");
+	const nonPermissionsLatency = layerLatency.filter(
+		(result) => result.family !== "permissions",
+	);
 	const findings = findingsFromLatency(nonPermissionsLatency);
 	const refuted = refutedFromLatency(nonPermissionsLatency);
 	const permissionPolicyTax = permissionPolicyTaxFromLatency(layerLatency);
@@ -138,7 +160,9 @@ async function main(): Promise<void> {
 	const fuzz = FAMILY_FILTER
 		? { programs: [], findings: [], refuted: [] }
 		: await runFuzz({ iterations: ITERATIONS, warmup: WARMUP });
-	const leak = FAMILY_FILTER ? { findings: [], streams: [] } : await runLeakSuite();
+	const leak = FAMILY_FILTER
+		? { findings: [], streams: [] }
+		: await runLeakSuite();
 	const footprint = FAMILY_FILTER
 		? { findings: [], components: [] }
 		: await runFootprint();
@@ -169,23 +193,30 @@ async function main(): Promise<void> {
 			{
 				family: "net",
 				op: "udp_echo_small",
-				reason: "guest UDP datagrams are unsupported in the current kernel-backed V8 bridge",
-				evidence: "ERR_NOT_IMPLEMENTED: external UDP datagrams are not yet supported by the kernel-backed V8 bridge",
+				reason:
+					"guest UDP datagrams are unsupported in the current kernel-backed V8 bridge",
+				evidence:
+					"ERR_NOT_IMPLEMENTED: external UDP datagrams are not yet supported by the kernel-backed V8 bridge",
 			},
 		],
 		critic_gaps: criticGaps(latency, fuzz, leak, footprint),
 	};
-	writeJson(`${RESULTS_DIR}/latency-matrix.json`, {
-		sidecar: matrix.sidecar,
-		matrixMode: matrix.mode,
-		wallTimeMs: matrix.wallTimeMs,
-		latency,
-		permissionPolicyTax,
-	});
-	writeJson(`${RESULTS_DIR}/findings.json`, findingsJson);
-	const baselinePath = `${RESULTS_DIR}/baseline/findings-baseline.json`;
-	const diff = compareBaselineFile(`${RESULTS_DIR}/findings.json`, baselinePath);
-	writeJson(`${RESULTS_DIR}/regression-diff.json`, diff);
+	if (WRITE_RESULTS) {
+		writeJson(`${RESULTS_DIR}/latency-matrix.json`, {
+			sidecar: matrix.sidecar,
+			matrixMode: matrix.mode,
+			wallTimeMs: matrix.wallTimeMs,
+			latency,
+			permissionPolicyTax,
+		});
+		writeJson(`${RESULTS_DIR}/findings.json`, findingsJson);
+		const baselinePath = `${RESULTS_DIR}/baseline/findings-baseline.json`;
+		const diff = compareBaselineFile(
+			`${RESULTS_DIR}/findings.json`,
+			baselinePath,
+		);
+		writeJson(`${RESULTS_DIR}/regression-diff.json`, diff);
+	}
 
 	printTable(
 		[
@@ -308,7 +339,8 @@ async function withOpVm<T>(
 	sharedVm: BenchVm | undefined,
 	callback: (vm: BenchVm, context?: unknown) => Promise<T>,
 ): Promise<T> {
-	const prepared = "prepareVm" in op && op.prepareVm ? await op.prepareVm() : undefined;
+	const prepared =
+		"prepareVm" in op && op.prepareVm ? await op.prepareVm() : undefined;
 	const options = mergeBenchVmOptions(baseVmOptions, prepared?.options ?? {});
 	const canUseSharedVm = sharedVm && !prepared?.options;
 	const vm = canUseSharedVm ? sharedVm : await createBenchVm(options);
@@ -353,11 +385,15 @@ async function primeMemoryBaselines(
 	} else {
 		if (ops.some((op) => !("runHostCmd" in op) && op.nativeOp)) {
 			const nativeBaseline = await primeNativeMemoryBaseline();
-			console.error(`native memory startup baseline: ${formatBytes(nativeBaseline)}`);
+			console.error(
+				`native memory startup baseline: ${formatBytes(nativeBaseline)}`,
+			);
 		}
 		if (ops.some((op) => !("runHostCmd" in op) && !op.runNode)) {
 			const nodeBaseline = await primeNodeMemoryBaseline();
-			console.error(`node memory startup baseline: ${formatBytes(nodeBaseline)}`);
+			console.error(
+				`node memory startup baseline: ${formatBytes(nodeBaseline)}`,
+			);
 		}
 	}
 
@@ -381,11 +417,14 @@ async function runIdleVmMemorySelfCheck(
 			family: "self_check",
 			name: "idle_prewarmed_vm",
 			fileLine: "packages/benchmarks/src/run-all.ts",
-			reproducer: "prewarm VM, clear_refs=5, wait 2s, read VmHWM - baseline VmRSS",
+			reproducer:
+				"prewarm VM, clear_refs=5, wait 2s, read VmHWM - baseline VmRSS",
 		});
 		const sampler = SidecarPeakMemorySampler.forVm(vm);
 		if (!sampler) {
-			console.error("idle prewarmed VM memory self-check skipped: sidecar pid unavailable");
+			console.error(
+				"idle prewarmed VM memory self-check skipped: sidecar pid unavailable",
+			);
 			return;
 		}
 		const memory = await sampler.measureIdle(2_000);
@@ -406,7 +445,9 @@ function criticGaps(
 ): string[] {
 	const gaps: string[] = [];
 	const covered = new Set(
-		latency.filter(isLayerOpResult).map((result) => `${result.family}/${result.op}`),
+		latency
+			.filter(isLayerOpResult)
+			.map((result) => `${result.family}/${result.op}`),
 	);
 	for (const required of [
 		"process/fanout_spawn_8",
@@ -425,7 +466,9 @@ function criticGaps(
 		gaps.push("fuzz did not confirm the non-P2 stdout fanout slow path");
 	}
 	if (leak.streams.some((stream) => stream.idleMs < 61_000)) {
-		gaps.push("leak suite was run in smoke mode without waiting past 60s ZOMBIE_TTL");
+		gaps.push(
+			"leak suite was run in smoke mode without waiting past 60s ZOMBIE_TTL",
+		);
 	}
 	if (footprint.components?.length === 0) {
 		gaps.push("footprint run did not emit component attribution");

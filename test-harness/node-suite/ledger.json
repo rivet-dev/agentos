@@ -5941,14 +5941,14 @@
     {
       "id": "parallel/test-fs-append-file.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-assert-encoding-error.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -5988,7 +5988,7 @@
     {
       "id": "parallel/test-fs-chown-type-check.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6032,7 +6032,7 @@
     {
       "id": "parallel/test-fs-empty-readStream.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6110,7 +6110,7 @@
     {
       "id": "parallel/test-fs-internal-assertencoding.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6186,7 +6186,7 @@
     {
       "id": "parallel/test-fs-mkdtemp-prefix-check.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6206,14 +6206,14 @@
     {
       "id": "parallel/test-fs-non-number-arguments-throw.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-null-bytes.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6226,28 +6226,28 @@
     {
       "id": "parallel/test-fs-open-mode-mask.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-open-no-close.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-open-numeric-flags.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-open.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6275,7 +6275,7 @@
     {
       "id": "parallel/test-fs-promises-exists.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6395,7 +6395,7 @@
     {
       "id": "parallel/test-fs-promises-readfile-empty.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6415,7 +6415,7 @@
     {
       "id": "parallel/test-fs-promises-statfs-validate-path.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6450,7 +6450,7 @@
     {
       "id": "parallel/test-fs-promises-writefile-with-fd.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6471,7 +6471,7 @@
     {
       "id": "parallel/test-fs-promisified.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6485,7 +6485,7 @@
     {
       "id": "parallel/test-fs-read-file-assert-encoding.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6513,21 +6513,21 @@
     {
       "id": "parallel/test-fs-read-optional-params.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-read-promises-optional-params.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-read-stream-autoClose.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6555,7 +6555,7 @@
     {
       "id": "parallel/test-fs-read-stream-err.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6569,14 +6569,14 @@
     {
       "id": "parallel/test-fs-read-stream-fd.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-read-stream-file-handle.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6590,7 +6590,7 @@
     {
       "id": "parallel/test-fs-read-stream-patch-open.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6604,14 +6604,14 @@
     {
       "id": "parallel/test-fs-read-stream-resume.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-read-stream-throw-type-error.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6624,7 +6624,7 @@
     {
       "id": "parallel/test-fs-read-type.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6636,7 +6636,7 @@
     {
       "id": "parallel/test-fs-read.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6660,14 +6660,14 @@
     {
       "id": "parallel/test-fs-readdir-stack-overflow.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-readdir-types-symlinks.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6718,7 +6718,7 @@
     {
       "id": "parallel/test-fs-readfile-flags.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6737,7 +6737,7 @@
     {
       "id": "parallel/test-fs-readfile-unlink.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6767,7 +6767,7 @@
     {
       "id": "parallel/test-fs-readlink-type-check.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6786,7 +6786,7 @@
     {
       "id": "parallel/test-fs-readv-promisify.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6800,14 +6800,14 @@
     {
       "id": "parallel/test-fs-readv.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-ready-event-stream.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6846,7 +6846,7 @@
     {
       "id": "parallel/test-fs-rename-type-check.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6859,7 +6859,7 @@
     {
       "id": "parallel/test-fs-rmdir-recursive-sync-warns-not-found.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6873,7 +6873,7 @@
     {
       "id": "parallel/test-fs-rmdir-recursive-throws-not-found.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6887,7 +6887,7 @@
     {
       "id": "parallel/test-fs-rmdir-recursive-warns-not-found.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6907,28 +6907,28 @@
     {
       "id": "parallel/test-fs-rmdir-type-check.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-rmSync-special-char.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-sir-writes-alot.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-stat-bigint.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6942,7 +6942,7 @@
     {
       "id": "parallel/test-fs-statfs.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -6984,14 +6984,14 @@
     {
       "id": "parallel/test-fs-stream-double-close.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-stream-fs-options.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -7057,7 +7057,7 @@
     {
       "id": "parallel/test-fs-timestamp-parsing-error.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -7085,7 +7085,7 @@
     {
       "id": "parallel/test-fs-unlink-type-check.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -7490,21 +7490,21 @@
     {
       "id": "parallel/test-fs-write-stream-err.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-write-stream-file-handle-2.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-write-stream-file-handle.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -7518,7 +7518,7 @@
     {
       "id": "parallel/test-fs-write-stream-fs.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -7531,28 +7531,28 @@
     {
       "id": "parallel/test-fs-write-stream-throw-type-error.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-write-stream.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-write-sync-optional-params.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
     {
       "id": "parallel/test-fs-write-sync.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },
@@ -7572,7 +7572,7 @@
     {
       "id": "parallel/test-fs-writestream-open-write.js",
       "legacy": "fail-accepted",
-      "real": "fail-accepted",
+      "real": "pass",
       "reason": "node-test-failure",
       "issue": "node-stdlib-m1-fs"
     },

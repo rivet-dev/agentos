@@ -198,6 +198,7 @@ const { values } = parseArgs({
     'update-ledger': { type: 'boolean', default: false },
     resume: { type: 'boolean', default: false },
     retry: { type: 'string' },
+    match: { type: 'string' },
     write: { type: 'string' },
   },
 });
@@ -205,7 +206,9 @@ const flavor = (values.flavor ?? process.env.AGENTOS_JS_STDLIB ?? 'legacy') as F
 const slice = values.slice as Slice;
 if (!['legacy', 'real'].includes(flavor)) throw new Error(`invalid flavor: ${flavor}`);
 if (!['sanity', 'smoke', 'full'].includes(slice)) throw new Error(`invalid slice: ${slice}`);
-const ids = await discover(slice);
+const discoveredIds = await discover(slice);
+const match = values.match ? new RegExp(values.match) : undefined;
+const ids = match ? discoveredIds.filter((id) => match.test(id)) : discoveredIds;
 const configuredLedger = values.ledger
   ? JSON.parse(await readFile(resolve(values.ledger), 'utf8')) as { cases: LedgerEntry[] }
   : undefined;

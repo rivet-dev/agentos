@@ -2216,13 +2216,17 @@ var _fdOpen = createBridgeSyncFacade("fs.openSync");
 var _fdClose = createBridgeSyncFacade("fs.closeSync");
 var _fdRead = createBridgeSyncFacade("fs.readSync");
 var _fsReadRaw = createBridgeSyncFacade("_fsReadRaw");
+var _fsReadIntoRaw = createBridgeSyncFacade("_fsReadIntoRaw");
 var _fdWrite = createBridgeSyncFacade("fs.writeSync");
 var _fsWriteRaw = createBridgeSyncFacade("_fsWriteRaw");
 var _fsWritevRaw = createBridgeSyncFacade("_fsWritevRaw");
 var _fdFstat = createBridgeSyncFacade("fs.fstatSync");
 var _fdFtruncate = createBridgeSyncFacade("fs.ftruncateSync");
 var _fdFsync = createBridgeSyncFacade("fs.fsyncSync");
+var _fdFdatasync = createBridgeSyncFacade("fs.fdatasyncSync");
 var _fdFutimes = createBridgeSyncFacade("fs.futimesSync");
+var _fdFchmod = createBridgeSyncFacade("fs.fchmodSync");
+var _fdFchown = createBridgeSyncFacade("fs.fchownSync");
 var _fdGetPath = createBridgeSyncFacade("fs._getPathSync");
 var _processUmask = createBridgeSyncFacade("process.umask");
 var _processMemoryUsage = createBridgeSyncFacade("process.memoryUsage");
@@ -2924,10 +2928,33 @@ var fs = {
     }
   },
   readSync(fd, buffer, offset, length, position) {
+    if (buffer?.buffer?.byteLength === 0 && Number(length ?? 0) > 0) {
+      const error = new TypeError("fs.readSync cannot write into a detached ArrayBuffer");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     const normalized = normalizeReadSyncArgs(buffer, offset, length, position);
+    const backing = normalized.buffer.buffer;
+    const unstableBacking = backing?.detached === true || backing?.resizable === true ||
+      (typeof SharedArrayBuffer !== "undefined" && backing instanceof SharedArrayBuffer);
+    if (unstableBacking) {
+      const error = new TypeError("fs.readSync requires a non-detached, fixed ArrayBuffer backing store");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const transport = globalThis.process?.env?.AGENTOS_BENCH_FS_SYNC_READ_TRANSPORT;
     let bytes;
     try {
-      if (hasBridgeSyncFn("_fsReadRaw")) {
+      if (transport !== "base64" && transport !== "raw" && hasBridgeSyncFn("_fsReadIntoRaw")) {
+        return _fsReadIntoRaw.applySyncPromise(void 0, [
+          fd,
+          normalized.length,
+          normalized.position ?? null,
+          normalized.buffer,
+          normalized.offset
+        ]);
+      }
+      if (transport !== "base64" && hasBridgeSyncFn("_fsReadRaw")) {
         const rawBytes = _fsReadRaw.applySyncPromise(void 0, [fd, normalized.length, normalized.position ?? null]);
         bytes = rawBytes instanceof Uint8Array ? rawBytes : import_buffer.Buffer.from(rawBytes);
       } else {
@@ -3008,7 +3035,7 @@ var fs = {
   fdatasyncSync(fd) {
     normalizeFdInteger(fd);
     try {
-      _fdFsync.applySyncPromise(void 0, [fd]);
+      _fdFdatasync.applySyncPromise(void 0, [fd]);
     } catch (e) {
       const msg = e?.message ?? String(e);
       if (msg.includes("EBADF")) throw createFsError("EBADF", "EBADF: bad file descriptor, fdatasync", "fdatasync");
@@ -3079,19 +3106,18 @@ var fs = {
   },
   fchmodSync(fd, mode) {
     const normalizedFd = normalizeFdInteger(fd);
-    const pathStr = _fdGetPath.applySync(void 0, [normalizedFd]);
-    if (!pathStr) {
-      throw createFsError("EBADF", "EBADF: bad file descriptor", "chmod");
-    }
-    fs.chmodSync(pathStr, normalizeModeArgument(mode));
+    bridgeCall(() => _fdFchmod.applySyncPromise(void 0, [
+      normalizedFd,
+      normalizeModeArgument(mode)
+    ]), "fchmod");
   },
   fchownSync(fd, uid, gid) {
     const normalizedFd = normalizeFdInteger(fd);
-    const pathStr = _fdGetPath.applySync(void 0, [normalizedFd]);
-    if (!pathStr) {
-      throw createFsError("EBADF", "EBADF: bad file descriptor", "chown");
-    }
-    fs.chownSync(pathStr, uid, gid);
+    bridgeCall(() => _fdFchown.applySyncPromise(void 0, [
+      normalizedFd,
+      normalizeNumberArgument("uid", uid, { min: -1, max: 4294967295, allowNegativeOne: true }),
+      normalizeNumberArgument("gid", gid, { min: -1, max: 4294967295, allowNegativeOne: true })
+    ]), "fchown");
   },
   lchownSync(path, uid, gid) {
     const pathStr = normalizePathLike(path);

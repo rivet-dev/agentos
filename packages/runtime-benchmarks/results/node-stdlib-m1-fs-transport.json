@@ -1,0 +1,439 @@
+{
+  "schema": 1,
+  "generatedAt": "2026-07-10T01:01:19.342-07:00",
+  "hardware": {
+    "cpu": "12th Gen Intel(R) Core(TM) i7-12700KF",
+    "cores": 20,
+    "ram": "62.6 GB",
+    "node": "v24.17.0",
+    "os": "Linux 6.1.0-41-amd64",
+    "arch": "x64"
+  },
+  "protocol": {
+    "iterations": 25,
+    "warmup": 5,
+    "runs": 5,
+    "stdlib": "real",
+    "comparison": "fd-level CBOR/base64 response versus direct write into the guest backing store",
+    "budgetLane": "one-call raw-byte path-based readFileSync fast path"
+  },
+  "lanes": {
+    "base64": {
+      "name": "base64-fd",
+      "transport": "base64",
+      "readFileFastPath": false,
+      "runs": [
+        [
+          {
+            "op": "fs_read_small",
+            "p50Ms": 0.06,
+            "p99Ms": 0.4,
+            "minMs": 0.06,
+            "maxMs": 0.4
+          },
+          {
+            "op": "fs_read_big",
+            "p50Ms": 0.62,
+            "p99Ms": 0.84,
+            "minMs": 0.49,
+            "maxMs": 0.84
+          }
+        ],
+        [
+          {
+            "op": "fs_read_small",
+            "p50Ms": 0.06,
+            "p99Ms": 0.08,
+            "minMs": 0.06,
+            "maxMs": 0.08
+          },
+          {
+            "op": "fs_read_big",
+            "p50Ms": 0.5,
+            "p99Ms": 0.73,
+            "minMs": 0.39,
+            "maxMs": 0.73
+          }
+        ],
+        [
+          {
+            "op": "fs_read_small",
+            "p50Ms": 0.08,
+            "p99Ms": 0.14,
+            "minMs": 0.06,
+            "maxMs": 0.14
+          },
+          {
+            "op": "fs_read_big",
+            "p50Ms": 0.53,
+            "p99Ms": 0.77,
+            "minMs": 0.42,
+            "maxMs": 0.77
+          }
+        ],
+        [
+          {
+            "op": "fs_read_small",
+            "p50Ms": 0.06,
+            "p99Ms": 0.08,
+            "minMs": 0.06,
+            "maxMs": 0.08
+          },
+          {
+            "op": "fs_read_big",
+            "p50Ms": 0.57,
+            "p99Ms": 1.06,
+            "minMs": 0.38,
+            "maxMs": 1.06
+          }
+        ],
+        [
+          {
+            "op": "fs_read_small",
+            "p50Ms": 0.06,
+            "p99Ms": 0.08,
+            "minMs": 0.06,
+            "maxMs": 0.08
+          },
+          {
+            "op": "fs_read_big",
+            "p50Ms": 0.51,
+            "p99Ms": 0.83,
+            "minMs": 0.47,
+            "maxMs": 0.83
+          }
+        ]
+      ],
+      "rows": [
+        {
+          "op": "fs_read_small",
+          "p50Ms": 0.06,
+          "p99Ms": 0.4,
+          "p50IqrMs": 0,
+          "runP50Ms": [
+            0.06,
+            0.06,
+            0.06,
+            0.06,
+            0.08
+          ],
+          "runP99Ms": [
+            0.08,
+            0.08,
+            0.08,
+            0.14,
+            0.4
+          ]
+        },
+        {
+          "op": "fs_read_big",
+          "p50Ms": 0.53,
+          "p99Ms": 1.06,
+          "p50IqrMs": 0.06,
+          "runP50Ms": [
+            0.5,
+            0.51,
+            0.53,
+            0.57,
+            0.62
+          ],
+          "runP99Ms": [
+            0.73,
+            0.77,
+            0.83,
+            0.84,
+            1.06
+          ]
+        }
+      ]
+    },
+    "backingStore": {
+      "name": "backing-store-fd",
+      "transport": "backing-store",
+      "readFileFastPath": false,
+      "runs": [
+        [
+          {
+            "op": "fs_read_small",
+            "p50Ms": 0.07,
+            "p99Ms": 0.26,
+            "minMs": 0.06,
+            "maxMs": 0.26
+          },
+          {
+            "op": "fs_read_big",
+            "p50Ms": 0.58,
+            "p99Ms": 0.88,
+            "minMs": 0.27,
+            "maxMs": 0.88
+          }
+        ],
+        [
+          {
+            "op": "fs_read_small",
+            "p50Ms": 0.07,
+            "p99Ms": 0.17,
+            "minMs": 0.06,
+            "maxMs": 0.17
+          },
+          {
+            "op": "fs_read_big",
+            "p50Ms": 0.5,
+            "p99Ms": 0.91,
+            "minMs": 0.37,
+            "maxMs": 0.91
+          }
+        ],
+        [
+          {
+            "op": "fs_read_small",
+            "p50Ms": 0.06,
+            "p99Ms": 0.08,
+            "minMs": 0.06,
+            "maxMs": 0.08
+          },
+          {
+            "op": "fs_read_big",
+            "p50Ms": 0.52,
+            "p99Ms": 0.95,
+            "minMs": 0.37,
+            "maxMs": 0.95
+          }
+        ],
+        [
+          {
+            "op": "fs_read_small",
+            "p50Ms": 0.1,
+            "p99Ms": 0.15,
+            "minMs": 0.06,
+            "maxMs": 0.15
+          },
+          {
+            "op": "fs_read_big",
+            "p50Ms": 0.51,
+            "p99Ms": 0.79,
+            "minMs": 0.46,
+            "maxMs": 0.79
+          }
+        ],
+        [
+          {
+            "op": "fs_read_small",
+            "p50Ms": 0.11,
+            "p99Ms": 0.13,
+            "minMs": 0.1,
+            "maxMs": 0.13
+          },
+          {
+            "op": "fs_read_big",
+            "p50Ms": 0.51,
+            "p99Ms": 1.27,
+            "minMs": 0.41,
+            "maxMs": 1.27
+          }
+        ]
+      ],
+      "rows": [
+        {
+          "op": "fs_read_small",
+          "p50Ms": 0.07,
+          "p99Ms": 0.26,
+          "p50IqrMs": 0.03,
+          "runP50Ms": [
+            0.06,
+            0.07,
+            0.07,
+            0.1,
+            0.11
+          ],
+          "runP99Ms": [
+            0.08,
+            0.13,
+            0.15,
+            0.17,
+            0.26
+          ]
+        },
+        {
+          "op": "fs_read_big",
+          "p50Ms": 0.51,
+          "p99Ms": 1.27,
+          "p50IqrMs": 0.01,
+          "runP50Ms": [
+            0.5,
+            0.51,
+            0.51,
+            0.52,
+            0.58
+          ],
+          "runP99Ms": [
+            0.79,
+            0.88,
+            0.91,
+            0.95,
+            1.27
+          ]
+        }
+      ]
+    },
+    "optimizedReadFile": {
+      "name": "optimized-read-file",
+      "transport": "backing-store",
+      "readFileFastPath": true,
+      "runs": [
+        [
+          {
+            "op": "fs_read_small",
+            "p50Ms": 0.06,
+            "p99Ms": 0.09,
+            "minMs": 0.06,
+            "maxMs": 0.09
+          },
+          {
+            "op": "fs_read_big",
+            "p50Ms": 0.58,
+            "p99Ms": 0.95,
+            "minMs": 0.47,
+            "maxMs": 0.95
+          }
+        ],
+        [
+          {
+            "op": "fs_read_small",
+            "p50Ms": 0.06,
+            "p99Ms": 0.08,
+            "minMs": 0.06,
+            "maxMs": 0.08
+          },
+          {
+            "op": "fs_read_big",
+            "p50Ms": 0.5,
+            "p99Ms": 0.68,
+            "minMs": 0.43,
+            "maxMs": 0.68
+          }
+        ],
+        [
+          {
+            "op": "fs_read_small",
+            "p50Ms": 0.1,
+            "p99Ms": 0.23,
+            "minMs": 0.1,
+            "maxMs": 0.23
+          },
+          {
+            "op": "fs_read_big",
+            "p50Ms": 0.5,
+            "p99Ms": 0.84,
+            "minMs": 0.39,
+            "maxMs": 0.84
+          }
+        ],
+        [
+          {
+            "op": "fs_read_small",
+            "p50Ms": 0.07,
+            "p99Ms": 0.08,
+            "minMs": 0.06,
+            "maxMs": 0.08
+          },
+          {
+            "op": "fs_read_big",
+            "p50Ms": 0.59,
+            "p99Ms": 0.89,
+            "minMs": 0.38,
+            "maxMs": 0.89
+          }
+        ],
+        [
+          {
+            "op": "fs_read_small",
+            "p50Ms": 0.1,
+            "p99Ms": 0.17,
+            "minMs": 0.06,
+            "maxMs": 0.17
+          },
+          {
+            "op": "fs_read_big",
+            "p50Ms": 0.59,
+            "p99Ms": 0.75,
+            "minMs": 0.39,
+            "maxMs": 0.75
+          }
+        ]
+      ],
+      "rows": [
+        {
+          "op": "fs_read_small",
+          "p50Ms": 0.07,
+          "p99Ms": 0.23,
+          "p50IqrMs": 0.04,
+          "runP50Ms": [
+            0.06,
+            0.06,
+            0.07,
+            0.1,
+            0.1
+          ],
+          "runP99Ms": [
+            0.08,
+            0.08,
+            0.09,
+            0.17,
+            0.23
+          ]
+        },
+        {
+          "op": "fs_read_big",
+          "p50Ms": 0.58,
+          "p99Ms": 0.95,
+          "p50IqrMs": 0.09,
+          "runP50Ms": [
+            0.5,
+            0.5,
+            0.58,
+            0.59,
+            0.59
+          ],
+          "runP99Ms": [
+            0.68,
+            0.75,
+            0.84,
+            0.89,
+            0.95
+          ]
+        }
+      ]
+    }
+  },
+  "transportDeltas": [
+    {
+      "op": "fs_read_small",
+      "base64P50Ms": 0.06,
+      "backingStoreP50Ms": 0.07,
+      "ratio": 1.1667,
+      "reductionPercent": -16.67
+    },
+    {
+      "op": "fs_read_big",
+      "base64P50Ms": 0.53,
+      "backingStoreP50Ms": 0.51,
+      "ratio": 0.9623,
+      "reductionPercent": 3.77
+    }
+  ],
+  "budgets": [
+    {
+      "op": "fs_read_small",
+      "optimizedP50Ms": 0.07,
+      "budgetMs": 0.03,
+      "budgetMet": false
+    },
+    {
+      "op": "fs_read_big",
+      "optimizedP50Ms": 0.58,
+      "budgetMs": 0.42,
+      "budgetMet": false
+    }
+  ]
+}

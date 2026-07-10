@@ -1,7 +1,25 @@
 {
   "schema": 1,
-  "measured_at_pst": "2026-07-09T22:45:27-07:00",
+  "measured_at_pst": "2026-07-10T01:01:19-07:00",
   "entries": [
+    {
+      "bench": "node-stdlib-m1-fs-transport",
+      "metric": "fs/readFileSync 4KiB backing-store p50",
+      "delta": "0.07ms measured vs 0.03ms budget",
+      "cause": "the one-call raw-byte path is bounded by the embedded sync-RPC round trip, whose independent 0.048ms target already exceeds this 0.03ms budget",
+      "disposition": "fix",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1",
+      "approver": "runtime lead"
+    },
+    {
+      "bench": "node-stdlib-m1-fs-transport",
+      "metric": "fs/readFileSync 1MiB backing-store p50",
+      "delta": "0.58ms measured vs 0.42ms budget",
+      "cause": "the one-call raw-byte path removes open/stat/read/close chattiness and base64, but the host read plus response-channel and host-to-guest copy remain above the native-floor budget",
+      "disposition": "fix",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1",
+      "approver": "runtime lead"
+    },
     {
       "bench": "node-stdlib-ab",
       "metric": "modules/import_npm_package guest p50",

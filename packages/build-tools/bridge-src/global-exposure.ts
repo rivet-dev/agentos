@@ -131,6 +131,11 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
     rationale: "Bridge-owned tls module handle for require resolution."
   },
   {
+    name: "_compileFunctionForCJSLoader",
+    classification: "hardened",
+    rationale: "V8-hosted CommonJS compilation bridge reference.",
+  },
+  {
     name: "_vmCreateContext",
     classification: "hardened",
     rationale: "Host vm context creation bridge reference."
@@ -396,6 +401,11 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
     rationale: "Host filesystem bridge reference."
   },
   {
+    name: "_fsReadFileRaw",
+    classification: "hardened",
+    rationale: "Raw-byte host file read bridge reference."
+  },
+  {
     name: "_fsReadFileAsync",
     classification: "hardened",
     rationale: "Host filesystem bridge reference."
@@ -601,6 +611,31 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
     rationale: "Host filesystem bridge reference."
   },
   {
+    name: "fs.fchmodSync",
+    classification: "hardened",
+    rationale: "Host file-descriptor mode bridge reference."
+  },
+  {
+    name: "fs.fchownSync",
+    classification: "hardened",
+    rationale: "Host file-descriptor ownership bridge reference."
+  },
+  {
+    name: "fs.ftruncateSync",
+    classification: "hardened",
+    rationale: "Host file-descriptor truncate bridge reference."
+  },
+  {
+    name: "fs.fsyncSync",
+    classification: "hardened",
+    rationale: "Host file-descriptor sync bridge reference."
+  },
+  {
+    name: "fs.fdatasyncSync",
+    classification: "hardened",
+    rationale: "Host file-descriptor data-sync bridge reference."
+  },
+  {
     name: "fs.openSync",
     classification: "hardened",
     rationale: "Host file-descriptor open bridge reference."
@@ -619,6 +654,11 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
     name: "_fsReadRaw",
     classification: "hardened",
     rationale: "Raw-byte host file-descriptor read bridge reference."
+  },
+  {
+    name: "_fsReadIntoRaw",
+    classification: "hardened",
+    rationale: "Direct guest-backing-store file-descriptor read bridge reference."
   },
   {
     name: "fs.writeSync",

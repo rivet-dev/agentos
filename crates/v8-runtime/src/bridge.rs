@@ -610,6 +610,49 @@ fn bridge_response_payload_to_v8<'s>(
     raw_bytes_to_uint8array(scope, payload)
 }
 
+fn copy_raw_response_into_guest_view<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: &v8::FunctionCallbackArguments<'s>,
+    payload: &[u8],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let value = args.get(3);
+    let view = v8::Local::<v8::ArrayBufferView>::try_from(value)
+        .map_err(|_| "fs read destination must be an ArrayBufferView".to_string())?;
+    let offset = usize::try_from(args.get(4).uint32_value(scope).unwrap_or(0))
+        .map_err(|_| "fs read destination offset must fit usize".to_string())?;
+    let buffer = view
+        .buffer(scope)
+        .ok_or_else(|| "fs read destination has no ArrayBuffer".to_string())?;
+    if buffer.was_detached() {
+        return Err("fs read destination ArrayBuffer is detached".to_string());
+    }
+    if offset > view.byte_length() || payload.len() > view.byte_length() - offset {
+        return Err(format!(
+            "fs read response of {} bytes exceeds destination view length {} at offset {offset}",
+            payload.len(),
+            view.byte_length()
+        ));
+    }
+    if !payload.is_empty() {
+        let destination = view.data();
+        if destination.is_null() {
+            return Err("fs read destination backing store is unavailable".to_string());
+        }
+        // Node's synchronous fs binding parks the isolate for the duration of
+        // the host call, so V8 cannot detach or resize this backing store while
+        // the trusted runtime writes into it. Node's native contract is
+        // src/node_file.cc Read; backing-store API: V8 ArrayBuffer::GetBackingStore.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                payload.as_ptr(),
+                destination.cast::<u8>().add(offset),
+                payload.len(),
+            );
+        }
+    }
+    Ok(v8::Integer::new_from_unsigned(scope, payload.len() as u32).into())
+}
+
 /// Serialize a V8 value to CBOR bytes.
 pub fn serialize_cbor_value(
     scope: &mut v8::HandleScope,
@@ -1694,6 +1737,64 @@ fn vm_run_in_this_context_value<'s>(
     vm_run_script_in_context(scope, isolate_handle, context, &code, &options)
 }
 
+fn compile_function_for_cjs_loader_value<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: &mut v8::FunctionCallbackArguments<'s>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let source_text = args.get(0).to_rust_string_lossy(scope);
+    let filename = args.get(1).to_rust_string_lossy(scope);
+    let source = v8::String::new(scope, &source_text)
+        .ok_or_else(|| String::from("CJS source exceeds the V8 string limit"))?;
+    let resource_name = v8::String::new(scope, &filename)
+        .ok_or_else(|| String::from("CJS filename exceeds the V8 string limit"))?;
+    let origin = v8::ScriptOrigin::new(
+        scope,
+        resource_name.into(),
+        0,
+        0,
+        false,
+        -1,
+        None,
+        false,
+        false,
+        false,
+        None,
+    );
+    let mut compiler_source = v8::script_compiler::Source::new(source, Some(&origin));
+    let parameter_names = ["exports", "require", "module", "__filename", "__dirname"]
+        .into_iter()
+        .map(|name| v8::String::new(scope, name).expect("static CJS parameter name"))
+        .collect::<Vec<_>>();
+
+    // Node's native binding compiles the CommonJS body as a V8 function with
+    // the five wrapper parameters, then returns it in the result record consumed
+    // by lib/internal/modules/cjs/loader.js. Contract: Node v24
+    // src/node_contextify.cc CompileFunctionForCJSLoader.
+    let function = v8::script_compiler::compile_function(
+        scope,
+        &mut compiler_source,
+        &parameter_names,
+        &[],
+        v8::script_compiler::CompileOptions::NoCompileOptions,
+        v8::script_compiler::NoCacheReason::NoReason,
+    )
+    .ok_or_else(|| String::from("V8 failed to compile the CommonJS module"))?;
+
+    let result = v8::Object::new(scope);
+    for (name, value) in [
+        ("function", function.into()),
+        ("sourceMapURL", v8::undefined(scope).into()),
+        ("sourceURL", v8::undefined(scope).into()),
+        ("canParseAsESM", v8::Boolean::new(scope, false).into()),
+    ] {
+        let key = v8::String::new(scope, name).expect("static CJS result key");
+        if result.set(scope, key.into(), value) != Some(true) {
+            return Err(format!("failed to set CJS compile result field {name}"));
+        }
+    }
+    Ok(result.into())
+}
+
 fn handle_local_bridge_call<'s>(
     scope: &mut v8::HandleScope<'s>,
     method: &str,
@@ -1707,6 +1808,9 @@ fn handle_local_bridge_call<'s>(
         "_vmCreateContext" => vm_create_context_value(scope, args).map(Some),
         "_vmRunInContext" => vm_run_in_context_value(scope, args).map(Some),
         "_vmRunInThisContext" => vm_run_in_this_context_value(scope, args).map(Some),
+        "_compileFunctionForCJSLoader" => {
+            compile_function_for_cjs_loader_value(scope, args).map(Some)
+        }
         _ => Ok(None),
     }
 }
@@ -1801,7 +1905,7 @@ fn sync_bridge_callback<'s>(
     }
 
     // Serialize V8 arguments using the Vec released by V8's serializer directly.
-    let encoded_args = match serialize_v8_args(scope, &args) {
+    let encoded_args = match serialize_v8_args_for_method(scope, &args, &data.method) {
         Ok(encoded_args) => encoded_args,
         Err(err) => {
             let msg =
@@ -1815,6 +1919,17 @@ fn sync_bridge_callback<'s>(
     // Perform sync-blocking bridge call
     match ctx.sync_call_response(&data.method, encoded_args) {
         Ok(Some(response)) => {
+            if data.method == "_fsReadIntoRaw" && response.status == 2 {
+                match copy_raw_response_into_guest_view(scope, &args, &response.payload) {
+                    Ok(value) => rv.set(value),
+                    Err(error) => {
+                        let msg = v8::String::new(scope, &error).unwrap();
+                        let exc = v8::Exception::type_error(scope, msg);
+                        scope.throw_exception(exc);
+                    }
+                }
+                return;
+            }
             let v8_val = bridge_response_payload_to_v8(scope, response.status, &response.payload);
             if let Some(val) = v8_val {
                 rv.set(val);
@@ -2083,6 +2198,24 @@ fn serialize_v8_args(
     let array = v8::Array::new(scope, count);
     for i in 0..count {
         array.set_index(scope, i as u32, args.get(i));
+    }
+    serialize_v8_value(scope, array.into())
+}
+
+fn serialize_v8_args_for_method(
+    scope: &mut v8::HandleScope,
+    args: &v8::FunctionCallbackArguments,
+    method: &str,
+) -> Result<Vec<u8>, String> {
+    if method != "_fsReadIntoRaw" {
+        return serialize_v8_args(scope, args);
+    }
+    // The destination view and offset are V8-local write targets, not request
+    // data. Omitting them prevents an O(n) serialization copy of the existing
+    // guest buffer before the sidecar performs the read.
+    let array = v8::Array::new(scope, 3);
+    for index in 0..3 {
+        array.set_index(scope, index, args.get(index as i32));
     }
     serialize_v8_value(scope, array.into())
 }
