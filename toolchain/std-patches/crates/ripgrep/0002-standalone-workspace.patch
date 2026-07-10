@@ -1,0 +1,27 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -160,17 +160,23 @@ default-features = false
+ [profile.deb]
+ inherits = "release-lto"
+ 
+ [profile.release]
+-debug = 1
++opt-level = "z"
++lto = true
++codegen-units = 1
++debug = 0
++strip = true
+ 
+ [profile.release-lto]
+ opt-level = 3
+ lto = "fat"
+ codegen-units = 1
+ debug = 0
+ debug-assertions = false
+ panic = "abort"
+ overflow-checks = false
+ incremental = false
+ inherits = "release"
+ strip = "symbols"
++
++[workspace]

@@ -17,7 +17,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WASMCORE_DIR="$(dirname "$SCRIPT_DIR")"
 PATCHES_DIR="$WASMCORE_DIR/std-patches/crates"
-VENDOR_DIR="$WASMCORE_DIR/vendor"
+# VENDOR_DIR defaults to the toolchain's own vendor/ (the `make wasm` command
+# build) but can be overridden so the reproducible codex clone build
+# (clone-and-build-codex-wasi.sh) can apply the same crate patches to the codex
+# workspace's vendored sources.
+VENDOR_DIR="${VENDOR_DIR:-$WASMCORE_DIR/vendor}"
 
 # Parse arguments
 MODE="apply"

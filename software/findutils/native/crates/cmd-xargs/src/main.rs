@@ -1,4 +1,8 @@
 fn main() {
-    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
-    std::process::exit(shims::xargs::xargs(args));
+    let args = std::env::args().collect::<Vec<String>>();
+    let args = args
+        .iter()
+        .map(std::convert::AsRef::as_ref)
+        .collect::<Vec<&str>>();
+    std::process::exit(findutils::xargs::xargs_main(&args));
 }

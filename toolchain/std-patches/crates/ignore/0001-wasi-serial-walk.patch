@@ -1,0 +1,60 @@
+--- a/src/walk.rs
++++ b/src/walk.rs
+@@ -1353,6 +1353,49 @@
+     /// synchronization. Then, once traversal is complete, all of the results
+     /// can be merged together into a single data structure.
+     pub fn visit(mut self, builder: &mut dyn ParallelVisitorBuilder<'_>) {
++        #[cfg(target_os = "wasi")]
++        {
++            let mut visitor = builder.build();
++            let mut paths = Vec::new().into_iter();
++            std::mem::swap(&mut paths, &mut self.paths);
++            let its = paths
++                .map(|p| {
++                    if p == Path::new("-") {
++                        (p, None)
++                    } else {
++                        let mut wd = WalkDir::new(&p);
++                        wd = wd.follow_links(self.follow_links || p.is_file());
++                        wd = wd.same_file_system(self.same_file_system);
++                        if let Some(max_depth) = self.max_depth {
++                            wd = wd.max_depth(max_depth);
++                        }
++                        if let Some(min_depth) = self.min_depth {
++                            wd = wd.min_depth(min_depth);
++                        }
++                        (p, Some(WalkEventIter::from(wd)))
++                    }
++                })
++                .collect::<Vec<_>>()
++                .into_iter();
++            let mut walk = Walk {
++                its,
++                it: None,
++                ig_root: self.ig_root.clone(),
++                ig: self.ig_root,
++                max_filesize: self.max_filesize,
++                skip: self.skip,
++                filter: self.filter,
++            };
++            for entry in &mut walk {
++                if visitor.visit(entry).is_quit() {
++                    break;
++                }
++            }
++            return;
++        }
++
++        #[cfg(not(target_os = "wasi"))]
++        {
+         let threads = self.threads();
+         let mut stack = vec![];
+         {
+@@ -1428,6 +1471,7 @@
+                 handle.join().unwrap();
+             }
+         });
++        }
+     }
+ 
+     fn threads(&self) -> usize {

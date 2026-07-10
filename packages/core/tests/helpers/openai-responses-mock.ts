@@ -43,6 +43,52 @@ function writeJson(
 	res.end(payload);
 }
 
+function writeSse(
+	res: ServerResponse,
+	events: Record<string, unknown>[],
+): void {
+	const payload = events
+		.map((event) => {
+			const type = String(event.type);
+			return `event: ${type}\ndata: ${JSON.stringify(event)}\n\n`;
+		})
+		.join("");
+	res.statusCode = 200;
+	res.setHeader("content-type", "text/event-stream");
+	res.setHeader("cache-control", "no-cache");
+	res.setHeader("content-length", Buffer.byteLength(payload));
+	res.end(payload);
+}
+
+function responseToSseEvents(response: Record<string, unknown>) {
+	const id = typeof response.id === "string" ? response.id : "resp_mock";
+	const events: Record<string, unknown>[] = [
+		{ type: "response.created", response: { id } },
+	];
+	const output = Array.isArray(response.output) ? response.output : [];
+	for (const item of output) {
+		if (!item || typeof item !== "object") continue;
+		events.push({
+			type: "response.output_item.done",
+			item,
+		});
+	}
+	events.push({
+		type: "response.completed",
+		response: {
+			id,
+			usage: {
+				input_tokens: 0,
+				input_tokens_details: null,
+				output_tokens: 0,
+				output_tokens_details: null,
+				total_tokens: 0,
+			},
+		},
+	});
+	return events;
+}
+
 export async function startResponsesMock(
 	fixtures: ResponsesFixture[],
 ): Promise<RunningResponsesMock> {
@@ -69,7 +115,11 @@ export async function startResponsesMock(
 			if (fixture.delayMs) {
 				await new Promise((resolve) => setTimeout(resolve, fixture.delayMs));
 			}
-			writeJson(res, 200, fixture.response);
+			if (body.stream === true) {
+				writeSse(res, responseToSseEvents(fixture.response));
+			} else {
+				writeJson(res, 200, fixture.response);
+			}
 		} catch (error) {
 			writeJson(res, 500, {
 				error: "invalid_request",

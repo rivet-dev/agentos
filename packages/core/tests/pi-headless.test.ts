@@ -1,8 +1,7 @@
 import { resolve } from "node:path";
-import type { Fixture, ToolCall } from "@copilotkit/llmock";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import common from "@agentos-software/common";
 import pi from "@agentos-software/pi";
+import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { describe, expect, test } from "vitest";
 import type { AgentCapabilities, AgentInfo } from "../src/agent-os.js";
 import { AgentOs } from "../src/agent-os.js";
@@ -11,8 +10,12 @@ import {
 	startLlmock,
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
+import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
+import { hasBuiltRegistryCommands } from "./helpers/registry-command-availability.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
+const registryCommandsAvailable = hasBuiltRegistryCommands(common);
+const registryCommandTest = registryCommandsAvailable ? test : test.skip;
 
 function getRequestBody(req: unknown): Record<string, unknown> {
 	const direct = req as Record<string, unknown>;
@@ -51,7 +54,7 @@ async function createPiVm(mockUrl: string): Promise<AgentOs> {
 		loopbackExemptPorts: [Number(new URL(mockUrl).port)],
 		mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
 		// Default software ships no agents; pass the pi agent package explicitly.
-		software: [common, pi],
+		software: [...(registryCommandsAvailable ? common : []), pi],
 	});
 }
 
@@ -206,63 +209,59 @@ describe("full createSession('pi') inside the VM", () => {
 		}
 	}, 120_000);
 
-	// Blocked on shell `>` redirect output being visible to `vm.readFile()`.
-	// The vanilla Pi SDK bash backend spawns the shell directly and the redirect
-	// runs inside the guest shell, but the written bytes do not reconcile to the
-	// host read path yet. Before the adapter dropped its custom bash operations
-	// override this case passed because the override routed the command through
-	// the rpc-client `sh -c` path that the host can observe; the vanilla backend
-	// surfaces the underlying runtime gap. Tracked in
-	// ~/.agents/todo/agentos-runtime-fixes.md (shell-exec redirect visibility).
-	test.skip("runs the real Pi SDK ACP flow end-to-end for bash tool calls", async () => {
-		const fixtures = createToolFixtures(
-			{
-				name: "bash",
-				arguments: JSON.stringify({
-					command: "printf 'bash-ok' > bash-output.txt",
-					timeout: 10,
-				}),
-			},
-			"bash-ok",
-			"bash-output.txt was written successfully.",
-		);
-		const { mock, url } = await startLlmock(fixtures);
-		const vm = await createPiVm(url);
-
-		let sessionId: string | undefined;
-		try {
-			const homeDir = await createVmPiHome(vm, url);
-			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("pi", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
-						ANTHROPIC_BASE_URL: url,
-					},
-				})
-			).sessionId;
-
-			const { response, text } = await vm.prompt(
-				sessionId,
-				"Use bash to write bash-ok into bash-output.txt.",
+	registryCommandTest(
+		"runs the real Pi SDK ACP flow end-to-end for bash tool calls",
+		async () => {
+			const fixtures = createToolFixtures(
+				{
+					name: "bash",
+					arguments: JSON.stringify({
+						command: "printf 'bash-ok' > bash-output.txt",
+						timeout: 10,
+					}),
+				},
+				"bash-ok",
+				"bash-output.txt was written successfully.",
 			);
+			const { mock, url } = await startLlmock(fixtures);
+			const vm = await createPiVm(url);
 
-			expect(response.error).toBeUndefined();
-			expect(text).toContain("bash-output.txt was written successfully.");
-			expect(
-				new TextDecoder().decode(
-					await vm.readFile(`${workspaceDir}/bash-output.txt`),
-				),
-			).toBe("bash-ok");
-			expect(mock.getRequests().length).toBeGreaterThanOrEqual(2);
-		} finally {
-			if (sessionId) {
-				vm.closeSession(sessionId);
+			let sessionId: string | undefined;
+			try {
+				const homeDir = await createVmPiHome(vm, url);
+				const workspaceDir = await createVmWorkspace(vm);
+				sessionId = (
+					await vm.createSession("pi", {
+						cwd: workspaceDir,
+						env: {
+							HOME: homeDir,
+							ANTHROPIC_API_KEY: "mock-key",
+							ANTHROPIC_BASE_URL: url,
+						},
+					})
+				).sessionId;
+
+				const { response, text } = await vm.prompt(
+					sessionId,
+					"Use bash to write bash-ok into bash-output.txt.",
+				);
+
+				expect(response.error).toBeUndefined();
+				expect(text).toContain("bash-output.txt was written successfully.");
+				expect(
+					new TextDecoder().decode(
+						await vm.readFile(`${workspaceDir}/bash-output.txt`),
+					),
+				).toBe("bash-ok");
+				expect(mock.getRequests().length).toBeGreaterThanOrEqual(2);
+			} finally {
+				if (sessionId) {
+					vm.closeSession(sessionId);
+				}
+				await vm.dispose();
+				await stopLlmock(mock);
 			}
-			await vm.dispose();
-			await stopLlmock(mock);
-		}
-	}, 120_000);
+		},
+		120_000,
+	);
 });

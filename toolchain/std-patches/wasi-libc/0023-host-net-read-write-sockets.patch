@@ -1,0 +1,88 @@
+Route POSIX read/write through host_net for socket descriptors.
+
+Upstream C programs commonly use read() and write() on socket fds. AgentOS
+host_net sockets are brokered outside the regular WASI fd syscalls, so try
+host_net first and fall back to regular descriptors when the fd is not a
+host_net socket.
+
+diff --git a/libc-bottom-half/cloudlibc/src/libc/unistd/read.c b/libc-bottom-half/cloudlibc/src/libc/unistd/read.c
+index 826e84b..367dcaf 100644
+--- a/libc-bottom-half/cloudlibc/src/libc/unistd/read.c
++++ b/libc-bottom-half/cloudlibc/src/libc/unistd/read.c
+@@ -3,16 +3,35 @@
+ // SPDX-License-Identifier: BSD-2-Clause
+ 
+ #include <wasi/api.h>
+ #include <errno.h>
++#include <stdint.h>
+ #include <unistd.h>
+ 
++__attribute__((__import_module__("host_net"), __import_name__("net_recv")))
++uint32_t __host_net_read_recv(uint32_t fd, uint8_t *buf_ptr, uint32_t buf_len,
++                              uint32_t flags, uint32_t *ret_received);
++
+ ssize_t read(int fildes, void *buf, size_t nbyte) {
++  if (nbyte > UINT32_MAX) {
++    errno = EINVAL;
++    return -1;
++  }
++
++  uint32_t socket_bytes_read;
++  uint32_t socket_error = __host_net_read_recv((uint32_t)fildes, (uint8_t *)buf,
++      (uint32_t)nbyte, 0, &socket_bytes_read);
++  if (socket_error == 0) return (ssize_t)socket_bytes_read;
++  if (socket_error != EBADF && socket_error != ENOTSOCK) {
++    errno = (int)socket_error;
++    return -1;
++  }
++
+   __wasi_iovec_t iov = {.buf = buf, .buf_len = nbyte};
+   size_t bytes_read;
+   __wasi_errno_t error = __wasi_fd_read(fildes, &iov, 1, &bytes_read);
+   if (error != 0) {
+     errno = error == ENOTCAPABLE ? EBADF : error;
+     return -1;
+   }
+   return bytes_read;
+ }
+diff --git a/libc-bottom-half/cloudlibc/src/libc/unistd/write.c b/libc-bottom-half/cloudlibc/src/libc/unistd/write.c
+index 63c4bcd..604b4d5 100644
+--- a/libc-bottom-half/cloudlibc/src/libc/unistd/write.c
++++ b/libc-bottom-half/cloudlibc/src/libc/unistd/write.c
+@@ -3,17 +3,36 @@
+ // SPDX-License-Identifier: BSD-2-Clause
+ 
+ #include <wasi/api.h>
+ #include <errno.h>
++#include <stdint.h>
+ #include <unistd.h>
+ 
++__attribute__((__import_module__("host_net"), __import_name__("net_send")))
++uint32_t __host_net_write_send(uint32_t fd, const uint8_t *buf_ptr, uint32_t buf_len,
++                               uint32_t flags, uint32_t *ret_sent);
++
+ ssize_t write(int fildes, const void *buf, size_t nbyte) {
++  if (nbyte > UINT32_MAX) {
++    errno = EINVAL;
++    return -1;
++  }
++
++  uint32_t socket_bytes_written;
++  uint32_t socket_error = __host_net_write_send((uint32_t)fildes, (const uint8_t *)buf,
++      (uint32_t)nbyte, 0, &socket_bytes_written);
++  if (socket_error == 0) return (ssize_t)socket_bytes_written;
++  if (socket_error != EBADF && socket_error != ENOTSOCK) {
++    errno = (int)socket_error;
++    return -1;
++  }
++
+   __wasi_ciovec_t iov = {.buf = buf, .buf_len = nbyte};
+   size_t bytes_written;
+   __wasi_errno_t error =
+       __wasi_fd_write(fildes, &iov, 1, &bytes_written);
+   if (error != 0) {
+     errno = error == ENOTCAPABLE ? EBADF : error;
+     return -1;
+   }
+   return bytes_written;
+ }

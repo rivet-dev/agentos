@@ -11,4 +11,5 @@ name = "find"
 path = "src/main.rs"
 
 [dependencies]
-secureexec-find = { path = "../find" }
+findutils = { version = "0.9.0", default-features = false }
+uucore = { version = "0.9.0", default-features = false }

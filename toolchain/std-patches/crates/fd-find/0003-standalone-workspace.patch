@@ -1,0 +1,14 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -162,5 +162,11 @@ debug = 0
+ 
+ [profile.release]
++opt-level = "z"
+ lto = true
+ codegen-units = 1
+ strip = true
++
++[workspace]
++
++[patch.crates-io]
++ctrlc = { path = "../../stubs/ctrlc" }

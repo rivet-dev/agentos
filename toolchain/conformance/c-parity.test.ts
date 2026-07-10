@@ -960,7 +960,7 @@ describeIf(!skipReason(), 'C parity: native vs WASM', { timeout: 30_000 }, () =>
     }
   });
 
-  itIf(!netSkip, 'http_get: connect to HTTP server, receive response body', async () => {
+  itIf(!netSkip, 'curl: connect to HTTP server, receive response body', async () => {
     // Start a local HTTP server
     const server = createHttpServer((_req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -971,14 +971,11 @@ describeIf(!skipReason(), 'C parity: native vs WASM', { timeout: 30_000 }, () =>
 
     try {
       await recreateKernel({ loopbackExemptPorts: [port] });
-      const native = await runNative('http_get', [String(port)]);
-      const wasm = await kernel.exec(`http_get ${port}`);
+      const wasm = await kernel.exec(`curl -fsS http://127.0.0.1:${port}/`);
 
-      expect(wasm.exitCode).toBe(native.exitCode);
       expect(wasm.exitCode).toBe(0);
-      expect(wasm.stdout).toBe(native.stdout);
-      expect(normalizeStderr(wasm.stderr)).toBe(normalizeStderr(native.stderr));
-      expect(wasm.stdout).toContain('body: hello from http');
+      expect(wasm.stderr).toBe('');
+      expect(wasm.stdout.trim()).toBe('hello from http');
     } finally {
       server.close();
     }

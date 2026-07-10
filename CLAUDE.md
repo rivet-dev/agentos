@@ -93,6 +93,37 @@ the guest — over inventing a softer fallback that hides the failure.
   for a release or complete package validation. Publish workflows must rebuild
   and stage the complete command set and fail when it is absent or incomplete.
 
+## Software Build (WASM Toolchain)
+
+Registry software is **real upstream Linux software** (GNU coreutils, grep, sed,
+gawk, real curl/sqlite/duckdb/vim, …) compiled to `wasm32-wasip1` against a
+**sysroot we fully own** — a patched Rust std + libc whose gaps are filled by
+custom host-syscall imports. Treat that target as **native POSIX**;
+`wasm32-wasip1` is an implementation detail, not a feature ceiling.
+
+- **We do not depend on stock WASI / wasi-libc.** The sysroot is ours. A missing
+  libc/POSIX API (`getrlimit`/`RLIMIT_NOFILE`, `getgroups`, spawn, fd dup, …) is
+  never a blocker — implement it (real, or a sane stub) in the patched
+  std/libc/host-import layer. "WASI doesn't have X" is not a reason to stop; X is
+  ours to add.
+- **Fix portability one layer down, in the sysroot** — a new std/libc patch or a
+  new host import — not with `cfg(target_*)` branches or shims in the tool's own
+  source. A WASM-specific branch in application code usually means the fix
+  belongs in the libc layer.
+- **Patch the real upstream tool only as a fallback**, when the fix genuinely
+  cannot live in the sysroot. Patching the real tool is allowed; reimplementing
+  it is not.
+- **"NOT POSSIBLE" is reserved for genuine impossibility** after exhausting both
+  sysroot patches and tool patches — never for a missing syscall we could
+  implement. Document the specific wall if you claim it.
+- **Working in `software/`, you may (and should) fix the layer underneath.** When
+  a package behaves differently from real Linux, the root cause is usually not the
+  package — it's the runtime. It is in-scope and expected to fix the underlying
+  implementation: the Node-compat / bridge layer, the WASM execution runtime, the
+  kernel/VFS syscalls, or the patched sysroot/libc. Do **not** paper over a
+  Linux-deviating behavior in the package, its wrapper, or its test — chase it
+  down into whichever runtime layer owns it and make that layer match Linux.
+
 ## Publishing
 
 - `scripts/publish` is the source of truth for npm/crates discovery, version

@@ -145,6 +145,12 @@ impl AsyncRead for ChildStdio {
                 buf.advance(n);
                 Poll::Ready(Ok(()))
             }
+            // The child pipe fd is set non-blocking in `stdio()`, so a read with
+            // no data available returns `WouldBlock` (WASI EAGAIN) instead of
+            // pinning the single-threaded executor. Re-poll cooperatively: yield
+            // to the timeout future + submission loop, then try again. The host
+            // `_fdRead` still drives the child via `_pumpPipeProducers`, so the
+            // child keeps making progress between reads.
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                 cx.waker().wake_by_ref();
                 Poll::Pending
@@ -176,15 +182,23 @@ impl AsyncWrite for ChildStdio {
     }
 }
 
+// WASI host import: set fd flags (FDFLAGS_NONBLOCK = 0x0004). std already imports
+// this from `wasi_snapshot_preview1`; re-declaring resolves to the same import.
+#[link(wasm_import_module = "wasi_snapshot_preview1")]
+unsafe extern "C" {
+    #[link_name = "fd_fdstat_set_flags"]
+    fn __wasi_fd_fdstat_set_flags(fd: u32, flags: u16) -> u16;
+}
+
 pub(crate) fn stdio<T: Into<OwnedFd>>(io: T) -> io::Result<ChildStdio> {
     let fd = io.into();
-    let file = std::fs::File::from(fd);
-    {
-        use std::os::wasi::fs::FileExt;
-        const FDFLAGS_NONBLOCK: u16 = 1 << 2;
-        file.fdstat_set_flags(FDFLAGS_NONBLOCK)?;
+    // Mark the child pipe fd non-blocking so `poll_read`/`poll_write` get
+    // `WouldBlock` instead of blocking the only executor thread (no I/O reactor
+    // on single-threaded wasm32-wasip1). FDFLAGS_NONBLOCK = 0x0004.
+    unsafe {
+        let _ = __wasi_fd_fdstat_set_flags(fd.as_raw_fd() as u32, 0x0004);
     }
-    Ok(ChildStdio { fd: file.into() })
+    Ok(ChildStdio { fd })
 }
 
 pub(crate) fn convert_to_stdio(io: ChildStdio) -> io::Result<Stdio> {

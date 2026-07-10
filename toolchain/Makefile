@@ -1,5 +1,8 @@
 WASM_TARGET := wasm32-wasip1
 RELEASE_DIR := target/$(WASM_TARGET)/release
+WASI_C_SYSROOT := $(CURDIR)/c/sysroot
+WASI_C_CC := $(CURDIR)/c/vendor/wasi-sdk/bin/clang
+WASI_C_AR := $(CURDIR)/c/vendor/wasi-sdk/bin/llvm-ar
 
 # Standalone binary output directory (configurable)
 COMMANDS_DIR ?= $(RELEASE_DIR)/commands
@@ -24,7 +27,6 @@ COMMAND_PACKAGES := $(addprefix -p cmd-,$(COMMAND_NAMES))
 
 # Alias symlinks: link_name:target_binary
 ALIAS_SYMLINKS := \
-	egrep:grep fgrep:grep \
 	gunzip:gzip zcat:gzip \
 	bash:sh \
 	dir:ls vdir:ls \
@@ -55,29 +57,56 @@ all: wasm
 commands: wasm
 	$(MAKE) -C c programs install
 
-# Build the real wasm32-wasip1 `codex-exec` agent engine from the codex fork
-# (branch wasi-port-codex-core). The fork ships a committed, idempotent, self-prepping build script
-# (it prepares the rustup sysroot for -Z build-std and restores it on exit — no manual stash), so
-# this folds codex into the toolchain: `make -C toolchain codex` produces and installs
-# software/codex/wasm/{codex-exec,codex}. Override CODEX_REPO if the fork is not at the
-# default sibling path. See the fork's docs/wasi-build.md for the toolchain constraints, and the
-# remaining work to source the CRT from wasi-sdk so the prebuilt rust target need not be installed.
+# Build the real wasm32-wasip1 `codex-exec` agent engine and install it where
+# @agentos-software/codex-cli stages commands from.
+#
+# Two modes:
+#   - default (CODEX_REPO unset): REPRODUCIBLE build. clone-and-build-codex-wasi.sh
+#     shallow-clones the fork pinned in toolchain/codex-ref, rewrites its
+#     [patch.crates-io] to the toolchain stubs + vendored/patched tokio, and builds.
+#     No local checkout needed; deterministic from the pin.
+#   - CODEX_REPO=/path/to/codex-rs/codex-rs: DEV override. Builds that existing
+#     checkout in place via scripts/build-codex-wasi.sh (fast local iteration).
 AGENTOS_ROOT := $(abspath $(CURDIR)/..)
-CODEX_REPO ?= $(abspath $(AGENTOS_ROOT)/../codex-rs/codex-rs)
-codex:
+CODEX_REF := $(shell cat $(CURDIR)/codex-ref 2>/dev/null)
+CODEX_REPO ?=
+CODEX_WASI_SDK_DIR := $(abspath $(CURDIR)/c/vendor/wasi-sdk)
+codex: c/vendor/wasi-sdk/bin/clang
+ifeq ($(strip $(CODEX_REPO)),)
+	@echo "codex: reproducible build from pin $(CODEX_REF)"
+	@WASI_SDK_DIR="$(CODEX_WASI_SDK_DIR)" \
+		"$(CURDIR)/scripts/clone-and-build-codex-wasi.sh"
+else
 	@if [ -x "$(CODEX_REPO)/scripts/build-wasi-codex-exec.sh" ]; then \
-		AGENTOS_DIR="$(AGENTOS_ROOT)" "$(CODEX_REPO)/scripts/build-wasi-codex-exec.sh"; \
+		echo "codex: CODEX_REPO override -> building $(CODEX_REPO) in place"; \
+		CODEX_REPO="$(CODEX_REPO)" \
+		WASI_SDK_DIR="$(CODEX_WASI_SDK_DIR)" \
+		"$(CURDIR)/scripts/build-codex-wasi.sh"; \
 	else \
-		echo "codex: fork build script not found at $(CODEX_REPO)/scripts/build-wasi-codex-exec.sh — skipping."; \
-		echo "       Set CODEX_REPO=/path/to/codex-rs/codex-rs (the wasi-port-codex-core checkout) to build it."; \
+		echo "codex: CODEX_REPO=$(CODEX_REPO) has no scripts/build-wasi-codex-exec.sh"; \
+		echo "       Unset CODEX_REPO to build reproducibly from the pin instead."; \
+		exit 1; \
 	fi
+endif
 
-# Strict variant (fails if the fork is absent) for environments that require the codex artifact.
+c/vendor/wasi-sdk/bin/clang:
+	$(MAKE) -C c wasi-sdk
+
+c/sysroot/lib/wasm32-wasi/libc.a:
+	$(MAKE) -C c sysroot
+
+# Strict variant for environments that require the codex artifact. With CODEX_REPO
+# unset it builds reproducibly from the pin; with CODEX_REPO set it fails hard if
+# that checkout lacks the fork build script.
 .PHONY: codex-required
 codex-required:
-	@test -x "$(CODEX_REPO)/scripts/build-wasi-codex-exec.sh" || { \
-		echo "ERROR: codex fork build script not found at $(CODEX_REPO); set CODEX_REPO"; exit 1; }
+ifeq ($(strip $(CODEX_REPO)),)
 	@$(MAKE) codex
+else
+	@test -x "$(CODEX_REPO)/scripts/build-wasi-codex-exec.sh" || { \
+		echo "ERROR: codex fork build script not found at $(CODEX_REPO); unset CODEX_REPO to build from the pin"; exit 1; }
+	@$(MAKE) codex
+endif
 
 # Apply std patches if they exist
 patch-std:
@@ -145,10 +174,13 @@ wasm-opt-check:
 	fi
 
 # Build all standalone command binaries, optimize, strip .wasm extension, create symlinks
-wasm: vendor patch-vendor patch-std wasm-opt-check
+wasm: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std wasm-opt-check
 	# --cfg tokio_unstable lifts tokio's wasm `compile_error!` so the patched
 	# tokio process/net modules (std-patches/crates/tokio) compile on wasm32-wasip1.
 	# Needed by codex (tokio::process/net). Harmless for commands not using tokio.
+	CC_wasm32_wasip1="$(WASI_C_CC)" \
+	AR_wasm32_wasip1="$(WASI_C_AR)" \
+	CFLAGS_wasm32_wasip1="--sysroot=$(WASI_C_SYSROOT)" \
 	RUSTFLAGS="-C link-arg=-L$(WASI_SYSROOT_SELF_CONTAINED) --cfg tokio_unstable" \
 	cargo build --target $(WASM_TARGET) \
 		-Z build-std=std,panic_abort \
@@ -210,7 +242,7 @@ wasm: vendor patch-vendor patch-std wasm-opt-check
 #   codex     the codex fork build    (codex, codex-exec)
 # `just toolchain-cmd <name>` calls this. `make wasm` builds the fast
 # Rust set; `make -C c programs install` builds/installs the fast C set.
-C_COMMANDS := zip unzip envsubst sqlite3 curl wget duckdb vim http_get
+C_COMMANDS := zip unzip envsubst sqlite3 curl wget grep git duckdb vim
 
 .PHONY: cmd/%
 cmd/%:
@@ -231,16 +263,28 @@ cmd/%:
 # Build ONE command binary (cargo package cmd-$(CMD) -> $(COMMANDS_DIR)/$(CMD)).
 # Usage: make wasm-cmd CMD=sh
 .PHONY: wasm-cmd
-wasm-cmd: vendor patch-vendor patch-std wasm-opt-check
+wasm-cmd: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std wasm-opt-check
 	@test -n "$(CMD)" || { echo "ERROR: pass CMD=<name> (a dir under crates/commands/)"; exit 1; }
 	@crate_dir=$$(find ../software -path "*/native/crates/cmd-$(CMD)" -type d -print -quit); \
 	test -n "$$crate_dir" || test -d "crates/commands/$(CMD)" || { \
 		echo "ERROR: no software/*/native/crates/cmd-$(CMD) or crates/commands/$(CMD)"; exit 1; }
+	@cargo_pkg="cmd-$(CMD)"; cargo_bin="$(CMD)"; \
+	if [ "$(CMD)" = "fd" ]; then \
+		cargo_pkg="fd-find"; \
+		cargo_bin="fd"; \
+	elif [ "$(CMD)" = "rg" ]; then \
+		cargo_pkg="ripgrep"; \
+		cargo_bin="rg"; \
+	fi; \
+	CC_wasm32_wasip1="$(WASI_C_CC)" \
+	AR_wasm32_wasip1="$(WASI_C_AR)" \
+	CFLAGS_wasm32_wasip1="--sysroot=$(WASI_C_SYSROOT)" \
 	RUSTFLAGS="-C link-arg=-L$(WASI_SYSROOT_SELF_CONTAINED) --cfg tokio_unstable" \
 	cargo build --target $(WASM_TARGET) \
 		-Z build-std=std,panic_abort \
 		--release \
-		-p cmd-$(CMD)
+		-p $$cargo_pkg \
+		--bin $$cargo_bin
 	@mkdir -p $(COMMANDS_DIR)
 	@if command -v wasm-opt >/dev/null 2>&1; then \
 		wasm-opt -O3 --strip-debug --all-features "$(RELEASE_DIR)/$(CMD).wasm" -o "$(COMMANDS_DIR)/$(CMD)"; \

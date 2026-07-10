@@ -1589,7 +1589,6 @@ export const WASMVM_COMMANDS = Object.freeze([
 	"unzip",
 	"sqlite3",
 	"curl",
-	"wget",
 	"git",
 	"git-remote-http",
 	"git-remote-https",
@@ -1758,7 +1757,6 @@ export const DEFAULT_FIRST_PARTY_TIERS: Readonly<
 	tac: "read-only",
 	tsort: "read-only",
 	curl: "full",
-	wget: "full",
 	sqlite3: "read-write",
 });
 

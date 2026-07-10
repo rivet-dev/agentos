@@ -1,11 +1,9 @@
 {
 	"commands": [
-		"grep"
+		"grep",
+		"egrep",
+		"fgrep"
 	],
-	"aliases": {
-		"egrep": "grep",
-		"fgrep": "grep"
-	},
 	"registry": {
 		"title": "grep",
 		"description": "GNU grep pattern matching (grep, egrep, fgrep).",

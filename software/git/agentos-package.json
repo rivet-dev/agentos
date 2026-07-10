@@ -4,11 +4,14 @@
 	],
 	"aliases": {
 		"git-remote-http": "git",
-		"git-remote-https": "git"
+		"git-remote-https": "git",
+		"git-upload-pack": "git",
+		"git-receive-pack": "git",
+		"git-upload-archive": "git"
 	},
 	"registry": {
 		"title": "git",
-		"description": "Git version control (clone, commit, push, pull).",
+		"description": "Upstream Git version control for AgentOS VMs.",
 		"priority": 90,
 		"image": "/images/registry/git.svg",
 		"category": "developer-tools"

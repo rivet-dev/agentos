@@ -3,7 +3,7 @@
 	"version": "0.3.3",
 	"type": "module",
 	"license": "Apache-2.0",
-	"description": "GNU wget HTTP client for secure-exec VMs",
+	"description": "GNU Wget HTTP client for AgentOS VMs",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"files": [
@@ -24,10 +24,10 @@
 	},
 	"devDependencies": {
 		"@agentos-software/manifest": "workspace:*",
+		"@agentos/test-harness": "workspace:*",
 		"@rivet-dev/agentos-toolchain": "workspace:*",
 		"@types/node": "^22.10.2",
 		"typescript": "^5.9.2",
-		"@agentos/test-harness": "workspace:*",
 		"vitest": "^2.1.9"
 	}
 }

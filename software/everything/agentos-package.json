@@ -1,0 +1,8 @@
+{
+	"registry": {
+		"title": "Everything",
+		"description": "Meta-package: all available WASM command packages.",
+		"priority": 110,
+		"category": "meta"
+	}
+}

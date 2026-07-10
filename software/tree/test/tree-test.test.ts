@@ -65,8 +65,8 @@ describeIf(!wasmSkip, 'tree command behavior', () => {
     expect(result.stdout).toContain('types.ts');
     expect(result.stdout).toContain('index.ts');
     expect(result.stdout).toContain('README.md');
-    // Should show 2 directories (src, lib) and 4 files
-    expect(result.stdout).toMatch(/2 director/);
+    // Upstream tree reports the displayed root plus src/lib.
+    expect(result.stdout).toMatch(/3 director/);
     expect(result.stdout).toMatch(/4 file/);
   }, TREE_TEST_TIMEOUT_MS);
 

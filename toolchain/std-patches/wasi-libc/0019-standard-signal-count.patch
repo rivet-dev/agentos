@@ -1,0 +1,19 @@
+Advertise the standard signal range in the AgentOS WASI sysroot.
+
+The patched WASI signal surface exposes conventional non-realtime signal names
+through SIGSYS (31) and keeps realtime signal APIs hidden. Report _NSIG as 32 so
+portable gnulib-generated headers do not reject the sysroot as a realtime-signal
+platform.
+
+diff --git a/libc-top-half/musl/arch/wasm32/bits/signal.h b/libc-top-half/musl/arch/wasm32/bits/signal.h
+index 478e1c8..7501d99 100644
+--- a/libc-top-half/musl/arch/wasm32/bits/signal.h
++++ b/libc-top-half/musl/arch/wasm32/bits/signal.h
+@@ -35,6 +35,6 @@
+ #define SIGSYS    31
+ #define SIGUNUSED SIGSYS
+ 
+-#define _NSIG 65
++#define _NSIG 32
+ 
+ #endif

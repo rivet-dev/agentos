@@ -1,0 +1,13 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -119,7 +119,7 @@ By default, ripgrep will respect your .gitignore and automatically skip hidden
+ files/directories and binary files.
+ """
+ 
+ [features]
+-pcre2 = ["grep/pcre2"]
++pcre2 = []
+
+ [[bin]]
+ name = "rg"
+ path = "crates/core/main.rs"

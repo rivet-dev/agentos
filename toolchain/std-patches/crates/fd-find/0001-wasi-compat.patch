@@ -1,0 +1,107 @@
+--- a/src/filesystem.rs
++++ b/src/filesystem.rs
+@@ -64,7 +64,7 @@ pub fn is_block_device(ft: fs::FileType) -> bool {
+     ft.is_block_device()
+ }
+ 
+-#[cfg(windows)]
++#[cfg(any(windows, target_os = "wasi"))]
+ pub fn is_block_device(_: fs::FileType) -> bool {
+     false
+ }
+@@ -74,7 +74,7 @@ pub fn is_char_device(ft: fs::FileType) -> bool {
+     ft.is_char_device()
+ }
+ 
+-#[cfg(windows)]
++#[cfg(any(windows, target_os = "wasi"))]
+ pub fn is_char_device(_: fs::FileType) -> bool {
+     false
+ }
+@@ -84,7 +84,7 @@ pub fn is_socket(ft: fs::FileType) -> bool {
+     ft.is_socket()
+ }
+ 
+-#[cfg(windows)]
++#[cfg(any(windows, target_os = "wasi"))]
+ pub fn is_socket(_: fs::FileType) -> bool {
+     false
+ }
+@@ -94,13 +94,16 @@ pub fn is_pipe(ft: fs::FileType) -> bool {
+     ft.is_fifo()
+ }
+ 
+-#[cfg(windows)]
++#[cfg(any(windows, target_os = "wasi"))]
+ pub fn is_pipe(_: fs::FileType) -> bool {
+     false
+ }
+ 
+-#[cfg(any(unix, target_os = "redox"))]
++#[cfg(any(unix, target_os = "redox", target_os = "wasi"))]
+ pub fn osstr_to_bytes(input: &OsStr) -> Cow<'_, [u8]> {
++    #[cfg(target_os = "wasi")]
++    use std::os::wasi::ffi::OsStrExt;
++    #[cfg(not(target_os = "wasi"))]
+     use std::os::unix::ffi::OsStrExt;
+     Cow::Borrowed(input.as_bytes())
+ }
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -257,6 +257,9 @@ fn config(mut opts: Opts) -> Result<Config> {
+             || opts.no_global_ignore_file),
+         follow_links: opts.follow,
++        #[cfg(any(unix, windows))]
+         one_file_system: opts.one_file_system,
++        #[cfg(not(any(unix, windows)))]
++        one_file_system: false,
+         null_separator: opts.null_separator,
+         quiet: opts.quiet,
+         max_depth: opts.max_depth(),
+--- a/src/walk.rs
++++ b/src/walk.rs
+@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
+ 
+ use anyhow::{Result, anyhow};
+ use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, bounded};
++#[cfg(target_os = "wasi")]
++use crossbeam_channel::unbounded;
+ use etcetera::BaseStrategy;
+ use ignore::overrides::{Override, OverrideBuilder};
+ use ignore::{WalkBuilder, WalkParallel, WalkState};
+@@ -656,17 +658,27 @@ impl WorkerState {
+             .unwrap();
+         }
+ 
+-        let (tx, rx) = bounded(2 * config.threads);
++        #[cfg(target_os = "wasi")]
++        let exit_code = {
++            let (tx, rx) = unbounded();
++            self.spawn_senders(walker, tx);
++            self.receive(rx)
++        };
+ 
+-        let exit_code = thread::scope(|scope| {
+-            // Spawn the receiver thread(s)
+-            let receiver = scope.spawn(|| self.receive(rx));
++        #[cfg(not(target_os = "wasi"))]
++        let exit_code = {
++            let (tx, rx) = bounded(2 * config.threads);
+ 
+-            // Spawn the sender threads.
+-            self.spawn_senders(walker, tx);
++            thread::scope(|scope| {
++                // Spawn the receiver thread(s)
++                let receiver = scope.spawn(|| self.receive(rx));
+ 
+-            receiver.join().unwrap()
+-        });
++                // Spawn the sender threads.
++                self.spawn_senders(walker, tx);
++
++                receiver.join().unwrap()
++            })
++        };
+ 
+         if self.interrupt_flag.load(Ordering::Relaxed) {
+             Ok(ExitCode::KilledBySigint)

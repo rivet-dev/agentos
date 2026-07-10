@@ -68,14 +68,14 @@ COMMANDS_DIR ?= ../target/wasm32-wasip1/release/commands
 
 # Fast real commands installed by the default software gate. Slow/heavy commands
 # (duckdb, vim) remain available through explicit parent `make cmd/<name>`.
-COMMANDS := zip unzip envsubst sqlite3 curl http_get
+COMMANDS := zip unzip envsubst sqlite3 curl wget grep git tree
 
 # Programs requiring patched sysroot (Tier 2+ custom host imports)
-PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler http_get dns_lookup sqlite3_cli curl wget fs_probe
+PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test closefrom_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler dns_lookup sqlite3 curl wget grep tree zip unzip fs_probe
 
 # Discover all package command and test-program C source files.
 ALL_SOURCES := $(foreach dir,$(C_SOURCE_DIRS),$(wildcard $(dir)/*.c))
-SKIPPED_BULK_PROGRAMS := wget
+SKIPPED_BULK_PROGRAMS :=
 
 # Exclude patched-sysroot programs when only vanilla sysroot is available
 ifeq ($(wildcard $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a),)
@@ -89,7 +89,7 @@ endif
 ifeq ($(wildcard $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a),)
   CUSTOM_WASM_PROG_NAMES :=
 else
-  CUSTOM_WASM_PROG_NAMES := curl
+  CUSTOM_WASM_PROG_NAMES := curl wget grep sqlite3 tree zip unzip
 endif
 
 WASM_PROG_NAMES := $(sort $(basename $(notdir $(SOURCES))) $(CUSTOM_WASM_PROG_NAMES))
@@ -136,7 +136,6 @@ $(WASI_SDK_DIR)/bin/clang:
 # All downloads cached in libs/ — add libs/ to .gitignore.
 
 SQLITE3_URL := https://www.sqlite.org/2024/sqlite-amalgamation-3470200.zip
-ZLIB_URL    := https://github.com/madler/zlib/archive/refs/tags/v1.3.1.zip
 CJSON_URL   := https://github.com/DaveGamble/cJSON/archive/refs/tags/v1.7.18.zip
 CURL_COMMIT := main
 CURL_FORK_REPO_PREFIX := secure
@@ -151,7 +150,29 @@ CURL_RELEASE_URL := https://github.com/curl/curl/releases/download/curl-$(CURL_R
 CURL_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/curl-upstream
 CURL_UPSTREAM_OVERLAY_DIR := ../../software/curl/native/c/overlay
 CURL_UPSTREAM_OVERLAY_FILES := $(wildcard $(CURL_UPSTREAM_OVERLAY_DIR)/lib/*.c $(CURL_UPSTREAM_OVERLAY_DIR)/lib/*.h $(CURL_UPSTREAM_OVERLAY_DIR)/lib/vtls/*.c $(CURL_UPSTREAM_OVERLAY_DIR)/lib/vtls/*.h)
-MINIZIP_URL := https://github.com/madler/zlib/archive/refs/tags/v1.3.1.zip
+ZLIB_VERSION := 1.3.1
+ZLIB_URL := https://zlib.net/zlib-$(ZLIB_VERSION).tar.gz
+ZLIB_BUILD_DIR := $(BUILD_DIR)/zlib
+WGET_VERSION := 1.24.5
+WGET_URL := https://ftp.gnu.org/gnu/wget/wget-$(WGET_VERSION).tar.gz
+WGET_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/wget-upstream
+WGET_UPSTREAM_OVERLAY_INCLUDE_DIR := overlays/wget/include
+WGET_UPSTREAM_OVERLAY_FILES := $(wildcard $(WGET_UPSTREAM_OVERLAY_INCLUDE_DIR)/*.h)
+GIT_VERSION := 2.55.0
+GIT_URL := https://www.kernel.org/pub/software/scm/git/git-$(GIT_VERSION).tar.xz
+GIT_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/git-upstream
+GIT_PATCH_DIR := patches/git
+GREP_VERSION := 3.12
+GREP_URL := https://ftp.gnu.org/gnu/grep/grep-$(GREP_VERSION).tar.xz
+GREP_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/grep-upstream
+INFOZIP_ZIP_VERSION := 30
+INFOZIP_ZIP_URL := https://downloads.sourceforge.net/infozip/zip$(INFOZIP_ZIP_VERSION).tar.gz
+INFOZIP_ZIP_BUILD_DIR := $(BUILD_DIR)/infozip-zip-upstream
+INFOZIP_UNZIP_VERSION := 60
+INFOZIP_UNZIP_URL := https://downloads.sourceforge.net/infozip/unzip$(INFOZIP_UNZIP_VERSION).tar.gz
+INFOZIP_UNZIP_BUILD_DIR := $(BUILD_DIR)/infozip-unzip-upstream
+TREE_VERSION := 2.3.2
+TREE_URL := https://gitlab.com/OldManProgrammer/unix-tree/-/archive/$(TREE_VERSION)/unix-tree-$(TREE_VERSION).tar.gz
 # duckdb-wasm currently documents DuckDB v1.5.0 in its README. We build the
 # matching upstream DuckDB tag ourselves with our patched WASI/POSIX sysroot.
 DUCKDB_VERSION := v1.5.0
@@ -161,32 +182,30 @@ DUCKDB_URL := https://github.com/duckdb/duckdb/archive/refs/tags/$(DUCKDB_VERSIO
 LIBS_DIR    := libs
 LIBS_CACHE  := .cache/libs
 
-libs/sqlite3/sqlite3.c:
+TREE_SOURCES := color.c file.c filter.c hash.c html.c info.c json.c list.c tree.c unix.c util.c xml.c strverscmp.c
+TREE_FILES := $(addprefix $(LIBS_DIR)/tree/,$(TREE_SOURCES) tree.h)
+TREE_WASM_FLAGS := -DLARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
+
+libs/sqlite3/sqlite3.c libs/sqlite3/sqlite3.h libs/sqlite3/shell.c:
 	@echo "Fetching sqlite3..."
 	@mkdir -p $(LIBS_CACHE) $(LIBS_DIR)/sqlite3
 	@curl -fSL "$(SQLITE3_URL)" -o "$(LIBS_CACHE)/sqlite3.zip"
 	@cd $(LIBS_CACHE) && unzip -qo sqlite3.zip
-	@cp $(LIBS_CACHE)/sqlite-amalgamation-*/sqlite3.c $(LIBS_CACHE)/sqlite-amalgamation-*/sqlite3.h $(LIBS_DIR)/sqlite3/
+	@cp $(LIBS_CACHE)/sqlite-amalgamation-*/sqlite3.c \
+	    $(LIBS_CACHE)/sqlite-amalgamation-*/sqlite3.h \
+	    $(LIBS_CACHE)/sqlite-amalgamation-*/shell.c \
+	    $(LIBS_DIR)/sqlite3/
 
-libs/zlib/zutil.c:
-	@echo "Fetching zlib..."
-	@mkdir -p $(LIBS_CACHE) $(LIBS_DIR)/zlib
-	@curl -fSL "$(ZLIB_URL)" -o "$(LIBS_CACHE)/zlib.zip"
-	@cd $(LIBS_CACHE) && unzip -qo zlib.zip
-	@cp $(LIBS_CACHE)/zlib-*/*.c $(LIBS_CACHE)/zlib-*/*.h $(LIBS_DIR)/zlib/
+$(TREE_FILES): $(LIBS_DIR)/tree/.fetched
 
-libs/minizip/ioapi.c:
-	@echo "Fetching minizip (from zlib contrib)..."
-	@mkdir -p $(LIBS_CACHE) $(LIBS_DIR)/minizip
-	@if [ ! -f "$(LIBS_CACHE)/zlib.zip" ]; then \
-		curl -fSL "$(MINIZIP_URL)" -o "$(LIBS_CACHE)/zlib.zip"; \
-		cd $(LIBS_CACHE) && unzip -qo zlib.zip; \
-	fi
-	@cp $(LIBS_CACHE)/zlib-*/contrib/minizip/ioapi.c $(LIBS_CACHE)/zlib-*/contrib/minizip/ioapi.h \
-	    $(LIBS_CACHE)/zlib-*/contrib/minizip/zip.c $(LIBS_CACHE)/zlib-*/contrib/minizip/zip.h \
-	    $(LIBS_CACHE)/zlib-*/contrib/minizip/unzip.c $(LIBS_CACHE)/zlib-*/contrib/minizip/unzip.h \
-	    $(LIBS_CACHE)/zlib-*/contrib/minizip/crypt.h \
-	    $(LIBS_DIR)/minizip/
+$(LIBS_DIR)/tree/.fetched:
+	@echo "Fetching upstream tree $(TREE_VERSION)..."
+	@mkdir -p $(LIBS_CACHE) $(LIBS_DIR)/tree
+	@curl -fSL "$(TREE_URL)" -o "$(LIBS_CACHE)/tree-$(TREE_VERSION).tar.gz"
+	@rm -rf "$(LIBS_CACHE)/unix-tree-$(TREE_VERSION)"
+	@tar -xzf "$(LIBS_CACHE)/tree-$(TREE_VERSION).tar.gz" -C "$(LIBS_CACHE)"
+	@cp $(addprefix $(LIBS_CACHE)/unix-tree-$(TREE_VERSION)/,$(TREE_SOURCES) tree.h) $(LIBS_DIR)/tree/
+	@touch $@
 
 libs/cjson/cJSON.c:
 	@echo "Fetching cJSON..."
@@ -212,8 +231,8 @@ libs/duckdb/CMakeLists.txt:
 	@tar -xzf "$(LIBS_CACHE)/duckdb.tar.gz" --strip-components=1 -C $(LIBS_DIR)/duckdb
 
 .PHONY: fetch-libs fetch-fast-libs clean-libs
-fetch-libs: libs/sqlite3/sqlite3.c libs/zlib/zutil.c libs/minizip/ioapi.c libs/cjson/cJSON.c libs/curl/lib/easy.c libs/duckdb/CMakeLists.txt
-fetch-fast-libs: libs/sqlite3/sqlite3.c libs/zlib/zutil.c libs/minizip/ioapi.c libs/cjson/cJSON.c libs/curl/lib/easy.c
+fetch-libs: libs/sqlite3/sqlite3.c libs/cjson/cJSON.c libs/curl/lib/easy.c libs/duckdb/CMakeLists.txt
+fetch-fast-libs: libs/sqlite3/sqlite3.c libs/cjson/cJSON.c libs/curl/lib/easy.c
 
 clean-libs:
 	rm -rf $(LIBS_DIR) $(LIBS_CACHE)
@@ -474,6 +493,11 @@ SQLITE_COMMON  := -DSQLITE_OMIT_WAL -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_THREAD
                   -DSQLITE_OMIT_LOCALTIME
 SQLITE_WASM    := -DSQLITE_OS_OTHER $(SQLITE_COMMON) -lwasi-emulated-signal -lwasi-emulated-mman
 SQLITE_NATIVE  := $(SQLITE_COMMON)
+SQLITE_SHELL_COMMON := -DSQLITE_OMIT_WAL -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_THREADSAFE=0 \
+                       -DSQLITE_OMIT_LOCALTIME -DSQLITE_NOHAVE_SYSTEM -DHAVE_READLINE=0
+SQLITE_SHELL_WASM := $(SQLITE_SHELL_COMMON) -D_WASI_EMULATED_PROCESS_CLOCKS \
+                     -lwasi-emulated-signal -lwasi-emulated-mman -lwasi-emulated-process-clocks
+SQLITE_SHELL_NATIVE := $(SQLITE_SHELL_COMMON)
 
 $(BUILD_DIR)/sqlite3_mem: $(call c_source,sqlite3_mem) libs/sqlite3/sqlite3.c $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
@@ -486,58 +510,94 @@ $(NATIVE_DIR)/sqlite3_mem: $(call c_source,sqlite3_mem) libs/sqlite3/sqlite3.c
 	$(NATIVE_CC) $(NATIVE_CFLAGS) $(SQLITE_NATIVE) -Ilibs/sqlite3 -o $@ \
 	    $(call c_source,sqlite3_mem) libs/sqlite3/sqlite3.c -lm -lpthread
 
-# sqlite3_cli: full CLI, links SQLite amalgamation (installed as sqlite3)
+# sqlite3: full official CLI, links SQLite amalgamation.
 # Uses -Os (not -O2) + no wasm-opt — higher optimization breaks SQLite's
 # internal function pointer tables in WASM indirect call table.
 # Uses --initial-memory=16777216 (16MB) for SQLite's malloc requirements.
-$(BUILD_DIR)/sqlite3_cli: $(call c_source,sqlite3_cli) libs/sqlite3/sqlite3.c $(WASI_SDK_DIR)/bin/clang
+$(BUILD_DIR)/sqlite3: libs/sqlite3/shell.c libs/sqlite3/sqlite3.c $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
 	$(CC) --target=wasm32-wasip1 --sysroot=$(SYSROOT) -Os -I include/ \
-	    $(SQLITE_WASM) -Ilibs/sqlite3 -Wl,--initial-memory=16777216 \
-	    -o $@ $(call c_source,sqlite3_cli) libs/sqlite3/sqlite3.c
+	    $(SQLITE_SHELL_WASM) -Ilibs/sqlite3 -Wl,--initial-memory=16777216 \
+	    -o $@ libs/sqlite3/shell.c libs/sqlite3/sqlite3.c
 
-$(NATIVE_DIR)/sqlite3_cli: $(call c_source,sqlite3_cli) libs/sqlite3/sqlite3.c
+$(BUILD_DIR)/sqlite3_cli: $(BUILD_DIR)/sqlite3
+	cp $< $@
+
+$(NATIVE_DIR)/sqlite3: libs/sqlite3/shell.c libs/sqlite3/sqlite3.c
 	@mkdir -p $(NATIVE_DIR)
-	$(NATIVE_CC) $(NATIVE_CFLAGS) $(SQLITE_NATIVE) -Ilibs/sqlite3 -o $@ \
-	    $(call c_source,sqlite3_cli) libs/sqlite3/sqlite3.c -lm -lpthread
+	$(NATIVE_CC) $(NATIVE_CFLAGS) $(SQLITE_SHELL_NATIVE) -Ilibs/sqlite3 -o $@ \
+	    libs/sqlite3/shell.c libs/sqlite3/sqlite3.c -lm -lpthread
 
-# zip: links zlib + minizip
-ZLIB_SRCS   := libs/zlib/adler32.c libs/zlib/compress.c libs/zlib/crc32.c libs/zlib/deflate.c \
-               libs/zlib/infback.c libs/zlib/inffast.c libs/zlib/inflate.c libs/zlib/inftrees.c \
-               libs/zlib/trees.c libs/zlib/uncompr.c libs/zlib/zutil.c
-MINIZIP_SRCS := libs/minizip/ioapi.c libs/minizip/zip.c
-ZIP_INCLUDES := -Ilibs/zlib -Ilibs/minizip
+$(LIBS_CACHE)/zlib-$(ZLIB_VERSION)/zlib.h:
+	@echo "Fetching zlib $(ZLIB_VERSION)..."
+	@mkdir -p $(LIBS_CACHE)
+	@curl -fSL "$(ZLIB_URL)" -o "$(LIBS_CACHE)/zlib-$(ZLIB_VERSION).tar.gz"
+	@rm -rf "$(LIBS_CACHE)/zlib-$(ZLIB_VERSION)"
+	@tar -xzf "$(LIBS_CACHE)/zlib-$(ZLIB_VERSION).tar.gz" -C "$(LIBS_CACHE)"
 
-$(BUILD_DIR)/zip: $(call c_source,zip) $(ZLIB_SRCS) $(MINIZIP_SRCS) $(WASI_SDK_DIR)/bin/clang
+$(ZLIB_BUILD_DIR)/libz.a: $(LIBS_CACHE)/zlib-$(ZLIB_VERSION)/zlib.h $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+	@mkdir -p $(ZLIB_BUILD_DIR)
+	@for src in adler32.c crc32.c deflate.c infback.c inffast.c inflate.c inftrees.c trees.c zutil.c compress.c uncompr.c gzclose.c gzlib.c gzread.c gzwrite.c; do \
+		$(CC) --target=wasm32-wasip1 --sysroot=$(SYSROOT) -O2 -DHAVE_UNISTD_H \
+			-I$(LIBS_CACHE)/zlib-$(ZLIB_VERSION) \
+			-c "$(LIBS_CACHE)/zlib-$(ZLIB_VERSION)/$$src" \
+			-o "$(ZLIB_BUILD_DIR)/$${src%.c}.o"; \
+	done
+	$(WASI_SDK_DIR)/bin/llvm-ar rcs $@ $(ZLIB_BUILD_DIR)/*.o
+
+$(NATIVE_DIR)/sqlite3_cli: $(NATIVE_DIR)/sqlite3
+	cp $< $@
+
+# tree: upstream Steve Baker tree compiled from pinned C source.
+$(BUILD_DIR)/tree: $(TREE_FILES) $(WASI_SDK_DIR)/bin/clang $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(WASM_CFLAGS) $(ZIP_INCLUDES) -o $@.wasm $(call c_source,zip) $(ZLIB_SRCS) $(MINIZIP_SRCS)
-	@if [ "$(HAS_WASM_OPT)" = "1" ]; then \
-		wasm-opt -O3 --strip-debug $@.wasm -o $@; \
-	else \
-		cp $@.wasm $@; \
-	fi
-	@rm -f $@.wasm
+	$(CC) --target=wasm32-wasip1 --sysroot=$(SYSROOT) -O2 -I include/ \
+	    $(TREE_WASM_FLAGS) -I$(LIBS_DIR)/tree -o $@ \
+	    $(addprefix $(LIBS_DIR)/tree/,$(TREE_SOURCES))
 
-$(NATIVE_DIR)/zip: $(call c_source,zip) $(ZLIB_SRCS) $(MINIZIP_SRCS)
+$(NATIVE_DIR)/tree: $(TREE_FILES)
 	@mkdir -p $(NATIVE_DIR)
-	$(NATIVE_CC) $(NATIVE_CFLAGS) $(ZIP_INCLUDES) -o $@ $(call c_source,zip) $(ZLIB_SRCS) $(MINIZIP_SRCS)
+	$(NATIVE_CC) $(NATIVE_CFLAGS) $(TREE_WASM_FLAGS) -I$(LIBS_DIR)/tree -o $@ \
+	    $(addprefix $(LIBS_DIR)/tree/,$(TREE_SOURCES))
 
-# unzip: links zlib + minizip (unzip side)
-MINIZIP_UNZIP_SRCS := libs/minizip/ioapi.c libs/minizip/unzip.c
-
-$(BUILD_DIR)/unzip: $(call c_source,unzip) $(ZLIB_SRCS) $(MINIZIP_UNZIP_SRCS) $(WASI_SDK_DIR)/bin/clang
+# zip/unzip: upstream Info-ZIP releases built against the patched C sysroot.
+$(BUILD_DIR)/zip: scripts/build-infozip-upstream.sh $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(WASM_CFLAGS) $(ZIP_INCLUDES) -o $@.wasm $(call c_source,unzip) $(ZLIB_SRCS) $(MINIZIP_UNZIP_SRCS)
-	@if [ "$(HAS_WASM_OPT)" = "1" ]; then \
-		wasm-opt -O3 --strip-debug $@.wasm -o $@; \
-	else \
-		cp $@.wasm $@; \
-	fi
-	@rm -f $@.wasm
+	bash scripts/build-infozip-upstream.sh \
+		--tool zip \
+		--version "$(INFOZIP_ZIP_VERSION)" \
+		--url "$(INFOZIP_ZIP_URL)" \
+		--cache-dir "$(abspath $(LIBS_CACHE))" \
+		--build-dir "$(abspath $(INFOZIP_ZIP_BUILD_DIR))" \
+		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
+		--output "$(abspath $@)"
 
-$(NATIVE_DIR)/unzip: $(call c_source,unzip) $(ZLIB_SRCS) $(MINIZIP_UNZIP_SRCS)
-	@mkdir -p $(NATIVE_DIR)
-	$(NATIVE_CC) $(NATIVE_CFLAGS) $(ZIP_INCLUDES) -o $@ $(call c_source,unzip) $(ZLIB_SRCS) $(MINIZIP_UNZIP_SRCS)
+$(BUILD_DIR)/unzip: scripts/build-infozip-upstream.sh $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+	@mkdir -p $(BUILD_DIR)
+	bash scripts/build-infozip-upstream.sh \
+		--tool unzip \
+		--version "$(INFOZIP_UNZIP_VERSION)" \
+		--url "$(INFOZIP_UNZIP_URL)" \
+		--cache-dir "$(abspath $(LIBS_CACHE))" \
+		--build-dir "$(abspath $(INFOZIP_UNZIP_BUILD_DIR))" \
+		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
+		--output "$(abspath $@)"
+
+$(BUILD_DIR)/git: scripts/build-git-upstream.sh $(ZLIB_BUILD_DIR)/libz.a $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+	@mkdir -p $(BUILD_DIR)
+	bash scripts/build-git-upstream.sh \
+		--version "$(GIT_VERSION)" \
+		--url "$(GIT_URL)" \
+		--cache-dir "$(abspath $(LIBS_CACHE))" \
+		--build-dir "$(abspath $(GIT_UPSTREAM_BUILD_DIR))" \
+		--patch-dir "$(abspath $(GIT_PATCH_DIR))" \
+		--zlib-dir "$(abspath $(LIBS_CACHE)/zlib-$(ZLIB_VERSION))" \
+		--zlib-build-dir "$(abspath $(ZLIB_BUILD_DIR))" \
+		--cc "$(abspath $(CC))" \
+		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
+		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
+		--sysroot "$(abspath $(SYSROOT))" \
+		--output "$(abspath $@)"
 
 # curl_test: links libcurl (HTTP/HTTPS build for WASM via host_net + host_tls)
 CURL_SRCS := $(wildcard libs/curl/lib/*.c) $(wildcard libs/curl/lib/vauth/*.c) \
@@ -546,7 +606,7 @@ CURL_SRCS := $(wildcard libs/curl/lib/*.c) $(wildcard libs/curl/lib/vauth/*.c) \
 CURL_INCLUDES := -Ilibs/curl/include -Ilibs/curl/lib -include libs/curl/lib/curl_setup.h -include libs/curl/lib/curl_printf.h
 CURL_LIB_DEFS := -DHAVE_CONFIG_H -DBUILDING_LIBCURL -D_WASI_EMULATED_SIGNAL -DHAVE_BASENAME -DHAVE_LIBGEN_H
 
-$(BUILD_DIR)/curl: scripts/build-curl-upstream.sh $(CURL_UPSTREAM_OVERLAY_FILES) $(WASI_SDK_DIR)/bin/clang
+$(BUILD_DIR)/curl: scripts/build-curl-upstream.sh $(CURL_UPSTREAM_OVERLAY_FILES) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
 	bash scripts/build-curl-upstream.sh \
 		--version "$(CURL_RELEASE_VERSION)" \
@@ -560,22 +620,30 @@ $(BUILD_DIR)/curl: scripts/build-curl-upstream.sh $(CURL_UPSTREAM_OVERLAY_FILES)
 		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
 		--output "$(abspath $@)"
 
-# wget: minimal wget built on libcurl
-$(BUILD_DIR)/wget: $(call c_source,wget) $(CURL_SRCS) $(WASI_SDK_DIR)/bin/clang
+$(BUILD_DIR)/wget: scripts/build-wget-upstream.sh $(WGET_UPSTREAM_OVERLAY_FILES) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(WASM_CFLAGS) $(CURL_LIB_DEFS) $(CURL_INCLUDES) \
-	    -lwasi-emulated-signal \
-	    -o $@.wasm $(call c_source,wget) $(CURL_SRCS)
-	@if [ "$(HAS_WASM_OPT)" = "1" ]; then \
-		wasm-opt -O3 --strip-debug --all-features $@.wasm -o $@; \
-	else \
-		cp $@.wasm $@; \
-	fi
-	@rm -f $@.wasm
+	bash scripts/build-wget-upstream.sh \
+		--version "$(WGET_VERSION)" \
+		--url "$(WGET_URL)" \
+		--cache-dir "$(abspath $(LIBS_CACHE))" \
+		--build-dir "$(abspath $(WGET_UPSTREAM_BUILD_DIR))" \
+		--overlay-include-dir "$(abspath $(WGET_UPSTREAM_OVERLAY_INCLUDE_DIR))" \
+		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
+		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
+		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
+		--output "$(abspath $@)"
 
-$(NATIVE_DIR)/wget: $(call c_source,wget)
-	@mkdir -p $(NATIVE_DIR)
-	$(NATIVE_CC) $(NATIVE_CFLAGS) -o $@ $(call c_source,wget) -lcurl
+$(BUILD_DIR)/grep: scripts/build-grep-upstream.sh $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+	@mkdir -p $(BUILD_DIR)
+	bash scripts/build-grep-upstream.sh \
+		--version "$(GREP_VERSION)" \
+		--url "$(GREP_URL)" \
+		--cache-dir "$(abspath $(LIBS_CACHE))" \
+		--build-dir "$(abspath $(GREP_UPSTREAM_BUILD_DIR))" \
+		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
+		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
+		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
+		--output "$(abspath $@)"
 
 # duckdb: upstream DuckDB CLI built from source with our patched WASI/POSIX sysroot
 $(BUILD_DIR)/duckdb: libs/duckdb/CMakeLists.txt $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang $(WASI_SDK_DIR)/bin/clang++ cmake/FindThreads.cmake scripts/build-duckdb.sh include/fcntl.h include/ifaddrs.h include/net/if.h include/sys/ioctl.h
@@ -619,9 +687,6 @@ install:
 	@INSTALLED=0; \
 	for cmd in $(COMMANDS); do \
 		src="$$cmd"; \
-		case "$$cmd" in \
-			sqlite3) src="sqlite3_cli" ;; \
-		esac; \
 		if [ -f "$(BUILD_DIR)/$$src" ]; then \
 			cp "$(BUILD_DIR)/$$src" "$(COMMANDS_DIR)/$$cmd"; \
 			INSTALLED=$$((INSTALLED + 1)); \
@@ -630,10 +695,11 @@ install:
 		fi; \
 	done; \
 	echo "Installed $$INSTALLED C command(s) to $(COMMANDS_DIR)"
-	@# Create symlinks for git remote helpers
+	@# Create symlinks for Git helper entry points used by upstream Git.
 	@if [ -f "$(COMMANDS_DIR)/git" ]; then \
-		ln -sf git "$(COMMANDS_DIR)/git-remote-http"; \
-		ln -sf git "$(COMMANDS_DIR)/git-remote-https"; \
+		for alias in git-remote-http git-remote-https git-upload-pack git-receive-pack git-upload-archive; do \
+			ln -sf git "$(COMMANDS_DIR)/$$alias"; \
+		done; \
 	fi
 
 # --- Clean ---
@@ -644,8 +710,8 @@ clean:
 # --- vim: real vim 9.2 -> wasm32-wasip1 against the full-OS libc ---
 #
 # vim compiles as a normal terminal program against the PATCHED sysroot plus a
-# small bridge library (vim/): termios via host_tty (raw-mode + winsize),
-# a termcap stub (builtin termcaps), and POSIX stubs the full-OS libc lacks.
+# small bridge library (vim/): a termcap stub (builtin termcaps), and POSIX
+# stubs the full-OS libc still lacks. Termios/process spawning live in sysroot.
 # Recipe recovered from the original hand build (see vim/ headers). The result
 # lands in $(BUILD_DIR)/vim; `make -C .. cmd/vim` installs it into the shared
 # commands dir. NOTE: run as `vim -n <file>` docs-wise is no longer needed —
@@ -654,7 +720,7 @@ VIM_VERSION ?= v9.2.0780
 VIM_SRC := libs/vim
 VIM_BRIDGE_SRC := ../../software/vim/native/c/vim-bridge
 VIM_BRIDGE_BUILD := $(BUILD_DIR)/vim-bridge
-VIM_BRIDGE_OBJS := $(VIM_BRIDGE_BUILD)/termios_bridge.o $(VIM_BRIDGE_BUILD)/termcap_stub.o $(VIM_BRIDGE_BUILD)/posix_stubs.o
+VIM_BRIDGE_OBJS := $(VIM_BRIDGE_BUILD)/termcap_stub.o $(VIM_BRIDGE_BUILD)/posix_stubs.o
 VIM_WCC := $(VIM_BRIDGE_BUILD)/wcc
 
 .PHONY: fetch-vim
@@ -667,6 +733,7 @@ $(VIM_BRIDGE_BUILD)/%.o: $(VIM_BRIDGE_SRC)/%.c $(WASI_SDK_DIR)/bin/clang sysroot
 	$(CC) --target=wasm32-wasip1 --sysroot=$(PATCHED_SYSROOT) -O2 -I $(VIM_BRIDGE_SRC) -c -o $@ $<
 
 $(VIM_BRIDGE_BUILD)/libtermcap.a: $(VIM_BRIDGE_OBJS)
+	rm -f $@
 	$(WASI_SDK_DIR)/bin/llvm-ar rcs $@ $(VIM_BRIDGE_OBJS)
 
 # Wrapper compiler: every vim TU gets the sysroot, the bridge headers, and the
@@ -681,22 +748,25 @@ $(VIM_WCC): $(WASI_SDK_DIR)/bin/clang
 	@chmod +x $@
 
 $(BUILD_DIR)/vim: fetch-vim $(VIM_BRIDGE_BUILD)/libtermcap.a $(VIM_WCC) wasm-opt-check
+	rm -f $(VIM_SRC)/src/auto/config.cache
 	cd $(VIM_SRC)/src && \
-	CC="$(abspath $(VIM_WCC))" \
-	LDFLAGS="$(abspath $(VIM_BRIDGE_BUILD)/termios_bridge.o) -L$(abspath $(VIM_BRIDGE_BUILD))" \
+CC="$(abspath $(VIM_WCC))" \
+LDFLAGS="-L$(abspath $(VIM_BRIDGE_BUILD))" \
 	vim_cv_toupper_broken=no \
 	vim_cv_terminfo=no \
 	vim_cv_tgetent=zero \
 	vim_cv_getcwd_broken=no \
 	vim_cv_stat_ignores_slash=no \
 	vim_cv_memmove_handles_overlap=yes \
-	vim_cv_bcopy_handles_overlap=yes \
-	vim_cv_memcpy_handles_overlap=yes \
-	vim_cv_tty_group=world \
-	vim_cv_tty_mode=0620 \
-	./configure --host=wasm32-wasip1 --build=$$(cc -dumpmachine 2>/dev/null || echo x86_64-pc-linux-gnu) \
+vim_cv_bcopy_handles_overlap=yes \
+vim_cv_memcpy_handles_overlap=yes \
+vim_cv_tty_group=world \
+vim_cv_tty_mode=0620 \
+ac_cv_header_dlfcn_h=no \
+./configure --host=wasm32-wasip1 --build=$$(cc -dumpmachine 2>/dev/null || echo x86_64-pc-linux-gnu) \
 		--with-features=normal --with-tlib=termcap \
 		--disable-gui --without-x --disable-nls --disable-channel \
+		--without-wayland \
 		--disable-netbeans --disable-selinux --disable-gpm --disable-sysmouse \
 		--disable-icon-cache-update --disable-desktop-database-update
 	$(MAKE) -C $(VIM_SRC)/src vim

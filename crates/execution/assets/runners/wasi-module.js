@@ -1393,11 +1393,18 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
               return this._measureWasiPhase("writeResultPtr", () => this._writeUint32(nwrittenPtr, written));
             }
           }
+          const entry = this._descriptorEntry(descriptor);
+          const localHostPassthrough =
+            handle.kind === "host-passthrough" &&
+            entry?.kind === "file" &&
+            entry.realFd === handle.targetFd;
           const position = handle.append
             ? this._measureWasiPhase("appendFstat", () =>
                 Number(__agentOSFs().fstatSync(handle.targetFd).size ?? 0)
               )
-            : null;
+            : localHostPassthrough
+              ? (entry.offset ?? 0)
+              : null;
           const written = this._measureWasiPhase("writeSync", () =>
             __agentOSFs().writeSync(
               handle.targetFd,
@@ -1407,6 +1414,15 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
               position,
             )
           );
+          if (localHostPassthrough) {
+            if (handle.append) {
+              entry.offset = this._measureWasiPhase("appendFstat", () =>
+                Number(__agentOSFs().fstatSync(handle.targetFd).size ?? 0)
+              );
+            } else {
+              entry.offset = (entry.offset ?? 0) + written;
+            }
+          }
           return this._measureWasiPhase("writeResultPtr", () => this._writeUint32(nwrittenPtr, written));
         }
         if (handle?.kind === "guest-file" && typeof handle.targetFd === "number") {
@@ -1745,6 +1761,11 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
           (handle?.kind === "passthrough" || handle?.kind === "host-passthrough") &&
           typeof handle.targetFd === "number"
         ) {
+          const localEntry = this._descriptorEntry(descriptor);
+          const localHostPassthrough =
+            handle.kind === "host-passthrough" &&
+            localEntry?.kind === "file" &&
+            localEntry.realFd === handle.targetFd;
           const totalLength = this._boundedReadLength(iovs, iovsLen);
           const buffer = Buffer.alloc(totalLength);
           const bytesRead = __agentOSFs().readSync(
@@ -1752,8 +1773,11 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
             buffer,
             0,
             totalLength,
-            null,
+            localHostPassthrough ? (localEntry.offset ?? 0) : null,
           );
+          if (localHostPassthrough) {
+            localEntry.offset = (localEntry.offset ?? 0) + bytesRead;
+          }
           const written = this._writeToIovs(iovs, iovsLen, buffer.subarray(0, bytesRead));
           return this._writeUint32(nreadPtr, written);
         }

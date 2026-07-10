@@ -1,0 +1,55 @@
+--- a/library/std/src/os/wasi/fs.rs
++++ b/library/std/src/os/wasi/fs.rs
+@@ -316,6 +316,18 @@
+     }
+ }
+ 
++/// WASI-specific extensions to [`fs::Permissions`].
++pub trait PermissionsExt {
++    /// Returns the underlying POSIX mode bits.
++    fn mode(&self) -> u32;
++}
++
++impl PermissionsExt for fs::Permissions {
++    fn mode(&self) -> u32 {
++        self.as_inner().mode()
++    }
++}
++
+ /// WASI-specific extensions to [`fs::Metadata`].
+ pub trait MetadataExt {
+     /// Returns the `st_dev` field of the internal `filestat_t`
+@@ -324,6 +336,14 @@
+     fn ino(&self) -> u64;
+     /// Returns the `st_nlink` field of the internal `filestat_t`
+     fn nlink(&self) -> u64;
++    /// Returns the underlying POSIX mode bits.
++    fn mode(&self) -> u32;
++    /// Returns the file size in bytes.
++    fn size(&self) -> u64;
++    /// Returns the owning user ID.
++    fn uid(&self) -> u32;
++    /// Returns the owning group ID.
++    fn gid(&self) -> u32;
+ }
+ 
+ impl MetadataExt for fs::Metadata {
+@@ -336,6 +356,18 @@
+     fn nlink(&self) -> u64 {
+         self.as_inner().as_inner().st_nlink
+     }
++    fn mode(&self) -> u32 {
++        self.as_inner().perm().mode()
++    }
++    fn size(&self) -> u64 {
++        self.as_inner().size()
++    }
++    fn uid(&self) -> u32 {
++        self.as_inner().as_inner().st_uid
++    }
++    fn gid(&self) -> u32 {
++        self.as_inner().as_inner().st_gid
++    }
+ }
+ 
+ /// WASI-specific extensions for [`fs::FileType`].

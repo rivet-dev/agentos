@@ -1,0 +1,22 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -38,7 +38,7 @@ repository = "https://github.com/BurntSushi/ripgrep/tree/master/crates/grep"
+ 
+ [features]
+ avx-accel = []
+-pcre2 = ["grep-pcre2"]
++pcre2 = []
+ simd-accel = []
+ 
+ [lib]
+@@ -55,10 +54,6 @@ version = "0.1.12"
+ [dependencies.grep-matcher]
+ version = "0.1.8"
+ 
+-[dependencies.grep-pcre2]
+-version = "0.1.9"
+-optional = true
+-
+ [dependencies.grep-printer]
+ version = "0.3.1"
+ 

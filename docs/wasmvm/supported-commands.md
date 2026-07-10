@@ -213,7 +213,6 @@
 | Command | just-bash | Status | Implementation | Target |
 |---------|-----------|--------|----------------|--------|
 | curl | yes | done | `curl_cli.c` (libcurl HTTP-only, C program via `host_net`) | — |
-| wget | yes | done | `wget.c` (libcurl-based, C program via `host_net`) | — |
 
 ## Version Control
 

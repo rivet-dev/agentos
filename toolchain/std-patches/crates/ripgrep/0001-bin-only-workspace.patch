@@ -1,0 +1,28 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -126,10 +126,6 @@ name = "rg"
+ path = "crates/core/main.rs"
+ bench = false
+ 
+-[[test]]
+-name = "integration"
+-path = "tests/tests.rs"
+-
+ [dependencies.anyhow]
+ version = "1.0.75"
+ 
+@@ -158,15 +154,6 @@ version = "0.16.0"
+ default-features = false
+ 
+-[dev-dependencies.serde]
+-version = "1.0.77"
+-
+-[dev-dependencies.serde_derive]
+-version = "1.0.77"
+-
+-[dev-dependencies.walkdir]
+-version = "2"
+-
+ [target.'cfg(all(target_env = "musl", target_pointer_width = "64"))'.dependencies.tikv-jemallocator]
+ version = "0.6.0"
+ 

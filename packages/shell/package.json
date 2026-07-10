@@ -26,7 +26,6 @@
 		"@agentos-software/git": "workspace:*",
 		"@agentos-software/grep": "workspace:*",
 		"@agentos-software/gzip": "workspace:*",
-		"@agentos-software/http-get": "workspace:*",
 		"@agentos-software/jq": "workspace:*",
 		"@agentos-software/ripgrep": "workspace:*",
 		"@agentos-software/sed": "workspace:*",

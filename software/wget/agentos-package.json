@@ -4,7 +4,7 @@
 	],
 	"registry": {
 		"title": "wget",
-		"description": "GNU wget file downloader.",
+		"description": "GNU Wget file downloader.",
 		"priority": 55,
 		"image": "/images/registry/wget.svg",
 		"category": "networking"

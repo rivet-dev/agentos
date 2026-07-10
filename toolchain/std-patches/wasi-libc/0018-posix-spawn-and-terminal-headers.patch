@@ -1,0 +1,417 @@
+Expose POSIX spawn and terminal compatibility headers in AgentOS wasi-libc.
+
+The AgentOS process broker already implements posix_spawn through host_process
+imports, but the C sysroot still omitted <spawn.h>. Upstream programs such as
+GNU Wget include standard POSIX headers directly, so install those headers and
+provide terminal/process-group helpers through the shared sysroot rather than
+per-program source forks.
+
+diff --git a/libc-bottom-half/sources/host_terminal_compat.c b/libc-bottom-half/sources/host_terminal_compat.c
+new file mode 100644
+index 0000000..3b70693
+--- /dev/null
++++ b/libc-bottom-half/sources/host_terminal_compat.c
+@@ -0,0 +1,217 @@
++// Terminal/process-group compatibility for AgentOS WASI commands.
++//
++// The kernel owns PTY state and exposes it through host_tty imports. Keep the
++// POSIX surface here in the sysroot so upstream C programs can use termios and
++// process-group probes without package-local behavioral forks.
++
++#include <errno.h>
++#include <stdarg.h>
++#include <stdint.h>
++#include <string.h>
++#include <sys/ioctl.h>
++#include <termios.h>
++#include <unistd.h>
++
++#ifndef TIOCGWINSZ
++#define TIOCGWINSZ 0x5413
++#endif
++
++#define WASM_IMPORT(mod, fn) \
++    __attribute__((__import_module__(mod), __import_name__(fn)))
++
++WASM_IMPORT("host_tty", "isatty")
++uint32_t __host_tty_isatty(uint32_t fd);
++
++WASM_IMPORT("host_tty", "get_size")
++uint32_t __host_tty_get_size(uint32_t fd, unsigned short *cols, unsigned short *rows);
++
++WASM_IMPORT("host_tty", "set_raw_mode")
++uint32_t __host_tty_set_raw_mode(uint32_t enabled);
++
++static struct termios g_shadow;
++static int g_shadow_valid = 0;
++
++static void cooked_defaults(struct termios *t) {
++    memset(t, 0, sizeof(*t));
++    t->c_iflag = ICRNL | IXON | IMAXBEL | IUTF8;
++    t->c_oflag = OPOST | ONLCR;
++    t->c_cflag = CS8 | CREAD | CLOCAL | B38400;
++    t->c_lflag = ISIG | ICANON | ECHO | ECHOE | ECHOK | ECHOCTL | ECHOKE | IEXTEN;
++    t->c_cc[VINTR] = 003;
++    t->c_cc[VQUIT] = 034;
++    t->c_cc[VERASE] = 0177;
++    t->c_cc[VKILL] = 025;
++    t->c_cc[VEOF] = 004;
++    t->c_cc[VTIME] = 0;
++    t->c_cc[VMIN] = 1;
++    t->c_cc[VSTART] = 021;
++    t->c_cc[VSTOP] = 023;
++    t->c_cc[VSUSP] = 032;
++    t->c_cc[VREPRINT] = 022;
++    t->c_cc[VWERASE] = 027;
++    t->c_cc[VLNEXT] = 026;
++    t->c_cc[VDISCARD] = 017;
++    t->__c_ispeed = B38400;
++    t->__c_ospeed = B38400;
++}
++
++static void ensure_shadow(void) {
++    if (!g_shadow_valid) {
++        cooked_defaults(&g_shadow);
++        g_shadow_valid = 1;
++    }
++}
++
++pid_t fork(void) {
++    errno = ENOSYS;
++    return -1;
++}
++
++pid_t getpgrp(void) {
++    return getpid();
++}
++
++pid_t setsid(void) {
++    errno = ENOSYS;
++    return -1;
++}
++
++pid_t tcgetpgrp(int fd) {
++    (void)fd;
++    return 1;
++}
++
++int tcsetpgrp(int fd, pid_t pgrp) {
++    (void)fd;
++    (void)pgrp;
++    return 0;
++}
++
++int tcgetattr(int fd, struct termios *termios_p) {
++    if (termios_p == NULL) {
++        errno = EFAULT;
++        return -1;
++    }
++    if (!__host_tty_isatty((uint32_t)fd)) {
++        errno = ENOTTY;
++        return -1;
++    }
++    ensure_shadow();
++    *termios_p = g_shadow;
++    return 0;
++}
++
++int tcsetattr(int fd, int optional_actions, const struct termios *termios_p) {
++    (void)optional_actions;
++    if (termios_p == NULL) {
++        errno = EFAULT;
++        return -1;
++    }
++    if (!__host_tty_isatty((uint32_t)fd)) {
++        errno = ENOTTY;
++        return -1;
++    }
++    g_shadow = *termios_p;
++    g_shadow_valid = 1;
++    uint32_t raw = ((termios_p->c_lflag & ICANON) && (termios_p->c_lflag & ECHO)) ? 0u : 1u;
++    uint32_t rc = __host_tty_set_raw_mode(raw);
++    if (rc != 0) {
++        errno = (int)rc;
++        return -1;
++    }
++    return 0;
++}
++
++pid_t tcgetsid(int fd) {
++    (void)fd;
++    return 1;
++}
++
++int tcgetwinsize(int fd, struct winsize *ws) {
++    if (ws == NULL) {
++        errno = EFAULT;
++        return -1;
++    }
++    unsigned short cols = 0;
++    unsigned short rows = 0;
++    uint32_t rc = __host_tty_get_size((uint32_t)fd, &cols, &rows);
++    if (rc != 0) {
++        errno = (int)rc;
++        return -1;
++    }
++    ws->ws_col = cols;
++    ws->ws_row = rows;
++    ws->ws_xpixel = 0;
++    ws->ws_ypixel = 0;
++    return 0;
++}
++
++int tcsetwinsize(int fd, const struct winsize *ws) {
++    (void)fd;
++    (void)ws;
++    errno = ENOSYS;
++    return -1;
++}
++
++void cfmakeraw(struct termios *t) {
++    if (t == NULL) return;
++    t->c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
++    t->c_oflag &= ~OPOST;
++    t->c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
++    t->c_cflag &= ~(CSIZE | PARENB);
++    t->c_cflag |= CS8;
++    t->c_cc[VMIN] = 1;
++    t->c_cc[VTIME] = 0;
++}
++
++int tcflush(int fd, int q) {
++    (void)fd;
++    (void)q;
++    return 0;
++}
++int tcdrain(int fd) {
++    (void)fd;
++    return 0;
++}
++
++int tcsendbreak(int fd, int d) {
++    (void)fd;
++    (void)d;
++    return 0;
++}
++
++int tcflow(int fd, int a) {
++    (void)fd;
++    (void)a;
++    return 0;
++}
++
++speed_t cfgetospeed(const struct termios *t) { return t ? t->__c_ospeed : 0; }
++speed_t cfgetispeed(const struct termios *t) { return t ? t->__c_ispeed : 0; }
++int cfsetospeed(struct termios *t, speed_t s) { if (t) t->__c_ospeed = s; return 0; }
++int cfsetispeed(struct termios *t, speed_t s) { if (t) t->__c_ispeed = s; return 0; }
++int cfsetspeed(struct termios *t, speed_t s) {
++    if (t) {
++        t->__c_ispeed = s;
++        t->__c_ospeed = s;
++    }
++    return 0;
++}
++
++int ioctl(int fd, int request, ...) {
++    va_list ap;
++    va_start(ap, request);
++    void *arg = va_arg(ap, void *);
++    va_end(ap);
++    if (request == TIOCGWINSZ) {
++        return tcgetwinsize(fd, (struct winsize *)arg);
++    }
++    errno = ENOTTY;
++    return -1;
++}
++
++char *getpass(const char *prompt) {
++    (void)prompt;
++    errno = ENXIO;
++    return NULL;
++}
+diff --git a/libc-bottom-half/sources/host_spawn_wait.c b/libc-bottom-half/sources/host_spawn_wait.c
+index 0414908..7b48221 100644
+--- a/libc-bottom-half/sources/host_spawn_wait.c
++++ b/libc-bottom-half/sources/host_spawn_wait.c
+@@ -128,6 +128,11 @@ int posix_spawn_file_actions_addchdir_np(posix_spawn_file_actions_t *restrict fa
+     return __addfdop(fa, op);
+ }
+ 
++int posix_spawn_file_actions_addchdir(posix_spawn_file_actions_t *restrict fa,
++    const char *restrict path) {
++    return posix_spawn_file_actions_addchdir_np(fa, path);
++}
++
+ int posix_spawn_file_actions_addfchdir_np(posix_spawn_file_actions_t *fa, int fd) {
+     if (fd < 0) return EBADF;
+     struct __fdop *op = malloc(sizeof(*op));
+diff --git a/libc-top-half/musl/include/spawn.h b/libc-top-half/musl/include/spawn.h
+index 225a0f0..55a6fe9 100644
+--- a/libc-top-half/musl/include/spawn.h
++++ b/libc-top-half/musl/include/spawn.h
+@@ -65,6 +65,7 @@ int posix_spawn_file_actions_addopen(posix_spawn_file_actions_t *__restrict, int
+ int posix_spawn_file_actions_addclose(posix_spawn_file_actions_t *, int);
+ int posix_spawn_file_actions_adddup2(posix_spawn_file_actions_t *, int, int);
+ 
++int posix_spawn_file_actions_addchdir(posix_spawn_file_actions_t *__restrict, const char *__restrict);
+ #if defined(_BSD_SOURCE) || defined(_GNU_SOURCE)
+ int posix_spawn_file_actions_addchdir_np(posix_spawn_file_actions_t *__restrict, const char *__restrict);
+ int posix_spawn_file_actions_addfchdir_np(posix_spawn_file_actions_t *, int);
+diff --git a/libc-top-half/musl/include/sys/wait.h b/libc-top-half/musl/include/sys/wait.h
+index 27e20b7..5f79380 100644
+--- a/libc-top-half/musl/include/sys/wait.h
++++ b/libc-top-half/musl/include/sys/wait.h
+@@ -21,11 +21,12 @@ pid_t waitpid (pid_t, int *, int );
+ 
+-#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+- || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) \
+- || defined(_BSD_SOURCE)
++#if defined(__wasilibc_unmodified_upstream) \
++ && (defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
++  || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) \
++  || defined(_BSD_SOURCE))
+ #include <signal.h>
+ int waitid (idtype_t, id_t, siginfo_t *, int);
+ #endif
+ 
+-#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
++#if (defined(_GNU_SOURCE) || defined(_BSD_SOURCE)) && defined(__wasilibc_unmodified_upstream)
+ #include <sys/resource.h>
+ pid_t wait3 (int *, int, struct rusage *);
+ pid_t wait4 (pid_t, int *, int, struct rusage *);
+diff --git a/libc-top-half/musl/include/fcntl.h b/libc-top-half/musl/include/fcntl.h
+index eac8775..a7ad6d5 100644
+--- a/libc-top-half/musl/include/fcntl.h
++++ b/libc-top-half/musl/include/fcntl.h
+@@ -31,6 +31,39 @@ int open(const char *, int, ...);
+ int openat(int, const char *, int, ...);
+ int posix_fadvise(int, off_t, off_t, int);
+ int posix_fallocate(int, off_t, off_t);
++
++#ifndef F_DUPFD
++#define F_DUPFD 0
++#endif
++
++#ifndef O_BINARY
++#define O_BINARY 0
++#endif
++#ifndef O_TEXT
++#define O_TEXT 0
++#endif
++
++#ifndef F_RDLCK
++#define F_RDLCK 0
++#endif
++#ifndef F_WRLCK
++#define F_WRLCK 1
++#endif
++#ifndef F_UNLCK
++#define F_UNLCK 2
++#endif
++
++#ifndef F_GETLK
++#define F_GETLK 12
++#define F_SETLK 13
++#define F_SETLKW 14
++#endif
++
++#ifndef F_GETLK64
++#define F_GETLK64 F_GETLK
++#define F_SETLK64 F_SETLK
++#define F_SETLKW64 F_SETLKW
++#endif
+ 
+ #ifdef __wasilibc_unmodified_upstream /* Use alternate WASI libc headers */
+ #define O_SEARCH   O_PATH
+diff --git a/libc-top-half/musl/include/setjmp.h b/libc-top-half/musl/include/setjmp.h
+index bbeffc9..f938367 100644
+--- a/libc-top-half/musl/include/setjmp.h
++++ b/libc-top-half/musl/include/setjmp.h
+@@ -7,12 +7,6 @@ extern "C" {
+ 
+ #include <features.h>
+ 
+-#ifndef __wasilibc_unmodified_upstream
+-/* WASI has no setjmp */
+-#if !defined(__wasm_exception_handling__)
+-#error Setjmp/longjmp support requires Exception handling support, which is [not yet standardized](https://github.com/WebAssembly/proposals?tab=readme-ov-file#phase-3---implementation-phase-cg--wg). To enable it, compile with `-mllvm -wasm-enable-sjlj` and use an engine that implements the Exception handling proposal.
+-#endif
+-#endif
+ #include <bits/setjmp.h>
+ 
+ typedef struct __jmp_buf_tag {
+diff --git a/libc-top-half/musl/include/unistd.h b/libc-top-half/musl/include/unistd.h
+index ded1723..742e3f0 100644
+--- a/libc-top-half/musl/include/unistd.h
++++ b/libc-top-half/musl/include/unistd.h
+@@ -137,7 +137,7 @@ int pause(void);
+ #endif
+ 
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no fork/exec */
+ pid_t fork(void);
++#ifdef __wasilibc_unmodified_upstream /* WASI has no fork/exec */
+ pid_t _Fork(void);
+ int execve(const char *, char *const [], char *const []);
+ int execv(const char *, char *const []);
+@@ -151,10 +151,10 @@ _Noreturn void _exit(int);
+ pid_t getpid(void);
+ pid_t getppid(void);
+ 
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no process groups */
+ pid_t getpgrp(void);
++pid_t setsid(void);
++#ifdef __wasilibc_unmodified_upstream /* WASI has no full process groups */
+ pid_t getpgid(pid_t);
+ int setpgid(pid_t, pid_t);
+-pid_t setsid(void);
+ pid_t getsid(pid_t);
+ #endif
+@@ -165,11 +165,9 @@ pid_t getsid(pid_t);
+ char *ttyname(int);
+ int ttyname_r(int, char *, size_t);
+ #endif
+ int isatty(int);
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no process groups */
+ pid_t tcgetpgrp(int);
+ int tcsetpgrp(int, pid_t);
+-#endif
+ 
+ uid_t getuid(void);
+ uid_t geteuid(void);
+@@ -240,12 +239,12 @@ int chroot(const char *);
+ #endif
+ int getpagesize(void);
++char *getpass(const char *);
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no processes */
+ int getdtablesize(void);
+ int sethostname(const char *, size_t);
+ int getdomainname(char *, size_t);
+ int setdomainname(const char *, size_t);
+ int setgroups(size_t, const gid_t *);
+-char *getpass(const char *);
+ int daemon(int, int);
+ void setusershell(void);
+ void endusershell(void);
+diff --git a/scripts/install-include-headers.sh b/scripts/install-include-headers.sh
+index 30b2da5..4a9f079 100755
+--- a/scripts/install-include-headers.sh
++++ b/scripts/install-include-headers.sh
+@@ -56,15 +56,15 @@ MUSL_OMIT_HEADERS+=("sys/procfs.h" "sys/user.h" "sys/kd.h" "sys/vt.h" \
+     "sys/soundcard.h" "sys/sem.h" "sys/shm.h" "sys/msg.h" "sys/ipc.h" \
+     "sys/ptrace.h" "sys/statfs.h" "bits/kd.h" "bits/vt.h" "bits/soundcard.h" \
+     "bits/sem.h" "bits/shm.h" "bits/msg.h" "bits/ipc.h" "bits/ptrace.h" \
+     "bits/statfs.h" "sys/vfs.h" "syslog.h" "sys/syslog.h" "wait.h" \
+-    "sys/wait.h" "ucontext.h" "sys/ucontext.h" "paths.h" "utmp.h" "utmpx.h" \
++    "ucontext.h" "sys/ucontext.h" "paths.h" "utmp.h" "utmpx.h" \
+     "lastlog.h" "sys/acct.h" "sys/cachectl.h" "sys/epoll.h" "sys/reboot.h" \
+     "sys/swap.h" "sys/sendfile.h" "sys/inotify.h" "sys/quota.h" "sys/klog.h" \
+     "sys/fsuid.h" "sys/io.h" "sys/prctl.h" "sys/mtio.h" "sys/mount.h" \
+     "sys/fanotify.h" "sys/personality.h" "elf.h" "link.h" "bits/link.h" \
+     "scsi/scsi.h" "scsi/scsi_ioctl.h" "scsi/sg.h" "sys/auxv.h" \
+     "shadow.h" "grp.h" "mntent.h" "resolv.h" "pty.h" "ulimit.h" "sys/xattr.h" \
+-    "wordexp.h" "spawn.h" "sys/membarrier.h" "sys/signalfd.h" "termios.h" \
+-    "sys/termios.h" "bits/termios.h" "net/if.h" "net/if_arp.h" \
++    "wordexp.h" "sys/membarrier.h" "sys/signalfd.h" \
++    "net/if.h" "net/if_arp.h" \
+     "net/ethernet.h" "net/route.h" "netinet/if_ether.h" "netinet/ether.h" \
+     "sys/timerfd.h" "libintl.h" "sys/sysmacros.h" "aio.h")

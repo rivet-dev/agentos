@@ -1,0 +1,58 @@
+Provide group lookup compatibility entry points in AgentOS wasi-libc.
+
+Tree links getgrgid() for optional `-g` group-name output. AgentOS VMs expose
+numeric gid/getgroups behavior but do not project a group database, so group
+name lookups should fail deterministically and let callers fall back to numeric
+gids.
+
+diff --git a/libc-bottom-half/sources/host_resource_user.c b/libc-bottom-half/sources/host_resource_user.c
+index 8d91a2f..aa78a47 100644
+--- a/libc-bottom-half/sources/host_resource_user.c
++++ b/libc-bottom-half/sources/host_resource_user.c
+@@ -2,6 +2,8 @@
+ 
+ #include <errno.h>
++#include <grp.h>
++#include <stddef.h>
+ #include <stdint.h>
+ #include <string.h>
+ #include <sys/resource.h>
+ #include <unistd.h>
+@@ -48,5 +50,37 @@ int getgroups(int size, gid_t list[]) {
+     list[0] = getgid();
+     return 1;
+ }
+ 
++struct group *getgrgid(gid_t gid) {
++    (void)gid;
++    errno = 0;
++    return NULL;
++}
++
++struct group *getgrnam(const char *name) {
++    (void)name;
++    errno = 0;
++    return NULL;
++}
++
++int getgrgid_r(gid_t gid, struct group *grp, char *buf, size_t buflen,
++               struct group **result) {
++    (void)gid;
++    (void)grp;
++    (void)buf;
++    (void)buflen;
++    *result = NULL;
++    return 0;
++}
++
++int getgrnam_r(const char *name, struct group *grp, char *buf, size_t buflen,
++               struct group **result) {
++    (void)name;
++    (void)grp;
++    (void)buf;
++    (void)buflen;
++    *result = NULL;
++    return 0;
++}
++
+ int getrlimit(int resource, struct rlimit *rlim) {

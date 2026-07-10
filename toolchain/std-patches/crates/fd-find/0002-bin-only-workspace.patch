@@ -1,0 +1,32 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -73,10 +73,6 @@ default = [
+ name = "fd"
+ path = "src/main.rs"
+ 
+-[[test]]
+-name = "tests"
+-path = "tests/tests.rs"
+-
+ [dependencies.aho-corasick]
+ version = "1.1"
+ 
+@@ -138,18 +134,6 @@ default-features = false
+ [dependencies.regex-syntax]
+ version = "0.8"
+ 
+-[dev-dependencies.diff]
+-version = "0.1"
+-
+-[dev-dependencies.filetime]
+-version = "0.2"
+-
+-[dev-dependencies.tempfile]
+-version = "3.24"
+-
+-[dev-dependencies.test-case]
+-version = "3.3"
+-
+ [target.'cfg(all(not(windows), not(target_os = "android"), not(target_os = "macos"), not(target_os = "freebsd"), not(target_os = "openbsd"), not(target_os = "illumos"), not(all(target_env = "musl", target_pointer_width = "32")), not(target_arch = "riscv64")))'.dependencies.tikv-jemallocator]
+ version = "0.6.0"
+ optional = true
