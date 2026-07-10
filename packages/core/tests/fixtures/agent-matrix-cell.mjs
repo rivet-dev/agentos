@@ -9,6 +9,9 @@
 // Driven by env: AGENT (pi|pi-cli|claude|opencode), ANTHROPIC_API_KEY,
 // AGENTOS_MATRIX_MODEL (opencode model id; must be a CURRENT id).
 
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
 const AGENT = process.env.AGENT || "pi";
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_BASE_URL =
@@ -26,10 +29,36 @@ const PKG = {
 }[AGENT];
 if (!PKG) throw new Error(`unknown AGENT ${AGENT}`);
 
-const { AgentOs } = await import("@rivet-dev/agentos-core");
-const software = (await import(PKG)).default;
+const REPO_ROOT = process.env.AGENTOS_MATRIX_REPO_ROOT;
+const localAgentDirs = {
+	pi: "pi",
+	"pi-cli": "pi-cli",
+	claude: "claude",
+	opencode: "opencode",
+};
+const importTarget = (path) => pathToFileURL(path).href;
+const coreModule = REPO_ROOT
+	? await import(importTarget(join(REPO_ROOT, "packages/core/dist/index.js")))
+	: await import("@rivet-dev/agentos-core");
+const agentModule = REPO_ROOT
+	? await import(
+			importTarget(
+				join(REPO_ROOT, "registry/agent", localAgentDirs[AGENT], "dist/index.js"),
+			),
+		)
+	: await import(PKG);
+const { AgentOs } = coreModule;
+const software = agentModule.default;
 
-const result = { agent: AGENT, pkg: PKG, ok: false, streaming: false, error: null };
+const result = {
+	agent: AGENT,
+	pkg: PKG,
+	ok: false,
+	streaming: false,
+	nativeResume: false,
+	transcriptRestore: false,
+	error: null,
+};
 
 let vm;
 let sessionId;
@@ -113,9 +142,10 @@ try {
 	});
 
 	promptStart = performance.now();
+	const nativeToken = `native-${AGENT}-2718`;
 	const { text, response } = await vm.prompt(
 		sessionId,
-		"Write a haiku about the ocean. Output only the haiku.",
+		`Remember the token ${nativeToken}. Then write a haiku about the ocean. Output only the haiku.`,
 	);
 	const resolvedAt = performance.now() - promptStart;
 
@@ -141,6 +171,53 @@ try {
 
 	result.ok = !response?.error && (text || "").length > 0;
 	result.streaming = streaming;
+
+	vm.closeSession(sessionId);
+	await vm._sessionClosePromises?.get(sessionId);
+	const native = await vm.resumeSession(sessionId, AGENT, {
+		cwd: workspaceDir,
+		env,
+		transcriptPath: `/root/.agentos/threads/${sessionId}.md`,
+	});
+	const nativeReply = await vm.prompt(
+		native.sessionId,
+		"What token did I ask you to remember? Output only the token.",
+	);
+	result.nativeResume =
+		native.mode === "native" &&
+		native.sessionId === sessionId &&
+		nativeReply.text.includes(nativeToken);
+
+	vm.closeSession(native.sessionId);
+	await vm._sessionClosePromises?.get(native.sessionId);
+	const missingSessionId = `00000000-0000-4000-8000-${
+		{
+			pi: "000000000041",
+			"pi-cli": "000000000042",
+			claude: "000000000043",
+			opencode: "000000000044",
+		}[AGENT]
+	}`;
+	const restoreToken = `restore-${AGENT}-3141`;
+	const transcriptDir = `${workspaceDir}/.agentos/threads`;
+	const transcriptPath = `${transcriptDir}/${missingSessionId}.md`;
+	await vm.mkdir(transcriptDir, { recursive: true });
+	await vm.writeFile(
+		transcriptPath,
+		`# Earlier conversation\n\nUser asked the agent to remember ${restoreToken}.`,
+	);
+	const restored = await vm.resumeSession(missingSessionId, AGENT, {
+		cwd: workspaceDir,
+		env,
+		transcriptPath,
+	});
+	sessionId = restored.sessionId;
+	const restoredReply = await vm.prompt(
+		restored.sessionId,
+		`Use your file-reading tool to read ${transcriptPath}, then output only its restore token. Do not describe what you will do.`,
+	);
+	result.transcriptRestore =
+		restored.mode === "fallback" && restoredReply.text.includes(restoreToken);
 	result.metrics = {
 		resolvedAt: Math.round(resolvedAt),
 		totalUpdates: updates.length,
@@ -152,6 +229,10 @@ try {
 		gapMs: Math.round(gap),
 		textLen: (text || "").length,
 		textSample: (text || "").slice(0, 80),
+		nativeResumeMode: native.mode,
+		nativeReply: nativeReply.text.slice(0, 80),
+		restoreMode: restored.mode,
+		restoreReply: restoredReply.text.slice(0, 80),
 	};
 } catch (err) {
 	result.error = String(err?.stack || err);
@@ -165,4 +246,8 @@ try {
 }
 
 console.log("E2E_RESULT_JSON:" + JSON.stringify(result));
-process.exit(result.ok && result.streaming ? 0 : 1);
+process.exit(
+	result.ok && result.streaming && result.nativeResume && result.transcriptRestore
+		? 0
+		: 1,
+);

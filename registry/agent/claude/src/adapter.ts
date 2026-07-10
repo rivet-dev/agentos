@@ -8,6 +8,8 @@ import {
 	type CancelNotification,
 	type InitializeRequest,
 	type InitializeResponse,
+	type LoadSessionRequest,
+	type LoadSessionResponse,
 	type NewSessionRequest,
 	type NewSessionResponse,
 	type PromptRequest,
@@ -16,6 +18,7 @@ import {
 	type SessionUpdate,
 	type SetSessionModeRequest,
 	type SetSessionModeResponse,
+	RequestError,
 	ndJsonStream,
 } from "@agentclientprotocol/sdk";
 import {
@@ -68,6 +71,17 @@ const traceAdapterMessages =
 	process.env.CLAUDE_CODE_TRACE_ADAPTER_MESSAGES === "1";
 const traceFile = process.env.CLAUDE_CODE_TRACE_FILE;
 
+function claudeConfigDir(): string {
+	const configured = process.env.CLAUDE_CONFIG_DIR?.trim();
+	const resolved =
+		configured || resolvePath(process.env.HOME?.trim() || "/home/agentos", ".claude");
+	// The SDK lookup helpers and the spawned CLI otherwise derive their home via
+	// different runtime shims inside the VM and can disagree on /root vs
+	// /home/agentos. Pin the value once so persisted sessions remain discoverable.
+	process.env.CLAUDE_CONFIG_DIR = resolved;
+	return resolved;
+}
+
 function traceAdapter(message: string): void {
 	if (!traceAdapterMessages) return;
 	process.stderr.write(`[agentos-claude] ${message}\n`);
@@ -79,6 +93,7 @@ function traceAdapter(message: string): void {
 async function loadPatchedClaudeSdkRuntime(): Promise<
 	{
 		cliPath: string;
+		getSessionMessages: typeof import("@anthropic-ai/claude-agent-sdk").getSessionMessages;
 		query: typeof import("@anthropic-ai/claude-agent-sdk").query;
 	}
 > {
@@ -89,6 +104,7 @@ async function loadPatchedClaudeSdkRuntime(): Promise<
 	const runtime = await import(resolveClaudeSdkPath({ packageDir, sdkPath }));
 	return {
 		cliPath,
+		getSessionMessages: runtime.getSessionMessages,
 		query: runtime.query,
 	};
 }
@@ -354,9 +370,10 @@ export class ClaudeQuerySession {
 		readonly sessionId: string,
 		private readonly cwd: string,
 		private mode: PermissionMode,
-		params: NewSessionRequest,
+		params: NewSessionRequest | LoadSessionRequest,
 		private readonly pathToClaudeCodeExecutable: string,
 		queryFactory: QueryFactory,
+		resumeSessionId?: string,
 	) {
 		traceAdapter(
 			`session_ctor id=${sessionId} cwd=${cwd} mode=${mode} cli=${pathToClaudeCodeExecutable}`,
@@ -368,6 +385,7 @@ export class ClaudeQuerySession {
 				cwd,
 				env: {
 					...process.env,
+					CLAUDE_CONFIG_DIR: claudeConfigDir(),
 					CLAUDE_CODE_SHELL:
 						process.env.CLAUDE_CODE_SHELL ?? "/bin/sh",
 					CLAUDE_CODE_IGNORE_STARTUP_EXIT_CODE:
@@ -382,7 +400,9 @@ export class ClaudeQuerySession {
 					CLAUDE_CODE_NODE_SHELL_WRAPPER:
 						process.env.CLAUDE_CODE_NODE_SHELL_WRAPPER ?? "1",
 					CLAUDE_CODE_SKIP_INITIAL_MESSAGES:
-						process.env.CLAUDE_CODE_SKIP_INITIAL_MESSAGES ?? "1",
+						// The initial-message path initializes Claude's on-disk transcript.
+						// Skipping it makes a new session impossible to resume natively.
+						"0",
 					CLAUDE_CODE_SKIP_SPECIAL_ENTRYPOINTS:
 						process.env.CLAUDE_CODE_SKIP_SPECIAL_ENTRYPOINTS ?? "1",
 					CLAUDE_CODE_USE_PIPE_OUTPUT:
@@ -399,7 +419,10 @@ export class ClaudeQuerySession {
 				includePartialMessages: true,
 				pathToClaudeCodeExecutable,
 				permissionMode: normalizeClaudePermissionMode(mode),
-				persistSession: false,
+				persistSession: true,
+				...(resumeSessionId
+					? { resume: resumeSessionId }
+					: { sessionId }),
 				sandbox: { enabled: false },
 				settingSources: ["project"],
 				spawnClaudeCodeProcess: ({ command, args, cwd, env }) => {
@@ -650,7 +673,9 @@ export class ClaudeQuerySession {
 		}
 	}
 
-	private async initialize(params: NewSessionRequest): Promise<void> {
+	private async initialize(
+		params: NewSessionRequest | LoadSessionRequest,
+	): Promise<void> {
 		this.pendingMcpServers = toSdkMcpServers(params.mcpServers);
 		traceAdapter(
 			`session_initialize id=${this.sessionId} mcpServers=${Object.keys(
@@ -1050,6 +1075,7 @@ class ClaudeSdkAgent implements Agent {
 				version: "0.1.0",
 			},
 			agentCapabilities: {
+				loadSession: true,
 				promptCapabilities: {
 					audio: false,
 					embeddedContext: false,
@@ -1062,6 +1088,41 @@ class ClaudeSdkAgent implements Agent {
 	async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
 		const sessionId = randomUUID();
 		const sdk = await claudeSdkRuntimePromise;
+		await this.startSession(sessionId, params, sdk);
+		return {
+			sessionId,
+			modes: claudeModes(),
+		};
+	}
+
+	async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
+		const sdk = await claudeSdkRuntimePromise;
+		claudeConfigDir();
+		// Session IDs are UUIDs and globally unique within Claude's config root.
+		// Searching all project directories also avoids realpath mismatches between
+		// the SDK runtime shim and the spawned CLI inside an AgentOS VM.
+		const storedMessages = await sdk.getSessionMessages(params.sessionId);
+		if (storedMessages.length === 0) {
+			throw RequestError.invalidParams(
+				{ kind: "unknown_session" },
+				`Unknown Claude session: ${params.sessionId}`,
+			);
+		}
+		await this.startSession(params.sessionId, params, sdk, params.sessionId);
+		return { modes: claudeModes() };
+	}
+
+	private async startSession(
+		sessionId: string,
+		params: NewSessionRequest | LoadSessionRequest,
+		sdk: ClaudeSdkRuntime,
+		resumeSessionId?: string,
+	): Promise<void> {
+		const existing = this.sessions.get(sessionId);
+		if (existing) {
+			existing.close();
+			this.sessions.delete(sessionId);
+		}
 		const session = new ClaudeQuerySession(
 			this.conn,
 			sessionId,
@@ -1070,19 +1131,10 @@ class ClaudeSdkAgent implements Agent {
 			params,
 			sdk.cliPath,
 			sdk.query,
+			resumeSessionId,
 		);
 		await session.ready();
 		this.sessions.set(sessionId, session);
-		return {
-			sessionId,
-			modes: {
-				currentModeId: "default",
-				availableModes: ACP_MODES.map((id) => ({
-					id,
-					name: id,
-				})),
-			},
-		};
 	}
 
 	async prompt(params: PromptRequest): Promise<PromptResponse> {
@@ -1115,6 +1167,13 @@ class ClaudeSdkAgent implements Agent {
 		}
 		return session;
 	}
+}
+
+function claudeModes(): NonNullable<NewSessionResponse["modes"]> {
+	return {
+		currentModeId: "default",
+		availableModes: ACP_MODES.map((id) => ({ id, name: id })),
+	};
 }
 
 function joinPromptText(prompt: PromptPart[] | undefined): string {

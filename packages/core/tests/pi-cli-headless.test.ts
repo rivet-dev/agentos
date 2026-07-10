@@ -1,8 +1,7 @@
 import { resolve } from "node:path";
-import type { Fixture, ToolCall } from "@copilotkit/llmock";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import common from "@agentos-software/common";
 import piCli from "@agentos-software/pi-cli";
+import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 import {
@@ -10,6 +9,7 @@ import {
 	startLlmock,
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
+import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 
@@ -19,6 +19,10 @@ function getRequestBody(req: unknown): Record<string, unknown> {
 	return body && typeof body === "object"
 		? (body as Record<string, unknown>)
 		: direct;
+}
+
+function requestContains(req: unknown, expected: string): boolean {
+	return JSON.stringify(getRequestBody(req)).includes(expected);
 }
 
 function createToolFixtures(
@@ -147,6 +151,108 @@ describe("full createSession('pi-cli') inside the VM", () => {
 			if (sessionId) {
 				vm.closeSession(sessionId);
 			}
+			await vm.dispose();
+			await stopLlmock(mock);
+		}
+	}, 120_000);
+
+	test("resumes an existing persisted Pi CLI session natively", async () => {
+		const firstPrompt = "Remember the native Pi CLI token: cedar-3141.";
+		const secondPrompt = "What native Pi CLI token did I give you?";
+		const { mock, url } = await startLlmock([
+			createAnthropicFixture(
+				{ predicate: (req) => requestContains(req, firstPrompt) },
+				{ content: "I will remember cedar-3141." },
+			),
+			createAnthropicFixture(
+				{ predicate: (req) => requestContains(req, secondPrompt) },
+				{ content: "The token was cedar-3141." },
+			),
+		]);
+		const vm = await createPiCliVm(url);
+
+		let sessionId: string | undefined;
+		try {
+			const homeDir = await createVmPiHome(vm, url);
+			const workspaceDir = await createVmWorkspace(vm);
+			const env = {
+				HOME: homeDir,
+				ANTHROPIC_API_KEY: "mock-key",
+				ANTHROPIC_BASE_URL: url,
+			};
+			sessionId = (await vm.createSession("pi-cli", { cwd: workspaceDir, env }))
+				.sessionId;
+			expect(vm.getSessionCapabilities(sessionId)?.loadSession).toBe(true);
+			expect(
+				(await vm.prompt(sessionId, firstPrompt)).response.error,
+			).toBeUndefined();
+			vm.closeSession(sessionId);
+
+			const resumed = await vm.resumeSession(sessionId, "pi-cli", {
+				cwd: workspaceDir,
+				env,
+				transcriptPath: `/root/.agentos/threads/${sessionId}.md`,
+			});
+			expect(resumed).toEqual({ sessionId, mode: "native" });
+			expect(
+				(await vm.prompt(resumed.sessionId, secondPrompt)).response.error,
+			).toBeUndefined();
+			const secondRequest = mock
+				.getRequests()
+				.find((request) => requestContains(request, secondPrompt));
+			expect(secondRequest).toBeDefined();
+			expect(requestContains(secondRequest, firstPrompt)).toBe(true);
+		} finally {
+			if (sessionId) vm.closeSession(sessionId);
+			await vm.dispose();
+			await stopLlmock(mock);
+		}
+	}, 120_000);
+
+	test("restores Pi CLI from the transcript when native state is missing", async () => {
+		const { mock, url } = await startLlmock([
+			createAnthropicFixture(
+				{ predicate: () => true },
+				{ content: "Recovered from the transcript pointer." },
+			),
+		]);
+		const vm = await createPiCliVm(url);
+
+		let liveSessionId: string | undefined;
+		try {
+			const homeDir = await createVmPiHome(vm, url);
+			const workspaceDir = await createVmWorkspace(vm);
+			const externalSessionId = "00000000-0000-4000-8000-000000000088";
+			const transcriptPath = `/root/.agentos/threads/${externalSessionId}.md`;
+			const resumed = await vm.resumeSession(externalSessionId, "pi-cli", {
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+					ANTHROPIC_BASE_URL: url,
+				},
+				transcriptPath,
+			});
+			liveSessionId = resumed.sessionId;
+			expect(resumed.mode).toBe("fallback");
+
+			expect(
+				(await vm.prompt(liveSessionId, "Continue the recovered session."))
+					.response.error,
+			).toBeUndefined();
+			expect(
+				mock
+					.getRequests()
+					.some(
+						(request) =>
+							requestContains(
+								request,
+								"You are continuing an earlier session",
+							) && requestContains(request, transcriptPath),
+					),
+			).toBe(true);
+		} finally {
+			if (liveSessionId) vm.closeSession(liveSessionId);
 			await vm.dispose();
 			await stopLlmock(mock);
 		}

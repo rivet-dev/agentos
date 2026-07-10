@@ -15,6 +15,13 @@ Set the relevant variable on the session's `env`, sourced from your server's env
 
 See [LLM Credentials](/docs/llm-credentials), and Pi's [providers docs](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/providers.md) for the full list.
 
+## Persistent Pi sessions
+
+Pi persists each conversation as JSONL under its standard per-project session
+directory and supports native ACP `session/load`. Set `PI_SESSION_DIR` in the
+session's `env` only to override the storage directory. Use durable VM storage;
+if the native file is unavailable, agentOS falls back to its persisted transcript.
+
 ## Skills
 
 Pi discovers `SKILL.md` files from its skills directory. Write the skill into the VM before creating a session and Pi loads it automatically.

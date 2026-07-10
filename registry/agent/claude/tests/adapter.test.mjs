@@ -55,7 +55,7 @@ function makeQuery({ endImmediately = false } = {}) {
 	};
 }
 
-function makeSession({ endImmediately = false, conn } = {}) {
+function makeSession({ endImmediately = false, conn, resumeSessionId } = {}) {
 	const c = conn ?? makeConn();
 	let capturedOptions;
 	const queryFactory = (arg) => {
@@ -70,9 +70,33 @@ function makeSession({ endImmediately = false, conn } = {}) {
 		{ cwd: "/workspace", mcpServers: undefined },
 		"/usr/bin/claude",
 		queryFactory,
+		resumeSessionId,
 	);
 	return { sess, conn: c, getOptions: () => capturedOptions };
 }
+
+test("claude sessions persist by default under their ACP session id", () => {
+	const { getOptions } = makeSession();
+	assert.equal(getOptions().persistSession, true);
+	assert.equal(getOptions().sessionId, "sess-1");
+	assert.equal(getOptions().env.CLAUDE_CODE_SKIP_INITIAL_MESSAGES, "0");
+	assert.equal(getOptions().resume, undefined);
+});
+
+test("claude session/load resumes native history instead of skipping it", () => {
+	const previous = process.env.CLAUDE_CODE_SKIP_INITIAL_MESSAGES;
+	process.env.CLAUDE_CODE_SKIP_INITIAL_MESSAGES = "1";
+	try {
+		const { getOptions } = makeSession({ resumeSessionId: "sess-1" });
+		assert.equal(getOptions().persistSession, true);
+		assert.equal(getOptions().resume, "sess-1");
+		assert.equal(getOptions().sessionId, undefined);
+		assert.equal(getOptions().env.CLAUDE_CODE_SKIP_INITIAL_MESSAGES, "0");
+	} finally {
+		if (previous === undefined) delete process.env.CLAUDE_CODE_SKIP_INITIAL_MESSAGES;
+		else process.env.CLAUDE_CODE_SKIP_INITIAL_MESSAGES = previous;
+	}
+});
 
 // ── Fix #5: input_json_delta maps to the correct tool by content-block index ──
 test("claude #5: partial tool input is attributed by content-block index, not insertion order", async () => {

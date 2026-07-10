@@ -117,8 +117,8 @@ When native resume succeeds:
 - the agent restores its own context
 - no transcript preamble is injected
 
-OpenCode uses this path when its own session store is still available in the
-durable VM filesystem.
+The built-in OpenCode, Pi, Pi CLI, and Claude adapters use this path when their
+native session stores are still available in the durable VM filesystem.
 
 ### Transcript Fallback
 
