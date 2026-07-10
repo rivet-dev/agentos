@@ -1,0 +1,1501 @@
+# Japanese messages for GNU grep
+# Copyright (C) 1996, 2014 Free Software Foundation, Inc.
+# This file is distributed under the same license as the grep package.
+# IIDA Yosiaki <iida@gnu.org>, 1999, 2000, 2001, 2002.
+# Yasuyuki Furukawa <yasu@on.cs.keio.ac.jp>, 1997
+# and taken over on 1999-09-24 by IIDA.
+# Special thanks to
+# Daisuke Yamashita <yamad@mb.infoweb.ne.jp>, 1999.
+# Masahito Yamaga <yamaga@ipc.chiba-u.ac.jp>, 2002.
+# GOTO Masanori <gotom@debian.or.jp>, 2006.
+#  derived from the version by Yasuyuki Furukawa <yasu@on.cs.keio.ac.jp> 1998.
+#                              Jun Nishii <jun@flatout.org> 1999.
+#                              Daisuke Yamashita <yamad@mb.infoweb.ne.jp> 1999.
+# Yasuaki Taniguchi <yasuakit@gmail.com>, 2010, 2011, 2014, 2017.
+msgid ""
+msgstr ""
+"Project-Id-Version: GNU grep 3.0.23-b00\n"
+"Report-Msgid-Bugs-To: bug-grep@gnu.org\n"
+"POT-Creation-Date: 2025-04-10 09:02-0700\n"
+"PO-Revision-Date: 2017-06-25 20:16+0900\n"
+"Last-Translator: Yasuaki Taniguchi <yasuakit@gmail.com>\n"
+"Language-Team: Japanese <translation-team-ja@lists.sourceforge.net>\n"
+"Language: ja\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Bugs: Report translation errors to the Language-Team address.\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"X-Generator: Poedit 2.0.2\n"
+
+#: lib/argmatch.c:145
+#, c-format
+msgid "invalid argument %s for %s"
+msgstr "%2$s に対する引数 %1$s が間違っています"
+
+#: lib/argmatch.c:146
+#, c-format
+msgid "ambiguous argument %s for %s"
+msgstr "%2$s に対する引数 %1$s が曖昧です"
+
+#: lib/argmatch.c:165 lib/argmatch.h:242
+msgid "Valid arguments are:"
+msgstr "有効な引数:"
+
+#: lib/c-stack.c:190
+msgid "program error"
+msgstr "プログラムエラー"
+
+#: lib/c-stack.c:191
+msgid "stack overflow"
+msgstr "スタックオーバーフロー"
+
+#: lib/closeout.c:121 src/grep.c:1352
+msgid "write error"
+msgstr "書き込みエラー"
+
+#: lib/dfa.c:910
+msgid "unbalanced ["
+msgstr "対応がとれていない [ です"
+
+#: lib/dfa.c:1031
+msgid "invalid character class"
+msgstr "無効な文字クラス名です"
+
+#: lib/dfa.c:1159
+msgid "character class syntax is [[:space:]], not [:space:]"
+msgstr "文字クラスの構文は [[:space:]] です。 [:space:] ではありません"
+
+#: lib/dfa.c:1234
+msgid "unfinished \\ escape"
+msgstr "\\ エスケープが終了していません"
+
+#: lib/dfa.c:1344
+#, fuzzy
+msgid "? at start of expression"
+msgstr "無効な正規表現です"
+
+#: lib/dfa.c:1356
+#, fuzzy
+msgid "* at start of expression"
+msgstr "無効な正規表現です"
+
+#: lib/dfa.c:1370
+#, fuzzy
+msgid "+ at start of expression"
+msgstr "無効な正規表現です"
+
+#: lib/dfa.c:1425
+msgid "{...} at start of expression"
+msgstr ""
+
+#: lib/dfa.c:1428
+msgid "invalid content of \\{\\}"
+msgstr "\\{\\} の中身が無効です"
+
+#: lib/dfa.c:1430
+msgid "regular expression too big"
+msgstr "正規表現が大きすぎます"
+
+#: lib/dfa.c:1580
+msgid "stray \\ before unprintable character"
+msgstr ""
+
+#: lib/dfa.c:1582
+msgid "stray \\ before white space"
+msgstr ""
+
+#: lib/dfa.c:1593
+#, c-format
+msgid "stray \\ before %s"
+msgstr ""
+
+#: lib/dfa.c:1594 lib/dfa.c:1597
+msgid "stray \\"
+msgstr ""
+
+#: lib/dfa.c:1948
+msgid "unbalanced ("
+msgstr "対応がとれていない ( です"
+
+#: lib/dfa.c:2065
+msgid "no syntax specified"
+msgstr "構文が指定されていません"
+
+#: lib/dfa.c:2076
+msgid "unbalanced )"
+msgstr "対応がとれていない ) です"
+
+#: lib/error.c:208
+msgid "Unknown system error"
+msgstr "不明なシステムエラー"
+
+#: lib/getopt.c:282
+#, c-format
+msgid "%s: option '%s%s' is ambiguous\n"
+msgstr "%s: オプション '%s%s' は曖昧です\n"
+
+#: lib/getopt.c:288
+#, c-format
+msgid "%s: option '%s%s' is ambiguous; possibilities:"
+msgstr "%s: オプション '%s%s' は曖昧です。次のものが可能です:"
+
+#: lib/getopt.c:322
+#, c-format
+msgid "%s: unrecognized option '%s%s'\n"
+msgstr "%s: オプション '%s%s' を認識できません\n"
+
+#: lib/getopt.c:348
+#, c-format
+msgid "%s: option '%s%s' doesn't allow an argument\n"
+msgstr "%s: オプション '%s%s' は引数を取ることができません\n"
+
+#: lib/getopt.c:363
+#, c-format
+msgid "%s: option '%s%s' requires an argument\n"
+msgstr "%s: オプション '%s%s' は引数が必要です\n"
+
+#: lib/getopt.c:624
+#, c-format
+msgid "%s: invalid option -- '%c'\n"
+msgstr "%s: 無効なオプション -- '%c'\n"
+
+#: lib/getopt.c:639 lib/getopt.c:685
+#, c-format
+msgid "%s: option requires an argument -- '%c'\n"
+msgstr "%s: オプションには引数が必要です -- '%c'\n"
+
+#: lib/obstack.c:320 lib/obstack.c:322 lib/xalloc-die.c:34
+msgid "memory exhausted"
+msgstr "メモリを使い果たしました"
+
+#: lib/openat-die.c:38
+msgid "unable to record current working directory"
+msgstr "現在の作業ディレクトリーを記録することができません"
+
+#: lib/openat-die.c:57
+msgid "failed to return to initial working directory"
+msgstr "初期作業ディレクトリーに戻るのに失敗しました"
+
+#: lib/xbinary-io.c:36
+#, c-format
+msgid "failed to set file descriptor text/binary mode"
+msgstr "ファイル記述子をテキスト/バイナリモードに設定できませんでした"
+
+#. TRANSLATORS:
+#. Get translations for open and closing quotation marks.
+#. The message catalog should translate "`" to a left
+#. quotation mark suitable for the locale, and similarly for
+#. "'".  For example, a French Unicode local should translate
+#. these to U+00AB (LEFT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), and U+00BB (RIGHT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), respectively.
+#.
+#. If the catalog has no translation, we will try to
+#. use Unicode U+2018 (LEFT SINGLE QUOTATION MARK) and
+#. Unicode U+2019 (RIGHT SINGLE QUOTATION MARK).  If the
+#. current locale is not Unicode, locale_quoting_style
+#. will quote 'like this', and clocale_quoting_style will
+#. quote "like this".  You should always include translations
+#. for "`" and "'" even if U+2018 and U+2019 are appropriate
+#. for your locale.
+#.
+#. If you don't know what to put here, please see
+#. <https://en.wikipedia.org/wiki/Quotation_marks_in_other_languages>
+#. and use glyphs suitable for your language.
+#: lib/quotearg.c:354
+msgid "`"
+msgstr "`"
+
+#: lib/quotearg.c:355
+msgid "'"
+msgstr "'"
+
+#: lib/regcomp.c:122
+msgid "Success"
+msgstr "成功です"
+
+#: lib/regcomp.c:125
+msgid "No match"
+msgstr "一致しません"
+
+#: lib/regcomp.c:128
+msgid "Invalid regular expression"
+msgstr "無効な正規表現です"
+
+#: lib/regcomp.c:131
+msgid "Invalid collation character"
+msgstr "無効な照合文字です"
+
+#: lib/regcomp.c:134
+msgid "Invalid character class name"
+msgstr "無効な文字クラス名です"
+
+#: lib/regcomp.c:137
+msgid "Trailing backslash"
+msgstr "終端のバックスラッシュ"
+
+#: lib/regcomp.c:140
+msgid "Invalid back reference"
+msgstr "無効な前方参照です"
+
+#: lib/regcomp.c:143
+msgid "Unmatched [, [^, [:, [., or [="
+msgstr "[、[^、[:、[.、または [= が不一致です"
+
+#: lib/regcomp.c:146
+msgid "Unmatched ( or \\("
+msgstr "( または \\( が不一致です"
+
+#: lib/regcomp.c:149
+msgid "Unmatched \\{"
+msgstr "\\{ が不一致です"
+
+#: lib/regcomp.c:152
+msgid "Invalid content of \\{\\}"
+msgstr "\\{\\} の中身が無効です"
+
+#: lib/regcomp.c:155
+msgid "Invalid range end"
+msgstr "無効な範囲終了です"
+
+#: lib/regcomp.c:158
+msgid "Memory exhausted"
+msgstr "メモリを使い果たしました"
+
+#: lib/regcomp.c:161
+msgid "Invalid preceding regular expression"
+msgstr "無効な前方正規表現です"
+
+#: lib/regcomp.c:164
+msgid "Premature end of regular expression"
+msgstr "正規表現が途中で終了しました"
+
+#: lib/regcomp.c:167
+msgid "Regular expression too big"
+msgstr "正規表現が大きすぎます"
+
+#: lib/regcomp.c:170
+msgid "Unmatched ) or \\)"
+msgstr ") または \\) が不一致です"
+
+#: lib/regcomp.c:650
+msgid "No previous regular expression"
+msgstr "以前に正規表現がありません"
+
+#: lib/version-etc.c:73
+#, c-format
+msgid "Packaged by %s (%s)\n"
+msgstr "パッケージ作成者: %s (%s)\n"
+
+#: lib/version-etc.c:76
+#, c-format
+msgid "Packaged by %s\n"
+msgstr "パッケージ作成者: %s\n"
+
+#. TRANSLATORS: Translate "(C)" to the copyright symbol
+#. (C-in-a-circle), if this symbol is available in the user's
+#. locale.  Otherwise, do not translate "(C)"; leave it as-is.
+#: lib/version-etc.c:83
+msgid "(C)"
+msgstr "(C)"
+
+#. TRANSLATORS: The %s placeholder is the web address of the GPL license.
+#: lib/version-etc.c:88
+#, fuzzy, c-format
+msgid ""
+"License GPLv3+: GNU GPL version 3 or later <%s>.\n"
+"This is free software: you are free to change and redistribute it.\n"
+"There is NO WARRANTY, to the extent permitted by law.\n"
+msgstr ""
+"\n"
+"ライセンス GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl."
+"html>.\n"
+"This is free software: you are free to change and redistribute it.\n"
+"There is NO WARRANTY, to the extent permitted by law.\n"
+"\n"
+
+#. TRANSLATORS: %s denotes an author name.
+#: lib/version-etc.c:105
+#, c-format
+msgid "Written by %s.\n"
+msgstr "作者 %s。\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:109
+#, c-format
+msgid "Written by %s and %s.\n"
+msgstr "作者 %s および %s。\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:113
+#, c-format
+msgid "Written by %s, %s, and %s.\n"
+msgstr "作者 %s、 %s、および %s。\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:120
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+"作者 %s、 %s、 %s、\n"
+"および %s。\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:127
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+"作者 %s、 %s、 %s、\n"
+"%s、および %s。\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:134
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, and %s.\n"
+msgstr ""
+"作者 %s、 %s、 %s、\n"
+"%s、 %s、および %s。\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:142
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, and %s.\n"
+msgstr ""
+"作者 %s、 %s、 %s、\n"
+"%s、 %s、 %s、および %s。\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:150
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+"作者 %s、 %s、 %s、\n"
+"%s、 %s、 %s、 %s、\n"
+"および %s。\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:159
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+"作者 %s、 %s、 %s、\n"
+"%s、 %s、 %s、 %s、\n"
+"%s、および %s。\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:170
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, %s, and others.\n"
+msgstr ""
+"作者 %s、 %s、 %s、\n"
+"%s、 %s、 %s、 %s、\n"
+"%s、 %s、 および他の方々。\n"
+
+#. TRANSLATORS: The placeholder indicates the bug-reporting address
+#. for this package.  Please add _another line_ saying
+#. "Report translation bugs to <...>\n" with the address for translation
+#. bugs (typically your translation team's web or email address).
+#: lib/version-etc.c:249
+#, fuzzy, c-format
+msgid "Report bugs to: %s\n"
+msgstr ""
+"\n"
+"バグを発見したら <%s> に報告して下さい。\n"
+"翻訳に関するバグは<translation-team-ja@lists.sourceforge.net>に報告してくださ"
+"い。\n"
+
+#: lib/version-etc.c:251
+#, c-format
+msgid "Report %s bugs to: %s\n"
+msgstr ""
+"%s のバグを発見したら <%s> に報告して下さい。\n"
+"翻訳に関するバグは<translation-team-ja@lists.sourceforge.net>に報告してくださ"
+"い。\n"
+
+#: lib/version-etc.c:255 lib/version-etc.c:257
+#, c-format
+msgid "%s home page: <%s>\n"
+msgstr "%s のホームページ: <%s>\n"
+
+#: lib/version-etc.c:260
+#, fuzzy, c-format
+msgid "General help using GNU software: <%s>\n"
+msgstr ""
+"GNU ソフトウェアを使用する際の一般的なヘルプ: <http://www.gnu.org/gethelp/>\n"
+
+#: src/dfasearch.c:57
+#, fuzzy, c-format
+msgid "warning: %s"
+msgstr "警告: %s: %s"
+
+#: src/grep.c:657
+msgid "(standard input)"
+msgstr "(標準入力)"
+
+#: src/grep.c:838
+msgid "invalid context length argument"
+msgstr "一致した前後の行の表示に関する引数が無効です"
+
+#: src/grep.c:911
+msgid "input is too large to count"
+msgstr "入力が大きすぎて数えられません"
+
+#: src/grep.c:1656
+#, fuzzy, c-format
+msgid "%s: binary file matches"
+msgstr "バイナリファイル %s に一致しました\n"
+
+#: src/grep.c:1694
+#, fuzzy, c-format
+msgid "%s: warning: recursive directory loop"
+msgstr "ディレクトリーが再帰的ループをしています"
+
+#: src/grep.c:1914
+#, fuzzy, c-format
+msgid "%s: input file is also the output"
+msgstr "入力ファイル %s が出力にもなっています"
+
+#: src/grep.c:1976 src/grep.c:1983
+#, fuzzy, c-format
+msgid "Usage: %s [OPTION]... PATTERNS [FILE]...\n"
+msgstr "使用法: %s [OPTION]... PATTERN [FILE]...\n"
+
+#: src/grep.c:1978
+#, c-format
+msgid "Try '%s --help' for more information.\n"
+msgstr "詳しくは'%s --help'を実行してください。\n"
+
+#: src/grep.c:1984
+#, fuzzy, c-format
+msgid "Search for PATTERNS in each FILE.\n"
+msgstr "各 FILE 内で PATTERN を検索します。\n"
+
+#: src/grep.c:1985
+#, fuzzy, c-format
+msgid ""
+"Example: %s -i 'hello world' menu.h main.c\n"
+"PATTERNS can contain multiple patterns separated by newlines.\n"
+"\n"
+"Pattern selection and interpretation:\n"
+msgstr ""
+"例: %s -i 'hello world' menu.h main.c\n"
+"\n"
+"パターンの選択および解釈:\n"
+
+#: src/grep.c:1990
+#, fuzzy, c-format
+msgid ""
+"  -E, --extended-regexp     PATTERNS are extended regular expressions\n"
+"  -F, --fixed-strings       PATTERNS are strings\n"
+"  -G, --basic-regexp        PATTERNS are basic regular expressions\n"
+"  -P, --perl-regexp         PATTERNS are Perl regular expressions\n"
+msgstr ""
+"  -E, --extended-regexp     PATTERN を拡張正規表現とする\n"
+"  -F, --fixed-strings       PATTERN を改行で区切られた文字列の組とする\n"
+"  -G, --basic-regexp        PATTERN を基本正規表現とする(デフォルト)\n"
+"  -P, --perl-regexp         PATTERN を Perl 正規表現とする\n"
+
+#: src/grep.c:1996
+#, fuzzy, c-format
+msgid ""
+"  -e, --regexp=PATTERNS     use PATTERNS for matching\n"
+"  -f, --file=FILE           take PATTERNS from FILE\n"
+"  -i, --ignore-case         ignore case distinctions in patterns and data\n"
+"      --no-ignore-case      do not ignore case distinctions (default)\n"
+"  -w, --word-regexp         match only whole words\n"
+"  -x, --line-regexp         match only whole lines\n"
+"  -z, --null-data           a data line ends in 0 byte, not newline\n"
+msgstr ""
+"  -e, --regexp=PATTERN      一致処理に PATTERN を使用する\n"
+"  -f, --file=FILE           FILE から PATTERN を取得する\n"
+"  -i, --ignore-case         大文字と小文字を区別しない\n"
+"  -w, --word-regexp         強制的に単語全体で PATTERN の一致処理を行う\n"
+"  -x, --line-regexp         強制的に行全体で PATTERN の一致処理を行う\n"
+"  -z, --null-data           データの行末を改行ではなく NULL とする\n"
+
+#: src/grep.c:2004
+#, c-format
+msgid ""
+"\n"
+"Miscellaneous:\n"
+"  -s, --no-messages         suppress error messages\n"
+"  -v, --invert-match        select non-matching lines\n"
+"  -V, --version             display version information and exit\n"
+"      --help                display this help text and exit\n"
+msgstr ""
+"\n"
+"その他:\n"
+"  -s, --no-messages         エラーメッセージを抑止する\n"
+"  -v, --invert-match        一致しない行を選択する\n"
+"  -V, --version             バージョン情報を表示して終了する\n"
+"      --help                このヘルプを表示して終了する\n"
+
+#: src/grep.c:2011
+#, c-format
+msgid ""
+"\n"
+"Output control:\n"
+"  -m, --max-count=NUM       stop after NUM selected lines\n"
+"  -b, --byte-offset         print the byte offset with output lines\n"
+"  -n, --line-number         print line number with output lines\n"
+"      --line-buffered       flush output on every line\n"
+"  -H, --with-filename       print file name with output lines\n"
+"  -h, --no-filename         suppress the file name prefix on output\n"
+"      --label=LABEL         use LABEL as the standard input file name "
+"prefix\n"
+msgstr ""
+"\n"
+"出力の制御:\n"
+"  -m, --max-count=NUM       NUM 行一致後に中断する\n"
+"  -b, --byte-offset         出力行と併せてバイトオフセットを表示する\n"
+"  -n, --line-number         出力行と併せて行番号を表示する\n"
+"      --line-buffered       行ごとに出力を flush する\n"
+"  -H, --with-filename       出力行と併せてファイル名を表示する\n"
+"  -h, --no-filename         出力の先頭にファイル名を付けない\n"
+"      --label=LABEL         標準入力のファイル名の接頭辞として LABEL を使用す"
+"る\n"
+
+#: src/grep.c:2022
+#, fuzzy, c-format
+msgid ""
+"  -o, --only-matching       show only nonempty parts of lines that match\n"
+"  -q, --quiet, --silent     suppress all normal output\n"
+"      --binary-files=TYPE   assume that binary files are TYPE;\n"
+"                            TYPE is 'binary', 'text', or 'without-match'\n"
+"  -a, --text                equivalent to --binary-files=text\n"
+msgstr ""
+"  -o, --only-matching       行の中で PATTERN に一致した部分のみ表示する\n"
+"  -q, --quiet, --silent     通常出力を全て抑止する\n"
+"      --binary-files=TYPE   バイナリファイルの形式を TYPE と仮定する\n"
+"                            TYPE は 'binary'、'text' または 'without-match'\n"
+"  -a, --text                --binary-files=text と等価\n"
+
+#: src/grep.c:2029
+#, c-format
+msgid ""
+"  -I                        equivalent to --binary-files=without-match\n"
+"  -d, --directories=ACTION  how to handle directories;\n"
+"                            ACTION is 'read', 'recurse', or 'skip'\n"
+"  -D, --devices=ACTION      how to handle devices, FIFOs and sockets;\n"
+"                            ACTION is 'read' or 'skip'\n"
+"  -r, --recursive           like --directories=recurse\n"
+"  -R, --dereference-recursive  likewise, but follow all symlinks\n"
+msgstr ""
+"  -I                        --binary-files=without-match と等価\n"
+"  -d, --directories=ACTION  ディレクトリーの扱い方を指定する\n"
+"                            ACTION は 'read'、'recurse' または 'skip'\n"
+"  -D, --devices=ACTION      デバイス、FIFO およびソケットの扱い方を指定する\n"
+"                            ACTION は `read' または `skip'\n"
+"  -r, --recursive           --directories=recurse と等価\n"
+"  -R, --dereference-recursive  上と同様だがシンボリックリンクを辿る\n"
+
+#: src/grep.c:2038
+#, fuzzy, c-format
+msgid ""
+"      --include=GLOB        search only files that match GLOB (a file "
+"pattern)\n"
+"      --exclude=GLOB        skip files that match GLOB\n"
+"      --exclude-from=FILE   skip files that match any file pattern from "
+"FILE\n"
+"      --exclude-dir=GLOB    skip directories that match GLOB\n"
+msgstr ""
+"      --include=FILE_PATTERN  FILE_PATTERN に一致したファイルのみ検索する\n"
+"      --exclude=FILE_PATTERN  FILE_PATTERN 一致したファイル・ディレクトリーを"
+"スキップする\n"
+"      --exclude-from=FILE   FILE から読み込んだファイル名のパターンに一致する"
+"ファイルをスキップする\n"
+"      --exclude-dir=PATTERN  PATTERN に一致したディレクトリーをスキップする\n"
+
+#: src/grep.c:2045
+#, c-format
+msgid ""
+"  -L, --files-without-match  print only names of FILEs with no selected "
+"lines\n"
+"  -l, --files-with-matches  print only names of FILEs with selected lines\n"
+"  -c, --count               print only a count of selected lines per FILE\n"
+"  -T, --initial-tab         make tabs line up (if needed)\n"
+"  -Z, --null                print 0 byte after FILE name\n"
+msgstr ""
+"  -L, --files-without-match  PATTERN に一致しない FILE の名前のみ表示する\n"
+"  -l, --files-with-matches  PATTERN に一致する FILE の名前のみ表示する\n"
+"  -c, --count               FILE ごとに一致した行数のみ表示する\n"
+"  -T, --initial-tab         タブを使用して整列する (必要な場合)\n"
+"  -Z, --null                FILE の名前を表示した後に値が 0 のバイトを出力す"
+"る\n"
+
+#: src/grep.c:2051
+#, c-format
+msgid ""
+"\n"
+"Context control:\n"
+"  -B, --before-context=NUM  print NUM lines of leading context\n"
+"  -A, --after-context=NUM   print NUM lines of trailing context\n"
+"  -C, --context=NUM         print NUM lines of output context\n"
+msgstr ""
+"\n"
+"前後の表示に関する制御:\n"
+"  -B, --before-context=NUM  一致した前の NUM 行を表示する\n"
+"  -A, --after-context=NUM   一致した後の NUM 行を表示する\n"
+"  -C, --context=NUM         一致した前後 NUM 行を表示する\n"
+
+#: src/grep.c:2058
+#, fuzzy, c-format
+msgid ""
+"  -NUM                      same as --context=NUM\n"
+"      --group-separator=SEP  print SEP on line between matches with context\n"
+"      --no-group-separator  do not print separator for matches with context\n"
+"      --color[=WHEN],\n"
+"      --colour[=WHEN]       use markers to highlight the matching strings;\n"
+"                            WHEN is 'always', 'never', or 'auto'\n"
+"  -U, --binary              do not strip CR characters at EOL (MSDOS/"
+"Windows)\n"
+"\n"
+msgstr ""
+"  -NUM                      --context=NUM と等価\n"
+"      --color[=WHEN],\n"
+"      --colour[=WHEN]       一致した文字列をハイライトするための印を使用す"
+"る。\n"
+"                            WHEN は 'always'、'never' または 'auto'\n"
+"  -U, --binary              行末にある CR を削除しない (MSDOS/Windows)\n"
+"\n"
+
+#: src/grep.c:2067
+#, fuzzy, c-format
+msgid ""
+"When FILE is '-', read standard input.  If no FILE is given, read standard\n"
+"input, but with -r, recursively search the working directory instead.  With\n"
+"fewer than two FILEs, assume -h.  Exit status is 0 if any line is selected,\n"
+"1 otherwise; if any error occurs and -q is not given, the exit status is 2.\n"
+msgstr ""
+"FILE が '-' の場合、標準入力から読み込みます。FILE を指定しない場合、ディレク"
+"トリーを再帰的に\n"
+"処理する場合は '.'、それ以外は '-' となります。FILE を1個だけ指定した場合は -"
+"h も有効になります。\n"
+"終了コードは、行が選択された場合は 0、それ以外は 1 です。エラーが発生して -q "
+"を指定していない\n"
+"場合の終了コードは 2 になります。\n"
+
+#: src/grep.c:2110
+msgid "conflicting matchers specified"
+msgstr "指定した一致処理系が競合しています"
+
+#: src/grep.c:2117
+#, fuzzy
+msgid "Perl matching not supported in a --disable-perl-regexp build"
+msgstr ""
+"このバイナリは --disable-perl-regexp 付きでコンパイルされているため -P オプ"
+"ションはサポートしません"
+
+#: src/grep.c:2119
+#, c-format
+msgid "invalid matcher %s"
+msgstr "%s は無効な一致処理系です"
+
+#: src/grep.c:2541
+msgid "unknown devices method"
+msgstr "デバイスに対する不明な操作です"
+
+#: src/grep.c:2690
+msgid "invalid max count"
+msgstr "無効な一致回数です"
+
+#: src/grep.c:2747
+msgid "unknown binary-files type"
+msgstr "不明なバイナリファイルの形式です"
+
+#: src/grep.c:2832
+#, fuzzy
+msgid ""
+"Written by Mike Haertel and others; see\n"
+"<https://git.savannah.gnu.org/cgit/grep.git/tree/AUTHORS>."
+msgstr ""
+"その他の方々は <http://git.sv.gnu.org/cgit/grep.git/tree/AUTHORS> を参照して"
+"ください"
+
+#: src/grep.c:2939
+#, c-format
+msgid "warning: GREP_COLOR='%s' is deprecated; use GREP_COLORS='mt=%s'"
+msgstr ""
+
+#: src/pcresearch.c:89
+#, c-format
+msgid ""
+"\n"
+"grep -P uses PCRE2 %s\n"
+msgstr ""
+
+#: src/pcresearch.c:167
+#, fuzzy
+msgid "-P supports only unibyte locales on this platform"
+msgstr "-P は1バイトの UTF-8 ロケールのみサポートします"
+
+#: src/pcresearch.c:169
+msgid "-P supports only unibyte and UTF-8 locales"
+msgstr "-P は1バイトの UTF-8 ロケールのみサポートします"
+
+#: src/pcresearch.c:192
+msgid "the -P option only supports a single pattern"
+msgstr "-P オプションは単一のパターンしかサポートしません"
+
+#: src/pcresearch.c:288
+msgid "exceeded PCRE's line length limit"
+msgstr "PCRE の行長制限を超過しました"
+
+#: src/pcresearch.c:366
+#, fuzzy, c-format
+msgid "%s: memory exhausted"
+msgstr "メモリを使い果たしました"
+
+#: src/pcresearch.c:369
+#, fuzzy, c-format
+msgid "%s: exhausted PCRE JIT stack"
+msgstr "PCRE JIT スタックを使い果たしました"
+
+#: src/pcresearch.c:373
+#, fuzzy, c-format
+msgid "%s: exceeded PCRE's backtracking limit"
+msgstr "PCRE のバックスラッシュ制限を超過しました"
+
+#: src/pcresearch.c:378
+#, fuzzy, c-format
+msgid "%s: exceeded PCRE's nested backtracking limit"
+msgstr "PCRE のバックスラッシュ制限を超過しました"
+
+#: src/pcresearch.c:382
+#, c-format
+msgid "%s: PCRE detected recurse loop"
+msgstr ""
+
+#: src/pcresearch.c:387
+#, fuzzy, c-format
+msgid "%s: exceeded PCRE's heap limit"
+msgstr "PCRE のバックスラッシュ制限を超過しました"
+
+#: src/pcresearch.c:396
+#, fuzzy, c-format
+msgid "%s: internal PCRE error: %d"
+msgstr "PCRE 内部エラー: %d"
+
+#, fuzzy, c-format
+#~ msgid "JIT internal error: %d"
+#~ msgstr "内部エラー"
+
+#~ msgid "failed to allocate memory for the PCRE JIT stack"
+#~ msgstr "PCRE JIT スタックへのメモリ割り当てに失敗しました"
+
+#~ msgid "internal error (should never happen)"
+#~ msgstr "内部エラー (決して発生しないはず)"
+
+#, c-format
+#~ msgid "warning: GREP_OPTIONS is deprecated; please use an alias or script"
+#~ msgstr ""
+#~ "警告: GREP_OPTIONS は廃止されました。alias またはスクリプトを使用してくだ"
+#~ "さい"
+
+#~ msgid "invalid %s%s argument '%s'"
+#~ msgstr "引数 '%3$s' に対して %1$s%2$s が無効です"
+
+#~ msgid "invalid suffix in %s%s argument '%s'"
+#~ msgstr "引数 '%3$s' に対して無効な接尾辞 %1$s%2$s です"
+
+#~ msgid "%s%s argument '%s' too large"
+#~ msgstr "引数 '%3$s' に対する %1$s%2$s が大きすぎます"
+
+#, fuzzy
+#~ msgid "%s home page: <https://www.gnu.org/software/%s/>\n"
+#~ msgstr "%s のホームページ: <http://www.gnu.org/software/%s/>\n"
+
+#~ msgid "Mike Haertel"
+#~ msgstr "Mike Haertel"
+
+#~ msgid "%s: option '--%s' doesn't allow an argument\n"
+#~ msgstr "%s: オプション '--%s' は引数を取ることができません\n"
+
+#~ msgid "%s: unrecognized option '--%s'\n"
+#~ msgstr "%s: オプション '--%s' を認識できません\n"
+
+#~ msgid "%s: option '-W %s' is ambiguous\n"
+#~ msgstr "%s: オプション '-W %s' は曖昧です\n"
+
+#~ msgid "%s: option '-W %s' doesn't allow an argument\n"
+#~ msgstr "%s: オプション '-W %s' は引数を取ることができません\n"
+
+#~ msgid "%s: option '-W %s' requires an argument\n"
+#~ msgstr "%s: オプション '-W %s' には引数が必要です\n"
+
+#~ msgid "PATTERN is, by default, a basic regular expression (BRE).\n"
+#~ msgstr "PATTERN はデフォルトでは基本正規表現 (BRE) です。\n"
+
+#~ msgid ""
+#~ "'egrep' means 'grep -E'.  'fgrep' means 'grep -F'.\n"
+#~ "Direct invocation as either 'egrep' or 'fgrep' is deprecated.\n"
+#~ msgstr ""
+#~ "'egrep' は 'grep -E' を意味します。 'fgrep' は 'grep -F' を意味します。\n"
+#~ "'egrep' または 'fgrep' による直接起動は廃止予定です。\n"
+
+#~ msgid "lseek failed"
+#~ msgstr "lseek に失敗しました"
+
+#~ msgid "unfinished repeat count"
+#~ msgstr "繰返し回数が終了していません"
+
+#~ msgid "malformed repeat count"
+#~ msgstr "不正な形式の繰り返し回数です"
+
+#~ msgid "PATTERN is an extended regular expression (ERE).\n"
+#~ msgstr "PATTERN は拡張正規表現 (ERE) です。\n"
+
+#~ msgid "Invocation as `egrep' is deprecated; use `grep -E' instead.\n"
+#~ msgstr ""
+#~ "`egrep' という名前での起動は廃止予定です。代わりに `grep -E' を使用してく"
+#~ "ださい。\n"
+
+#~ msgid "PATTERN is a set of newline-separated fixed strings.\n"
+#~ msgstr "PATTERN は改行で区切られた固定文字列の組です。\n"
+
+#~ msgid "Invocation as `fgrep' is deprecated; use `grep -F' instead.\n"
+#~ msgstr ""
+#~ "`fgrep' という名前での起動は廃止予定です。代わりに `grep -F' を使用してく"
+#~ "ださい。\n"
+
+#~ msgid "writing output"
+#~ msgstr "出力の書込み"
+
+#~ msgid "GNU Grep home page: <%s>\n"
+#~ msgstr "GNU Grep のホームページ: <%s>\n"
+
+#~ msgid "%s can only use the %s pattern syntax"
+#~ msgstr "%s は %s パターン構文の時のみ使用できます"
+
+#~ msgid ""
+#~ "in GREP_COLORS=\"%s\", the \"%s\" capacity needs a value (\"=...\"); "
+#~ "skipped"
+#~ msgstr ""
+#~ "GREP_COLORS=\"%s\" において、\"%s\" には値の代入 (\"=...\") が必要です。ス"
+#~ "キップしました"
+
+#~ msgid ""
+#~ "in GREP_COLORS=\"%s\", the \"%s\" capacity is boolean and cannot take a "
+#~ "value (\"=%s\"); skipped"
+#~ msgstr ""
+#~ "GREP_COLORS=\"%s\" において、\"%s\" は真偽値であり値を代入 (\"=%s\") する"
+#~ "ことはできません。スキップしました"
+
+#~ msgid "in GREP_COLORS=\"%s\", the \"%s\" capacity %s"
+#~ msgstr "GREP_COLORS=\"%s\" において \"%s\" は %s です"
+
+#~ msgid ""
+#~ "stopped processing of ill-formed GREP_COLORS=\"%s\" at remaining "
+#~ "substring \"%s\""
+#~ msgstr ""
+#~ "GREP_COLORS=\"%s\" の形式に誤りがあるため処理を中止しました。残りの部分文"
+#~ "字列は \"%s\" です"
+
+#~ msgid "ARGP_HELP_FMT: %s value is less than or equal to %s"
+#~ msgstr "ARGP_HELP_FMT: %s の値は %s の値以下です"
+
+#~ msgid "%.*s: ARGP_HELP_FMT parameter requires a value"
+#~ msgstr "%.*s: ARGP_HELP_FMT パラメータには値が必要です"
+
+#~ msgid "%.*s: ARGP_HELP_FMT parameter must be positive"
+#~ msgstr "%.*s: ARGP_HELP_FMT パラメータは正の値でなければいけません"
+
+#~ msgid "%.*s: Unknown ARGP_HELP_FMT parameter"
+#~ msgstr "%.*s: 不明な ARGP_HELP_FMT パラメータ"
+
+#~ msgid "Garbage in ARGP_HELP_FMT: %s"
+#~ msgstr "ARGP_HELP_FMT 中にごみがあります: %s"
+
+#~ msgid ""
+#~ "Mandatory or optional arguments to long options are also mandatory or "
+#~ "optional for any corresponding short options."
+#~ msgstr ""
+#~ "長い形式のオプションで必須または任意の引数は、それに対応する短い形式のオプ"
+#~ "ションでも同様に必須または任意です。"
+
+#~ msgid "Usage:"
+#~ msgstr "使用法:"
+
+#~ msgid "  or: "
+#~ msgstr "または: "
+
+#~ msgid " [OPTION...]"
+#~ msgstr " [OPTION...]"
+
+#~ msgid "Report bugs to %s.\n"
+#~ msgstr "バグを発見したら %s 宛に報告して下さい。\n"
+
+#~ msgid "give this help list"
+#~ msgstr "このヘルプを表示する"
+
+#~ msgid "give a short usage message"
+#~ msgstr "短い使用方法を表示する"
+
+#~ msgid "NAME"
+#~ msgstr "名前"
+
+#~ msgid "set the program name"
+#~ msgstr "プログラム名を設定する"
+
+#~ msgid "SECS"
+#~ msgstr "SECS"
+
+#~ msgid "hang for SECS seconds (default 3600)"
+#~ msgstr "SECS 秒でハング (デフォルト 3600)"
+
+#~ msgid "print program version"
+#~ msgstr "プログラムのバージョンを表示する"
+
+#~ msgid "(PROGRAM ERROR) No version known!?"
+#~ msgstr "(プログラムエラー) 不明なバージョン!?"
+
+#~ msgid "%s: Too many arguments\n"
+#~ msgstr "%s: 引数が多すぎます\n"
+
+#~ msgid "(PROGRAM ERROR) Option should have been recognized!?"
+#~ msgstr "(プログラムエラー) オプションは認識されているべきです!?"
+
+#~ msgid "cannot find a temporary directory, try setting $TMPDIR"
+#~ msgstr "一時ディレクトリを作成できません。 $TMPDIR を設定してみてください"
+
+#~ msgid "cannot create a temporary directory using template \"%s\""
+#~ msgstr "テンプレート \"%s\" を使用した一時ディレクトリを作成できません"
+
+#~ msgid "cannot remove temporary file %s"
+#~ msgstr "一時ファイル %s を削除できません"
+
+#~ msgid "cannot remove temporary directory %s"
+#~ msgstr "一時ディレクトリ %s を削除できません"
+
+#~ msgid "error closing file"
+#~ msgstr "ファイルクローズエラー"
+
+#~ msgid "preserving permissions for %s"
+#~ msgstr "%s のパーミッションを保存しています"
+
+#~ msgid "error while opening \"%s\" for reading"
+#~ msgstr "\"%s\"を読込むため開いている際にエラーが発生しました"
+
+#~ msgid "cannot open backup file \"%s\" for writing"
+#~ msgstr "書込み用バックアップファイル\"%s\"を開くことができません"
+
+#~ msgid "error reading \"%s\""
+#~ msgstr "\"%s\"の読込み中にエラーが発生しました"
+
+#~ msgid "error writing \"%s\""
+#~ msgstr "\"%s\"の書込み中にエラーが発生しました"
+
+#~ msgid "error after reading \"%s\""
+#~ msgstr "\"%s\"の読込み後にエラーが発生しました"
+
+#~ msgid "fdopen() failed"
+#~ msgstr "fdopen()に失敗しました"
+
+#~ msgid "C# compiler not found, try installing pnet"
+#~ msgstr "C# コンパイラが見つりません。pnet をインストールしてみてください"
+
+#~ msgid "C# virtual machine not found, try installing pnet"
+#~ msgstr "C# 仮想マシンが見つかりません。pnet をインストールしてみてください"
+
+#~ msgid "%s subprocess failed"
+#~ msgstr "%s サブプロセスが失敗しました"
+
+#~ msgid "regular empty file"
+#~ msgstr "通常の空ファイル"
+
+#~ msgid "regular file"
+#~ msgstr "通常ファイル"
+
+#~ msgid "directory"
+#~ msgstr "ディレクトリ"
+
+#~ msgid "block special file"
+#~ msgstr "ブロックスペシャルファイル"
+
+#~ msgid "character special file"
+#~ msgstr "キャラクタスペシャルファイル"
+
+#~ msgid "fifo"
+#~ msgstr "fifo"
+
+#~ msgid "symbolic link"
+#~ msgstr "シンボリックリンク"
+
+#~ msgid "socket"
+#~ msgstr "ソケット"
+
+#~ msgid "message queue"
+#~ msgstr "メッセージキュー"
+
+#~ msgid "semaphore"
+#~ msgstr "セマフォ"
+
+#~ msgid "shared memory object"
+#~ msgstr "共有メモリオブジェクト"
+
+#~ msgid "typed memory object"
+#~ msgstr "型付メモリオブジェクト"
+
+#~ msgid "weird file"
+#~ msgstr "不明なファイル"
+
+#~ msgid "Address family for hostname not supported"
+#~ msgstr "ホスト名に対する Address family がサポートされていません"
+
+#~ msgid "Temporary failure in name resolution"
+#~ msgstr "名前解決に一時的に失敗しました"
+
+#~ msgid "Bad value for ai_flags"
+#~ msgstr "ai_flags に対する誤った値です"
+
+#~ msgid "Non-recoverable failure in name resolution"
+#~ msgstr "名前解決でリカバリできない失敗が発生しました"
+
+#~ msgid "ai_family not supported"
+#~ msgstr "ai_family はサポートされていません"
+
+#~ msgid "Memory allocation failure"
+#~ msgstr "メモリ配置に失敗しました"
+
+#~ msgid "No address associated with hostname"
+#~ msgstr "ホスト名にアドレスが割り当てられていません"
+
+#~ msgid "Name or service not known"
+#~ msgstr "名前またはサービスが不明です"
+
+#~ msgid "Servname not supported for ai_socktype"
+#~ msgstr "ai_socktype に対して Servname がサポートされていません"
+
+#~ msgid "ai_socktype not supported"
+#~ msgstr "ai_socktype はサポートされていません"
+
+#~ msgid "System error"
+#~ msgstr "システムエラー"
+
+#~ msgid "Argument buffer too small"
+#~ msgstr "引数バッファが小さすぎます"
+
+#~ msgid "Processing request in progress"
+#~ msgstr "要求された処理は実行中です"
+
+#~ msgid "Request canceled"
+#~ msgstr "要求がキャンセルされました"
+
+#~ msgid "Request not canceled"
+#~ msgstr "要求がキャンセルされませんでした"
+
+#~ msgid "All requests done"
+#~ msgstr "すべての要求が完了しました"
+
+#~ msgid "Interrupted by a signal"
+#~ msgstr "シグナル割り込みが発生しました"
+
+#~ msgid "Parameter string not correctly encoded"
+#~ msgstr "パラメーター文字列が正しくエンコードされていません"
+
+#~ msgid "Unknown error"
+#~ msgstr "不明なエラー"
+
+#~ msgid "invalid source_version argument to compile_java_class"
+#~ msgstr "compile_java_class への source_version 引数が無効です"
+
+#~ msgid "invalid target_version argument to compile_java_class"
+#~ msgstr "compile_java_class への target_version 引数が無効です"
+
+#~ msgid "failed to create \"%s\""
+#~ msgstr "\"%s\" の作成に失敗しました"
+
+#~ msgid "error while writing \"%s\" file"
+#~ msgstr "\"%s\" ファイルの書き込み中にエラーが発生しました"
+
+#~ msgid "Java compiler not found, try installing gcj or set $JAVAC"
+#~ msgstr ""
+#~ "Java コンパイラが見つかりません。 gcj をインストールするか、またはt "
+#~ "$JAVAC を設定してみてください"
+
+#~ msgid "Java virtual machine not found, try installing gij or set $JAVA"
+#~ msgstr ""
+#~ "Java 仮想マシンが見つかりません。 gij をインストールするか、または $JAVA "
+#~ "を設定してみてください"
+
+#~ msgid "%s subprocess I/O error"
+#~ msgstr "%s サブプロセス I/O エラー"
+
+#~ msgid "cannot change permissions of %s"
+#~ msgstr "%s のパーミッションを変更できません"
+
+#~ msgid "cannot create directory %s"
+#~ msgstr "ディレクトリ %s を作成できません"
+
+#~ msgid "Failed to open /dev/zero for read"
+#~ msgstr "/dev/zeroを読込み用に開けません"
+
+#~ msgid "creation of reading thread failed"
+#~ msgstr "読み込みスレッドの作成に失敗しました"
+
+#~ msgid "cannot set up nonblocking I/O to %s subprocess"
+#~ msgstr "%s 子プロセスへ非ブロック I/O を設定できません"
+
+#~ msgid "communication with %s subprocess failed"
+#~ msgstr "%s 子プロセスとの通信に失敗しました"
+
+#~ msgid "write to %s subprocess failed"
+#~ msgstr "%s 子プロセスへの書き込みに失敗しました"
+
+#~ msgid "read from %s subprocess failed"
+#~ msgstr "%s 子プロセスからの読み込みに失敗しました"
+
+#~ msgid "subprocess %s terminated with exit code %d"
+#~ msgstr "子プロセス %s が終了コード %d で終了しました"
+
+#~ msgid "creation of threads failed"
+#~ msgstr "スレッドの作成に失敗しました"
+
+#~ msgid "%s subprocess terminated with exit code %d"
+#~ msgstr "%s 子プロセスが終了コード %d で終了しました"
+
+#~ msgid "cannot create pipe"
+#~ msgstr "パイプを作成できません"
+
+#~ msgid "^[yY]"
+#~ msgstr "^[yY]"
+
+#~ msgid "^[nN]"
+#~ msgstr "^[nN]"
+
+#~ msgid "setting permissions for %s"
+#~ msgstr "%s のパーミッションを設定します"
+
+#~ msgid "Hangup"
+#~ msgstr "Hangup"
+
+#~ msgid "Interrupt"
+#~ msgstr "割り込み"
+
+#~ msgid "Quit"
+#~ msgstr "終了"
+
+#~ msgid "Illegal instruction"
+#~ msgstr "Illegal instruction"
+
+#~ msgid "Trace/breakpoint trap"
+#~ msgstr "Trace/breakpoint trap"
+
+#~ msgid "Aborted"
+#~ msgstr "中止"
+
+#~ msgid "Floating point exception"
+#~ msgstr "浮動小数点例外"
+
+#~ msgid "Killed"
+#~ msgstr "強制終了"
+
+#~ msgid "Bus error"
+#~ msgstr "バスエラー"
+
+#~ msgid "Segmentation fault"
+#~ msgstr "Segmentation fault"
+
+#~ msgid "Broken pipe"
+#~ msgstr "Broken pipe"
+
+#~ msgid "Alarm clock"
+#~ msgstr "Alarm clock"
+
+#~ msgid "Terminated"
+#~ msgstr "Terminated"
+
+#~ msgid "Urgent I/O condition"
+#~ msgstr "緊急 I/O 状態"
+
+#~ msgid "Stopped (signal)"
+#~ msgstr "停止 (シグナル)"
+
+#~ msgid "Stopped"
+#~ msgstr "停止"
+
+#~ msgid "Continued"
+#~ msgstr "継続"
+
+#~ msgid "Child exited"
+#~ msgstr "子プロセス終了"
+
+#~ msgid "Stopped (tty input)"
+#~ msgstr "停止 (tty 入力)"
+
+#~ msgid "Stopped (tty output)"
+#~ msgstr "停止 (tty 出力)"
+
+#~ msgid "I/O possible"
+#~ msgstr "I/O 可能"
+
+#~ msgid "CPU time limit exceeded"
+#~ msgstr "CPU時間制限を超過しました"
+
+#~ msgid "File size limit exceeded"
+#~ msgstr "ファイルサイズ制限を超過しました"
+
+#~ msgid "Virtual timer expired"
+#~ msgstr "仮想タイマーが終了しました"
+
+#~ msgid "Profiling timer expired"
+#~ msgstr "プロファイリングタイマーが終了しました"
+
+#~ msgid "Window changed"
+#~ msgstr "Window が変更されました"
+
+#~ msgid "User defined signal 1"
+#~ msgstr "ユーザー定義シグナル1"
+
+#~ msgid "User defined signal 2"
+#~ msgstr "ユーザー定義シグナル2"
+
+#~ msgid "EMT trap"
+#~ msgstr "EMT トラップ"
+
+#~ msgid "Bad system call"
+#~ msgstr "間違ったシステムコール"
+
+#~ msgid "Stack fault"
+#~ msgstr "スタックエラー"
+
+#~ msgid "Information request"
+#~ msgstr "情報要求"
+
+#~ msgid "Power failure"
+#~ msgstr "電源エラー"
+
+#~ msgid "Resource lost"
+#~ msgstr "リソースが無くなりました"
+
+#~ msgid "error writing to a closed pipe or socket"
+#~ msgstr "閉じたパイプまたはソケットへの書き込みでエラーが発生しました"
+
+#~ msgid "Real-time signal %d"
+#~ msgstr "リアルタイムシグナル %d"
+
+#~ msgid "Unknown signal %d"
+#~ msgstr "不明なシグナル %d"
+
+#~ msgid "iconv function not usable"
+#~ msgstr "iconv 関数が使えません"
+
+#~ msgid "iconv function not available"
+#~ msgstr "iconv 関数が有効ではありません"
+
+#~ msgid "character out of range"
+#~ msgstr "範囲外の文字"
+
+#~ msgid "cannot convert U+%04X to local character set"
+#~ msgstr "U+%04X をローカル文字セットに変換できません"
+
+#~ msgid "cannot convert U+%04X to local character set: %s"
+#~ msgstr "U+%04X をローカル文字セット %s に変換できません"
+
+#~ msgid "invalid spec"
+#~ msgstr "無効な指定"
+
+#~ msgid "unable to display error message"
+#~ msgstr "エラーメッセージを表示できません"
+
+#~ msgid "_open_osfhandle failed"
+#~ msgstr "_open_osfhandle に失敗しました"
+
+#~ msgid "cannot restore fd %d: dup2 failed"
+#~ msgstr "ファイル記述子 (fd) %d をリストアできません: dup2 に失敗しました"
+
+#~ msgid "%s subprocess"
+#~ msgstr "%s 子プロセス"
+
+#~ msgid "%s subprocess got fatal signal %d"
+#~ msgstr "%s 子プロセスが致命的なシグナル %d を受信しました"
+
+#~ msgid "stdin"
+#~ msgstr "標準入力"
+
+#~ msgid "stdout"
+#~ msgstr "標準出力"
+
+#~ msgid "stderr"
+#~ msgstr "標準エラー出力"
+
+#~ msgid "unknown stream"
+#~ msgstr "不明なストリーム"
+
+#~ msgid "failed to reopen %s with mode %s"
+#~ msgstr "%s をモード %s で再度開くことに失敗しました"
+
+#~ msgid "string comparison failed"
+#~ msgstr "文字列の比較に失敗しました"
+
+#~ msgid "Set LC_ALL='C' to work around the problem."
+#~ msgstr "問題を回避するために LC_ALL='C' を指定してください."
+
+#~ msgid "The strings compared were %s and %s."
+#~ msgstr "比較した文字列は %s と %s です."
+
+#~ msgid "cannot perform formatted output"
+#~ msgstr "書式設定を行った出力を実行することができません"
+
+#~ msgid "%s: illegal option -- %c\n"
+#~ msgstr "%s: 不正なオプション -- %c\n"
+
+#~ msgid "block size"
+#~ msgstr "ブロックサイズ"
+
+#~ msgid "%s exists but is not a directory"
+#~ msgstr "%s は存在しますがディレクトリではありません"
+
+#~ msgid "cannot change owner and/or group of %s"
+#~ msgstr "%s のオーナーとグループを変更できません"
+
+#~ msgid "cannot chdir to directory %s"
+#~ msgstr "ディレクトリ %s に移動できません"
+
+#~ msgid "cannot get the login group of a numeric UID"
+#~ msgstr "数字のUIDのログイングループを取得できません"
+
+#~ msgid ""
+#~ "\n"
+#~ "This is free software.  You may redistribute copies of it under the terms "
+#~ "of\n"
+#~ "the GNU General Public License <http://www.gnu.org/licenses/gpl.html>.\n"
+#~ "There is NO WARRANTY, to the extent permitted by law.\n"
+#~ "\n"
+#~ msgstr ""
+#~ "\n"
+#~ "本プログラムはフリーソフトウェアです. GNU一般公有使用許諾\n"
+#~ "<http://www.gnu.org/licenses/gpl.html> で定められた条項の下で本プログラ\n"
+#~ "ムのコピーを再配布できます. 適切な法が認る限りにおいて全くの無保証です.\n"
+#~ "\n"
+
+#~ msgid "out of memory"
+#~ msgstr "メモリーがなくなりました"
+
+#~ msgid "Usage: %s [OPTION]... PATTERN [FILE] ...\n"
+#~ msgstr "使用法: %s [オプション]‥‥ パターン [ファイル] ‥‥\n"
+
+#~ msgid ""
+#~ "\n"
+#~ "Output control:\n"
+#~ "  -m, --max-count=NUM       stop after NUM matches\n"
+#~ "  -b, --byte-offset         print the byte offset with output lines\n"
+#~ "  -n, --line-number         print line number with output lines\n"
+#~ "      --line-buffered       flush output on every line\n"
+#~ "  -H, --with-filename       print the filename for each match\n"
+#~ "  -h, --no-filename         suppress the prefixing filename on output\n"
+#~ "      --label=LABEL         print LABEL as filename for standard input\n"
+#~ "  -o, --only-matching       show only the part of a line matching "
+#~ "PATTERN\n"
+#~ "  -q, --quiet, --silent     suppress all normal output\n"
+#~ "      --binary-files=TYPE   assume that binary files are TYPE\n"
+#~ "                            TYPE is 'binary', 'text', or 'without-match'\n"
+#~ "  -a, --text                equivalent to --binary-files=text\n"
+#~ "  -I                        equivalent to --binary-files=without-match\n"
+#~ "  -d, --directories=ACTION  how to handle directories\n"
+#~ "                            ACTION is 'read', 'recurse', or 'skip'\n"
+#~ "  -D, --devices=ACTION      how to handle devices, FIFOs and sockets\n"
+#~ "                            ACTION is 'read' or 'skip'\n"
+#~ "  -R, -r, --recursive       equivalent to --directories=recurse\n"
+#~ "      --include=PATTERN     files that match PATTERN will be examined\n"
+#~ "      --exclude=PATTERN     files that match PATTERN will be skipped.\n"
+#~ "      --exclude-from=FILE   files that match PATTERN in FILE will be "
+#~ "skipped.\n"
+#~ "  -L, --files-without-match only print FILE names containing no match\n"
+#~ "  -l, --files-with-matches  only print FILE names containing matches\n"
+#~ "  -c, --count               only print a count of matching lines per "
+#~ "FILE\n"
+#~ "  -Z, --null                print 0 byte after FILE name\n"
+#~ msgstr ""
+#~ "\n"
+#~ "出力制御:\n"
+#~ "  -m, --max-count=回数      指定した一致回数の後、終了する\n"
+#~ "  -b, --byte-offset         出力行にバイト・オフセットも表示する\n"
+#~ "  -n, --line-number         出力行に行数も表示する\n"
+#~ "      --line-buffered       行ごとに出力を掃き出す\n"
+#~ "  -H, --with-filename       各一致にたいしてそのファイル名も表示する\n"
+#~ "  -h, --no-filename         前のファイル名を出力から抑止する\n"
+#~ "      --label=ラベル        ラベルをファイル名として標準出力に表示する\n"
+#~ "  -o, --only-matching       パターンと一致する行の部分だけを示す\n"
+#~ "  -q, --quiet, --silent     通常の出力をすべて抑止する\n"
+#~ "      --binary-files=型     バイナリー・ファイルの型。「binary」\n"
+#~ "                            「text」「without-match」を指定\n"
+#~ "  -a, --text                --binary-files=textと同じ\n"
+#~ "  -I                        --binary-files=without-matchと同じ\n"
+#~ "  -d, --directories=操作    ディレクトリーへの操作\n"
+#~ "                            「read」(読込み)、「recurse」(再帰)、\n"
+#~ "                            「skip」(省略) のいずれかを指定\n"
+#~ "  -D, --devices=操作        デバイス、FIFO、ソケットへの操作\n"
+#~ "                            「read」か「skip」を指定\n"
+#~ "  -R, -r, --recursive       --directories=recurseと同じ\n"
+#~ "      --include=パターン    パターンと一致するファイルを検査する\n"
+#~ "      --exclude=パターン    パターンと一致するファイルを省略する。\n"
+#~ "      --exclude-from=ファイル 指定したファイル内のパターンと\n"
+#~ "                            一致するファイルを省略する。\n"
+#~ "  -L, --files-without-match 一致のなかったファイル名のみを表示する\n"
+#~ "  -l, --files-with-matches  一致したファイル名のみを表示する\n"
+#~ "  -c, --count               ファイルごとに一致した行数のみを表示する\n"
+#~ "  -Z, --null                ファイル名の後に、ヌル値のバイトを表示\n"
+
+#~ msgid ""
+#~ "\n"
+#~ "Report bugs to <bug-gnu-utils@gnu.org>.\n"
+#~ msgstr ""
+#~ "\n"
+#~ "バグは <bug-gnu-utils@gnu.org> へ報告してください。\n"
+
+#~ msgid "unknown directories method"
+#~ msgstr "未知のディレクトリー操作です"
+
+#~ msgid "%s (GNU grep) %s\n"
+#~ msgstr "%s (GNU grep) %s\n"
+
+#~ msgid ""
+#~ "Copyright 1988, 1992-1999, 2000, 2001 Free Software Foundation, Inc.\n"
+#~ msgstr ""
+#~ "Copyright 1988, 1992-1999, 2000, 2001 Free Software Foundation, Inc.\n"
+
+#~ msgid ""
+#~ "This is free software; see the source for copying conditions. There is "
+#~ "NO\n"
+#~ "warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR "
+#~ "PURPOSE.\n"
+#~ msgstr ""
+#~ "これはフリー・ソフトウェアです。複製に関する条件はソースをご覧ください。\n"
+#~ "これは無保証です。営利目的やある特定の目的にむけた適正のものでもありませ"
+#~ "ん。\n"
+
+#~ msgid "The -P and -z options cannot be combined"
+#~ msgstr "-Pと-zのオプションの組合せはできません"

@@ -1,0 +1,2 @@
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/llvm-ar qc libduckdb_fsst.a CMakeFiles/duckdb_fsst.dir/libfsst.cpp.obj
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/llvm-ranlib libduckdb_fsst.a

@@ -1,0 +1,55 @@
+#!/bin/sh
+# grep -i would misbehave for any matched line containing a character
+# (like "I" in the tr_TR.utf8 locale) whose lower-case representation
+# occupies more bytes (two in this case, for 0xc4b1, aka U+0131).
+
+# Copyright (C) 2011-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_tr_utf8_locale_
+require_compiled_in_MB_support
+
+# Before this change, grep could print a lot of uninitialized memory:
+# $ printf "IIIIIII\n" > in
+# $ for i in $(seq 10); do LC_ALL=tr_TR.utf8 src/grep -i . in|wc -c; done
+# 760
+# 754
+# 585
+# 298
+# 273
+# 458
+# 660
+# 552
+# 936
+# 678
+
+fail=0
+
+printf "IIIIIII\n" > in || framework_failure_
+LC_ALL=tr_TR.utf8 grep -i .... in > out || fail=1
+compare out in || fail=1
+
+# Also exercise the case in which the original string and the lower-case
+# buffer have precisely the same length (22 bytes here), yet internal
+# offsets do differ.  Lengths are the same because while some bytes shrink
+# when converted to lower case, others grow, and here they balance out.
+i='I\304\260'
+printf "$i$i$i$i$i$i$i\n" > in || framework_failure_
+LC_ALL=tr_TR.utf8 grep -i .... in > out || fail=1
+compare out in || fail=1
+
+Exit $fail

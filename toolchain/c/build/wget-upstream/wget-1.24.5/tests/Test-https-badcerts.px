@@ -1,0 +1,103 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+use POSIX;
+use Socket;
+use WgetFeature qw(https);
+use SSLTest;
+
+###############################################################################
+
+# code, msg, headers, content
+my %urls = (
+    '/somefile.txt' => {
+        code => "200",
+        msg => "Dontcare",
+        headers => {
+            "Content-type" => "text/plain",
+        },
+        content => "blabla",
+    },
+);
+
+my $srcdir;
+if (@ARGV) {
+    $srcdir = shift @ARGV;
+} elsif (defined $ENV{srcdir}) {
+    $srcdir = $ENV{srcdir};
+}
+$srcdir = Cwd::abs_path("$srcdir");
+
+# HOSTALIASES env variable allows us to create hosts file alias.
+my $testhostname = "WgetTestingServer";
+$ENV{'HOSTALIASES'} = "$srcdir/certs/wgethosts";
+
+my $addr = gethostbyname($testhostname);
+unless ($addr)
+{
+    warn "Failed to resolve $testhostname, using $srcdir/certs/wgethosts\n";
+    exit 77;
+}
+unless (inet_ntoa($addr) =~ "127.0.0.1")
+{
+    warn "Unexpected IP for localhost: ".inet_ntoa($addr)."\n";
+    exit 77;
+}
+
+my $cacrt      = "$srcdir/certs/test-ca-cert.pem";
+
+# Use expired server certificate
+my $servercrt  = "$srcdir/certs/expired.pem";
+my $serverkey  = "$srcdir/certs/server-key.pem";
+
+# Try Wget using SSL with expired cert. Expect Failure.
+my $port    = 30443;
+my $cmdline = $WgetTest::WGETPATH . " --ca-certificate=$cacrt".
+                                    " https://$testhostname:$port/somefile.txt";
+my $expected_error_code = 5;
+my %existing_files = (
+);
+
+my %expected_downloaded_files = (
+  'somefile.txt' => {
+    content => "blabla",
+  },
+);
+
+my $sslsock = SSLTest->new(cmdline   => $cmdline,
+                           input     => \%urls,
+                           errcode   => $expected_error_code,
+                           existing  => \%existing_files,
+                           output    => \%expected_downloaded_files,
+                           certfile  => $servercrt,
+                           keyfile   => $serverkey,
+                           lhostname => $testhostname,
+                           sslport   => $port);
+if ($sslsock->run() == 0)
+{
+  exit -1;
+}
+print "Test successful.\n";
+
+# Use certificate that is not yet valid
+$servercrt  = "$srcdir/certs/invalid.pem";
+$serverkey  = "$srcdir/certs/server-key.pem";
+
+# Retry the test with --no-check-certificate. expect success
+$port    = 20443;
+$cmdline = $WgetTest::WGETPATH . " --ca-certificate=$cacrt".
+                                 " https://$testhostname:$port/somefile.txt";
+
+$expected_error_code = 5;
+
+my $retryssl = SSLTest->new(cmdline  => $cmdline,
+                           input     => \%urls,
+                           errcode   => $expected_error_code,
+                           existing  => \%existing_files,
+                           certfile  => $servercrt,
+                           keyfile   => $serverkey,
+                           lhostname => $testhostname,
+                           sslport   => $port);
+exit $retryssl->run();
+# vim: et ts=4 sw=4

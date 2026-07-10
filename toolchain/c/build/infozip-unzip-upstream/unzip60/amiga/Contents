@@ -1,0 +1,32 @@
+Contents of the "amiga" directory for UnZip 5.5 and later:
+
+  Contents      this file
+  amiga.c       Amiga-specific file I/O routines
+  amiga.h       Amiga-specific header file
+  filedate.c    SetFileDate clone for OS 1.3, and other low-level resources
+
+  smakefile     SAS/C makefile for UnZip, fUnZip, and UnZipSFX
+
+  makefile.azt  Aztec C makefile for UnZip, fUnZip, and UnZipSFX
+  stat.c        stat() emulation for Aztec, along with opendir()/readdir()/etc
+  z-stat.h      replacement stat.h header file for use with stat.c
+  crc_68.a      assembler version of crc32.c
+  flate.a       assembler version of inflate_codes() (define ASM_INFLATECODES)
+
+  makesfx.c     source for MakeSFX, without which UnZipSFX is not usable
+
+Notes:
+
+  The crc_68.a source file is not currently used by the SAS/C makefile,
+  nor is flate.a; as of UnZip 5.2 neither of these wants args in
+  registers.
+
+  The DICE makefile has been removed since no one is supporting that
+  compiler anymore.
+
+  As of UnZip 5.2, if you have AmigaDOS 2.1 or newer and have set your
+  timezone in the Locale preferences editor, this will be an adequate
+  substitute for setting TZ.  If you do not set TZ to your current timezone,
+  files will be restored with times corrsponding to "EST5EDT", U.S. Eastern
+  time.  See ../proginfo/timezone.txt for directions on how to set the
+  TZ variable.

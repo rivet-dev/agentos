@@ -1,0 +1,20 @@
+#!/bin/sh
+# Check that "grep -r PAT" reads ".".
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+mkdir dir || framework_failure_
+echo aaa > dir/a || framework_failure_
+echo bbb > dir/b || framework_failure_
+
+echo a:aaa > exp || framework_failure_
+
+(cd dir && grep -r aaa) > out || fail=1
+compare exp out || fail=1
+
+(cd dir && grep -r aaa < a) > out || fail=1
+compare exp out || fail=1
+
+(cd dir && grep -r aaa *) > out || fail=1
+compare exp out || fail=1
+
+Exit $fail

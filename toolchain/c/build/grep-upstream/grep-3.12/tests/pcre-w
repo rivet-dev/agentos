@@ -1,0 +1,31 @@
+#! /bin/sh
+# Before grep-2.19, grep -Pw %% would match %% enclosed in word boundaries
+#
+# Copyright (C) 2014-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_pcre_
+
+fail=0
+
+echo %aa% > in || framework_failure_
+grep -Pw aa in > out || fail=1
+compare out in || fail=1
+
+echo a%%a > in || framework_failure_
+grep -Pw %% in > out && fail=1
+compare /dev/null out || fail=1
+
+echo %%%% > in || framework_failure_
+grep -Pw %% in > out || fail=1
+compare out in || fail=1
+
+echo %% > in || framework_failure_
+grep -Pw %% in > out || fail=1
+compare out in || fail=1
+
+Exit $fail

@@ -1,0 +1,214 @@
+# Makefile for Info-ZIP's unzip, zipinfo, funzip and unzipsfx
+# using djgpp v1.12m4.  Tested with unzip550 by Christian Spieler
+#
+# This Makefile is specifically tailored for GNU Make and GNU C and
+# may not work with a generic UNIX compatible Make utility.
+# Features use:
+# - pattern rules (%.o : %.c, etc.)
+# - GNUMake conditionals and functions  (ifeq, $(patsubst,,),...)
+#
+# To allow mixed use of real mode (16bit) vs. GO32 (32bit protected mode)
+# GNUMake utility and GCC driver, precautions have been taken to
+# limit command lines to the DOS 126 bytes limit.
+# In case you have an environment that supports long command lines
+# at all "interface" levels (e.g.: DJGPPv1 Gmake 3.71 and GO32 gcc.exe),
+# you may define the Makefile macro LONGARGS to take advantage of the
+# "long command lines" capability.
+# I have archived the fastest compilation (with LONGARGS support!) by
+# using both a real mode gnumake (private port) and the real mode
+# gcc.exe driver.
+#
+# The Makefile allows the optional creation of standalone exectutables.
+# This has the advantage that unzip.exe does not rely on any other file,
+# but results in much larger executables.
+#
+
+# Separators colon and <sp> are used in U**X, semi-colon and <sp> in DOS.
+VPATH=. msdos
+
+ifdef NOASM
+USE_ASMCRC=
+else
+USE_ASMCRC=1
+endif
+
+# UnZip flags
+LOC=-DDOS $(ASMFLG) $(LOCAL_UNZIP)
+CC=gcc
+LD=$(CC)
+CPPFLAGS=-I. $(LOC)
+ASFLAGS=$(CPPFLAGS)
+CFLAGS=-Wall -O2 -m486 $(CPPFLAGS)
+FUN_FLAGS=$(CFLAGS) -DFUNZIP
+SFX_FLAGS=$(CFLAGS) -DSFX
+LDFLAGS=-s -v
+LIBS=-lpc
+
+STRIP=strip
+
+# Define the STANDALONE macro to create executables which can be
+# used without any external extender file.
+# >>> NOTE: Either copy the go32 extender into your build directory, or
+# >>>       edit the STUBIFY macro and add the correct path to "go32.exe".
+ifdef STANDALONE
+STUBIFY=coff2exe -s go32.exe
+else
+STUBIFY=coff2exe
+endif
+
+# general-purpose stuff
+# If cp.exe is not found change to CP=copy /Y    .
+CP = cp -f
+# If install.exe is not found change to INSTALL=$(CP)   .
+INSTALL=install
+# The default value of RM is "rm -f"  .  If rm.exe is not found, uncomment
+# the following:
+RM=del
+E = .exe
+O = .o
+M=msdos
+
+# defaults for crc32 stuff and system dependent headers
+ifdef USE_ASMCRC
+ASMFLG = -DASM_CRC
+CRCA_O = crc_gcc$O
+else
+ASMFLG =
+CRCA_O =
+endif
+
+# object files
+OBJS1 = unzip$O crc32$O $(CRCA_O) crypt$O envargs$O explode$O
+OBJS2 = extract$O fileio$O globals$O inflate$O list$O match$O
+OBJS3 = process$O ttyio$O ubz2err$O unreduce$O unshrink$O zipinfo$O
+OBJS = $(OBJS1) $(OBJS2) $(OBJS3) $M$O
+
+OBJX1 = unzipsfx$O crc32_$O $(CRCA_O) crypt_$O extract_$O fileio_$O
+OBJX2 = globals_$O inflate_$O match_$O process_$O ttyio_$O ubz2err_$O $M_$O
+OBJX = $(OBJX1) $(OBJX2)
+
+OBJF = funzip$O crc32-$O $(CRCA_O) crypt-$O globals-$O inflate-$O ttyio-$O
+
+OBJECTS_ALL = $(sort $(OBJS) $(OBJX) $(OBJF) crc_gcc$O)
+
+# Common header files included by all C sources:
+UNZIP_H = unzip.h unzpriv.h globals.h msdos/doscfg.h
+
+# executable files
+UNZIPS = unzip$E zipinfo$E funzip$E unzipsfx$E
+
+# pattern rules to compile the sources:
+%$O : %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+%-$O: %.c
+	$(CC) $(FUN_FLAGS) -c $< -o $@
+
+%_$O: %.c
+	$(CC) $(SFX_FLAGS) -c $< -o $@
+
+%sfx$O: %.c
+	$(CC) $(SFX_FLAGS) -c $< -o $@
+
+all: unzips
+
+unzips:	unzip$E zipinfo$E funzip$E unzipsfx$E
+
+unzip$E: $(OBJS)
+ifdef LONGARGS
+	$(LD) $(LDFLAGS) $(OBJS) $(LIBS) -o unzip
+else
+	echo $(OBJS1) > unzip.rsp
+	echo $(OBJS2) >> unzip.rsp
+	echo $(OBJS3) $M$O >> unzip.rsp
+	echo $(LIBS) >> unzip.rsp
+	$(LD) $(LDFLAGS) -o unzip @unzip.rsp
+	$(RM) unzip.rsp
+endif
+	$(STRIP) unzip
+	$(STUBIFY) unzip
+	stubedit $@ globbing=no
+	$(RM) unzip
+
+zipinfo$E: unzip$E
+	coff2exe -g zipinfo
+	stubedit $@ runfile=unzip globbing=no
+
+funzip$E: $(OBJF)
+	$(LD) $(LDFLAGS) $(OBJF) -o funzip
+	$(STRIP) funzip
+	$(STUBIFY) funzip
+	$(RM) funzip
+
+unzipsfx$E: $(OBJX)
+ifdef LONGARGS
+	$(LD) $(LDFLAGS) $(OBJX) $(LIBS) -o unzipsfx
+else
+	echo $(OBJX1) > unzipsfx.rsp
+	echo $(OBJX2) >> unzipsfx.rsp
+	echo $(LIBS) >> unzipsfx.rsp
+	$(LD) $(LDFLAGS) -o unzipsfx @unzipsfx.rsp
+	$(RM) unzipsfx.rsp
+endif
+	$(STRIP) unzipsfx
+	$(STUBIFY) unzipsfx
+	stubedit $@ globbing=no
+	$(RM) unzipsfx
+
+# explicit compilation instructions:
+crc_gcc$O: crc_i386.S		# 32bit, GNU AS
+	$(CC) $(ASFLAGS) -x assembler-with-cpp -c -o $@ crc_i386.S
+
+# BIN_PATH may be defined in djgpp.env [make] or defined above.
+install:
+	$(INSTALL) $(UNZIPS) $(BIN_PATH)
+
+uninstall:
+	cd $(BIN_PATH); $(RM) $(UNZIPS)
+
+clean:
+ifeq ($(firstword $(RM)), del)
+	$(RM) *$O
+	$(RM) *.zip
+else
+	$(RM) $(OBJECTS_ALL) *.zip
+endif
+
+# Source dependencies:
+crc_gcc$O:      crc_i386.S
+crc32$O:        crc32.c $(UNZIP_H) zip.h crc32.h
+crc32-$O:       crc32.c $(UNZIP_H) zip.h crc32.h
+crc32_$O:       crc32.c $(UNZIP_H) zip.h crc32.h
+crypt$O:        crypt.c $(UNZIP_H) zip.h crypt.h crc32.h ttyio.h
+crypt-$O:       crypt.c $(UNZIP_H) zip.h crypt.h crc32.h ttyio.h
+crypt_$O:       crypt.c $(UNZIP_H) zip.h crypt.h crc32.h ttyio.h
+envargs$O:      envargs.c $(UNZIP_H)
+explode$O:      explode.c $(UNZIP_H)
+extract$O:      extract.c $(UNZIP_H) crc32.h crypt.h
+extract_$O:     extract.c $(UNZIP_H) crc32.h crypt.h
+fileio$O:       fileio.c $(UNZIP_H) crc32.h crypt.h ttyio.h ebcdic.h
+fileio_$O:      fileio.c $(UNZIP_H) crc32.h crypt.h ttyio.h ebcdic.h
+funzip$O:       funzip.c $(UNZIP_H) crc32.h crypt.h ttyio.h
+globals$O:      globals.c $(UNZIP_H)
+globals-$O:     globals.c $(UNZIP_H)
+globals_$O:     globals.c $(UNZIP_H)
+inflate$O:      inflate.c inflate.h $(UNZIP_H)
+inflate-$O:     inflate.c inflate.h $(UNZIP_H) crypt.h
+inflate_$O:     inflate.c inflate.h $(UNZIP_H)
+list$O:         list.c $(UNZIP_H)
+match$O:        match.c $(UNZIP_H)
+match_$O:       match.c $(UNZIP_H)
+msdos$O:        msdos/msdos.c $(UNZIP_H)
+msdos_$O:       msdos/msdos.c $(UNZIP_H)
+process$O:      process.c $(UNZIP_H) crc32.h
+process_$O:     process.c $(UNZIP_H) crc32.h
+ttyio$O:        ttyio.c $(UNZIP_H) zip.h crypt.h ttyio.h
+ttyio-$O:       ttyio.c $(UNZIP_H) zip.h crypt.h ttyio.h
+ttyio_$O:       ttyio.c $(UNZIP_H) zip.h crypt.h ttyio.h
+ubz2err$O:      ubz2err.c $(UNZIP_H)
+ubz2err_$O:     ubz2err.c $(UNZIP_H)
+unreduce$O:     unreduce.c $(UNZIP_H)
+unshrink$O:     unshrink.c $(UNZIP_H)
+unzip$O:        unzip.c $(UNZIP_H) crypt.h unzvers.h consts.h
+unzipsfx$O:     unzip.c $(UNZIP_H) crypt.h unzvers.h consts.h
+zipinfo$O:      zipinfo.c $(UNZIP_H)

@@ -1,0 +1,138 @@
+?tacl routine
+#FRAME
+SINK [#LOAD /keep 1/ commacs]
+SINK [#LOAD /keep 1/ macros]
+
+[#PUSH file prev memory clib OK model unzip lib accel unlicensed licensed
+       options fileset nocrypt crypt arg^value object^owner object^security
+       deflate64
+]
+#PUSH #DEFAULTS
+
+#SET OK -1
+
+== Customise the following values for your environment
+#SET object^owner    SUPER.DAVES
+#SET object^security "UUUU"
+
+[#LOOP |WHILE| [#MORE] |DO|
+  [#CASE [#ARGUMENT /VALUE arg^value/
+           KEYWORD /WORDLIST LARGE SMALL/
+           KEYWORD /WORDLIST NOWIDE WIDE/
+           KEYWORD /WORDLIST UNLICENSED/
+           KEYWORD /WORDLIST NOCRYPT/
+           KEYWORD /WORDLIST DEFLATE64 NODEFLATE64/
+           TEMPLATE FILENAME ]
+    |1| #SET memory [arg^value]
+    |2| #SET model [arg^value]
+    |3| #SET unlicensed [arg^value]
+    |4| #SET nocrypt [arg^value]
+    |5| #SET deflate64 [arg^value]
+    |6| #SET fileset [arg^value]
+    |OTHERWISE|
+  ]
+]
+
+[#IF [#EMPTYV memory] |THEN| #SET memory LARGE]
+[#IF [#EMPTYV model] |THEN| #SET model NOWIDE]
+[#IF [#EMPTYV deflate64] |THEN| #SET deflate64 DEFLATE64]
+
+[#IF model '=' "WIDE"
+  |THEN| #SETV clib model
+  |ELSE| #SETV clib memory
+]
+
+[#IF model '=' "WIDE"
+|THEN|
+  #SET unzip UNZIPW
+|ELSE|
+  #SET unzip UNZIPL
+]
+#SET lib [unzip]B
+#SET accel UNZIP
+#SET options [options], [model]
+
+[#IF unlicensed '=' "UNLICENSED"
+|THEN|
+  #SET unzip [unzip]U
+  #SET accel [accel]U
+  #SET lib   [lib]U
+|ELSE|
+  #SET licensed LICENSED
+  #SET options [options], define [licensed]
+]
+
+[#IF nocrypt '=' "NOCRYPT"
+|THEN|
+|ELSE|
+  #SET crypt USE_CRYPT
+  #SET options [options], define [crypt]
+]
+
+[#IF deflate64 '=' "NODEFLATE64"
+|THEN|
+  #SET options [options], define NO_DEFLATE64
+]
+
+[#IF [#EMPTYV fileset] |THEN| #SET fileset *C]
+
+#OUTPUT Files to compile: [fileset]
+#OUTPUT Pointer Model   : [model]
+#OUTPUT Memory Model    : [memory]
+#OUTPUT C Library       : [clib]
+#OUTPUT Axcel Object    : [accel]
+#OUTPUT Run Object      : [unzip]
+#OUTPUT Library Object  : [lib]
+#OUTPUT Compile Options : [options]
+#OUTPUT
+
+#SET file [#FILENAMES /MAXIMUM 1/ [fileset]]
+[#LOOP |while| NOT [#EMPTYV file]
+|DO|
+  #SETV prev file
+  CC [file] $T.#UNZIP [options]
+  [#IF [tacl^completioncode] > 1 |THEN| #set OK 0 ]
+  #SET file [#FILENAMES /MAXIMUM 1, PREVIOUS [prev]/ [fileset]]
+]
+
+[#IF OK |THEN|
+  BBUNZIPLIB
+  [#IF [tacl^completioncode] > 0 |THEN| #SET OK 0]
+]
+
+#PUSH #PROCESSFILESECURITY
+VOLUME ,"NUNU"
+
+[#IF OK |THEN|
+  BBUNZIP [unzip] [clib]
+  [#IF [tacl^completioncode] > 0 |THEN| #SET OK 0]
+]
+
+[#IF OK |THEN|
+  secure^file [accel] [object^security] [object^owner]
+  accel^file [unzip] [accel]
+  [#IF [tacl^completioncode] > 0 |THEN| #SET OK 0]
+]
+
+[#IF OK
+  |THEN| #OUTPUT Successfully produced Accelerated Object [accel]
+         secure^file [accel] [object^security] [object^owner]
+         [#IF [#INTERACTIVE] |THEN|
+           [#IF licensed '=' "LICENSED" |THEN|
+             #OUTPUT [accel] will not run without being LICENSED
+             [#IF [#FILEINFO /LICENSED/ [accel]]
+             |THEN|
+               #OUTPUT [accel] already LICENSED
+             |ELSE|
+               [#IF [#MATCH Y* [#INPUT [accel] License [accel] ?]] |THEN|
+                 fup^license [accel]
+               ]
+             ]
+           ]
+         ]
+  |ELSE| #OUTPUT Failed to produce Accelerated Object [accel]
+]
+
+#OUTPUT Finished
+
+#UNFRAME

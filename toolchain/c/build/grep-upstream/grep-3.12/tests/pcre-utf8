@@ -1,0 +1,40 @@
+#! /bin/sh
+# Ensure that, with -P, Unicode \p{} symbols are correctly matched.
+#
+# Copyright (C) 2012-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_en_utf8_locale_
+LC_ALL=en_US.UTF-8 require_pcre_
+
+fail=0
+
+echo '$' | LC_ALL=en_US.UTF-8 grep -qP '\p{S}' \
+  || skip_ 'PCRE unicode support is compiled out'
+
+euro='\342\202\254 euro'
+printf "$euro\\n" > in || framework_failure_
+
+# The euro sign has the unicode "Symbol" property, so this must match:
+LC_ALL=en_US.UTF-8 grep -P '^\p{S}' in > out || fail=1
+compare in out || fail=1
+
+# This RE must *not* match in the C locale, because the first
+# byte is not a "Symbol".
+LC_ALL=C grep -P '^\p{S}' in > out && fail=1
+compare /dev/null out || fail=1
+
+LC_ALL=en_US.UTF-8 grep -P '^. euro$' in > out2 || fail=1
+compare in out2 || fail=1
+
+LC_ALL=en_US.UTF-8 grep -oP '. euro' in > out3 || fail=1
+compare in out3 || fail=1
+
+LC_ALL=en_US.UTF-8 grep -P '^\P{S}' in > out4
+compare /dev/null out4 || fail=1
+
+Exit $fail

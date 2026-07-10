@@ -1,0 +1,2 @@
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/llvm-ar qc libdummy_static_extension_loader.a CMakeFiles/dummy_static_extension_loader.dir/loader/dummy_static_extension_loader.cpp.obj
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/llvm-ranlib libdummy_static_extension_loader.a

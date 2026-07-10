@@ -1,0 +1,259 @@
+# Makefile for Info-ZIP's UnZip, UnZipSFX and fUnZip using DJGPP v2.01 or
+# higher, by Frank Donahoe.                      Last updated: 21 Jul 2008
+
+# This Makefile is specifically tailored for GNU make and GNU C and
+# may not work with a generic Unix-compatible make utility.  The latest
+# make version is 3.78.1.  Thanks to Eli Zaretskii for generously responding
+# to questions with advice on the changes needed to make install work under
+# DJGPP version 2.0x.
+# Features used:
+# - pattern rules (%.o : %.c, etc.)
+# - GNU-specific conditionals and functions  (ifeq, $(patsubst,,),...)
+# - simply expanded variables (VAR := text)
+#
+# The stand-alone executable requires DPMI services to run.  If running
+# in a DOS window under Windows 3.1 or later, the dpmi server is auto-
+# matically present.  Under DOS, if a DPMI server is not loaded, the
+# program will look for "cwsdpmi.exe."  If found, it will be loaded for
+# the duration of the program.
+#
+# cwsdpmi is a "free" dpmi server written by Charles W. Sandmann
+# (sandman@clio.rice.edu).  It may be found, among other sites, on SimTel
+# Net at the URL:
+#
+#   ftp://ftp.simtel.net/pub/simtelnet/gnu/djgpp/v2misc/csdpmi?[b,s].zip
+#
+# and on its mirrors worldwide.  The latest version as of this writing is 5.
+# Archives with the b postscript contain the binaries.  An alternate server
+# is found, l.c., in the archive pmode??[b,s].zip.  The latest (20001022) is
+# v1.3.
+
+# Separators colon and <sp> are used in Unix, semi-colon and <sp> in DOS.
+VPATH=. msdos
+
+ifdef NOASM
+USE_ASMCRC=
+else
+USE_ASMCRC=1
+endif
+
+.PHONY : clean install uninstall
+
+# UnZip flags
+# LOCAL_UNZIP may be set in "AUTOEXEC.BAT" or defined in "djgpp.env" under
+# [make] as in the example below.  Or, if you habitually work in a DOS box
+# under Windows9x, right click on the MS-DOS icon, select properties, then
+# program, to find a slot called batch file, where you may specify the path
+# to a file which will set the variables of choice every time the box is
+# opened.
+# See, for example, DOSWILD, in the file INSTALL.
+
+# [make]
+# +BUTT=-mcpu=pentiumpro
+# +LOC=-W -Wall
+# +LOCAL_UNZIP=-DUSE_UNSHRINK
+
+# BUTT may be defined to specify the target system.  With gcc v2.95,
+# optimizing options like "-mcpu=pentiumpro -march=pentiumpro" are supported,
+# but the traditional "-m386" and "-m486" options of previous gcc 2.x
+# version will continue to work.
+# So if you are in the habit of compiling from source, programs for your
+# own use, it is well to consult gcc's manual for options suitable to
+# your processer and to set BUTT accordingly.  Consult INSTALL for
+# LOCAL_UNZIP.
+
+LOC=
+CC=gcc
+LD=$(CC)
+CPPFLAGS=-I. $(INC_BZ2LIB) -DDOS -DUSE_VFAT $(ASMFLG) $(LOCAL_UNZIP) $(LOC)
+ASFLAGS=$(CPPFLAGS)
+CFLAGS=-Wall -O2 $(BUTT) $(CPPFLAGS)
+
+# See INSTALL for discussion of SFX_EXDIR.
+# EXDIR=-DSFX_EXDIR
+
+FUN_FLAGS=$(CFLAGS) -DFUNZIP
+
+# Include OFP for a modest decrease in size of unzipsfx.exe.
+OFP=-fomit-frame-pointer
+
+SFX_FLAGS=-Wall -O2 $(CPPFLAGS) -DSFX $(EXDIR) $(OFP)
+LDFLAGS=-s
+
+# general-purpose stuff
+# If cp.exe is not found change to CP=copy /Y    .
+CP = cp -fp
+# If install.exe is not found change to INSTALL=$(CP)   .  To prevent a
+# conflict with any of the many different "install's" that might be found
+# in the path, GNU install will be called as `ginstall'.  This also bypasses
+# a stub bug that cropped up with the install from fil316b.zip.
+INSTALL=ginstall
+# The default value of RM is "rm -f"  .  If rm.exe is not found, uncomment
+# the following:
+# RM=del
+# Laszlo Molnar who wrote DJ Packer and Markus F. X. J. Oberhumer who wrote
+# the compression library used by the DJ Packer have collaborated on the
+# Ultimate Packer for eXecutables, which has recently been released.  Look
+# for upx???d.zip at     http://upx.sourceforge.net/
+# As an alternative, look for "djp.exe", now two years old, in the archive
+# mlp107[b,s].zip, found in the same location as csdpmi?[b,s].zip (see above).
+# Do not add the option -s to djp.exe without making the required changes
+# to the target zipinfo$E.  Uncomment the three lines beginning with $(DJP)
+# or $(DJPSX).
+
+#DJP = djp -q
+#DJPSX = djp -q -s
+DJP = upx -qq --best
+DJPSX = $(DJP)
+E = .exe
+O = .o
+M=msdos
+
+# defaults for crc32 stuff and system dependent headers
+ifdef USE_ASMCRC
+ASMFLG = -DASM_CRC
+CRCA_O = crc_gcc$O
+else
+ASMFLG =
+CRCA_O =
+endif
+
+# optional inclusion of bzip2 decompression
+IZ_BZIP2 = bzip2
+ifdef USEBZ2
+INC_BZ2LIB = -I$(IZ_BZIP2)
+LOCAL_UNZIP:=-DUSE_BZIP2 $(LOCAL_UNZIP)
+LD_BZ2LIB = -L$(IZ_BZIP2) -lbz2
+LIBBZIP2 = $(IZ_BZIP2)/libbz2.a
+else
+INC_BZ2LIB =
+LD_BZ2LIB =
+LIBBZIP2 =
+endif
+
+# object files
+OBJS1 = unzip$O crc32$O $(CRCA_O) crypt$O envargs$O explode$O
+OBJS2 = extract$O fileio$O globals$O inflate$O list$O match$O
+OBJS3 = process$O ttyio$O ubz2err$O unreduce$O unshrink$O zipinfo$O
+OBJS = $(OBJS1) $(OBJS2) $(OBJS3) $M$O
+
+OBJX = unzipsfx$O crc32_$O $(CRCA_O) crypt_$O extract_$O fileio_$O \
+	globals_$O inflate_$O match_$O process_$O ttyio_$O ubz2err_$O $M_$O
+
+OBJF = funzip$O crc32-$O $(CRCA_O) crypt-$O globals-$O inflate-$O ttyio-$O
+
+OBJECTS_ALL = $(sort $(OBJS) $(OBJX) $(OBJF) crc_gcc$O)
+
+# Common header files included by all C sources:
+UNZIP_H = unzip.h unzpriv.h globals.h msdos/doscfg.h
+
+# executable files
+UNZIPS = unzip$E zipinfo$E funzip$E unzipsfx$E
+
+# pattern rules to compile the sources:
+%$O : %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+%-$O: %.c
+	$(CC) $(FUN_FLAGS) -c $< -o $@
+
+%_$O: %.c
+	$(CC) $(SFX_FLAGS) -c $< -o $@
+
+%sfx$O: %.c
+	$(CC) $(SFX_FLAGS) -c $< -o $@
+
+all: unzips
+
+unzips:	unzip$E zipinfo$E funzip$E unzipsfx$E
+
+unzip$E: $(OBJS) $(LIBBZIP2)
+	$(LD) $(LDFLAGS) $(OBJS) $(LD_BZ2LIB) -o $@
+#	$(DJP) $@
+
+zipinfo$E: unzip$E
+	stubify -g $@
+	stubedit $@ runfile=unzip argv0=zipinfo
+
+funzip$E: $(OBJF)
+	$(LD) $(LDFLAGS) $(OBJF) -o $@
+#	$(DJP) $@
+
+unzipsfx$E: $(OBJX)
+	$(LD) $(LDFLAGS) $(OBJX) -o $@
+#	$(DJPSX) $@
+
+# create/update the library for the optional bzip2 support:
+$(IZ_BZIP2)/libbz2.a:
+	$(MAKE) -C $(IZ_BZIP2) -f Makebz2.iz CC="$(CC)" RM="$(RM)"
+
+# explicit compilation instructions:
+
+crc_gcc$O: crc_i386.S		# 32bit, GNU AS
+	$(CC) $(ASFLAGS) -x assembler-with-cpp -c -o $@ $<
+
+# BIN_PATH may be defined in djgpp.env [make] or defined below.  If the
+# installation is to the directory containing gcc.exe etc. place the
+# following in djgpp.env:
+
+# [make]
+# +BIN_PATH=%\DJDIR%\bin
+
+# Even if so placed, it can be over-ridden here by, say:
+# BIN_PATH=c:\usr\bin
+
+install:
+	-@if not exist $(BIN_PATH)\nul mkdir $(BIN_PATH)
+	command.com /c for %f in ($(UNZIPS)) do $(INSTALL) %f $(BIN_PATH) > NUL
+
+uninstall:
+	command.com /c for %f in ($(UNZIPS)) do $(RM) $(BIN_PATH)\%f > NUL
+
+clean:
+	$(MAKE) -C $(IZ_BZIP2) -f Makebz2.iz CC="$(CC)" RM="$(RM)" clean
+ifeq ($(firstword $(RM)), del)
+	$(RM) *$O
+	$(RM) *.~
+	$(RM) *.exe
+else
+	$(RM) $(OBJECTS_ALL) *.~ *.exe
+endif
+
+# Source dependencies:
+crc_gcc$O:      crc_i386.S
+crc32$O:        crc32.c $(UNZIP_H) zip.h crc32.h
+crc32-$O:       crc32.c $(UNZIP_H) zip.h crc32.h
+crc32_$O:       crc32.c $(UNZIP_H) zip.h crc32.h
+crypt$O:        crypt.c $(UNZIP_H) zip.h crypt.h crc32.h ttyio.h
+crypt-$O:       crypt.c $(UNZIP_H) zip.h crypt.h crc32.h ttyio.h
+crypt_$O:       crypt.c $(UNZIP_H) zip.h crypt.h crc32.h ttyio.h
+envargs$O:      envargs.c $(UNZIP_H)
+explode$O:      explode.c $(UNZIP_H)
+extract$O:      extract.c $(UNZIP_H) crc32.h crypt.h
+extract_$O:     extract.c $(UNZIP_H) crc32.h crypt.h
+fileio$O:       fileio.c $(UNZIP_H) crc32.h crypt.h ttyio.h ebcdic.h
+fileio_$O:      fileio.c $(UNZIP_H) crc32.h crypt.h ttyio.h ebcdic.h
+funzip$O:       funzip.c $(UNZIP_H) crc32.h crypt.h ttyio.h
+globals$O:      globals.c $(UNZIP_H)
+globals-$O:     globals.c $(UNZIP_H)
+globals_$O:     globals.c $(UNZIP_H)
+inflate$O:      inflate.c inflate.h $(UNZIP_H)
+inflate-$O:     inflate.c inflate.h $(UNZIP_H) crypt.h
+inflate_$O:     inflate.c inflate.h $(UNZIP_H)
+list$O:         list.c $(UNZIP_H)
+match$O:        match.c $(UNZIP_H)
+match_$O:       match.c $(UNZIP_H)
+msdos$O:        msdos/msdos.c $(UNZIP_H)
+msdos_$O:       msdos/msdos.c $(UNZIP_H)
+process$O:      process.c $(UNZIP_H) crc32.h
+process_$O:     process.c $(UNZIP_H) crc32.h
+ttyio$O:        ttyio.c $(UNZIP_H) zip.h crypt.h ttyio.h
+ttyio-$O:       ttyio.c $(UNZIP_H) zip.h crypt.h ttyio.h
+ttyio_$O:       ttyio.c $(UNZIP_H) zip.h crypt.h ttyio.h
+ubz2err$O:      ubz2err.c $(UNZIP_H)
+ubz2err_$O:     ubz2err.c $(UNZIP_H)
+unreduce$O:     unreduce.c $(UNZIP_H)
+unshrink$O:     unshrink.c $(UNZIP_H)
+unzip$O:        unzip.c $(UNZIP_H) crypt.h unzvers.h consts.h
+unzipsfx$O:     unzip.c $(UNZIP_H) crypt.h unzvers.h consts.h
+zipinfo$O:      zipinfo.c $(UNZIP_H)

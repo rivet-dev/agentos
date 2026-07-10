@@ -1,0 +1,15 @@
+Installation instructions:
+
+1. Edit the Makefile for your OS.  Comment out the Linux options and un-comment
+   the options for your OS.
+2. Type: make
+3. Type: make install
+4. Enjoy colorful directory trees.
+
+  I cannot test on non-Linux machines, so please feel free to contribute
+porting information, bug reports, compile options, patches, etc for porting to
+other OS's to Steve.Baker.llc@gmail.com.
+
+  I would also welcome any localization efforts, particularly translating the
+man page to other languages.  And of course feel free to suggest options and
+improvements you would like to see in tree.

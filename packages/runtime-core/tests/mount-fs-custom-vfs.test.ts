@@ -83,4 +83,22 @@ describe("Kernel.mountFs custom JS VFS", () => {
 		},
 		120_000,
 	);
+
+	test("routes positioned writes through a mounted JS VFS", async () => {
+		const mounted = createRecordingFilesystem();
+		kernel = createKernel({ filesystem: createInMemoryFileSystem() });
+
+		kernel.mountFs("/mnt/custom", mounted.fs);
+		await kernel.writeFile("/mnt/custom/db.bin", "abcde");
+		await kernel.pwrite(
+			"/mnt/custom/db.bin",
+			2,
+			new TextEncoder().encode("XYZ"),
+		);
+
+		expect(
+			new TextDecoder().decode(await kernel.readFile("/mnt/custom/db.bin")),
+		).toBe("abXYZ");
+		expect(mounted.calls).toContain("pwrite:/db.bin");
+	});
 });

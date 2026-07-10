@@ -165,7 +165,7 @@ Focused lanes live under `src/focused/` and preserve the legacy CLI flags, env v
 - **`wasi-ls-scaling`**: focused `ls` command scaling. Knobs: `BENCH_WASI_LS_ITERATIONS`, `BENCH_WASI_LS_WARMUP`, `BENCH_WASI_LS_SERIAL_RUNS`, `BENCH_WASI_LS_FILE_COUNTS`, `BENCH_WASI_LS_VARIANTS`, `BENCH_WASI_LS_WASM_WARMUP_DEBUG`, `BENCH_WASI_LS_SYSCALL_COUNTERS`.
 - **`wasi-ls-scaling-counters`**: `ls` scaling with syscall counters.
 
-The shell/coreutils focused lanes use the local `NodeRuntime` command-dir resolution, which prefers `registry/native/target/wasm32-wasip1/release/commands` when `make -C registry/native wasm` has been run.
+The shell/coreutils focused lanes use the local `NodeRuntime` command-dir resolution, which prefers `toolchain/target/wasm32-wasip1/release/commands` when `make -C toolchain wasm` has been run.
 
 ## Net Family
 

@@ -16,7 +16,7 @@ mod common;
 fn coreutils_aospkg() -> Option<PathBuf> {
     for path in [
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../registry/software/coreutils/dist/package.aospkg"),
+            .join("../../software/coreutils/dist/package.aospkg"),
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../node_modules/@agentos-software/coreutils/dist/package.aospkg"),
     ] {

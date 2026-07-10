@@ -1,0 +1,7 @@
+Contents of the "aosvs" subdirectory for UnZip 5.3 and later:
+
+  Contents      this file
+  README        compilation notes, history, etc.
+  make_unz.cli  command script to make UnZip only (not UnZipSFX or fUnZip)
+  aosvs.c       AOS/VS-specific support routines
+  aosvs.h       AOS/VS-specific typedefs and header stuff

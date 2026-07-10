@@ -35,7 +35,6 @@
 		"@agentos-software/tree": "workspace:*",
 		"@agentos-software/unzip": "workspace:*",
 		"@agentos-software/vim": "workspace:*",
-		"@agentos-software/vix": "workspace:*",
 		"@agentos-software/wget": "workspace:*",
 		"@agentos-software/yq": "workspace:*",
 		"@agentos-software/zip": "workspace:*",

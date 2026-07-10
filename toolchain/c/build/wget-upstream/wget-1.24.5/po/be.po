@@ -1,0 +1,3638 @@
+# Belarusian messages for GNU wget.
+# Copyright (C) 2003, 2004, 2022, 2023 Free Software Foundation, Inc.
+# This file is distributed under the same license as the wget package.
+#
+# Hleb Valoska <el_globus@tut.by>, 2003.
+# Alexander Nyakhaychyk <nyakhaychyk@gmail.com>, 2003, 2004, 2007, 2008, 2010.
+# Viachaslau Khalikin <viachaslau.vinegret@outlook.com>, 2022, 2023.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: GNU wget 1.21.4\n"
+"Report-Msgid-Bugs-To: bug-wget@gnu.org\n"
+"POT-Creation-Date: 2024-03-10 15:08+0100\n"
+"PO-Revision-Date: 2023-12-30 04:06+0300\n"
+"Last-Translator: Viachaslau Khalikin <viachaslau.vinegret@outlook.com>\n"
+"Language-Team: Belarusian <debian-l10n-belarusian@lists.debian.org>\n"
+"Language: be\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
+"n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+"X-Bugs: Report translation errors to the Language-Team address.\n"
+"X-Generator: Emacs 29.1, po mode 2.28\n"
+
+#: src/connect.c:201
+#, c-format
+msgid "%s: unable to resolve bind address %s; disabling bind.\n"
+msgstr "%s: немагчыма вызначыць адрас bind %s; адключэньне bind.\n"
+
+#: src/connect.c:282
+#, c-format
+msgid "Connecting to %s|%s|:%d... "
+msgstr "Злучэньне з %s[%s]:%d... "
+
+#: src/connect.c:290
+#, c-format
+msgid "Connecting to %s:%d... "
+msgstr "Злучэньне з %s:%d... "
+
+#: src/connect.c:293
+#, c-format
+msgid "Connecting to [%s]:%d... "
+msgstr "Злучэньне з [%s]:%d... "
+
+#: src/connect.c:329
+#, c-format
+msgid "setsockopt SO_RCVBUF failed: %s\n"
+msgstr "памылка ў setsockopt SO_RCVBUF: %s\n"
+
+#: src/connect.c:357
+msgid "connected.\n"
+msgstr "злучана.\n"
+
+#: src/connect.c:376 src/host.c:915 src/host.c:953
+#, c-format
+msgid "failed: %s.\n"
+msgstr "збой: %s.\n"
+
+#: src/connect.c:400 src/http.c:2111
+#, c-format
+msgid "%s: unable to resolve host address %s\n"
+msgstr "%s: немагчыма вызначыць адрас вузла %s\n"
+
+#: src/connect.c:470
+#, c-format
+msgid "setsockopt SO_REUSEADDR failed: %s\n"
+msgstr "памылка ў setsockopt SO_REUSEADDR: %s\n"
+
+#: src/connect.c:694 src/connect.c:756
+#, c-format
+msgid "Too many fds open.  Cannot use select on a fd >= %d\n"
+msgstr ""
+"Адкрыта занадта шмат файлавых дэскрыптараў (fds).  Немагчыма выкарыстоўваць "
+"select для fd >= %d\n"
+
+#: src/convert.c:201
+#, c-format
+msgid "Converted links in %d files in %s seconds.\n"
+msgstr "Пераўтворана спасылак ў %d файлаў за %s сэкундаў.\n"
+
+#: src/convert.c:230
+#, c-format
+msgid "Converting links in %s... "
+msgstr "Пераўтварэньне спасылак у %s... "
+
+#: src/convert.c:243
+msgid "nothing to do.\n"
+msgstr "няма чаго рабіць.\n"
+
+#: src/convert.c:246
+#, c-format
+msgid "%d.\n"
+msgstr "%d.\n"
+
+#: src/convert.c:252 src/convert.c:276
+#, c-format
+msgid "Cannot convert links in %s: %s\n"
+msgstr "Немагчыма пераўтварыць спасылкі ў %s: %s\n"
+
+#: src/convert.c:267
+#, c-format
+msgid "Unable to delete %s: %s\n"
+msgstr "Немагчыма выдаліць %s: %s\n"
+
+#: src/convert.c:586
+#, c-format
+msgid "Cannot back up %s as %s: %s\n"
+msgstr "Немагчыма зрабіць рэзэрвовую копію %s як %s: %s\n"
+
+#: src/cookies.c:311
+#, c-format
+msgid "Unable to get cookie for %s\n"
+msgstr "Немагчыма атрымаць файлы cookie для %s\n"
+
+#: src/cookies.c:464
+#, c-format
+msgid "Syntax error in Set-Cookie: %s at position %d.\n"
+msgstr "Сынтаксычная памылка ў Set-Cookie: %s на пазыцыі %d.\n"
+
+#: src/cookies.c:777
+#, c-format
+msgid "Cookie coming from %s attempted to set domain to "
+msgstr "Cookie, атрыманыя з %s, спрабавалі выставіць дамэн у "
+
+#: src/cookies.c:780 src/spider.c:94
+#, c-format
+msgid "%s\n"
+msgstr "%s\n"
+
+#: src/cookies.c:1259 src/cookies.c:1380
+#, c-format
+msgid "Cannot open cookies file %s: %s\n"
+msgstr "Немагчыма адкрыць файл з cookies %s: %s\n"
+
+#: src/cookies.c:1417
+#, c-format
+msgid "Error writing to %s: %s\n"
+msgstr "Памылка запісу ў %s: %s\n"
+
+#: src/cookies.c:1420
+#, c-format
+msgid "Error closing %s: %s\n"
+msgstr "Памылка закрыцьця %s: %s\n"
+
+#: src/ftp-ls.c:1045
+msgid "Unsupported listing type, trying Unix listing parser.\n"
+msgstr ""
+"Гэты тып лістынгу не падтрымліваецца, спроба ўжыць разбор Unix-лістынгаў.\n"
+
+#: src/ftp-ls.c:1096 src/ftp-ls.c:1098
+#, c-format
+msgid "Index of /%s on %s:%d"
+msgstr "Зьмест /%s на %s:%d"
+
+#: src/ftp-ls.c:1123
+#, c-format
+msgid "time unknown       "
+msgstr "час невядомы       "
+
+#: src/ftp-ls.c:1127
+#, c-format
+msgid "File        "
+msgstr "Файл        "
+
+#: src/ftp-ls.c:1130
+#, c-format
+msgid "Directory   "
+msgstr "Каталёг   "
+
+#: src/ftp-ls.c:1133
+#, c-format
+msgid "Link        "
+msgstr "Спасылка        "
+
+#: src/ftp-ls.c:1136
+#, c-format
+msgid "Not sure    "
+msgstr "Ня пэўны    "
+
+#: src/ftp-ls.c:1159
+#, c-format
+msgid " (%s bytes)"
+msgstr " (%s байтаў)"
+
+#: src/ftp.c:225
+#, c-format
+msgid "Length: %s"
+msgstr "Даўжыня: %s"
+
+#: src/ftp.c:231 src/http.c:4090
+#, c-format
+msgid ", %s (%s) remaining"
+msgstr ", %s (%s) засталося"
+
+#: src/ftp.c:235 src/http.c:4094
+#, c-format
+msgid ", %s remaining"
+msgstr ", %s засталося"
+
+#: src/ftp.c:238
+msgid " (unauthoritative)\n"
+msgstr " (неаўтарытэтны)\n"
+
+#: src/ftp.c:403
+msgid "Could not initialize SSL. It will be disabled.\n"
+msgstr "Не ўдалося ініцыялізаваць SSL. Ён будзе адключаны.\n"
+
+#: src/ftp.c:485
+#, c-format
+msgid "Logging in as %s ... "
+msgstr "Уваходжу як %s ... "
+
+#: src/ftp.c:504 src/ftp.c:590 src/ftp.c:657 src/ftp.c:722 src/ftp.c:963
+#: src/ftp.c:1016 src/ftp.c:1063 src/ftp.c:1126 src/ftp.c:1187 src/ftp.c:1285
+#: src/ftp.c:1335
+msgid "Error in server response, closing control connection.\n"
+msgstr "Памылка ў адказе сэрвэра; закрыцьцё кантрольнага злучэньня.\n"
+
+#: src/ftp.c:511
+msgid "Error in server greeting.\n"
+msgstr "Памылка ў вітаньні сэрвэра.\n"
+
+#: src/ftp.c:518 src/ftp.c:730 src/ftp.c:971 src/ftp.c:1071 src/ftp.c:1136
+#: src/ftp.c:1197 src/ftp.c:1295 src/ftp.c:1345
+msgid "Write failed, closing control connection.\n"
+msgstr "Памылка запісу, закрыцьцё кантрольнага злучэньня.\n"
+
+#: src/ftp.c:524
+msgid "The server refuses login.\n"
+msgstr "Сэрвэр адмаўляе ва ўваходзе.\n"
+
+#: src/ftp.c:530
+msgid "Login incorrect.\n"
+msgstr "Няправільны ўваход.\n"
+
+#: src/ftp.c:536
+msgid "Logged in!\n"
+msgstr "Увайшоў!\n"
+
+#: src/ftp.c:556
+msgid "Server did not accept the 'PBSZ 0' command.\n"
+msgstr "Сэрвэр не прыняў каманду «PBSZ 0».\n"
+
+#: src/ftp.c:566
+#, c-format
+msgid "Server did not accept the 'PROT %c' command.\n"
+msgstr "Сэрвэр не прыняў каманду «PROT %c».\n"
+
+#: src/ftp.c:598
+msgid "Server error, can't determine system type.\n"
+msgstr "Памылка сэрвэра, немагчыма вызначыць тып сыстэмы.\n"
+
+#: src/ftp.c:607 src/ftp.c:1106 src/ftp.c:1170 src/ftp.c:1213
+msgid "done.    "
+msgstr "зроблена.    "
+
+#: src/ftp.c:710 src/ftp.c:989 src/ftp.c:1033 src/ftp.c:1315 src/ftp.c:1364
+msgid "done.\n"
+msgstr "зроблена.\n"
+
+#: src/ftp.c:737
+#, c-format
+msgid "Unknown type `%c', closing control connection.\n"
+msgstr "Невядомы тып «%c», закрыцьцё кантрольнага злучэньня.\n"
+
+#: src/ftp.c:749
+msgid "done.  "
+msgstr "зроблена.  "
+
+#: src/ftp.c:755
+msgid "==> CWD not needed.\n"
+msgstr "==> CWD не патрэбны.\n"
+
+#: src/ftp.c:946
+msgid "Logically impossible section reached in getftp()"
+msgstr "Лягічна немагчымы раздзел дасягнуты ў getftp()"
+
+#: src/ftp.c:947
+#, c-format
+msgid ""
+"cwd_count: %d\n"
+"cwd_start: %d\n"
+"cwd_end: %d\n"
+msgstr ""
+"cwd_count: %d\n"
+"cwd_start: %d\n"
+"cwd_end: %d\n"
+
+#: src/ftp.c:977
+#, c-format
+msgid ""
+"No such directory %s.\n"
+"\n"
+msgstr ""
+"Няма такога каталёга %s.\n"
+"\n"
+
+#: src/ftp.c:998
+msgid "==> CWD not required.\n"
+msgstr "==> CWD не патрабуецца.\n"
+
+#: src/ftp.c:1041
+msgid "File has already been retrieved.\n"
+msgstr "Файл ужо здабыты.\n"
+
+#: src/ftp.c:1077
+msgid "Cannot initiate PASV transfer.\n"
+msgstr "Немагчыма ініцыяваць перадачу PASV.\n"
+
+#: src/ftp.c:1081
+msgid "Cannot parse PASV response.\n"
+msgstr "Немагчыма разабраць адказ PASV.\n"
+
+#: src/ftp.c:1098
+#, c-format
+msgid "couldn't connect to %s port %d: %s\n"
+msgstr "Не ўдалося злучыцца з %s, порт %d: %s\n"
+
+#: src/ftp.c:1152
+#, c-format
+msgid "Bind error (%s).\n"
+msgstr "Памылка bind (%s).\n"
+
+#: src/ftp.c:1158
+msgid "Invalid PORT.\n"
+msgstr "Недапушчальны PORT.\n"
+
+#: src/ftp.c:1204
+msgid ""
+"\n"
+"REST failed, starting from scratch.\n"
+msgstr ""
+"\n"
+"Збой загаду REST; пачынаем усё нанова.\n"
+
+#: src/ftp.c:1247
+#, c-format
+msgid "File %s exists.\n"
+msgstr "Файл %s існуе.\n"
+
+#: src/ftp.c:1253
+#, c-format
+msgid "No such file %s.\n"
+msgstr "Няма такога файла %s.\n"
+
+#: src/ftp.c:1303
+#, c-format
+msgid ""
+"No such file %s.\n"
+"\n"
+msgstr ""
+"Няма такога файла %s.\n"
+"\n"
+
+#: src/ftp.c:1353
+#, c-format
+msgid ""
+"No such file or directory %s.\n"
+"\n"
+msgstr ""
+"Няма такога файла ці каталёга %s.\n"
+"\n"
+
+#: src/ftp.c:1512 src/http.c:2597
+#, c-format
+msgid "%s has sprung into existence.\n"
+msgstr "%s пачаў існаваць.\n"
+
+#: src/ftp.c:1601
+#, c-format
+msgid "%s: %s, closing control connection.\n"
+msgstr "%s: %s; закрыцьцё кантрольнага злучэньня.\n"
+
+#: src/ftp.c:1613
+#, c-format
+msgid "%s (%s) - Data connection: %s; "
+msgstr "%s (%s) - Злучэньне для даных: %s; "
+
+#: src/ftp.c:1628
+msgid "Control connection closed.\n"
+msgstr "Кантрольнае злучэньне закрыта.\n"
+
+#: src/ftp.c:1646
+msgid "Data transfer aborted.\n"
+msgstr "Перадача даных спынена.\n"
+
+#: src/ftp.c:1870 src/main.c:1691
+#, c-format
+msgid "File %s already there; not retrieving.\n"
+msgstr "Файл %s ужо тут; абмінаем.\n"
+
+#: src/ftp.c:1955 src/http.c:4364
+#, c-format
+msgid "(try:%2d)"
+msgstr "(спроба:%2d)"
+
+#: src/ftp.c:2047 src/http.c:4794
+#, c-format
+msgid ""
+"%s (%s) - written to stdout %s[%s]\n"
+"\n"
+msgstr ""
+"%s (%s) - запісаны ў stdout %s[%s]\n"
+"\n"
+
+#: src/ftp.c:2048 src/http.c:4795
+#, c-format
+msgid ""
+"%s (%s) - %s saved [%s]\n"
+"\n"
+msgstr ""
+"%s (%s) - %s захаваны [%s]\n"
+"\n"
+
+#: src/ftp.c:2108 src/main.c:2178 src/metalink.c:1133 src/recur.c:511
+#: src/recur.c:750 src/retr.c:1303
+#, c-format
+msgid "Removing %s.\n"
+msgstr "Выдаленьне %s.\n"
+
+#: src/ftp.c:2165
+#, c-format
+msgid "Using %s as listing tmp file.\n"
+msgstr "Выкарыстаньне %s у якасьці лістынгу часовага файла.\n"
+
+#: src/ftp.c:2182
+#, c-format
+msgid "Removed %s.\n"
+msgstr "Выдалены %s.\n"
+
+#: src/ftp.c:2221
+#, c-format
+msgid "Recursion depth %d exceeded max. depth %d.\n"
+msgstr "Значэньне рэкурсіўнай глыбіні %d большае за максымальную глыбіню %d.\n"
+
+#: src/ftp.c:2291
+#, c-format
+msgid "Remote file no newer than local file %s -- not retrieving.\n"
+msgstr "Аддалены файл не навейшы за лякальны файл %s -- абмінаем.\n"
+
+#: src/ftp.c:2299
+#, c-format
+msgid ""
+"Remote file is newer than local file %s -- retrieving.\n"
+"\n"
+msgstr ""
+"Аддалены файл навейшы за лякальны файл %s -- выцягваем.\n"
+"\n"
+
+#: src/ftp.c:2306
+#, c-format
+msgid ""
+"The sizes do not match (local %s) -- retrieving.\n"
+"\n"
+msgstr ""
+"Памеры не супадаюць (лякальны %s) -- выцягваецца.\n"
+"\n"
+
+#: src/ftp.c:2324
+msgid "Invalid name of the symlink, skipping.\n"
+msgstr "Няправільная назва сымбалічнай спасылкі; абмінаем.\n"
+
+#: src/ftp.c:2353
+#, c-format
+msgid ""
+"Already have correct symlink %s -> %s\n"
+"\n"
+msgstr ""
+"Ужо маецца правільная сымбалічная спасылка %s -> %s\n"
+"\n"
+
+#: src/ftp.c:2362
+#, c-format
+msgid "Creating symlink %s -> %s\n"
+msgstr "Стварэньне сымбалічнай спасылкі %s -> %s\n"
+
+#: src/ftp.c:2372
+#, c-format
+msgid "Symlinks not supported, skipping symlink %s.\n"
+msgstr "Сымбалічныя спасылкі не падтрымліваюцца; абмінаем спасылку %s.\n"
+
+#: src/ftp.c:2387
+#, c-format
+msgid "Skipping directory %s.\n"
+msgstr "Абмінаем каталёг %s.\n"
+
+#: src/ftp.c:2400
+#, c-format
+msgid "%s: unknown/unsupported file type.\n"
+msgstr "%s: тып файла не падтрымліваецца або невядомы.\n"
+
+#: src/ftp.c:2424
+#, c-format
+msgid "Failed to set permissions for %s.\n"
+msgstr "Не атрымалася выставіць правы доступу для %s.\n"
+
+#: src/ftp.c:2445
+#, c-format
+msgid "%s: corrupt time-stamp.\n"
+msgstr "%s: пашкоджаны адбітак часу.\n"
+
+#: src/ftp.c:2469
+#, c-format
+msgid "Will not retrieve dirs since depth is %d (max %d).\n"
+msgstr "Каталёгі ня будуць выцягвацца, бо глыбіня ўжо %d (макс. %d).\n"
+
+#: src/ftp.c:2528
+#, c-format
+msgid "Not descending to %s as it is excluded/not-included.\n"
+msgstr "Не зьніжацца да %s, бо выключана/не ўключана.\n"
+
+#: src/ftp.c:2644
+#, c-format
+msgid "Rejecting %s.\n"
+msgstr "Адхіляем %s.\n"
+
+#: src/ftp.c:2654
+#, c-format
+msgid "Rejecting %s (Invalid Entry).\n"
+msgstr "Адхіляем %s (Няправільны Запіс).\n"
+
+#: src/ftp.c:2675
+#, c-format
+msgid "%s is excluded/not-included through regex.\n"
+msgstr "%s выключаны або не ўключаны праз рэгулярны выраз.\n"
+
+#: src/ftp.c:2695
+#, c-format
+msgid "Error matching %s against %s: %s\n"
+msgstr "Памылка супадзеньня %s супраць %s: %s\n"
+
+#: src/ftp.c:2735
+#, c-format
+msgid "No matches on pattern %s.\n"
+msgstr "Адсутнічаюць супадзеньні з узорам %s.\n"
+
+#: src/ftp.c:2807
+#, c-format
+msgid "Wrote HTML-ized index to %s [%s].\n"
+msgstr "HTML-ізаваны індэкс запісаны ў %s [%s].\n"
+
+#: src/ftp.c:2812
+#, c-format
+msgid "Wrote HTML-ized index to %s.\n"
+msgstr "HTML-ізаваны індэкс запісаны ў %s.\n"
+
+#: src/gnutls.c:133
+#, c-format
+msgid "ERROR: Cannot open directory %s.\n"
+msgstr "ПАМЫЛКА: Немагчыма адкрыць каталёг %s.\n"
+
+#: src/gnutls.c:179
+#, c-format
+msgid "ERROR: Failed to open cert %s: (%d).\n"
+msgstr "ПАМЫЛКА: Не атрымалася адкрыць сэртыфікат %s: (%d).\n"
+
+#: src/gnutls.c:184
+#, c-format
+msgid "Loaded CA certificate '%s'\n"
+msgstr "Загружаны CA сэртыфікат «%s»\n"
+
+#: src/gnutls.c:192
+#, c-format
+msgid "ERROR: Failed to load CRL file '%s': (%d)\n"
+msgstr "ПАМЫЛКА: Не атрымалася загрузіць файл CRL «%s»: (%d)\n"
+
+#: src/gnutls.c:196
+#, c-format
+msgid "Loaded CRL file '%s'\n"
+msgstr "Загружаны файл CRL «%s»\n"
+
+#: src/gnutls.c:220
+msgid "ERROR: GnuTLS requires the key and the cert to be of the same type.\n"
+msgstr "ПАМЫЛКА: GnuTLS патрабуе, каб ключ і сертыфікат былі аднаго тыпу.\n"
+
+#: src/gnutls.c:777 src/gnutls.c:841
+msgid "Your GnuTLS version is too old to support TLS 1.3\n"
+msgstr "Ваша версія GnuTLS занадта старая да падтрымкі TLS 1.3\n"
+
+#: src/gnutls.c:789
+#, c-format
+msgid "GnuTLS: unimplemented 'secure-protocol' option value %u\n"
+msgstr "GnuTLS: значэньне %u опцыі «secure-protocol» не рэалізавана\n"
+
+#: src/gnutls.c:791 src/gnutls.c:847 src/host.c:158 src/openssl.c:289
+msgid "Please report this issue to bug-wget@gnu.org\n"
+msgstr "Калі ласка, паведаміце пра гэтую праблему на bug-wget@gnu.org\n"
+
+#: src/gnutls.c:846
+#, c-format
+msgid "GnuTLS: unimplemented 'secure-protocol' option value %d\n"
+msgstr "GnuTLS: значэньне %d опцыі «secure-protocol» не рэалізавана\n"
+
+#: src/gnutls.c:899
+msgid ""
+"GnuTLS: Cannot set prio string directly. Falling back to default priority.\n"
+msgstr ""
+"GnuTLS: Немагчыма ўстанавіць радок «prio» непасрэдна. Вяртаньне да "
+"прыярытэту па змаўчаньні.\n"
+
+#: src/gnutls.c:1027 src/openssl.c:1037
+msgid "ERROR"
+msgstr "ПАМЫЛКА"
+
+#: src/gnutls.c:1027 src/openssl.c:1037
+msgid "WARNING"
+msgstr "ПАПЯРЭДЖАНЬНЕ"
+
+#: src/gnutls.c:1038 src/openssl.c:1050
+#, c-format
+msgid "%s: No certificate presented by %s.\n"
+msgstr "%s: Няма сэртыфікату, прадстаўленага %s.\n"
+
+#: src/gnutls.c:1044
+#, c-format
+msgid "%s: The certificate of %s is not trusted.\n"
+msgstr "%s: Сэртыфікат %s не зьяўляецца давераным.\n"
+
+#: src/gnutls.c:1045
+#, c-format
+msgid "%s: The certificate of %s doesn't have a known issuer.\n"
+msgstr "%s: Невядомы выдавец сэртыфікату %s.\n"
+
+#: src/gnutls.c:1046
+#, c-format
+msgid "%s: The certificate of %s has been revoked.\n"
+msgstr "%s: Сэртыфікат %s быў адкліканы.\n"
+
+#: src/gnutls.c:1047
+#, c-format
+msgid "%s: The certificate signer of %s was not a CA.\n"
+msgstr ""
+"%s: Падпісант сэртыфікату %s не належыць да цэнтру сэртыфікацыі (CA).\n"
+
+#: src/gnutls.c:1048
+#, c-format
+msgid "%s: The certificate of %s was signed using an insecure algorithm.\n"
+msgstr ""
+"%s: Сэртыфікат %s быў падпісаны з выкарыстаньнем небясьпечнага альгарытму.\n"
+
+#: src/gnutls.c:1049
+#, c-format
+msgid "%s: The certificate of %s is not yet activated.\n"
+msgstr "%s: Сэртыфікат %s яшчэ не актываваны.\n"
+
+#: src/gnutls.c:1050
+#, c-format
+msgid "%s: The certificate of %s has expired.\n"
+msgstr "%s: Тэрмін дзеяньня сэртыфікату %s скончыўся.\n"
+
+#: src/gnutls.c:1062
+#, c-format
+msgid "Error initializing X509 certificate: %s\n"
+msgstr "Памылка ініцыялізацыі сэртыфікату X509: %s\n"
+
+#: src/gnutls.c:1071
+msgid "No certificate found\n"
+msgstr "Сэртыфікат ня знойдзены\n"
+
+#: src/gnutls.c:1078
+#, c-format
+msgid "Error parsing certificate: %s\n"
+msgstr "Памылка разбору сэртыфікату: %s\n"
+
+#: src/gnutls.c:1085
+msgid "The certificate has not yet been activated\n"
+msgstr "Сэртыфікат яшчэ не актываваны\n"
+
+#: src/gnutls.c:1090
+msgid "The certificate has expired\n"
+msgstr "Тэрмін дзеяньня сэртыфікату скончыўся\n"
+
+#: src/gnutls.c:1097
+#, c-format
+msgid "The certificate's owner does not match hostname %s\n"
+msgstr "Уладальнік сэртыфікату не супадае з імем вузла %s\n"
+
+#: src/gnutls.c:1106 src/openssl.c:1246
+msgid "The public key does not match pinned public key!\n"
+msgstr "Адкрыты ключ не супадае з замацаваным адкрытым ключом!\n"
+
+#: src/gnutls.c:1115
+msgid "Certificate must be X.509\n"
+msgstr "Сэртыфікат мусіць належыць да тыпу X.509\n"
+
+#: src/host.c:157
+msgid "Error in handling the address list.\n"
+msgstr "Памылка пры апрацоўцы сьпісу адрасоў.\n"
+
+#: src/host.c:368
+msgid "Unknown host"
+msgstr "Невядомы вузел"
+
+#: src/host.c:372
+msgid "Temporary failure in name resolution"
+msgstr "Часовы збой у вызначэньні назвы"
+
+#: src/host.c:374
+msgid "Unknown error"
+msgstr "Невядомая памылка"
+
+#: src/host.c:850
+#, c-format
+msgid "Resolving %s... "
+msgstr "Вызначэньне %s... "
+
+#: src/host.c:926
+msgid "failed: No IPv4/IPv6 addresses for host.\n"
+msgstr "збой: адсутнічае IPv4/IPv6 адрас для вузла.\n"
+
+#: src/host.c:956
+msgid "failed: timed out.\n"
+msgstr "збой: скончыўся час.\n"
+
+#: src/html-url.c:306
+#, c-format
+msgid "%s: Cannot resolve incomplete link %s.\n"
+msgstr "%s: Немагчыма вызначыць незавершаную спасылку %s.\n"
+
+#: src/html-url.c:944
+#, c-format
+msgid "%s: Invalid URL %s: %s\n"
+msgstr "%s: Няправільны URL %s: %s\n"
+
+#: src/http.c:380
+#, c-format
+msgid "Failed writing HTTP request: %s.\n"
+msgstr "Памылка запісу HTTP запыту: %s.\n"
+
+#: src/http.c:795
+msgid "No headers, assuming HTTP/0.9"
+msgstr "Адсутнічаюць загалоўкі; верагодна, HTTP/0.9"
+
+#: src/http.c:1637
+#, c-format
+msgid ""
+"File %s already there; not retrieving.\n"
+"\n"
+msgstr ""
+"Файл %s ужо тут; абмінаем.\n"
+"\n"
+
+#: src/http.c:1834
+msgid "gmtime failed. This is probably a bug.\n"
+msgstr "Памылка gmtime. Верагодна, гэта баг.\n"
+
+#: src/http.c:1918
+msgid ""
+"Cannot convert timestamp to http format. Falling back to time 0 as last "
+"modification time.\n"
+msgstr ""
+"Немагчыма пераўтварыць адбітак часу ў фармат http. Выкарыстоўваем час 0 — як "
+"час апошняй мадыфікацыі.\n"
+
+#: src/http.c:2001
+#, c-format
+msgid "BODY data file %s missing: %s\n"
+msgstr "Адсутнічае файл з BODY-данымі %s: %s\n"
+
+#: src/http.c:2093
+#, c-format
+msgid "Reusing existing connection to [%s]:%d.\n"
+msgstr "Паўторнае выкарыстаньне існуючага злучэньня з [%s]:%d.\n"
+
+#: src/http.c:2098
+#, c-format
+msgid "Reusing existing connection to %s:%d.\n"
+msgstr "Паўторнае выкарыстаньне існуючага злучэньня з %s:%d.\n"
+
+#: src/http.c:2164
+#, c-format
+msgid "Failed reading proxy response: %s\n"
+msgstr "Памылка чытаньня адказу проксі: %s\n"
+
+#: src/http.c:2183 src/http.c:3460 src/http.c:4590
+#, c-format
+msgid "%s ERROR %d: %s.\n"
+msgstr "%s ПАМЫЛКА %d: %s.\n"
+
+#: src/http.c:2185 src/http.c:3462 src/http.c:3663
+msgid "Malformed status line"
+msgstr "Дрэнны радок стану"
+
+#: src/http.c:2196
+#, c-format
+msgid "Proxy tunneling failed: %s"
+msgstr "Збой тунэляваньня проксі: %s"
+
+#: src/http.c:2460
+msgid "Unknown authentication scheme.\n"
+msgstr "Невядомая схема аўтэнтыфікацыі.\n"
+
+#: src/http.c:2478
+#, c-format
+msgid "Authentication selected: %s\n"
+msgstr "Выбрана аўтэнтыфікацыя: %s\n"
+
+#: src/http.c:2612
+#, c-format
+msgid "Saving to: %s\n"
+msgstr "Захаваньне ў %s.\n"
+
+#: src/http.c:2830
+#, c-format
+msgid ""
+"When downloading signature:\n"
+"%s: %s.\n"
+msgstr ""
+"Пад час спампоўваньня подпісу:\n"
+"%s: %s.\n"
+
+#: src/http.c:2865
+msgid "Unable to read signature content from temporary file. Skipping.\n"
+msgstr "Немагчыма прачытаць зьмесьціва подпісу з часовага файла. Абмінаем.\n"
+
+#: src/http.c:2888
+msgid "Could not create temporary file. Skipping signature download.\n"
+msgstr "Не ўдалося стварыць часовы файл. Абмінаем спампоўку подпісу.\n"
+
+#: src/http.c:2922 src/http.c:3004
+#, c-format
+msgid "Invalid pri value. Assuming %d.\n"
+msgstr "Няправільнае значэньне «pri». Мяркуем %d.\n"
+
+#: src/http.c:3118
+msgid ""
+"Could not find acceptable digest for Metalink resources.\n"
+"Ignoring them.\n"
+msgstr ""
+"Немагчыма знайсьці прыдатную хэш-суму для рэсурсаў Metalink.\n"
+"Ігнаруем іх.\n"
+
+#: src/http.c:3252
+msgid "Disabling SSL due to encountered errors.\n"
+msgstr "SSL адключаецца з-за сустракаемых памылак.\n"
+
+#: src/http.c:3396
+#, c-format
+msgid "%s request sent, awaiting response... "
+msgstr "%s запыт дасланы, чакаецца адказ... "
+
+#: src/http.c:3436
+msgid "No data received.\n"
+msgstr "Даныя не атрыманыя.\n"
+
+#: src/http.c:3442
+#, c-format
+msgid "Read error (%s) in headers.\n"
+msgstr "Памылка чытаньня (%s) у загалоўках.\n"
+
+#: src/http.c:3665
+msgid "(no description)"
+msgstr "(апісаньне адсутнічае)"
+
+#: src/http.c:3859
+#, c-format
+msgid "Location: %s%s\n"
+msgstr "Знаходжаньне: %s%s\n"
+
+#: src/http.c:3860 src/http.c:4100
+msgid "unspecified"
+msgstr "нявызначана"
+
+#: src/http.c:3861
+msgid " [following]"
+msgstr " [крочым]"
+
+#: src/http.c:3943
+#, c-format
+msgid ""
+"File %s not modified on server. Omitting download.\n"
+"\n"
+msgstr ""
+"Файл %s ня зьменены на сэрвэры. Абмінаем спампоўку.\n"
+"\n"
+
+#: src/http.c:4016
+#, c-format
+msgid ""
+"Server ignored If-Modified-Since header for file %s.\n"
+"You might want to add --no-if-modified-since option.\n"
+"\n"
+msgstr ""
+"Сэрвэр ігнаруе загаловак If-Modified-Since для файла %s.\n"
+"Паспрабуйце дадаць опцыю --no-if-modified-since.\n"
+"\n"
+
+#: src/http.c:4036
+msgid ""
+"\n"
+"    The file is already fully retrieved; nothing to do.\n"
+"\n"
+msgstr ""
+"\n"
+"    Файл ужо цалкам здабыты; рабіць нічога ня трэба.\n"
+"\n"
+
+#: src/http.c:4080
+msgid "Length: "
+msgstr "Даўжыня: "
+
+#: src/http.c:4100
+msgid "ignored"
+msgstr "ігнаруецца"
+
+#: src/http.c:4272
+msgid "Warning: wildcards not supported in HTTP.\n"
+msgstr ""
+"Папярэджаньне! У HTTP не падтрымліваюцца шаблённыя выразы (wildcards).\n"
+
+#: src/http.c:4354
+msgid "Spider mode enabled. Check if remote file exists.\n"
+msgstr "Уключаны рэжым «павука». Праверка наяўнасьці аддаленага файла.\n"
+
+#: src/http.c:4447
+#, c-format
+msgid "Cannot write to %s (%s).\n"
+msgstr "Немагчыма запісаць у %s (%s).\n"
+
+#: src/http.c:4469
+msgid "Required attribute missing from Header received.\n"
+msgstr "Абавязковы атрыбут адсутнічае у атрыманым Загалоўку.\n"
+
+#: src/http.c:4474
+msgid "Username/Password Authentication Failed.\n"
+msgstr "Памылка аўтэнтыфікацыі карыстальніка/пароля.\n"
+
+#: src/http.c:4480
+msgid "Cannot write to WARC file.\n"
+msgstr "Немагчыма запісаць у файл WARC.\n"
+
+#: src/http.c:4486
+msgid "Cannot write to temporary WARC file.\n"
+msgstr "Немагчыма запісаць у часовы файл WARC.\n"
+
+#: src/http.c:4491
+msgid "Unable to establish SSL connection.\n"
+msgstr "Немагчыма ўсталяваць SSL злучэньне.\n"
+
+#: src/http.c:4497
+#, c-format
+msgid "Cannot unlink %s (%s).\n"
+msgstr "Немагчыма выдаліць %s (%s).\n"
+
+#: src/http.c:4507
+#, c-format
+msgid "ERROR: Redirection (%d) without location.\n"
+msgstr "ПАМЫЛКА: Перанакіраваньне (%d) без паказваньня знаходжаньня.\n"
+
+#: src/http.c:4529
+msgid ""
+"Could not find Metalink data in HTTP response. Downloading file using HTTP "
+"GET.\n"
+msgstr ""
+"Немагчыма знайсьці даныя Metalink у адказе HTTP. Спампоўваньне файла з "
+"дапамогай HTTP GET.\n"
+
+#: src/http.c:4538
+msgid "Metalink headers found. Switching to Metalink mode.\n"
+msgstr "Знойдзены загалоўкі Metalink. Пераход у рэжым Metalink.\n"
+
+#: src/http.c:4579
+msgid "Remote file does not exist -- broken link!!!\n"
+msgstr "Аддалены файл не існуе -- зламаная спасылка!!!\n"
+
+#: src/http.c:4607
+msgid "Last-modified header missing -- time-stamps turned off.\n"
+msgstr "Загаловак Last-Modified адсутнічае -- адбіткі часу адключаныя.\n"
+
+#: src/http.c:4615
+msgid "Last-modified header invalid -- time-stamp ignored.\n"
+msgstr ""
+"Загаловак Last-Modified нерэчаісны -- адбітак часу будзе ігнаравацца.\n"
+
+#: src/http.c:4645
+#, c-format
+msgid ""
+"Server file no newer than local file %s -- not retrieving.\n"
+"\n"
+msgstr ""
+"Файл на сэрвэры не навейшы за лякальны файл %s -- абмінаем.\n"
+"\n"
+
+#: src/http.c:4653
+#, c-format
+msgid "The sizes do not match (local %s) -- retrieving.\n"
+msgstr "Памеры не супадаюць (лякальны %s) -- выцягваем.\n"
+
+#: src/http.c:4662
+msgid "Remote file is newer, retrieving.\n"
+msgstr "Аддалены файл навейшы, выцягваем.\n"
+
+#: src/http.c:4680
+msgid ""
+"Remote file exists and could contain links to other resources -- "
+"retrieving.\n"
+"\n"
+msgstr ""
+"Аддалены файл існуе і можа зьмяшчаць спасылкі на іншыя рэсурсы -- "
+"выцягваем.\n"
+"\n"
+
+#: src/http.c:4686
+msgid ""
+"Remote file exists but does not contain any link -- not retrieving.\n"
+"\n"
+msgstr ""
+"Аддалены файл існуе, але не зьмяшчае ніякіх спасылак -- абмінаем.\n"
+"\n"
+
+#: src/http.c:4695
+msgid ""
+"Remote file exists and could contain further links,\n"
+"but recursion is disabled -- not retrieving.\n"
+"\n"
+msgstr ""
+"Аддалены файл існуе і можа зьмяшчаць дадатковыя спасылкі,\n"
+"але рэкурсія адключаная - абмінаем.\n"
+"\n"
+
+#: src/http.c:4701
+msgid ""
+"Remote file exists.\n"
+"\n"
+msgstr ""
+"Аддалены файл існуе.\n"
+"\n"
+
+#: src/http.c:4710
+#, c-format
+msgid "%s URL: %s %2d %s\n"
+msgstr "%s URL: %s %2d %s\n"
+
+#: src/http.c:4758
+#, c-format
+msgid ""
+"%s (%s) - written to stdout %s[%s/%s]\n"
+"\n"
+msgstr ""
+"%s (%s) - запісаны ў stdout %s[%s/%s]\n"
+"\n"
+
+#: src/http.c:4759
+#, c-format
+msgid ""
+"%s (%s) - %s saved [%s/%s]\n"
+"\n"
+msgstr ""
+"%s (%s) - %s захаваны [%s/%s]\n"
+"\n"
+
+#: src/http.c:4825
+#, c-format
+msgid "%s (%s) - Connection closed at byte %s. "
+msgstr "%s (%s) - Злучэньне закрыта на байце %s. "
+
+#: src/http.c:4848
+#, c-format
+msgid "%s (%s) - Read error at byte %s (%s)."
+msgstr "%s (%s) - Памылка чытаньня на байце %s (%s)."
+
+#: src/http.c:4857
+#, c-format
+msgid "%s (%s) - Read error at byte %s/%s (%s). "
+msgstr "%s (%s) - Памылка чытаньня на байце %s/%s (%s). "
+
+#: src/http.c:5114
+#, c-format
+msgid "Unsupported quality of protection '%s'.\n"
+msgstr "Якасьць абароны «%s» не падтрымліваецца.\n"
+
+#: src/http.c:5119
+#, c-format
+msgid "Unsupported algorithm '%s'.\n"
+msgstr "Альгарытм «%s» не падтрымліваецца.\n"
+
+#: src/init.c:583
+#, c-format
+msgid ""
+"%s: WGETRC points to %s, which couldn't be accessed because of error: %s.\n"
+msgstr "%s: WGETRC спасылаецца на %s, які не даступны з-за памылкі: %s.\n"
+
+#: src/init.c:695 src/netrc.c:456
+#, c-format
+msgid "%s: Cannot read %s (%s).\n"
+msgstr "%s: Немагчыма прачытаць %s (%s).\n"
+
+#: src/init.c:712
+#, c-format
+msgid "%s: Error in %s at line %d.\n"
+msgstr "%s: Памылка ў %s, радок %d.\n"
+
+#: src/init.c:718
+#, c-format
+msgid "%s: Syntax error in %s at line %d.\n"
+msgstr "%s: Сынтаксычная памылка ў %s, радок %d.\n"
+
+#: src/init.c:723
+#, c-format
+msgid "%s: Unknown command %s in %s at line %d.\n"
+msgstr "%s: Невядомая каманда %s у %s; радок %d.\n"
+
+#: src/init.c:762
+#, c-format
+msgid ""
+"Parsing system wgetrc file (env SYSTEM_WGETRC) failed.  Please check\n"
+"'%s',\n"
+"or specify a different file using --config.\n"
+msgstr ""
+"Памылка разбору сыстэмнага файла wgetrc (зьменная асяродзьдзя "
+"SYSTEM_WGETRC).  Калі ласка, праверце\n"
+"«%s»,\n"
+"або вызначце іншы файл, выкарыстоўваючы --config.\n"
+
+#: src/init.c:777
+#, c-format
+msgid ""
+"Parsing system wgetrc file failed.  Please check\n"
+"'%s',\n"
+"or specify a different file using --config.\n"
+msgstr ""
+"Памылка разбору сыстэмнага файла wgetrc.  Калі ласка, праверце\n"
+"«%s»,\n"
+"або вызначце іншы файл, выкарыстоўваючы --config.\n"
+
+#: src/init.c:793
+#, c-format
+msgid "%s: Warning: Both system and user wgetrc point to %s.\n"
+msgstr ""
+"%s: ПАПЯРЭДЖАНЬНЕ! Сыстэмны ды карыстальніцкі wgetrc спасылаюцца на %s.\n"
+
+#: src/init.c:1006
+#, c-format
+msgid "%s: Invalid --execute command %s\n"
+msgstr "%s: Нядзейсная каманда --execute %s\n"
+
+#: src/init.c:1066
+#, c-format
+msgid "%s: %s: Invalid boolean %s; use `on' or `off'.\n"
+msgstr "%s: %s: Нядзейсны булевы %s; выкарыстоўвайце «on» ці «off».\n"
+
+#: src/init.c:1099
+#, c-format
+msgid "%s: %s: Invalid %s; use `on', `off' or `quiet'.\n"
+msgstr "%s: %s: Нядзейснае %s; выкарыстоўвайце «on», «off» ці «quiet».\n"
+
+#: src/init.c:1119
+#, c-format
+msgid "%s: %s: Invalid number %s.\n"
+msgstr "%s: %s: Нядзейсны лік %s.\n"
+
+#: src/init.c:1201
+#, c-format
+msgid "%s: %s must only be used once\n"
+msgstr "%s: %s мусіць выкарыстоўвацца толькі аднойчы\n"
+
+#: src/init.c:1356 src/init.c:1377
+#, c-format
+msgid "%s: %s: Invalid byte value %s\n"
+msgstr "%s: %s: Нядзейснае значэньне байта %s\n"
+
+#: src/init.c:1402
+#, c-format
+msgid "%s: %s: Invalid time period %s\n"
+msgstr "%s: %s: Нядзейсны адрэзак часу %s\n"
+
+#: src/init.c:1443
+#, c-format
+msgid "%s: %s: Negative time period %s\n"
+msgstr "%s: %s: Адмоўны адрэзак часу %s\n"
+
+#: src/init.c:1471 src/main.c:1927
+#, c-format
+msgid ""
+"use-askpass requires a string or either environment variable WGET_ASKPASS or "
+"SSH_ASKPASS to be set.\n"
+msgstr ""
+"use-askpass патрабуе радка або зададзенай зьменнай асяродзьдзя WGET_ASKPASS "
+"або SSH_ASKPASS.\n"
+
+#: src/init.c:1489 src/init.c:1511 src/init.c:1619 src/init.c:1675
+#: src/init.c:1741 src/init.c:1762 src/init.c:1787
+#, c-format
+msgid "%s: %s: Invalid value %s.\n"
+msgstr "%s: %s: Нядзейснае значэньне %s.\n"
+
+#: src/init.c:1545
+#, c-format
+msgid "%s: %s: Invalid header %s.\n"
+msgstr "%s: %s: Нядзейсны загаловак %s.\n"
+
+#: src/init.c:1566
+#, c-format
+msgid "%s: %s: Invalid WARC header %s.\n"
+msgstr "%s: %s: Нядзейсны WARC загаловак %s.\n"
+
+#: src/init.c:1632
+#, c-format
+msgid "%s: %s: Invalid progress type %s.\n"
+msgstr "%s: %s: Нядзейсны тып прагрэсбару %s.\n"
+
+#: src/init.c:1714
+#, c-format
+msgid ""
+"%s: %s: Invalid restriction %s,\n"
+"    use [unix|vms|windows],[lowercase|uppercase],[nocontrol],[ascii].\n"
+msgstr ""
+"%s: %s: Нядзейснае абмежаваньне %s,\n"
+"    выкарыстоўвайце [unix|vms|windows],[lowercase|uppercase],[nocontrol],"
+"[ascii].\n"
+
+#: src/iri.c:114
+#, c-format
+msgid "Encoding %s isn't valid\n"
+msgstr "Кадоўка %s не зьяўляецца дзейснай\n"
+
+#: src/iri.c:140 src/url.c:1612
+#, c-format
+msgid "Conversion from %s to %s isn't supported\n"
+msgstr "Пераўтварэньне з %s у %s не падтрымліваецца\n"
+
+#: src/iri.c:180 src/url.c:1642
+msgid "Incomplete or invalid multibyte sequence encountered\n"
+msgstr "Выяўлена няпоўная або няправільная шматбайтавая пасьлядоўнасьць\n"
+
+#: src/iri.c:200 src/url.c:1659
+#, c-format
+msgid "Unhandled errno %d\n"
+msgstr "Неапрацаваны код памылкі (errno) %d\n"
+
+#: src/iri.c:237
+msgid "locale_to_utf8: locale is unset\n"
+msgstr "locale_to_utf8: лякаль не вызначаная\n"
+
+#: src/iri.c:283 src/iri.c:298
+#, c-format
+msgid "idn_encode failed (%d): %s\n"
+msgstr "збой idn_encode (%d): %s\n"
+
+#: src/iri.c:290
+#, c-format
+msgid "Failed to convert to lower: %d: %s\n"
+msgstr "Не атрымалася пераўтварыць у ніжні рэгістар: %d: %s\n"
+
+#: src/log.c:938 src/log.c:957
+#, c-format
+msgid ""
+"\n"
+"Redirecting output to %s.\n"
+msgstr ""
+"\n"
+"Перанакіраваньне вываду ў %s.\n"
+
+#: src/log.c:950
+#, c-format
+msgid "%s: %s; disabling logging.\n"
+msgstr "%s: %s; адключэньне пратакаліраваньня.\n"
+
+#: src/main.c:574
+#, c-format
+msgid "Usage: %s [OPTION]... [URL]...\n"
+msgstr "Выкарыстаньне: %s [ОПЦЫЯ]... [URL]...\n"
+
+#: src/main.c:590
+msgid ""
+"Mandatory arguments to long options are mandatory for short options too.\n"
+"\n"
+msgstr ""
+"Абавязковыя аргумэнты аднолькава належаць да доўгіх і да кароткі опцыяў.\n"
+"\n"
+
+#: src/main.c:592
+msgid "Startup:\n"
+msgstr "Запуск:\n"
+
+#: src/main.c:594
+msgid ""
+"  -V,  --version                   display the version of Wget and exit\n"
+msgstr "  -V,  --version                   адлюстраваць вэрсію Wget\n"
+
+#: src/main.c:596
+msgid "  -h,  --help                      print this help\n"
+msgstr "  -h,  --help                      надрукаваць гэтую даведку\n"
+
+#: src/main.c:598
+msgid "  -b,  --background                go to background after startup\n"
+msgstr "  -b,  --background                праца ў фоне пасьля запуску\n"
+
+#: src/main.c:600
+msgid "  -e,  --execute=COMMAND           execute a `.wgetrc'-style command\n"
+msgstr ""
+"  -e,  --execute=КАМАНДА           выконвае каманду ў стылі «.wgetrc»\n"
+
+#: src/main.c:604
+msgid "Logging and input file:\n"
+msgstr "Пратакаліраваньне ды ўваходныя файлы:\n"
+
+#: src/main.c:606
+msgid "  -o,  --output-file=FILE          log messages to FILE\n"
+msgstr "  -o,  --output-file=ФАЙЛ          запісваць паведамленьні ў ФАЙЛ\n"
+
+#: src/main.c:608
+msgid "  -a,  --append-output=FILE        append messages to FILE\n"
+msgstr "  -a,  --append-output=ФАЙЛ        дадаць паведамленьні ў ФАЙЛ\n"
+
+#: src/main.c:611
+msgid ""
+"  -d,  --debug                     print lots of debugging information\n"
+msgstr ""
+"  -d,  --debug                     надрукаваць шмат адладачных зьвестак\n"
+
+#: src/main.c:615
+msgid "       --wdebug                    print Watt-32 debug output\n"
+msgstr ""
+"       --wdebug                    надрукаваць адладачныя зьвесткі Watt-32\n"
+
+#: src/main.c:618
+msgid "  -q,  --quiet                     quiet (no output)\n"
+msgstr "  -q,  --quiet                     ціхі рэжым (бяз вываду)\n"
+
+#: src/main.c:620
+msgid "  -v,  --verbose                   be verbose (this is the default)\n"
+msgstr "  -v,  --verbose                   падрабязны рэжым (прадвызначана)\n"
+
+#: src/main.c:622
+msgid ""
+"  -nv, --no-verbose                turn off verboseness, without being "
+"quiet\n"
+msgstr ""
+"  -nv, --no-verbose                адключыць падрабязны вывад, бяз поўнага "
+"заглушэньня\n"
+
+#: src/main.c:624
+msgid ""
+"       --report-speed=TYPE         output bandwidth as TYPE.  TYPE can be "
+"bits\n"
+msgstr ""
+"       --report-speed=ТЫП          вывад прапускной здольнасьці ў зададзеным "
+"ТЫПу.  ТЫП можа быць «bits»\n"
+
+#: src/main.c:626
+msgid ""
+"  -i,  --input-file=FILE           download URLs found in local or external "
+"FILE\n"
+msgstr ""
+"  -i,  --input-file=ФАЙЛ           спампоўваць URL, знойдзеныя ў лякальным "
+"ці ў зьнешнім ФАЙЛе\n"
+
+#: src/main.c:629
+msgid ""
+"       --input-metalink=FILE       download files covered in local Metalink "
+"FILE\n"
+msgstr ""
+"       --input-metalink=ФАЙЛ       спампоўваць файлы, уключаныя ў лякальны "
+"Metalink ФАЙЛ\n"
+
+#: src/main.c:632
+msgid "  -F,  --force-html                treat input file as HTML\n"
+msgstr "  -F,  --force-html                лічыць уваходны файл за HTML\n"
+
+#: src/main.c:634
+msgid ""
+"  -B,  --base=URL                  resolves HTML input-file links (-i -F)\n"
+"                                     relative to URL\n"
+msgstr ""
+"  -B,  --base=URL                  вызначаць спасылкі ўваходнага файла HTML "
+"(-i -F)\n"
+"                                     адносна URL\n"
+
+#: src/main.c:637
+msgid "       --config=FILE               specify config file to use\n"
+msgstr "       --config=ФАЙЛ               вызначыць файл канфігурацыі\n"
+
+#: src/main.c:639
+msgid "       --no-config                 do not read any config file\n"
+msgstr ""
+"       --no-config                 не чытаць ніякія файлы канфігурацый\n"
+
+#: src/main.c:641
+msgid ""
+"       --rejected-log=FILE         log reasons for URL rejection to FILE\n"
+msgstr ""
+"       --rejected-log=ФАЙЛ         пратакаліраваць прычыны адхіленьня URL у "
+"ФАЙЛ\n"
+
+#: src/main.c:645
+msgid "Download:\n"
+msgstr "Спампоўка:\n"
+
+#: src/main.c:647
+msgid ""
+"  -t,  --tries=NUMBER              set number of retries to NUMBER (0 "
+"unlimits)\n"
+msgstr ""
+"  -t,  --tries=ЛІК                 задаць ЛІК як колькасьць паўторных спроб "
+"(0 — неабмежавана)\n"
+
+#: src/main.c:649
+msgid ""
+"       --retry-connrefused         retry even if connection is refused\n"
+msgstr ""
+"       --retry-connrefused         паўтараць, нават калі ў злучэньні "
+"адмоўлена\n"
+
+#: src/main.c:651
+msgid ""
+"       --retry-on-host-error       consider host errors as non-fatal, "
+"transient errors\n"
+msgstr ""
+"       --retry-on-host-error       лічыць памылкі вузла некрытычнымі, "
+"кароткачасовымі памылкамі\n"
+
+#: src/main.c:653
+msgid ""
+"       --retry-on-http-error=ERRORS    comma-separated list of HTTP errors "
+"to retry\n"
+msgstr ""
+"       --retry-on-http-error=ПАМЫЛКІ   сьпіс (праз коску) памылак HTTP пры "
+"паўторных спробах\n"
+
+#: src/main.c:655
+msgid "  -O,  --output-document=FILE      write documents to FILE\n"
+msgstr "  -O,  --output-document=ФАЙЛ      запісаць дакумэнт у ФАЙЛ\n"
+
+#: src/main.c:657
+msgid ""
+"  -nc, --no-clobber                skip downloads that would download to\n"
+"                                     existing files (overwriting them)\n"
+msgstr ""
+"  -nc, --no-clobber                абмінаць спампоўку існуючых файлаў, якія\n"
+"                                     падлягаюць спампоўваньню (з "
+"перазапісваньнем)\n"
+
+#: src/main.c:660
+msgid ""
+"       --no-netrc                  don't try to obtain credentials from ."
+"netrc\n"
+msgstr ""
+"       --no-netrc                  не спрабаваць атрымліваць уліковыя даныя "
+"з .netrc\n"
+
+#: src/main.c:662
+msgid ""
+"  -c,  --continue                  resume getting a partially-downloaded "
+"file\n"
+msgstr ""
+"  -c,  --continue                  працяг спампоўваньня часткова атрыманага "
+"файла\n"
+
+#: src/main.c:664
+msgid ""
+"       --start-pos=OFFSET          start downloading from zero-based "
+"position OFFSET\n"
+msgstr ""
+"       --start-pos=ЗРУШЭНЬНЕ       пачынаць спампоўваньне з нулявой пазыцыі "
+"ЗРУШЭНЬНЯ\n"
+
+#: src/main.c:666
+msgid "       --progress=TYPE             select progress gauge type\n"
+msgstr "       --progress=ТЫП              задаць тып індыкатара прагрэсу\n"
+
+#: src/main.c:668
+msgid ""
+"       --show-progress             display the progress bar in any verbosity "
+"mode\n"
+msgstr ""
+"       --show-progress             адлюстроўваць прагрэсбар незалежна ад "
+"рэжыму падрабязнасьці\n"
+
+#: src/main.c:670
+msgid ""
+"  -N,  --timestamping              don't re-retrieve files unless newer "
+"than\n"
+"                                     local\n"
+msgstr ""
+"  -N,  --timestamping              не выцягваць паўторна тыя файлы,\n"
+"                                     якія старэйшыя за лякальныя\n"
+
+#: src/main.c:673
+msgid ""
+"       --no-if-modified-since      don't use conditional if-modified-since "
+"get\n"
+"                                     requests in timestamping mode\n"
+msgstr ""
+"       --no-if-modified-since      не выкарыстоўваць умоўныя get-запыты if-"
+"modified-since\n"
+"                                     у рэжыме адбіткаў часу\n"
+
+#: src/main.c:676
+msgid ""
+"       --no-use-server-timestamps  don't set the local file's timestamp by\n"
+"                                     the one on the server\n"
+msgstr ""
+"       --no-use-server-timestamps  не ўстанаўліваць лякальнаму файлу той жа "
+"адбітак часу,\n"
+"                                     які зададзены на сэрвэры\n"
+
+#: src/main.c:679
+msgid "  -S,  --server-response           print server response\n"
+msgstr "  -S,  --server-response           надрукаваць адказ сэрвэра\n"
+
+#: src/main.c:681
+msgid "       --spider                    don't download anything\n"
+msgstr "       --spider                    не спампоўваць нічога\n"
+
+#: src/main.c:683
+msgid "  -T,  --timeout=SECONDS           set all timeout values to SECONDS\n"
+msgstr ""
+"  -T,  --timeout=СЭКУНДАЎ          задаць усе значэньні часу чаканьня ў лік "
+"СЭКУНДАЎ\n"
+
+#: src/main.c:686
+msgid ""
+"       --dns-servers=ADDRESSES     list of DNS servers to query (comma "
+"separated)\n"
+msgstr ""
+"       --dns-servers=АДРАСЫ        сьпіс DNS сэрвэраў да запытаў (праз "
+"коску)\n"
+
+#: src/main.c:688
+msgid ""
+"       --bind-dns-address=ADDRESS  bind DNS resolver to ADDRESS (hostname or "
+"IP) on local host\n"
+msgstr ""
+"       --bind-dns-address=АДРАС    прывязаць вызначальнік DNS да АДРАСА "
+"(назва вузла або IP) лякальнага вузла\n"
+
+#: src/main.c:691
+msgid "       --dns-timeout=SECS          set the DNS lookup timeout to SECS\n"
+msgstr ""
+"       --dns-timeout=СЭК           задаць час чаканьня DNS пошуку ў СЭК\n"
+
+#: src/main.c:693
+msgid "       --connect-timeout=SECS      set the connect timeout to SECS\n"
+msgstr ""
+"       --connect-timeout=СЭК       задаць час чаканьня злучэньня ў СЭК\n"
+
+#: src/main.c:695
+msgid "       --read-timeout=SECS         set the read timeout to SECS\n"
+msgstr ""
+"       --read-timeout=СЭК          задаць час чаканьня чытаньня ў СЭК\n"
+
+#: src/main.c:697
+msgid ""
+"  -w,  --wait=SECONDS              wait SECONDS between retrievals\n"
+"                                     (applies if more then 1 URL is to be "
+"retrieved)\n"
+msgstr ""
+"  -w,  --wait=СЭКУНДАЎ             чакаць колькасьць СЭКУНДАЎ паміж "
+"выцягваньнямі\n"
+"                                     (ужываецца, калі будзе выцягнута больш "
+"аднаго URL)\n"
+
+#: src/main.c:700
+msgid ""
+"       --waitretry=SECONDS         wait 1..SECONDS between retries of a "
+"retrieval\n"
+"                                     (applies if more then 1 URL is to be "
+"retrieved)\n"
+msgstr ""
+"       --waitretry=СЭКУНДАЎ        чакаць 1..СЭКУНДАЎ паміж спробамі "
+"выцягваньня\n"
+"                                     (ужываецца, калі будзе выцягнута больш "
+"аднаго URL)\n"
+
+#: src/main.c:703
+msgid ""
+"       --random-wait               wait from 0.5*WAIT...1.5*WAIT secs "
+"between retrievals\n"
+"                                     (applies if more then 1 URL is to be "
+"retrieved)\n"
+msgstr ""
+"       --random-wait               чакаць 0.5*WAIT...1.5*WAIT сэкундаў паміж "
+"выцягваньнямі\n"
+"                                     (ужываецца, калі будзе выцягнута больш "
+"аднаго URL)\n"
+
+#: src/main.c:706
+msgid "       --no-proxy                  explicitly turn off proxy\n"
+msgstr "       --no-proxy                  яўна адключыць проксі\n"
+
+#: src/main.c:708
+msgid "  -Q,  --quota=NUMBER              set retrieval quota to NUMBER\n"
+msgstr "  -Q,  --quota=ЛІК                 задаць квоту выцягваньня ў ЛІК\n"
+
+#: src/main.c:710
+msgid ""
+"       --bind-address=ADDRESS      bind to ADDRESS (hostname or IP) on local "
+"host\n"
+msgstr ""
+"       --bind-address=АДРАС        прывязаць АДРАС (назва вузла або IP) "
+"лякальнага вузла\n"
+
+#: src/main.c:712
+msgid "       --limit-rate=RATE           limit download rate to RATE\n"
+msgstr ""
+"       --limit-rate=ТЭМП           абмежаваць хуткасьць спампоўкі ўзроўнем "
+"ТЭМП\n"
+
+#: src/main.c:714
+msgid "       --no-dns-cache              disable caching DNS lookups\n"
+msgstr "       --no-dns-cache              адключыць кэш вынікаў DNS пошуку\n"
+
+#: src/main.c:716
+msgid ""
+"       --restrict-file-names=OS    restrict chars in file names to ones OS "
+"allows\n"
+msgstr ""
+"       --restrict-file-names=АС    ужываць ў імёнах файлаў толькі тыя "
+"сымбалі, якія дазваляе АС\n"
+
+#: src/main.c:718
+msgid ""
+"       --ignore-case               ignore case when matching files/"
+"directories\n"
+msgstr ""
+"       --ignore-case               ігнараваць рэгістар у назвах файлаў/"
+"каталёгаў\n"
+
+#: src/main.c:721
+msgid "  -4,  --inet4-only                connect only to IPv4 addresses\n"
+msgstr "  -4,  --inet4-only                злучацца толькі з IPv4 адрасамі\n"
+
+#: src/main.c:723
+msgid "  -6,  --inet6-only                connect only to IPv6 addresses\n"
+msgstr "  -6,  --inet6-only                злучацца толькі з IPv6 адрасамі\n"
+
+#: src/main.c:725
+msgid ""
+"       --prefer-family=FAMILY      connect first to addresses of specified "
+"family,\n"
+"                                     one of IPv6, IPv4, or none\n"
+msgstr ""
+"       --prefer-family=FAMILY      спачатку злучацца з адрасамі вызначанага "
+"сямейства;\n"
+"                                     можа быць IPv6, IPv4 або none\n"
+
+#: src/main.c:729
+msgid "       --user=USER                 set both ftp and http user to USER\n"
+msgstr ""
+"       --user=ІМЯ                  задаць ІМЯ карыстальніка ftp ды http\n"
+
+#: src/main.c:731
+msgid ""
+"       --password=PASS             set both ftp and http password to PASS\n"
+msgstr ""
+"       --password=ПАРОЛЬ           задаць ПАРОЛЬ карыстальніка ftp ды http\n"
+
+#: src/main.c:733
+msgid "       --ask-password              prompt for passwords\n"
+msgstr "       --ask-password              запытваць паролі\n"
+
+#: src/main.c:736
+msgid ""
+"       --use-askpass=COMMAND       specify credential handler for "
+"requesting \n"
+"                                     username and password.  If no COMMAND "
+"is \n"
+"                                     specified the WGET_ASKPASS or the "
+"SSH_ASKPASS \n"
+"                                     environment variable is used.\n"
+msgstr ""
+"       --use-askpass=КАМАНДА       адзначыць апрацоўнік уліковых даных для "
+"запытаў \n"
+"                                     імя карыстальніка й пароля. Калі "
+"КАМАНДА не \n"
+"                                     адзначана, будзе выкарыстана зьменная "
+"асяродзьдзя\n"
+"                                     WGET_ASKPASS або SSH_ASKPASS.\n"
+
+#: src/main.c:742
+msgid "       --no-iri                    turn off IRI support\n"
+msgstr "       --no-iri                    адключыць падтрымку IRI\n"
+
+#: src/main.c:744
+msgid ""
+"       --local-encoding=ENC        use ENC as the local encoding for IRIs\n"
+msgstr ""
+"       --local-encoding=КАД        выкарыстоўваць лякальную кадоўку КАД для "
+"IRI\n"
+
+#: src/main.c:746
+msgid ""
+"       --remote-encoding=ENC       use ENC as the default remote encoding\n"
+msgstr ""
+"       --remote-encoding=КАД       выкарыстоўваць КАД як прадвызначанаю "
+"аддаленую кадоўку\n"
+
+#: src/main.c:748
+msgid "       --unlink                    remove file before clobber\n"
+msgstr ""
+"       --unlink                    выдаляць файл перад перазапісваньнем "
+"(clobber)\n"
+
+#: src/main.c:751
+msgid ""
+"       --keep-badhash              keep files with checksum mismatch "
+"(append .badhash)\n"
+msgstr ""
+"       --keep-badhash              захоўваць файлы з неадпаведнасьцю "
+"кантрольных сум (з дадаткам .badhash)\n"
+
+#: src/main.c:753
+msgid ""
+"       --metalink-index=NUMBER     Metalink application/metalink4+xml "
+"metaurl ordinal NUMBER\n"
+msgstr ""
+"       --metalink-index=НУМАР      Парадкавы нумар metaurl Metalink "
+"application/metalink4+xml\n"
+
+#: src/main.c:755
+msgid ""
+"       --metalink-over-http        use Metalink metadata from HTTP response "
+"headers\n"
+msgstr ""
+"       --metalink-over-http        выкарыстоўваць метаданыя Metalink з "
+"загалоўках адказу HTTP\n"
+
+#: src/main.c:757
+msgid ""
+"       --preferred-location        preferred location for Metalink "
+"resources\n"
+msgstr ""
+"       --preferred-location        пажаданае разьмяшчэньне рэсурсаў "
+"Metalink\n"
+
+#: src/main.c:761
+msgid ""
+"       --xattr                     turn on storage of metadata in extended "
+"file attributes\n"
+msgstr ""
+"       --xattr                     уключыць сховішча метаданых у пашыраных "
+"атрыбутаў файлаў\n"
+
+#: src/main.c:766
+msgid "Directories:\n"
+msgstr "Каталёгі:\n"
+
+#: src/main.c:768
+msgid "  -nd, --no-directories            don't create directories\n"
+msgstr "  -nd, --no-directories            не ствараць каталёгі\n"
+
+#: src/main.c:770
+msgid "  -x,  --force-directories         force creation of directories\n"
+msgstr "  -x,  --force-directories         прымусова ствараць каталёгі\n"
+
+#: src/main.c:772
+msgid "  -nH, --no-host-directories       don't create host directories\n"
+msgstr ""
+"  -nH, --no-host-directories       не ствараць каталёгі з назвамі вузлоў\n"
+
+#: src/main.c:774
+msgid "       --protocol-directories      use protocol name in directories\n"
+msgstr ""
+"       --protocol-directories      ужываць назву пратаколу ў назваў "
+"каталёгаў\n"
+
+#: src/main.c:776
+msgid "  -P,  --directory-prefix=PREFIX   save files to PREFIX/..\n"
+msgstr "  -P,  --directory-prefix=ПРЭФІКС  захоўваць файлы ў ПРЭФІКС/..\n"
+
+#: src/main.c:778
+msgid ""
+"       --cut-dirs=NUMBER           ignore NUMBER remote directory "
+"components\n"
+msgstr ""
+"       --cut-dirs=ЛІК              ігнараваць ЛІК кампанэнтаў аддаленага "
+"каталёга\n"
+
+#: src/main.c:782
+msgid "HTTP options:\n"
+msgstr "Опцыі HTTP:\n"
+
+#: src/main.c:784
+msgid "       --http-user=USER            set http user to USER\n"
+msgstr "       --http-user=ІМЯ             задаць ІМЯ карыстальніка http\n"
+
+#: src/main.c:786
+msgid "       --http-password=PASS        set http password to PASS\n"
+msgstr "       --http-password=ПАРОЛЬ      задаць ПАРОЛЬ карыстальніка http\n"
+
+#: src/main.c:788
+msgid "       --no-cache                  disallow server-cached data\n"
+msgstr ""
+"       --no-cache                  адпрэчваць даныя, кэшаваныя на баку "
+"сэрвэра\n"
+
+#: src/main.c:790
+msgid ""
+"       --default-page=NAME         change the default page name (normally\n"
+"                                     this is 'index.html'.)\n"
+msgstr ""
+"       --default-page=НАЗВА        зьмяніць прадвызначанаю назву старонкі "
+"(звычайна\n"
+"                                     гэта 'index.html'.)\n"
+
+#: src/main.c:793
+msgid ""
+"  -E,  --adjust-extension          save HTML/CSS documents with proper "
+"extensions\n"
+msgstr ""
+"  -E,  --adjust-extension          захоўваць дакумэнты HTML/CSS з належным "
+"пашырэньнем\n"
+
+#: src/main.c:795
+msgid ""
+"       --ignore-length             ignore 'Content-Length' header field\n"
+msgstr ""
+"       --ignore-length             ігнараваць загаловак «Content-Length»\n"
+
+#: src/main.c:797
+msgid "       --header=STRING             insert STRING among the headers\n"
+msgstr "       --header=РАДОК              уставіць РАДОК паміж загалоўкамі\n"
+
+#: src/main.c:800
+msgid ""
+"       --compression=TYPE          choose compression, one of auto, gzip and "
+"none. (default: none)\n"
+msgstr ""
+"       --compression=ТЫП           выбар тыпу сьціску: auto, gzip ці none. "
+"(прадвызначана: none)\n"
+
+#: src/main.c:803
+msgid ""
+"       --max-redirect              maximum redirections allowed per page\n"
+msgstr ""
+"       --max-redirect              максымальная колькасьць перанакіраваньняў "
+"на старонку\n"
+
+#: src/main.c:805
+msgid "       --proxy-user=USER           set USER as proxy username\n"
+msgstr ""
+"       --proxy-user=ІМЯ            задаць ІМЯ карыстальніка проксі-сэрвэра\n"
+
+#: src/main.c:807
+msgid "       --proxy-password=PASS       set PASS as proxy password\n"
+msgstr ""
+"       --proxy-password=ПАРОЛЬ     задаць ПАРОЛЬ карыстальніка проксі-"
+"сэрвэра\n"
+
+#: src/main.c:809
+msgid ""
+"       --referer=URL               include 'Referer: URL' header in HTTP "
+"request\n"
+msgstr ""
+"       --referer=URL               уключаць загаловак «Referer: URL» у запыт "
+"HTTP\n"
+
+#: src/main.c:811
+msgid "       --save-headers              save the HTTP headers to file\n"
+msgstr "       --save-headers              захаваць загалоўкі HTTP у файл\n"
+
+#: src/main.c:813
+msgid ""
+"  -U,  --user-agent=AGENT          identify as AGENT instead of Wget/"
+"VERSION\n"
+msgstr ""
+"  -U,  --user-agent=АГЕНТ          ідэнтыфікаваць сябе як АГЕНТ замест Wget/"
+"VERSION\n"
+
+#: src/main.c:815
+msgid ""
+"       --no-http-keep-alive        disable HTTP keep-alive (persistent "
+"connections)\n"
+msgstr ""
+"       --no-http-keep-alive        адключыць HTTP keep-alive (пастаянныя "
+"злучэньні)\n"
+
+#: src/main.c:817
+msgid "       --no-cookies                don't use cookies\n"
+msgstr "       --no-cookies                не выкарыстоўваць cookies\n"
+
+#: src/main.c:819
+msgid ""
+"       --load-cookies=FILE         load cookies from FILE before session\n"
+msgstr ""
+"       --load-cookies=ФАЙЛ         загрузіць cookies з ФАЙЛа перад сэсіяй\n"
+
+#: src/main.c:821
+msgid "       --save-cookies=FILE         save cookies to FILE after session\n"
+msgstr ""
+"       --save-cookies=ФАЙЛ         захаваць cookies у ФАЙЛ пасьля сэсіі\n"
+
+#: src/main.c:823
+msgid ""
+"       --keep-session-cookies      load and save session (non-permanent) "
+"cookies\n"
+msgstr ""
+"       --keep-session-cookies      загружаць і захоўваць сэсіённыя cookies "
+"(не пастаянныя)\n"
+
+#: src/main.c:825
+msgid ""
+"       --post-data=STRING          use the POST method; send STRING as the "
+"data\n"
+msgstr ""
+"       --post-data=РАДОК           выкарыстоўваць мэтад POST; адпраўляць "
+"РАДОК у якасьці даных\n"
+
+#: src/main.c:827
+msgid ""
+"       --post-file=FILE            use the POST method; send contents of "
+"FILE\n"
+msgstr ""
+"       --post-file=ФАЙЛ            выкарыстоўваць мэтад POST; адпраўляць "
+"зьмесьціва ФАЙЛа\n"
+
+#: src/main.c:829
+msgid ""
+"       --method=HTTPMethod         use method \"HTTPMethod\" in the request\n"
+msgstr ""
+"       --method=МэтадHTTP          выкарыстоўваць у запыту мэтад "
+"«МэтадHTTP»\n"
+
+#: src/main.c:831
+msgid ""
+"       --body-data=STRING          send STRING as data. --method MUST be "
+"set\n"
+msgstr ""
+"       --body-data=РАДОК           адправіць РАДОК у якасьці даных. МУСІЦЬ "
+"быць вызначаны --method\n"
+
+#: src/main.c:833
+msgid ""
+"       --body-file=FILE            send contents of FILE. --method MUST be "
+"set\n"
+msgstr ""
+"       --body-file=ФАЙЛ            адправіць зьмест ФАЙЛа. МУСІЦЬ быць "
+"вызначаны --method\n"
+
+#: src/main.c:835
+msgid ""
+"       --content-disposition       honor the Content-Disposition header "
+"when\n"
+"                                     choosing local file names "
+"(EXPERIMENTAL)\n"
+msgstr ""
+"       --content-disposition       улічваць загаловак Content-Disposition "
+"пры\n"
+"                                     выбары імён лякальных файлаў "
+"(ЭКСПЭРЫМЭНТАЛЬНА)\n"
+
+#: src/main.c:838
+msgid ""
+"       --content-on-error          output the received content on server "
+"errors\n"
+msgstr ""
+"       --content-on-error          выводзіць атрыманыя даныя пры памылках "
+"сэрвэра\n"
+
+#: src/main.c:840
+msgid ""
+"       --auth-no-challenge         send Basic HTTP authentication "
+"information\n"
+"                                     without first waiting for the server's\n"
+"                                     challenge\n"
+msgstr ""
+"       --auth-no-challenge         адпраўляць інфармацыю пра спраўджаньне "
+"Basic HTTP\n"
+"                                     без папярэдняга чаканьня запыту "
+"сэрвэра\n"
+
+#: src/main.c:847
+msgid "HTTPS (SSL/TLS) options:\n"
+msgstr "Опцыі HTTPS (SSL/TLS):\n"
+
+#: src/main.c:849
+msgid ""
+"       --secure-protocol=PR        choose secure protocol, one of auto, "
+"SSLv2,\n"
+"                                     SSLv3, TLSv1, TLSv1_1, TLSv1_2, TLSv1_3 "
+"and PFS\n"
+msgstr ""
+"       --secure-protocol=PR        выбар бясьпечнага пратакола: auto, "
+"SSLv2,\n"
+"                                     SSLv3, TLSv1, TLSv1_1, TLSv1_2, TLSv1_3 "
+"ды PFS\n"
+
+#: src/main.c:852
+msgid "       --https-only                only follow secure HTTPS links\n"
+msgstr ""
+"       --https-only                пераходзіць толькі па бясьпечным "
+"спасылкам HTTPS\n"
+
+#: src/main.c:854
+msgid ""
+"       --no-check-certificate      don't validate the server's certificate\n"
+msgstr "       --no-check-certificate      не правяраць сэртыфікат сэрвэра\n"
+
+#: src/main.c:856
+msgid "       --certificate=FILE          client certificate file\n"
+msgstr "       --certificate=ФАЙЛ          файл кліенцкага сэртыфікату\n"
+
+#: src/main.c:858
+msgid ""
+"       --certificate-type=TYPE     client certificate type, PEM or DER\n"
+msgstr ""
+"       --certificate-type=ТЫП      тып кліенцкага сэртыфікату: PEM або DER\n"
+
+#: src/main.c:860
+msgid "       --private-key=FILE          private key file\n"
+msgstr "       --private-key=ФАЙЛ          файл сакрэтнага ключа\n"
+
+#: src/main.c:862
+msgid "       --private-key-type=TYPE     private key type, PEM or DER\n"
+msgstr "       --private-key-type=ТЫП      тып сакрэтнага ключа: PEM або DER\n"
+
+#: src/main.c:864
+msgid "       --ca-certificate=FILE       file with the bundle of CAs\n"
+msgstr "       --ca-certificate=ФАЙЛ       файл з наборам CA\n"
+
+#: src/main.c:866
+msgid ""
+"       --ca-directory=DIR          directory where hash list of CAs is "
+"stored\n"
+msgstr ""
+"       --ca-directory=КАТ          каталёг, у якім захоўваецца сьпіс хэшаў "
+"CA\n"
+
+#: src/main.c:868
+msgid "       --crl-file=FILE             file with bundle of CRLs\n"
+msgstr "       --crl-file=ФАЙЛ             файл з наборам CRL\n"
+
+#: src/main.c:870
+msgid ""
+"       --pinnedpubkey=FILE/HASHES  Public key (PEM/DER) file, or any number\n"
+"                                   of base64 encoded sha256 hashes preceded "
+"by\n"
+"                                   'sha256//' and separated by ';', to "
+"verify\n"
+"                                   peer against\n"
+msgstr ""
+"       --pinnedpubkey=ФАЙЛ/ХЭШЫ    Файл з адкрытым ключом (PEM/DER), або "
+"любая колькасьць\n"
+"                                   sha256 хэшаў, кадаваных у base64, якія "
+"пачынаюцца з\n"
+"                                   «sha256//» і падзеленых праз «;», to "
+"verify\n"
+"                                   peer against\n"
+
+#: src/main.c:876
+msgid ""
+"       --random-file=FILE          file with random data for seeding the SSL "
+"PRNG\n"
+msgstr ""
+"       --random-file=ФАЙЛ          файл з выпадковымі данымі для запаўненьня "
+"SSL PRNG\n"
+
+#: src/main.c:880
+msgid ""
+"       --egd-file=FILE             file naming the EGD socket with random "
+"data\n"
+msgstr ""
+"       --egd-file=ФАЙЛ             вызначальны файл сокета EGD з выпадковымі "
+"данымі\n"
+
+#: src/main.c:884
+msgid ""
+"       --ciphers=STR           Set the priority string (GnuTLS) or cipher "
+"list string (OpenSSL) directly.\n"
+"                                   Use with care. This option overrides --"
+"secure-protocol.\n"
+"                                   The format and syntax of this string "
+"depend on the specific SSL/TLS engine.\n"
+msgstr ""
+"       --ciphers=РАД           Непасрэдна адзначыць радок прыярытэту "
+"(GnuTLS) або радок са сьпісам шыфраў (OpenSSL).\n"
+"                                   Выкарыстоўваць з асьцярогай. Гэтая опцыя "
+"перавызначае --secure-protocol.\n"
+"                                   Фармат і сынтаксіс гэтага радка залежыць "
+"ад спэцыфікі рухавіка SSL/TLS.\n"
+
+#: src/main.c:891
+msgid "HSTS options:\n"
+msgstr "Опцыі HSTS:\n"
+
+#: src/main.c:893
+msgid "       --no-hsts                   disable HSTS\n"
+msgstr "       --no-hsts                   адключыць HSTS\n"
+
+#: src/main.c:895
+msgid ""
+"       --hsts-file                 path of HSTS database (will override "
+"default)\n"
+msgstr ""
+"       --hsts-file                 шлях да базы даных HSTS (перавызначыць "
+"значэньне па змаўчаньні)\n"
+
+#: src/main.c:900
+msgid "FTP options:\n"
+msgstr "Опцыі FTP:\n"
+
+#: src/main.c:903
+msgid ""
+"       --ftp-stmlf                 use Stream_LF format for all binary FTP "
+"files\n"
+msgstr ""
+"       --ftp-stmlf                 выкарыстоўваць фармат Stream_LF для ўсіх "
+"бінарных файлаў FTP\n"
+
+#: src/main.c:906
+msgid "       --ftp-user=USER             set ftp user to USER\n"
+msgstr "       --ftp-user=ІМЯ              задаць ІМЯ карыстальніка ftp\n"
+
+#: src/main.c:908
+msgid "       --ftp-password=PASS         set ftp password to PASS\n"
+msgstr "       --ftp-password=ПАРОЛЬ       задаць ПАРОЛЬ карыстальніка ftp\n"
+
+#: src/main.c:910
+msgid "       --no-remove-listing         don't remove '.listing' files\n"
+msgstr "       --no-remove-listing         не выдаляць файлы '.listing'\n"
+
+#: src/main.c:912
+msgid "       --no-glob                   turn off FTP file name globbing\n"
+msgstr ""
+"       --no-glob                   выключыць маскі для назваў файлаў FTP\n"
+
+#: src/main.c:914
+msgid ""
+"       --no-passive-ftp            disable the \"passive\" transfer mode\n"
+msgstr ""
+"       --no-passive-ftp            адключыць «пасіўны» рэжым перадачы даных\n"
+
+#: src/main.c:916
+msgid "       --preserve-permissions      preserve remote file permissions\n"
+msgstr ""
+"       --preserve-permissions      захоўваць правы доступу аддаленых файлаў\n"
+
+#: src/main.c:918
+msgid ""
+"       --retr-symlinks             when recursing, get linked-to files (not "
+"dir)\n"
+msgstr ""
+"       --retr-symlinks             калі ўжываецца рэкурсія, атрымоўваць "
+"злучаныя файлы (не каталёгі)\n"
+
+#: src/main.c:923
+msgid "FTPS options:\n"
+msgstr "Опцыі FTPS:\n"
+
+#: src/main.c:925
+msgid ""
+"       --ftps-implicit                 use implicit FTPS (default port is "
+"990)\n"
+msgstr ""
+"       --ftps-implicit                 яўна выкарыстоўваць FTPS "
+"(прадвызначаны порт — 990)\n"
+
+#: src/main.c:927
+msgid ""
+"       --ftps-resume-ssl               resume the SSL/TLS session started in "
+"the control connection when\n"
+"                                         opening a data connection\n"
+msgstr ""
+"       --ftps-resume-ssl               аднаўляць сэанс SSL/TLS, які пачаты ў "
+"кіруючым канале, пры\n"
+"                                         адкрыцьці канала даных\n"
+
+#: src/main.c:930
+msgid ""
+"       --ftps-clear-data-connection    cipher the control channel only; all "
+"the data will be in plaintext\n"
+msgstr ""
+"       --ftps-clear-data-connection    шыфраваць толькі кіруючы канал; усе "
+"даныя будуць у фармаце простага тэксту\n"
+
+#: src/main.c:932
+msgid ""
+"       --ftps-fallback-to-ftp          fall back to FTP if FTPS is not "
+"supported in the target server\n"
+msgstr ""
+"       --ftps-fallback-to-ftp          выкарыстоўваць FTP у выпадку, калі "
+"FTPS не падтрымліваецца на прызначаным сэрвэры\n"
+
+#: src/main.c:936
+msgid "WARC options:\n"
+msgstr "Опцыі WARC:\n"
+
+#: src/main.c:938
+msgid ""
+"       --warc-file=FILENAME        save request/response data to a .warc.gz "
+"file\n"
+msgstr ""
+"       --warc-file=ФАЙЛ            захоўваць даныя запыту/адказу ў файл ."
+"warc.gz\n"
+
+#: src/main.c:940
+msgid ""
+"       --warc-header=STRING        insert STRING into the warcinfo record\n"
+msgstr "       --warc-header=РАДОК         уставіць РАДОК у запіс warcinfo\n"
+
+#: src/main.c:942
+msgid ""
+"       --warc-max-size=NUMBER      set maximum size of WARC files to NUMBER\n"
+msgstr ""
+"       --warc-max-size=ЛІК         задаць максымальны памер файлаў WARC у "
+"значэньне ЛІК\n"
+
+#: src/main.c:944
+msgid "       --warc-cdx                  write CDX index files\n"
+msgstr "       --warc-cdx                  запісаць індэксныя файлы CDX\n"
+
+#: src/main.c:946
+msgid ""
+"       --warc-dedup=FILENAME       do not store records listed in this CDX "
+"file\n"
+msgstr ""
+"       --warc-dedup=ФАЙЛ           не захоўваць запісы, пералічаныя ў файле "
+"CDX\n"
+
+#: src/main.c:949
+msgid ""
+"       --no-warc-compression       do not compress WARC files with GZIP\n"
+msgstr "       --no-warc-compression       не сьціскаць файлы WARC праз GZIP\n"
+
+#: src/main.c:952
+msgid "       --no-warc-digests           do not calculate SHA1 digests\n"
+msgstr "       --no-warc-digests           не падлічваць хэш-сумы SHA1\n"
+
+#: src/main.c:954
+msgid ""
+"       --no-warc-keep-log          do not store the log file in a WARC "
+"record\n"
+msgstr ""
+"       --no-warc-keep-log          не захоўваць файл пратаколу у запіс WARC\n"
+
+#: src/main.c:956
+msgid ""
+"       --warc-tempdir=DIRECTORY    location for temporary files created by "
+"the\n"
+"                                     WARC writer\n"
+msgstr ""
+"       --warc-tempdir=КАТАЛЁГ      разьмяшчэньне для часовых файлаў, "
+"створаных\n"
+"                                     пры дапамозе запісу WARC\n"
+
+#: src/main.c:961
+msgid "Recursive download:\n"
+msgstr "Рэкурсіўная спампоўка:\n"
+
+#: src/main.c:963
+msgid "  -r,  --recursive                 specify recursive download\n"
+msgstr "  -r,  --recursive                 вызначыць рэкурсіўную спампоўку\n"
+
+#: src/main.c:965
+msgid ""
+"  -l,  --level=NUMBER              maximum recursion depth (inf or 0 for "
+"infinite)\n"
+msgstr ""
+"  -l,  --level=ЛІК                 максымальная глыбіня рэкурсіі (inf або 0 "
+"для бясконцага)\n"
+
+#: src/main.c:967
+msgid ""
+"       --delete-after              delete files locally after downloading "
+"them\n"
+msgstr ""
+"       --delete-after              выдаляць файлы лякальна пасьля іх "
+"спампоўваньня\n"
+
+#: src/main.c:969
+msgid ""
+"  -k,  --convert-links             make links in downloaded HTML or CSS "
+"point to\n"
+"                                     local files\n"
+msgstr ""
+"  -k,  --convert-links             ствараць спасылкі ў спампаваных HTML ці "
+"CSS на\n"
+"                                     лякальныя файлы\n"
+
+#: src/main.c:972
+msgid ""
+"       --convert-file-only         convert the file part of the URLs only "
+"(usually known as the basename)\n"
+msgstr ""
+"       --convert-file-only         пераўтвараць толькі файлавую частку URL-"
+"аў (звычайна вядома як базавая назва — basename)\n"
+
+#: src/main.c:974
+msgid ""
+"       --backups=N                 before writing file X, rotate up to N "
+"backup files\n"
+msgstr ""
+"       --backups=N                 перад запісам файла X, раціраваць да N "
+"рэзэрвовых копій файлаў\n"
+
+#: src/main.c:978
+msgid ""
+"  -K,  --backup-converted          before converting file X, back up as "
+"X_orig\n"
+msgstr ""
+"  -K,  --backup-converted          перад пераўтварэньнем файла X, стварыць "
+"рэзэрвовую копію X_orig\n"
+
+#: src/main.c:981
+msgid ""
+"  -K,  --backup-converted          before converting file X, back up as X."
+"orig\n"
+msgstr ""
+"  -K,  --backup-converted          перад пераўтварэньнем файла X, стварыць "
+"рэзэрвовую копію X.orig\n"
+
+#: src/main.c:984
+msgid ""
+"  -m,  --mirror                    shortcut for -N -r -l inf --no-remove-"
+"listing\n"
+msgstr ""
+"  -m,  --mirror                    цэтлік, эквівалентны -N -r -l inf --no-"
+"remove-listing\n"
+
+#: src/main.c:986
+msgid ""
+"  -p,  --page-requisites           get all images, etc. needed to display "
+"HTML page\n"
+msgstr ""
+"  -p,  --page-requisites           атрымаць усе выявы й інш., неабходныя да "
+"адлюстраваньня старонкі HTML\n"
+
+#: src/main.c:988
+msgid ""
+"       --strict-comments           turn on strict (SGML) handling of HTML "
+"comments\n"
+msgstr ""
+"       --strict-comments           уключыць строгую (SGML) апрацоўку "
+"камэнтараў HTML\n"
+
+#: src/main.c:992
+msgid "Recursive accept/reject:\n"
+msgstr "Рэкурсіўныя дазволы/забароны:\n"
+
+#: src/main.c:994
+msgid ""
+"  -A,  --accept=LIST               comma-separated list of accepted "
+"extensions\n"
+msgstr ""
+"  -A,  --accept=СЬПІС              сьпіс (праз коску) дазволеных "
+"пашырэньняў\n"
+
+#: src/main.c:996
+msgid ""
+"  -R,  --reject=LIST               comma-separated list of rejected "
+"extensions\n"
+msgstr ""
+"  -R,  --reject=СЬПІС              сьпіс (праз коску) адхіленых пашырэньняў\n"
+
+#: src/main.c:998
+msgid "       --accept-regex=REGEX        regex matching accepted URLs\n"
+msgstr ""
+"       --accept-regex=РЭГВЫР       рэгулярны выраз для дазволеных URL\n"
+
+#: src/main.c:1000
+msgid "       --reject-regex=REGEX        regex matching rejected URLs\n"
+msgstr "       --reject-regex=РЭГВЫР       рэгулярны выраз для адхіленых URL\n"
+
+#: src/main.c:1003
+msgid "       --regex-type=TYPE           regex type (posix|pcre)\n"
+msgstr ""
+"       --regex-type=ТЫП            тып рэгулярнага выразу (posix|pcre)\n"
+
+#: src/main.c:1006
+msgid "       --regex-type=TYPE           regex type (posix)\n"
+msgstr "       --regex-type=ТЫП            тып рэгулярнага выразу (posix)\n"
+
+#: src/main.c:1009
+msgid ""
+"  -D,  --domains=LIST              comma-separated list of accepted domains\n"
+msgstr ""
+"  -D,  --domains=СЬПІС             сьпіс (праз коску) дазволеных дамэнаў\n"
+
+#: src/main.c:1011
+msgid ""
+"       --exclude-domains=LIST      comma-separated list of rejected domains\n"
+msgstr ""
+"       --exclude-domains=СЬПІС     сьпіс (праз коску) адхіленых дамэнаў\n"
+
+#: src/main.c:1013
+msgid ""
+"       --follow-ftp                follow FTP links from HTML documents\n"
+msgstr ""
+"       --follow-ftp                прытрымлівацца спасылак FTP з дакумэнта "
+"HTML\n"
+
+#: src/main.c:1015
+msgid ""
+"       --follow-tags=LIST          comma-separated list of followed HTML "
+"tags\n"
+msgstr ""
+"       --follow-tags=СЬПІС         сьпіс (праз коску) належных тэгаў HTML\n"
+
+#: src/main.c:1017
+msgid ""
+"       --ignore-tags=LIST          comma-separated list of ignored HTML "
+"tags\n"
+msgstr ""
+"       --ignore-tags=СЬПІС         сьпіс (праз коску) ігнараваных тэгаў "
+"HTML\n"
+
+#: src/main.c:1019
+msgid "  -H,  --span-hosts                go to foreign hosts when recursive\n"
+msgstr ""
+"  -H,  --span-hosts                пераходзяць да іншых вузлоў пад час "
+"рэкурсіўнай апрацоўкі\n"
+
+#: src/main.c:1021
+msgid "  -L,  --relative                  follow relative links only\n"
+msgstr ""
+"  -L,  --relative                  пераходзіць толькі па адносных спасылках\n"
+
+#: src/main.c:1023
+msgid "  -I,  --include-directories=LIST  list of allowed directories\n"
+msgstr "  -I,  --include-directories=СЬПІС сьпіс дазволеных каталёгаў\n"
+
+#: src/main.c:1025
+msgid ""
+"       --trust-server-names        use the name specified by the "
+"redirection\n"
+"                                     URL's last component\n"
+msgstr ""
+"       --trust-server-names        выкарыстоўваць назву, пазначанаю ў "
+"апошнім\n"
+"                                     кампаненце перанакіраваньня URL\n"
+
+#: src/main.c:1028
+msgid "  -X,  --exclude-directories=LIST  list of excluded directories\n"
+msgstr "  -X,  --exclude-directories=СЬПІС сьпіс выключаных каталёгаў\n"
+
+#: src/main.c:1030
+msgid ""
+"  -np, --no-parent                 don't ascend to the parent directory\n"
+msgstr ""
+"  -np, --no-parent                 не падымацца да бацькоўскага каталёга\n"
+
+#: src/main.c:1033
+msgid ""
+"Email bug reports, questions, discussions to <bug-wget@gnu.org>\n"
+"and/or open issues at https://savannah.gnu.org/bugs/?"
+"func=additem&group=wget.\n"
+msgstr ""
+"Паведамленьні пра памылкі, пытаньні, абмеркаваньні дасылайце на <bug-"
+"wget@gnu.org>\n"
+"і/або для адкрыцьця праблем скарыстайце https://savannah.gnu.org/bugs/?"
+"func=additem&group=wget.\n"
+
+#: src/main.c:1039
+#, c-format
+msgid "GNU Wget %s, a non-interactive network retriever.\n"
+msgstr "Неінтэрактыўны сеткавы запампоўнік GNU Wget %s.\n"
+
+#: src/main.c:1082
+#, c-format
+msgid "Password for user %s: "
+msgstr "Пароль карыстальніка %s: "
+
+#: src/main.c:1084
+#, c-format
+msgid "Password: "
+msgstr "Пароль:"
+
+#: src/main.c:1108
+#, c-format
+msgid "Cannot create pipe\n"
+msgstr "Немагчыма стварыць пайп\n"
+
+#: src/main.c:1116
+#, c-format
+msgid "Error initializing spawn file actions for use-askpass: %d\n"
+msgstr ""
+"Памылка ініцыялізацыі дзеяньняў файла пры спараджэньні для use-askpass: %d\n"
+
+#: src/main.c:1125
+#, c-format
+msgid "Error setting spawn file actions for use-askpass: %d\n"
+msgstr ""
+"Памылка ўсталяваньня дзеяньняў файла пры спараджэньні для use-askpass: %d\n"
+
+#: src/main.c:1149
+#, c-format
+msgid "Error reading response from command \"%s %s\": %s\n"
+msgstr "Памылка чытання адказу з каманды «%s %s»: %s\n"
+
+#: src/main.c:1172
+#, c-format
+msgid "Username for '%s%s': "
+msgstr "Імя карыстальніка для '%s%s': "
+
+#: src/main.c:1182
+#, c-format
+msgid "Password for '%s%s@%s': "
+msgstr "Пароль для '%s%s@%s': "
+
+#: src/main.c:1254
+msgid "Wgetrc: "
+msgstr "Wgetrc: "
+
+#: src/main.c:1255
+msgid "Locale: "
+msgstr "Лякаль: "
+
+#: src/main.c:1256
+msgid "Compile: "
+msgstr "Кампілятар: "
+
+#: src/main.c:1257
+msgid "Link: "
+msgstr "Спасылка: "
+
+#: src/main.c:1261
+#, c-format
+msgid ""
+"GNU Wget %s built on %s.\n"
+"\n"
+msgstr ""
+"GNU Wget %s скампіляваны на %s.\n"
+"\n"
+
+#: src/main.c:1294
+#, c-format
+msgid "    %s (env)\n"
+msgstr "    %s (env)\n"
+
+#: src/main.c:1301
+#, c-format
+msgid "    %s (user)\n"
+msgstr "    %s (user)\n"
+
+#: src/main.c:1306
+#, c-format
+msgid "    %s (system)\n"
+msgstr "    %s (system)\n"
+
+#. TRANSLATORS: When available, an actual copyright character
+#. (circle-c) should be used in preference to "(C)".
+#: src/main.c:1334
+#, c-format
+msgid "Copyright (C) %s Free Software Foundation, Inc.\n"
+msgstr "Аўтарскія правы © %s Free Software Foundation, Inc.\n"
+
+#: src/main.c:1337
+msgid ""
+"License GPLv3+: GNU GPL version 3 or later\n"
+"<http://www.gnu.org/licenses/gpl.html>.\n"
+"This is free software: you are free to change and redistribute it.\n"
+"There is NO WARRANTY, to the extent permitted by law.\n"
+msgstr ""
+"Ліцэнзія GPLv3+: GNU GPL вэрсіі 3 або навей\n"
+"<http://www.gnu.org/licenses/gpl.html>.\n"
+"Гэта свабоднае праграмнае забесьпячэньне: вы можаце вольна зьмяняць і "
+"распаўсюджваць яго.\n"
+"Няма НІЯКІХ ГАРАНТЫЙ у межах дзеючага заканадаўства.\n"
+
+#. TRANSLATORS: When available, please use the proper diacritics for
+#. names such as this one. See en_US.po for reference.
+#: src/main.c:1345
+msgid ""
+"\n"
+"Originally written by Hrvoje Niksic <hniksic@xemacs.org>.\n"
+msgstr ""
+"\n"
+"Першастваральнік - Hrvoje Niksic <hniksic@xemacs.org>.\n"
+
+#: src/main.c:1348
+msgid "Please send bug reports and questions to <bug-wget@gnu.org>.\n"
+msgstr ""
+"Адпраўляйце справаздачы пра памылкі ды пытаньні на <bug-wget@gnu.org>.\n"
+
+#: src/main.c:1400
+#, c-format
+msgid "Memory allocation problem\n"
+msgstr "Праблема разьмеркаваньня памяці\n"
+
+#: src/main.c:1451
+#, c-format
+msgid "Exiting due to error in %s\n"
+msgstr "Выхад з-за памылкі ў %s\n"
+
+#: src/main.c:1481 src/main.c:1552 src/main.c:1794
+#, c-format
+msgid "Try `%s --help' for more options.\n"
+msgstr "Паспрабуйце «%s --help», каб пабачыць больш опцыяў.\n"
+
+#: src/main.c:1548
+#, c-format
+msgid "%s: illegal option -- `-n%c'\n"
+msgstr "%s: недапушчальная опцыя -- «-n%c»\n"
+
+#: src/main.c:1594
+#, c-format
+msgid "Debugging support not compiled in. Ignoring --debug flag.\n"
+msgstr "Падтрымка адладкі не ўбудавана. Ігнараваньне фляжка --debug.\n"
+
+#: src/main.c:1607
+#, c-format
+msgid ""
+"Both --no-clobber and --convert-links were specified, only --convert-links "
+"will be used.\n"
+msgstr ""
+"Адзначаныя абедзьве --no-clobber ды --convert-links, будзе выкарыстана "
+"толькі --convert-links.\n"
+
+#: src/main.c:1609
+#, c-format
+msgid ""
+"Both --no-clobber and --convert-file-only were specified, only --convert-"
+"file-only will be used.\n"
+msgstr ""
+"Адзначаныя абедзьве --no-clobber ды --convert-file-only, будзе выкарыстана "
+"толькі --convert-file-only.\n"
+
+#: src/main.c:1642
+#, c-format
+msgid "Can't be verbose and quiet at the same time.\n"
+msgstr "Немагчыма адначасова быць шматслоўным і маўклівым.\n"
+
+#: src/main.c:1648
+#, c-format
+msgid "Can't timestamp and not clobber old files at the same time.\n"
+msgstr ""
+"Немагчыма выкарыстоўваць адбітак часу й не перазапісваць старыя файлы "
+"адначасова.\n"
+
+#: src/main.c:1657
+#, c-format
+msgid "Cannot specify both --inet4-only and --inet6-only.\n"
+msgstr "Нельга адзначаць абедзьве --inet4-only ды --inet6-only.\n"
+
+#: src/main.c:1667
+msgid ""
+"Cannot specify both -k or --convert-file-only and -O if multiple URLs are "
+"given, or in combination\n"
+"with -p or -r. See the manual for details.\n"
+"\n"
+msgstr ""
+"Нельга адзначаць абедзьве -k ці --convert-file-only ды -O, калі атрымана "
+"мноства URL, або ў камбінацыі\n"
+"з -p ці -r. Падрабязнасьці глядзіце ў дапаможніку.\n"
+"\n"
+
+#: src/main.c:1676
+msgid ""
+"WARNING: combining -O with -r or -p will mean that all downloaded content\n"
+"will be placed in the single file you specified.\n"
+"\n"
+msgstr ""
+"ПАПЯРЭДЖАНЬНЕ: спалучэньне -O з -r ці -p будзе значыць, што ўсё спампаванае "
+"зьмесьціва\n"
+"будзе зьмешчана ў вызначаны вамі адзін файл.\n"
+"\n"
+
+#: src/main.c:1682
+msgid ""
+"WARNING: timestamping does nothing in combination with -O. See the manual\n"
+"for details.\n"
+"\n"
+msgstr ""
+"ПАПЯРЭДЖАНЬНЕ: адбіткі часу не будуць працаваць у спалучэньні з -O.\n"
+"Падрабязнасьці глядзіце ў дапаможніку.\n"
+"\n"
+
+#: src/main.c:1702
+#, c-format
+msgid ""
+"WARC output does not work with --no-clobber, --no-clobber will be disabled.\n"
+msgstr "Вывад WARC не працуе з --no-clobber, --no-clobber будзе адключаны.\n"
+
+#: src/main.c:1709
+#, c-format
+msgid ""
+"WARC output does not work with timestamping, timestamping will be disabled.\n"
+msgstr ""
+"Вывад WARC не працуе з адбіткам часу, адбіткі часу будуць адключаныя.\n"
+
+#: src/main.c:1716
+#, c-format
+msgid "WARC output does not work with --spider.\n"
+msgstr "Вывад WARC не працуе з --spider.\n"
+
+#: src/main.c:1722
+#, c-format
+msgid ""
+"WARC output does not work with --continue or --start-pos, they will be "
+"disabled.\n"
+msgstr ""
+"Вывад WARC не працуе з --continue або --start-pos, яны будуць адключаныя.\n"
+
+#: src/main.c:1730
+#, c-format
+msgid ""
+"Digests are disabled; WARC deduplication will not find duplicate records.\n"
+msgstr "Хэш-сумы адключаныя; дэдуплікацыя WARC ня знойдзе дублікаты запісаў.\n"
+
+#: src/main.c:1751
+#, c-format
+msgid ""
+"Compression does not work with --continue or --start-pos, they will be "
+"disabled.\n"
+msgstr ""
+"Сьцісканьне не працуе з --continue або --start-pos, яны будуць адключаныя.\n"
+
+#: src/main.c:1762
+#, c-format
+msgid "Cannot specify both --ask-password and --password.\n"
+msgstr "Нельга адзначаць абедзьве --ask-password ды --password.\n"
+
+#: src/main.c:1770
+#, c-format
+msgid ""
+"WARNING: No username set with --ask-password. This is usually not what you "
+"want.\n"
+msgstr ""
+"ПАПЯРЭДЖАНЬНЕ: Не зададзена імя карыстальніка пры --ask-password. Звычайна "
+"гэта не тое, што трэба.\n"
+
+#: src/main.c:1776
+#, c-format
+msgid ""
+"Specifying both --start-pos and --continue is not recommended; --continue "
+"will be disabled.\n"
+msgstr ""
+"Не рэкамэндуецца ўжываць адразу --start-pos ды --continue; --continue будзе "
+"адключана.\n"
+
+#: src/main.c:1789
+#, c-format
+msgid "%s: missing URL\n"
+msgstr "%s: прапушчаны URL\n"
+
+#: src/main.c:1837
+#, c-format
+msgid "You cannot specify both --post-data and --post-file.\n"
+msgstr "Нельга адзначаць абедзьве --post-data ды --post-file.\n"
+
+#: src/main.c:1842
+#, c-format
+msgid ""
+"You cannot use --post-data or --post-file along with --method. --method "
+"expects data through --body-data and --body-file options\n"
+msgstr ""
+"Нельга выкарыстоўваць --post-data ці --post-file разам з --method. --method "
+"чакае даных праз опцыі --body-data ды --body-file\n"
+
+#: src/main.c:1851
+#, c-format
+msgid ""
+"You must specify a method through --method=HTTPMethod to use with --body-"
+"data or --body-file.\n"
+msgstr ""
+"Вы мусіце вызначыць мэтад праз --method=МэтадHTTP, каб выкарыстоўваць --body-"
+"data або --body-file.\n"
+
+#: src/main.c:1857
+#, c-format
+msgid "You cannot specify both --body-data and --body-file.\n"
+msgstr "Нельга адзначаць абедзьве --body-data ды --body-file.\n"
+
+#: src/main.c:1909
+#, c-format
+msgid "This version does not have support for IRIs\n"
+msgstr "Гэтая вэрсія ня мае падтрымкі IRI\n"
+
+#: src/main.c:2009
+#, c-format
+msgid ""
+"-k or -r can be used together with -O only if outputting to a regular file.\n"
+msgstr ""
+"-k або -r можна выкарыстоўваць разам з -O толькі, калі вывад выконваецца ў "
+"звычайны файл.\n"
+
+#: src/main.c:2015
+#, c-format
+msgid ""
+"--convert-links or --convert-file-only can be used together only if "
+"outputting to a regular file.\n"
+msgstr ""
+"--convert-links або --convert-file-only можна выкарыстоўваць разам толькі, "
+"калі вывад выконваецца ў звычайны файл.\n"
+
+#: src/main.c:2026
+#, c-format
+msgid "Failed to init libcares\n"
+msgstr "Не ўдалося ініцыяваць libcares\n"
+
+#: src/main.c:2032
+#, c-format
+msgid "Failed to init c-ares channel\n"
+msgstr "Не атрымалася ініцыяваць канал c-ares\n"
+
+#: src/main.c:2055
+#, c-format
+msgid "Failed to parse IP address '%s'\n"
+msgstr "Не атрымалася разабраць IP-адрас \"%s\"\n"
+
+#: src/main.c:2066
+#, c-format
+msgid "Failed to set DNS server(s) '%s' (%d)\n"
+msgstr "Не атрымалася задаць DNS-сэрвэр(ы) «%s» (%d)\n"
+
+#: src/main.c:2201
+#, c-format
+msgid "No URLs found in %s.\n"
+msgstr "Ня знойдзены URL у %s.\n"
+
+#: src/main.c:2217
+#, c-format
+msgid "Unable to parse metalink file %s.\n"
+msgstr "Немагчыма разабраць файл metalink %s.\n"
+
+#: src/main.c:2247 src/metalink.c:337
+#, c-format
+msgid "Could not download all resources from %s.\n"
+msgstr "Не атрымалася спампаваць усе рэсурсы з %s.\n"
+
+#: src/main.c:2274
+#, c-format
+msgid ""
+"FINISHED --%s--\n"
+"Total wall clock time: %s\n"
+"Downloaded: %d files, %s in %s (%s)\n"
+msgstr ""
+"ЗАВЕРШАНА --%s--\n"
+"Агульны час: %s\n"
+"Спампавана: %d файлаў, %s у %s (%s)\n"
+
+#: src/main.c:2288
+#, c-format
+msgid "Download quota of %s EXCEEDED!\n"
+msgstr "Квота спампоўкі (%s) ПЕРАВЫШАНА!\n"
+
+#: src/metalink.c:93
+msgid "-O not supported for metalink download. Ignoring.\n"
+msgstr "-O не падтрымліваецца пры спампоўкі metalink. Ігнараваньне.\n"
+
+#: src/metalink.c:172
+#, c-format
+msgid "[--trust-server-names %s, --directory-prefix=%s]\n"
+msgstr "[--trust-server-names %s, --directory-prefix=%s]\n"
+
+#: src/metalink.c:176
+#, c-format
+msgid "Planned metalink file: %s\n"
+msgstr "Заплянаваны файл metallink: %s\n"
+
+#: src/metalink.c:179
+#, c-format
+msgid "Secured metalink file: %s\n"
+msgstr "Бясьпечны файл metallink: %s\n"
+
+#: src/metalink.c:184
+msgid "Rejecting metalink file. Unsafe name.\n"
+msgstr "Адхіленьне файла metalink. Небясьпечнае імя.\n"
+
+#: src/metalink.c:238
+#, c-format
+msgid "Processing metaurl %s...\n"
+msgstr "Апрацоўка metaurl %s...\n"
+
+#: src/metalink.c:251
+#, c-format
+msgid "Rejecting metaurl file %s. Unsafe name.\n"
+msgstr "Адхіленьне файла metaurl %s. Небясьпечная назва.\n"
+
+#: src/metalink.c:268
+#, c-format
+msgid "Failed to download %s. Skipping metaurl.\n"
+msgstr "Не ўдалося спампаваць %s. Абмінаем metaurl.\n"
+
+#: src/metalink.c:285
+#, c-format
+msgid "Unable to parse metaurl file %s.\n"
+msgstr "Немагчыма разабраць файл metaurl %s.\n"
+
+#: src/metalink.c:354
+msgid "Metaurls processing returned with error.\n"
+msgstr "Апрацоўка metaurls вярнулася з памылкай.\n"
+
+#: src/metalink.c:386
+#, c-format
+msgid "Resource type %s not supported, ignoring...\n"
+msgstr "Тып рэсурсу %s не падтрымліваецца, ігнаруецца...\n"
+
+#: src/metalink.c:507
+msgid "Could not open downloaded file.\n"
+msgstr "Немагчыма адкрыць спампаваны файл.\n"
+
+#: src/metalink.c:512
+#, c-format
+msgid "Computing size for %s\n"
+msgstr "Вылічэньне памеру для %s\n"
+
+#: src/metalink.c:517
+msgid "File size not declared. Skipping check.\n"
+msgstr "Памер файла не заяўлены. Абмінаем праверку.\n"
+
+#: src/metalink.c:525
+msgid "Could not get downloaded file's size.\n"
+msgstr "Немагчыма вызначыць памер спампаванага файла.\n"
+
+#: src/metalink.c:537
+#, c-format
+msgid "Size mismatch for file %s.\n"
+msgstr "Неадпаведнасьць памеру файла %s.\n"
+
+#: src/metalink.c:545
+msgid "Size matches.\n"
+msgstr "Памер адпавядае.\n"
+
+#: src/metalink.c:598
+#, c-format
+msgid "Computing checksum for %s\n"
+msgstr "Вылічваецца кантрольная сума для %s\n"
+
+#: src/metalink.c:676
+msgid "Checksum matches.\n"
+msgstr "Кантрольная сума супадае.\n"
+
+#: src/metalink.c:681
+#, c-format
+msgid "Checksum mismatch for file %s.\n"
+msgstr "Кантрольная сума для файла %s не супадае.\n"
+
+#: src/metalink.c:720
+msgid "Could not open downloaded file for signature verification.\n"
+msgstr "Немагчыма адкрыць спампаваны файл для праверкі подпісу.\n"
+
+#: src/metalink.c:778
+#, c-format
+msgid "GPGME data_new_from_mem: %s\n"
+msgstr "GPGME data_new_from_mem: %s\n"
+
+#: src/metalink.c:790
+#, c-format
+msgid "GPGME op_verify: %s\n"
+msgstr "GPGME op_verify: %s\n"
+
+#: src/metalink.c:803
+msgid "GPGME op_verify_result: NULL\n"
+msgstr "GPGME op_verify_result: NULL\n"
+
+#: src/metalink.c:819
+msgid "Signature validation succeeded.\n"
+msgstr "Посьпех праверкі подпісу.\n"
+
+#: src/metalink.c:827
+msgid "Invalid signature. Rejecting resource.\n"
+msgstr "Няправільны подпіс. Адмаўляем рэсурсу.\n"
+
+#: src/metalink.c:836
+msgid "Data matches signature, but signature is not trusted.\n"
+msgstr "Дадзеныя супадаюць з подпісам, але подпіс не зьяўляецца давераным.\n"
+
+#: src/metalink.c:863
+msgid "No checksums found.\n"
+msgstr "Кантрольныя сумы не знойдзены.\n"
+
+#: src/metalink.c:869
+#, c-format
+msgid "Failed to download %s. Skipping resource.\n"
+msgstr "Не ўдалося спампаваць %s. Абмінаем рэсурс.\n"
+
+#: src/metalink.c:876
+#, c-format
+msgid "File %s retrieved but size does not match. \n"
+msgstr "Файл %s здабыты, але памер не адпавядае.\n"
+
+#: src/metalink.c:883
+#, c-format
+msgid "File %s retrieved but checksum does not match. \n"
+msgstr "Файл %s здабыты, але кантрольная сума не супадае.\n"
+
+#: src/metalink.c:892
+#, c-format
+msgid "File %s retrieved but signature does not match. \n"
+msgstr "Файл %s здабыты, але подпіс не супадае.\n"
+
+#: src/metalink.c:1111
+#, c-format
+msgid "Renaming %s to %s.\n"
+msgstr "Перайменаваньне %s у %s.\n"
+
+#: src/mswindows.c:96
+#, c-format
+msgid "Continuing in background.\n"
+msgstr "Праца працягнецца ў фоне.\n"
+
+#: src/mswindows.c:289
+#, c-format
+msgid "Continuing in background, pid %lu.\n"
+msgstr "Праца працягнецца ў фоне, pid %lu.\n"
+
+#: src/mswindows.c:291 src/utils.c:502
+#, c-format
+msgid "Output will be written to %s.\n"
+msgstr "Вывад будзе запісаны ў %s.\n"
+
+#: src/mswindows.c:323
+#, c-format
+msgid "fake_fork_child() failed\n"
+msgstr "Памылка fake_fork_child()\n"
+
+#: src/mswindows.c:331
+#, c-format
+msgid "fake_fork() failed\n"
+msgstr "Памылка fake_fork()\n"
+
+#: src/mswindows.c:460 src/mswindows.c:467
+#, c-format
+msgid "%s: Couldn't find usable socket driver.\n"
+msgstr "%s: Не ўдалося знайсьці прыдатны для выкарыстаньня драйвэр сокета.\n"
+
+#: src/mswindows.c:647
+#, c-format
+msgid "ioctl() failed.  The socket could not be set as blocking.\n"
+msgstr "Памылка ioctl(). Не ўдалося ўсталяваць сокет як блякіруючы.\n"
+
+#: src/netrc.c:373
+#, c-format
+msgid "%s: %s:%d: warning: %s token appears before any machine name\n"
+msgstr ""
+"%s: %s:%d: папярэджаньне: токен %s сустракаецца перад кожнай назвай машыны\n"
+
+#: src/netrc.c:416
+#, c-format
+msgid "%s: %s:%d: unknown token \"%s\"\n"
+msgstr "%s: %s:%d: невядомы токен «%s»\n"
+
+#: src/netrc.c:557
+#, c-format
+msgid "Usage: %s NETRC [HOSTNAME]\n"
+msgstr "Выкарыстаньне: %s NETRC [НАЗВА_ВУЗЛА]\n"
+
+#: src/netrc.c:575
+#, c-format
+msgid "%s: cannot stat %s: %s\n"
+msgstr "%s: немагчыма выканаць stat %s: %s\n"
+
+#: src/openssl.c:129
+msgid "WARNING: using a weak random seed.\n"
+msgstr "ПАПЯРЭДЖАНЬНЕ: выкарыстаньне слабай крыніцы выпадковых даных.\n"
+
+#: src/openssl.c:209
+msgid "Could not seed PRNG; consider using --random-file.\n"
+msgstr "Немагчыма запоўніць PRNG; варта скарыстацца --random-file.\n"
+
+#: src/openssl.c:272
+msgid "Your OpenSSL version is too old to support TLS 1.3\n"
+msgstr "Ваша вэрсія OpenSSL занадта старая да падтрымкі TLS 1.3\n"
+
+#: src/openssl.c:278
+msgid "Your OpenSSL version is too old to support TLSv1.1\n"
+msgstr "Ваша вэрсія OpenSSL занадта старая да падтрымкі TLSv1.1\n"
+
+#: src/openssl.c:282
+msgid "Your OpenSSL version is too old to support TLSv1.2\n"
+msgstr "Ваша вэрсія OpenSSL занадта старая да падтрымкі TLSv1.2\n"
+
+#: src/openssl.c:288
+#, c-format
+msgid "OpenSSL: unimplemented 'secure-protocol' option value %d\n"
+msgstr "OpenSSL: нерэалізаванае значэньне опцыі «secure-protocol» %d\n"
+
+#: src/openssl.c:295
+#, c-format
+msgid "Your OpenSSL version does not support option '%s'.\n"
+msgstr "Ваша вэрсія OpenSSL не падтрымлівае опцыю «%s».\n"
+
+#: src/openssl.c:296
+msgid "Rebuilding Wget and/or OpenSSL may help in this situation.\n"
+msgstr "Перазборка Wget ды/ці OpenSSL можа дапамагчы ў гэтым выпадку.\n"
+
+#: src/openssl.c:341
+#, c-format
+msgid "OpenSSL: Invalid cipher list: %s\n"
+msgstr "OpenSSL: Няправільны сьпіс шыфраў: %s\n"
+
+#: src/openssl.c:368
+msgid "OpenSSL: Failed set trust to partial chain\n"
+msgstr "OpenSSL: Не атрымалася ўстанавіць давер да частковай ланцужкі\n"
+
+#: src/openssl.c:374
+msgid "OpenSSL: Failed to allocate verification param\n"
+msgstr "OpenSSL: Не атрымалася вылучыць парамэтар праверкі\n"
+
+#: src/openssl.c:852
+msgid "WARNING: Could not seed PRNG. Consider using --random-file.\n"
+msgstr ""
+"ПАПЯРЭДЖАНЬНЕ: Немагчыма запоўніць PRNG. Варта скарыстацца --random-file.\n"
+
+#: src/openssl.c:1072
+#, c-format
+msgid "%s: cannot verify %s's certificate, issued by %s:\n"
+msgstr "%s: немагчыма праверыць сэртыфікат %s, выдадзены %s:\n"
+
+#: src/openssl.c:1083
+msgid "  Unable to locally verify the issuer's authority.\n"
+msgstr "  Немагчыма лякальна праверыць сапраўднасьць выдаўца.\n"
+
+#: src/openssl.c:1088
+msgid "  Self-signed certificate encountered.\n"
+msgstr "  Выяўлены самападпісаны сэртыфікат.\n"
+
+#: src/openssl.c:1091
+msgid "  Issued certificate not yet valid.\n"
+msgstr "  Выдадзены сэртыфікат яшчэ не сапраўдны.\n"
+
+#: src/openssl.c:1094
+msgid "  Issued certificate has expired.\n"
+msgstr "  Тэрмін дзеяньня выдадзенага сэртыфікату скончыўся.\n"
+
+#: src/openssl.c:1182
+#, c-format
+msgid ""
+"%s: no certificate subject alternative name matches\n"
+"\trequested host name %s.\n"
+msgstr ""
+"%s: няма альтэрнатыўнага імя суб'екту сэртыфікату, якое б\n"
+"\tсупадала з запытаным імем вузла %s.\n"
+
+#: src/openssl.c:1201
+#, c-format
+msgid ""
+"    %s: certificate common name %s doesn't match requested host name %s.\n"
+msgstr ""
+"    %s: агульнае імя сэртыфікату %s не адпавядае запытанаму імені вузла %s.\n"
+
+#: src/openssl.c:1233
+#, c-format
+msgid ""
+"    %s: certificate common name is invalid (contains a NUL character).\n"
+"    This may be an indication that the host is not who it claims to be\n"
+"    (that is, it is not the real %s).\n"
+msgstr ""
+"    %s: няправільнае агульнае імя сэртыфікату (зьмяшчае  сымбаль NUL).\n"
+"    Гэта можа азначаць, што вузел не той, за каго сябе выдае \n"
+"    (гэта, на самой справе, не сапраўдны %s).\n"
+
+#: src/openssl.c:1258
+#, c-format
+msgid "To connect to %s insecurely, use `--no-check-certificate'.\n"
+msgstr ""
+"Каб злучыцца з %s небясьпечна, выкарыстоўвайце «--no-check-certificate».\n"
+
+#: src/progress.c:260
+#, c-format
+msgid ""
+"\n"
+"%*s[ skipping %sK ]"
+msgstr ""
+"\n"
+"%*s[ абмінаем %sK ]"
+
+#: src/progress.c:545
+#, c-format
+msgid "Invalid dot style specification %s; leaving unchanged.\n"
+msgstr "Няправільная спэцыфікацыя dot стылю %s; пакідаем бяз зьменаў.\n"
+
+#. TRANSLATORS: "ETA" is English-centric, but this must
+#. be short, ideally 3 chars.  Abbreviate if necessary.
+#: src/progress.c:1006
+#, c-format
+msgid "    eta %s"
+msgstr "    ~ %s"
+
+#. TRANSLATORS: The meaning is "elapsed time", and it is shown
+#. * next to the progress bar once the download is done.
+#. * This should not take up more room than
+#. * available here (6 columns).  Abbreviate if necessary.
+#: src/progress.c:1312
+msgid "    in "
+msgstr "    за "
+
+#: src/ptimer.c:158
+#, c-format
+msgid "Cannot get REALTIME clock frequency: %s\n"
+msgstr "Немагчыма атрымаць частату гадзіньніка REALTIME: %s\n"
+
+#: src/recur.c:428
+#, c-format
+msgid ""
+"nofollow attribute found in %s. Will not follow any links on this page\n"
+msgstr ""
+"Знойдзены атрыбут nofollow ў %s. З гэтай старонкі не будзе пераходаў па "
+"спасылках\n"
+
+#: src/recur.c:512
+#, c-format
+msgid "Removing %s since it should be rejected.\n"
+msgstr "Выдаленьне %s, таму што ён павінен быць адхілены.\n"
+
+#: src/res.c:394
+#, c-format
+msgid "Cannot open %s: %s\n"
+msgstr "Немагчыма адкрыць %s: %s\n"
+
+#: src/res.c:556
+msgid "Loading robots.txt; please ignore errors.\n"
+msgstr "Загружаецца robots.txt; калі ласка, не зьвяртайце ўвагі на памылкі.\n"
+
+#: src/retr.c:925
+#, c-format
+msgid "Error parsing proxy URL %s: %s.\n"
+msgstr "Памылка разбору URL проксі %s: %s.\n"
+
+#: src/retr.c:938
+#, c-format
+msgid "Error in proxy URL %s: Must be HTTP.\n"
+msgstr "Памылка ў URL проксі %s: мусіць быць HTTP.\n"
+
+#: src/retr.c:1067
+#, c-format
+msgid "%d redirections exceeded.\n"
+msgstr "перавышэньне колькасьці перанакіраваньняў (%d).\n"
+
+#: src/retr.c:1327
+msgid ""
+"Giving up.\n"
+"\n"
+msgstr ""
+"Здаемся.\n"
+"\n"
+
+#: src/retr.c:1327
+msgid ""
+"Retrying.\n"
+"\n"
+msgstr ""
+"Паўтараем спробу.\n"
+"\n"
+
+#: src/spider.c:77
+msgid ""
+"Found no broken links.\n"
+"\n"
+msgstr ""
+"Зламаныя спасылкі ня знойдзены.\n"
+"\n"
+
+#: src/spider.c:84
+#, c-format
+msgid ""
+"Found %d broken link.\n"
+"\n"
+msgid_plural ""
+"Found %d broken links.\n"
+"\n"
+msgstr[0] ""
+"Знойдзена %d зламаная спасылка.\n"
+"\n"
+msgstr[1] ""
+"Знойдзены %d зламаныя спасылкі.\n"
+"\n"
+msgstr[2] ""
+"Знойдзена %d зламаных спасылак.\n"
+"\n"
+
+#: src/url.c:688
+msgid "No error"
+msgstr "Няма памылак"
+
+#: src/url.c:689
+msgid "Unsupported scheme"
+msgstr "Схема не падтрымліваецца"
+
+#: src/url.c:690
+msgid "HTTPS support not compiled in"
+msgstr "Падтрымка HTTPS не ўбудавана"
+
+#: src/url.c:691
+msgid "FTPS support not compiled in"
+msgstr "Падтрымка FTPS не ўбудавана"
+
+#: src/url.c:692
+msgid "Scheme missing"
+msgstr "Адсутнічае схема"
+
+#: src/url.c:693
+msgid "Invalid host name"
+msgstr "Нядзейсная назва вузла"
+
+#: src/url.c:694
+msgid "Bad port number"
+msgstr "Кепскі нумар порта"
+
+#: src/url.c:695
+msgid "Invalid user name"
+msgstr "Нядзейснае ўліковае імя"
+
+#: src/url.c:696
+msgid "Unterminated IPv6 numeric address"
+msgstr "Незавершаны лікавы адрас IPv6"
+
+#: src/url.c:697
+msgid "IPv6 addresses not supported"
+msgstr "Адрасы IPv6 не падтрымліваюцца"
+
+#: src/url.c:698
+msgid "Invalid IPv6 numeric address"
+msgstr "Няправільны лікавы адрас IPv6"
+
+#: src/url.c:1645
+msgid "Unconvertable multibyte sequence encountered\n"
+msgstr "Выяўлена непераўтваральная шматбайтавая пасьлядоўнасьць\n"
+
+#: src/utils.c:122
+#, c-format
+msgid "%s: %s: Failed to allocate enough memory; memory exhausted.\n"
+msgstr ""
+"%s: %s: немагчыма разьмеркаваць дастаткова памяці; памяць вычарпаная.\n"
+
+#: src/utils.c:128
+#, c-format
+msgid "%s: %s: Failed to allocate %ld bytes; memory exhausted.\n"
+msgstr "%s: %s: немагчыма разьмеркаваць %ld байтаў; памяць вычарпаная.\n"
+
+#: src/utils.c:348
+#, c-format
+msgid "%s: aprintf: text buffer is too big (%d bytes), aborting.\n"
+msgstr "%s: aprintf: тэкставы буфэр завялікі (%d байтаў), перапыненьне.\n"
+
+#: src/utils.c:500
+#, c-format
+msgid "Continuing in background, pid %d.\n"
+msgstr "Праца працягваецца ў фоне, pid %d.\n"
+
+#: src/utils.c:551
+#, c-format
+msgid "Failed to unlink symlink %s: %s\n"
+msgstr "Немагчыма выдаліць сымбалічную спасылку %s: %s\n"
+
+#: src/utils.c:872
+#, c-format
+msgid "Failed to Fopen file %s\n"
+msgstr "Памылка пры выкананьні Fopen для файла %s\n"
+
+#: src/utils.c:878
+#, c-format
+msgid "Failed to get FD for file %s\n"
+msgstr "Памылка пры атрыманьні FD для файла %s\n"
+
+#: src/utils.c:885
+#, c-format
+msgid "Failed to stat file %s, (check permissions)\n"
+msgstr "Не атрымалася запытаць stat файла %s (праверка правоў доступу)\n"
+
+#: src/utils.c:895
+#, c-format
+msgid "File %s changed since the last check. Security check failed.\n"
+msgstr ""
+"Файл %s зьменены пасьля апошняй праверкі. Праверка бясьпекі не атрымалася.\n"
+
+#: src/utils.c:930
+#, c-format
+msgid "Failed to open file %s, reason :%s\n"
+msgstr "Не атрымалася адкрыць файл %s, прычына: %s\n"
+
+#: src/utils.c:936
+#, c-format
+msgid "Failed to stat file %s, error: %s\n"
+msgstr "Не ўдалося запытаць stat файла %s, памылка: %s\n"
+
+#: src/utils.c:946
+#, c-format
+msgid ""
+"Trying to open file %s but it changed since last check. Security check "
+"failed.\n"
+msgstr ""
+"Спроба адкрыць файл %s, але ён зьмяніўся пасьля апошняй праверкі. Праверка "
+"бясьпекі не атрымалася.\n"
+
+#: src/utils.c:2443
+#, c-format
+msgid "Invalid regular expression %s, PCRE2 error %d\n"
+msgstr "Няправільны рэгулярны выраз %s, памылка PCRE2 %d\n"
+
+#: src/utils.c:2460 src/utils.c:2483
+#, c-format
+msgid "Invalid regular expression %s, %s\n"
+msgstr "Няправільны рэгулярны выраз %s, %s\n"
+
+#: src/utils.c:2513 src/utils.c:2535 src/utils.c:2559
+#, c-format
+msgid "Error while matching %s: %d\n"
+msgstr "Памылка пры супастаўленьні %s: %d\n"
+
+#: src/utils.c:2852
+#, c-format
+msgid "Skipping key with wrong size (%d/%d): %s\n"
+msgstr "Абмінаем ключ памылковага памеру (%d/%d): %s\n"
+
+#: src/warc.c:217
+msgid "Error setting WARC file position.\n"
+msgstr "Памылка ўстаноўкі пазіцыі файла WARC.\n"
+
+#: src/warc.c:224
+msgid "Error flushing WARC file to disk.\n"
+msgstr "Памылка скіду файла WARC на дыск.\n"
+
+#: src/warc.c:234
+msgid "Error duplicating WARC file file descriptor.\n"
+msgstr "Памылка дубліраваньня дэскрыптара файла WARC.\n"
+
+#: src/warc.c:245
+msgid "Error opening GZIP stream to WARC file.\n"
+msgstr "Памылка адкрыцьця патоку GZIP у файл WARC.\n"
+
+#: src/warc.c:830
+msgid "Error writing warcinfo record to WARC file.\n"
+msgstr "Памылка запісваньня запісу warcinfo ў файл WARC.\n"
+
+#: src/warc.c:893
+#, c-format
+msgid ""
+"Opening WARC file %s.\n"
+"\n"
+msgstr ""
+"Адкрыцьцё файла WARC %s.\n"
+"\n"
+
+#: src/warc.c:899
+#, c-format
+msgid "Error opening WARC file %s.\n"
+msgstr "Памылка адкрыцьця файла WARC %s.\n"
+
+#: src/warc.c:1095
+msgid "CDX file does not list original urls. (Missing column 'a'.)\n"
+msgstr "Файл CDX не зьмяшчае сьпісу зыходных url. (Адсутнічае слупок «a».)\n"
+
+#: src/warc.c:1098
+msgid "CDX file does not list checksums. (Missing column 'k'.)\n"
+msgstr ""
+"Файл CDX не зьмяшчае сьпісу кантрольных сум. (Адсутнічае слупок «k».)\n"
+
+#: src/warc.c:1101
+msgid "CDX file does not list record ids. (Missing column 'u'.)\n"
+msgstr ""
+"Файл CDX не зьмяшчае сьпісу ідэнтыфікатараў запісаў. (Адсутнічае слупок "
+"«u».)\n"
+
+#: src/warc.c:1125
+#, c-format
+msgid ""
+"Loaded %d record from CDX.\n"
+"\n"
+msgid_plural ""
+"Loaded %d records from CDX.\n"
+"\n"
+msgstr[0] "Загружаны %d запіс з CDX.\n"
+msgstr[1] "Загружана %d запісы з CDX.\n"
+msgstr[2] "Загружана %d запісаў з CDX.\n"
+
+#: src/warc.c:1171
+#, c-format
+msgid "Could not read CDX file %s for deduplication.\n"
+msgstr "Не ўдалося прачытаць файл CDX %s для дэдуплікацыі.\n"
+
+#: src/warc.c:1181
+msgid "Could not open temporary WARC manifest file.\n"
+msgstr "Не удалося адкрыць часовы файл маніфэста WARC.\n"
+
+#: src/warc.c:1191
+msgid "Could not open temporary WARC log file.\n"
+msgstr "Не ўдалося адкрыць часовы файл журнала WARC.\n"
+
+#: src/warc.c:1200
+msgid "Could not open WARC file.\n"
+msgstr "Не ўдалося адкрыць файл WARC.\n"
+
+#: src/warc.c:1209
+msgid "Could not open CDX file for output.\n"
+msgstr "Не ўдалося адкрыць файл CDX для вываду.\n"
+
+#: src/warc.c:1239
+msgid "Could not open temporary WARC file.\n"
+msgstr "Не ўдалося адкрыць часовы файл WARC.\n"
+
+#: src/warc.c:1515
+msgid "Found exact match in CDX file. Saving revisit record to WARC.\n"
+msgstr ""
+"Знойдзена дакладнае супадзеньне ў файле CDX. Захоўваньне перагледжанага "
+"запісу ў WARC.\n"
+
+#~ msgid "Unknown system error"
+#~ msgstr "Невядомая сістэмная памылка"
+
+#~ msgid "%s: option `%s' is ambiguous\n"
+#~ msgstr "%s: опцыя \"%s\" зьяўляецца неадназначнай\n"
+
+#~ msgid "%s: option `--%s' doesn't allow an argument\n"
+#~ msgstr "%s: опцыя \"--%s\" не дазваляе довады\n"
+
+#~ msgid "%s: option `%c%s' doesn't allow an argument\n"
+#~ msgstr "%s: опцыя \"%c%s\" не дазваляе довады\n"
+
+#~ msgid "%s: option `%s' requires an argument\n"
+#~ msgstr "%s: опцыя \"%s\" патрабуе довад\n"
+
+#~ msgid "%s: unrecognized option `--%s'\n"
+#~ msgstr "%s: нераспазнаная опцыя \"--%s\"\n"
+
+#~ msgid "%s: unrecognized option `%c%s'\n"
+#~ msgstr "%s: нераспазнаная опцыя \"%c%s\"\n"
+
+#~ msgid "%s: illegal option -- %c\n"
+#~ msgstr "%s: недапушчальная опцыя -- %c\n"
+
+#~ msgid "%s: invalid option -- %c\n"
+#~ msgstr "%s: нерэчаісная опцыя -- %c\n"
+
+#~ msgid "%s: option requires an argument -- %c\n"
+#~ msgstr "%s: опцыя патрабуе аргумэнт -- %c\n"
+
+#~ msgid "%s: option `-W %s' is ambiguous\n"
+#~ msgstr "%s: опцыя  \"-W %s\" зьяўляецца неадназначнай\n"
+
+#~ msgid "%s: option `-W %s' doesn't allow an argument\n"
+#~ msgstr "%s: опцыя \"-W %s\" не дазваляе аргумэнты\n"
+
+#~ msgid "`"
+#~ msgstr "«"
+
+#~ msgid "'"
+#~ msgstr "»"
+
+#~ msgid "memory exhausted"
+#~ msgstr "памяць вычэрпаная"
+
+#~ msgid "Authorization failed.\n"
+#~ msgstr "Збой аўтарызаваньня.\n"
+
+#~ msgid "idn_decode failed (%d): %s\n"
+#~ msgstr "збой idn_decode (%d): %s\n"
+
+#~ msgid ""
+#~ "\n"
+#~ "%s received.\n"
+#~ msgstr ""
+#~ "\n"
+#~ "%s атрымана.\n"
+
+#~ msgid "Mail bug reports and suggestions to <bug-wget@gnu.org>.\n"
+#~ msgstr ""
+#~ "Лістуйце справаздачы аб памылках і пажаданні на <bug-wget@gnu.org>.\n"
+
+#~ msgid ""
+#~ "GNU Wget %s built on VMS %s %s.\n"
+#~ "\n"
+#~ msgstr ""
+#~ "GNU Wget %s скампіляваны на VMS %s %s.\n"
+#~ "\n"
+
+#~ msgid "Currently maintained by Micah Cowan <micah@cowan.name>.\n"
+#~ msgstr "Бягучы распрацоўнік - Micah Cowan <micah@cowan.name>.\n"
+
+#~ msgid "File `%s' already there; not retrieving.\n"
+#~ msgstr "Файл \"%s\" ужо тут; абмінаем.\n"
+
+#~ msgid ""
+#~ "WARNING: Can't reopen standard output in binary mode;\n"
+#~ "         downloaded file may contain inappropriate line endings.\n"
+#~ msgstr ""
+#~ "УВАГА! Немагчыма адкрыць стандартны вывад у бінарным рэжыме;\n"
+#~ "         запампаваны файл можа ўтрымліваць недакладныя канцы радкоў.\n"
+
+#~ msgid "Error in Set-Cookie, field `%s'"
+#~ msgstr "Памылка ў Set-Cookie, поле \"%s\""
+
+#~ msgid "Syntax error in Set-Cookie at character `%c'.\n"
+#~ msgstr "Сынтаксычная памылка ў Set-Cookie на знаку \"%c\".\n"
+
+#~ msgid " [%s to go]"
+#~ msgstr " [%s засталося]"
+
+#~ msgid "Host not found"
+#~ msgstr "Вузел ня знойдзен"
+
+#~ msgid "Failed to set up an SSL context\n"
+#~ msgstr "Немагчыма наладзіць кантэкст SSL\n"
+
+#~ msgid "Trying without the specified certificate\n"
+#~ msgstr "Спроба без заданага пасьведчаньня\n"
+
+#~ msgid "End of file while parsing headers.\n"
+#~ msgstr "EOF (канец файла) пад час разбору загалоўкаў.\n"
+
+#~ msgid " (%s to go)"
+#~ msgstr " (%s засталося)"
+
+#~ msgid "File `%s' already there, will not retrieve.\n"
+#~ msgstr "Файл \"%s\" ужо тутака й ня будзе выцягвацца.\n"
+
+#~ msgid ""
+#~ "%s (%s) - `%s' saved [%ld/%ld])\n"
+#~ "\n"
+#~ msgstr ""
+#~ "%s (%s) - `%s' захавана [%ld/%ld])\n"
+#~ "\n"
+
+#~ msgid "%s (%s) - Connection closed at byte %ld/%ld. "
+#~ msgstr "%s (%s) - Злучэньне закрыта на байце %ld/%ld. "
+
+#~ msgid "%s: %s: Cannot convert `%s' to an IP address.\n"
+#~ msgstr "%s: %s: Немагчыма пераўтварыць `%s' у адрас IP.\n"
+
+#~ msgid "%s: %s: Please specify always, on, off, or never.\n"
+#~ msgstr ""
+#~ "%s: %s: Вызначы, калі ласка, заўжды (always), уключана (on), выключана "
+#~ "(off) ці ніколі (never).\n"
+
+#~ msgid ""
+#~ "Startup:\n"
+#~ "  -V,  --version           display the version of Wget and exit.\n"
+#~ "  -h,  --help              print this help.\n"
+#~ "  -b,  --background        go to background after startup.\n"
+#~ "  -e,  --execute=COMMAND   execute a `.wgetrc'-style command.\n"
+#~ "\n"
+#~ msgstr ""
+#~ "Запуск:\n"
+#~ "  -V,  --version           адлюстраваць вэрсыю Wget і выйсьці.\n"
+#~ "  -h,  --help              надрукаваць гэтую даведку.\n"
+#~ "  -b,  --background        перайсьці ў тло пасьля запуску.\n"
+#~ "  -e,  --execute=ЗАГАД     выканаць загад у стылі \".wgetrc\".\n"
+#~ "\n"
+
+#~ msgid ""
+#~ "This program is distributed in the hope that it will be useful,\n"
+#~ "but WITHOUT ANY WARRANTY; without even the implied warranty of\n"
+#~ "MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n"
+#~ "GNU General Public License for more details.\n"
+#~ msgstr ""
+#~ "Гэтая праграма разпаўсюджваецца з надзеяй, што яна будзе карыснай,\n"
+#~ "але БЕЗЬ НІЯКАЕ ГАРАНТЫІ; нават без гарантыі КАШТОЎНАСЬЦІ ці\n"
+#~ "ПРЫДАТНАСЬЦІ ДЛЯ КАНКРЭТНАЕ МЭТЫ. Глядзі падрабязнасьці ў Аснонай\n"
+#~ "Публічнай Лцэнзіі GNU (GNU GPL).\n"
+
+#~ msgid "%s: Redirection cycle detected.\n"
+#~ msgstr "%s: знойдзены цыкал перанакіроўваньня.\n"
+
+#~ msgid "%s: %s: Not enough memory.\n"
+#~ msgstr "%s: %s: нестае памяці.\n"

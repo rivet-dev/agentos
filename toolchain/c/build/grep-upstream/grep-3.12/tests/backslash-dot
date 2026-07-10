@@ -1,0 +1,20 @@
+#! /bin/sh
+# This once failed to match: echo . | grep '\.'
+#
+# Copyright (C) 2020-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+fail=0
+
+echo . > in || framework_failure_
+
+grep '\.' in > out 2> err || fail=1
+compare in out || fail=1
+compare /dev/null err || fail=1
+
+Exit $fail

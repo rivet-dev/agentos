@@ -1,0 +1,27 @@
+Contents of the "tandem" subdirectory for UnZip 5.42 and later:
+
+  Contents      this file
+  README
+  HISTORY
+  commacs       generic support macros for compiling
+  doit          macro to extract and rename required Tandem files from archive
+  macros        Info-ZIP-specific macros for compiling
+  make          Tandem NSK script to compile UnZip intelligently
+  makesfx       Tandem NSK script to compile UnZipSFX
+  tandem.c      Tandem NSK-specific Zip & UnZip support routines
+  tandem.h      Tandem NSK-specific data declarations
+  tanunz.c      Tandem NSK-specific UnZip support routines
+  tannsk.h      Tandem NSK-specific declarations that need delayed including
+
+To compile, run the rename.unix script on a Unix system (renames *.c files
+to *c and *.h files to *h, and leaves all files necessary for Tandem port
+in the Tandem subdirectory).  Then transfer the renamed files to the Tandem
+system (if by ftp, use ASCII mode so the line-endings are converted to CR/LF
+format properly).  Edit the `make' script and change all references to
+$DATA9.DAVESZIP with whatever subvol you use, and change all references to
+SUPER.DAVES with whatever user id you use.  Then run it.  Individual object
+files will be named *o (that is, unzip.c -> unzipc -> unzipo), and an
+intermediate UnZip library (unziplib) and final UnZip binary (unzipl or
+unzipw, depending on large or wide model) will be created.
+
+The filecode for unzipl should be 100 [OBJECT]...presumably this is automatic.

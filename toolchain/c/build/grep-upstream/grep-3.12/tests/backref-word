@@ -1,0 +1,18 @@
+#!/bin/sh
+# This would fail for grep-2.6
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+printf 'foo foo bar\n'      > exp1 || framework_failure_
+fail=0
+
+for LOC in en_US.UTF-8 zh_CN $LOCALE_FR_UTF8; do
+  out=out1-$LOC
+  LC_ALL=$LOC grep -w '\(foo\) \1' exp1 > $out || fail=1
+  compare exp1 $out || fail=1
+
+  LC_ALL=$LOC grep -wx '\(foo\) \1' exp1 > $out
+  test $? -eq 1 || fail=1
+  compare /dev/null $out || fail=1
+done
+
+Exit $fail

@@ -1,8 +1,0 @@
-{
-	"name": "project-matrix-ws-pass",
-	"private": true,
-	"type": "commonjs",
-	"dependencies": {
-		"ws": "8.18.0"
-	}
-}

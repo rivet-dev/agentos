@@ -1,0 +1,23 @@
+;module-definition file for Windows UnZip static Library -- used by link.exe
+LIBRARY UNZIP32  ; Library module name
+
+;DESCRIPTION 'Windows Info-ZIP UnZip Library (32 bit), by Mike White'
+
+CODE  PRELOAD FIXED
+
+DATA  PRELOAD MOVEABLE
+
+EXPORTS
+     Wiz_SingleEntryUnzip
+     UzpVersion
+     Wiz_Init
+     Wiz_SetOpts
+     Wiz_Unzip
+     Wiz_Validate
+     Wiz_NoPrinting
+     UzpVersion2
+     Wiz_UnzipToMemory
+     Wiz_Match
+     Wiz_Grep
+     UzpFreeMemBuffer
+

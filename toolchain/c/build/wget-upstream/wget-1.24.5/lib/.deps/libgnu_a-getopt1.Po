@@ -1,0 +1,24 @@
+libgnu_a-getopt1.o: getopt1.c ../src/config.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/stdbool.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/stdbool.h \
+  assert.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/assert.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/features.h \
+  getopt.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/getopt.h \
+  getopt-cdefs.h getopt-pfx-core.h getopt-core.h getopt-pfx-ext.h \
+  getopt-ext.h getopt_int.h
+../src/config.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/stdbool.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/stdbool.h:
+assert.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/assert.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/features.h:
+getopt.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/getopt.h:
+getopt-cdefs.h:
+getopt-pfx-core.h:
+getopt-core.h:
+getopt-pfx-ext.h:
+getopt-ext.h:
+getopt_int.h:

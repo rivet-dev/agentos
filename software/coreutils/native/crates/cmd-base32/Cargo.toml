@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-base32"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "base32 standalone binary for secure-exec VM"
+
+[[bin]]
+name = "base32"
+path = "src/main.rs"
+
+[dependencies]
+uu_base32 = "0.7.0"

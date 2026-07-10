@@ -9,7 +9,7 @@
 //! - `AGENT_OS_PI_MODULE_CWD` env (a workspace with a built/installed `@agentos-software/pi`), else
 //! - the repo root, but only when the in-repo adapter is built
 //!   (`node_modules/@agentos-software/pi/dist/adapter.js`). Build it with `pnpm --dir packages/core
-//!   build && pnpm --dir registry/agent/pi build` (core first for types).
+//!   build && pnpm --dir software/pi build` (core first for types).
 //!
 //! Background: a real agent SDK exercises module-loading patterns (tsc `__exportStar` CJS barrels,
 //! deep pnpm symlink graphs, `__dirname` package self-location) that mock ACP adapters never touch.
@@ -55,11 +55,11 @@ fn pi_module_cwd() -> Option<String> {
 
 fn pi_package_path() -> Option<PathBuf> {
     // Prefer the packed .aospkg — the artifact the registry actually ships.
-    let aospkg = repo_root().join("registry/agent/pi/dist/package.aospkg");
+    let aospkg = repo_root().join("software/pi/dist/package.aospkg");
     if aospkg.is_file() {
         return std::fs::canonicalize(aospkg).ok();
     }
-    let dir = repo_root().join("registry/agent/pi/dist/package");
+    let dir = repo_root().join("software/pi/dist/package");
     if dir.join("agentos-package.json").is_file() {
         std::fs::canonicalize(dir).ok()
     } else {

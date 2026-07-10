@@ -1,0 +1,19 @@
+#!/bin/sh
+# This test would segfault for grep-2.14
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+require_compiled_in_MB_support
+
+e_acute=$(printf '\303\251')
+printf "$e_acute\n" > exp || framework_failure_
+fail=0
+
+for LOC in en_US.UTF-8 $LOCALE_FR_UTF8; do
+  out=out-$LOC
+  printf "á\nç\n$e_acute\n" | LC_ALL=$LOC grep -E "([^.]*[$e_acute]){1,2}" \
+      > $out || fail=1
+  compare exp $out || fail=1
+done
+
+Exit $fail

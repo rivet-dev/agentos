@@ -196,6 +196,8 @@ export interface SidecarSpawnOptions {
 	command?: string;
 	args?: string[];
 	eventBufferCapacity?: number;
+	gracefulExitMs?: number;
+	forceExitMs?: number;
 	// Migration-only compatibility path for pre-BARE test fixtures.
 	payloadCodec?: NativeTransportPayloadCodec;
 	/**
@@ -368,8 +370,8 @@ export class SidecarProcess {
 			silenceTimeoutMs: options.silenceTimeoutMs,
 			eventBufferCapacity:
 				options.eventBufferCapacity ?? DEFAULT_SIDECAR_EVENT_BUFFER_CAPACITY,
-			gracefulExitMs: DEFAULT_SIDECAR_GRACEFUL_EXIT_MS,
-			forceExitMs: DEFAULT_SIDECAR_FORCE_EXIT_MS,
+			gracefulExitMs: options.gracefulExitMs ?? DEFAULT_SIDECAR_GRACEFUL_EXIT_MS,
+			forceExitMs: options.forceExitMs ?? DEFAULT_SIDECAR_FORCE_EXIT_MS,
 			disposedErrorMessage: "native sidecar disposed",
 			payloadCodec: options.payloadCodec ?? "bare",
 		});
@@ -885,6 +887,23 @@ export class SidecarProcess {
 		await this.guestFilesystemCall(session, vm, {
 			operation: "write_file",
 			path,
+			content: encoded.content,
+			encoding: encoded.encoding,
+		});
+	}
+
+	async pwrite(
+		session: AuthenticatedSession,
+		vm: CreatedVm,
+		path: string,
+		offset: number,
+		content: Uint8Array,
+	): Promise<void> {
+		const encoded = encodeGuestFilesystemContent(content);
+		await this.guestFilesystemCall(session, vm, {
+			operation: "pwrite",
+			path,
+			offset,
 			content: encoded.content,
 			encoding: encoded.encoding,
 		});

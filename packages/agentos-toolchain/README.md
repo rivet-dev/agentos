@@ -13,8 +13,8 @@ npx @rivet-dev/agentos-toolchain pack <npm-pkg | ./local-dir> [options]
 packages lives here, next to the things it packages.** secure-exec owns the VM
 runtime that *runs* packages — the kernel, the VFS, the `/opt/agentos` mount, the
 `$PATH` command resolver, and the header/`binfmt` dispatch — and it owns the
-package **definitions** themselves: the generic registry software (`registry/software/*`)
-and the agent adapters (`registry/agent/*`). This toolchain is what builds those
+package **definitions** themselves: the generic registry software (`software/*`)
+and the agent adapters (`software/*`). This toolchain is what builds those
 definitions into the on-disk package format that the runtime resolves. Its
 `header.ts` is the same `binfmt` table the sidecar enforces (`crates/sidecar`), so
 keeping it in this repo keeps the producer and the consumer of the format in one

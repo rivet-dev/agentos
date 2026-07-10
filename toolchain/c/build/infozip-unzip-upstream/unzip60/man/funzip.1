@@ -1,0 +1,127 @@
+.\"  Copyright (c) 1990-2009 Info-ZIP.  All rights reserved.
+.\"
+.\"  See the accompanying file LICENSE, version 2009-Jan-02 or later
+.\"  (the contents of which are also included in unzip.h) for terms of use.
+.\"  If, for some reason, all these files are missing, the Info-ZIP license
+.\"  also may be found at:  ftp://ftp.info-zip.org/pub/infozip/license.html
+.\"
+.\" funzip.1 by Greg Roelofs and others.
+.\"
+.\" =========================================================================
+.\" define .EX/.EE (for multiline user-command examples; normal Courier font)
+.de EX
+.in +4n
+.nf
+.ft CW
+..
+.de EE
+.ft R
+.fi
+.in -4n
+..
+.\" =========================================================================
+.TH FUNZIP 1L "20 April 2009 (v3.95)" "Info-ZIP"
+.SH NAME
+funzip \- filter for extracting from a ZIP archive in a pipe
+.PD
+.SH SYNOPSIS
+\fBfunzip\fP [\fB\-password\fP] [\fIinput[.zip|.gz]\fP]
+.\" =========================================================================
+.SH ARGUMENTS
+.IP [\fI\-password\fP]
+Optional password to be used if ZIP archive is encrypted.  Decryption
+may not be supported at some sites.  See DESCRIPTION for more details.
+.IP [\fIinput[.zip|.gz]\fP]
+Optional input archive file specification. See DESCRIPTION for details.
+.PD
+.\" =========================================================================
+.SH DESCRIPTION
+.I funzip
+without a file argument acts as a filter; that is, it assumes that a
+ZIP archive (or a \fIgzip\fP'd(1) file) is being piped into
+standard input, and it extracts the first member from the archive to stdout.
+When stdin comes from a tty device,
+.I funzip
+assumes that this cannot be a stream of (binary) compressed data and
+shows a short help text, instead.
+If there is a file argument, then input is read from the specified file
+instead of from stdin.
+.PP
+A password for encrypted zip files can be specified
+on the command line (preceding the file name, if any) by prefixing the
+password with a dash.  Note that this constitutes a security risk on many
+systems; currently running processes are often visible via simple commands
+(e.g., \fIps\fP(1) under Unix), and command-line histories can be read.
+If the first entry of the zip file is encrypted and
+no password is specified on the command line, then the user is prompted for
+a password and the password is not echoed on the console.
+.PP
+Given the limitation on single-member extraction, \fIfunzip\fP is most
+useful in conjunction with a secondary archiver program such as \fItar\fP(1).
+The following section includes an example illustrating this usage in the
+case of disk backups to tape.
+.PD
+.\" =========================================================================
+.SH EXAMPLES
+To use \fIfunzip\fP to extract the first member file of the archive test.zip
+and to pipe it into \fImore\fP(1):
+.PP
+.EX
+funzip test.zip | more
+.EE
+.PP
+To use \fIfunzip\fP to test the first member file of test.zip (any errors
+will be reported on standard error):
+.PP
+.EX
+funzip test.zip > /dev/null
+.EE
+.PP
+To use \fIzip\fP and \fIfunzip\fP in place of \fIcompress\fP(1) and
+\fIzcat\fP(1) (or \fIgzip\fP(1L) and \fIgzcat\fP(1L)) for tape backups:
+.PP
+.EX
+tar cf \- . | zip \-7 | dd of=/dev/nrst0 obs=8k
+dd if=/dev/nrst0 ibs=8k | funzip | tar xf \-
+.EE
+.PP
+(where, for example, nrst0 is a SCSI tape drive).
+.PD
+.\" =========================================================================
+.SH BUGS
+When piping an encrypted file into \fImore\fP and allowing \fIfunzip\fP
+to prompt for password, the terminal may sometimes be reset to a non-echo
+mode.  This is apparently due to a race condition between the two programs;
+\fIfunzip\fP changes the terminal mode to non-echo before \fImore\fP reads
+its state, and \fImore\fP then ``restores'' the terminal to this mode before
+exiting.  To recover, run \fIfunzip\fP on the same file but redirect to
+/dev/null rather than piping into more; after prompting again for the
+password, \fIfunzip\fP will reset the terminal properly.
+.PP
+There is presently no way to extract any member but the first from a ZIP
+archive.  This would be useful in the case where a ZIP archive is included
+within another archive.  In the case where the first member is a directory,
+\fIfunzip\fP simply creates the directory and exits.
+.PP
+The functionality of \fIfunzip\fP should be incorporated into \fIunzip\fP
+itself (future release).
+.PD
+.\" =========================================================================
+.SH "SEE ALSO"
+\fIgzip\fP(1L), \fIunzip\fP(1L), \fIunzipsfx\fP(1L), \fIzip\fP(1L),
+\fIzipcloak\fP(1L), \fIzipinfo\fP(1L), \fIzipnote\fP(1L), \fIzipsplit\fP(1L)
+.PD
+.\" =========================================================================
+.SH URL
+The Info-ZIP home page is currently at
+.EX
+\fChttp://www.info-zip.org/pub/infozip/\fR
+.EE
+or
+.EX
+\fCftp://ftp.info-zip.org/pub/infozip/\fR .
+.EE
+.PD
+.\" =========================================================================
+.SH AUTHOR
+Mark Adler (Info-ZIP)

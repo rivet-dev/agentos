@@ -1,0 +1,16 @@
+#!/bin/sh
+# grep must ignore --devices=ACTION (-D) when reading stdin
+# For grep-2.11, this test would fail.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+# Test both with no file argument, and with "-".
+echo foo | grep -D skip foo - || fail=1
+echo foo | grep --devices=skip foo || fail=1
+
+require_timeout_
+mkfifo myfifo || framework_failure_
+timeout 10 grep -D skip foo myfifo
+test $? -eq 1 || fail=1
+
+Exit $fail

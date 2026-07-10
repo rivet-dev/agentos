@@ -3431,7 +3431,11 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 						proc_getppid(retPid) { return writeU32(retPid, 0); },
 						proc_kill() { return errnoNosys; },
 						sleep_ms(milliseconds) {
-							Atomics.wait(wait, 0, 0, milliseconds >>> 0);
+							const deadline = Date.now() + (milliseconds >>> 0);
+							while (Date.now() < deadline) {
+								// Keep guest sleeps interruptible by V8 termination during kill/dispose.
+								Atomics.wait(wait, 0, 0, Math.max(1, Math.min(10, deadline - Date.now())));
+							}
 							return errnoSuccess;
 						},
 						pty_open() { return errnoNosys; },

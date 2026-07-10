@@ -7,6 +7,7 @@
 			"types": [
 				"agent"
 			],
+			"category": "agents",
 			"priority": 100,
 			"package": "@agentos-software/pi",
 			"status": "available",
@@ -21,6 +22,7 @@
 			"types": [
 				"agent"
 			],
+			"category": "agents",
 			"priority": 90,
 			"package": "@agentos-software/claude-code",
 			"status": "docs",
@@ -36,6 +38,7 @@
 			"types": [
 				"agent"
 			],
+			"category": "agents",
 			"priority": 80,
 			"package": "@agentos-software/codex",
 			"status": "docs",
@@ -51,6 +54,7 @@
 			"types": [
 				"agent"
 			],
+			"category": "agents",
 			"priority": 70,
 			"package": "@agentos-software/opencode",
 			"status": "docs",
@@ -65,6 +69,7 @@
 			"types": [
 				"browser"
 			],
+			"category": "browser",
 			"priority": 0,
 			"package": "@agentos-software/browserbase",
 			"status": "available",
@@ -78,6 +83,7 @@
 			"types": [
 				"software"
 			],
+			"category": "meta",
 			"priority": 100,
 			"package": "@agentos-software/build-essential",
 			"status": "available"
@@ -89,6 +95,7 @@
 			"types": [
 				"software"
 			],
+			"category": "meta",
 			"priority": 95,
 			"package": "@agentos-software/common",
 			"status": "available"
@@ -100,6 +107,7 @@
 			"types": [
 				"software"
 			],
+			"category": "developer-tools",
 			"priority": 90,
 			"package": "@agentos-software/git",
 			"status": "available",
@@ -112,6 +120,7 @@
 			"types": [
 				"software"
 			],
+			"category": "developer-tools",
 			"priority": 85,
 			"package": "@agentos-software/ripgrep",
 			"status": "available"
@@ -123,6 +132,7 @@
 			"types": [
 				"software"
 			],
+			"category": "data",
 			"priority": 80,
 			"package": "@agentos-software/jq",
 			"status": "available",
@@ -135,6 +145,7 @@
 			"types": [
 				"software"
 			],
+			"category": "data",
 			"priority": 75,
 			"package": "@agentos-software/sqlite3",
 			"status": "available",
@@ -147,6 +158,7 @@
 			"types": [
 				"software"
 			],
+			"category": "data",
 			"priority": 70,
 			"package": "@agentos-software/duckdb",
 			"status": "available",
@@ -159,6 +171,7 @@
 			"types": [
 				"software"
 			],
+			"category": "editors",
 			"priority": 65,
 			"package": "@agentos-software/vim",
 			"status": "available",
@@ -171,6 +184,7 @@
 			"types": [
 				"software"
 			],
+			"category": "core",
 			"priority": 60,
 			"package": "@agentos-software/tar",
 			"status": "available",
@@ -183,6 +197,7 @@
 			"types": [
 				"software"
 			],
+			"category": "networking",
 			"priority": 55,
 			"package": "@agentos-software/wget",
 			"status": "available",
@@ -195,6 +210,7 @@
 			"types": [
 				"software"
 			],
+			"category": "networking",
 			"priority": 50,
 			"package": "@agentos-software/curl",
 			"status": "available",
@@ -207,6 +223,7 @@
 			"types": [
 				"software"
 			],
+			"category": "core",
 			"priority": 45,
 			"package": "@agentos-software/coreutils",
 			"status": "available",
@@ -219,6 +236,7 @@
 			"types": [
 				"software"
 			],
+			"category": "core",
 			"priority": 40,
 			"package": "@agentos-software/grep",
 			"status": "available",
@@ -231,6 +249,7 @@
 			"types": [
 				"software"
 			],
+			"category": "core",
 			"priority": 35,
 			"package": "@agentos-software/sed",
 			"status": "available",
@@ -243,6 +262,7 @@
 			"types": [
 				"software"
 			],
+			"category": "developer-tools",
 			"priority": 30,
 			"package": "@agentos-software/fd",
 			"status": "available"
@@ -254,6 +274,7 @@
 			"types": [
 				"software"
 			],
+			"category": "core",
 			"priority": 25,
 			"package": "@agentos-software/tree",
 			"status": "available"
@@ -265,6 +286,7 @@
 			"types": [
 				"software"
 			],
+			"category": "core",
 			"priority": 20,
 			"package": "@agentos-software/gawk",
 			"status": "available",
@@ -277,6 +299,7 @@
 			"types": [
 				"software"
 			],
+			"category": "core",
 			"priority": 15,
 			"package": "@agentos-software/findutils",
 			"status": "available",
@@ -289,8 +312,21 @@
 			"types": [
 				"software"
 			],
+			"category": "core",
 			"priority": 12,
 			"package": "@agentos-software/zip",
+			"status": "available"
+		},
+		{
+			"slug": "envsubst",
+			"title": "envsubst",
+			"description": "Substitute environment variables in text streams.",
+			"types": [
+				"software"
+			],
+			"category": "core",
+			"priority": 10,
+			"package": "@agentos-software/envsubst",
 			"status": "available"
 		},
 		{
@@ -300,6 +336,7 @@
 			"types": [
 				"software"
 			],
+			"category": "core",
 			"priority": 10,
 			"package": "@agentos-software/unzip",
 			"status": "available"
@@ -311,6 +348,7 @@
 			"types": [
 				"software"
 			],
+			"category": "core",
 			"priority": 8,
 			"package": "@agentos-software/gzip",
 			"status": "available",
@@ -323,6 +361,7 @@
 			"types": [
 				"software"
 			],
+			"category": "core",
 			"priority": 6,
 			"package": "@agentos-software/diffutils",
 			"status": "available",
@@ -335,6 +374,7 @@
 			"types": [
 				"software"
 			],
+			"category": "data",
 			"priority": 4,
 			"package": "@agentos-software/yq",
 			"status": "available"
@@ -346,6 +386,7 @@
 			"types": [
 				"software"
 			],
+			"category": "core",
 			"priority": 2,
 			"package": "@agentos-software/file",
 			"status": "available"
@@ -357,6 +398,7 @@
 			"types": [
 				"software"
 			],
+			"category": "agents",
 			"priority": 0,
 			"package": "@agentos-software/codex-cli",
 			"status": "available",
@@ -369,19 +411,9 @@
 			"types": [
 				"software"
 			],
+			"category": "networking",
 			"priority": 0,
 			"package": "@agentos-software/http-get",
-			"status": "available"
-		},
-		{
-			"slug": "vix",
-			"title": "vix",
-			"description": "Lightweight vi-style text editor.",
-			"types": [
-				"software"
-			],
-			"priority": 0,
-			"package": "@agentos-software/vix",
 			"status": "available"
 		}
 	]

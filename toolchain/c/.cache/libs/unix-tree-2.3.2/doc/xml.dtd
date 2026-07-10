@@ -1,0 +1,126 @@
+<?xml version="1.0"?>
+<!ELEMENT tree (directory*,link*,file*,char*,block*,socket*,fifo*,door*,port*,report+)>
+<!ELEMENT directory (directory*,link*,file*,char*,block*,socket*,fifo*,door*,port*,error*)>
+<!ELEMENT link (directory*,link*,file*,char*,block*,socket*,fifo*,door*,port*,error*)>
+<!ELEMENT file (error*)>
+<!ELEMENT char (error*)>
+<!ELEMENT block (error*)>
+<!ELEMENT socket (error*)>
+<!ELEMENT fifo (error*)>
+<!ELEMENT door (error*)>
+<!ELEMENT port (error*)>
+<!ELEMENT report (files+, directories, size+)>
+<!ELEMENT files (#PCDATA)>
+<!ELEMENT directories (#PCDATA)>
+<!ELEMENT size (#PCDATA)>
+<!ELEMENT error (#CDATA)>
+
+<!ATTLIST directory
+  name CDATA #REQUIRED
+  mode CDATA #IMPLIED
+  prot CDATA #IMPLIED
+  inode CDATA #IMPLIED
+  dev CDATA #IMPLIED
+  user CDATA #IMPLIED
+  group CDATA #IMPLIED
+  size CDATA #IMPLIED
+  time CDATA #IMPLIED
+  info CDATA #IMPLIED
+>
+<!ATTLIST link
+  name CDATA #REQUIRED
+  target CDATA #REQUIRED
+  mode CDATA #IMPLIED
+  prot CDATA #IMPLIED
+  inode CDATA #IMPLIED
+  dev CDATA #IMPLIED
+  user CDATA #IMPLIED
+  group CDATA #IMPLIED
+  size CDATA #IMPLIED
+  time CDATA #IMPLIED
+  info CDATA #IMPLIED
+>
+<!ATTLIST file
+  name CDATA #REQUIRED
+  mode CDATA #IMPLIED
+  prot CDATA #IMPLIED
+  inode CDATA #IMPLIED
+  dev CDATA #IMPLIED
+  user CDATA #IMPLIED
+  group CDATA #IMPLIED
+  size CDATA #IMPLIED
+  time CDATA #IMPLIED
+  info CDATA #IMPLIED
+>
+<!ATTLIST char
+  name CDATA #REQUIRED
+  mode CDATA #IMPLIED
+  prot CDATA #IMPLIED
+  inode CDATA #IMPLIED
+  dev CDATA #IMPLIED
+  user CDATA #IMPLIED
+  group CDATA #IMPLIED
+  size CDATA #IMPLIED
+  time CDATA #IMPLIED
+  info CDATA #IMPLIED
+>
+<!ATTLIST block
+  name CDATA #REQUIRED
+  mode CDATA #IMPLIED
+  prot CDATA #IMPLIED
+  inode CDATA #IMPLIED
+  dev CDATA #IMPLIED
+  user CDATA #IMPLIED
+  group CDATA #IMPLIED
+  size CDATA #IMPLIED
+  time CDATA #IMPLIED
+  info CDATA #IMPLIED
+>
+<!ATTLIST socket
+  name CDATA #REQUIRED
+  mode CDATA #IMPLIED
+  prot CDATA #IMPLIED
+  inode CDATA #IMPLIED
+  dev CDATA #IMPLIED
+  user CDATA #IMPLIED
+  group CDATA #IMPLIED
+  size CDATA #IMPLIED
+  time CDATA #IMPLIED
+  info CDATA #IMPLIED
+>
+<!ATTLIST fifo
+  name CDATA #REQUIRED
+  mode CDATA #IMPLIED
+  prot CDATA #IMPLIED
+  inode CDATA #IMPLIED
+  dev CDATA #IMPLIED
+  user CDATA #IMPLIED
+  group CDATA #IMPLIED
+  size CDATA #IMPLIED
+  time CDATA #IMPLIED
+  info CDATA #IMPLIED
+>
+<!ATTLIST door
+  name CDATA #REQUIRED
+  mode CDATA #IMPLIED
+  prot CDATA #IMPLIED
+  inode CDATA #IMPLIED
+  dev CDATA #IMPLIED
+  user CDATA #IMPLIED
+  group CDATA #IMPLIED
+  size CDATA #IMPLIED
+  time CDATA #IMPLIED
+  info CDATA #IMPLIED
+>
+<!ATTLIST port
+  name CDATA #REQUIRED
+  mode CDATA #IMPLIED
+  prot CDATA #IMPLIED
+  inode CDATA #IMPLIED
+  dev CDATA #IMPLIED
+  user CDATA #IMPLIED
+  group CDATA #IMPLIED
+  size CDATA #IMPLIED
+  time CDATA #IMPLIED
+  info CDATA #IMPLIED
+>

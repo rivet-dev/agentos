@@ -1,0 +1,31 @@
+#!/bin/sh
+# Ensure that -m1 stops reading after the first match.
+# In grep-2.19, yes x|grep -m1 x would infloop.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_timeout_
+
+fail=0
+
+echo x > exp || framework_failure_
+
+yes x | timeout 10 grep -m1 x > out || fail=1
+compare exp out || fail=1
+
+# Make sure -m2 stops reading even when output is /dev/null.
+# In grep 3.11, it would continue reading.
+printf 'x\nx\nx\n' >in || framework_failure
+(grep -m2 x >/dev/null && head -n1) <in >out || fail=1
+compare exp out || fail=1
+
+# The following two tests would fail before v3.11-70
+echo x > in || framework_failure_
+echo in > exp || framework_failure_
+grep -l -m1 . in > out || fail=1
+compare exp out || fail=1
+
+# Ensure that this prints nothing and exits successfully.
+grep -q -m1 . in > out || fail=1
+compare /dev/null out || fail=1
+
+Exit $fail

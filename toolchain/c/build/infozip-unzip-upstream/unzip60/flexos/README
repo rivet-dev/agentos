@@ -1,0 +1,39 @@
+This should be considered an initial port - there will probably be some
+bugs and non-functioning features.
+
+The only functionality that has had any real testing is "unzip filename",
+anything else is basically untested.
+
+This has been cross-compiled from DOS using Metaware's High C compiler
+and the DOS version of pamake (v3.0).  It should compile with the FlexOS
+hosted version of HighC, and the makefile could be converted to work
+with the native FlexOS make.
+
+The following considerations apply:
+
+)Compiled against and linked with portlib.
+)Used on FlexOS 286 v2.32
+)Volume labels are not supported - this is due to the way FlexOS decides
+ if a drive has case-sensitive filenames based upon the contents of the
+ volume label.
+)No special handling for case-sensitive media (see above).
+)Not using the PORTLIB wildarg routine (i.e., UnZip does its own globbing).
+)Based upon the MSDOS port.
+)Filenames are in FAT format.
+)The current version of getch is a cheat (simply using getchar()).  I
+ should interrogate stdin and if it's a FlexOS console use special code
+ to turn off echo and just read one char.
+)Only the basic MSDOS FAT file attributes are saved/restored.  There is
+ currently no support for the FlexOS extended file attributes.
+)There is some code that should attempt to do the correct thing when a
+ pathspec with a logical name definition is used (e.g., "system:path/to/it");
+ however it again has not been stress-tested.
+)There is no special handling for floppy drives, there probably should
+ be.
+)The dateformat is compiled in as DMY (shoot me I'm British),  I'm not
+ sure if there is actually a way to get locale info.
+)The assembler speedups haven't yet been ported to ASM86 (should simply
+ be a change of syntax)
+
+ --
+ D.Fawcus  17 July 1997

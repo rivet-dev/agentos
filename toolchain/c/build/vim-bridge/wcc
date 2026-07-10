@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasip1 --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -O2 -I /home/nathan/.herdr/workspaces/agent-os/reg-tests/software/vim/native/c/vim-bridge -include /home/nathan/.herdr/workspaces/agent-os/reg-tests/software/vim/native/c/vim-bridge/compat.h "$@"

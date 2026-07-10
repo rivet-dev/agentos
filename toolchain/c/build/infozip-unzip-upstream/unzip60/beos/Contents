@@ -1,0 +1,15 @@
+Contents of the "beos" sub-directory for UnZip 5.52 and later:
+
+  Contents      this file
+  README        notes from the author of the BeOS port
+  Makefile      makefile for building UnZip (sorry, no project files)
+  beocfg.h      BeOS-specific configuration settings
+  beos.c        BeOS-specific routines (similar to the Unix ones)
+  beos.h        structures for the BeOS extra field
+  beosmain.cpp  BeOS-specific C++ routines
+  unzip.rsc     BeOS resources for UnZip
+  unzipsfx.rsc  BeOS resources for UnZipSFX
+
+This port supports both Metrowerks CodeWarrior (PowerPC and x86) and GNU C.
+
+- Chris Herborth (chrish@qnx.com)

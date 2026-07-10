@@ -2085,7 +2085,11 @@ fn translate_wasm_signal_state_sync_rpc_request(
     let flags = request
         .args
         .get(3)
-        .and_then(Value::as_u64)
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_i64().map(|signed| signed as u64))
+        })
         .unwrap_or_default() as u32;
 
     execution
@@ -2843,6 +2847,11 @@ if (typeof globalThis !== "undefined") {{
             flags,
           ]);
         }}
+        case "process.take_signal":
+          if (typeof _processTakeSignal === "undefined") {{
+            throw new Error("secure-exec WASM signal-drain bridge is unavailable");
+          }}
+          return _processTakeSignal.applySync(void 0, args);
         default:
           throw new Error(`secure-exec WASM sync RPC method not implemented in V8 runtime: ${{method}}`);
       }}

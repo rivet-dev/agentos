@@ -1,0 +1,23 @@
+;module-definition file for Windows UnZip32 DLL -- used by link.exe
+LIBRARY UNZIP32  ; Library module name
+
+;DESCRIPTION 'Windows Info-ZIP UnZip32 DLL by Mike White'
+
+;CODE  PRELOAD FIXED
+
+;DATA  PRELOAD MOVEABLE
+
+EXPORTS
+     Wiz_SingleEntryUnzip
+     Wiz_SingleEntryUnzpList
+     UzpVersion
+     Wiz_Init
+     Wiz_SetOpts
+     Wiz_Unzip
+     Wiz_Validate
+     Wiz_NoPrinting
+     UzpVersion2
+     Wiz_UnzipToMemory
+     Wiz_Grep
+     UzpFreeMemBuffer
+

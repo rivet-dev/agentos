@@ -1,0 +1,32 @@
+libcxx/src/CMakeFiles/cxx_static.dir/new_helpers.cpp.o: \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/llvm-project/libcxx/src/new_helpers.cpp \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__verbose_abort \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__config \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__config_site \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__configuration/abi.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__configuration/compiler.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__configuration/platform.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__configuration/availability.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__configuration/language.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/new \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__exception/exception.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__type_traits/is_function.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__type_traits/integral_constant.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__type_traits/is_same.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__type_traits/remove_cv.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__type_traits/remove_const.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__type_traits/remove_volatile.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/cstddef \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__type_traits/enable_if.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/__type_traits/is_integral.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/version \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/include/c++/v1/stddef.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/stddef.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_header_macro.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_ptrdiff_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_size_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_wchar_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_null.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_nullptr_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_max_align_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_offsetof.h

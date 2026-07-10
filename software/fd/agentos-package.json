@@ -1,0 +1,11 @@
+{
+	"commands": [
+		"fd"
+	],
+	"registry": {
+		"title": "fd",
+		"description": "Fast file finder.",
+		"priority": 30,
+		"category": "developer-tools"
+	}
+}

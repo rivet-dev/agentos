@@ -1,0 +1,15 @@
+#!/bin/sh
+# This would make grep-3.11 fail with ENOTSUP and exit 2.
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+expensive_
+
+fail=0
+
+mkdir t || framework_failure_
+(cd t && seq 100000|xargs touch) || framework_failure_
+
+returns_ 1 grep -r x t > out 2> err
+compare /dev/null out || fail=1
+compare /dev/null err || fail=1
+
+Exit $fail

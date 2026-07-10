@@ -1,0 +1,15 @@
+{
+	"name": "pi",
+	"agent": {
+		"acpEntrypoint": "pi-sdk-acp",
+		"snapshot": true
+	},
+	"registry": {
+		"title": "PI",
+		"description": "Run the PI coding agent with lightweight, fast execution.",
+		"image": "/images/registry/pi.svg",
+		"priority": 100,
+		"category": "agents"
+	},
+	"kind": "agent"
+}

@@ -1,0 +1,561 @@
+Version 2.3.2 (3/16/2026)
+  - Whitelist characters instead of blacklisting (had an incomplete blacklist
+    somehow,) in url_encode() (M. Richardson)
+  - Wrong path was being used to allocate a path string. (Masaki Hasegawa)
+  - Symbolic link name might be printed incorrectly when -f and -l were used
+    at the same time. (Masaki Hasegawa)
+  - Use EXIT_FAILURE / EXIT_SUCCESS instead of 1 / 0 in exit(), supposedly more
+    portable, but I am not sure I'm convinced. (polluks@github)
+  - Fix regression (maybe) in --gitignore for paths that are relative to the
+    .gitignore file broken by using realpath to to the .gitignore.  Relative
+    patterns in ignore files above the tree'd root will likely not work w/o
+    some more work on this. (Merlin04@github)
+
+Version 2.3.1 (1/31/2026)
+  - The "something always slips through" release.
+  - Completely #include guard selinux context output for non-Linux as well as
+    the stddata_fd variable declared outside of an include guard.
+
+Version 2.3.0 (1/30/2026)
+  - Add ACL detection (--acl) and selinux (--selinux) (not tested, no way for
+    me to easily test this, please report problems with it) options for Linux
+    only. This should lead to adding support for other xattr attributes in the
+    future, though I will likely re-work the mechanism to be more generic.
+    Support for extended attributes could be added for other operating systems
+    if patches for them are provided.
+  - Adds --condense option to condense directory "singletons" (i.e. directories
+    that contain exactly a single directory) into a single line of output. This
+    should be useful for project directories displayed with -d and such. Note
+    that the meta-data displayed will only be valid for the first directory
+    component of the path that is displayed. (PowerPlop@github / others)
+  - Adds --compress=# option to compress the indentation lines. Positive values
+    between 1-3, 1 being normal, and 3 being lines fully compressed. Negative
+    values from -1 to -3 being the same as positive values, except the space
+    after each indentation level is not printed.  Values < -3 or > 3 switch to
+    noindent mode.  This also modifies the JSON and XML indentation output
+    instead of being a fixed 2 space indent.
+    There is a possibility that I could modify this function to go in the other
+    direction and allow for even larger indents, so the meaning of # may change.
+  - The above work also resulted in fixing the line drawing for a number of
+    Asian character sets.  Also ANSI-lines (-A) now is essentially
+    --charset=ANSI and uses it's linedraw.
+  - Reworked --gitignore code to properly search up the directory tree for
+    a git root, searching for additional .gitignore files and the git root's
+    .git/info/exclude file.
+  - Fixed --matchdirs to not exclude sub-directories of matched directories.
+    (FloppyDisco@github).  I reworked the -P and -I code considerably while
+    working on this and now -I will match directories (even w/o --matchdirs.)
+    This behavior changes established behavior quite a bit and may have to be
+    modified again.
+  - Handle '.' in --fromfile input properly.  This should have been in there
+    from day one TBH.  It will likely change the expected output, but it should
+    now be correct in my opinion.
+  - Modify gittrim to trim carriage returns for Window borkness.
+  - Fix segmentation fault when attempting to tree a non-existent file with
+    hyperlinks enabled. (Nicolai Dagestad)
+  - Fix broken hyperlink paths where an optional hanging / is present on the
+    directory name given to tree. (Nicolai Dagestad)
+  - Fix possible NULL de-reference in xml.c, exit fillinfo() early if a NULL
+    pointer is past to it. (Ubuntu? - not sure)
+  - Move all flags into a central struct to cut down on namespace pollution,
+    work should continue on this. Remove unused gnu_getcwd() function, moved and
+    added some functionality into a new util.c file and some additional misc
+    code cleanup.
+
+Version 2.2.1 (11/25/2024)
+  - Yet another brown-paper bag release.  I seem to like doing these.
+  - Fix regression where I free a pointer that should not have been freed due
+    to a variable renaming that wasn't completed. (Daniel Li / Landon Bouma)
+  - Put back, in a modified form, HTML href directory path fixing that was
+    removed in 2.1.2. If the "baseHREF" part after the -H begins with a dash
+    (-), the dash is removed and the lead directory name is removed from the
+    href, otherwise it is left as-is.  It can be very difficult to know how to
+    handle the host and directory part given the plethora of protocols and
+    what-not, so hopefully this should give enough control over that to suit
+    most requirements.
+
+Version 2.2.0 (11/24/2024)
+  - Add option --opt-toggle which turns on the ability to toggle options such
+    as -a, -p, etc.  Useful to add to an alias for turning an option off when
+    using said alias. (Christoph Anton Mitterer)
+  - Add --hyperlink option to print OSC 8 terminal hyperlinks for files. Also
+    adds the --scheme and --authority options to modify the schema and hostname/
+    authority of the links. (Nicolai Dagestad)
+    OSC 8 Terminal hyperlinks:
+      https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda
+  - Maybe finally fix JSON error reporting when unable to open a directory and a
+    full tree is required, such as when using --du. (Alchemyst@github)
+  - Fix small rounding error in human readable size (-h) output, where 9.99K is
+    rounded to 10.0K rather than 10K (Ivan Ivanovich)
+  - Fix the totals report for sizes when --du option is used.  The directory
+    size total was correct, but the final report was an accumulation of all
+    the directory totals rather than just the top most directory total.
+    (Alchemyst@github)
+  - Add .gitignore file to distribution for those wanting that. (Kenta Arai)
+  - Add 'none' as a valid --sort option (i.e. -U).
+  - Add ability to cross compile for Android (freemedom@github)
+  - List charsets again if --charsets is not given an argument.
+  - Allow --help and usage to use ANSI bold and italic if colorization is
+    enabled.
+  - General code cleanups:
+    - Removed unused externs where possible.
+    - Clean up some warnings issued by -Wextra (Kenta Arai)
+    - Update Makefile to allow CC and the CFLAGS -O3 option to be overridden,
+      move CPPFLAGS into their own variable, add -Wstrict-prototypes
+      (David Seifert)
+    - Long over-due move to stdbool.h, removes custom bool type and changes all
+      occurrences of TRUE/FALSE to true/false. (David Seifert / others)  This
+      likely makes C99+ even more of a requirement now. Please let me know if
+      this requires a work-around for your system.
+    - Went ahead and added -Wconversion to the Makefile as well. This required a
+      large number of type conversion fixing which may have unexpected side
+      effects, but should hopefully help with tree safely dealing with absurd
+      sizes/number of things in the future as this promotes using size_t more.
+      This probably needs more work to do properly however.
+    - Apply the const constraint on parameter strings wherever possible.
+
+Version 2.1.3 (07/09/2024)
+  - Mostly a brown-paper bag release to fix the below regression and add a
+    feature I forgot to add.
+  - Fix regression in search() function that broke --fromfile (Florian Ernst)
+    (caused by removing too much code while fixing premature sort for
+    --fromfile)
+  - Allow the -L option to accept its parameter immediately (with no space)
+    instead of requiring it be the next option word. (Trevor Gross)
+
+Version 2.1.2 (07/01/2024)
+  - Fix issue where --gitignore does not think a pattern with a singular
+    terminal '/' (indicating it matches only directories,) is a relative path.
+    (Clinton)
+  - Don't emit the error 'recursive, not followed' if when using -L, the depth
+    would prevent descending anyway. This also fixes up a JSON output error 
+    (missing comma) when this happens. (simonpmind)
+  - Don't prematurely sort files/directories with --from*file. (gitlab @jack6th)
+  - Various seg-faults fixed (Hanqin Guan (The OSLab of Peking University)):
+    - Make doubly sure that there is actually a previous path entry when reading
+      from a tabbed file.
+    - Make sure there is actually a file entity when applying the link info to
+      it when reading fromfile using --fflinks.
+    - Increase space for the path a little in listdir(), just to be sure.
+    - Make sure that there is no topsort (--dirsfirst / --filesfirst) if there
+      is no basesort (-U).
+    - Make sure gittrim() function can handle a null string.
+  - Update email address to steve.baker.llc@gmail.com from ice@mama.indstate.edu
+    which has been permanently disabled.
+
+Version 2.1.1 (05/31/2023)
+  - Various spelling corrections.
+  - Fix issue where following links while doing JSON output would lead to
+    incorrect JSON output. (simonpmind)
+  - Fix issue where .info patterns relative to the .info file that did not use
+    a wildcard for matching the prefix were not matching files properly.
+    (German Lashevich)
+  - Added support for making trees from tab indented files (--fromtabfile)
+    (gitlab @AvidSeeker), also cleaned up some other issues in the fromfile
+    code.
+  - Fix buffer overflow in listdir() when file names are allowed to be longer
+    than 256 characters (like when using fromfile.) (Javier Jaramago Fernández)
+  - If when attempting to open a .gitignore or .info file from a top level
+    directory and failing, recursively check the parents for such a file.  This
+    stops when successful at opening such a file. This behavior might in the
+    future be modified to open all such files in all parents to until root is
+    reached. (Damien Bezborodov) Note that this requires the use of realpath()
+    which I think may be an issue for some OSes.
+  - Fix issue where tree would never descend (-l) a symbolic link when a full
+    tree is gathered (--du/matchdirs/prune) (gitlab @6ramr)
+
+Version 2.1.0 (12/26/2022)
+  This is a bit bigger release, due to not realizing that gitlab/github was
+  not sending me email and ice+tree@mama.indstate.edu was broken.  This has
+  been fixed and I think I have gone through most all of the outstanding issues
+  that were submitted over the last few months.  Note to those that are sending
+  me git merge requests: because I distribute this in multiple ways and places,
+  and I tend to manually go over patches and often re-work them in any event, I
+  will not likely ever directly accept any merge requests. I will still use the
+  patch information from them for inclusion into the code, so you are more than
+  welcome to still submit such merges.
+  - Add support for --info and --gitignore for the --fromfile option.
+    (Suggested by Piotr Andruszkow)
+  - Add options --infofile and --gitfile to load .info and .gitignore files
+    explicitly.  Each implies --info or --gitignore respectively.
+  - Add NULL guard for json_printinfo() and xml_printinfo() (and fix ftype
+    printing for XML) (Kenta Arai)
+  - Fix getcharset() to not return a getenv() pointer (fix for ENV34-C issue.)
+    (Kenta Arai)
+  - Another attempt at fixing extraneous /'s in HTML URLs/output. (Sebastian
+    Rose)
+  - Fixed XML output (Dave Rice)
+  - Remove the (very outdated) French version of the manpage.  Look to
+    localization projects such as Debian's 'manpages-l10n' for localized
+    translations. (hmartink)
+  - Add support for the NO_COLOR environment variable (https://no-color.org/).
+    Equivalent to the -n option (can be still be overridden with -C).
+    (Timm Fitschen)
+  - Removed many C99isms to enable compiling on C90 compilers with fewer
+    warnings.  (Sith Wijesinghe and Matthew Sessions)  It should not be
+    necessary to avoid using a standard that is old enough to drink,
+    furthermore it is all but impossible to remove the remaining warnings and
+    have modern features like compound literals. In the meantime I've added
+    -std=c11 to the default CFLAGS for Linux and will likely not worry about
+    C90 compatibility going forward unless there is some other reason for it.
+  - Added a helper function for long command line arguments to clean up option
+    processing (and fixes the processing for a few of the options such as
+    --timefmt= (наб?).)
+  - Added --hintro and --houtro options to select files to use as the HTML
+    intro and outro.  Use /dev/null or an empty file to eliminate them
+    entirely.  This should make it much easier to create your own custom CSS
+    or embed one or more trees into a web page.
+  - Defer printing the version until the character set is known so we can use
+    the linedraw copyright symbol.
+  - Revert change to the error code to not return an error (code 2) when
+    attempting to list a non-directory that actually exists.  Tree will still
+    return an error when attempting to list a non-existing directory/file.
+  - Added option --fflinks which will process symbolic link information from
+    a file generated with 'tree -if --noreport' when using --fromfile.
+    (Suggested by Chentao Credungtao)
+  - Updated the totals reporting code to also include in the total the file or
+    directory that is being listed.  This should make a correct report when
+    doing something like 'tree *'.
+
+Version 2.0.4 (09/06/2022)
+  - Brown paper bag release:
+    - Fix missing comma in JSON output. (jogbear?)
+
+Version 2.0.3 (08/26/2022)
+  - Fix segfault when filelimit is used and tree encounters a directory it
+    cannot enter. (Kenta Arai)
+  - Use += when assigning CFLAGS and LDFLAGS in the Makefile allowing
+    them to be modified by environment variables during make. (Ben Brown)
+    Possibly assumes GNU make.
+  - Fixed broken -x option (stops recursing.) (balping)
+  - Fix use after free (causing segfault) for dir/subdir in list.c (Erik
+    Skultety / Ben Brown)
+  - Fixes for .gitignore functionality (Saniya Maheshwari / Mig-hub ? / Carlos
+    Pinto)
+    - Fixed * handing in patmatch. Worked almost like ** before, now properly
+      stops at /'s.  These issues were the result of forgetting that patmatch()
+      was just to match filenames to patterns, not paths.
+    - Patterns starting with / are actually relative to the .gitignore file,
+      not the root of the filesystem, go figure.
+    - Patterns without /'s in .gitignore apply to any file in any directory
+      under the .gitignore, not just the .gitignore directory
+  - Remove "All rights reserved" from copyright statements.  A left-over from
+    trees original artistic license.
+  - Add in --du and --prune to --help output (Nxueyamao?)
+  - Fixed segfault when an unknown directory is given with -X
+  - Fixed output up for -X and -J options.
+  - Remove one reference to strnlen which isn't necessary since it may not
+    be available on some OS's.
+
+Version 2.0.2 (02/16/2022)
+  - Okay, apparently the stddata addition is causing havoc (who knew how many
+    scripts just haphazardly hand programs random file descriptors, that's
+    surely not a problem.)  Going forward the stddata option will only work
+    if the environment variable STDDATA_FD is present or set to the descriptor
+    to produce the JSON output on.
+  - Fix HTML url output issue. (Maxim Cournoyer)  It was definitely broken in
+    the 2.0.0 release, and this should normalize it with respect to older
+    versions, however I think it needs to be updated to work better.
+  - Update MANPATH for OS X (Michiel Beijen)
+  - Fixed an error with * in the patchmatch code where *foo*bar would match
+    *foo alone. (Josey Smith)
+
+Version 2.0.1 (01/03/2022)
+  - Simplify Makefile and the following changes: prefix -> PREFIX,
+    BINDIR -> DESTDIR, -O4 -> -O3, mode 644 for man page installation
+    (Michal Vasilek)
+  - Make patterns ending in '/' match directories (but not files) for -I / -P
+    (Michiel Beijen) should also fix issues with --gitignore as well
+    (Taylor Faubion)
+  - Fix --gitignore not matching files relative to the path of the .gitignore
+    (Taylor Faubion)  I did say it was hacked together.
+  - Refactored color.c a bit to simplify the code as a prelude to meta coloring.
+
+Version 2.0.0 (12/21/2021)
+  - This started out as a 1.9.0 release but then I got fed up with the
+    abundance of directory listers (8 in total, 2 each for each output mode).
+    Nothing is terribly well tested since there are a lot of changes and I would
+    like to get this out the door finally, please report breakage.  This reduced
+    so much code that all the below additions only resulted in a code base that
+    is only 54 lines larger than 1.8.0.
+  - Rolled all the directory listers into 2 functions that call output specific
+    functions (removes one TODO).
+  - -R option now recursively calls the emit_tree() function rather than using
+    system() to re-call tree.  Also removes a TODO.
+  - Adds --info to print information about files/directories from information
+    found in .info files (removes a maybe do) In HTML output, comments show as
+    mouse over tooltips, which I imagine will be the most useful use of this
+    "feature".
+  - Output un-indented JSON on file descriptor 3 ("stddata") automatically if
+    file descriptor 3 is present (currently Linux only.) Maybe switch to BSON.
+  - Always HTML escape filenames in HTML output even when -C is used.
+    (Eric Pruitt)
+  - Return a non-zero exit status if there is a failure to open any directory.
+  - Added --gitignore option to filter out files specified by .gitignore files.
+    (also reads $GIT_DIR/info/exclude if present.) To facilitate gitignore,
+    adds support for ** on pattern matching to allow /**/ to match a single /.
+    This is not well tested and kind of hacked together, so may not work
+    correctly. (Jake Zimmerman and others)
+  - Now also supports multiple -I and -P instances. (Michiel Beijen and others)
+  - Now prints meta data for the top level directory as well.
+  - Split spaghetti code in main into individual functions.
+  - Properly sort --fromfile input (Chentao Credungtao via Debian)
+  - Make tree colorization use reset (rs code in dir_colors,) not normal color
+    when resetting attributes (Filips Romāns via Debian).
+  - Honor -n (no color) even if the CLICOLOR_FORCE environment variable is set
+    (Paul Seyfert)
+  - Added --metafirst to print the metadata before the indentation lines
+    (suggested by Richard Mitchell)
+  - Fix --sort option to not require =
+  - Defer sorting for --du until the entire sub-directory tree has been
+    processed.
+  - Optimized makefile, HP/UX support (Osipov, Michael). Note that this changes
+    the prefix default to /usr/local, which is becoming required for many
+    systems now.
+  - Renamed (the by now very obsolete) doc/tree.1.fr to doc/tree.fr.1 (Jonas
+    Stein)
+  - Fix JSON string escaping such that it is not using the HTML escaping (Fox
+    & others)
+  - Add --filesfirst option (John A. Fedoruk). Cleaned up sorting code to make
+    --dirsfirst and --filesfirst top level meta-sorts.
+  - "arial" not "ariel" (Mark), HTML style-sheet cleaned up in any event.
+  - Deprecate using local -DLINUX / -DCYGWIN and use the OS provided
+    __linux__ or __CYGWIN__ (Jonas Stein)
+  - XML/HTML/JSON output needs to be mutually exclusive, last command line
+    switch wins. (Sergei Maximov)
+  - Make sure we use xmalloc instead of malloc in a number of places (Tomáš
+    Beránek)
+
+Version 1.8.0 (11/16/2018)
+  - Added an experimental --fromfile option (suggested by several people.)
+    This may eventually be replaced or supplemented by a --fromjson option.
+  - Added support for BSD's CLICOLOR and CLICOLOR_FORCE environment variables.
+    (Suggested by Alyssa Ross)
+  - Use strftime() exclusively when formatting date/time to respect locale.
+  - Some man page fixes and cleanups curtsey of Kirill Kolyshkin
+  - Update BINDIR in Makefile for MacOS X -- It is not allowed to install
+    programs to /usr/bin on MacOS X any longer due to System Integrity
+    Protection (SIP) (Shawn Mehan)
+  - Misc patches from Jacob Wahlgren:
+    - Improved command line switch error reporting.
+    - Symbolic links not displayed if a -P pattern is active
+    - Missing argument error reporting fixes on long format switches.
+  - Fixed JSON output hanging commas (John Lane, Tad, others)
+  - JSON size output ignored -h/--si flags (Wagner Camarao)
+  - Fixed issue with malformed multibyte string handling. (Mantas
+    Mikul&#279;nas)
+  - Fixed issue where mbstowcs() fails to null terminate the string due to
+    improper UTF-8 encoding leading to garbage being printed. (Nick Craig-Wood)
+  - Found a bug where the wrong inode (and device) information would be printed
+    for symbolic links. (Stephan Gabert)
+
+Version 1.7.0 (04/23/2014)
+  - Allow user/group names up to 32 characters before clipping.
+  - Made -i compress XML and JSON output as much as possible by eliminating
+    extraneous whitespace.
+  - Added --caseinsensitive (renamed --ignore-case ala grep) flag so patterns
+    match without regard to case, courtesy of Jason A Donenfeld.
+  - Added --matchdirs option courtesy of Brian Mattern & Jason A. Donenfeld
+    <Jason@zx2c4.com>.
+  - Fixed possible buffer overflow on large uid/gids w/o user names/group
+    names (Alexandre Wendling <alexandrerw@celepar.pr.gov.br>)
+  - Added JSON support courtesy of Florian Sesser <fs@it-agenten.com>.
+  - Fixed formatting error with HTML output when -L 1 specified. (Sascha Zorn 
+    <sascha.zorn@gmail.com>)
+  - Added file size sorting (Philipp M?ller <philippausmuensing@googlemail.com>)
+  - Added '--sort[=]<name>' option, ala ls.
+  - Fixed OS X makefile problems (Ryan Hollis <theryanhollis@gmail.com>)
+  - Fixed possible memory overflow in read_dir (path/lbuf not equal in size
+    to pathsize/lbufsize.) (Han Hui <hanhui03@163.com>)
+  - Fix S_ISDOOR/S_IFDOOR spelling mistake for Solaris. (Tim Mooney
+    <Tim.Mooney@ndsu.edu>)
+  - Make tree more reliably detect UTF-8 locales. (Mantas Mikulnas
+    <grawity@gmail.com> and others.)
+  - Return non-zero exit status on option errors, print usage to stdout when
+    not an error, add the posix '--' option terminator, Change -S description
+    to mean CP437 (console) output codes, not ASCII. (Ivan Shmakov
+    <oneingray@gmail.com>)
+
+Version 1.6.0 (05/24/11)
+  - Re-org of code into multiple files, split HTML and Unix listdir() into
+    separate functions, various code cleanups and optimizations.
+  - Fixed a memory leak in listdir() when memory was allocated early and not
+    freed before function exit.
+  - Fixed possible buffer overflow where symbolic links are followed.
+  - Fixed links printing "argetm" before the name of the link when the LINK
+    setting for DIR_COLORS is set to target (Markus Schnalke
+    <meillo@marmaro.de>)
+  - More fully support dir colors -- added support for su, sg, tw, ow, & st
+    options (and "do" in theory).
+  - Use the environment variable "TREE_COLORS" instead of "LS_COLORS" for
+    color information if it exists.
+  - Added --si flag to print filesizes in SI (powers of 1000) units (Ulrich
+    Eckhardt)
+  - Added -Q to quote filenames in double quotes.  Does not override -N or -q.
+  - Control characters are no longer printed in carrot notation, but as
+    backslashed octal, ala ls, except for codes 7-13 which are printed as
+    \a, \b, \t, \n, \v, \f and \r respectively. Spaces and backslashes are
+    also now backslashed as per ls, for better input to scripts unless -Q
+    is in use (where "'s are backslashed.) (Ujjwal Kumar)
+  - Added -U for unsorted listings (directory order).
+  - Added -c for sorting by last status change (ala ls -c).
+  - --dirsfirst is now a meta-sort and does not override -c, -v, -r or -t, but
+    is disabled by -U.
+  - After many requests, added the ability to process the entire tree before
+    emitting output.  Used for the new options --du, which works like the du
+    command: sums the amount of space under each directory and prints a total
+    amount used in the report and the --prune option which will prune all empty
+    directories from the output (makes the -P option output much more readable.)
+    It should be noted that this will be slow to output when processing large
+    directory trees and can consume copious amounts of memory, use at your own
+    peril.
+  - Added -X option to emit the directory tree in XML format (turns colorization
+    off always.)
+  - Added --timefmt option to specify the format of time display (implies -D).
+    Uses the strftime format.
+
+Version 1.5.3 (11/24/09)
+  - Properly quote directories for the system command when tree is relaunched
+    using the -R option.
+  - Fixed possible indentation problem if dirs[*] is not properly zeroed
+    (Martin Nagy).
+  - Use strcoll() instead of strcmp() to sort files based on locale if set.
+  - Change "const static" to "static const" to remove some compiler warnings
+    for Solaris (Kamaraju Kusumanchi).
+  - Actually use TREE_CHARSET if it's defined.
+  - Automatically select UTF-8 charset if TREE_CHARSET is not set, and the
+    locale is set to *UTF-8 (overridden with --charset option.)
+
+Version 1.5.2.2 (01/22/09)
+  - Set locale before checking MB_CUR_MAX.
+  - Added HP-NonStop platform support (Craig McDaniel <craigmcd@gmail.com>)
+  - Fixed to support 32 bit UID/GIDs.
+  - Added Solaris build options to Makefile (edit and uncomment to use).
+    Provided by Wang Quanhong
+
+Version 1.5.2.1 (08/29/08)
+  - Added strverscmp.c file for os's without strverscmp.  Source file is
+    attributed to: Jean-Franois Bignolles <bignolle@ecoledoc.ibp.fr>
+  - Try different approach to MB_CUR_MAX problem.
+  - Changed the argument to printit() to be signed char to avoid warnings.
+
+Version 1.5.2 (06/06/08)
+  - Added --filelimit X option to not descend directories that have more than
+    X number of files in them.
+  - Added -v option for version sorting (also called natural sorting) ala ls.
+
+Version 1.5.1.2 (06/04/08)
+  - Fixed compile issues related to MB_CUR_MAX on non-Linux machines.
+  - Removed unnecessary features.h
+
+Version 1.5.1.1 (06/11/07)
+  - Regression in HTML output, fixed formatting issues.
+
+Version 1.5.1 (?)
+  - Remove extraneous / at end of user input directory names when using -f
+    option (Zurd)
+  - List available charsets if --charset option is missing charset argument.
+  - Fixed --charset option processing bug.
+  - Fixed missing <br>'s when -i option used with -H.
+  - Added -h option for human readable output.
+  - Colorization bugfix for special files and directories (make tree behave as
+    ls does)
+
+Version 1.5.0 (08/15/04)
+  - Added -T option to change title and H1 header in HTML output.
+  - Added -r option to reverse alpha sort output, ala. 'ls -r'.
+  - '|' wildcard support added by David MacMahon <davidm@astron.Berkeley.EDU>.
+  - Remove extraneous '/' at the end of dirs and dir-symlinks in HTML output.
+  - Removed several possible overflow problems by dynamically allocating
+    arrays in several places.
+  - Better support for Locales and printing utf-8 encoded characters in
+    filenames (still hackish).
+  - Fixed -t to alphasort files with same time-stamps.
+  - Fixed encoding of filenames in HTML output, Kyosuke and others.
+  - Patches by Kyosuke Tokoro <NBG01720@nifty.ne.jp>:
+    - Now, runs OS/2 systems.
+      + Print the file attributes in 'adhrs' format for each file, instead
+        of the protections in 'drwxrwxrwx' format, when running the tree
+        on OS/2 with option -p.
+    - Added --charset option, to specify which character set is used for
+      output.
+       + You can specify any IANA registered character set name. But I have
+         tested only following character sets:
+               Shift_JIS       EUC-JP          IBM850
+               UTF-8           ISO-8859-1      US-ASCII
+       + Now, `-S' option is equal to `--charset=IBM437'.
+       + When running on OS/2 systems, the default value of this option
+         is according to current codepage.  On the other systems, no default.
+  - Change font-weight to font-size in CSS .VERSION.
+  - Change version to standard major.minor.patch format.
+  - Switch from artistic license to GPLv2.
+
+Version 1.4 (02/21/02 (b1), 03/24/02 (b2), 02/06/03 (b3))
+  - Added large file support under Linux.
+  - Fixed crashing on missing command line arguments.
+  - Fixed several memory leaks
+  - Added --dirsfirst option to list directories first.
+  - Fixed formatting error when unable to open directories.
+  - Fixed bug in parse_dir_colors().
+  - Changed -I to also ignore directories.
+  - Added --nolinks command to turn off hyperlinks with the HTML output.
+  - Fixed several memory leaks in listdir().
+  - Some additional code cleanup in listdir().
+  - Some systems may define TRUE/FALSE, so don't create the enums for TRUE
+    and FALSE if that's the case.
+  - Fixed over-allocation bug in read_dir().
+  - Added crude beginnings of color output for HTML via CSS (Ted Tiberio
+    ttiberio@rochester.rr.com).
+  - Fixed buffer overflow problem in dircolors parsing.
+  - Fixed recursive symlink detection.
+  - Added --inodes and --device options.
+  - Added --noreport option.
+
+Version 1.3 (02/15/99)
+  - Fixed long pathname problem by dynamically allocating the path.
+  - Added recursive symlink detection.
+  - Added --help and --version options.
+  - When -C is used and LS_COLORS is undefined, tree uses a default color
+    scheme (thus -C always forces color output now).
+  - Added -S to show ASCII tree lines (Gerald Scheidl)
+  - Made tree more portable (Guido Socher and others)
+
+  Following options courtesy of Francesc Rocher:
+  - Added -o <filename> to redirect the output.
+  - Added -H <baseHRef> to print the tree in HTML format.
+  - Added -L to set the maximum level of directories to print.
+  - Added -R to recursively restart the search at the level given by `-L'
+    option (adding as well `-o 00Tree.html').
+
+Version 1.2 (01/05/97)
+  - Added -D to print the date of the last modification.
+  - Added -t option to sort by last modification time (ala ls -t).
+  - Added -I <pattern>, similar to the -P option except tree does not print
+    those files which match the pattern.
+  - Made tree print non-printable characters in filenames in standard unix
+    carrot notation.
+  - Added -N option to make tree print filenames without any processing.
+  - Added -q option to make tree print non-printable characters in filenames
+    as question marks.
+  - Added `|' to -F output and made it only print character type after the
+    link on sym-links, not on the symlink name itself.
+  - Added -u option to display username/uid, and -g option to display group
+    name/gid.
+  - Fully (pass the salt) implemented dircolors support.
+
+Version 1.1 (07/09/96)
+  - Made some changes to the Makefile to insure proper installation and for
+    multi-architecture support and a bug-fix.
+  - Made root directory colorized if dircolors is enabled.
+  - Put []'s around permission and size info, 'cause I think it looks better.
+  - Added -A option to enable ANSI-lines hack.
+  - Added some sanity checks for dircolors support.
+  - Added -P <pattern> to list only those files that match the wildcard
+    given in <pattern>.
+  - Fixed error where relative symbolic links to directories would not be
+    followed when the -l option was used.
+  - Made uid 0 the same as anyone else (-a was default for uid 0)
+  - Added -x directive to stay on one filesystem (ala find -xdev).
+
+Version 1.0 (??/??/90?)
+  - The original, a model of perfection...

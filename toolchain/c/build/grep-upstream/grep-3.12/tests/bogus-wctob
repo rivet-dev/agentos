@@ -1,0 +1,17 @@
+#!/bin/sh
+# This was latent in grep-2.8 and earlier because we punted interpretation
+# of MBCSETs to glibc.  However, it becomes apparent as soon as "[à]" is
+# simplified to "à".
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+printf '\340'      > in || framework_failure_
+fail=0
+
+LC_ALL=en_US.UTF-8 grep '[à]' in
+case $? in
+  0) fail=1 ;;
+  1) ;;
+  2) framework_failure_ unexpected error from grep ;;
+esac
+
+Exit $fail

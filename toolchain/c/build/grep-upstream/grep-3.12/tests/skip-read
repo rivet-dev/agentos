@@ -1,0 +1,23 @@
+#!/bin/sh
+# Check that grep skips reading in some cases.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+fail=0
+
+echo /dev/null >exp || framework_failure_
+
+for opts in '-m0 y' '-f /dev/null' '-v ""'; do
+  for matcher in '' -E -F; do
+    eval returns_ 1 grep $opts $matcher no-such-file > out || fail=1
+    compare /dev/null out || fail=1
+    eval returns_ 1 grep -l $opts $matcher /dev/null > out || fail=1
+    compare /dev/null out || fail=1
+    eval returns_ 1 grep -L $opts $matcher /dev/null > out || fail=1
+    compare exp out || fail=1
+    eval returns_ 1 grep -L $opts $matcher /dev/null > /dev/null || fail=1
+  done
+done
+
+
+Exit $fail

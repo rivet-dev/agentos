@@ -1,0 +1,35 @@
+Contents of the "msdos" subdirectory for UnZip 5.3 and later:
+
+  Contents       this file
+  README         notes about quirks in MS-DOS executables and compilers
+  crc_i86.asm    optimized 8086/80286 assembler version of generic crc32.c
+  doscfg.h       OS-dependent configuration, included by unzpriv.h
+  msdos.c        OS-dependent UnZip routines for MS-DOS
+  makefile.bc    makefile for Borland C++ and Turbo C++
+  makefile.msc   makefile for Microsoft C and make or nmake
+  makefile.tc    makefile for Turbo C and make
+  makefile.wat   makefile for Watcom C
+  makefile.dj1   makefile for GNU C, djgpp v1.12m4 port
+  makefile.dj2   makefile for GNU C, djgpp v2.x port
+  makefile.emx   makefile for GNU C, emx 0.9c port, gnu make
+
+Notes:
+
+(1) Two makefiles for djgpp/GNU make are provided, one for djgpp 1.12 and one
+    for djgpp v2.x.  In addition, the Unix makefile (unix/Makefile) contains
+    a djgpp v2.x target using the go32-gcc cross compiler on Linux.  Read the
+    appropriate makefile sections for details.
+
+(2) The makefile for emx+gcc has been used with GNU Make ports from DJGPP and
+    the GNUish MS-DOS project.  Other make utilities may work, too.  The
+    resulting executables require emx.exe or rsx.exe to run (akin to djgpp
+    1.x's go32.exe).
+
+(3) The OS/2 makefile includes several (cross compilation ?) targets to
+    generate MS-DOS executables which can be used with MSC 6.0 or later
+    (`mscdos', 16-bit), Watcom C/C++ 9.0 or later (`watcom16dos', 16-bit;
+    `watcomdos' and `pmodew', 32-bit) and emx+gcc 0.9c or later (`gccdos',
+    32-bit). These targets have only been tested in cross-compilation from
+    OS/2 to MS-DOS, but they may work on a plain MS-DOS system, when a proper
+    make utility is available.
+

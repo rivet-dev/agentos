@@ -1,0 +1,6734 @@
+# Microsoft eMbedded Visual Tools Project File - Name="unzipcmd" - Package Owner=<4>
+# Microsoft eMbedded Visual Tools Generated Build File, Format Version 6.02
+# ** DO NOT EDIT **
+
+# TARGTYPE "Win32 (WCE ARM) Application" 0x8501
+# TARGTYPE "Win32 (WCE x86em) Application" 0x7f01
+# TARGTYPE "Win32 (WCE SH3) Application" 0x8101
+# TARGTYPE "Win32 (WCE SH4) Application" 0x8601
+# TARGTYPE "Win32 (WCE MIPS) Application" 0x8201
+
+CFG=unzipcmd - Win32 (WCE MIPS) Debug
+!MESSAGE This is not a valid makefile. To build this project using NMAKE,
+!MESSAGE use the Export Makefile command and run
+!MESSAGE 
+!MESSAGE NMAKE /f "unzipcmd.vcn".
+!MESSAGE 
+!MESSAGE You can specify a configuration when running NMAKE
+!MESSAGE by defining the macro CFG on the command line. For example:
+!MESSAGE 
+!MESSAGE NMAKE /f "unzipcmd.vcn" CFG="unzipcmd - Win32 (WCE MIPS) Debug"
+!MESSAGE 
+!MESSAGE Possible choices for configuration are:
+!MESSAGE 
+!MESSAGE "unzipcmd - Win32 (WCE x86em) Release" (based on "Win32 (WCE x86em) Application")
+!MESSAGE "unzipcmd - Win32 (WCE x86em) Debug" (based on "Win32 (WCE x86em) Application")
+!MESSAGE "unzipcmd - Win32 (WCE MIPS) Release" (based on "Win32 (WCE MIPS) Application")
+!MESSAGE "unzipcmd - Win32 (WCE MIPS) Debug" (based on "Win32 (WCE MIPS) Application")
+!MESSAGE "unzipcmd - Win32 (WCE SH4) Release" (based on "Win32 (WCE SH4) Application")
+!MESSAGE "unzipcmd - Win32 (WCE SH4) Debug" (based on "Win32 (WCE SH4) Application")
+!MESSAGE "unzipcmd - Win32 (WCE SH3) Release" (based on "Win32 (WCE SH3) Application")
+!MESSAGE "unzipcmd - Win32 (WCE SH3) Debug" (based on "Win32 (WCE SH3) Application")
+!MESSAGE "unzipcmd - Win32 (WCE ARM) Release" (based on "Win32 (WCE ARM) Application")
+!MESSAGE "unzipcmd - Win32 (WCE ARM) Debug" (based on "Win32 (WCE ARM) Application")
+!MESSAGE 
+
+# Begin Project
+# PROP AllowPerConfigDependencies 0
+# PROP Scc_ProjName ""
+# PROP Scc_LocalPath ""
+# PROP ATL_Project 2
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+# PROP BASE Use_MFC 0
+# PROP BASE Use_Debug_Libraries 0
+# PROP BASE Output_Dir "x86emRel"
+# PROP BASE Intermediate_Dir "x86emRel\ConBuild"
+# PROP BASE CPU_ID "{D6519020-710F-11D3-99F2-00105A0DF099}"
+# PROP BASE Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP BASE Target_Dir ""
+# PROP Use_MFC 0
+# PROP Use_Debug_Libraries 0
+# PROP Output_Dir "x86emRel"
+# PROP Intermediate_Dir "x86emRel\ConBuild"
+# PROP CPU_ID "{D6519020-710F-11D3-99F2-00105A0DF099}"
+# PROP Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP Ignore_Export_Lib 0
+# PROP Target_Dir ""
+RSC=rc.exe
+# ADD BASE RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "NDEBUG" /d "$(CePlatform)" /d "_X86_" /d "x86" /d "i486" /r
+# ADD RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "NDEBUG" /d "$(CePlatform)" /d "_X86_" /d "x86" /d "i486" /r
+CPP=cl.exe
+# ADD BASE CPP /nologo /W3 /Ox /Os /D _WIN32_WCE=$(CEVersion) /D "WIN32" /D "STRICT" /D "_WIN32_WCE_EMULATION" /D "INTERNATIONAL" /D "USA" /D "INTLMSG_CODEPAGE" /D "$(CePlatform)" /D "i486" /D UNDER_CE=$(CEVersion) /D "UNICODE" /D "_UNICODE" /D "_X86_" /D "x86" /D "NDEBUG" /D "NO_ZIPINFO" /YX /M$(CECrtMT) /c
+# ADD CPP /nologo /W3 /Ox /Os /I "../.." /I "../../wince/inc" /D "_X86_" /D "x86" /D "i486" /D "NDEBUG" /D "WIN32" /D "STRICT" /D "_WIN32_WCE_EMULATION" /D "INTERNATIONAL" /D "USA" /D "INTLMSG_CODEPAGE" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "UNICODE" /D "_UNICODE" /D "_MBCS" /D "NO_ZIPINFO" /YX /M$(CECrtMT) /c
+MTL=midl.exe
+# ADD BASE MTL /nologo /D "NDEBUG" /mktyplib203 /o "NUL" /win32
+# ADD MTL /nologo /D "NDEBUG" /mktyplib203 /o "NUL" /win32
+BSC32=bscmake.exe
+# ADD BASE BSC32 /nologo
+# ADD BSC32 /nologo
+LINK32=link.exe
+# ADD BASE LINK32 $(CEx86Corelibc) commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /subsystem:windows /nodefaultlib:$(CENoDefaultLib) /machine:I386 /windowsce:emulation
+# ADD LINK32 $(CEx86Corelibc) commctrl.lib coredll.lib /nologo /base:"" /stack:0x10000,0x1000 /subsystem:windows /nodefaultlib:$(CENoDefaultLib) /machine:I386 /windowsce:emulation
+# SUBTRACT LINK32 /pdb:none
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+# PROP BASE Use_MFC 0
+# PROP BASE Use_Debug_Libraries 1
+# PROP BASE Output_Dir "x86emDbg"
+# PROP BASE Intermediate_Dir "x86emDbg\ConBuild"
+# PROP BASE CPU_ID "{D6519020-710F-11D3-99F2-00105A0DF099}"
+# PROP BASE Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP BASE Target_Dir ""
+# PROP Use_MFC 0
+# PROP Use_Debug_Libraries 1
+# PROP Output_Dir "x86emDbg"
+# PROP Intermediate_Dir "x86emDbg\ConBuild"
+# PROP CPU_ID "{D6519020-710F-11D3-99F2-00105A0DF099}"
+# PROP Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP Ignore_Export_Lib 0
+# PROP Target_Dir ""
+RSC=rc.exe
+# ADD BASE RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "DEBUG" /d "$(CePlatform)" /d "_X86_" /d "x86" /d "i486" /r
+# ADD RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "DEBUG" /d "$(CePlatform)" /d "_X86_" /d "x86" /d "i486" /r
+CPP=cl.exe
+# ADD BASE CPP /nologo /W3 /Zi /Od /D "DEBUG" /D "i486" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "WIN32" /D "STRICT" /D "_WIN32_WCE_EMULATION" /D "INTERNATIONAL" /D "USA" /D "INTLMSG_CODEPAGE" /D "$(CePlatform)" /D "UNICODE" /D "_UNICODE" /D "_X86_" /D "x86" /D "NO_ZIPINFO" /YX /M$(CECrtMTDebug) /c
+# ADD CPP /nologo /W3 /Zi /Od /I "../.." /I "../../wince/inc" /D "DEBUG" /D "_X86_" /D "x86" /D "i486" /D "WIN32" /D "STRICT" /D "_WIN32_WCE_EMULATION" /D "INTERNATIONAL" /D "USA" /D "INTLMSG_CODEPAGE" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "UNICODE" /D "_UNICODE" /D "_MBCS" /D "NO_ZIPINFO" /YX /M$(CECrtMTDebug) /c
+MTL=midl.exe
+# ADD BASE MTL /nologo /D "_DEBUG" /mktyplib203 /o "NUL" /win32
+# ADD MTL /nologo /D "_DEBUG" /mktyplib203 /o "NUL" /win32
+BSC32=bscmake.exe
+# ADD BASE BSC32 /nologo
+# ADD BSC32 /nologo
+LINK32=link.exe
+# ADD BASE LINK32 $(CEx86Corelibc) commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /subsystem:windows /debug /nodefaultlib:$(CENoDefaultLib) /machine:I386 /windowsce:emulation
+# SUBTRACT BASE LINK32 /incremental:no
+# ADD LINK32 $(CEx86Corelibc) commctrl.lib coredll.lib /nologo /base:"" /stack:0x10000,0x1000 /subsystem:windows /debug /nodefaultlib:$(CENoDefaultLib) /machine:I386 /windowsce:emulation
+# SUBTRACT LINK32 /pdb:none
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+# PROP BASE Use_MFC 0
+# PROP BASE Use_Debug_Libraries 0
+# PROP BASE Output_Dir "WMIPSRel"
+# PROP BASE Intermediate_Dir "WMIPSRel\ConBuild"
+# PROP BASE CPU_ID "{D6519010-710F-11D3-99F2-00105A0DF099}"
+# PROP BASE Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP BASE Target_Dir ""
+# PROP Use_MFC 0
+# PROP Use_Debug_Libraries 0
+# PROP Output_Dir "WMIPSRel"
+# PROP Intermediate_Dir "WMIPSRel\ConBuild"
+# PROP CPU_ID "{D6519010-710F-11D3-99F2-00105A0DF099}"
+# PROP Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP Target_Dir ""
+RSC=rc.exe
+# ADD BASE RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "NDEBUG" /d "$(CePlatform)" /d "MIPS" /d "_MIPS_" /r
+# ADD RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "NDEBUG" /d "$(CePlatform)" /d "MIPS" /d "_MIPS_" /r
+CPP=clmips.exe
+# ADD BASE CPP /nologo /W3 /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "MIPS" /D "_MIPS_" /D UNDER_CE=$(CEVersion) /D "UNICODE" /D "_UNICODE" /D "NDEBUG" /YX /Oxs /M$(CECrtMT) /c
+# ADD CPP /nologo /W3 /Ox /Os /I "../.." /I "../../wince/inc" /D "MIPS" /D "_MIPS_" /D "NDEBUG" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "UNICODE" /D "_UNICODE" /D "_MBCS" /D "NO_ZIPINFO" /YX /M$(CECrtMT) /c
+MTL=midl.exe
+# ADD BASE MTL /nologo /D "NDEBUG" /mktyplib203 /o "NUL" /win32
+# ADD MTL /nologo /D "NDEBUG" /mktyplib203 /o "NUL" /win32
+BSC32=bscmake.exe
+# ADD BASE BSC32 /nologo
+# ADD BSC32 /nologo
+LINK32=link.exe
+# ADD BASE LINK32 commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /nodefaultlib:"$(CENoDefaultLib)" /subsystem:$(CESubsystem) /MACHINE:MIPS
+# ADD LINK32 commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /nodefaultlib:"$(CENoDefaultLib)" /subsystem:$(CESubsystem) /MACHINE:MIPS
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+# PROP BASE Use_MFC 0
+# PROP BASE Use_Debug_Libraries 1
+# PROP BASE Output_Dir "WMIPSDbg"
+# PROP BASE Intermediate_Dir "WMIPSDbg\ConBuild"
+# PROP BASE CPU_ID "{D6519010-710F-11D3-99F2-00105A0DF099}"
+# PROP BASE Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP BASE Target_Dir ""
+# PROP Use_MFC 0
+# PROP Use_Debug_Libraries 1
+# PROP Output_Dir "WMIPSDbg"
+# PROP Intermediate_Dir "WMIPSDbg\ConBuild"
+# PROP CPU_ID "{D6519010-710F-11D3-99F2-00105A0DF099}"
+# PROP Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP Target_Dir ""
+RSC=rc.exe
+# ADD BASE RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "DEBUG" /d "$(CePlatform)" /d "MIPS" /d "_MIPS_" /r
+# ADD RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "DEBUG" /d "$(CePlatform)" /d "MIPS" /d "_MIPS_" /r
+CPP=clmips.exe
+# ADD BASE CPP /nologo /W3 /Zi /Od /D "DEBUG" /D "MIPS" /D "_MIPS_" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "UNICODE" /D "_UNICODE" /YX /M$(CECrtMTDebug) /c
+# ADD CPP /nologo /W3 /Zi /Od /I "../.." /I "../../wince/inc" /D "DEBUG" /D "MIPS" /D "_MIPS_" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "UNICODE" /D "_UNICODE" /D "_MBCS" /D "NO_ZIPINFO" /YX /M$(CECrtMTDebug) /c
+MTL=midl.exe
+# ADD BASE MTL /nologo /D "_DEBUG" /mktyplib203 /o "NUL" /win32
+# ADD MTL /nologo /D "_DEBUG" /mktyplib203 /o "NUL" /win32
+BSC32=bscmake.exe
+# ADD BASE BSC32 /nologo
+# ADD BSC32 /nologo
+LINK32=link.exe
+# ADD BASE LINK32 commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /debug /nodefaultlib:"$(CENoDefaultLib)" /subsystem:$(CESubsystem) /MACHINE:MIPS
+# ADD LINK32 commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /debug /nodefaultlib:"$(CENoDefaultLib)" /subsystem:$(CESubsystem) /MACHINE:MIPS
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+# PROP BASE Use_MFC 0
+# PROP BASE Use_Debug_Libraries 0
+# PROP BASE Output_Dir "WSH4Rel"
+# PROP BASE Intermediate_Dir "WSH4Rel\ConBuild"
+# PROP BASE CPU_ID "{D6519021-710F-11D3-99F2-00105A0DF099}"
+# PROP BASE Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP BASE Target_Dir ""
+# PROP Use_MFC 0
+# PROP Use_Debug_Libraries 0
+# PROP Output_Dir "WSH4Rel"
+# PROP Intermediate_Dir "WSH4Rel\ConBuild"
+# PROP CPU_ID "{D6519021-710F-11D3-99F2-00105A0DF099}"
+# PROP Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP Ignore_Export_Lib 0
+# PROP Target_Dir ""
+RSC=rc.exe
+# ADD BASE RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "NDEBUG" /d "UNICODE" /d "_UNICODE" /d "$(CePlatform)" /d "SHx" /d "SH4" /d "_SH4_" /r
+# ADD RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "NDEBUG" /d "UNICODE" /d "_UNICODE" /d "$(CePlatform)" /d "SHx" /d "SH4" /d "_SH4_" /r
+CPP=shcl.exe
+# ADD BASE CPP /nologo /W3 /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "SHx" /D "SH4" /D "_SH4_" /D UNDER_CE=$(CEVersion) /D "UNICODE" /D "_UNICODE" /D "NDEBUG" /YX /Qsh4 /Oxs /M$(CECrtMT) /c
+# ADD CPP /nologo /W3 /Ox /Os /I "../.." /I "../../wince/inc" /D "SHx" /D "SH4" /D "_SH4_" /D "NDEBUG" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "UNICODE" /D "_UNICODE" /D "_MBCS" /D "NO_ZIPINFO" /YX /Qsh4 /M$(CECrtMT) /c
+MTL=midl.exe
+# ADD BASE MTL /nologo /D "NDEBUG" /mktyplib203 /o "NUL" /win32
+# ADD MTL /nologo /D "NDEBUG" /mktyplib203 /o "NUL" /win32
+BSC32=bscmake.exe
+# ADD BASE BSC32 /nologo
+# ADD BSC32 /nologo
+LINK32=link.exe
+# ADD BASE LINK32 commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /nodefaultlib:"$(CENoDefaultLib)" /subsystem:$(CESubsystem) /MACHINE:SH4
+# ADD LINK32 commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /nodefaultlib:"$(CENoDefaultLib)" /subsystem:$(CESubsystem) /MACHINE:SH4
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+# PROP BASE Use_MFC 0
+# PROP BASE Use_Debug_Libraries 1
+# PROP BASE Output_Dir "WSH4Dbg"
+# PROP BASE Intermediate_Dir "WSH4Dbg\ConBuild"
+# PROP BASE CPU_ID "{D6519021-710F-11D3-99F2-00105A0DF099}"
+# PROP BASE Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP BASE Target_Dir ""
+# PROP Use_MFC 0
+# PROP Use_Debug_Libraries 1
+# PROP Output_Dir "WSH4Dbg"
+# PROP Intermediate_Dir "WSH4Dbg\ConBuild"
+# PROP CPU_ID "{D6519021-710F-11D3-99F2-00105A0DF099}"
+# PROP Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP Target_Dir ""
+RSC=rc.exe
+# ADD BASE RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "DEBUG" /d "UNICODE" /d "_UNICODE" /d "$(CePlatform)" /d "SHx" /d "SH4" /d "_SH4_" /r
+# ADD RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "DEBUG" /d "UNICODE" /d "_UNICODE" /d "$(CePlatform)" /d "SHx" /d "SH4" /d "_SH4_" /r
+CPP=shcl.exe
+# ADD BASE CPP /nologo /W3 /Zi /Od /D "DEBUG" /D "SHx" /D "SH4" /D "_SH4_" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "UNICODE" /D "_UNICODE" /YX /Qsh4 /M$(CECrtMTDebug) /c
+# ADD CPP /nologo /W3 /Zi /Od /I "../.." /I "../../wince/inc" /D "DEBUG" /D "SHx" /D "SH4" /D "_SH4_" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "UNICODE" /D "_UNICODE" /D "_MBCS" /D "NO_ZIPINFO" /YX /Qsh4 /M$(CECrtMTDebug) /c
+MTL=midl.exe
+# ADD BASE MTL /nologo /D "_DEBUG" /mktyplib203 /o "NUL" /win32
+# ADD MTL /nologo /D "_DEBUG" /mktyplib203 /o "NUL" /win32
+BSC32=bscmake.exe
+# ADD BASE BSC32 /nologo
+# ADD BSC32 /nologo
+LINK32=link.exe
+# ADD BASE LINK32 commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /debug /nodefaultlib:"$(CENoDefaultLib)" /subsystem:$(CESubsystem) /MACHINE:SH4
+# ADD LINK32 commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /debug /nodefaultlib:"$(CENoDefaultLib)" /subsystem:$(CESubsystem) /MACHINE:SH4
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+# PROP BASE Use_MFC 0
+# PROP BASE Use_Debug_Libraries 0
+# PROP BASE Output_Dir "WSH3Rel"
+# PROP BASE Intermediate_Dir "WSH3Rel\ConBuild"
+# PROP BASE CPU_ID "{D6519020-710F-11D3-99F2-00105A0DF099}"
+# PROP BASE Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP BASE Target_Dir ""
+# PROP Use_MFC 0
+# PROP Use_Debug_Libraries 0
+# PROP Output_Dir "WSH3Rel"
+# PROP Intermediate_Dir "WSH3Rel\ConBuild"
+# PROP CPU_ID "{D6519020-710F-11D3-99F2-00105A0DF099}"
+# PROP Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP Target_Dir ""
+RSC=rc.exe
+# ADD BASE RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "NDEBUG" /d "$(CePlatform)" /d "SHx" /d "SH3" /d "_SH3_" /r
+# ADD RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "NDEBUG" /d "$(CePlatform)" /d "SHx" /d "SH3" /d "_SH3_" /r
+CPP=shcl.exe
+# ADD BASE CPP /nologo /W3 /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "SHx" /D "SH3" /D "_SH3_" /D UNDER_CE=$(CEVersion) /D "UNICODE" /D "_UNICODE" /D "NDEBUG" /YX /Oxs /M$(CECrtMT) /c
+# ADD CPP /nologo /W3 /Ox /Os /I "../.." /I "../../wince/inc" /D "SHx" /D "SH3" /D "_SH3_" /D "NDEBUG" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "UNICODE" /D "_UNICODE" /D "_MBCS" /D "NO_ZIPINFO" /YX /M$(CECrtMT) /c
+MTL=midl.exe
+# ADD BASE MTL /nologo /D "NDEBUG" /mktyplib203 /o "NUL" /win32
+# ADD MTL /nologo /D "NDEBUG" /mktyplib203 /o "NUL" /win32
+BSC32=bscmake.exe
+# ADD BASE BSC32 /nologo
+# ADD BSC32 /nologo
+LINK32=link.exe
+# ADD BASE LINK32 commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /nodefaultlib:"$(CENoDefaultLib)" /subsystem:$(CESubsystem) /MACHINE:SH3
+# ADD LINK32 commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /nodefaultlib:"$(CENoDefaultLib)" /subsystem:$(CESubsystem) /MACHINE:SH3
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+# PROP BASE Use_MFC 0
+# PROP BASE Use_Debug_Libraries 1
+# PROP BASE Output_Dir "WSH3Dbg"
+# PROP BASE Intermediate_Dir "WSH3Dbg\ConBuild"
+# PROP BASE CPU_ID "{D6519020-710F-11D3-99F2-00105A0DF099}"
+# PROP BASE Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP BASE Target_Dir ""
+# PROP Use_MFC 0
+# PROP Use_Debug_Libraries 1
+# PROP Output_Dir "WSH3Dbg"
+# PROP Intermediate_Dir "WSH3Dbg\ConBuild"
+# PROP CPU_ID "{D6519020-710F-11D3-99F2-00105A0DF099}"
+# PROP Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP Target_Dir ""
+RSC=rc.exe
+# ADD BASE RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "DEBUG" /d "$(CePlatform)" /d "SHx" /d "SH3" /d "_SH3_" /r
+# ADD RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "DEBUG" /d "$(CePlatform)" /d "SHx" /d "SH3" /d "_SH3_" /r
+CPP=shcl.exe
+# ADD BASE CPP /nologo /W3 /Zi /Od /D "DEBUG" /D "SHx" /D "SH3" /D "_SH3_" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "UNICODE" /D "_UNICODE" /YX /M$(CECrtMTDebug) /c
+# ADD CPP /nologo /W3 /Zi /Od /I "../.." /I "../../wince/inc" /D "DEBUG" /D "SHx" /D "SH3" /D "_SH3_" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "UNICODE" /D "_UNICODE" /D "_MBCS" /D "NO_ZIPINFO" /YX /M$(CECrtMTDebug) /c
+MTL=midl.exe
+# ADD BASE MTL /nologo /D "_DEBUG" /mktyplib203 /o "NUL" /win32
+# ADD MTL /nologo /D "_DEBUG" /mktyplib203 /o "NUL" /win32
+BSC32=bscmake.exe
+# ADD BASE BSC32 /nologo
+# ADD BSC32 /nologo
+LINK32=link.exe
+# ADD BASE LINK32 commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /debug /nodefaultlib:"$(CENoDefaultLib)" /subsystem:$(CESubsystem) /MACHINE:SH3
+# ADD LINK32 commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /debug /nodefaultlib:"$(CENoDefaultLib)" /subsystem:$(CESubsystem) /MACHINE:SH3
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+# PROP BASE Use_MFC 0
+# PROP BASE Use_Debug_Libraries 0
+# PROP BASE Output_Dir "ARMRel"
+# PROP BASE Intermediate_Dir "ARMRel\ConBuild"
+# PROP BASE CPU_ID "{D6518FFC-710F-11D3-99F2-00105A0DF099}"
+# PROP BASE Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP BASE Target_Dir ""
+# PROP Use_MFC 0
+# PROP Use_Debug_Libraries 0
+# PROP Output_Dir "ARMRel"
+# PROP Intermediate_Dir "ARMRel\ConBuild"
+# PROP CPU_ID "{D6518FFC-710F-11D3-99F2-00105A0DF099}"
+# PROP Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP Target_Dir ""
+RSC=rc.exe
+# ADD BASE RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "NDEBUG" /d "$(CePlatform)" /d "ARM" /d "_ARM_" /r
+# ADD RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "NDEBUG" /d "$(CePlatform)" /d "ARM" /d "_ARM_" /r
+CPP=clarm.exe
+# ADD BASE CPP /nologo /W3 /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "ARM" /D "_ARM_" /D UNDER_CE=$(CEVersion) /D "UNICODE" /D "_UNICODE" /D "NDEBUG" /YX /Oxs /M$(CECrtMT) /c
+# ADD CPP /nologo /W3 /Ox /Os /I "../.." /I "../../wince/inc" /D "ARM" /D "_ARM_" /D "NDEBUG" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "UNICODE" /D "_UNICODE" /D "_MBCS" /D "NO_ZIPINFO" /YX /M$(CECrtMT) /c
+MTL=midl.exe
+# ADD BASE MTL /nologo /D "NDEBUG" /mktyplib203 /o "NUL" /win32
+# ADD MTL /nologo /D "NDEBUG" /mktyplib203 /o "NUL" /win32
+BSC32=bscmake.exe
+# ADD BASE BSC32 /nologo
+# ADD BSC32 /nologo
+LINK32=link.exe
+# ADD BASE LINK32 commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /nodefaultlib:"$(CENoDefaultLib)" /subsystem:$(CESubsystem) /align:"4096" /MACHINE:ARM
+# ADD LINK32 commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /nodefaultlib:"$(CENoDefaultLib)" /subsystem:$(CESubsystem) /align:"4096" /MACHINE:ARM
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+# PROP BASE Use_MFC 0
+# PROP BASE Use_Debug_Libraries 1
+# PROP BASE Output_Dir "ARMDbg"
+# PROP BASE Intermediate_Dir "ARMDbg\ConBuild"
+# PROP BASE CPU_ID "{D6518FFC-710F-11D3-99F2-00105A0DF099}"
+# PROP BASE Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP BASE Target_Dir ""
+# PROP Use_MFC 0
+# PROP Use_Debug_Libraries 1
+# PROP Output_Dir "ARMDbg"
+# PROP Intermediate_Dir "ARMDbg\ConBuild"
+# PROP CPU_ID "{D6518FFC-710F-11D3-99F2-00105A0DF099}"
+# PROP Platform_ID "{8A9A2F80-6887-11D3-842E-005004848CBA}"
+# PROP Ignore_Export_Lib 0
+# PROP Target_Dir ""
+RSC=rc.exe
+# ADD BASE RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "DEBUG" /d "$(CePlatform)" /d "ARM" /d "_ARM_" /r
+# ADD RSC /l 0x409 /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "DEBUG" /d "$(CePlatform)" /d "ARM" /d "_ARM_" /r
+CPP=clarm.exe
+# ADD BASE CPP /nologo /W3 /Zi /Od /D "DEBUG" /D "ARM" /D "_ARM_" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "UNICODE" /D "_UNICODE" /YX /M$(CECrtMTDebug) /c
+# ADD CPP /nologo /W3 /Zi /Od /I "../.." /I "../../wince/inc" /D "DEBUG" /D "ARM" /D "_ARM_" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "UNICODE" /D "_UNICODE" /D "_MBCS" /D "NO_ZIPINFO" /YX /M$(CECrtMTDebug) /c
+MTL=midl.exe
+# ADD BASE MTL /nologo /D "_DEBUG" /mktyplib203 /o "NUL" /win32
+# ADD MTL /nologo /D "_DEBUG" /mktyplib203 /o "NUL" /win32
+BSC32=bscmake.exe
+# ADD BASE BSC32 /nologo
+# ADD BSC32 /nologo
+LINK32=link.exe
+# ADD BASE LINK32 commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /debug /nodefaultlib:"$(CENoDefaultLib)" /subsystem:$(CESubsystem) /align:"4096" /MACHINE:ARM
+# ADD LINK32 commctrl.lib coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /debug /nodefaultlib:"$(CENoDefaultLib)" /subsystem:$(CESubsystem) /align:"4096" /MACHINE:ARM
+
+!ENDIF 
+
+# Begin Target
+
+# Name "unzipcmd - Win32 (WCE x86em) Release"
+# Name "unzipcmd - Win32 (WCE x86em) Debug"
+# Name "unzipcmd - Win32 (WCE MIPS) Release"
+# Name "unzipcmd - Win32 (WCE MIPS) Debug"
+# Name "unzipcmd - Win32 (WCE SH4) Release"
+# Name "unzipcmd - Win32 (WCE SH4) Debug"
+# Name "unzipcmd - Win32 (WCE SH3) Release"
+# Name "unzipcmd - Win32 (WCE SH3) Debug"
+# Name "unzipcmd - Win32 (WCE ARM) Release"
+# Name "unzipcmd - Win32 (WCE ARM) Debug"
+# Begin Group "Source Files"
+
+# PROP Default_Filter "cpp;c;cxx;rc;def;r;odl;idl;hpj;bat"
+# Begin Source File
+
+SOURCE=..\..\crc32.c
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_CRC32=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRC32=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_CRC32=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRC32=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_CRC32=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRC32=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_CRC32=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRC32=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_CRC32=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRC32=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_CRC32=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRC32=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_CRC32=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRC32=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_CRC32=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRC32=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_CRC32=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRC32=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_CRC32=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRC32=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\crypt.c
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_CRYPT=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRYPT=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_CRYPT=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRYPT=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_CRYPT=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRYPT=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_CRYPT=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRYPT=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_CRYPT=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRYPT=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_CRYPT=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRYPT=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_CRYPT=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRYPT=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_CRYPT=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRYPT=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_CRYPT=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRYPT=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_CRYPT=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_CRYPT=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\explode.c
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_EXPLO=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXPLO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_EXPLO=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXPLO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_EXPLO=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXPLO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_EXPLO=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXPLO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_EXPLO=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXPLO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_EXPLO=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXPLO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_EXPLO=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXPLO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_EXPLO=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXPLO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_EXPLO=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXPLO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_EXPLO=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXPLO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\extract.c
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_EXTRA=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXTRA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_EXTRA=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXTRA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_EXTRA=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXTRA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_EXTRA=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXTRA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_EXTRA=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXTRA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_EXTRA=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXTRA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_EXTRA=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXTRA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_EXTRA=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXTRA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_EXTRA=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXTRA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_EXTRA=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_EXTRA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\fileio.c
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_FILEI=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\ebcdic.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_FILEI=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\charconv.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_FILEI=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\ebcdic.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_FILEI=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\charconv.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_FILEI=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\ebcdic.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_FILEI=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\charconv.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_FILEI=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\ebcdic.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_FILEI=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\charconv.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_FILEI=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\ebcdic.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_FILEI=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\charconv.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_FILEI=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\ebcdic.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_FILEI=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\charconv.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_FILEI=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\ebcdic.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_FILEI=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\charconv.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_FILEI=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\ebcdic.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_FILEI=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\charconv.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_FILEI=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\ebcdic.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_FILEI=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\charconv.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_FILEI=\
+	"..\..\crc32.h"\
+	"..\..\crypt.h"\
+	"..\..\ebcdic.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_FILEI=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\charconv.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\globals.c
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_GLOBA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_GLOBA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_GLOBA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_GLOBA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_GLOBA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_GLOBA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_GLOBA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_GLOBA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_GLOBA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_GLOBA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_GLOBA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_GLOBA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_GLOBA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_GLOBA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_GLOBA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_GLOBA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_GLOBA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_GLOBA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_GLOBA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_GLOBA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\inflate.c
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_INFLA=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\inflate.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_INFLA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_INFLA=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\inflate.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_INFLA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_INFLA=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\inflate.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_INFLA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_INFLA=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\inflate.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_INFLA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_INFLA=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\inflate.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_INFLA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_INFLA=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\inflate.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_INFLA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_INFLA=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\inflate.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_INFLA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_INFLA=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\inflate.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_INFLA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_INFLA=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\inflate.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_INFLA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_INFLA=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\inflate.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_INFLA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\intrface.cpp
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_INTRF=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	"..\winmain.h"\
+	
+NODEP_CPP_INTRF=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_INTRF=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	"..\winmain.h"\
+	
+NODEP_CPP_INTRF=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_INTRF=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	"..\winmain.h"\
+	
+NODEP_CPP_INTRF=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_INTRF=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	"..\winmain.h"\
+	
+NODEP_CPP_INTRF=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_INTRF=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	"..\winmain.h"\
+	
+NODEP_CPP_INTRF=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_INTRF=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	"..\winmain.h"\
+	
+NODEP_CPP_INTRF=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_INTRF=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	"..\winmain.h"\
+	
+NODEP_CPP_INTRF=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_INTRF=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	"..\winmain.h"\
+	
+NODEP_CPP_INTRF=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_INTRF=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	"..\winmain.h"\
+	
+NODEP_CPP_INTRF=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_INTRF=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	"..\winmain.h"\
+	
+NODEP_CPP_INTRF=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\list.c
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_LIST_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_LIST_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_LIST_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_LIST_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_LIST_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_LIST_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_LIST_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_LIST_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_LIST_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_LIST_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_LIST_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_LIST_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_LIST_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_LIST_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_LIST_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_LIST_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_LIST_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_LIST_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_LIST_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_LIST_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\match.c
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_MATCH=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_MATCH=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_MATCH=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_MATCH=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_MATCH=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_MATCH=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_MATCH=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_MATCH=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_MATCH=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_MATCH=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_MATCH=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_MATCH=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_MATCH=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_MATCH=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_MATCH=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_MATCH=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_MATCH=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_MATCH=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_MATCH=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_MATCH=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\process.c
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_PROCE=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_PROCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_PROCE=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_PROCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_PROCE=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_PROCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_PROCE=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_PROCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_PROCE=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_PROCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_PROCE=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_PROCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_PROCE=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_PROCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_PROCE=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_PROCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_PROCE=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_PROCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_PROCE=\
+	"..\..\crc32.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_PROCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\ttyio.c
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_TTYIO=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_TTYIO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_TTYIO=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_TTYIO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_TTYIO=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_TTYIO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_TTYIO=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_TTYIO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_TTYIO=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_TTYIO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_TTYIO=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_TTYIO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_TTYIO=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_TTYIO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_TTYIO=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_TTYIO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_TTYIO=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_TTYIO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_TTYIO=\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\ttyio.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\..\zip.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_TTYIO=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\ubz2err.c
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_UBZ2ERR_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UBZ2ERR_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_UBZ2ERR_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UBZ2ERR_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_UBZ2ERR_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UBZ2ERR_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_UBZ2ERR_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UBZ2ERR_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_UBZ2ERR_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UBZ2ERR_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_UBZ2ERR_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UBZ2ERR_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_UBZ2ERR_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UBZ2ERR_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_UBZ2ERR_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UBZ2ERR_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_UBZ2ERR_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UBZ2ERR_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_UBZ2ERR_=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\decs.h"\
+	"..\..\windll\structs.h"\
+	"..\..\windll\windll.h"\
+	"..\intrface.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UBZ2ERR_=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\unreduce.c
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_UNRED=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNRED=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_UNRED=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNRED=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_UNRED=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNRED=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_UNRED=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNRED=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_UNRED=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNRED=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_UNRED=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNRED=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_UNRED=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNRED=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_UNRED=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNRED=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_UNRED=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNRED=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_UNRED=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNRED=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\unshrink.c
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_UNSHR=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNSHR=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_UNSHR=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNSHR=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_UNSHR=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNSHR=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_UNSHR=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNSHR=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_UNSHR=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNSHR=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_UNSHR=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNSHR=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_UNSHR=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNSHR=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_UNSHR=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNSHR=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_UNSHR=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNSHR=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_UNSHR=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNSHR=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\unzip.c
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_UNZIP=\
+	"..\..\consts.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNZIP=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_UNZIP=\
+	"..\..\consts.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNZIP=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_UNZIP=\
+	"..\..\consts.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNZIP=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_UNZIP=\
+	"..\..\consts.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNZIP=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_UNZIP=\
+	"..\..\consts.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNZIP=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_UNZIP=\
+	"..\..\consts.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNZIP=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_UNZIP=\
+	"..\..\consts.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNZIP=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_UNZIP=\
+	"..\..\consts.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNZIP=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_UNZIP=\
+	"..\..\consts.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNZIP=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_UNZIP=\
+	"..\..\consts.h"\
+	"..\..\crypt.h"\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_UNZIP=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\wcemain.c
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_WCEMA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WCEMA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_WCEMA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WCEMA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_WCEMA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WCEMA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_WCEMA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WCEMA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_WCEMA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WCEMA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_WCEMA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WCEMA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_WCEMA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WCEMA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_WCEMA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WCEMA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_WCEMA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WCEMA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_WCEMA=\
+	"..\..\globals.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WCEMA=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=..\wince.cpp
+
+!IF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Release"
+
+DEP_CPP_WINCE=\
+	"..\..\globals.h"\
+	"..\..\timezone.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WINCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE x86em) Debug"
+
+DEP_CPP_WINCE=\
+	"..\..\globals.h"\
+	"..\..\timezone.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WINCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Release"
+
+DEP_CPP_WINCE=\
+	"..\..\globals.h"\
+	"..\..\timezone.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WINCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE MIPS) Debug"
+
+DEP_CPP_WINCE=\
+	"..\..\globals.h"\
+	"..\..\timezone.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WINCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Release"
+
+DEP_CPP_WINCE=\
+	"..\..\globals.h"\
+	"..\..\timezone.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WINCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH4) Debug"
+
+DEP_CPP_WINCE=\
+	"..\..\globals.h"\
+	"..\..\timezone.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WINCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Release"
+
+DEP_CPP_WINCE=\
+	"..\..\globals.h"\
+	"..\..\timezone.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WINCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE SH3) Debug"
+
+DEP_CPP_WINCE=\
+	"..\..\globals.h"\
+	"..\..\timezone.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WINCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Release"
+
+DEP_CPP_WINCE=\
+	"..\..\globals.h"\
+	"..\..\timezone.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WINCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ELSEIF  "$(CFG)" == "unzipcmd - Win32 (WCE ARM) Debug"
+
+DEP_CPP_WINCE=\
+	"..\..\globals.h"\
+	"..\..\timezone.h"\
+	"..\..\unzip.h"\
+	"..\..\unzpriv.h"\
+	"..\..\unzvers.h"\
+	"..\..\windll\structs.h"\
+	"..\punzip.h"\
+	"..\punzip.rcv"\
+	"..\wcecfg.h"\
+	"..\wince.h"\
+	
+NODEP_CPP_WINCE=\
+	"..\..\acorn\riscos.h"\
+	"..\..\amiga\amiga.h"\
+	"..\..\aosvs\aosvs.h"\
+	"..\..\flexos\flxcfg.h"\
+	"..\..\maccfg.h"\
+	"..\..\msdos\doscfg.h"\
+	"..\..\netware\nlmcfg.h"\
+	"..\..\os2\os2cfg.h"\
+	"..\..\os2\os2data.h"\
+	"..\..\qdos\izqdos.h"\
+	"..\..\tandem.h"\
+	"..\..\theos\thscfg.h"\
+	"..\..\unix\unxcfg.h"\
+	"..\..\vmmvs.h"\
+	"..\..\win32\w32cfg.h"\
+	"..\..\zlib.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# End Group
+# Begin Group "Header Files"
+
+# PROP Default_Filter "h;hpp;hxx;hm;inl"
+# Begin Source File
+
+SOURCE=..\..\consts.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\crc32.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\crypt.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\globals.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\inflate.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\intrface.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\ttyio.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\unzip.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\unzpriv.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\unzvers.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\wcecfg.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\wince.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\zip.h
+# End Source File
+# End Group
+# Begin Group "Resource Files"
+
+# PROP Default_Filter "ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe"
+# End Group
+# End Target
+# End Project

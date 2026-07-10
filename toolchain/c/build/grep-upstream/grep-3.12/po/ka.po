@@ -1,0 +1,831 @@
+# Georgian translation for grep
+# Copyright (C) 2023 Free Software Foundation, Inc.
+# This file is distributed under the same license as the grep package.
+# Temuri Doghonadze <temuri.doghonadze@gmail.com>, 2023
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: grep 3.10.12\n"
+"Report-Msgid-Bugs-To: bug-grep@gnu.org\n"
+"POT-Creation-Date: 2025-04-10 09:02-0700\n"
+"PO-Revision-Date: 2023-04-21 16:25+0200\n"
+"Last-Translator: Temuri Doghonadze <temuri.doghonadze@gmail.com>\n"
+"Language-Team: Georgian <(nothing)>\n"
+"Language: ka\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"X-Bugs: Report translation errors to the Language-Team address.\n"
+"X-Generator: Poedit 3.2.2\n"
+
+#: lib/argmatch.c:145
+#, c-format
+msgid "invalid argument %s for %s"
+msgstr "%s არასწორი არგუმენტია %s-თვის"
+
+#: lib/argmatch.c:146
+#, c-format
+msgid "ambiguous argument %s for %s"
+msgstr "%s გაურკვეველი არგუმენტია %s-თვის"
+
+#: lib/argmatch.c:165 lib/argmatch.h:242
+msgid "Valid arguments are:"
+msgstr "სწორი არგუმენტებია:"
+
+#: lib/c-stack.c:190
+msgid "program error"
+msgstr "პროგრამის შეცდომა"
+
+#: lib/c-stack.c:191
+msgid "stack overflow"
+msgstr "სტეკის გადავსება"
+
+#: lib/closeout.c:121 src/grep.c:1352
+msgid "write error"
+msgstr "ჩაწერის შეცდომა"
+
+#: lib/dfa.c:910
+msgid "unbalanced ["
+msgstr "დაუბალანსებელი ["
+
+#: lib/dfa.c:1031
+msgid "invalid character class"
+msgstr "სიმბოლოების არასწორი კლასი"
+
+#: lib/dfa.c:1159
+msgid "character class syntax is [[:space:]], not [:space:]"
+msgstr "სიმბოლოების კლასის სწორი სინტაქსია [[:space:]] და არა [:space:]"
+
+#: lib/dfa.c:1234
+msgid "unfinished \\ escape"
+msgstr "დაუსრულებელი დასრულების სიმბოლო \\"
+
+#: lib/dfa.c:1344
+msgid "? at start of expression"
+msgstr "? გამოსახულების დასაწყისში"
+
+#: lib/dfa.c:1356
+msgid "* at start of expression"
+msgstr "* გამოსახულების დასაწყისში"
+
+#: lib/dfa.c:1370
+msgid "+ at start of expression"
+msgstr "+ გამოსახულების დასაწყისში"
+
+#: lib/dfa.c:1425
+msgid "{...} at start of expression"
+msgstr "{...} გამოსახულების დასაწყისში"
+
+#: lib/dfa.c:1428
+msgid "invalid content of \\{\\}"
+msgstr "\\{\\}-ის არასწორი შემცველობა"
+
+#: lib/dfa.c:1430
+msgid "regular expression too big"
+msgstr "რეგულარული გამოსახულება ძალიან დიდია"
+
+#: lib/dfa.c:1580
+msgid "stray \\ before unprintable character"
+msgstr "უცხო \\ დაუბეჭდავად  სიმბოლომდე"
+
+#: lib/dfa.c:1582
+msgid "stray \\ before white space"
+msgstr "უცხო \\ თეთრ გამოტოვებამდე"
+
+#: lib/dfa.c:1593
+#, fuzzy, c-format
+msgid "stray \\ before %s"
+msgstr "უცხო \\ %lc-მდე"
+
+#: lib/dfa.c:1594 lib/dfa.c:1597
+msgid "stray \\"
+msgstr "უცხო \\"
+
+#: lib/dfa.c:1948
+msgid "unbalanced ("
+msgstr "დაუბალანსებელი ("
+
+#: lib/dfa.c:2065
+msgid "no syntax specified"
+msgstr "სინტაქსი მითითებული არაა"
+
+#: lib/dfa.c:2076
+msgid "unbalanced )"
+msgstr "დაუბალანსებელი )"
+
+#: lib/error.c:208
+msgid "Unknown system error"
+msgstr "სისტემის უცნობი შეცდომა"
+
+#: lib/getopt.c:282
+#, c-format
+msgid "%s: option '%s%s' is ambiguous\n"
+msgstr "%s: პარამეტრი '%s%s' გაურკვეველია\n"
+
+#: lib/getopt.c:288
+#, c-format
+msgid "%s: option '%s%s' is ambiguous; possibilities:"
+msgstr "%s: პარამეტრი '%s%s' გაურკვეველია; შესაძლო ვარიანტები:"
+
+#: lib/getopt.c:322
+#, c-format
+msgid "%s: unrecognized option '%s%s'\n"
+msgstr "%s: უცნობი პარამეტრი '%s'%s'\n"
+
+#: lib/getopt.c:348
+#, c-format
+msgid "%s: option '%s%s' doesn't allow an argument\n"
+msgstr "%s: პარამეტრს \"%s%s' არგუმენტი არ სჭირდება\n"
+
+#: lib/getopt.c:363
+#, c-format
+msgid "%s: option '%s%s' requires an argument\n"
+msgstr "%s: პარამეტრს \"%s%s\" არგუმენტი ესაჭიროება\n"
+
+#: lib/getopt.c:624
+#, c-format
+msgid "%s: invalid option -- '%c'\n"
+msgstr "%s: არასწორი პარამეტრი -- '%c'\n"
+
+#: lib/getopt.c:639 lib/getopt.c:685
+#, c-format
+msgid "%s: option requires an argument -- '%c'\n"
+msgstr "%s: პარამეტრს ესაჭიროება არგუმენტი -- '%c'\n"
+
+#: lib/obstack.c:320 lib/obstack.c:322 lib/xalloc-die.c:34
+msgid "memory exhausted"
+msgstr "მეხსიერება გადავსებულია"
+
+#: lib/openat-die.c:38
+msgid "unable to record current working directory"
+msgstr "მიმდინარე საქაღალდის ჩაწერა შეუძლებელია"
+
+#: lib/openat-die.c:57
+msgid "failed to return to initial working directory"
+msgstr "საწყისი საქაღალდის დაბრუნების შეცდომა"
+
+#: lib/xbinary-io.c:36
+#, c-format
+msgid "failed to set file descriptor text/binary mode"
+msgstr "ფაილის დესკრიპტორის ტექსტური/ბინარული რეჟიმის დაყენების შეცდომა"
+
+#. TRANSLATORS:
+#. Get translations for open and closing quotation marks.
+#. The message catalog should translate "`" to a left
+#. quotation mark suitable for the locale, and similarly for
+#. "'".  For example, a French Unicode local should translate
+#. these to U+00AB (LEFT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), and U+00BB (RIGHT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), respectively.
+#.
+#. If the catalog has no translation, we will try to
+#. use Unicode U+2018 (LEFT SINGLE QUOTATION MARK) and
+#. Unicode U+2019 (RIGHT SINGLE QUOTATION MARK).  If the
+#. current locale is not Unicode, locale_quoting_style
+#. will quote 'like this', and clocale_quoting_style will
+#. quote "like this".  You should always include translations
+#. for "`" and "'" even if U+2018 and U+2019 are appropriate
+#. for your locale.
+#.
+#. If you don't know what to put here, please see
+#. <https://en.wikipedia.org/wiki/Quotation_marks_in_other_languages>
+#. and use glyphs suitable for your language.
+#: lib/quotearg.c:354
+msgid "`"
+msgstr "`"
+
+#: lib/quotearg.c:355
+msgid "'"
+msgstr "'"
+
+#: lib/regcomp.c:122
+msgid "Success"
+msgstr "წარმატება"
+
+#: lib/regcomp.c:125
+msgid "No match"
+msgstr "არ ემთხვევა"
+
+#: lib/regcomp.c:128
+msgid "Invalid regular expression"
+msgstr "არასწორი რეგულარული გამოსახულება"
+
+#: lib/regcomp.c:131
+msgid "Invalid collation character"
+msgstr "კოლაციის არასწორი სიმბოლო"
+
+#: lib/regcomp.c:134
+msgid "Invalid character class name"
+msgstr "სიმბოლოების არასწორი კლასი"
+
+#: lib/regcomp.c:137
+msgid "Trailing backslash"
+msgstr "ბოლო Backslash"
+
+#: lib/regcomp.c:140
+msgid "Invalid back reference"
+msgstr "არასწორი უკუბმა"
+
+#: lib/regcomp.c:143
+msgid "Unmatched [, [^, [:, [., or [="
+msgstr "არ ემთხვევა [, [^, [:, [., ან [="
+
+#: lib/regcomp.c:146
+msgid "Unmatched ( or \\("
+msgstr "არ ემთხვევა ( ან \\("
+
+#: lib/regcomp.c:149
+msgid "Unmatched \\{"
+msgstr "არ ემთხვევა \\{"
+
+#: lib/regcomp.c:152
+msgid "Invalid content of \\{\\}"
+msgstr "\\{\\}-ის არასწორი შემცელობა"
+
+#: lib/regcomp.c:155
+msgid "Invalid range end"
+msgstr "დიაპაზონის არასწორი დასასრული"
+
+#: lib/regcomp.c:158
+msgid "Memory exhausted"
+msgstr "მეხსიერება გადავსებულია"
+
+#: lib/regcomp.c:161
+msgid "Invalid preceding regular expression"
+msgstr "რეგულარული გამოსახულების არასწორი საწყისი"
+
+#: lib/regcomp.c:164
+msgid "Premature end of regular expression"
+msgstr "რეგულარული გამოსახულების მოულოდნელი დასასრული"
+
+#: lib/regcomp.c:167
+msgid "Regular expression too big"
+msgstr "რეგულარული გამოსახულება ძალიან დიდია"
+
+#: lib/regcomp.c:170
+msgid "Unmatched ) or \\)"
+msgstr "არ ემთხვევა ) ან \\)"
+
+#: lib/regcomp.c:650
+msgid "No previous regular expression"
+msgstr "წინა რეგულარული გამოსახულება არ არსებობს"
+
+#: lib/version-etc.c:73
+#, c-format
+msgid "Packaged by %s (%s)\n"
+msgstr "აწყობილია %s-ის მიერ (%s)\n"
+
+#: lib/version-etc.c:76
+#, c-format
+msgid "Packaged by %s\n"
+msgstr "აწყობილია %s-ის მიერ\n"
+
+#. TRANSLATORS: Translate "(C)" to the copyright symbol
+#. (C-in-a-circle), if this symbol is available in the user's
+#. locale.  Otherwise, do not translate "(C)"; leave it as-is.
+#: lib/version-etc.c:83
+msgid "(C)"
+msgstr "(C)"
+
+#. TRANSLATORS: The %s placeholder is the web address of the GPL license.
+#: lib/version-etc.c:88
+#, c-format
+msgid ""
+"License GPLv3+: GNU GPL version 3 or later <%s>.\n"
+"This is free software: you are free to change and redistribute it.\n"
+"There is NO WARRANTY, to the extent permitted by law.\n"
+msgstr ""
+"License GPLv3+: GNU GPL version 3 or later <%s>.\n"
+"This is free software: you are free to change and redistribute it.\n"
+"There is NO WARRANTY, to the extent permitted by law.\n"
+
+#. TRANSLATORS: %s denotes an author name.
+#: lib/version-etc.c:105
+#, c-format
+msgid "Written by %s.\n"
+msgstr "ავტორი: %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:109
+#, c-format
+msgid "Written by %s and %s.\n"
+msgstr "ავტორები: %s და %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:113
+#, c-format
+msgid "Written by %s, %s, and %s.\n"
+msgstr "ავტორები: %s, %s და %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:120
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+"ავტორები: %s, %s, %s\n"
+"და %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:127
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+"ავტორები: %s, %s, %s,\n"
+"%s და %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:134
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, and %s.\n"
+msgstr ""
+"ავტორები: %s, %s, %s,\n"
+"%s, %s და %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:142
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, and %s.\n"
+msgstr ""
+"ავტორები: %s, %s, %s,\n"
+"%s, %s, %s და %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:150
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+"ავტორები: %s, %s, %s,\n"
+"%s, %s, %s, %s\n"
+"და %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:159
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+"ავტორები: %s, %s, %s,\n"
+"%s, %s, %s, %s\n"
+"%s და %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:170
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, %s, and others.\n"
+msgstr ""
+"ავტორები: %s, %s, %s,\n"
+"%s, %s, %s, %s\n"
+"%s, %s და სხვ.\n"
+
+#. TRANSLATORS: The placeholder indicates the bug-reporting address
+#. for this package.  Please add _another line_ saying
+#. "Report translation bugs to <...>\n" with the address for translation
+#. bugs (typically your translation team's web or email address).
+#: lib/version-etc.c:249
+#, c-format
+msgid "Report bugs to: %s\n"
+msgstr "შეცდომების შესახებ მიწერეთ: %s\n"
+
+#: lib/version-etc.c:251
+#, c-format
+msgid "Report %s bugs to: %s\n"
+msgstr "%s-ის შეცდომების შესახებ მისაწერი ელფოსტა: %s\n"
+
+#: lib/version-etc.c:255 lib/version-etc.c:257
+#, c-format
+msgid "%s home page: <%s>\n"
+msgstr "%s-ის საწყისი გვერდია: <%s>\n"
+
+#: lib/version-etc.c:260
+#, c-format
+msgid "General help using GNU software: <%s>\n"
+msgstr "GNU-ის პროგრამული უზრუნველყოფის საერთო დახმარება: <%s >\n"
+
+#: src/dfasearch.c:57
+#, c-format
+msgid "warning: %s"
+msgstr "გაფრთხილება: %s"
+
+#: src/grep.c:657
+msgid "(standard input)"
+msgstr "(სტანდარტული შეტანა)"
+
+#: src/grep.c:838
+msgid "invalid context length argument"
+msgstr "კონტექსტის სიგრძის არასწორი არგუმენტი"
+
+#: src/grep.c:911
+msgid "input is too large to count"
+msgstr "შეტანილი დათვლისთვის ძალიან დიდია"
+
+#: src/grep.c:1656
+#, c-format
+msgid "%s: binary file matches"
+msgstr "%s: ემთხვევა ბინარული ფაილი"
+
+#: src/grep.c:1694
+#, c-format
+msgid "%s: warning: recursive directory loop"
+msgstr "%s: ყურადღებით: საქაღალდეების რეკურსიული მარყუჟი"
+
+#: src/grep.c:1914
+#, c-format
+msgid "%s: input file is also the output"
+msgstr "%s: შეტანის ფაილი ასევე გამოსატანიცაა"
+
+#: src/grep.c:1976 src/grep.c:1983
+#, c-format
+msgid "Usage: %s [OPTION]... PATTERNS [FILE]...\n"
+msgstr "გამოყენება: %s {პარამეტრი]... შაბლონები [ფაილი]...\n"
+
+#: src/grep.c:1978
+#, c-format
+msgid "Try '%s --help' for more information.\n"
+msgstr "მეტი ინფორმაციისთვის სცადეთ '%s --help'\n"
+
+#: src/grep.c:1984
+#, c-format
+msgid "Search for PATTERNS in each FILE.\n"
+msgstr "შაბლონების ძებნა თითოეულ ფაილში.\n"
+
+#: src/grep.c:1985
+#, c-format
+msgid ""
+"Example: %s -i 'hello world' menu.h main.c\n"
+"PATTERNS can contain multiple patterns separated by newlines.\n"
+"\n"
+"Pattern selection and interpretation:\n"
+msgstr ""
+"მაგალითად: %s -I \"hello world\" menu.h main.c\n"
+"შაბლონები შეიძლება კარეტის გადატანით გამოყოფილ ბევრ ხაზსაც შეიცავდეს\n"
+"\n"
+"შაბლონების არჩევანი და ინტერპრეტაცია:\n"
+
+#: src/grep.c:1990
+#, c-format
+msgid ""
+"  -E, --extended-regexp     PATTERNS are extended regular expressions\n"
+"  -F, --fixed-strings       PATTERNS are strings\n"
+"  -G, --basic-regexp        PATTERNS are basic regular expressions\n"
+"  -P, --perl-regexp         PATTERNS are Perl regular expressions\n"
+msgstr ""
+"  -E, --extended-regexp    შაბლონები გაფართოვდება რეგულარული "
+"გამოსახულებებებით\n"
+"  -F, --fixed-strings     შაბლონები სტრიქონებს წარმოადგენენ\n"
+"  -G, --basic-regexp    შაბლონები მარტივ რეგულარული გამოსახულებებია\n"
+"  -P, --perl-regexp      შაბლონები პერლის რეგულარული გამოსახულებებია\n"
+
+#: src/grep.c:1996
+#, c-format
+msgid ""
+"  -e, --regexp=PATTERNS     use PATTERNS for matching\n"
+"  -f, --file=FILE           take PATTERNS from FILE\n"
+"  -i, --ignore-case         ignore case distinctions in patterns and data\n"
+"      --no-ignore-case      do not ignore case distinctions (default)\n"
+"  -w, --word-regexp         match only whole words\n"
+"  -x, --line-regexp         match only whole lines\n"
+"  -z, --null-data           a data line ends in 0 byte, not newline\n"
+msgstr ""
+"  -e, --regexp=შაბლონები    მოსაძებნად შაბლონების გამოყენება\n"
+"  -f, --file=ფაილი                     შაბლონების ფაილიდან აღება\n"
+"  -I, --ignore-case                      დიდი და პატარა ასოებს შორის "
+"სხვაობის იგნორი\n"
+"      --no-ignorecase                  დიდი და პატარა ასოებს შორის სხვაობის "
+"გათვალისწინება(ნაგულისხმები)\n"
+"  -w, --word-regexp                  მხოლოდ მთლიანი სიტყვების დამთხვევა\n"
+"  -x, --line-regexp                     მხოლოდ მთელი ხაზების დამთხვევის "
+"შემთხვევაში\n"
+"  -z, --null-data                         თუ მონაცემები ნულოვანი ბაიტით "
+"მთავრდება და არა ახალი ხაზით.\n"
+
+#: src/grep.c:2004
+#, c-format
+msgid ""
+"\n"
+"Miscellaneous:\n"
+"  -s, --no-messages         suppress error messages\n"
+"  -v, --invert-match        select non-matching lines\n"
+"  -V, --version             display version information and exit\n"
+"      --help                display this help text and exit\n"
+msgstr ""
+"\n"
+"სხვადასხვა:\n"
+"  -s, --no-messages    შეცდომის შეტყობინებების არ-ჩვენება\n"
+"  -v, --invert-match     მხოლოდ დაუმთხვეველი ხაზების ჩვენება\n"
+"  -V, --version             ვერსიის ინფორმაციის ჩვენება და გასვლა\n"
+"   --help                      ამ დახმარების ჩვენება და გასვლა\n"
+
+#: src/grep.c:2011
+#, c-format
+msgid ""
+"\n"
+"Output control:\n"
+"  -m, --max-count=NUM       stop after NUM selected lines\n"
+"  -b, --byte-offset         print the byte offset with output lines\n"
+"  -n, --line-number         print line number with output lines\n"
+"      --line-buffered       flush output on every line\n"
+"  -H, --with-filename       print file name with output lines\n"
+"  -h, --no-filename         suppress the file name prefix on output\n"
+"      --label=LABEL         use LABEL as the standard input file name "
+"prefix\n"
+msgstr ""
+"\n"
+"გამოტანის კონტროლი:\n"
+"  -m, --max-count=რიცხვი    მითითებული რაოდენობა ხაზების ჩვენების შემდეგ "
+"გაჩერება\n"
+"  -b --byte-offset                  ხაზის დასაწყისიდან ბაიტების წანაცვლების "
+"ჩვენება\n"
+"  -n, --line-number               გამოტანილი ინფორმაციის ხაზების დანომრვა\n"
+"       --line-buffered              გამოტანის ბუფერის ყოველი ხაზის შემდეგ "
+"წაშლა\n"
+"  -H, --with-filename           გამოტანილი ხაზების დასაწყისში ფაილის სახელის "
+"მითითება\n"
+"  -h, --no-filename              გამოტანილი ხაზების დასაწყისში ფაილის "
+"სახელის არ მითითება\n"
+"      --label=ჭდე                 სტანდარტული შეყვანის ფაილის სახელის "
+"პრეფიქსად ჭდის გამოყენება\n"
+
+#: src/grep.c:2022
+#, c-format
+msgid ""
+"  -o, --only-matching       show only nonempty parts of lines that match\n"
+"  -q, --quiet, --silent     suppress all normal output\n"
+"      --binary-files=TYPE   assume that binary files are TYPE;\n"
+"                            TYPE is 'binary', 'text', or 'without-match'\n"
+"  -a, --text                equivalent to --binary-files=text\n"
+msgstr ""
+"  -o, --only-matching       ნაპოვნი ხაზების მხოლოდ არაცარიელი ადგილების "
+"ჩვენება\n"
+"  -q, --quiet, --silent         ჩუმი რეჟიმი\n"
+"   --binary-files=ტიპი     მითითებული ბინარული ფაილის ტიპის ხელით მითითება;\n"
+"                  ტიპი შეიძლება იყოს \"binary\", \"text\" ან \"without-"
+"match\"\n"
+"  -a, --text                         იგივე, რაც --binary-files=text\n"
+
+#: src/grep.c:2029
+#, c-format
+msgid ""
+"  -I                        equivalent to --binary-files=without-match\n"
+"  -d, --directories=ACTION  how to handle directories;\n"
+"                            ACTION is 'read', 'recurse', or 'skip'\n"
+"  -D, --devices=ACTION      how to handle devices, FIFOs and sockets;\n"
+"                            ACTION is 'read' or 'skip'\n"
+"  -r, --recursive           like --directories=recurse\n"
+"  -R, --dereference-recursive  likewise, but follow all symlinks\n"
+msgstr ""
+"  -l                                            ექვივალენტურია --binary-"
+"files=without-match\n"
+"  -d, --directories=ქმედება  რა მოუვათ საქაღალდეებსლ\n"
+"                                                ქმედებაშეიძლება იყოს "
+"\"read\", \"recursive\" და \"skip\"\n"
+"  -D, --devices=ACTION         რა მოუვათ მოწყობილობებს, ფიფოებს და "
+"სოკეტებს;\n"
+"                                                ქმედება შეიძლება იყოს "
+"\"read\" ან \"skip\"\n"
+"  -r, --recursive                        იგივე, რაც --directories=recurse\n"
+"  -R, --dereference-recursive  იგივე, ოღონდ სიმბმულების მიყოლა\n"
+
+#: src/grep.c:2038
+#, c-format
+msgid ""
+"      --include=GLOB        search only files that match GLOB (a file "
+"pattern)\n"
+"      --exclude=GLOB        skip files that match GLOB\n"
+"      --exclude-from=FILE   skip files that match any file pattern from "
+"FILE\n"
+"      --exclude-dir=GLOB    skip directories that match GLOB\n"
+msgstr ""
+"      --include=შაბლონი     მხოლოდ იმ ფაილებში ძებნა, რომლის სახელიც შაბლონს "
+"ემთხვევა\n"
+"      --exclude=შაბლონი    იმ დაილებს გამოტოვება, რომლის სახელიც შაბლონს "
+"ემთხვევა\n"
+"      --exclude-from=ფაილი    იმ ფაილების გამოტოვება, რომლის სახელიც ფაილში "
+"აღწერილ ერთერთ შაბლონს ემთხვევა.\n"
+"      --exclude-dir=შაბლონი   იმ საქაღალდეების გამოტოვება, რომლებიც შაბლონს "
+"ემთხვევა\n"
+
+#: src/grep.c:2045
+#, c-format
+msgid ""
+"  -L, --files-without-match  print only names of FILEs with no selected "
+"lines\n"
+"  -l, --files-with-matches  print only names of FILEs with selected lines\n"
+"  -c, --count               print only a count of selected lines per FILE\n"
+"  -T, --initial-tab         make tabs line up (if needed)\n"
+"  -Z, --null                print 0 byte after FILE name\n"
+msgstr ""
+"  -L, --files-without-match     იმ ფაილების, რომლებიც არ შეიცავენ მითითებულ "
+"სტრიქონს, მხოლოდ სახელების გამოტანა\n"
+"  -l, --files-with-matches     იმ ფაილების, როლებიც შეიცავენ მითითებულ "
+"სტრიქონს, მხოლოდ სახელების გამოტანა\n"
+"  -c, --count     ფაილებიდან მხოლოდ მითითებული რაოდენობის ხაზების გამოტანა\n"
+"  -T, --initial-tab  საჭიროების შემთხვევაში სტრიქონების ჰარეებით შევსება\n"
+"  -Z, --null      ფაილის სახელის შემდეგ ნულოვანი ბაიტის დასმა\n"
+
+#: src/grep.c:2051
+#, c-format
+msgid ""
+"\n"
+"Context control:\n"
+"  -B, --before-context=NUM  print NUM lines of leading context\n"
+"  -A, --after-context=NUM   print NUM lines of trailing context\n"
+"  -C, --context=NUM         print NUM lines of output context\n"
+msgstr ""
+"\n"
+"კონტექსტის კონტროლი:\n"
+"  -B, --before-context=რიცხვი   კონტექსტის წინ მითითებული რაოდენობის ხაზების "
+"ჩასმა.\n"
+"  -A, --after-context=რიცხვი   კონტექსტის შემდეგ მითითებული რაოდენობის "
+"ხაზების ჩასმა\n"
+"  -C, --context=რიცხვი   კონტექსტის მითითებული რაოდენობის რიცხვის გამოტანა\n"
+
+#: src/grep.c:2058
+#, c-format
+msgid ""
+"  -NUM                      same as --context=NUM\n"
+"      --group-separator=SEP  print SEP on line between matches with context\n"
+"      --no-group-separator  do not print separator for matches with context\n"
+"      --color[=WHEN],\n"
+"      --colour[=WHEN]       use markers to highlight the matching strings;\n"
+"                            WHEN is 'always', 'never', or 'auto'\n"
+"  -U, --binary              do not strip CR characters at EOL (MSDOS/"
+"Windows)\n"
+"\n"
+msgstr ""
+"  -რიცხვი               იგივე, რაც --context=რიცხვი\n"
+"        --group-separator=გამყოფი    კონტექსტის ხაზებს შორის გამყოფი "
+"სიმბოლოს ჩასმა\n"
+"        --no-group-separator                 კონტექსტის ხაზებს შორის "
+"გამყოფის არ ჩასმა\n"
+"        --color=[როდის],\n"
+"        --colour=[როდის]                     დამთხვეული სტრიქონების "
+"გამოსაკვეთად ფერების გამოყენება\n"
+"                                       როდის შეიძლება იყოს \"always\", "
+"\"never\" და \"auto\"\n"
+"  -U, --binary                  არ მოაცილო CR სიმბოლო EOL-ის შემდეგ (MSDOS/"
+"Windows)\n"
+"\n"
+
+#: src/grep.c:2067
+#, fuzzy, c-format
+msgid ""
+"When FILE is '-', read standard input.  If no FILE is given, read standard\n"
+"input, but with -r, recursively search the working directory instead.  With\n"
+"fewer than two FILEs, assume -h.  Exit status is 0 if any line is selected,\n"
+"1 otherwise; if any error occurs and -q is not given, the exit status is 2.\n"
+msgstr ""
+"როცა ფაილი წარმოადგენს '-'-ს, კითხვა სტანდარტული შეტანით ხდება. ფაილის "
+"გარეშე წაიკითხება '.\"\n"
+"თუ რეკურსიულია, თუარადა -.  2 ფაილზე ნაკლების შემთხვევაში იგულისხმება \"-"
+"h\".\n"
+"გამოსვლის სტატუსი უდრის 0-ს, თუ 1 ხაზი მაინცაა არჩეული, წინააღმდეგ "
+"შემთხვევაში კი 1-ს;\n"
+"თუ მოხდა რამე შეცდომა და -q მითითებული არაა, გამოსვლის სტატუსი 2-ის ტოლი "
+"იქნება.\n"
+"\n"
+
+#: src/grep.c:2110
+msgid "conflicting matchers specified"
+msgstr "მითითებულია ურთიერთსაწინააღმდეგო დამთხვევები"
+
+#: src/grep.c:2117
+msgid "Perl matching not supported in a --disable-perl-regexp build"
+msgstr ""
+"--disable-perl-regexp-ით აშენებულ გამშვებ ფაილს Perl-ის გამოსახულებების "
+"მხარდაჭერა არ გააჩნია"
+
+#: src/grep.c:2119
+#, c-format
+msgid "invalid matcher %s"
+msgstr "%s არასწორი პირობაა"
+
+#: src/grep.c:2541
+msgid "unknown devices method"
+msgstr "უცნობი მოწყობილობების მეთოდი"
+
+#: src/grep.c:2690
+msgid "invalid max count"
+msgstr "არასწორი უდიდესი რიცხვი"
+
+#: src/grep.c:2747
+msgid "unknown binary-files type"
+msgstr "მანქანური ფაილის არასწორი ფორმატი"
+
+#: src/grep.c:2832
+msgid ""
+"Written by Mike Haertel and others; see\n"
+"<https://git.savannah.gnu.org/cgit/grep.git/tree/AUTHORS>."
+msgstr ""
+"დაწერილია მაიკ ჰენთელისა და სხვების მიერ; იხ:\n"
+"<https://git.savannah.gnu.org/cgit/grep.git/tree/AUTHORS>."
+
+#: src/grep.c:2939
+#, c-format
+msgid "warning: GREP_COLOR='%s' is deprecated; use GREP_COLORS='mt=%s'"
+msgstr ""
+"გაფრთხილება: GREP_COLOR='%s' მოძველებულია; გამოიყენეთ GREP_COLORS='mt=%s'"
+
+#: src/pcresearch.c:89
+#, c-format
+msgid ""
+"\n"
+"grep -P uses PCRE2 %s\n"
+msgstr ""
+"\n"
+"grep -P იყენებს PCRE2 %s\n"
+
+#: src/pcresearch.c:167
+msgid "-P supports only unibyte locales on this platform"
+msgstr "-P -ს ამ პლატფორმაზე მხოლოდ ერთბაიტიანი ენების მხარდაჭერა გააჩნია"
+
+#: src/pcresearch.c:169
+msgid "-P supports only unibyte and UTF-8 locales"
+msgstr "-P -ს მხოლოდ ერთბაიტიანი და UTF-8 ენების მხარდაჭერა გააჩნია"
+
+#: src/pcresearch.c:192
+msgid "the -P option only supports a single pattern"
+msgstr "-P-ს მხოლოდ ერთი შაბლონის მხარდაჭერა გააჩნია"
+
+#: src/pcresearch.c:288
+msgid "exceeded PCRE's line length limit"
+msgstr "გადაჭარბებულია PCRE-ის ხაზის სიგრძის ლიმიტი"
+
+#: src/pcresearch.c:366
+#, c-format
+msgid "%s: memory exhausted"
+msgstr "%s: მეხსიერება გადავსებულია"
+
+#: src/pcresearch.c:369
+#, c-format
+msgid "%s: exhausted PCRE JIT stack"
+msgstr "%s: PCRE JIT stack-ი გახარჯულია"
+
+#: src/pcresearch.c:373
+#, c-format
+msgid "%s: exceeded PCRE's backtracking limit"
+msgstr "%s: PCRE-ის უკუდევნების ლიმიტი გადაჭარბებულია"
+
+#: src/pcresearch.c:378
+#, c-format
+msgid "%s: exceeded PCRE's nested backtracking limit"
+msgstr "%s: PCRE-ის ჩალაგებული უკუდევნების ლიმიტი გადაჭარბებულია"
+
+#: src/pcresearch.c:382
+#, c-format
+msgid "%s: PCRE detected recurse loop"
+msgstr "%s : PCRE-მ რეკურსიული მარყუჟი აღმოაჩინა"
+
+#: src/pcresearch.c:387
+#, c-format
+msgid "%s: exceeded PCRE's heap limit"
+msgstr "%s: PCRE-ის გამოყოფილი მეხსიერების ლიმიტი გადაჭარბებულია"
+
+#: src/pcresearch.c:396
+#, c-format
+msgid "%s: internal PCRE error: %d"
+msgstr "%s: PCRE-ის შიდა შეცდომა: %d"
+
+#, c-format
+#~ msgid "warning: --unix-byte-offsets (-u) is obsolete"
+#~ msgstr "გაფრთხილება: --unix-byte-offsets (-u) მოძველებულია"
+
+#~ msgid ""
+#~ "\n"
+#~ "Built with PCRE "
+#~ msgstr ""
+#~ "\n"
+#~ "აგებულია PCRE-ით "
+
+#~ msgid "JIT internal error: %d"
+#~ msgstr "JIT-ის შიდა შეცდომა: %d"

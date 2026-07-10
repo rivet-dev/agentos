@@ -1,0 +1,50 @@
+#include <windows.h>
+#if (defined(WIN32) && !defined(__EMX__) && !defined(__MINGW32__))
+#include <winver.h>
+#endif
+#include "../unzvers.h"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION UZ_MAJORVER,UZ_MINORVER,UZ_PATCHLEVEL,0
+PRODUCTVERSION UZ_MAJORVER,UZ_MINORVER,UZ_PATCHLEVEL,0
+FILEFLAGSMASK 0x3L
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+FILEOS VOS__WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+#ifdef _UNICODE
+        BLOCK "040904B0"
+#else
+        BLOCK "040904E4"
+#endif
+        BEGIN
+            VALUE "Comments", "\0"
+            VALUE "CompanyName", IZ_COMPANY_NAME "\0"
+            VALUE "FileDescription", "Info-ZIP's UnZip for Win32 console\0"
+            VALUE "FileVersion", UZ_VER_STRING "\0"
+            VALUE "InternalName", "UnZip\0"
+            VALUE "LegalCopyright", "Info-ZIP 1996-2009\0"
+            VALUE "LegalTrademarks", "\0"
+            VALUE "OriginalFilename", "UNZIP.EXE\0"
+            VALUE "PrivateBuild", "\0"
+            VALUE "ProductName", "Info-ZIP's UnZip for Windows\0"
+            VALUE "ProductVersion", UZ_VER_STRING "\0"
+            VALUE "SpecialBuild", "\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+#ifdef _UNICODE
+        VALUE "Translation", 0x409, 1200
+#else
+        VALUE "Translation", 0x409, 1252
+#endif
+    END
+END

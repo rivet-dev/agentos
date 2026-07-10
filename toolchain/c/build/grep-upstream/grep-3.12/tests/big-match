@@ -1,0 +1,36 @@
+#!/bin/sh
+# Check that grep doesn't mishandle long matching lines.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+expensive_
+
+# Create a one-line file containing slightly more than 2 GiB.
+echo x | dd bs=1024k seek=2048 >2G-plus-2 || framework_failure_
+
+skip_diagnostic=
+
+# These two patterns catch different kinds of
+# failures due to internal integer overflows.
+# However, the second one, '^.*x\(\)\1', provokes
+# so much memory consumption via regexec.c that it renders
+# some systems unusable.
+for pattern in '^.*'; do
+  diagnostic=$(LC_ALL=C grep -a "$pattern" 2G-plus-2 2>&1 >/dev/null)
+  status=$?
+
+  case $status,$diagnostic in
+    0,*) ;;
+    2,*': line too long for re_search')
+       skip_diagnostic='regular expression library cannot handle the test' ;;
+    137,''|2,*': memory exhausted')
+       # The 137/no-diagnostic arises when the kernel OOM-kills grep.
+       skip_diagnostic='not enough main memory to run the test' ;;
+    *) fail=1 ;;
+  esac
+done
+
+case $fail,$skip_diagnostic in
+0,?*) skip_ "$skip_diagnostic" ;;
+esac
+
+Exit $fail

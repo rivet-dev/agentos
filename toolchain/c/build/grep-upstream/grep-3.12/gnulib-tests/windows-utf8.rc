@@ -1,0 +1,9 @@
+/* This file is in the public domain. */
+
+/* This file is a resource definition file.
+   When compiled to an object file, it embeds the windows-utf8.manifest file,
+   that has the effect that in the application, GetACP () == 65001 instead
+   of e.g. 1252. */
+
+#include <winresrc.h>  /* includes <winuser.h>, <winver.h> */
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "windows-utf8.manifest"

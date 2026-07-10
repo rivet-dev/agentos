@@ -17,7 +17,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../..");
 const SECURE_EXEC_C_ROOT = resolve(
 	REPO_ROOT,
-	"registry/native/c",
+	"toolchain/c",
 );
 const WASM_PROBE_BINARY = resolve(SECURE_EXEC_C_ROOT, "build/fs_probe");
 const NATIVE_PROBE_BINARY = resolve(

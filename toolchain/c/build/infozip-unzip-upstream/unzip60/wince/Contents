@@ -1,0 +1,42 @@
+Contents of the "WinCE" subdirectory for UnZip 5.52 and later:
+
+   Contents     This file.
+   README       Information about the Windows CE port and its author.
+   punzip.h     Main header file for the entire Pocket UnZip project.
+   wcecfg.h     Common system-specific configurations for Windows CE port code.
+   wcemain.c    Main entry code for Win CE command line tool.
+   winmain.cpp  Contains the entire user interface and all Windows code.
+   winmain.h    Header for winmain.cpp.
+   intrface.cpp The interface between the Windows code and Info-ZIP code.
+   intrface.h   Header for intrface.cpp.
+   wince.cpp    All the Win32 APIs and C runtimes called by Info-ZIP.
+   wince.h      Header for wince.cpp.
+   punzip.rc    Resource file for all dialogs, bitmaps, menus, icons, etc.
+   resource.h   Resource header file for punzip.rc and other source modules.
+   punzip.htp   Windows CE help file (rename to punzip.html for WinNT).
+   punzip.rcv   Version resource and version defines.
+   punzip.ic2   Windows CE app icons (16x16 and 32x32, both 2 bits/pixel).
+   punzip.ico   Windows NT application icons (16x16 and 32x32, 16 bits/pixel).
+   zipfile.ic2  Windows CE zip icons (16x16 and 32x32, both 2 bits/pixel).
+   zipfile.ico  Windows NT zip file icons (16x16 and 32x32, 16 bits/pixel).
+   imglist.2bp  Windows CE image list bitmap (2 bits/pixel).
+   imglist.bmp  Windows NT image list bitmap (16 bits/pixel including mask).
+   ilmask.bmp   Windows CE image list mask bitmap (1 bit/pixel).
+   toolbar.2bp  Windows CE toolbar bitmap (2 bits/pixel).
+   toolbar.bmp  Windows NT toolbar bitmap (16 bits/pixel).
+   inc\         Contains dummy headers that are called by Info-ZIP code.
+   vc5\
+     punzip.dsp   Visual C++ 5.0 project for WinCE (SH3 and MIPS) and WinNT.
+   vc6\
+     punzip.dsp   Visual C++ 6.0 project for WinCE (SH3 and MIPS) and WinNT.
+   vcEMbed3\
+     punzip.vcp   Visual C++ Embedded Tools 3.0 project for pUnZip (WinCE).
+     unzipcmd.vcp Visual C++ Embedded Tools 3.0 project for WinCE cmdline tool.
+     unzipwce.vcw Visual C++ Embedded Tools 3.0 workspace for all WinCE tools.
+
+Please note that Info-ZIP's source distribution for UnZip contains all text
+files in UNIX format (LF line terminators). But the Microsoft tools require
+some of the sources and project files to be supplied in MSDOS format (CR-LF
+line terminators). You have to apply UnZip's "-a" option (or use some third-
+party line termination converter) to get the UnZip sources unpacked in the
+correct file format.

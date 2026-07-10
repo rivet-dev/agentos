@@ -1,0 +1,11 @@
+{
+	"commands": [
+		"yq"
+	],
+	"registry": {
+		"title": "yq",
+		"description": "YAML/JSON processor.",
+		"priority": 4,
+		"category": "data"
+	}
+}

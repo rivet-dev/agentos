@@ -1,0 +1,159 @@
+-----------------------------------------------------------------------
+[Installation notes for VM/CMS port of UNZIP 5.32 and ZIP 2.2]
+Additional notes from Ian E. Gorman (4/98):
+
+I have not fully tested ZIP and UNZIP in VM (for example, I have not
+tried all the options), so ZIP 2.2 for VM and UNZIP 5.32 for VM
+should be regarded as beta versions.  Try them out before you decide
+that you can depend on them.
+
+Most of the work for the VM port has been done by others, but I have
+made some changes and compiled on a more recent version of VM/CMS.  It
+is possible that I have introduced new problems or undone some of the
+solutions found by previous authors.
+
+
+Installation
+============
+
+The executables are stored in CMS "PACK" format instead of being
+stored in ZIP archives.  This format takes a little longer to
+download, but installation is slightly simpler.
+
+
+Installing UNZIP
+----------------
+
+The UNZIP executable is supplied as the binary file UNZIP.MOD, in the
+CMS "PACK" format.
+
+You must get the UNZIP.MOD file on to your system as a binary file in
+fixed recording mode, block size 1024.
+
+If you are using FTP in CMS, you can get the file in the correct
+format with the LOCSITE and BINARY commands.  Assuming that the UNZIP
+executable is stored on the remote site as unz532vm.mod, you could
+issue the following commands
+
+    FTP where.ever.com
+    <enter user id and password and other stuff>
+    BINARY
+    LOCSITE FIX 1024
+    GET unz532vm.mod
+    QUIT
+
+If you are using a 3270 terminal session to upload from a PC, you can
+upload the file in the correct format with the SEND command:
+
+    SEND unz532vm.mod A: unz532vm mod a1 (RECFM F LRECL 1024
+
+If your 3270 emulator does not have the SEND command, but is a GUI
+application, it may allow you to upload from the menu bar.  If so,
+set your options to binary, VM/CMS, fixed record length, and a length
+of 1024 before you upload.
+
+When you get the PACKed file on your CMS minidisk, you convert it to
+an executable module by using the COPY command with the UNPACK option:
+
+    COPY unz532vm mod a unzip module a1 (UNPACK OLDDATE REPLACE
+
+You can omit the OLDDATE and REPLACE options if you want to.
+
+
+Installing ZIP
+--------------
+
+The ZIP executable is supplied as the binary file ZIP.MOD, in the CMS
+"PACK" format.
+
+You must get the ZIP.MOD file on to your system as a binary file in
+fixed recording mode, block size 1024.  Assuming that the file is
+stored as zip22vm.mod, you can get the file the same way you got the
+UNZIP.MOD file:
+
+    Using FTP:
+
+        FTP where.ever.com
+        <enter user id and password and other stuff>
+        BINARY
+        LOCSITE FIX 1024
+        GET zip22vm.mod
+        QUIT
+
+    Using 3270 file transfer:
+
+        SEND unz532vm.mod A: unz532vm mod a1 (RECFM F LRECL 1024
+
+When you get the PACKed file on your CMS minidisk, you convert it to
+an executable module by using the COPY command with the UNPACK option:
+
+    COPY zip22vm mod a zip module a1 (UNPACK OLDDATE REPLACE
+
+
+Installing Documentation
+------------------------
+
+Once you have UNZIP running, you can use it to extract documentation
+from ZIP archives.
+
+You can transfer the ZIP archives to VMV/CMS as a binary file with any
+record length.  A record length of 1 will work fine:
+
+    via FTP:
+
+        FTP where.ever.com
+        <enter user id and password and other stuff>
+        BINARY
+        LOCSITE FIX 1
+        GET zip22vm.zip zipdoc.zip
+        GET unz532vm.zip unzipdoc.zip
+        QUIT
+
+    via 3270 session:
+
+        SEND zip22vm.zip A: unzipdoc zip a1 (RECFM F LRECL 1
+        SEND unz532vm.zip A: zipdoc zip a1 (RECFM F LRECL 1
+
+Once you have the ZIP archives, extract the documentation to the minidisk of
+your choice by using the -d option:
+
+    unzip -a -d A2 unzipdoc.zip
+    unzip -a -d A2 zipdoc.zip
+
+The "-a" option is required because the documents are archived as
+ASCII text files, but they must be converted to EBCDIC to read them
+in VM/CMS.
+
+
+Notes
+=====
+
+Different EBCDIC Character Sets
+-------------------------------
+
+The documentation may look strange on your system, because UNZIP
+translates from ASCII to "Open Systems" EBCDIC (IBM-1047).  Unless
+you are a software developer, you are probably using a different
+kind of EBCDIC (like US EBCDIC, IBM-037).  This causes some character
+codes to display as different characters.  For example, the character
+codes that display as square brackets in IBM-1047 will display as
+e-acute and a-grave in IBM-037.
+
+You can use the IBM ICONV utility to translate documents from one
+character set to another:
+
+    ICONV old doc a new doc a1 (FROMCODE IBM-1047 TOCODE IBM-037
+
+
+IND$FILE protocol
+-----------------
+
+This is the method by which files are transferred via 3270 sessions
+between PC and mainframe.
+
+If you know how to transfer files via 3270 session between PC and
+mainframe, you know as much as you need to know about IND$FILE.
+
+If your mainframe has IND$FILE, and your 3270 emulator does file
+transfers, you can use your emulator to transfer files between PC
+and mainframe.

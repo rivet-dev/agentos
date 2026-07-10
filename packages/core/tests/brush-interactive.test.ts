@@ -35,8 +35,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../..");
 const SIDECAR_BINARY = resolve(REPO_ROOT, "target/debug/agentos-sidecar");
 const REGISTRY_SH_CANDIDATES = [
-	"../secure-exec/registry/native/target/wasm32-wasip1/release/commands/sh",
-	"../secure-exec-provides/registry/native/target/wasm32-wasip1/release/commands/sh",
+	"../secure-exec/toolchain/target/wasm32-wasip1/release/commands/sh",
+	"../secure-exec-provides/toolchain/target/wasm32-wasip1/release/commands/sh",
 ].map((candidate) => resolve(REPO_ROOT, candidate));
 const REGISTRY_SH = REGISTRY_SH_CANDIDATES.find((candidate) =>
 	existsSync(candidate),
@@ -73,7 +73,7 @@ async function waitFor(term: Terminal, text: string, timeoutMs = 20000): Promise
 }
 
 // Requires the `sh` wasm command built locally (`make` in the secure-exec
-// sibling's registry/native). CI consumes published @agentos-software packages
+// sibling's toolchain). CI consumes published @agentos-software packages
 // and does not build wasm commands, so skip when the artifact is absent rather
 // than failing the suite.
 describe.skipIf(REGISTRY_SH === undefined)("brush interactive PTY repaint", () => {

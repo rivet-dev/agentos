@@ -1,0 +1,79 @@
+?tacl routine
+#FRAME
+load /keep 1/ commacs
+
+#PUSH file prev memory OK model sfx lib accel unlicensed licensed options
+#PUSH #DEFAULTS
+
+load /keep 1/ macros
+
+#SET OK -1
+
+[#IF [#ARGUMENT /VALUE memory/ KEYWORD /WORDLIST LARGE WIDE/ OTHERWISE ]]
+[#IF [#ARGUMENT /VALUE unlicensed/ KEYWORD /WORDLIST UNLICENSED/ OTHERWISE ]]
+
+[#IF memory '=' "WIDE"
+|THEN|
+  #SET model WIDE
+  #SET sfx   SFX
+|ELSE|
+  #SET memory LARGE
+  #SET model NOWIDE
+  #SET sfx   SFX
+]
+#OUTPUT Creating SFX Module
+#SET lib [sfx]B
+#SET accel SFX
+
+#SET options [options], [model], define SFX
+
+[#IF unlicensed '=' "UNLICENSED"
+|THEN|
+  #SET sfx   [sfx]U
+  #SET accel [accel]U
+  #SET lib   [lib]U
+|ELSE|
+  #SET licensed LICENSED
+  #SET options [options], define [licensed]
+]
+
+#OUTPUT Memory Model    : [memory]
+#OUTPUT Axcel Module    : [accel]
+#OUTPUT Run Module      : [sfx]
+
+[#IF [#FILEINFO /MODIFICATION/ EXTRACTC] > [#FILEINFO /MODIFICATION/ EXTRACTX]
+|THEN|
+  #OUTPUT Compiling EXTRACTC for SFX
+  C /IN EXTRACTC, OUT $T.#SFX.EXTRACT/EXTRACTX;SYMBOLS,HIGHPIN [options]
+|ELSE|
+  #OUTPUT EXTRACT(SFX) is up to date
+]
+
+[#IF [#FILEINFO /MODIFICATION/ PROCESSC] > [#FILEINFO /MODIFICATION/ PROCESSX]
+|THEN|
+  #OUTPUT Compiling PROCESSC for SFX
+  C /IN PROCESSC, OUT $T.#SFX.PROCESS/PROCESSX;SYMBOLS,HIGHPIN [options]
+|ELSE|
+  #OUTPUT PROCESS(SFX) is up to date
+]
+
+[#IF [#FILEINFO /MODIFICATION/ TANUNZC] > [#FILEINFO /MODIFICATION/ TANUNZX]
+|THEN|
+  #OUTPUT Compiling TANUNZC for SFX
+  C /IN TANUNZC , OUT $T.#SFX.TANUNZ /TANUNZX ;SYMBOLS,HIGHPIN [options]
+|ELSE|
+  #OUTPUT TANUNZ(SFX) is up to date
+]
+
+[#IF [#FILEINFO /MODIFICATION/ UNZIPC] > [#FILEINFO /MODIFICATION/ UNZIPX]
+|THEN|
+  #OUTPUT Compiling UNZIPC for SFX
+  C /IN UNZIPC  , OUT $T.#SFX.UNZIP  /UNZIPX  ;SYMBOLS,HIGHPIN [options]
+|ELSE|
+  #OUTPUT UNZIP(SFX) is up to date
+]
+
+BBSFXLIB
+BBSFX [sfx] [memory]
+
+#UNFRAME

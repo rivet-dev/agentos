@@ -1,0 +1,14 @@
+Contents of the "man" subdirectory for UnZip 5.41 and later:
+
+  Contents      this file
+  funzip.1      fUnZip manual page, nroff format
+  unzip.1       UnZip manual page, nroff format
+  unzipsfx.1    UnZipSFX manual page, nroff format
+  zipgrep.1     ZipGrep manual page, nroff format
+  zipinfo.1     ZipInfo manual page, nroff format
+
+This subdirectory contains the master source files for the UnZip user
+documentation. Although these documents are Unix man-page sources, they
+are of general interest and therefore stored separately.
+Some non-Unix systems may supply a man-page reader where they could be
+used; and they are the sources for the generic ASCII text document files.

@@ -1,0 +1,68 @@
+#!/bin/sh
+# Test NUL bytes in patterns and data.
+
+# Copyright 2014-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+# Add "." to PATH for the use of get-mb-cur-max.
+path_prepend_ .
+
+locales=C
+for locale in en_US.iso885915 en_US.UTF-8; do
+  get-mb-cur-max en_US.UTF-8 >/dev/null 2>&1 && locales="$locales $locale"
+done
+
+fail=0
+
+for left in '' a '#' '\0'; do
+  for right in '' b '#' '\0'; do
+    data="$left\\0$right"
+    printf "$data\\n" >in || framework_failure_
+    for hat in '' '^'; do
+      for dollar in '' '$'; do
+        for force_regex in '' '\\(\\)\\1'; do
+          pat="$hat$force_regex$data$dollar"
+          printf "$pat\\n" >pat || framework_failure_
+          for locale in $locales; do
+            LC_ALL=$locale grep -f pat in
+            status=$?
+            test $status -eq 0 || test $status -eq 1 ||
+              fail_ "'$pat' caused an error"
+            LC_ALL=$locale grep -a -f pat in | cmp -s - in ||
+              fail_ "-a '$pat' does not match '$data'"
+          done
+        done
+      done
+    done
+  done
+done
+
+(echo xxx && yes yyy | head -n 100000 && printf 'z\n\0') >in || framework_failure_
+echo xxx >exp || framework_failure_
+grep xxx in >out || fail=1
+compare exp out || fail=1
+
+printf 'xxx\n' > exp || framework_failure_
+grep -E 'xxx|z' in >out || fail=1
+compare exp out || fail=1
+
+printf '%s\0' 'abcadc' >in || framework_failure_
+printf '%s\0' 'abc' 'adc' >exp || framework_failure_
+grep -oz 'a[^c]*c' in >out || fail=1
+compare exp out || fail=1
+
+Exit $fail

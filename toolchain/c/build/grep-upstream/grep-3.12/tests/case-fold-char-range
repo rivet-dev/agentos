@@ -1,0 +1,23 @@
+#!/bin/sh
+# This would fail for grep-2.5.3
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+printf 'A\nZ\n'      > exp1 || framework_failure_
+fail=0
+
+for LOC in en_US.UTF-8 zh_CN $LOCALE_FR_UTF8; do
+  out=out1-$LOC
+  printf 'A\n1\nZ\n.\n' | LC_ALL=$LOC grep -i '[a-z]' > $out || fail=1
+  compare exp1 $out || fail=1
+done
+
+# This actually passes also for grep-2.5.3
+printf 'a\nz\n'      > exp2 || framework_failure_
+
+for LOC in en_US.UTF-8 zh_CN $LOCALE_FR_UTF8; do
+  out=out2-$LOC
+  printf 'a\n1\nz\n.\n' | LC_ALL=$LOC grep -i '[A-Z]' > $out || fail=1
+  compare exp2 $out || fail=1
+done
+
+Exit $fail

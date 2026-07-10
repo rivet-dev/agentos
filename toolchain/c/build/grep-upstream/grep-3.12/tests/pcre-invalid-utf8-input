@@ -1,0 +1,31 @@
+#! /bin/sh
+# Ensure that grep -P doesn't abort or infloop for invalid multi-byte input
+#
+# Copyright (C) 2013-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_timeout_
+require_en_utf8_locale_
+require_compiled_in_MB_support
+LC_ALL=en_US.UTF-8 require_pcre_
+
+fail=0
+
+printf 'j\202j\nj\nk\202\n' > in || framework_failure_
+
+LC_ALL=en_US.UTF-8 timeout 10 grep -P j in
+test $? -eq 0 || fail=1
+
+LC_ALL=en_US.UTF-8 timeout 10 grep -P 'k$' in
+test $? -eq 1 || fail=1
+
+echo k >exp
+
+LC_ALL=en_US.UTF-8 timeout 10 grep -aoP 'k*' in >out || fail=1
+compare exp out || fail=1
+
+Exit $fail

@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-printf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "printf standalone binary for secure-exec VM"
+
+[[bin]]
+name = "printf"
+path = "src/main.rs"
+
+[dependencies]
+uu_printf = "0.7.0"

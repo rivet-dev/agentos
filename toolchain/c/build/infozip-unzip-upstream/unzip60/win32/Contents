@@ -1,0 +1,40 @@
+Contents of the "win32" sub-archive for UnZip 6.0 and later:
+
+  Contents      this file
+  Makefile      makefile for UnZip using MS Visual C++
+  Makefile.bc   makefile for UnZip using Borland C++
+  Makefile.dj   makefile for UnZip using djgpp v2.x with rsxntdj 1.31
+  Makefile.emx  makefile for UnZip using emx+gcc 0.9c with RSXNT 1.4 (+)
+  Makefile.gcc  makefile for UnZip using native Win32 gcc ports (Cygwin, MinGW)
+  Makefile.lcc  makefile for UnZip using free LCC-Win32 compiler
+  Makefile.wat  makefile for UnZip using Watcom C/C++
+  crc_i386.asm  32-bit Intel-assembler version of CRC routine
+  crc_i386.c    ditto, for MS[V]C with no MASM only
+  crc_lcc.asm   ditto, adapted for LCC-Win32 assembler syntax
+  nt.c          WinNT-specific support routines (ACLs/security descriptors)
+  nt.h          WinNT-specific support header
+  rsxntwin.h    supplement header for RSXNT, fills holes in their <windows.h>
+  w32cfg.h      Win32-specific configuration, included by unzpriv.h
+  win32.c       Win32-specific support routines
+  win32i64.c
+  winapp.rc     resource file for regular console-mode UnZip application
+  vc6/          directory containing Visual C++ 6.0 project files
+    funzip.dsp    MSVC++ 6.0 project file for fUnZip command-line tool
+    unzip.dsp     MSVC++ 6.0 project file for UnZip command-line main program
+    unzipsfx.dsp  MSVC++ 6.0 project file for UnZipSFX console mode stub
+    unzipbz2.dsp  MSVC++ 6.0 project file for UnZip with bzip2 support
+    bz2lib.dsp    MSVC++ 6.0 project file for bz2lib (de)compression library
+    unzip.dsw     MSVC++ 6.0 workspace file for all UnZip command line tools
+  vc8/          directory containing Visual C++ 2005 (8.0) project files
+    funzip.vcproj   MSVC++ 8.0 project file for fUnZip command-line tool
+    unzip.vcproj    MSVC++ 8.0 project file for UnZip command-line main program
+    unzipsfx.vcproj MSVC++ 8.0 project file for UnZipSFX console mode stub
+    unzipbz2.vcproj MSVC++ 8.0 project file for UnZip with bzip2 support
+    bz2lib.vcproj   MSVC++ 8.0 project file for bz2lib (de)compression library
+    unzip.sln       MSVC++ 8.0 workspace file for all UnZip command line tools
+
+crc_i386.c has been tested with MSVC and can be selected through the MSVC
+makefile.  It is provided for those who may have MSVC but no assembler.
+Note that some C compilers on Pentium-class machines have been reported
+to emit faster code from the plain C sources (crc32.c) than the assembler
+routines provide.  This has not been tested lately, however.

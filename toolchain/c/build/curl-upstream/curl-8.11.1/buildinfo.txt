@@ -1,0 +1,13 @@
+# This is a generated file.  Do not edit.
+buildinfo.configure.tool: configure
+buildinfo.configure.args:  '--host=wasm32-unknown-wasi' '--disable-shared' '--disable-threaded-resolver' '--disable-ldap' '--without-libpsl' '--with-mbedtls=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/curl-upstream/deps' '--with-zlib=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/curl-upstream/deps' '--with-brotli=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/curl-upstream/deps' '--with-zstd=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/curl-upstream/deps' '--with-ca-bundle=/etc/ssl/certs/ca-certificates.crt' 'host_alias=wasm32-unknown-wasi' 'CC=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasip1 --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot' 'CFLAGS=-O2 -flto' 'LDFLAGS=-L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/curl-upstream/deps/lib' 'LIBS=-lbrotlicommon' 'CPPFLAGS=-I/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/curl-upstream/deps/include'
+buildinfo.host: x86_64-pc-linux-gnux32
+buildinfo.host.cpu: x86_64
+buildinfo.host.os: linux-gnux32
+buildinfo.target: wasm32-unknown-wasi
+buildinfo.target.cpu: wasm32
+buildinfo.target.os: wasi
+buildinfo.target.flags: CROSS
+buildinfo.compiler: CLANG
+buildinfo.compiler.version: 19.1
+buildinfo.sysroot: 

@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-tee"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "tee standalone binary for secure-exec VM"
+
+[[bin]]
+name = "tee"
+path = "src/main.rs"
+
+[dependencies]
+uu_tee = "0.7.0"

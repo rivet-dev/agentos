@@ -1,0 +1,17 @@
+#!/bin/sh
+# This would fail for grep-2.6
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+printf '00a\n00g\n00z\n00A\n00G\n00Z\n'      > in || framework_failure_
+
+fail=0
+
+for LOC in en_US.UTF-8 en_US zh_CN $LOCALE_FR_UTF8 C; do
+  out1=out1-$LOC
+  LC_ALL=$LOC grep -E '(.)\1[A-Z]' in > $out1 || fail=1
+  out2=out2-$LOC
+  LC_ALL=$LOC grep -E '[A-Z]' in > $out2 || fail=1
+  compare $out1 $out2 || fail=1
+done
+
+Exit $fail

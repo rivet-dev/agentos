@@ -1,0 +1,15 @@
+#! /bin/sh
+# Test for presence of pcre version number in --version output.
+#
+# Copyright (C) 2023-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+grep -q '^#define HAVE_LIBPCRE 1' "$CONFIG_HEADER" \
+  || skip_ 'built without PCRE support'
+
+grep --version | grep -qP '^grep -P uses PCRE2 [\d.]+'

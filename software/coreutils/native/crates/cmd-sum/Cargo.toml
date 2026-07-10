@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-sum"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "sum standalone binary for secure-exec VM"
+
+[[bin]]
+name = "sum"
+path = "src/main.rs"
+
+[dependencies]
+uu_sum = "0.7.0"

@@ -1,0 +1,145 @@
+[e-mail excerpt from Dave Lovelace explaining AOS/VS port, compiler, etc.]
+
+> From: Dave Lovelace <davel@cyberspace.org>
+> Subject: Re: zip on Data General AOS/VS
+> Date: Wed, 17 May 1995 11:02:03 -0400 (EDT)
+>
+> The diffs for zip & unzip are both in the same file.  I've also included the
+> extra source files which I wrote, the CLI macros which I used to compile
+> & link the things, & my own history of what I did.  Note that some of the
+> changes I made reversed earlier changes, & this was written for my own
+> use (or for others here if I leave or die or something).  I hope it will help.
+>
+> This was compiled using DG's C compiler for AOS/VS, rev 4.10.  It has been
+> compiled only on an MV-5500 running AOS/VS rev 7.70, but the resulting
+> programs have been distributed & run on several different MVs running various
+> versions of AOS/VS, so it should be fairly independent of at least minor rev
+> variations.  To the best of my knowledge it has *not* been tested under
+> AOS/VS II, & I really don't know anything about that environment; possibly
+> the special AOS/VS file info I'm storing in the extra field will have some
+> different format there.
+
+
+
+[README/history info from Dave Lovelace]
+
+In modifying this for use on AOS/VS, I found only a few changes
+were needed for DG C 4.10:
+
+2. There was a bug in the inflate() code, because memset()
+   was being called with a non-char pointer.  Pretty obviously
+   the other systems where this was used do not have char pointers
+   different from other pointers.  IT IS QUITE POSSIBLE THAT OTHER
+   BUGS OF THIS SORT EXIST.  Testing did not uncover any.
+3. In fileio.c, it appears that utime() is being called correctly,
+   but it does not set the file's time and always returns failure.
+   Since the AOS/VS tar and cpio programs provided by DG also suffer
+   from the fault of not setting file times, I must conclude that
+   this is by design.  At any rate, I modified the code (with
+   compilation conditional on a macro AOS_VS) to not say "error"
+   when this occurs.
+
+One change which I think would be desirable: if the filename isn't
+already a relative or absolute pathname (specifying a unique location),
+the program follows the searchlist under AOS/VS.  It will unexpectedly
+replace files anywhere in your searchlist.  (If you don't use the
+-o option, it will ask you first, but not tell you where the file
+to be replaced resides.)  I suspect this could be handled by prepending
+./ to any filenames which don't already begin with /.  (I haven't
+checked how this would work inside the program.  Possibly this
+could be done in every case - I don't think PKZIP ever stores an
+absolute pathname.)
+
+To see the compile options I used, look at the file MAKE.AOS_VS.CLI
+You may of course need to change the searchlist to use that macro.
+
+ ------------------------------------------------------------------
+15-dec-93
+I fixed some of the above things, introducing new problems.  It now
+won't follow the searchlist - but the logic prevents it from creating
+directories (if they aren't explicitly in the ZIP, anyway).  But
+UNZIP now sets the creation time to the time stored in the ZIP, and
+ZIP now stores that instead of the TLM.  I had to introduce an
+extra module, with some code of my own and some other public domain
+code, to accomplish this.
+
+ ------------------------------------------------------------------
+ 1-jun-94
+I found an additional bug: the header was causing void to be #define'd
+as int, and prototypes weren't being used.  I changed UNZIP.H and
+added a define of PROTO to the MAKE.AOS_VS.CLI and REMAKE.CLI macros.
+
+I found and fixed the bug that prevented the (creation) times from
+being set on files with explicit paths.  (The Unix-style paths didn't
+work as inputs to the AOS/VS ?CREATE system call.)
+
+Additional known bugs:
+
+1. I have not yet located the source of the bug that prevents the
+   date/time from being set (also ACLs etc.) when an existing file
+   is overwritten.  For some reason the call to delete & recreate
+   the file is not being reached.
+
+2. We need to do something in ZIP to store (as comments?) the file's
+   type and ACL, and then here in UNZIP extract these and apply
+   them.  This is not going to be trivial to make foolproof, but
+   it's badly needed.
+
+ ------------------------------------------------------------------
+ 2-jun-94
+I fixed #1 above.  The compiler was checking whether UNIX was defined,
+and it wasn't.  It appears that *some* of the places UNIX is used are
+things we can't get along with, so I changed the code to check for
+AOS_VS as well.  It seems to work just fine.
+
+I also introduced a function zvs_credir() to create a directory
+(as opposed to a CPD, though it can create CPDs to with the proper
+file-type parameter).  Directories in a path which are being created
+will now be directories instead of CPDs.
+
+The big change that's needed now is to have ZIP store (somehow)
+the file's ACL and file type, and then to have UNZIP use this
+information to recreate the file as it was before ZIPping.  Ideally,
+ZIP should also store links and CPD max-block info as well.  Planned
+strategy: either in the name field but after the name, or in a comment,
+store the packet returned by ?FSTAT (using sys_fstat()), and then
+use this packet for the ?CREATE call in zvs_create().
+
+ ------------------------------------------------------------------
+22-Jul-94
+The changes to use the extra-field field for AOS/VS file info are in
+place.  In general, if a ZIPfile was created with the current rev of
+ZIP.PR, the files should be restored with file type, ACL, etc. OK.
+I didn't test to make sure element size & max index levels come
+through OK, but I think they should.
+
+Unix symbolic links are now UNZIPped OK, but ZIP.PR isn't yet able
+to ZIP links.  When it is, UNZIP should be ready.
+
+In general UNZIP now ignores the searchlist fairly well, but not
+perfectly.  If the directory of a file you're UNZIPping can be
+referenced elsewhere in the searchlist, UNZIP will find the file
+there.  (For example, if the file UDD/BBASIC/ZZPGSUBSET.SR is in
+the ZIPfile, and : is in your searchlist, then UDD and UDD:BBASIC
+will be created under your current directory, but UNZIP will still
+find :UDD:BBASIC:ZZPGSUBSET.SR instead of =UDD:BBASIC:ZZPGSUBSET.SR.
+
+Filenames (which are now stored in uppercase by ZIP.PR) must be
+matched exactly if specified.  This applies to Unix path structure
+as well as case.
+
+ ------------------------------------------------------------------
+ 4-Aug-94
+I fixed a bug which caused (for links only) the Unix pathname to
+be put through ux_to_vs_name twice.  The result was that a path
+such as    dir1/dir2/fname    went first to    :dir1:dir2:fname    and
+then to    dir1?dir2?fname.
+
+I also added the /NOSEA switch to the cc/link lines in the macros
+MAKE.AOS_VS.CLI and REMAKE.CLI.  This should prevent any confusion
+over whether a file exists somewhere other than relative to the current
+dir.  This would disable calls to system() from using the searchlist,
+but in this program I think they're all useless & hopefully inactive
+anyway.
+
+ ------------------------------------------------------------------

@@ -1,0 +1,30 @@
+#!/bin/sh
+# Check that grep --binary-file=without-match quickly skips files with holes.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+expensive_
+require_perl_
+
+# Skip this test if there is no usable SEEK_HOLE support,
+# as is the case with linux-3.5.0 on ext4 and tmpfs file systems.
+$PERL -e '$f=*STDERR; sysseek($f,2**22,0); syswrite($f,"a");' \
+      -e 'exit ("0 but true" ne sysseek($f,0,4))' 2> seek-hole-test \
+  || skip_ "this system/FS lacks SEEK_HOLE support"
+
+# Try to make this test not THAT expensive, on typical hosts.
+virtual_memory_KiB=10240
+if echo x | (ulimit -v $virtual_memory_KiB && grep x) >/dev/null 2>&1; then
+  ulimit -v $virtual_memory_KiB
+fi
+
+# Create a file that starts with at least a buffer's worth of text,
+# but has a big hole later.
+(${AWK-awk} 'BEGIN{ for (i=0;i<1000;i++) printf "%080d\n", 0 }' < /dev/null
+  echo x | dd bs=1024k seek=8000000
+) >8T-or-so || skip_ 'cannot create big sparse file'
+
+grep --binary-file=without-match x 8T-or-so >/dev/null
+test $? -eq 1 || fail=1
+
+Exit $fail

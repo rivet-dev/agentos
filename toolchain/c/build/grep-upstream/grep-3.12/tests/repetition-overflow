@@ -1,0 +1,19 @@
+#!/bin/sh
+# These would fail (i.e., match erroneously) prior to grep-2.11.
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+xp1=4294967297 # 2^32+1
+xp2=4294967298 # 2^32+2
+
+fail=0
+
+# Before grep-2.11, when DFA-matching, a repetition count exceeding the
+# range of "unsigned int" would silently wrap around.   Hence, 2^32+1
+# would be treated just like "1", and both of these would mistakenly match.
+
+echo abc  | returns_ 2 grep -E "b{$xp1}"   > out 2> /dev/null || fail=1
+compare /dev/null out || fail=1
+echo abbc | returns_ 2 grep -E "b{1,$xp2}" > out 2> /dev/null || fail=1
+compare /dev/null out || fail=1
+
+Exit $fail

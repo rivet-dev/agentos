@@ -1,0 +1,209 @@
+/*
+  Copyright (c) 1990-2009 Info-ZIP.  All rights reserved.
+
+  See the accompanying file LICENSE, version 2009-Jan-02 or later
+  (the contents of which are also included in unzip.h) for terms of use.
+  If, for some reason, all these files are missing, the Info-ZIP license
+  also may be found at:  ftp://ftp.info-zip.org/pub/infozip/license.html
+*/
+//******************************************************************************
+//
+// File:        PUNZIP.RCV
+//
+// Description: Resources that Microsoft Visual C++ does not edit directly.
+//              This file sets all the version defines and declares the Version
+//              Info resource.  This file is included by both the C compiler and
+//              the resource compiler.
+//
+// Copyright:   All the source files for Pocket UnZip, except for components
+//              written by the Info-ZIP group, are copyrighted 1997 by Steve P.
+//              Miller.  The product "Pocket UnZip" itself is property of the
+//              author and cannot be altered in any way without written consent
+//              from Steve P. Miller.
+//
+// Disclaimer:  All project files are provided "as is" with no guarantee of
+//              their correctness.  The authors are not liable for any outcome
+//              that is the result of using this source.  The source for Pocket
+//              UnZip has been placed in the public domain to help provide an
+//              understanding of its implementation.  You are hereby granted
+//              full permission to use this source in any way you wish, except
+//              to alter Pocket UnZip itself.  For comments, suggestions, and
+//              bug reports, please write to stevemil@pobox.com.
+//
+//
+// Date      Name          History
+// --------  ------------  -----------------------------------------------------
+// 02/01/97  Steve Miller  Created (Version 1.0 using Info-ZIP UnZip 5.30)
+//
+//******************************************************************************
+
+#ifndef __PUNZIP_RCV__
+#define __PUNZIP_RCV__
+
+#ifdef APSTUDIO_INVOKED
+   #error this file is not editable by Microsoft Visual C++
+#endif // APSTUDIO_INVOKED
+
+#ifdef _WIN32_WCE
+#define VS_FFI_FILEFLAGSMASK    0x0000003FL
+#define VS_FF_PRERELEASE        0x00000002L
+#define VOS__WINDOWS32          0x00000004L
+#define VFT_APP                 0x00000001L
+#define VFT2_UNKNOWN            0x00000000L
+#define VS_FF_DEBUG             0x00000001L
+#else
+#include <winver.h>
+#endif
+#include "../unzvers.h"
+
+//******************************************************************************
+//***** User Modifiable Version Defines
+//******************************************************************************
+
+#define VERSION_MAJOR        2
+#define VERSION_MINOR        0
+#define VERSION_PRIVATE      0
+#define VERSION_PATCH        UZ_PATCHLEVEL
+
+#define VERSION_STRING       "2.0"
+
+// Set VER_FF_PRERELEASE to VS_FF_PRERELEASE for beta and 0 for release.
+#ifdef BETA
+#define VER_FF_PRERELEASE VS_FF_PRERELEASE
+#else
+#define VER_FF_PRERELEASE 0
+#endif
+
+//******************************************************************************
+//***** Fixed Version Defines
+//******************************************************************************
+
+#define VER_INTERNALNAME_STR "PUNZIP"
+#define VER_PRODUCT_STR      "Pocket UnZip\256"
+#define VER_DEVELOPER_STR    "Steve P. Miller (stevemil@pobox.com)"
+#define VER_COMMENT_STR      "Pocket UnZip is built on top of Info-ZIP's UnZip " UZ_VER_STRING UZ_BETALEVEL " source code from " UZ_VERSION_DATE "."
+
+#define VER_FILENAME_STR     VER_INTERNALNAME_STR ".EXE"
+#define VER_VERSION          VERSION_MAJOR,VERSION_MINOR,VERSION_PRIVATE,VERSION_PATCH
+
+#define VER_COMPANY_STR      VER_DEVELOPER_STR
+#define VER_COPYRIGHT_STR    "Copyright \251 1997-2009 Info-ZIP.  All Rights Reserved."
+
+
+#ifdef UNICODE
+   #define VER_CODEPAGE " Unicode)"
+#else
+   #define VER_CODEPAGE " Ansi)"
+#endif
+
+#if defined(_X86_) || defined(_M_IX86)
+   #define VER_ARCH " (i386," VER_CODEPAGE
+#elif defined(_MIPS_) || defined(_M_MRX000)
+   #define VER_ARCH " (MIPS)"
+#elif defined(_SH3_)
+   #define VER_ARCH " (Hitachi SH-3)"
+#elif defined(_PPC_) || defined(_M_PPC)
+   #define VER_ARCH " (IBM PowerPC)"
+#elif defined(_ALPHA_) || defined(_M_ALPHA)
+   #define VER_ARCH " (DEC Alpha)"
+#elif defined(_M_MPPC)
+   #define VER_ARCH " (Macintosh PowerPC)"
+#elif defined(_M_M68K)
+   #define VER_ARCH " (Macintosh 68K)"
+#else
+   #define VER_ARCH ""
+#endif
+
+
+#ifdef _DEBUG
+   #define VER_FF_DEBUG          VS_FF_DEBUG
+#else
+   #define VER_FF_DEBUG          0
+#endif
+
+#if (VERSION_PATCH > 0)
+   #define VER_FF_PATCHED        VS_FF_PATCHED
+#else
+   #define VER_FF_PATCHED        0
+#endif
+
+#if (VERSION_PRIVATE > 0)
+   #define VER_FF_PRIVATEBUILD   VS_FF_PRIVATEBUILD
+#else
+   #define VER_FF_PRIVATEBUILD   0
+#endif
+
+#ifdef _DEBUG
+   #if (VER_FF_PRERELEASE == VS_FF_PRERELEASE)
+      #define VER_VERSION_STR    VERSION_STRING " Beta (Debug)"
+   #else
+      #define VER_VERSION_STR    VERSION_STRING " (Debug)"
+   #endif
+#else
+   #if (VER_FF_PRERELEASE == VS_FF_PRERELEASE)
+      #define VER_VERSION_STR    VERSION_STRING " Beta"
+   #else
+      #define VER_VERSION_STR    VERSION_STRING
+   #endif
+#endif
+
+#ifdef _WIN32_WCE
+#define VER_FULLPRODUCT_STR      VER_PRODUCT_STR " for Windows\256 CE" VER_ARCH
+#define VER_FULLVERSION_STR      VER_VERSION_STR " for Windows\256 CE" VER_ARCH
+#else
+#define VER_FULLPRODUCT_STR      VER_PRODUCT_STR " for Windows\256 NT" VER_ARCH
+#define VER_FULLVERSION_STR      VER_VERSION_STR " for Windows\256 NT" VER_ARCH
+#endif
+
+//******************************************************************************
+//***** VERSIONINFO Resource
+//******************************************************************************
+
+#ifdef RC_INVOKED
+
+VS_VERSION_INFO VERSIONINFO
+
+   FILEVERSION    VER_VERSION
+   PRODUCTVERSION VER_VERSION
+   FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+   FILEFLAGS      VER_FF_PRERELEASE | VER_FF_DEBUG | VER_FF_PATCHED | VER_FF_PRIVATEBUILD
+   FILEOS         VOS__WINDOWS32
+   FILETYPE       VFT_APP
+   FILESUBTYPE    VFT2_UNKNOWN
+
+   BEGIN
+      BLOCK "StringFileInfo"
+      BEGIN
+#ifdef UNICODE
+         BLOCK "040904B0"     // 0x0409 = U.S. English, 0x04B0 = Unicode
+#else
+         BLOCK "040904E4"     // 0x0409 = U.S. English, 0x04E4 = Ansi 1252
+#endif
+         BEGIN
+             VALUE "CompanyName",     VER_COMPANY_STR "\0"
+             VALUE "FileDescription", VER_FULLPRODUCT_STR "\0"
+             VALUE "FileVersion",     VER_FULLVERSION_STR "\0"
+             VALUE "InternalName",    VER_INTERNALNAME_STR "\0"
+             VALUE "LegalCopyright",  VER_COPYRIGHT_STR "\0"
+             VALUE "OriginalFilename",VER_FILENAME_STR "\0"
+             VALUE "ProductName",     VER_PRODUCT_STR "\0"
+             VALUE "ProductVersion",  VER_VERSION_STR "\0"
+             VALUE "Comments",        VER_COMMENT_STR "\0"
+         END
+      END
+
+      BLOCK "VarFileInfo"
+      BEGIN
+#ifdef UNICODE
+         // English language (0x0409) and the Unicode codepage (1200)
+         VALUE "Translation", 0x0409, 1200
+#else
+         // English language (0x0409) and the Western Europe codepage (1252)
+         VALUE "Translation", 0x0409, 1252
+#endif
+      END
+   END
+
+#endif // RC_INVOKED
+
+#endif // __PUNZIP_RCV__

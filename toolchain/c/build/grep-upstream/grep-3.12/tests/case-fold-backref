@@ -1,0 +1,14 @@
+#!/bin/sh
+# This would fail for grep-2.5.3
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+printf '%s foo\n' foo fOo Foo FOO > exp1 || framework_failure_
+fail=0
+
+for LOC in en_US.UTF-8 en_US zh_CN $LOCALE_FR_UTF8 C; do
+  out=out1-$LOC
+  LC_ALL=$LOC grep -Ei '(foo) \1' exp1 > $out || fail=1
+  compare exp1 $out || fail=1
+done
+
+Exit $fail

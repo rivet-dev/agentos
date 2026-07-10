@@ -1,0 +1,13 @@
+libgreputils_a-getopt1.o: getopt1.c ../config.h getopt.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/getopt.h \
+  getopt-cdefs.h getopt-pfx-core.h getopt-core.h getopt-pfx-ext.h \
+  getopt-ext.h getopt_int.h
+../config.h:
+getopt.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/getopt.h:
+getopt-cdefs.h:
+getopt-pfx-core.h:
+getopt-core.h:
+getopt-pfx-ext.h:
+getopt-ext.h:
+getopt_int.h:

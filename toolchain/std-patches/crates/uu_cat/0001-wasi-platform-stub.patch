@@ -1,0 +1,12 @@
+--- a/src/platform/mod.rs
++++ b/src/platform/mod.rs
+@@ -4,6 +4,9 @@
+
+ #[cfg(unix)]
+ pub use self::unix::is_unsafe_overwrite;
++// wasmVM: WASI has no fcntl/lseek — overwrite detection is not possible
++#[cfg(target_os = "wasi")]
++pub fn is_unsafe_overwrite<I, O>(_input: &I, _output: &O) -> bool { false }
+
+ #[cfg(windows)]
+ pub use self::windows::is_unsafe_overwrite;

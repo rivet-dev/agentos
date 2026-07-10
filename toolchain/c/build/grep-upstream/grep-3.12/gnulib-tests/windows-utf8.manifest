@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- This file is in the public domain. -->
+
+<!-- This file is an application manifest that has the effect that in the
+     application, GetACP () == 65001 instead of e.g. 1252.
+     Documentation:
+     https://learn.microsoft.com/en-us/windows/win32/sbscs/application-manifests#activeCodePage
+     https://learn.microsoft.com/en-us/windows/apps/design/globalizing/use-utf8-code-page
+     XML schema that this file needs to obey:
+     https://learn.microsoft.com/en-us/windows/win32/sbscs/manifest-file-schema
+     It is supposed to work in Windows 10 version 1903 or newer,
+     when the UCRT runtime is in use (as opposed to old MSVCRT).
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+    </windowsSettings>
+  </application>
+</assembly>

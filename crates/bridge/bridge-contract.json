@@ -189,12 +189,13 @@
 				"_childProcessSpawnStart",
 				"_childProcessPoll",
 				"_childProcessStdinWrite",
-				"_childProcessStdinClose",
-				"_childProcessKill",
-				"_processKill",
-				"_processSignalState"
-			]
-		},
+					"_childProcessStdinClose",
+					"_childProcessKill",
+					"_processKill",
+					"_processSignalState",
+					"_processTakeSignal"
+				]
+			},
 		{
 			"convention": "syncPromise",
 			"argumentTypes": [
@@ -945,13 +946,17 @@
 			"method": "process.kill",
 			"translateArgs": false
 		},
-		"_processSignalState": {
-			"method": "process.signal_state",
-			"translateArgs": false
-		},
-		"_ptySetRawMode": {
-			"method": "__pty_set_raw_mode",
-			"translateArgs": false
+			"_processSignalState": {
+				"method": "process.signal_state",
+				"translateArgs": false
+			},
+			"_processTakeSignal": {
+				"method": "process.take_signal",
+				"translateArgs": false
+			},
+			"_ptySetRawMode": {
+				"method": "__pty_set_raw_mode",
+				"translateArgs": false
 		},
 		"_resolveModule": {
 			"method": "__resolve_module",

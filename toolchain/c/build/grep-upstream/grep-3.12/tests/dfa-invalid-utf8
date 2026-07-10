@@ -1,0 +1,29 @@
+#! /bin/sh
+# Test whether "grep '.'" matches invalid UTF-8 byte sequences.
+#
+# Copyright 2019-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_en_utf8_locale_
+require_compiled_in_MB_support
+
+fail=0
+
+printf 'a\360\202\202\254b\n' >in1 || framework_failure_
+LC_ALL=en_US.UTF-8 grep 'a.b' in1 > out1 2> err
+test $? -eq 1 || fail=1
+compare /dev/null out1 || fail=1
+compare /dev/null err1 || fail=1
+
+printf 'a\360\202\202\254ba\360\202\202\254b\n' >in2 ||
+  framework_failure_
+LC_ALL=en_US.UTF-8 grep -E '(a.b)\1' in2 > out2 2> err
+test $? -eq 1 || fail=1
+compare /dev/null out2 || fail=1
+compare /dev/null err2 || fail=1
+
+Exit $fail

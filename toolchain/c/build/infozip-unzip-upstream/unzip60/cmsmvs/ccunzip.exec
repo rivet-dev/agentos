@@ -1,0 +1,77 @@
+/* CCUNZIP  EXEC   Compile unzip 5.4 for VM/CMS                           */
+/*                 Author: George Petrov, 11 Apr 1995 (VMCOMPIL EXEC) */
+/* Modified for IBM C V3R1 by Ian E. Gorman, 2 Nov 1998
+   Facilities for compiling and testing were provided by
+      OmniMark Technologies Corporation, Ottawa, Canada
+*/
+Address Command
+Signal On Error
+
+/* Allow longnames, compile re-entrant code.
+   global.c and vmmvs.c require EXTENDED features */
+CCopts = 'LONGNAME RENT LANGLVL(EXTENDED) NOEXECOPS'
+
+/* UNZIP options -- VM_CMS, REENTRANT */
+CCopts = CCopts 'DEFINE(VM_CMS,REENTRANT)'
+
+/* Link the load module to run in more or less than 16MB memory */
+LINKopts = 'AMODE ANY RMODE ANY RLDSAVE'
+
+
+'GLOBAL TXTLIB  SCEELKED CMSLIB'
+'GLOBAL LOADLIB SCEERUN'
+
+
+/* produce the TEXT (object) files */
+linklist=''
+modname='UNZIP'
+Say 'Building' modname 'MODULE...'
+Call Compile 'UNZIP'
+Call Compile 'CRC32'
+Call Compile 'CRYPT'
+Call Compile 'ENVARGS'
+Call Compile 'EXPLODE'
+Call Compile 'EXTRACT'
+Call Compile 'FILEIO'
+Call Compile 'GLOBALS'
+Call Compile 'INFLATE'
+Call Compile 'PROCESS'
+Call Compile 'LIST'
+Call Compile 'MATCH'
+Call Compile 'TTYIO'
+Call Compile 'UNREDUCE'
+Call Compile 'UNSHRINK'
+Call Compile 'ZIPINFO'
+Call Compile 'VMMVS'
+
+Say 'Linking...'
+'EXEC CMOD' linklist '(MODNAME' modname LINKopts
+Say modname 'built successfully.'
+
+
+/* Make ZIPINFO from UNZIP */
+modname = 'ZIPINFO'
+'COPYFILE UNZIP MODULE A ZIPINFO MODULE A (OLDDATE REPLACE'
+Say modname 'built successfully.'
+Say 'Done.'
+
+Exit rc
+
+
+
+error:
+Say 'Error' rc 'during compilation!'
+Say 'Error in line' sigl':'
+Say '   'Sourceline(sigl)
+Exit rc
+
+
+
+Compile:  Procedure Expose CCopts LINKopts linklist
+Parse arg filename filetype filemode .
+If filetype='' Then filetype='C'
+linklist = linklist filename
+
+Say 'Compiling' filename filetype filemode '...'
+'EXEC CC' filename filetype filemode '('CCopts
+Return rc

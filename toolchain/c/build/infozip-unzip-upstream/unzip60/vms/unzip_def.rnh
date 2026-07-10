@@ -1,0 +1,296 @@
+.!
+.!  File:       UNZIP_DEF.RNH
+.!
+.!  Author:     Hunter Goatley
+.!
+.!  Date:       October 23, 1991
+.!
+.!  Description:
+.!
+.!      RUNOFF source file for VMS on-line help for portable UnZip.
+.!      Adapted from UNZIP.MAN (now UNZIP.TXT).
+.!
+.!      To build:       $ REN UNZIP_DEF.RNH UNZIP.RNH
+.!                      $ RUNOFF UNZIP.RNH
+.!                      $ LIBR/HELP/INSERT libr UNZIP
+.!
+.!  Modification history:
+.!
+.!      01-001          Hunter Goatley          23-OCT-1991 09:21
+.!              Genesis.
+.!      01-002          Cave Newt               16-MAR-1992 22:37
+.!              Updated for UnZip 4.2.
+.!      01-003          Igor Mandrichenko       23-MAY-1992 22:14
+.!              Added -X option to command syntax.
+.!      01-004          Cave Newt               24-MAY-1992 13:30
+.!              Added UNZIP_OPTS environment variable help.
+.!      01-005          Igor Mandrichenko       14-DEC-1993 18:55
+.!              Modified for UnZip V5.1
+.!      01-006          Cave Newt               21-DEC-1993 12:38
+.!              Added -x option and cleaned up.
+.!      01-007          Cave Newt               14-JUL-1994 09:45
+.!              Added -Z, -C and -L options, removed -U, minor clean-up.
+.!      01-008          Cave Newt               28-JUL-1994 08:57
+.!              Removed semi-colons from comments.
+.!      02-001          Christian Spieler       09-DEC-1995 02:25
+.!              Modified for UnZip 5.2.
+.!      02-002          Christian Spieler       06-FEB-1996 02:25
+.!              Added -h "help" option.
+.!      02-003          Christian Spieler       04-MAR-1997 20:25
+.!              Added -P "command line password" option.
+.!      02-004          Christian Spieler       26-JUL-1997 00:05
+.!              Added Exit_Codes subtopic, explaining UnZip's VMS return codes.
+.!      02-005          Christian Spieler       28-APR-2000 03:22
+.!              Changed references to plaintext UnZip documentation file
+.!              into "UNZIP.TXT".
+.!      02-006          Christian Spieler       15-APR-2001 22:29
+.!              Added description for extended functionality of -b option.
+.!      02-007          Christian Spieler       10-DEC-2001 13:58
+.!              Added description for new -: traverse dirs option.
+.!      02-008          Christian Spieler       29-JAN-2005 01:50
+.!              Added description for the -T "set archive timestamp" option.
+.!      02-009          Christian Spieler       04-MAR-2007 14:37
+.!              Added description for the -S "Stream-LF text files" option;
+.!              updated the documentation of the VMS exit codes.
+.!      02-010          S. Schweda, C. Spieler  28-Dec-2007 21:28
+.!              Added description for the -D "timestamp restoration" option.
+.!
+.noflags
+.lm4 .rm72
+.indent -4
+1 UNZIP
+.br
+UnZip is used to extract files compressed and packaged by Zip (see HELP ZIP
+for information on ZIP).
+.sk
+For a brief help on Zip and Unzip, run each without specifying any
+parameters on the command line, or specify the -h flag (but not in UnZip's
+Zipinfo mode).
+.sk
+UNZIP will list, test, or extract from a ZIP archive.  ZIP archives are commonly
+found on MS-DOS systems; a VMS version of ZIP can also be found here.
+.sk
+Archive member extraction is implied by the absence of the -c, -p, -t, -l, -v or
+-z options.  All archive members are processed unless a filespec is provided to
+specify a subset of the archive members.
+Format:
+.sk;.lm+1;.literal
+UNZIP [-cfhlptTuvxz[ajnoqCDLMSVXY:2]] file[.zip] [list] [-x xlist] [-d out_dir]
+.end literal;.lm-1
+.!------------------------------------------------------------------------------
+.indent -4
+2 Parameters
+.sk;.indent -4
+file[.zip]
+.sk
+File specification for the ZIP archive(s) with optional wildcards. UnZip will
+perform actions specified for every zipfile matching the specification.
+Default file specification is SYS$DISK:[].ZIP.
+Note that self-extracting ZIP files are supported; just specify the .EXE
+suffix yourself.
+.sk;.indent -4
+[list]
+.sk
+An optional list of archive members to be processed; if no list is given, all
+archive members are processed.  Expressions may be
+used to match multiple members.  Expressions should be enclosed in double-quotes
+to prevent interpretation by DCL.  Multiple filenames should be separated by
+blanks.  Each file specification is similar to a Unix egrep expression and may
+contain:
+.sk
+.literal
+     *       matches a sequence of 0 or more characters
+     ?       matches exactly 1 character
+     [...]   matches any single character found inside the brackets;
+             ranges are specified by a beginning character, a hyphen,
+             and an ending character.  If a '!' or '^' immediately
+             follows the left bracket, then any character not in the
+             given range is matched.
+             Hint: To specify a verbatim left bracket '[', the
+                   three-character sequence "[[]" has to be used.
+.end literal
+.sk
+.sk;.indent -4
+[-x xlist]
+.sk
+An optional list of archive members to be excluded from processing.  The xlist
+overrides any files included in the normal list.
+.sk;.indent -4
+[-d out_dir]
+.sk
+Optional directory specification to be used as target root directory
+for files to be extracted.  Directory should be specified in "[.foo]"
+format rather than "foo.dir" or "foo/" format.
+.!------------------------------------------------------------------------------
+.indent -4
+2 Options
+.br
+The default action of UnZip is to extract all zipfile entries.  The following
+options and modifiers can be provided:
+.sk;.literal
+   -Z   ZipInfo mode
+   -c   extract files to SYS$OUTPUT (terminal)
+   -f   freshen existing files (replace if newer); create none
+   -h   show brief help screen and exit quietly
+   -l   list archive files (short format)
+   -p   extract files to SYS$OUTPUT; no informational messages
+   -t   test archive files
+   -T   set zipfile timestamps to that of each archive's newest entry
+   -u   update existing files; create new ones if needed
+   -v   list archive files (verbose format)
+   -z   display only the archive comment
+.end literal;.sk;.literal
+ MODIFIERS
+   -a   extract text files in standard VMS text file format
+   -aa  extract all files as text
+   -b   auto-extract only binary files in fixed 512-byte record format
+   -bb  extract all files as binary in fixed 512-byte record format
+   -j   junk paths (don't recreate archive's directory structure)
+   -n   never overwrite or make a new version of an existing file
+   -o   always make a new version (-oo: overwrite orig) existing file
+   -q   perform operations quietly (-qq => even quieter)
+   -C   match filenames case-insensitively
+   -D   do not restore any timestamps (--D restore them even for dirs)
+   -L   convert filenames to lowercase if created under DOS, VMS, etc.
+   -M   feed screen output through built-in "more" pager
+   -P<password> supply decryption password on the cmd line (insecure!)
+   -S   use Stream_LF record format to extract text files (with -a[a])
+   -V   retain (VMS) file version numbers
+   -X   restore owner/ACL protection info (may require privileges)
+   -Y   treat ".nnn" suffix as version number ("a.b.3" -> "a.b;3")
+   -:   allow "../" path components to traverse across top extract dir
+   -2   force creation of ODS2-compatible file names
+.end literal;.sk
+Note that uppercase options (-C, -D, -L, -M, -P, -S, -T, -V, -X, -Y, and
+-Z) must be specified in quotes (unless SET PROC/PARSE=EXTEND is set).
+For example:
+.sk;.literal
+    unzip "-VX" -a zipfile
+.end literal;.sk
+When extracting to SYS$OUTPUT (-c or -p options) redirected to a file,
+you may want to override the default text file conversion by specifying
+the -b option. A single "-b" option switches to "binary piping" mode
+for Zip entries marked as non-text, only. To force "binary piping" mode
+even for Zip file entries marked as text, the "-bb" option should be used.
+(Please note that a later "-a" cancels any -b option, see below.)
+.sk
+The output conversion options -b and -a may be combined to perform
+binary conversions on binary files and text conversion on text files.
+But note: For compatibility with implementation on other systems, -b cancels
+any -a option; to get the intended result, -a must be specified AFTER -b.
+And, in combination, "text" recognition takes precedence; this means
+that -bba (-bb -a) has the same effect as -ba (-b -a), and -aa overrides
+binary conversion for ALL files.
+.sk
+The conversion option -S is only effective when used together with
+-a or -aa. When specified, "text" files are written in Stream-LF record
+format instead of the VMS default of Variable-Length record format.
+(When no conversion options are specified, all non-VMS entries are always
+written as Stream-LF files.)
+.sk
+Please note that using the "-P<password>" option is higly insecure, the
+plaintext password may be seen by others. For this reason (and because of
+lack of space), the "-P<password>" option is not advertised on UnZip's
+online help screen.
+.!------------------------------------------------------------------------------
+.indent -4
+2 Exit_Status
+.br
+On VMS, UnZip's UNIX-style exit values are mapped into VMS-style status
+codes with facility code 1954 = %x7A2, and with the inhibit-message
+(%x10000000) and facility-specific (%x00008000) bits set:
+.sk
+.literal
+   %x17A28001                        normal exit
+   %x17A28000 + 16*UnZip_error_code  warnings
+   %x17A28002 + 16*UnZip_error_code  normal errors
+   %x17A28004 + 16*UnZip_error_code  fatal errors
+.end literal
+.sk
+Note that multiplying the UNIX-style UnZip error code by 16 places it
+conveniently in the hexadecimal representation of the VMS exit code,
+"__" in %x17A28__s, where "s" is the severity code.  For example, a
+missing archive might cause UnZip error code 9, which would be
+transformed into the VMS exit status %X17A28092.
+.sk
+The UnZip VMS exit codes include severity values which approximate those
+defined by PKWARE, as shown in the following table:
+.literal
+
+    VMS     UnZip err
+  severity    code     Error description
+ ----------+---------+----------------------------------------------
+  Success       0      Normal.  No errors or warnings detected.
+  Warning       1      One or more warnings  were  encountered, but
+                       processing  completed  successfully  anyway.
+                       This  includes  archives  where  one or more
+                       (but not all)  files were skipped because of
+                       unsupported compress or encrypt methods,  or
+                       bad passwords.
+  Error         2      Error in the archive format.  Processing may
+                       have completed  successfully  anyway.   Some
+                       defects in archives (made by other programs)
+                       can be repaired transparently.
+  Fatal         3      Severe error in the archive format. Process-
+                       ing probably failed immediately.
+  Fatal         4      Memory allocation failed in program initial-
+                       ization.
+  Fatal         5      Memory  allocation  failed  in password pro-
+                       cessing.
+  Fatal         6      Memory allocation failed while decompressing
+                       to disk.
+  Fatal         7      Memory allocation failed while decompressing
+                       in memory.
+  Fatal         8      Memory  allocation  failed    (reserved  for
+                       future use).
+  Error         9      Specified archive files were not found.
+  Error        10      Invalid command-line options or parameters.
+  Error        11      No files matched selection criteria.
+  Fatal        50      Disk full.
+  Fatal        51      Unexpected  end-of-file  while  reading  the
+                       archive.
+  Error        80      User interrupt (Ctrl/C).
+  Error        81      No files were processed,  because  of unsup-
+                       ported compress or encrypt methods.
+  Error        82      No  files  were  processed,  because  of bad
+                       password(s).
+  Fatal        83      Large-file archive could not be processed by
+                       this small-file program.
+.end literal
+.!------------------------------------------------------------------------------
+.indent -4
+2 Logical_Names
+.br
+UnZip allows to modify its default behaviour by specifying option defaults
+via the UNZIP_OPTS logical name.
+For example, the following will cause UnZip to restore owner/protection
+information and perform all operations at quiet-level 1 by default:
+.sk;.literal
+    define UNZIP_OPTS "-qX"
+.end literal;.sk
+Note that the quotation marks here are required to preserve lowercase options
+(opposite of the command-line behavior).
+To negate a default option on the command line, add one or more minus
+signs before the option letter, in addition to the leading switch character
+`-':
+.sk;.literal
+    unzip --ql zipfile
+.end literal
+or
+.literal
+    unzip -l-q zipfile
+.end literal;.sk
+At present it is not possible to decrement an option below zero--that is,
+more than a few minuses have no effect.
+.sk
+UNZIP_OPTS may be defined as a symbol rather than a logical name, but if
+both are defined, the logical name takes precedence.
+.!-----------------------------------------------------------------------------
+.indent -4
+2 Authors
+.br
+Info-ZIP; currently maintained by Christian Spieler.  VMS support maintained
+by Christian Spieler and Hunter Goatley.  Originally based on a program
+by Samuel H. Smith.
+.sk
+VMS on-line help ported from UNZIP.TXT by Hunter Goatley.

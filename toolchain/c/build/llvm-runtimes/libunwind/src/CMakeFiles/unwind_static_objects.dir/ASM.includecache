@@ -1,0 +1,20 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/llvm-project/libunwind/src/UnwindRegistersRestore.S
+assembly.h
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/llvm-project/libunwind/src/assembly.h
+
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/llvm-project/libunwind/src/UnwindRegistersSave.S
+assembly.h
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/llvm-project/libunwind/src/assembly.h
+
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/llvm-project/libunwind/src/assembly.h
+cet.h
+-
+

@@ -1,0 +1,89 @@
+.\"  Copyright (c) 1990-2009 Info-ZIP.  All rights reserved.
+.\"
+.\"  See the accompanying file LICENSE, version 2009-Jan-02 or later
+.\"  (the contents of which are also included in unzip.h) for terms of use.
+.\"  If, for some reason, all these files are missing, the Info-ZIP license
+.\"  also may be found at:  ftp://ftp.info-zip.org/pub/infozip/license.html
+.\"
+.\" zipgrep.1 by Greg Roelofs.
+.\"
+.\" =========================================================================
+.TH ZIPGREP 1L "20 April 2009" "Info-ZIP"
+.SH NAME
+zipgrep \- search files in a ZIP archive for lines matching a pattern
+.PD
+.SH SYNOPSIS
+\fBzipgrep\fP [\fBegrep_options\fP] \fIpattern\fP
+\fIfile\fP[\fI.zip\fP] [\fIfile(s)\fP\ .\|.\|.]
+[\fB\-x\fP\ \fIxfile(s)\fP\ .\|.\|.]
+.PD
+.\" =========================================================================
+.SH DESCRIPTION
+\fIzipgrep\fP will search files within a ZIP archive for lines matching
+the given string or pattern.  \fIzipgrep\fP is a shell script and requires
+\fIegrep\fP(1) and \fIunzip\fP(1L) to function.  Its output is identical to
+that of \fIegrep\fP(1).
+.PD
+.\" =========================================================================
+.SH ARGUMENTS
+.TP
+.IP \fIpattern\fP
+The pattern to be located within a ZIP archive.  Any string or regular
+expression accepted by \fIegrep\fP(1) may be used.
+.IR file [ .zip ]
+Path of the ZIP archive.  (Wildcard expressions for the ZIP archive name are
+not supported.)  If the literal filename is not found, the suffix \fC.zip\fR
+is appended.  Note that self-extracting ZIP files are supported, as with any
+other ZIP archive; just specify the \fC.exe\fR suffix (if any) explicitly.
+.IP [\fIfile(s)\fP]
+An optional list of archive members to be processed, separated by spaces.
+If no member files are specified, all members of the ZIP archive are searched.
+Regular expressions (wildcards) may be used to match multiple members:
+.RS
+.IP *
+matches a sequence of 0 or more characters
+.IP ?
+matches exactly 1 character
+.IP [.\|.\|.]
+matches any single character found inside the brackets; ranges are specified
+by a beginning character, a hyphen, and an ending character.  If an exclamation
+point or a caret (`!' or `^') follows the left bracket, then the range of
+characters within the brackets is complemented (that is, anything \fIexcept\fP
+the characters inside the brackets is considered a match).
+.RE
+.IP
+(Be sure to quote any character that might otherwise be interpreted or
+modified by the operating system.)
+.IP [\fB\-x\fP\ \fIxfile(s)\fP]
+An optional list of archive members to be excluded from processing.
+Since wildcard characters match directory separators (`/'), this option
+may be used to exclude any files that are in subdirectories.  For
+example, ``\fCzipgrep grumpy foo *.[ch] -x */*\fR'' would search for the
+string ``grumpy'' in all C source files in the main directory of the ``foo''
+archive, but none in any subdirectories.  Without the \fB\-x\fP
+option, all C source files in all directories within the zipfile would be
+searched.
+.\" =========================================================================
+.SH OPTIONS
+All options prior to the ZIP archive filename are passed to \fIegrep\fP(1).
+.PD
+.\" =========================================================================
+.SH "SEE ALSO"
+\fIegrep\fP(1), \fIunzip\fP(1L), \fIzip\fP(1L), \fIfunzip\fP(1L),
+\fIzipcloak\fP(1L), \fIzipinfo\fP(1L), \fIzipnote\fP(1L), \fIzipsplit\fP(1L)
+.PD
+.\" =========================================================================
+.SH URL
+The Info-ZIP home page is currently at
+.EX
+\fChttp://www.info-zip.org/pub/infozip/\fR
+.EE
+or
+.EX
+\fCftp://ftp.info-zip.org/pub/infozip/\fR .
+.EE
+.PD
+.\" =========================================================================
+.SH AUTHORS
+\fIzipgrep\fP was written by Jean-loup Gailly.
+.PD

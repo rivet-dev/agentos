@@ -1,0 +1,11 @@
+{
+	"commands": [
+		"envsubst"
+	],
+	"registry": {
+		"title": "envsubst",
+		"description": "Substitute environment variables in text streams.",
+		"priority": 10,
+		"category": "core"
+	}
+}

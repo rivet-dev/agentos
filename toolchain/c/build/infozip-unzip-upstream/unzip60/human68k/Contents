@@ -1,0 +1,7 @@
+Contents of the "human68k" sub-archive for UnZip 5.50 and later:
+
+  Contents       this file
+  Makefile       (shorter) Makefile for GNU C on X680x0/Human68k
+  human68k.c     Human68k-specific routines for UnZip
+  crc_68.s       assembler version of crc32.c
+  flate.s        assembler version of inflate_codes() (define ASM_INFLATECODES)

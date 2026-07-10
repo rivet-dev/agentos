@@ -1,0 +1,829 @@
+# Italian translation of grep
+# Copyright (C) 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2016, 2018 Free Software Foundation, Inc.
+# Copyright (C) 2020, 2021 Free Software Foundation, Inc.
+# This file is distributed under the same license as the grep package.
+#
+# Marco d'Itri <md@linux.it>, 1999, 2001.
+# Milo Casagrande <milo@milo.name>, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2016, 2018, 2020, 2021.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: grep-3.6.27\n"
+"Report-Msgid-Bugs-To: bug-grep@gnu.org\n"
+"POT-Creation-Date: 2025-04-10 09:02-0700\n"
+"PO-Revision-Date: 2021-08-19 10:56+0200\n"
+"Last-Translator: Milo Casagrande <milo@milo.name>\n"
+"Language-Team: Italian <tp@lists.linux.it>\n"
+"Language: it\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Bugs: Report translation errors to the Language-Team address.\n"
+"Plural-Forms: nplurals=2; plural=(n!=1);\n"
+"X-Generator: Poedit 2.4.2\n"
+"X-Poedit-SourceCharset: UTF-8\n"
+
+#: lib/argmatch.c:145
+#, c-format
+msgid "invalid argument %s for %s"
+msgstr "argomento %s per %s non valido"
+
+#: lib/argmatch.c:146
+#, c-format
+msgid "ambiguous argument %s for %s"
+msgstr "argomento %s ambiguo per %s"
+
+#: lib/argmatch.c:165 lib/argmatch.h:242
+msgid "Valid arguments are:"
+msgstr "Gli argomenti validi sono:"
+
+#: lib/c-stack.c:190
+msgid "program error"
+msgstr "errore del programma"
+
+#: lib/c-stack.c:191
+msgid "stack overflow"
+msgstr "overflow dello stack"
+
+#: lib/closeout.c:121 src/grep.c:1352
+msgid "write error"
+msgstr "errore di scrittura"
+
+#: lib/dfa.c:910
+msgid "unbalanced ["
+msgstr "[ non bilanciata"
+
+#: lib/dfa.c:1031
+msgid "invalid character class"
+msgstr "Classe del carattere non valido"
+
+#: lib/dfa.c:1159
+msgid "character class syntax is [[:space:]], not [:space:]"
+msgstr "La sintassi per la classe di caratteri è [[:space:]], non [:space:]"
+
+#: lib/dfa.c:1234
+msgid "unfinished \\ escape"
+msgstr "Escape \\ incompleto"
+
+#: lib/dfa.c:1344
+#, fuzzy
+msgid "? at start of expression"
+msgstr "Espressione regolare non valida"
+
+#: lib/dfa.c:1356
+#, fuzzy
+msgid "* at start of expression"
+msgstr "Espressione regolare non valida"
+
+#: lib/dfa.c:1370
+#, fuzzy
+msgid "+ at start of expression"
+msgstr "Espressione regolare non valida"
+
+#: lib/dfa.c:1425
+msgid "{...} at start of expression"
+msgstr ""
+
+#: lib/dfa.c:1428
+msgid "invalid content of \\{\\}"
+msgstr "Contenuto di \\{\\} non valido"
+
+#: lib/dfa.c:1430
+msgid "regular expression too big"
+msgstr "Espressione regolare troppo grande"
+
+#: lib/dfa.c:1580
+msgid "stray \\ before unprintable character"
+msgstr ""
+
+#: lib/dfa.c:1582
+msgid "stray \\ before white space"
+msgstr ""
+
+#: lib/dfa.c:1593
+#, c-format
+msgid "stray \\ before %s"
+msgstr ""
+
+#: lib/dfa.c:1594 lib/dfa.c:1597
+msgid "stray \\"
+msgstr ""
+
+#: lib/dfa.c:1948
+msgid "unbalanced ("
+msgstr "( non bilanciata"
+
+#: lib/dfa.c:2065
+msgid "no syntax specified"
+msgstr "Nessuna sintassi specificata"
+
+#: lib/dfa.c:2076
+msgid "unbalanced )"
+msgstr ") non bilanciata"
+
+#: lib/error.c:208
+msgid "Unknown system error"
+msgstr "Errore di sistema sconosciuto"
+
+#: lib/getopt.c:282
+#, c-format
+msgid "%s: option '%s%s' is ambiguous\n"
+msgstr "%s: l'opzione \"%s%s\" è ambigua\n"
+
+#: lib/getopt.c:288
+#, c-format
+msgid "%s: option '%s%s' is ambiguous; possibilities:"
+msgstr "%s: l'opzione \"%s%s\" è ambigua. Possibilità:"
+
+#: lib/getopt.c:322
+#, c-format
+msgid "%s: unrecognized option '%s%s'\n"
+msgstr "%s: opzione \"%s%s\" non riconosciuta\n"
+
+#: lib/getopt.c:348
+#, c-format
+msgid "%s: option '%s%s' doesn't allow an argument\n"
+msgstr "%s: l'opzione \"%s%s\" non accetta argomenti\n"
+
+#: lib/getopt.c:363
+#, c-format
+msgid "%s: option '%s%s' requires an argument\n"
+msgstr "%s: l'opzione \"%s%s\" richiede un argomento\n"
+
+#: lib/getopt.c:624
+#, c-format
+msgid "%s: invalid option -- '%c'\n"
+msgstr "%s: opzione non valida -- \"%c\"\n"
+
+#: lib/getopt.c:639 lib/getopt.c:685
+#, c-format
+msgid "%s: option requires an argument -- '%c'\n"
+msgstr "%s: l'opzione richiede un argomento -- \"%c\"\n"
+
+#: lib/obstack.c:320 lib/obstack.c:322 lib/xalloc-die.c:34
+msgid "memory exhausted"
+msgstr "memoria esaurita"
+
+#: lib/openat-die.c:38
+msgid "unable to record current working directory"
+msgstr "impossibile registrare la directory di lavoro attuale"
+
+#: lib/openat-die.c:57
+msgid "failed to return to initial working directory"
+msgstr "errore nel restituire la directory di lavoro iniziale"
+
+#: lib/xbinary-io.c:36
+#, c-format
+msgid "failed to set file descriptor text/binary mode"
+msgstr ""
+"impostazione del descrittore file in modalità testo/binario non riuscita"
+
+#. TRANSLATORS:
+#. Get translations for open and closing quotation marks.
+#. The message catalog should translate "`" to a left
+#. quotation mark suitable for the locale, and similarly for
+#. "'".  For example, a French Unicode local should translate
+#. these to U+00AB (LEFT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), and U+00BB (RIGHT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), respectively.
+#.
+#. If the catalog has no translation, we will try to
+#. use Unicode U+2018 (LEFT SINGLE QUOTATION MARK) and
+#. Unicode U+2019 (RIGHT SINGLE QUOTATION MARK).  If the
+#. current locale is not Unicode, locale_quoting_style
+#. will quote 'like this', and clocale_quoting_style will
+#. quote "like this".  You should always include translations
+#. for "`" and "'" even if U+2018 and U+2019 are appropriate
+#. for your locale.
+#.
+#. If you don't know what to put here, please see
+#. <https://en.wikipedia.org/wiki/Quotation_marks_in_other_languages>
+#. and use glyphs suitable for your language.
+#: lib/quotearg.c:354
+msgid "`"
+msgstr "\""
+
+#: lib/quotearg.c:355
+msgid "'"
+msgstr "\""
+
+#: lib/regcomp.c:122
+msgid "Success"
+msgstr "Successo"
+
+#: lib/regcomp.c:125
+msgid "No match"
+msgstr "Nessuna corrispondenza"
+
+#: lib/regcomp.c:128
+msgid "Invalid regular expression"
+msgstr "Espressione regolare non valida"
+
+# (ndt) http://en.wikipedia.org/wiki/Collation
+#: lib/regcomp.c:131
+msgid "Invalid collation character"
+msgstr "Carattere di collazione non valido"
+
+#: lib/regcomp.c:134
+msgid "Invalid character class name"
+msgstr "Nome classe del carattere non valido"
+
+#: lib/regcomp.c:137
+msgid "Trailing backslash"
+msgstr "Backslash finale"
+
+#: lib/regcomp.c:140
+msgid "Invalid back reference"
+msgstr "Riferimento all'indietro non valido"
+
+#: lib/regcomp.c:143
+msgid "Unmatched [, [^, [:, [., or [="
+msgstr "[, [^, [:, [., o [= senza corrispondenza"
+
+#: lib/regcomp.c:146
+msgid "Unmatched ( or \\("
+msgstr "( o \\( senza corrispondenza"
+
+#: lib/regcomp.c:149
+msgid "Unmatched \\{"
+msgstr "\\{ senza corrispondenza"
+
+#: lib/regcomp.c:152
+msgid "Invalid content of \\{\\}"
+msgstr "Contenuto di \\{\\} non valido"
+
+#: lib/regcomp.c:155
+msgid "Invalid range end"
+msgstr "Limite massimo non valido"
+
+#: lib/regcomp.c:158
+msgid "Memory exhausted"
+msgstr "Memoria esaurita"
+
+#: lib/regcomp.c:161
+msgid "Invalid preceding regular expression"
+msgstr "Espressione regolare precedente non valida"
+
+#: lib/regcomp.c:164
+msgid "Premature end of regular expression"
+msgstr "Fine prematura dell'espressione regolare"
+
+#: lib/regcomp.c:167
+msgid "Regular expression too big"
+msgstr "Espressione regolare troppo grande"
+
+#: lib/regcomp.c:170
+msgid "Unmatched ) or \\)"
+msgstr ") o \\) senza corrispondenza"
+
+#: lib/regcomp.c:650
+msgid "No previous regular expression"
+msgstr "Nessuna espressione regolare precedente"
+
+#: lib/version-etc.c:73
+#, c-format
+msgid "Packaged by %s (%s)\n"
+msgstr "Pacchetto creato da %s (%s)\n"
+
+#: lib/version-etc.c:76
+#, c-format
+msgid "Packaged by %s\n"
+msgstr "Pacchetto creato da %s\n"
+
+#. TRANSLATORS: Translate "(C)" to the copyright symbol
+#. (C-in-a-circle), if this symbol is available in the user's
+#. locale.  Otherwise, do not translate "(C)"; leave it as-is.
+#: lib/version-etc.c:83
+msgid "(C)"
+msgstr "©"
+
+#. TRANSLATORS: The %s placeholder is the web address of the GPL license.
+#: lib/version-etc.c:88
+#, c-format
+msgid ""
+"License GPLv3+: GNU GPL version 3 or later <%s>.\n"
+"This is free software: you are free to change and redistribute it.\n"
+"There is NO WARRANTY, to the extent permitted by law.\n"
+msgstr ""
+"Licenza GPLv3+: GNU GPL versione 3 o successiva <%s>.\n"
+"Questo programma è software libero: siete liberi di modificarlo e "
+"ridistribuirlo.\n"
+"Non c'è ALCUNA GARANZIA, per quanto consentito dalle vigenti normative.\n"
+"\n"
+
+#. TRANSLATORS: %s denotes an author name.
+#: lib/version-etc.c:105
+#, c-format
+msgid "Written by %s.\n"
+msgstr "Scritto da %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:109
+#, c-format
+msgid "Written by %s and %s.\n"
+msgstr "Scritto da %s e %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:113
+#, c-format
+msgid "Written by %s, %s, and %s.\n"
+msgstr "Scritto da %s, %s e %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:120
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+"Scritto da %s, %s, %s\n"
+"e %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:127
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+"Scritto da %s, %s, %s,\n"
+"%s e %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:134
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, and %s.\n"
+msgstr ""
+"Scritto da %s, %s, %s,\n"
+"%s, %s e %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:142
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, and %s.\n"
+msgstr ""
+"Scritto da %s, %s, %s,\n"
+"%s, %s, %s e %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:150
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+"Scritto da %s, %s, %s,\n"
+"%s, %s, %s, %s\n"
+"e %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:159
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+"Scritto da %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s e %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:170
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, %s, and others.\n"
+msgstr ""
+"Scritto da %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, %s e altri.\n"
+
+#. TRANSLATORS: The placeholder indicates the bug-reporting address
+#. for this package.  Please add _another line_ saying
+#. "Report translation bugs to <...>\n" with the address for translation
+#. bugs (typically your translation team's web or email address).
+#: lib/version-etc.c:249
+#, c-format
+msgid "Report bugs to: %s\n"
+msgstr "Segnalare i bug a: %s\n"
+
+#: lib/version-etc.c:251
+#, c-format
+msgid "Report %s bugs to: %s\n"
+msgstr "Segnalare i bug di %s a: %s\n"
+
+#: lib/version-etc.c:255 lib/version-etc.c:257
+#, c-format
+msgid "%s home page: <%s>\n"
+msgstr "Sito web di %s: <%s>\n"
+
+#: lib/version-etc.c:260
+#, c-format
+msgid "General help using GNU software: <%s>\n"
+msgstr "Pagina di aiuto per l'utilizzo di software GNU: <%s>\n"
+
+#: src/dfasearch.c:57
+#, c-format
+msgid "warning: %s"
+msgstr ""
+
+#: src/grep.c:657
+msgid "(standard input)"
+msgstr "(standard input)"
+
+#: src/grep.c:838
+msgid "invalid context length argument"
+msgstr "argomento della lunghezza del contesto non valido"
+
+#: src/grep.c:911
+msgid "input is too large to count"
+msgstr "l'input è troppo grande per essere contato"
+
+#: src/grep.c:1656
+#, c-format
+msgid "%s: binary file matches"
+msgstr "%s: il file binario corrisponde"
+
+#: src/grep.c:1694
+#, c-format
+msgid "%s: warning: recursive directory loop"
+msgstr "%s: attenzione: ciclo ricorsivo di directory"
+
+#: src/grep.c:1914
+#, c-format
+msgid "%s: input file is also the output"
+msgstr "%s: il file di input è anche l'output"
+
+#: src/grep.c:1976 src/grep.c:1983
+#, c-format
+msgid "Usage: %s [OPTION]... PATTERNS [FILE]...\n"
+msgstr "Uso: %s [OPZIONE]... MODELLI [FILE]...\n"
+
+#: src/grep.c:1978
+#, c-format
+msgid "Try '%s --help' for more information.\n"
+msgstr "Usare \"%s --help\" per ulteriori informazioni.\n"
+
+#: src/grep.c:1984
+#, c-format
+msgid "Search for PATTERNS in each FILE.\n"
+msgstr "Cerca MODELLI in ogni FILE\n"
+
+#: src/grep.c:1985
+#, c-format
+msgid ""
+"Example: %s -i 'hello world' menu.h main.c\n"
+"PATTERNS can contain multiple patterns separated by newlines.\n"
+"\n"
+"Pattern selection and interpretation:\n"
+msgstr ""
+"Esempio: %s -i \"ciao mondo\" menu.h main.c\n"
+"MODELLI può contenere diversi modelli separati da newline.\n"
+"\n"
+"Selezione e interpretazione del modello:\n"
+
+#: src/grep.c:1990
+#, c-format
+msgid ""
+"  -E, --extended-regexp     PATTERNS are extended regular expressions\n"
+"  -F, --fixed-strings       PATTERNS are strings\n"
+"  -G, --basic-regexp        PATTERNS are basic regular expressions\n"
+"  -P, --perl-regexp         PATTERNS are Perl regular expressions\n"
+msgstr ""
+"  -E, --extended-regexp     MODELLI sono espressioni regolari estese\n"
+"  -F, --fixed-strings       MODELLI sono stringhe\n"
+"  -G, --basic-regexp        MODELLI sono espressioni regolari semplici\n"
+"  -P, --perl-regexp         MODELLI sono espressioni regolari Perl\n"
+
+#: src/grep.c:1996
+#, c-format
+msgid ""
+"  -e, --regexp=PATTERNS     use PATTERNS for matching\n"
+"  -f, --file=FILE           take PATTERNS from FILE\n"
+"  -i, --ignore-case         ignore case distinctions in patterns and data\n"
+"      --no-ignore-case      do not ignore case distinctions (default)\n"
+"  -w, --word-regexp         match only whole words\n"
+"  -x, --line-regexp         match only whole lines\n"
+"  -z, --null-data           a data line ends in 0 byte, not newline\n"
+msgstr ""
+"  -e, --regexp=MODELLI      Usa MODELLI per la corrispondenza\n"
+"  -f, --file=FILE           Ottiene i MODELLI dal FILE\n"
+"  -i, --ignore-case         Ignora la distinzione maiuscole/minuscole\n"
+"      --no-ignore-case      Non ignora la distinzione maiuscole/minuscole\n"
+"                            (predefinito)\n"
+"  -w, --word-regexp         Corrispondere solo a parole intere\n"
+"  -x, --line-regexp         Corrispondere solo a righe intere\n"
+"  -z, --null-data           Una riga di dati termina con il byte 0 invece "
+"che\n"
+"                            newline\n"
+
+#: src/grep.c:2004
+#, c-format
+msgid ""
+"\n"
+"Miscellaneous:\n"
+"  -s, --no-messages         suppress error messages\n"
+"  -v, --invert-match        select non-matching lines\n"
+"  -V, --version             display version information and exit\n"
+"      --help                display this help text and exit\n"
+msgstr ""
+"\n"
+"Varie:\n"
+"  -s, --no-messages         Elimina i messaggi di errore\n"
+"  -v, --invert-match        Seleziona le righe che non corrispondono\n"
+"  -V, --version             Stampa la versione ed esce\n"
+"      --help                Visualizza questo aiuto ed esce\n"
+
+#: src/grep.c:2011
+#, c-format
+msgid ""
+"\n"
+"Output control:\n"
+"  -m, --max-count=NUM       stop after NUM selected lines\n"
+"  -b, --byte-offset         print the byte offset with output lines\n"
+"  -n, --line-number         print line number with output lines\n"
+"      --line-buffered       flush output on every line\n"
+"  -H, --with-filename       print file name with output lines\n"
+"  -h, --no-filename         suppress the file name prefix on output\n"
+"      --label=LABEL         use LABEL as the standard input file name "
+"prefix\n"
+msgstr ""
+"\n"
+"Controllo dell'output:\n"
+"  -m, --max-count=NUM       Si ferma dopo NUM righe selezionate\n"
+"  -b, --byte-offset         Stampa l'offset del byte con le righe di output\n"
+"  -n, --line-number         Stampa il numero della riga con le righe di "
+"output\n"
+"      --line-buffered       Esegue il flush dell'output con ogni riga\n"
+"  -H, --with-filename       Stampa il nome del file con le righe di output\n"
+"  -h, --no-filename         Elimina il nome del file dall'output\n"
+"      --label=ETICH         Usa ETICH come nome del file per lo standard "
+"input\n"
+
+#: src/grep.c:2022
+#, c-format
+msgid ""
+"  -o, --only-matching       show only nonempty parts of lines that match\n"
+"  -q, --quiet, --silent     suppress all normal output\n"
+"      --binary-files=TYPE   assume that binary files are TYPE;\n"
+"                            TYPE is 'binary', 'text', or 'without-match'\n"
+"  -a, --text                equivalent to --binary-files=text\n"
+msgstr ""
+"  -o, --only-matching       Mostra solo la parte della riga che corrisponde\n"
+"  -q, --quiet, --silent     Elimina tutto l'output normale\n"
+"      --binary-files=TIPO   Suppone che i file binari siano del TIPO "
+"\"binary\",\n"
+"                            \"text\" oppure \"without-match\"\n"
+"  -a, --text                Equivale a --binary-files=text\n"
+
+#: src/grep.c:2029
+#, c-format
+msgid ""
+"  -I                        equivalent to --binary-files=without-match\n"
+"  -d, --directories=ACTION  how to handle directories;\n"
+"                            ACTION is 'read', 'recurse', or 'skip'\n"
+"  -D, --devices=ACTION      how to handle devices, FIFOs and sockets;\n"
+"                            ACTION is 'read' or 'skip'\n"
+"  -r, --recursive           like --directories=recurse\n"
+"  -R, --dereference-recursive  likewise, but follow all symlinks\n"
+msgstr ""
+"  -I                        Equivale a --binary-files=without-match\n"
+"  -d, --directories=AZIONE  Come gestire le directory: AZIONE è \"read\",\n"
+"                            \"recurse\" o \"skip\"\n"
+"  -D, --devices=AZIONE      Come gestire device, FIFO e socket: AZIONE è\n"
+"                            \"read\" o \"skip\"\n"
+"  -r, --recursive           Equivale a --directories=recurse\n"
+"  -R, --dereference-recursive\n"
+"                            Simile al precedente, ma segue i collegamenti\n"
+"                            simbolici\n"
+
+#: src/grep.c:2038
+#, c-format
+msgid ""
+"      --include=GLOB        search only files that match GLOB (a file "
+"pattern)\n"
+"      --exclude=GLOB        skip files that match GLOB\n"
+"      --exclude-from=FILE   skip files that match any file pattern from "
+"FILE\n"
+"      --exclude-dir=GLOB    skip directories that match GLOB\n"
+msgstr ""
+"      --include=GLOB        Esamina solo i file corrispondenti a GLOB "
+"(modello di file)\n"
+"      --exclude=GLOB        Salta file corrispondenti a GLOB\n"
+"      --exclude-from=FILE   Salta i file corrispondenti ai modelli nel FILE\n"
+"      --exclude-dir=GLOB    Salta le directory corrispondenti a GLOB\n"
+
+#: src/grep.c:2045
+#, c-format
+msgid ""
+"  -L, --files-without-match  print only names of FILEs with no selected "
+"lines\n"
+"  -l, --files-with-matches  print only names of FILEs with selected lines\n"
+"  -c, --count               print only a count of selected lines per FILE\n"
+"  -T, --initial-tab         make tabs line up (if needed)\n"
+"  -Z, --null                print 0 byte after FILE name\n"
+msgstr ""
+"  -L, --files-without-match Stampa solo i nomi dei FILE senza righe "
+"selezionate\n"
+"  -l, --files-with-matches  Stampa solo i nomi dei FILE con righe "
+"selezionate\n"
+"  -c, --count               Stampa solo il conteggio delle righe selezionate "
+"in\n"
+"                            ogni FILE\n"
+"  -T, --initial-tab         Allinea le tabulazioni (se necessario)\n"
+"  -Z, --null                Stampa il byte 0 dopo ogni nome di FILE\n"
+
+#: src/grep.c:2051
+#, c-format
+msgid ""
+"\n"
+"Context control:\n"
+"  -B, --before-context=NUM  print NUM lines of leading context\n"
+"  -A, --after-context=NUM   print NUM lines of trailing context\n"
+"  -C, --context=NUM         print NUM lines of output context\n"
+msgstr ""
+"\n"
+"Controllo del contesto:\n"
+"  -B, --before-context=NUM  Stampa NUM righe di contesto precedente\n"
+"  -A, --after-context=NUM   Stampa NUM righe di contesto seguente\n"
+"  -C, --context=NUM         Stampa NUM righe di contesto dell'output\n"
+
+#: src/grep.c:2058
+#, c-format
+msgid ""
+"  -NUM                      same as --context=NUM\n"
+"      --group-separator=SEP  print SEP on line between matches with context\n"
+"      --no-group-separator  do not print separator for matches with context\n"
+"      --color[=WHEN],\n"
+"      --colour[=WHEN]       use markers to highlight the matching strings;\n"
+"                            WHEN is 'always', 'never', or 'auto'\n"
+"  -U, --binary              do not strip CR characters at EOL (MSDOS/"
+"Windows)\n"
+"\n"
+msgstr ""
+"  -NUM                      Come --context=NUM\n"
+"      --group-separator=SEP Stampa SEP in linea tra la corrispondenze con "
+"il \n"
+"                            contesto\n"
+"      --no-group-separator  Non stampa separatore per corrispondenze con "
+"il \n"
+"                            contesto\n"
+"      --color[=QUANDO],\n"
+"      --colour[=QUANDO]     Usa i colori per distinguere le stringhe\n"
+"                            corrispondenti; QUANDO può essere \"always\", "
+"\"never\"\n"
+"                            o \"auto\"\n"
+"  -U, --binary              Non rimuove i caratteri CR all'EOL (MSDOS/"
+"Windows)\n"
+"\n"
+
+#: src/grep.c:2067
+#, fuzzy, c-format
+msgid ""
+"When FILE is '-', read standard input.  If no FILE is given, read standard\n"
+"input, but with -r, recursively search the working directory instead.  With\n"
+"fewer than two FILEs, assume -h.  Exit status is 0 if any line is selected,\n"
+"1 otherwise; if any error occurs and -q is not given, the exit status is 2.\n"
+msgstr ""
+"Se FILE è \"-\", legge lo standard input; se non c'è alcun FILE, legge \".\" "
+"se in\n"
+"modalità ricorsiva, altrimenti \"-\". Se sono stati specificati meno di due "
+"FILE\n"
+"presume -h. Esce con lo stato 0 se è stata selezionata almeno una riga,\n"
+"1 altrimenti. Se si verifica un errore e l'opzione -q non è\n"
+"stata usata, lo stato di uscita è 2.\n"
+
+#: src/grep.c:2110
+msgid "conflicting matchers specified"
+msgstr "specificate corrispondenze in conflitto"
+
+#: src/grep.c:2117
+msgid "Perl matching not supported in a --disable-perl-regexp build"
+msgstr ""
+"Corrispondenze Perl non supportate: questo binario è compilato con --disable-"
+"perl-regexp"
+
+#: src/grep.c:2119
+#, c-format
+msgid "invalid matcher %s"
+msgstr "corrispondenza %s non valida"
+
+#: src/grep.c:2541
+msgid "unknown devices method"
+msgstr "metodo per i device sconosciuto"
+
+#: src/grep.c:2690
+msgid "invalid max count"
+msgstr "numero massimo non valido"
+
+#: src/grep.c:2747
+msgid "unknown binary-files type"
+msgstr "tipo di file binario sconosciuto"
+
+#: src/grep.c:2832
+#, fuzzy
+msgid ""
+"Written by Mike Haertel and others; see\n"
+"<https://git.savannah.gnu.org/cgit/grep.git/tree/AUTHORS>."
+msgstr ""
+"Creato da Mike Haertel e altri; consultare\n"
+"<https://git.sv.gnu.org/cgit/grep.git/tree/AUTHORS>."
+
+#: src/grep.c:2939
+#, c-format
+msgid "warning: GREP_COLOR='%s' is deprecated; use GREP_COLORS='mt=%s'"
+msgstr ""
+
+#: src/pcresearch.c:89
+#, c-format
+msgid ""
+"\n"
+"grep -P uses PCRE2 %s\n"
+msgstr ""
+
+#: src/pcresearch.c:167
+#, fuzzy
+msgid "-P supports only unibyte locales on this platform"
+msgstr "-P supporta solamente lingue unibyte e UTF-8"
+
+#: src/pcresearch.c:169
+msgid "-P supports only unibyte and UTF-8 locales"
+msgstr "-P supporta solamente lingue unibyte e UTF-8"
+
+#: src/pcresearch.c:192
+msgid "the -P option only supports a single pattern"
+msgstr "l'opzione -P supporta un solo modello"
+
+#: src/pcresearch.c:288
+msgid "exceeded PCRE's line length limit"
+msgstr "limite di lunghezza riga PCRE raggiunto"
+
+#: src/pcresearch.c:366
+#, c-format
+msgid "%s: memory exhausted"
+msgstr "%s: memoria esaurita"
+
+#: src/pcresearch.c:369
+#, c-format
+msgid "%s: exhausted PCRE JIT stack"
+msgstr "%s: stack JIT PCRE esaurito"
+
+#: src/pcresearch.c:373
+#, c-format
+msgid "%s: exceeded PCRE's backtracking limit"
+msgstr "%s: limite di backtrack PCRE raggiunto"
+
+#: src/pcresearch.c:378
+#, fuzzy, c-format
+msgid "%s: exceeded PCRE's nested backtracking limit"
+msgstr "%s: limite di backtrack PCRE raggiunto"
+
+#: src/pcresearch.c:382
+#, c-format
+msgid "%s: PCRE detected recurse loop"
+msgstr ""
+
+#: src/pcresearch.c:387
+#, fuzzy, c-format
+msgid "%s: exceeded PCRE's heap limit"
+msgstr "%s: limite di ricorsione PCRE superato"
+
+#: src/pcresearch.c:396
+#, c-format
+msgid "%s: internal PCRE error: %d"
+msgstr "%s: errore interno PCRE: %d"
+
+#, c-format
+#~ msgid "warning: --unix-byte-offsets (-u) is obsolete"
+#~ msgstr "attenzione: --unix-byte-offsets (-u) è obsoleto"
+
+#, fuzzy, c-format
+#~ msgid "JIT internal error: %d"
+#~ msgstr "%s: errore interno PCRE: %d"
+
+#~ msgid "failed to allocate memory for the PCRE JIT stack"
+#~ msgstr "impossibile allocare memoria per lo stack PCRE JIT"
+
+#~ msgid "internal error (should never happen)"
+#~ msgstr "errore interno (non si dovrebbe mai verificare)"

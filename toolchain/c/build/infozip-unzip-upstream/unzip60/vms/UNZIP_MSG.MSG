@@ -1,0 +1,59 @@
+!    VMS Error Message Source File for UnZip
+!
+! Because the facility code was formally assigned by HP, the .FACILITY
+! directive below specifies /SYSTEM.  Because the messages are, in
+! general, specific to UnZip, this file is not compiled with /SHARED.
+! For example:
+!
+!    MESSAGE /OBJECT = [.dest]UNZIP_MSG.OBJ /NOSYMBOLS [.VMS]UNZIP_MSG.MSG
+!
+!    LINK /SHAREABLE = [.dest]UNZIP_MSG.EXE [.dest]UNZIP_MSG.OBJ
+!
+!-----------------------------------------------------------------------
+
+.TITLE  Info-ZIP UnZip Error Messages
+.FACILITY IZ_UNZIP, 1954 /SYSTEM
+.IDENT 'V6.0-000'
+
+! PK_
+.BASE 0
+OK      /SUCCESS      <Normal successful completion>
+.BASE 2
+WARN    /WARNING      <Generic warning - bad CRC, unknown compress method, ...>
+.BASE 4
+ERR     /ERROR        <Error in zipfile>
+.BASE 6
+BADERR  /SEVERE       <Error in zipfile>
+.BASE 8
+MEM     /SEVERE       <insufficient memory (init)>
+.BASE 10
+MEM2    /SEVERE       <insufficient memory (password)>
+.BASE 12
+MEM3    /SEVERE       <insufficient memory (file expand)>
+.BASE 14
+MEM4    /SEVERE       <insufficient memory (memory expand)>
+.BASE 16
+MEM5    /SEVERE       <insufficient memory (???)>
+.BASE 18
+NOZIP   /ERROR        <zipfile not found>
+.BASE 20
+PARAM   /ERROR        <Invalid parameters specified on command line>
+.BASE 22
+FIND    /ERROR        <No files found to extract or view>
+
+.BASE 100
+DISK    /SEVERE       <I/O error - disk full, ...>
+.BASE 102
+EOF     /SEVERE       <Unexpected end-of-file in zipfile>
+
+! IZ_
+.BASE 160
+CTRLC   /ERROR        <User interrupt (CRTL/C)>
+.BASE 162
+UNSUP   /ERROR        <Unsupported compression or encryption for all files>
+.BASE 164
+BADPWD  /ERROR        <Bad decryption password for all files>
+.BASE 166
+ERRBF   /ERROR        <Large-file archive, small-file program>
+
+.END

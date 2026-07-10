@@ -1,0 +1,32 @@
+#!/bin/sh
+# Test binary files in unibyte locales with encoding errors
+
+# Copyright 2016-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_unibyte_locale
+
+fail=0
+
+printf 'a\n\200\nb\n' >in || framework_failure_
+printf 'a\n' >exp || framework_failure_
+grep . in >out || fail=1
+
+# In some unibyte locales, \200 is an encoding error;
+# in others, it is a valid character.  Allow either possibility.
+compare exp out || compare in out || fail=1
+
+Exit $fail

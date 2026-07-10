@@ -118,6 +118,15 @@ const PREFERRED_SIGNAL_NAMES = [
 	"SIGEMT",
 	"SIGINFO",
 ] as const;
+const NON_TERMINATING_SIGNALS = new Set([
+	"0",
+	"SIGCHLD",
+	"SIGCONT",
+	"SIGSTOP",
+	"SIGURG",
+	"SIGWINCH",
+]);
+const LOCALLY_TERMINATING_SIGNALS = new Set(["SIGKILL", "SIGTERM"]);
 const NON_CANONICAL_SIGNAL_NAMES = new Set([
 	"SIGCLD",
 	"SIGIOT",
@@ -418,7 +427,10 @@ export class NativeSidecarKernelProxy {
 			liveProcesses.map((entry) => this.signalProcess(entry, 15)),
 		);
 
-		await this.client.disposeVm(this.session, this.vm).catch(() => {});
+		await Promise.race([
+			this.client.disposeVm(this.session, this.vm),
+			new Promise<void>((resolve) => setTimeout(resolve, 1000)),
+		]).catch(() => {});
 		for (const entry of liveProcesses) {
 			if (entry.exitCode === null) {
 				// The sidecar dispose path already performs TERM/KILL escalation for any
@@ -679,13 +691,19 @@ export class NativeSidecarKernelProxy {
 				}
 				entry.pendingKillSignal = signal;
 				void entry.startPromise.then(async () => {
-					if (entry.exitCode !== null || entry.pendingKillSignal === null) {
+					if (entry.pendingKillSignal === null) {
 						return;
 					}
 					const pendingSignal = entry.pendingKillSignal;
 					entry.pendingKillSignal = null;
 					await this.signalProcess(entry, pendingSignal);
 				});
+				if (
+					(signal === 9 || signal === 15) &&
+					entry.exitCode === null
+				) {
+					this.finishProcess(entry, 128 + signal);
+				}
 			},
 			wait: async () => {
 				const exitCode = await this.waitForTrackedProcess(entry);
@@ -1469,16 +1487,6 @@ export class NativeSidecarKernelProxy {
 			return;
 		}
 
-		if (entry.exitViaEvent) {
-			// The sidecar drains process output before it emits `process_exited`,
-			// the stdio frame stream is FIFO, and this pump dispatches events in
-			// order. Once the exit event reaches this entry, no trailing output can
-			// follow it; one zero-delay turn is cheap insurance for same-tick
-			// listener scheduling.
-			await drainTrailingProcessOutputTurn(0);
-			return;
-		}
-
 		let observedGeneration = entry.outputGeneration;
 		let quietTurns = 0;
 		let delayMs = 0;
@@ -1683,14 +1691,37 @@ export class NativeSidecarKernelProxy {
 		entry: TrackedProcessEntry,
 		signal: number,
 	): Promise<void> {
-		await this.signalRefreshes.get(entry.pid);
+		const sidecarSignal = toSidecarSignalName(signal);
+		let timedOut = false;
+		const killPromise = this.client.killProcess(
+			this.session,
+			this.vm,
+			entry.processId,
+			sidecarSignal,
+		);
 		try {
-			await this.client.killProcess(
-				this.session,
-				this.vm,
-				entry.processId,
-				toSidecarSignalName(signal),
-			);
+			await Promise.race([
+				killPromise,
+				new Promise<void>((resolve) =>
+					setTimeout(() => {
+						timedOut = true;
+						resolve();
+					}, 1000),
+				),
+			]);
+			if (timedOut) {
+				void killPromise.catch(() => {});
+			}
+			const hasGuestHandler =
+				this.signalStates.get(entry.pid)?.handlers.has(signal) ?? false;
+			if (
+				entry.exitCode === null &&
+				!hasGuestHandler &&
+				LOCALLY_TERMINATING_SIGNALS.has(sidecarSignal) &&
+				(entry.driver === "wasmvm" || timedOut)
+			) {
+				this.finishProcess(entry, 128 + signal);
+			}
 		} catch (error) {
 			if (isNoSuchProcessError(error) || isUnknownVmError(error)) {
 				return;
@@ -2011,16 +2042,12 @@ export class NativeSidecarKernelProxy {
 				return this.client.pread(this.session, this.vm, path, offset, length);
 			},
 			pwrite: async (path, offset, data) => {
-				const bytes =
-					await this.createFilesystemView(includeLocalMounts).readFile(path);
-				const nextSize = Math.max(bytes.length, offset + data.length);
-				const updated = new Uint8Array(nextSize);
-				updated.set(bytes);
-				updated.set(data, offset);
-				await this.createFilesystemView(includeLocalMounts).writeFile(
-					path,
-					updated,
-				);
+				const local = includeLocalMounts ? this.resolveLocalMount(path) : null;
+				if (local) {
+					this.assertLocalWritable(local.mount);
+					return local.mount.fs.pwrite(local.relativePath, offset, data);
+				}
+				return this.client.pwrite(this.session, this.vm, path, offset, data);
 			},
 		};
 	}

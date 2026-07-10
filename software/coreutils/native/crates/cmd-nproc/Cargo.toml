@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-nproc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "nproc standalone binary for secure-exec VM"
+
+[[bin]]
+name = "nproc"
+path = "src/main.rs"
+
+[dependencies]
+uu_nproc = "0.7.0"

@@ -1,0 +1,103 @@
+	Module		VMS_UNZIP_CLD
+	Ident		"03-003"
+
+Define	Verb		UNZIP
+	Parameter	P1, Label=ZIPFILE, Prompt="Zip file"
+	Parameter	P2, Label=INFILE, VALUE(LIST), Prompt="Files to UnZip"
+	Qualifier	BINARY, VALUE(TYPE=CONVBIN_KEYWORDS), Negatable
+	Qualifier	TEXT, VALUE(TYPE=CONVTXT_KEYWORDS, LIST), Negatable
+	Qualifier	SCREEN, Negatable
+	Qualifier	DIRECTORY, VALUE(REQUIRED,TYPE=$FILE), Nonnegatable
+	Qualifier	FRESHEN, Negatable
+	Qualifier	HELP, Nonnegatable
+	Qualifier	JUNK, Negatable
+	Qualifier	LIST, Nonnegatable
+	Qualifier	BRIEF, Nonnegatable, Default
+	Qualifier	FULL, VALUE(TYPE=FULL_MODIFIER), Nonnegatable
+	Qualifier	EXISTING, VALUE(REQUIRED, TYPE=EXISTING_KEYWORDS),
+			Nonnegatable
+	Qualifier	OVERWRITE, Negatable
+	Qualifier	QUIET, VALUE(TYPE=QUIET_MODIFIER), Nonnegatable
+	Qualifier	TEST, Negatable
+	Qualifier	PIPE, Nonnegatable
+	Qualifier	PASSWORD, VALUE(REQUIRED), Nonnegatable
+	Qualifier	TIMESTAMP, Nonnegatable
+	Qualifier	TRAVERSE_DIRS, Negatable
+	Qualifier	UPPERCASE, Negatable
+	Qualifier	UPDATE, Negatable
+	Qualifier	VERSION, Negatable
+	Qualifier	RESTORE, VALUE(TYPE=RESTORE_KEYWORDS, LIST), Negatable
+	Qualifier	COMMENT, Negatable
+	Qualifier	EXCLUDE, VALUE(LIST), Nonnegatable
+	Qualifier	CASE_INSENSITIVE, Negatable
+	Qualifier	LOWERCASE, Negatable
+	Qualifier	PAGE, Negatable
+	Qualifier	DOT_VERSION, Negatable
+	Qualifier	ODS2, Negatable
+	Qualifier	YYZ_UNZIP, NonNegatable, Default
+	Qualifier	ZIPINFO, Syntax=INFORMATION, NonNegatable
+	DisAllow	BRIEF and FULL
+	DisAllow	DIRECTORY and SCREEN
+	DisAllow	BINARY and TEXT.ALL
+	DisAllow	BINARY.ALL and TEXT
+	DisAllow	(OVERWRITE or (neg OVERWRITE)) and EXISTING
+	DisAllow	(neg RESTORE) and RESTORE.DATE
+	DisAllow	(neg RESTORE) and (neg RESTORE.DATE)
+	DisAllow	(neg RESTORE) and RESTORE.OWNER_PROT
+	DisAllow	(neg RESTORE) and (neg RESTORE.OWNER_PROT)
+	DisAllow	(neg RESTORE.DATE) and RESTORE.DATE.ALL
+	DisAllow	(neg RESTORE.DATE) and RESTORE.DATE.FILES
+	DisAllow	TEXT.ALL and TEXT.AUTO
+	DisAllow	TEXT.AUTO and TEXT.NONE
+	DisAllow	TEXT.NONE and TEXT.ALL
+	DisAllow	TEXT.NONE and TEXT.STMLF
+	DisAllow	(neg TEXT) and TEXT.STMLF
+	DisAllow	ZIPINFO and HELP
+
+Define	Type		CONVBIN_KEYWORDS
+	Keyword		AUTO, DEFAULT
+	Keyword		ALL
+	Keyword		NONE
+
+Define	Type		CONVTXT_KEYWORDS
+	Keyword		AUTO, DEFAULT
+	Keyword		ALL
+	Keyword		NONE
+	Keyword		STMLF
+
+Define	Type		EXISTING_KEYWORDS
+	Keyword		NEW_VERSION
+	Keyword		OVERWRITE
+	Keyword		NOEXTRACT
+
+Define	Type		RESTORE_KEYWORDS
+	Keyword		DATE, VALUE(TYPE=RESTOREDATE_KEYS, Required),
+			Negatable
+	Keyword		OWNER_PROT, Default, Negatable
+
+Define	Type		RESTOREDATE_KEYS
+        Keyword		FILES, DEFAULT
+	Keyword		ALL
+
+Define	Type		QUIET_MODIFIER
+	Keyword		SUPER
+
+Define	Type		FULL_MODIFIER
+	Keyword		DIAGNOSTICS
+
+Define Syntax INFORMATION
+	Parameter	P1, Label=ZIPFILE, Prompt="Zip file"
+	Parameter	P2, Label=INFILE, VALUE(LIST), Prompt="Files to display"
+	Qualifier	ZIPINFO, NonNegatable, Default
+	Qualifier	ONE_LINE, Nonnegatable
+	Qualifier	SHORT, Nonnegatable
+	Qualifier	MEDIUM, Nonnegatable
+	Qualifier	LONG, Nonnegatable
+	Qualifier	VERBOSE, Nonnegatable
+	Qualifier	HEADER, Nonnegatable
+	Qualifier	COMMENT, Nonnegatable
+	Qualifier	TOTALS, Nonnegatable
+	Qualifier	TIMES, Nonnegatable
+	Qualifier	EXCLUDE, VALUE(LIST), Nonnegatable
+	Qualifier	CASE_INSENSITIVE, Negatable
+	Qualifier	PAGE, Negatable

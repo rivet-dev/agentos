@@ -475,6 +475,7 @@ export interface Kernel extends KernelInterface {
 	removeFile(path: string): Promise<void>;
 	removeDir(path: string): Promise<void>;
 	rename(oldPath: string, newPath: string): Promise<void>;
+	pwrite(path: string, offset: number, data: Uint8Array): Promise<void>;
 	vmFetch(request: {
 		port: number;
 		method: string;
@@ -1213,7 +1214,10 @@ export class NodeFileSystem implements VirtualFileSystem {
 		offset: number,
 		data: Uint8Array,
 	): Promise<void> {
-		const handle = await fs.open(this.normalizeTarget(targetPath), "r+");
+		const handle = await fs.open(
+			this.normalizeTarget(targetPath),
+			fsSync.constants.O_WRONLY,
+		);
 		try {
 			await handle.write(data, 0, data.length, offset);
 		} finally {
@@ -2982,6 +2986,15 @@ class NativeKernel implements Kernel {
 		return this.proxy!.rename(oldPath, newPath);
 	}
 
+	async pwrite(
+		targetPath: string,
+		offset: number,
+		data: Uint8Array,
+	): Promise<void> {
+		await this.ensureReady();
+		return this.proxy!.vfs.pwrite(targetPath, offset, data);
+	}
+
 	private tryResolveMountedCommand(command: string): boolean {
 		const normalized = normalizeCommandLookup(command);
 		for (const driver of this.mountedRuntimeDrivers) {
@@ -3069,6 +3082,8 @@ class NativeKernel implements Kernel {
 					cwd: REPO_ROOT,
 					command: ensureNativeSidecarBinary(),
 					args: [],
+					gracefulExitMs: 100,
+					forceExitMs: 100,
 				}),
 			);
 		const session = await this.measureBoot("session_open", () =>

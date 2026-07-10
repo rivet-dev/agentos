@@ -1,0 +1,31 @@
+#! /bin/sh
+# Test for a bug in glibc's regex code as of September 7, 2014.
+#
+# Copyright (C) 2014-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+# This tickles a bug in the regex code that can cause heap violations etc.
+# A fix would be welcome, though fixing is not trivial.  See:
+# https://sourceware.org/bugzilla/show_bug.cgi?id=11053
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_timeout_
+
+echo a > in || framework_failure_
+
+fail=0
+
+# Clear this, so glibc doesn't bother to produce a core dump.
+MALLOC_CHECK_=
+
+warn_ "$ME_: expect malfunction on glibc systems due to" \
+   "https://sourceware.org/bugzilla/show_bug.cgi?id=11053"
+
+# While with glibc-2.35, it no longer aborts, the empty result is still wrong:
+timeout 10 grep -E '(.?)(.?)(.?)\3\2\1' in > out || fail=1
+compare out in || fail=1
+
+Exit $fail

@@ -1,0 +1,17 @@
+#! /bin/sh
+# Ensure that grep -oP doesn't cause internal error at match.
+#
+# Copyright (C) 2014-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_pcre_
+
+fail=0
+
+echo ab | grep -oP 'a' || fail=1
+
+Exit $fail

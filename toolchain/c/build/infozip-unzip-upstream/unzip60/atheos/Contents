@@ -1,0 +1,10 @@
+Contents of the "atheos" sub-directory for UnZip 5.52 and later:
+
+  Contents      this file
+  README        notes from the author of the AtheOS port
+  Makefile      makefile for building UnZip
+  athcfg.h      AtheOS-specific configuration settings
+  atheos.c      AtheOS-specific routines (similar to the BeOS/Unix ones)
+  atheos.h      structures for the AtheOS extra field
+
+- Ruslan Nickolaev (nruslan@hotbox.ru)

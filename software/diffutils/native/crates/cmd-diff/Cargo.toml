@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-diff"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "diff standalone binary for secure-exec VM"
+
+[[bin]]
+name = "diff"
+path = "src/main.rs"
+
+[dependencies]
+secureexec-diff = { path = "../diff" }

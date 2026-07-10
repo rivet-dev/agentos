@@ -27,11 +27,11 @@ const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 const REGISTRY_COMMAND_DIR_CANDIDATES = [
 	resolve(
 		import.meta.dirname,
-		"../../../registry/native/target/wasm32-wasip1/release/commands",
+		"../../../toolchain/target/wasm32-wasip1/release/commands",
 	),
 	resolve(
 		import.meta.dirname,
-		"../../../../secure-exec/registry/native/target/wasm32-wasip1/release/commands",
+		"../../../../secure-exec/toolchain/target/wasm32-wasip1/release/commands",
 	),
 ];
 

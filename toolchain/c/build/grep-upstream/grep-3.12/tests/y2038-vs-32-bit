@@ -1,0 +1,13 @@
+#!/bin/sh
+# This would fail with grep-3.9 and 3.10 on 32-bit ARM and x86 hosts.
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+fail=0
+
+echo text > in || framework_failure_
+touch -t 203901010000 in || skip_ 'touch -t 2039... failed'
+grep t in > out 2> err || fail=1
+compare in out || fail=1
+compare /dev/null err || fail=1
+
+Exit $fail

@@ -1,0 +1,43 @@
+Here it is...  the UnZip 5.1 port for the Atari ST/TT/Falcon!
+
+This took me longer than I expected thanks to a difference between the
+MiNT library and most UNIX libraries...  symlinks are 0x16000
+instead of 0xa000...  I'm told this isn't even defined in POSIX, so I
+can't really complain.  At least we've got a filesystem that can use
+symlinks!
+
+This port requires GNU C and allows you to build an unzip/zipinfo/funzip
+that supports long filenames (on appropriate filesystems, thanks to the
+MiNT library), as well as symlinks.  It also does "proper" (ie, DOS-style)
+translation of text-file end-of-line characters.  The programs also build
+as shared-text binaries, so you can start unzipping several files at once
+in the background and only a small part of unzip will be duplicated in
+memory.
+
+I build unzip with the MiNT library, GNU C 2.5.8 (2.5.7 and lower have a
+rather sever problem in the optimiser that affects 68000 code only; it
+adds 68020-only instructions to the 68000 code).  Oh, and I tested it
+extensively under MiNT's minix filesystem as well as the bogus DOS
+filesystem that "normal" Atari partitions have.
+
+The Makefile won't need any editing if you want to built unzip et al. on
+a minix filesystem; if you want to install it on a DOS filesystem, use
+"cp" instead of "ln" for zipinfo.  [Or, to save disk space, make a script/
+command-file which invokes "unzip -Z ...". --CN]  This is such a good
+idea that I'm annoyed that Greg thought of it and I didn't...  ;-)  If
+you're using a shell worth your while, you can alias zipinfo to
+'unzip -Z' and then forget all about this paragraph.
+
+If you want to compile this using Turbo C (aka Pure C in North America)
+you're on your own...  That's ok, I'll make a nice binary version of
+unzip available as soon as the official 5.1 version is released (give or
+take a few days).
+
+Enjoy!  Cave Newt should be given kudos for keeping this monster easy to
+port...  ;-)  [Hah!  But thanks anyway. :-) --CN]
+
+PLEASE email me to tell me if you've uploaded the source or binary
+versions of Unzip 5.x to any BBS systems or commercial online systems so
+we can update the WHERE file!
+
+-Chris Herborth-

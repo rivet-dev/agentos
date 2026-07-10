@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-md5sum"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "md5sum standalone binary for secure-exec VM"
+
+[[bin]]
+name = "md5sum"
+path = "src/main.rs"
+
+[dependencies]
+uu_md5sum = "0.7.0"

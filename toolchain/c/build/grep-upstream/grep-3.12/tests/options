@@ -1,0 +1,49 @@
+#! /bin/sh
+# Test for POSIX options for grep
+#
+# Copyright (C) 2001, 2006, 2009-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+#
+# grep [ -E| -F][ -c| -l| -q ][-insvx] -e pattern_list
+#      [-f pattern_file] ... [file. ..]
+# grep [ -E| -F][ -c| -l| -q ][-insvx][-e pattern_list]
+#      -f pattern_file ... [file ...]
+# grep [ -E| -F][ -c| -l| -q ][-insvx] pattern_list [file...]
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+fail=0
+
+# checking for -E extended regex
+echo "abababccccccd" | grep -E -e 'c{3}' > /dev/null 2>&1
+if test $? -ne 0 ; then
+        echo "Options: Wrong status code, test #1 failed"
+        fail=1
+fi
+
+# checking for basic regex
+echo "abababccccccd" | grep -G -e 'c\{3\}' > /dev/null 2>&1
+if test $? -ne 0 ; then
+        echo "Options: Wrong status code, test #2 failed"
+        fail=1
+fi
+
+# checking for fixed string
+echo "abababccccccd" | grep -F -e 'c\{3\}' > /dev/null 2>&1
+if test $? -ne 1 ; then
+        echo "Options: Wrong status code, test #3 failed"
+        fail=1
+fi
+
+# checking for multiple -e options; see:
+# https://bugs.gnu.org/21670
+echo abchelloabc | grep -e '^hello' -e 'hello$' > /dev/null 2>&1
+if test $? -ne 1 ; then
+        echo "Options: Wrong status code, test #4 failed"
+        fail=1
+fi
+
+Exit $fail

@@ -1,0 +1,44 @@
+#!/bin/sh
+# This would mistakenly print a line prior to grep-2.18.
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+require_compiled_in_MB_support
+
+encode() { echo "$1" | tr ABC '\357\274\241'; }
+
+encode ABC >exp1
+encode aABC >exp2
+encode ABCABC >exp3
+encode _____________________ABCABC___ >exp4
+
+fail=0
+
+for LOC in en_US.UTF-8 $LOCALE_FR_UTF8; do
+  for pat in A aA BCA; do
+    for file in exp1 exp2 exp3 exp4; do
+      for type in regex dfa fgrep; do
+        case $type in
+          dfa) opt= prefix= ;;
+          fgrep) opt=-F prefix= ;;
+          regex) opt= prefix='\(\)\1' ;;
+        esac
+        pattern=$prefix$(encode $pat)
+        out=out-$type-$LOC
+        LC_ALL=$LOC grep $opt "$pattern" $file >$out
+        status=$?
+        echo $status >$out.status
+        if test $status -eq 0; then
+          compare $file $out
+        elif test $status -eq 1; then
+          compare_dev_null_ /dev/null $out
+        else
+          test $status -eq 2
+        fi || fail=1
+        compare out-regex-$LOC.status $out.status || fail=1
+      done
+    done
+  done
+done
+
+Exit $fail

@@ -1,0 +1,39 @@
+#!/bin/sh
+# Test for a performance regression with -Fw and a non-UTF8 multibyte locale.
+
+# Copyright 2019-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+fail=0
+
+require_timeout_
+require_JP_EUC_locale_
+
+yes 00 | head -n 10000000 > in || framework_failure_
+
+# Since we're using an absolute timeout below and want to avoid any initial
+# disk read performance penalty, run first with a large timeout and no error
+# test to prime any cache. Prompted by a report of test failure on a netbsd8.1
+# VM whereby the first run would take 2.5 MINUTES, yet the second would complete
+# in just half a second.
+timeout 500 grep -Fw 0 in
+
+# Before fixing the regression, this would have taken minutes.
+# With the fix, it typically completes in well under one second.
+returns_ 1 timeout 30 grep -Fw 0 in || fail=1
+
+Exit $fail

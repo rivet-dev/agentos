@@ -2652,6 +2652,8 @@ function readSyncRpcLine() {
   }
 }
 
+const pendingWasmSignals = [];
+
 function callSyncRpc(method, args = []) {
   if (
     globalThis.__agentOSSyncRpc &&
@@ -3040,6 +3042,7 @@ const hostNetImport = {
         process.env.AGENTOS_SANDBOX_ROOT.length > 0);
     try {
       while (true) {
+        dispatchPendingWasmSignals();
         const view = new DataView(instanceMemory.buffer);
         let ready = 0;
         // fds the kernel owns (PTY/pipe stdio in sidecar-managed mode): their readiness
@@ -3144,6 +3147,7 @@ const hostNetImport = {
         }
 
         if (ready > 0 || t === 0 || (deadline != null && Date.now() >= deadline)) {
+          dispatchPendingWasmSignals();
           new DataView(instanceMemory.buffer).setUint32(Number(retReadyPtr) >>> 0, ready >>> 0, true);
           return 0;
         }
@@ -4155,7 +4159,16 @@ const hostProcessImport = {
         },
         sleep_ms(milliseconds) {
           try {
-            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(milliseconds) >>> 0);
+            const waitArray = new Int32Array(new SharedArrayBuffer(4));
+            const deadline = Date.now() + (Number(milliseconds) >>> 0);
+            while (Date.now() < deadline) {
+              // Keep guest sleeps interruptible by V8 termination during SIGTERM,
+              // SIGKILL, and VM disposal. Also drain handled Wasm signals at
+              // syscall boundaries so cooperative handlers run during sleeps.
+              dispatchPendingWasmSignals();
+              Atomics.wait(waitArray, 0, 0, Math.max(1, Math.min(10, deadline - Date.now())));
+            }
+            dispatchPendingWasmSignals();
             return WASI_ERRNO_SUCCESS;
           } catch {
             return WASI_ERRNO_FAULT;
@@ -4174,11 +4187,12 @@ const hostProcessImport = {
               mask: decodeSignalMask(maskLo, maskHi),
               flags: Number(flags) >>> 0,
             };
-            emitControlMessage({
-              type: 'signal_state',
-              signal: Number(signal) >>> 0,
-              registration,
-            });
+            callSyncRpc('process.signal_state', [
+              Number(signal) >>> 0,
+              registration.action,
+              JSON.stringify(registration.mask),
+              registration.flags,
+            ]);
             return WASI_ERRNO_SUCCESS;
           } catch {
             return WASI_ERRNO_FAULT;
@@ -5728,7 +5742,9 @@ wasiImport.poll_oneoff = (inPtr, outPtr, nsubscriptions, neventsPtr) => {
     });
   }
 
-  if (!hasSyntheticSubscription && !hasRemappedPassthroughSubscription) {
+  const hasClockSubscription = subscriptions.some((subscription) => subscription.kind === 'clock');
+
+  if (!hasSyntheticSubscription && !hasRemappedPassthroughSubscription && !hasClockSubscription) {
     return delegateManagedPollOneoff
       ? delegateManagedPollOneoff(inPtr, outPtr, nsubscriptions, neventsPtr)
       : WASI_ERRNO_BADF;
@@ -5812,6 +5828,7 @@ wasiImport.poll_oneoff = (inPtr, outPtr, nsubscriptions, neventsPtr) => {
   }
 
   while (readyEvents.length === 0) {
+    dispatchPendingWasmSignals();
     for (const subscription of subscriptions) {
       if (subscription.error != null) {
         readyEvents.push({
@@ -5895,7 +5912,7 @@ wasiImport.poll_oneoff = (inPtr, outPtr, nsubscriptions, neventsPtr) => {
     );
   }
 
-  if (readyEvents.length === 0 && subscriptions.some((subscription) => subscription.kind === 'clock')) {
+    if (readyEvents.length === 0 && hasClockSubscription) {
     const clockSubscription = subscriptions.find((subscription) => subscription.kind === 'clock');
     readyEvents.push({
       userdata: clockSubscription.userdata,
@@ -6036,6 +6053,27 @@ function dispatchWasmSignal(signal) {
   }
 }
 
+function dispatchPendingWasmSignals() {
+  while (pendingWasmSignals.length > 0) {
+    dispatchWasmSignal(pendingWasmSignals.shift());
+  }
+  while (true) {
+    let signal;
+    try {
+      signal = callSyncRpc('process.take_signal', []);
+    } catch (error) {
+      if (error?.code === 'ERR_AGENTOS_WASM_SYNC_RPC_UNAVAILABLE') {
+        return;
+      }
+      throw error;
+    }
+    if (typeof signal !== 'number') {
+      return;
+    }
+    dispatchWasmSignal(signal);
+  }
+}
+
 Object.defineProperty(globalThis, '__secureExecWasmSignalDispatch', {
   configurable: true,
   writable: true,
@@ -6044,7 +6082,9 @@ Object.defineProperty(globalThis, '__secureExecWasmSignalDispatch', {
       typeof payload?.number === 'number'
         ? payload.number
         : signalNumberFromName(payload?.signal);
-    dispatchWasmSignal(signal);
+    if (signal > 0) {
+      pendingWasmSignals.push(signal);
+    }
   },
 });
 

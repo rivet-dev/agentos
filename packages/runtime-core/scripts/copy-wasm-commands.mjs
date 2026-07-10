@@ -7,7 +7,7 @@
  * The kernel needs a guest `sh` (plus coreutils) to spawn any process — without
  * these binaries `NodeRuntime.create()` cannot boot. The binaries are produced
  * by the in-repo Rust command build at
- * `registry/native/target/wasm32-wasip1/release/commands/`. That path only
+ * `toolchain/target/wasm32-wasip1/release/commands/`. That path only
  * exists in a developer checkout, so we copy the whole command set (symlinks
  * included, the way `bash -> sh` and the stub aliases are laid out) into
  * `packages/core/commands/`, which is listed in `files` and resolved at runtime
@@ -35,7 +35,7 @@ const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
 const SOURCE_DIR = path.join(
 	REPO_ROOT,
-	"registry/native/target/wasm32-wasip1/release/commands",
+	"toolchain/target/wasm32-wasip1/release/commands",
 );
 const DEST_DIR = path.join(PACKAGE_ROOT, "commands");
 
@@ -66,7 +66,7 @@ function main() {
 		// never built without the commands.
 		const message =
 			`WASM commands not found at ${SOURCE_DIR} and none vendored at ${DEST_DIR}. ` +
-			"Build them with `make -C registry/native wasm` (or drop a prebuilt " +
+			"Build them with `make -C toolchain wasm` (or drop a prebuilt " +
 			"commands artifact into the package) before packing so they ship in the tarball.";
 		if (process.argv.includes("--require")) {
 			console.error(`error: ${message}`);

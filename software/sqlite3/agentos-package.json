@@ -1,0 +1,12 @@
+{
+	"commands": [
+		"sqlite3"
+	],
+	"registry": {
+		"title": "SQLite3",
+		"description": "SQLite database command-line interface.",
+		"priority": 75,
+		"image": "/images/registry/sqlite3.svg",
+		"category": "data"
+	}
+}

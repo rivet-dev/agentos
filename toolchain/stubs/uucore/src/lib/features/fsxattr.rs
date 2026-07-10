@@ -1,0 +1,333 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+
+// spell-checker:ignore getxattr posix_acl_default
+
+//! Set of functions to manage xattr on files and dirs
+use itertools::Itertools;
+use rustc_hash::FxHashMap;
+use std::ffi::{OsStr, OsString};
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
+
+const POSIX_ACL_XATTR_VERSION: u32 = 2;
+const POSIX_ACL_XATTR_HEADER_LEN: usize = 4;
+const POSIX_ACL_XATTR_ENTRY_LEN: usize = 8;
+
+/// Copies extended attributes (xattrs) from one file or directory to another.
+///
+/// # Arguments
+///
+/// * `source` - A reference to the source path.
+/// * `dest` - A reference to the destination path.
+///
+/// # Returns
+///
+/// A result indicating success or failure.
+pub fn copy_xattrs<P: AsRef<Path>>(source: P, dest: P) -> std::io::Result<()> {
+    for attr_name in xattr::list(&source)? {
+        if let Some(value) = xattr::get(&source, &attr_name)? {
+            xattr::set(&dest, &attr_name, &value)?;
+        }
+    }
+    Ok(())
+}
+
+/// Like `copy_xattrs`, but skips the security.selinux attribute.
+#[cfg(unix)]
+pub fn copy_xattrs_skip_selinux<P: AsRef<Path>>(source: P, dest: P) -> std::io::Result<()> {
+    for attr_name in xattr::list(&source)? {
+        if attr_name.to_string_lossy() != "security.selinux" {
+            if let Some(value) = xattr::get(&source, &attr_name)? {
+                xattr::set(&dest, &attr_name, &value)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Retrieves the extended attributes (xattrs) of a given file or directory.
+///
+/// # Arguments
+///
+/// * `source` - A reference to the path of the file or directory.
+///
+/// # Returns
+///
+/// A result containing a HashMap of attributes names and values, or an error.
+pub fn retrieve_xattrs<P: AsRef<Path>>(source: P) -> std::io::Result<FxHashMap<OsString, Vec<u8>>> {
+    let mut attrs = FxHashMap::default();
+    for attr_name in xattr::list(&source)? {
+        if let Some(value) = xattr::get(&source, &attr_name)? {
+            attrs.insert(attr_name, value);
+        }
+    }
+    Ok(attrs)
+}
+
+/// Applies extended attributes (xattrs) to a given file or directory.
+///
+/// # Arguments
+///
+/// * `dest` - A reference to the path of the file or directory.
+/// * `xattrs` - A HashMap containing attribute names and their corresponding values.
+///
+/// # Returns
+///
+/// A result indicating success or failure.
+pub fn apply_xattrs<P: AsRef<Path>>(
+    dest: P,
+    xattrs: FxHashMap<OsString, Vec<u8>>,
+) -> std::io::Result<()> {
+    for (attr, value) in xattrs {
+        xattr::set(&dest, &attr, &value)?;
+    }
+    Ok(())
+}
+
+/// Checks if a file has an Access Control List (ACL) based on its extended attributes.
+///
+/// # Arguments
+///
+/// * `file` - A reference to the path of the file.
+///
+/// # Returns
+///
+/// `true` if the file has extended attributes (indicating an ACL), `false` otherwise.
+pub fn has_acl<P: AsRef<Path>>(file: P) -> bool {
+    // don't use exacl here, it is doing more getxattr call then needed
+    xattr::list_deref(file).is_ok_and(|acl| {
+        // if we have extra attributes, we have an acl
+        acl.count() > 0
+    })
+}
+
+/// Checks if a file has an Access Control List (ACL) named "security.capability" based on its extended attributes.
+///
+/// # Arguments
+///
+/// * `file` - A reference to the path of the file.
+///
+/// # Returns
+///
+/// `true` if the file has an extended attribute named "security.capability", `false` otherwise.
+pub fn has_security_cap_acl<P: AsRef<Path>>(file: P) -> bool {
+    // don't use exacl here, it is doing more getxattr call then needed
+    xattr::list_deref(file).is_ok_and(|mut acl| {
+        #[cfg(unix)]
+        return acl.contains(OsStr::from_bytes(b"security.capability"));
+
+        #[cfg(not(unix))]
+        return false;
+    })
+}
+
+/// Returns the permissions bits of a file or directory which has Access Control List (ACL) entries based on its
+/// extended attributes (Only works for linux)
+///
+/// # Arguments
+///
+/// * `source` - A reference to the path of the file.
+///
+/// # Returns
+///
+/// `u32`  the perm bits of a file having extended attributes of type 'system.posix_acl_default' with permissions
+/// otherwise returns a 0 if perm bits are 0 or the file has no extended attributes
+pub fn get_acl_perm_bits_from_xattr<P: AsRef<Path>>(source: P) -> u32 {
+    // TODO: Modify this to work on non linux unix systems.
+
+    // Only default acl entries get inherited by objects under the path i.e. if child directories
+    // will have their permissions modified.
+    if let Ok(entries) = retrieve_xattrs(source) {
+        if let Some(value) = entries.get(&OsString::from("system.posix_acl_default")) {
+            return acl_perm_bits_from_xattr_value(value);
+        }
+    }
+    0
+}
+
+fn acl_perm_bits_from_xattr_value(value: &[u8]) -> u32 {
+    let Some(header) = value.get(..POSIX_ACL_XATTR_HEADER_LEN) else {
+        return 0;
+    };
+
+    let version = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+    if version != POSIX_ACL_XATTR_VERSION {
+        return 0;
+    }
+
+    let entries = &value[POSIX_ACL_XATTR_HEADER_LEN..];
+    if entries.len() % POSIX_ACL_XATTR_ENTRY_LEN != 0 {
+        return 0;
+    }
+
+    let mut perm: u32 = 0;
+    for entry in entries.chunks_exact(POSIX_ACL_XATTR_ENTRY_LEN) {
+        let entry_perm = u16::from_le_bytes([entry[2], entry[3]]);
+        if entry_perm > 0o7 {
+            return 0;
+        }
+
+        perm = (perm << 3) | u32::from(entry_perm);
+    }
+
+    perm
+}
+
+// FIXME: 3 tests failed on OpenBSD
+#[cfg(not(target_os = "openbsd"))]
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_copy_xattrs() {
+        let temp_dir = tempdir().unwrap();
+        let source_path = temp_dir.path().join("source.txt");
+        let dest_path = temp_dir.path().join("dest.txt");
+
+        File::create(&source_path).unwrap();
+        File::create(&dest_path).unwrap();
+
+        let test_attr = "user.test";
+        let test_value = b"test value";
+        xattr::set(&source_path, test_attr, test_value).unwrap();
+
+        copy_xattrs(&source_path, &dest_path).unwrap();
+
+        let copied_value = xattr::get(&dest_path, test_attr).unwrap().unwrap();
+        assert_eq!(copied_value, test_value);
+    }
+
+    #[test]
+    fn test_apply_and_retrieve_xattrs() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("test_file.txt");
+
+        File::create(&file_path).unwrap();
+
+        let mut test_xattrs = FxHashMap::default();
+        let test_attr = "user.test_attr";
+        let test_value = b"test value";
+        test_xattrs.insert(OsString::from(test_attr), test_value.to_vec());
+        apply_xattrs(&file_path, test_xattrs).unwrap();
+
+        let retrieved_xattrs = retrieve_xattrs(&file_path).unwrap();
+        assert!(retrieved_xattrs.contains_key(OsString::from(test_attr).as_os_str()));
+        assert_eq!(
+            retrieved_xattrs
+                .get(OsString::from(test_attr).as_os_str())
+                .unwrap(),
+            test_value
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_get_perm_bits_from_xattr_value() {
+        let test_value = vec![
+            2, 0, 0, 0, 1, 0, 7, 0, 255, 255, 255, 255, 4, 0, 0, 0, 255, 255, 255, 255, 32, 0, 0,
+            0, 255, 255, 255, 255,
+        ];
+
+        assert_eq!(0o700, acl_perm_bits_from_xattr_value(&test_value));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_get_perm_bits_from_xattr_value_rejects_malformed_entries() {
+        assert_eq!(0, acl_perm_bits_from_xattr_value(&[]));
+        assert_eq!(0, acl_perm_bits_from_xattr_value(&[2, 0, 0]));
+        assert_eq!(
+            0,
+            acl_perm_bits_from_xattr_value(&[3, 0, 0, 0, 1, 0, 7, 0, 255, 255, 255, 255])
+        );
+        assert_eq!(0, acl_perm_bits_from_xattr_value(&[2, 0, 0, 0, 1, 0, 7, 0]));
+        assert_eq!(
+            0,
+            acl_perm_bits_from_xattr_value(&[2, 0, 0, 0, 1, 0, 8, 0, 255, 255, 255, 255])
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_get_perm_bits_from_xattrs() {
+        let temp_dir = tempdir().unwrap();
+        let source_path = temp_dir.path().join("source_dir");
+
+        std::fs::create_dir(&source_path).unwrap();
+
+        let test_attr = "system.posix_acl_default";
+        // posix_acl entries are in the form of
+        // struct posix_acl_entry{
+        //  tag: u16,
+        //  perm: u16,
+        //  id: u32,
+        // }
+        // the fields are serialized in little endian.
+        // The entries are preceded by a header of value of 0x0002
+        // Reference: `<https://github.com/torvalds/linux/blob/master/include/uapi/linux/posix_acl_xattr.h>`
+        // The id is undefined i.e. -1 which in u32 is 0xFFFFFFFF and tag and perm bits as given in the
+        // header file.
+        // Reference: `<https://github.com/torvalds/linux/blob/master/include/uapi/linux/posix_acl.h>`
+        //
+        //
+        // There is a bindgen bug which generates the ACL_OTHER constant whose value is 0x20 into 32.
+        // which when the bug is fixed will need to be changed back to 20 from 32 in the vec 'test_value'.
+        //
+        // Reference `<https://github.com/rust-lang/rust-bindgen/issues/2926>`
+        //
+        // The test_value vector is the header 0x0002 followed by tag and permissions for user_obj , tag
+        // and permissions and for group_obj and finally the tag and permissions for ACL_OTHER. Each
+        // entry has undefined id as mentioned above.
+        //
+        //
+
+        let test_value = vec![
+            2, 0, 0, 0, 1, 0, 7, 0, 255, 255, 255, 255, 4, 0, 0, 0, 255, 255, 255, 255, 32, 0, 0,
+            0, 255, 255, 255, 255,
+        ];
+
+        xattr::set(&source_path, test_attr, test_value.as_slice()).unwrap();
+
+        let perm_bits = get_acl_perm_bits_from_xattr(source_path);
+
+        assert_eq!(0o700, perm_bits);
+    }
+
+    #[test]
+    fn test_file_has_acl() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("test_file.txt");
+
+        File::create(&file_path).unwrap();
+
+        // FIXME: this fails on a system that uses SELinux
+        assert!(!has_acl(&file_path));
+
+        let test_attr = "user.test_acl";
+        let test_value = b"test value";
+        xattr::set(&file_path, test_attr, test_value).unwrap();
+
+        assert!(has_acl(&file_path));
+        assert!(!has_security_cap_acl(&file_path));
+
+        // FreeBSD/NetBSD's xattr library does not support the "security" namespace
+        // (https://github.com/Stebalien/xattr/blob/master/src/sys/bsd.rs#L148).
+        // However, individual file systems might still implement additional namespaces according to
+        // https://man.freebsd.org/cgi/man.cgi?query=extattr&sektion=9&manpath=FreeBSD+14.3-RELEASE+and+Ports
+        #[cfg(not(any(target_os = "freebsd", target_os = "netbsd")))]
+        {
+            let test_attr = "security.capability";
+            let test_value = b"";
+            xattr::set(&file_path, test_attr, test_value).unwrap();
+
+            assert!(has_security_cap_acl(&file_path));
+        }
+    }
+}

@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
 // guest in the kernel-backed node-stdlib executor in real Chromium and speaks ACP.
 //
 // Requires the pi adapter bundle (built by scripts/build-wasm-test-assets when the
-// registry/agent/pi dist + @mariozechner/pi-agent-core are present locally; skipped in
+// software/pi dist + @mariozechner/pi-agent-core are present locally; skipped in
 // CI where they are absent). Runs the adapter in the executor's persistent-execution
 // mode (ExecOptions.persistent) so its async WHATWG-stream stdin pump can produce the
 // reply before the run completes.
@@ -19,7 +19,7 @@ test("the real pi adapter boots in the converged executor and answers ACP initia
 	const bundlePresent = await page.evaluate(() =>
 		fetch("/pi-adapter.bundle.cjs").then((r) => r.ok).catch(() => false),
 	);
-	test.skip(!bundlePresent, "pi adapter bundle not built (registry/agent/pi dist absent)");
+	test.skip(!bundlePresent, "pi adapter bundle not built (software/pi dist absent)");
 
 	const result = await page.evaluate(() => window.__piBoot!.run());
 

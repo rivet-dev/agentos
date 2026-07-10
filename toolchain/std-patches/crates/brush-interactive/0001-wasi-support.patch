@@ -1,0 +1,141 @@
+diff -ruN '--exclude=*.orig' a/src/basic/basic_shell.rs b/src/basic/basic_shell.rs
+--- a/src/basic/basic_shell.rs	2026-06-27 14:11:52.527433629 -0700
++++ b/src/basic/basic_shell.rs	2026-06-27 14:11:52.527433629 -0700
+@@ -104,6 +104,25 @@
+         line: &str,
+         cursor: usize,
+     ) -> Result<brush_core::completion::Completions, ShellError> {
++        #[cfg(target_os = "wasi")]
++        {
++            // Single-threaded wasi has no tokio runtime to block_on. The
++            // completion future only does synchronous VFS walks and
++            // uncontended lock acquisition, so drive it inline with a
++            // noop-waker poll loop (bounded: a future that parks on a waker
++            // can never be woken on one thread — bail to no completions).
++            let mut future = std::pin::pin!(self.generate_completions_async(line, cursor));
++            let mut context = std::task::Context::from_waker(std::task::Waker::noop());
++            for _ in 0..100_000 {
++                match std::future::Future::poll(future.as_mut(), &mut context) {
++                    std::task::Poll::Ready(result) => return result,
++                    std::task::Poll::Pending => std::hint::spin_loop(),
++                }
++            }
++            return Ok(brush_core::completion::Completions::default());
++        }
++
++        #[cfg(not(target_os = "wasi"))]
+         tokio::task::block_in_place(|| {
+             tokio::runtime::Handle::current()
+                 .block_on(self.generate_completions_async(line, cursor))
+diff -ruN '--exclude=*.orig' a/src/completion.rs b/src/completion.rs
+--- a/src/completion.rs	2026-06-27 14:11:52.527433629 -0700
++++ b/src/completion.rs	2026-06-27 14:11:52.527433629 -0700
+@@ -17,6 +17,10 @@
+     tokio::pin!(completion_future);
+ 
+     // Wait for the completions to come back or interruption, whichever happens first.
++    #[cfg(target_os = "wasi")]
++    let result = completion_future.await;
++
++    #[cfg(not(target_os = "wasi"))]
+     let result = tokio::select! {
+         result = &mut completion_future => {
+             result
+diff -ruN '--exclude=*.orig' a/src/reedline/completer.rs b/src/reedline/completer.rs
+--- a/src/reedline/completer.rs	2026-06-27 14:11:52.527433629 -0700
++++ b/src/reedline/completer.rs	2026-06-27 14:11:52.527433629 -0700
+@@ -10,6 +10,25 @@
+ 
+ impl reedline::Completer for ReedlineCompleter {
+     fn complete(&mut self, line: &str, pos: usize) -> Vec<reedline::Suggestion> {
++        #[cfg(target_os = "wasi")]
++        {
++            // Single-threaded wasi has no tokio runtime to block_on. The
++            // completion future only does synchronous VFS walks and
++            // uncontended lock acquisition, so drive it inline with a
++            // noop-waker poll loop (bounded: a future that parks on a waker
++            // can never be woken on one thread — bail to no completions).
++            let mut future = std::pin::pin!(self.complete_async(line, pos));
++            let mut context = std::task::Context::from_waker(std::task::Waker::noop());
++            for _ in 0..100_000 {
++                match std::future::Future::poll(future.as_mut(), &mut context) {
++                    std::task::Poll::Ready(result) => return result,
++                    std::task::Poll::Pending => std::hint::spin_loop(),
++                }
++            }
++            return Vec::new();
++        }
++
++        #[cfg(not(target_os = "wasi"))]
+         tokio::task::block_in_place(|| {
+             tokio::runtime::Handle::current().block_on(self.complete_async(line, pos))
+         })
+diff -ruN '--exclude=*.orig' a/src/reedline/edit_mode.rs b/src/reedline/edit_mode.rs
+--- a/src/reedline/edit_mode.rs	2026-06-27 14:11:52.527433629 -0700
++++ b/src/reedline/edit_mode.rs	2026-06-27 14:11:52.527433629 -0700
+@@ -31,6 +31,10 @@
+ 
+ impl reedline::EditMode for MutableEditMode {
+     fn parse_event(&mut self, event: reedline::ReedlineRawEvent) -> reedline::ReedlineEvent {
++        #[cfg(target_os = "wasi")]
++        let mut inner = self.inner.try_lock().expect("edit mode lock is not reentrant");
++
++        #[cfg(not(target_os = "wasi"))]
+         let mut inner = tokio::task::block_in_place(|| {
+             tokio::runtime::Handle::current().block_on(self.inner.lock())
+         });
+@@ -39,6 +43,10 @@
+     }
+ 
+     fn edit_mode(&self) -> reedline::PromptEditMode {
++        #[cfg(target_os = "wasi")]
++        let inner = self.inner.try_lock().expect("edit mode lock is not reentrant");
++
++        #[cfg(not(target_os = "wasi"))]
+         let inner = tokio::task::block_in_place(|| {
+             tokio::runtime::Handle::current().block_on(self.inner.lock())
+         });
+diff -ruN '--exclude=*.orig' a/src/reedline/highlighter.rs b/src/reedline/highlighter.rs
+--- a/src/reedline/highlighter.rs	2026-06-27 14:11:52.527433629 -0700
++++ b/src/reedline/highlighter.rs	2026-06-27 14:11:52.527433629 -0700
+@@ -78,6 +78,10 @@
+ impl reedline::Highlighter for ReedlineHighlighter {
+     #[expect(clippy::significant_drop_tightening)]
+     fn highlight(&self, line: &str, cursor: usize) -> reedline::StyledText {
++        #[cfg(target_os = "wasi")]
++        let shell = self.shell.try_lock().expect("shell lock is not reentrant");
++
++        #[cfg(not(target_os = "wasi"))]
+         let shell = tokio::task::block_in_place(|| {
+             tokio::runtime::Handle::current().block_on(self.shell.lock())
+         });
+diff -ruN '--exclude=*.orig' a/src/reedline/history.rs b/src/reedline/history.rs
+--- a/src/reedline/history.rs	2026-06-27 14:11:52.527433629 -0700
++++ b/src/reedline/history.rs	2026-06-27 14:11:52.527433629 -0700
+@@ -6,6 +6,12 @@
+ 
+ impl ReedlineHistory {
+     fn lock_shell(&self) -> tokio::sync::MutexGuard<'_, brush_core::Shell> {
++        #[cfg(target_os = "wasi")]
++        {
++            return self.shell.try_lock().expect("shell lock is not reentrant");
++        }
++
++        #[cfg(not(target_os = "wasi"))]
+         tokio::task::block_in_place(|| {
+             tokio::runtime::Handle::current().block_on(self.shell.lock())
+         })
+diff -ruN '--exclude=*.orig' a/src/reedline/validator.rs b/src/reedline/validator.rs
+--- a/src/reedline/validator.rs	2026-06-27 14:11:52.527433629 -0700
++++ b/src/reedline/validator.rs	2026-06-27 14:11:52.527433629 -0700
+@@ -6,6 +6,10 @@
+ 
+ impl reedline::Validator for ReedlineValidator {
+     fn validate(&self, line: &str) -> reedline::ValidationResult {
++        #[cfg(target_os = "wasi")]
++        let shell = self.shell.try_lock().expect("shell lock is not reentrant");
++
++        #[cfg(not(target_os = "wasi"))]
+         let shell = tokio::task::block_in_place(|| {
+             tokio::runtime::Handle::current().block_on(self.shell.lock())
+         });

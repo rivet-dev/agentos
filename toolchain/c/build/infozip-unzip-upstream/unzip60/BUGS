@@ -1,0 +1,82 @@
+Bogus bugs (not our fault!):
+---------------------------
+
+ By far THE BIGGEST source of bug reports to Info-ZIP/zip-bugs is the
+ incorrect transfer of zipfiles (or of the UnZip executable itself).
+ ALWAYS TRANSFER IN BINARY MODE!  This includes ftp transfers and *both*
+ ends of a Kermit connection ("set file type binary").  If your copy
+ isn't exactly the same size as the original, you made a mistake.
+
+ Another common source of errors such as "compression method 8 not sup-
+ ported" is the existence of an old version of UnZip somewhere in your
+ path.  Make sure you're using the version you think you're using; give
+ the full path explicitly if necessary.  Executing "unzip" without any
+ options will print a help screen, at the top of which is the UnZip
+ version number and release date; and executing "unzip -v" without any
+ zipfile or other options will give information about what compiler was
+ used, the target operating system, any special UnZip options, and the
+ date of compilation--only for version 5.11 and later, though!  (Also,
+ under Unix C shell and some Bourne shells, "which unzip" will print
+ the path of the unzip you're actually using.  Under OS/2 and MS-DOS,
+ whch21gr.zip [on Simtel mirror sites] will do the same thing; in addi-
+ tion, "which -a unzip" will show *all* copies of "unzip" in your path.)
+
+
+Bugs (real and/or imagined):
+---------------------------
+
+ - [OS/2 DLL] when trying to use the REXX function UzUnZipToStem to extract a
+    file with `&' in its name, the DLL crashes (but UzUnZipToVar still works)
+    [Daniel H, 961215]
+ - UnZip has problems with archives bigger than 2GB; it may print "note: didn't
+    find end-of-central-dir signature at end of central dir" (harmless) or
+    may not be able to seek to member files [James Lemley 970107, Iris Spaniol
+    970206, ...]
+
+      Fixed with Zip64 support in UnZip 6.0
+
+ - fix overwrite behavior:  hidden/system problems?; etc.
+ - 32-bit DOS UnZip still unable to set volume labels?
+ - 32-bit DOS UnZip under OS/2 doesn't extract all wildcard zipfiles?
+    [DOS box:  unzip386 (ver 5.12) x:\32bit\unix\emx09a\*.zip, Hobbes 3/95]
+ - 32-bit DOS UnZip under OS/2 doesn't set timestamp when overwriting files
+    on HPFS partition? (go32 and pmode/w both; emx/rsx OK) [Eberhard Mattes
+    950726]
+ - USE_FWRITE still causes occasional CRC errors when extracting on Pyramid?
+    [Kevin Fritz 931102]
+ - still NT/W95 bug with "unzip -v d:*.zip" not matching properly? [Steve S
+    940527]
+    980427: bug no longer exists, Opendir() must have been corrected by someone
+
+ - when ^Z received in no-echo mode, echo is not restored (works OK if
+    resume, however)
+ - signal() handler disabled after first use with one of BSD/SysV?
+ - MKS Korn shell:  unzip assumes the MKS-style command-line environment
+    options are relevant to it, but this is not the case if unzip was called
+    by another program (e.g., from a .BAT file).  A fix for this exists for
+    Borland compilers but not for MSC, Watcom, djgpp, etc.
+ - OS/2:  for paths with one long component, the .LONGNAME EA may be saved for
+    all components (waste of disk space):  how to check??
+ - VMS:  for extracting to other directories, only the VMS-style "-d [.foo]"
+    format is accepted; "-d foo" should also be allowed.  Long filenames are
+    not automatically truncated to 39.39.
+ - Novell Netware:  Netware drives may clear the archive bit on extracted
+    files under OS/2 and/or MS-DOS.  UnZip always *tries* to set the archive
+    bit, however.  [pynq@uchicago, 940527]
+ - DEC Ultrix:  on long zipfiles, unzip will sometimes fail (bad CRC, not always
+    reproducible); this is apparently due either to a hardware bug (cache mem)
+    or OS bug (page faults?) [Igor, Jean-loup, bottom of BUGS.long]
+ - funzip/more/decryption/no-echo bug:  race condition(?) causes terminal to
+    be "reset" to no-echo state
+ - Macintosh (100200), Atari (020000) external file attributes not interpreted
+    correctly (both unzip and zipinfo)
+ - pkbug error:  zipfile with incorrect csize and/or ucsize--check for end of
+    compressed (csize) data in uncompression routines:
+      unreduce.c:    while (((outpos + outcnt) < ucsize) && (!zipeof)) {
+    [James Birdsall, Mark, bottom of BUGS.long]
+ - OS/2:  directory EAs not restored if directory exists [Kai Uwe, KG27515@uark]
+    (subsequent note:  no way to determine which EAs are newer ==> cannot
+    restore without user input)
+    (update: as of UnZip 5.30, option -o forces restoring of directory EAs)
+ - MS-DOS:  Borland executables don't allow other than 80-column, 25/43/50-line
+    screen modes (Borland bug) [Michael Stillwell]

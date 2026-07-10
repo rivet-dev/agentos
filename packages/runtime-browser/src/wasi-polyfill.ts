@@ -162,6 +162,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
   const __agentOSWasiOpenDirectory = 2;
   const __agentOSWasiOpenExclusive = 4;
   const __agentOSWasiOpenTruncate = 8;
+  const __agentOSWasiFdflagsAppend = 1;
   const __agentOSWasiRightFdRead = 1n << 1n;
   const __agentOSWasiRightFdWrite = 1n << 6n;
   const __agentOSWasiDefaultRightsBase = 0xffffffffffffffffn;
@@ -499,6 +500,14 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
     _hasWriteRights(rights) {
       try {
         return (BigInt(rights) & __agentOSWasiRightFdWrite) !== 0n;
+      } catch {
+        return true;
+      }
+    }
+
+    _hasReadRights(rights) {
+      try {
+        return (BigInt(rights) & __agentOSWasiRightFdRead) !== 0n;
       } catch {
         return true;
       }
@@ -887,6 +896,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
     }
 
     _mapFsError(error) {
+      __agentOSWasiDebug(
+        \`fs error code=\${String(error?.code ?? "")} message=\${String(error?.message ?? error)}\`,
+      );
       switch (error?.code) {
         case "EACCES":
         case "EPERM":
@@ -935,6 +947,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
         refCount: 1,
         open: true,
         readOnly: entry.readOnly === true,
+        append: entry.append === true,
       };
     }
 
@@ -1488,19 +1501,28 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
               return this._measureWasiPhase("writeResultPtr", () => this._writeUint32(nwrittenPtr, written));
             }
           }
+          const position = handle.append
+            ? this._measureWasiPhase("appendFstat", () =>
+                Number(__agentOSFs().fstatSync(handle.targetFd).size ?? 0)
+              )
+            : null;
           const written = this._measureWasiPhase("writeSync", () =>
             __agentOSFs().writeSync(
               handle.targetFd,
               bytes,
               0,
               bytes.length,
-              null,
+              position,
             )
           );
           return this._measureWasiPhase("writeResultPtr", () => this._writeUint32(nwrittenPtr, written));
         }
         if (handle?.kind === "guest-file" && typeof handle.targetFd === "number") {
-          const position = handle.append ? null : (handle.position ?? 0);
+          const position = handle.append
+            ? this._measureWasiPhase("appendFstat", () =>
+                Number(__agentOSFs().fstatSync(handle.targetFd).size ?? 0)
+              )
+            : (handle.position ?? 0);
           const written = this._measureWasiPhase("writeSync", () =>
             __agentOSFs().writeSync(
               handle.targetFd,
@@ -1577,7 +1599,11 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
         }
         if (entry.kind === "file") {
           this._clearStatCache();
-          const position = typeof entry.offset === "number" ? entry.offset : null;
+          const position = entry.append
+            ? this._measureWasiPhase("appendFstat", () =>
+                Number(__agentOSFs().fstatSync(entry.realFd).size ?? 0)
+              )
+            : (typeof entry.offset === "number" ? entry.offset : null);
           const written = this._measureWasiPhase("writeSync", () =>
             __agentOSFs().writeSync(
               entry.realFd,
@@ -1587,7 +1613,11 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
               position,
             )
           );
-          if (typeof entry.offset === "number") {
+          if (entry.append) {
+            entry.offset = this._measureWasiPhase("appendFstat", () =>
+              Number(__agentOSFs().fstatSync(entry.realFd).size ?? 0)
+            );
+          } else if (typeof entry.offset === "number") {
             entry.offset += written;
           }
           return this._measureWasiPhase("writeResultPtr", () => this._writeUint32(nwrittenPtr, written));
@@ -2314,8 +2344,12 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
           this._clearStatCache();
         }
         const fsConstants = __agentOSFs().constants ?? {};
+        const requestedFdFlags = Number(_fdflags) >>> 0;
+        const append = (requestedFdFlags & __agentOSWasiFdflagsAppend) !== 0;
         let openFlags = requestedWriteAccess
-          ? fsConstants.O_RDWR ?? 2
+          ? (this._hasReadRights(requestedRightsBase)
+              ? fsConstants.O_RDWR ?? 2
+              : fsConstants.O_WRONLY ?? 1)
           : fsConstants.O_RDONLY ?? 0;
         if ((requestedFlags & __agentOSWasiOpenCreate) !== 0) {
           openFlags |= fsConstants.O_CREAT ?? 64;
@@ -2325,6 +2359,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
         }
         if ((requestedFlags & __agentOSWasiOpenTruncate) !== 0) {
           openFlags |= fsConstants.O_TRUNC ?? 512;
+        }
+        if (append) {
+          openFlags |= fsConstants.O_APPEND ?? 1024;
         }
         if (openDirectory) {
           openFlags |= fsConstants.O_DIRECTORY ?? 0;
@@ -2343,10 +2380,13 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
             hostPath: fsPath,
             readOnly: resolved.readOnly === true,
             realFd,
-            offset: 0,
+            offset: append
+              ? Number(__agentOSFs().fstatSync(realFd).size ?? 0)
+              : 0,
+            append,
             rightsBase: requestedRightsBase & allowedRightsInheriting,
             rightsInheriting: requestedRightsInheriting & allowedRightsInheriting,
-            fdFlags: (Number(_fdflags) >>> 0) & 0xffff,
+            fdFlags: requestedFdFlags & 0xffff,
           });
         });
         return this._measureWasiPhase("writeOpenedFd", () => this._writeUint32(openedFdPtr, openedFd));

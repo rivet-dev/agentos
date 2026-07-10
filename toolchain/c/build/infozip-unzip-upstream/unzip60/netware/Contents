@@ -1,0 +1,15 @@
+Contents of the "netware" subdirectory for UnZip 5.53 and later:
+
+  Contents       this file
+  README         notes about Novell NetWare port
+  makefile.wat   makefile for compiling unzip.nlm using Watcom C 11.0
+  nlmcfg.h       OS-dependent configuration, included by unzpriv.h
+  netware.c       OS-dependent UnZip routines for NetWare
+  unzip.build    Korn-shell build script
+  unzip.link     Watcom link directive file
+
+Notes:
+
+This port is courtesy of Vance Baarda (Novell NetWare Server Install).
+It is designed to compile with the Watcom C compiler.  See the README
+for further info.

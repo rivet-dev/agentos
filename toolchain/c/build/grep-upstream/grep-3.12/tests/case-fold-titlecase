@@ -1,0 +1,190 @@
+#!/bin/sh
+# Check that case folding works even with titlecase and similarly odd chars.
+
+# Copyright 2014-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+require_compiled_in_MB_support
+LC_ALL=en_US.UTF-8
+export LC_ALL
+
+fail=0
+
+for testcase in \
+  0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+do
+  case $testcase in
+    0)
+      a='\302\265'     # U+00B5
+      b='\316\234'     # U+039C
+      c='\316\274'     # U+03BC
+      ;;
+    1)
+      a='\111'         # U+0049
+      b='\151'         # U+0069
+      c='\304\260'     # U+0130
+      ;;
+    2)
+      a='\111'         # U+0049
+      b='\151'         # U+0069
+      c='\304\261'     # U+0131
+      ;;
+    3)
+      a='\123'         # U+0053
+      b='\163'         # U+0073
+      c='\305\277'     # U+017F
+      ;;
+    4)
+      a='\307\204'     # U+01C4
+      b='\307\205'     # U+01C5
+      c='\307\206'     # U+01C6
+      ;;
+    5)
+      a='\307\207'     # U+01C7
+      b='\307\210'     # U+01C8
+      c='\307\211'     # U+01C9
+      ;;
+    6)
+      a='\307\212'     # U+01CA
+      b='\307\213'     # U+01CB
+      c='\307\214'     # U+01CC
+      ;;
+    7)
+      a='\307\261'     # U+01F1
+      b='\307\262'     # U+01F2
+      c='\307\263'     # U+01F3
+      ;;
+    8)
+      a='\315\205'     # U+0345
+      b='\316\231'     # U+0399
+      c='\316\271'     # U+03B9
+      ;;
+    9)
+      a='\316\243'     # U+03A3
+      b='\317\202'     # U+03C2
+      c='\317\203'     # U+03C3
+      ;;
+    10)
+      a='\316\222'     # U+0392
+      b='\316\262'     # U+03B2
+      c='\317\220'     # U+03D0
+      ;;
+    11)
+      a='\316\230'     # U+0398
+      b='\316\270'     # U+03B8
+      c='\317\221'     # U+03D1
+      ;;
+    12)
+      a='\316\246'     # U+03A6
+      b='\317\206'     # U+03C6
+      c='\317\225'     # U+03D5
+      ;;
+    13)
+      a='\316\240'     # U+03A0
+      b='\317\200'     # U+03C0
+      c='\317\226'     # U+03D6
+      ;;
+    14)
+      a='\316\232'     # U+039A
+      b='\316\272'     # U+03BA
+      c='\317\260'     # U+03F0
+      ;;
+    15)
+      a='\316\241'     # U+03A1
+      b='\317\201'     # U+03C1
+      c='\317\261'     # U+03F1
+      ;;
+    16)
+      a='\316\230'     # U+0398
+      b='\316\270'     # U+03B8
+      c='\317\264'     # U+03F4
+      ;;
+    17)
+      a='\316\225'     # U+0395
+      b='\316\265'     # U+03B5
+      c='\317\265'     # U+03F5
+      ;;
+    18)
+      a='\341\271\240' # U+1E60
+      b='\341\271\241' # U+1E61
+      c='\341\272\233' # U+1E9B
+      ;;
+    19)
+      a='\303\237'     # U+00DF
+      b='\303\237'     # U+00DF
+      c='\341\272\236' # U+1E9E
+      ;;
+    20)
+      a='\316\231'     # U+0399
+      b='\316\271'     # U+03B9
+      c='\341\276\276' # U+1FBE
+      ;;
+    21)
+      a='\316\251'     # U+03A9
+      b='\317\211'     # U+03C9
+      c='\342\204\246' # U+2126
+      ;;
+    22)
+      a='\113'         # U+004B
+      b='\153'         # U+006B
+      c='\342\204\252' # U+212A
+      ;;
+    23)
+      a='\303\205'     # U+00C5
+      b='\303\245'     # U+00E5
+      c='\342\204\253' # U+212B
+      ;;
+    24)
+      a='\316\243'     # U+03A3
+      b='\317\203'     # U+03C3
+      c='\317\262'     # U+03F2
+      ;;
+  esac
+
+  printf "$a\\n$b\\n$c\\n" >in || framework_failure_
+  for pattern in "$a" "$b" "$c"; do
+     pat=$(printf "$pattern\\n") || framework_failure_
+     grep -i "\\(\\)\\1$pat" in >out-regex || fail=1
+     grep -i "$pat" in >out-dfa || fail=1
+     compare_ out-regex out-dfa || fail=1
+     grep -iF "$pat" in >out-fixed || fail=1
+     compare_ out-regex out-fixed || fail=1
+  done
+done
+
+# Try a unibyte test with ISO 8859-7, if available.
+if test "$(get-mb-cur-max el_GR.iso88597)" = 1; then
+  LC_ALL=el_GR.iso88597
+  export LC_ALL
+
+  a='\323' # SIGMA
+  b='\362' # stigma
+  c='\363' # sigma
+
+  printf "$a\\n$b\\n$c\\n" >in || framework_failure_
+  for pattern in "$a" "$b" "$c"; do
+     pat=$(printf "$pattern\\n") || framework_failure_
+     grep -i "\\(\\)\\1$pat" in >out-regex || fail=1
+     grep -i "$pat" in >out-dfa || fail=1
+     compare_ out-regex out-dfa || fail=1
+     grep -iF "$pat" in >out-fixed || fail=1
+     compare_ out-regex out-fixed || fail=1
+  done
+fi
+
+Exit $fail

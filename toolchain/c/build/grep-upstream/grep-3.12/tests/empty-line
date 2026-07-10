@@ -1,0 +1,41 @@
+#! /bin/sh
+# Test that the empty pattern matches everything.
+# Some of these tests failed in grep 2.18.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+fail=0
+printf 'abc\n' >in || framework_failure_
+nl='
+'
+
+for opt in '' -E -F; do
+  case $opt in
+    '') prefix='\(\)\1';;
+    -E) prefix='()\1';;
+    -F) prefix="foo$nl";;
+  esac
+
+  for pattern in "" "$nl" "---$nl" "${nl}foo"; do
+    for pat in "$pattern" "$prefix$pattern"; do
+      grep $opt -e "$pat" in >out || fail=1
+      compare in out || fail=1
+
+      printf -- '%s\n' "$pat" >pat || framework_failure_
+      grep $opt -f pat in >out || fail=1
+      compare in out || fail=1
+
+      # Check that pattern files that end in non-newlines
+      # are treated as if a newline were appended.
+      case $pattern in
+        '' | *"$nl") ;;
+        *)
+          printf -- '%s' "$pat" >pat || framework_failure_
+          grep $opt -f pat in >out || fail=1
+          compare in out || fail=1;;
+      esac
+    done
+  done
+done
+
+Exit $fail

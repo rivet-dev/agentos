@@ -41,6 +41,11 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
     rationale: "Host process signal-listener state bridge reference."
   },
   {
+    name: "_processTakeSignal",
+    classification: "hardened",
+    rationale: "Host process pending-signal drain bridge reference."
+  },
+  {
     name: "_osConfig",
     classification: "hardened",
     rationale: "Bridge bootstrap configuration must not be replaced by sandbox code."

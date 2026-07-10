@@ -1,0 +1,404 @@
+//Microsoft Developer Studio generated resource script.
+//
+#include "resource.h"
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include "afxres.h"
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// Englisch (USA) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE DISCARDABLE
+BEGIN
+    "resource.h\0"
+END
+
+2 TEXTINCLUDE DISCARDABLE
+BEGIN
+    "#include ""afxres.h""\0"
+END
+
+3 TEXTINCLUDE DISCARDABLE
+BEGIN
+    "#include ""punzip.rcv""\r\n"
+    "#ifdef _WIN32_WCE\r\n"
+    "IDI_UNZIP ICON DISCARDABLE ""punzip.ic2""\r\n"
+    "IDI_ZIPFILE ICON DISCARDABLE ""zipfile.ic2""\r\n"
+    "IDB_TOOLBAR BITMAP DISCARDABLE ""toolbar.2bp""\r\n"
+    "IDB_IMAGELIST BITMAP DISCARDABLE ""imglist.2bp""\r\n"
+    "IDB_IMAGELIST_MASK BITMAP DISCARDABLE ""ilmask.bmp""\r\n"
+    "#else\r\n"
+    "IDI_UNZIP ICON DISCARDABLE ""punzip.ico""\r\n"
+    "IDI_ZIPFILE ICON DISCARDABLE ""zipfile.ico""\r\n"
+    "IDB_TOOLBAR BITMAP DISCARDABLE ""toolbar.bmp""\r\n"
+    "IDB_IMAGELIST BITMAP DISCARDABLE ""imglist.bmp""\r\n"
+    "#endif\0"
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Menu
+//
+
+IDR_UNZIP MENU DISCARDABLE
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&Open...\tCtrl+O",            IDM_FILE_OPEN, GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "&Properties\tAlt+Enter",      IDM_FILE_PROPERTIES, GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM SEPARATOR
+        MENUITEM "&Close",                      IDM_FILE_CLOSE, GRAYED
+    END
+    POPUP "&Actions"
+    BEGIN
+        MENUITEM "&Extract Selected Files\tCtrl+E", IDM_ACTION_EXTRACT
+        , GRAYED
+        MENUITEM "E&xtract All Files",          IDM_ACTION_EXTRACT_ALL
+        , GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "&Test Selected Files\tCtrl+T", IDM_ACTION_TEST, GRAYED
+        MENUITEM "Te&st All Files",             IDM_ACTION_TEST_ALL, GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "&View Selected File\tEnter",  IDM_ACTION_VIEW, GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "Select &All\tCtrl+A",         IDM_ACTION_SELECT_ALL
+        , GRAYED
+    END
+    POPUP "&View"
+    BEGIN
+        MENUITEM "&Expanded View",              IDM_VIEW_EXPANDED_VIEW
+        , GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "Zip File &Comment",           IDM_VIEW_COMMENT, GRAYED
+    END
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&About Pocket UnZip",         IDM_HELP_ABOUT, GRAYED
+    END
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_REPLACE DIALOG DISCARDABLE  1, 1, 250, 60
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION
+CAPTION "Confirm File Replace"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT           "",IDC_FILE,6,6,237,18,NOT WS_GROUP
+    LTEXT           "Would you like to replace the existing file?",
+                    IDC_STATIC,6,26,237,10,NOT WS_GROUP
+    PUSHBUTTON      "&Yes",IDM_REPLACE_YES,6,40,54,14
+    PUSHBUTTON      "Yes to &All",IDM_REPLACE_ALL,67,40,54,14
+    PUSHBUTTON      "&No",IDM_REPLACE_NO,128,40,54,14
+    PUSHBUTTON      "N&o to All",IDM_REPLACE_NONE,189,40,54,14
+END
+
+IDD_COMMENT DIALOG DISCARDABLE  1, 1, 361, 196
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Zip File Comment"
+FONT 8, "MS Sans Serif"
+BEGIN
+    EDITTEXT        IDC_COMMENT,6,6,349,184,ES_MULTILINE | WS_VSCROLL |
+                    WS_HSCROLL | NOT WS_TABSTOP
+END
+
+IDD_PROPERTIES DIALOG DISCARDABLE  0, 0, 251, 114
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Properties"
+FONT 8, "MS Sans Serif"
+BEGIN
+    EDITTEXT        IDC_COMMENT,6,18,238,90,ES_MULTILINE | NOT WS_VISIBLE |
+                    WS_VSCROLL | WS_HSCROLL
+    LTEXT           "",IDC_FILE,11,22,229,8
+    LTEXT           "Size:",IDC_STATIC,11,34,70,8
+    LTEXT           "",IDC_FILE_SIZE,84,34,100,8
+    LTEXT           "Compressed Size:",IDC_STATIC,11,46,70,8
+    LTEXT           "",IDC_COMPRESSED_SIZE,84,46,100,8
+    LTEXT           "Compression Factor:",IDC_STATIC,11,58,70,8
+    LTEXT           "",IDC_COMPRESSON_FACTOR,84,58,100,8
+    LTEXT           "Compression Method:",IDC_STATIC,11,70,70,8
+    LTEXT           "",IDC_COMPRESSION_METHOD,84,70,100,8
+    LTEXT           "Modified:",IDC_STATIC,11,82,70,8
+    LTEXT           "",IDC_MODIFIED,84,82,100,8
+    LTEXT           "CRC:",IDC_STATIC,11,94,70,8
+    LTEXT           "",IDC_CRC,84,94,100,8
+    LTEXT           "Attributes:",IDC_STATIC,190,34,50,8
+    CONTROL         "Directory",IDC_DIRECTORY,"Button",BS_3STATE,190,44,50,
+                    10
+    CONTROL         "Read-only",IDC_READONLY,"Button",BS_3STATE,190,54,50,10
+    CONTROL         "Archive",IDC_ARCHIVE,"Button",BS_3STATE,190,64,50,10
+    CONTROL         "Hidden",IDC_HIDDEN,"Button",BS_3STATE,190,74,50,10
+    CONTROL         "System",IDC_SYSTEM,"Button",BS_3STATE,190,84,50,10
+    CONTROL         "Encrypted",IDC_ENCRYPTED,"Button",BS_3STATE,190,94,50,
+                    10
+    CONTROL         "Tab2",IDC_TAB,"SysTabControl32",WS_TABSTOP,4,4,242,106
+END
+
+IDD_EXTRACT DIALOG DISCARDABLE  0, 0, 297, 105
+STYLE DS_MODALFRAME | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION "Extract Files"
+FONT 8, "MS Sans Serif"
+BEGIN
+    DEFPUSHBUTTON   "&Extract",IDOK,246,6,45,14
+    PUSHBUTTON      "&Cancel",IDCANCEL,246,24,45,14
+    LTEXT           "Files to extract:",IDC_STATIC,12,18,54,8
+    RTEXT           "",IDC_FILE_COUNT,67,18,46,8
+    LTEXT           "Bytes to extract:",IDC_STATIC,12,30,54,8
+    RTEXT           "",IDC_BYTE_COUNT,67,30,46,8
+    GROUPBOX        "Statistics",IDC_STATIC,6,6,118,37
+    CONTROL         "&Restore file paths",IDC_RESTORE_PATHS,"Button",
+                    BS_AUTOCHECKBOX | WS_TABSTOP,8,47,118,10
+    LTEXT           "Extract &To:",IDC_STATIC,6,64,59,8
+    EDITTEXT        IDC_EXTRACT_TO,6,74,230,14,ES_AUTOHSCROLL
+    PUSHBUTTON      "&Browse...",IDC_BROWSE,246,74,45,14
+    LTEXT           "If encrypted files are encountered during extraction, you will be prompted for a password.",
+                    IDC_STATIC,6,91,285,8
+    CONTROL         "&Prompt to overwrite",IDC_OVERWRITE_PROMPT,"Button",
+                    BS_AUTORADIOBUTTON,138,18,80,10
+    CONTROL         "&Overwrite if newer",IDC_OVERWRITE_NEWER,"Button",
+                    BS_AUTORADIOBUTTON,138,30,80,10
+    CONTROL         "&Always overwrite",IDC_OVERWRITE_ALWAYS,"Button",
+                    BS_AUTORADIOBUTTON,138,42,80,10
+    CONTROL         "&Never overwrite",IDC_OVERWRITE_NEVER,"Button",
+                    BS_AUTORADIOBUTTON,138,54,80,10
+    GROUPBOX        "Overwrite Options",IDC_STATIC,132,6,104,61
+END
+
+IDD_PASSWORD DIALOG DISCARDABLE  1, 1, 250, 79
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Password Required for Encrypted File"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT           "",IDC_FILE,6,6,237,18,NOT WS_GROUP
+    LTEXT           "",IDC_PROMPT,6,26,237,10,NOT WS_GROUP
+    EDITTEXT        IDC_PASSWORD,6,40,237,14,ES_PASSWORD | ES_AUTOHSCROLL
+    PUSHBUTTON      "Skip &All",IDC_SKIP_ALL,170,59,73,14
+    DEFPUSHBUTTON   "&Ok",IDOK,6,59,73,14
+    PUSHBUTTON      "&Skip",IDCANCEL,88,59,73,14
+END
+
+IDD_EXTRACT_PROGRESS DIALOG DISCARDABLE  0, 0, 400, 129
+STYLE DS_MODALFRAME | WS_POPUP
+FONT 8, "MS Sans Serif"
+BEGIN
+    PUSHBUTTON      "&Abort",IDCANCEL,6,110,112,14
+    LTEXT           "File Progress",IDC_FILE,6,5,389,8
+    CONTROL         "Progress1",IDC_FILE_PROGRESS,"msctls_progress32",
+                    WS_BORDER,6,15,112,10
+    LTEXT           "Total Progress",IDC_STATIC,6,28,61,8
+    RTEXT           "0%",IDC_PERCENTAGE,84,28,33,8
+    CONTROL         "Progress1",IDC_TOTAL_PROGRESS,"msctls_progress32",
+                    WS_BORDER,6,38,112,10
+    LTEXT           "Files processed:",IDC_STATIC,10,55,58,8
+    RTEXT           "0",IDC_FILES_PROCESSED,68,55,44,8
+    LTEXT           "Files total:",IDC_STATIC,10,66,58,8
+    RTEXT           "",IDC_FILES_TOTAL,68,66,44,8
+    LTEXT           "Bytes processed:",IDC_STATIC,10,83,58,8
+    RTEXT           "0",IDC_BYTES_PROCESSED,68,83,44,8
+    LTEXT           "Bytes total:",IDC_STATIC,10,94,58,8
+    RTEXT           "",IDC_BYTES_TOTAL,68,94,44,8
+    EDITTEXT        IDC_LOG,123,15,272,109,ES_MULTILINE | WS_VSCROLL |
+                    WS_HSCROLL
+    GROUPBOX        "",IDC_STATIC,6,49,112,29
+    GROUPBOX        "",IDC_STATIC,6,77,112,29
+END
+
+IDD_ABOUT DIALOG DISCARDABLE  34, 22, 270, 126
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "About Pocket UnZip"
+FONT 8, "MS Sans Serif"
+BEGIN
+    ICON            100,IDC_STATIC,9,8,20,20
+    LTEXT           "",IDC_PRODUCT,36,15,228,8
+    LTEXT           "",IDC_VERSION,36,29,228,8
+    LTEXT           "",IDC_DEVELOPER,36,39,228,8
+    LTEXT           "Visit my web site at http://pobox.com/~stevemil/",
+                    IDC_STATIC,36,49,228,8
+    LTEXT           "",IDC_COPYRIGHT,36,59,228,8
+    CTEXT           "Many thanks go to Greg Roelofs and all the fine folks at Info-ZIP.",
+                    IDC_STATIC,5,79,259,8
+    CTEXT           "",IDC_COMMENT,20,89,229,16
+    CTEXT           "Visit ftp://ftp.info-zip.org/pub/infozip/ for the latest news and binaries.",
+                    IDC_STATIC,5,109,259,8
+    GROUPBOX        "",IDC_STATIC,3,0,263,71,BS_LEFT
+    GROUPBOX        "",IDC_STATIC,3,71,263,49,BS_LEFT
+END
+
+IDD_VIEW_PROGRESS DIALOG DISCARDABLE  0, 0, 189, 57
+STYLE DS_MODALFRAME | WS_POPUP
+FONT 8, "MS Sans Serif"
+BEGIN
+    PUSHBUTTON      "&Abort",IDCANCEL,60,36,70,14
+    CTEXT           "Extracting temporary file for your viewing pleasure.",
+                    IDC_FILE,6,6,177,8
+    CONTROL         "Progress1",IDC_FILE_PROGRESS,"msctls_progress32",
+                    WS_BORDER,6,20,177,10
+END
+
+IDD_VIEW_ASSOCIATION DIALOG DISCARDABLE  0, 0, 297, 63
+STYLE DS_MODALFRAME | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION "Open With"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT           "There does not appear to be any application associated with this file",
+                    IDC_STATIC,6,6,230,10
+    LTEXT           "type.  In order to view this file, you must specify a viewer application.",
+                    IDC_STATIC,6,15,230,10
+    LTEXT           "&Path to viewer application.",IDC_STATIC,6,32,230,8
+    EDITTEXT        IDC_PATH,6,42,230,14,ES_AUTOHSCROLL
+    PUSHBUTTON      "&Browse...",IDC_BROWSE,246,42,45,14
+    DEFPUSHBUTTON   "&OK",IDOK,246,6,45,14
+    PUSHBUTTON      "&Cancel",IDCANCEL,246,24,45,14
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO DISCARDABLE
+BEGIN
+    IDD_REPLACE, DIALOG
+    BEGIN
+        LEFTMARGIN, 6
+        RIGHTMARGIN, 243
+        TOPMARGIN, 6
+        BOTTOMMARGIN, 54
+    END
+
+    IDD_COMMENT, DIALOG
+    BEGIN
+        LEFTMARGIN, 6
+        RIGHTMARGIN, 355
+        TOPMARGIN, 6
+        BOTTOMMARGIN, 190
+    END
+
+    IDD_PROPERTIES, DIALOG
+    BEGIN
+        LEFTMARGIN, 4
+        RIGHTMARGIN, 246
+        TOPMARGIN, 4
+        BOTTOMMARGIN, 110
+    END
+
+    IDD_EXTRACT, DIALOG
+    BEGIN
+        LEFTMARGIN, 6
+        RIGHTMARGIN, 291
+        TOPMARGIN, 6
+        BOTTOMMARGIN, 99
+    END
+
+    IDD_PASSWORD, DIALOG
+    BEGIN
+        LEFTMARGIN, 6
+        RIGHTMARGIN, 243
+        TOPMARGIN, 6
+        BOTTOMMARGIN, 73
+    END
+
+    IDD_EXTRACT_PROGRESS, DIALOG
+    BEGIN
+        LEFTMARGIN, 6
+        RIGHTMARGIN, 394
+        TOPMARGIN, 6
+        BOTTOMMARGIN, 123
+    END
+
+    IDD_ABOUT, DIALOG
+    BEGIN
+        RIGHTMARGIN, 265
+        TOPMARGIN, 1
+        BOTTOMMARGIN, 120
+    END
+
+    IDD_VIEW_PROGRESS, DIALOG
+    BEGIN
+        LEFTMARGIN, 6
+        RIGHTMARGIN, 183
+        TOPMARGIN, 6
+        BOTTOMMARGIN, 51
+    END
+
+    IDD_VIEW_ASSOCIATION, DIALOG
+    BEGIN
+        LEFTMARGIN, 6
+        RIGHTMARGIN, 291
+        TOPMARGIN, 6
+        BOTTOMMARGIN, 57
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Accelerator
+//
+
+IDR_UNZIP ACCELERATORS DISCARDABLE
+BEGIN
+    "A",            IDM_ACTION_SELECT_ALL,  VIRTKEY, CONTROL, NOINVERT
+    "E",            IDM_ACTION_EXTRACT,     VIRTKEY, CONTROL, NOINVERT
+    "O",            IDM_FILE_OPEN,          VIRTKEY, CONTROL, NOINVERT
+    "T",            IDM_ACTION_TEST,        VIRTKEY, CONTROL, NOINVERT
+    VK_RETURN,      IDM_ACTION_VIEW,        VIRTKEY, NOINVERT
+    VK_RETURN,      IDM_FILE_PROPERTIES,    VIRTKEY, ALT, NOINVERT
+END
+
+#endif    // Englisch (USA) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+#include "punzip.rcv"
+#ifdef _WIN32_WCE
+IDI_UNZIP ICON DISCARDABLE "punzip.ic2"
+IDI_ZIPFILE ICON DISCARDABLE "zipfile.ic2"
+IDB_TOOLBAR BITMAP DISCARDABLE "toolbar.2bp"
+IDB_IMAGELIST BITMAP DISCARDABLE "imglist.2bp"
+IDB_IMAGELIST_MASK BITMAP DISCARDABLE "ilmask.bmp"
+#else
+IDI_UNZIP ICON DISCARDABLE "punzip.ico"
+IDI_ZIPFILE ICON DISCARDABLE "zipfile.ico"
+IDB_TOOLBAR BITMAP DISCARDABLE "toolbar.bmp"
+IDB_IMAGELIST BITMAP DISCARDABLE "imglist.bmp"
+#endif
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+

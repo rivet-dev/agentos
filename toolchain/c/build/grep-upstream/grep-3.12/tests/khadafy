@@ -1,0 +1,26 @@
+#! /bin/sh
+# Regression test for GNU grep.
+#
+# Copyright (C) 2001, 2006, 2009-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+fail=0
+
+# The Khadafy test is brought to you by Scott Anderson . . .
+
+grep -E -f $abs_top_srcdir/tests/khadafy.regexp \
+    $abs_top_srcdir/tests/khadafy.lines > khadafy.out || fail=1
+if cmp $abs_top_srcdir/tests/khadafy.lines khadafy.out
+then
+        :
+else
+        echo Khadafy test failed -- output left on khadafy.out
+        fail=1
+fi
+
+Exit $fail

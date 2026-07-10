@@ -1,0 +1,25 @@
+#!/bin/sh
+# Ensure that grep can handle lines 2GiB long.
+# Before grep-2.16, a line of length 2^31 or greater would provoke
+# an "Invalid argument" (EINVAL) failure from the read syscall on
+# systems like OS/X 10.8.5.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+# Searching 2GiB takes a while.
+expensive_
+
+echo big > exp || framework_failure_
+
+MiB=1048576
+dd bs=$MiB seek=2048 of=big < /dev/null || framework_failure_
+echo x >> big || framework_failure_
+grep -l x big > out 2> err || fail=1
+
+# Not everyone has 2GB of memory free.
+grep '^grep: memory exhausted$' err && skip_ 'memory exhausted'
+
+compare exp out || fail=1
+compare /dev/null err || fail=1
+
+Exit $fail

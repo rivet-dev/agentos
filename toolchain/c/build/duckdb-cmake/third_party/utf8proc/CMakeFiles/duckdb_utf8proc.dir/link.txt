@@ -1,0 +1,2 @@
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/llvm-ar qc libduckdb_utf8proc.a CMakeFiles/duckdb_utf8proc.dir/utf8proc.cpp.obj CMakeFiles/duckdb_utf8proc.dir/utf8proc_wrapper.cpp.obj
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/llvm-ranlib libduckdb_utf8proc.a

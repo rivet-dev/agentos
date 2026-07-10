@@ -470,6 +470,7 @@ pub(crate) struct ActiveProcess {
     pub(crate) next_mapped_host_fd: u32,
     pub(crate) pending_execution_events: VecDeque<ActiveExecutionEvent>,
     pub(crate) pending_self_signal_exit: Option<i32>,
+    pub(crate) pending_wasm_signals: VecDeque<i32>,
     pub(crate) child_processes: BTreeMap<String, ActiveProcess>,
     pub(crate) next_child_process_id: usize,
     pub(crate) http_servers: BTreeMap<u64, ActiveHttpServer>,

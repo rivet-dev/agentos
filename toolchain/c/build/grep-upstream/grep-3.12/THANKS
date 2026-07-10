@@ -1,0 +1,158 @@
+These people have contributed to the GNU grep. Those contributions are
+described in the version control logs.  If your name has been left out,
+if you'd rather not be listed, or if you'd prefer a different address
+be used, please send a note to the bug-report mailing list (as seen at
+end of e.g., grep --help).
+
+Adam Katz                           savannah@kopis.com
+Aharon Robbins                      arnold@skeeve.com
+Akim Demaille                       akim@epita.fr
+Alain Magloire                      alainm@rcsm.ee.mcgill.ca
+Allan McRae                         allan@archlinux.org
+Andreas Ley                         andy@rz.uni-karlsruhe.de
+Andreas Schwab                      schwab@suse.de
+Anton Samokat                       samokat700@gmail.com
+Arnold D. Robbins                   arnold@skeeve.com
+Arnold Robbins                      arnold@skeeve.com
+Barret Rhoden                       brho@cs.berkeley.edu
+Bastiaan "Darquan" Stougie          darquan@zonnet.nl
+behoffski                           behoffski@grouse.com.au
+Ben Elliston                        bje@cygnus.com
+Benno Schulenberg                   bensberg@justemail.net
+Bernd Strieder                      strieder@student.uni-kl.de
+Bernhard Rosenkraenzer              bero@arklinux.org
+Bernhard Voelker                    mail@bernhard-voelker.de
+Bob Proulx                          rwp@hprwp.fc.hp.com
+Brian Youmans                       3diff@gnu.org
+Bruno Haible                        bruno@clisp.org
+Carlo Marcelo Arenas Belón          carenas@gmail.com
+Charles Levert                      charles_levert@gna.org
+Christian Boltz                     grep-bug@cboltz.de
+Christian Groessler                 cpg@aladdin.de
+Collin Funk                         collin.funk1@gmail.com
+Corinna Vinschen                    vinschen@redhat.com
+Dagobert Michelsen                  dam@opencsw.org
+Daisuke GOTO                        gotoh@m-design.com
+Dave Reisner                        d@falconindy.com
+David Clissold                      cliss@austin.ibm.com
+David J MacKenzie                   djm@catapult.va.pubnix.com
+David O'Brien                       obrien@freebsd.org
+Dmitry V. Levin                     ldv@altlinux.org
+'Drake' Daham Wang                  drakewang@gmail.com
+Egmont Koblinger                    egmont@gmail.com
+Eli Zaretskii                       eliz@gnu.org
+Emanuele Torre                      torreemanuele6@gmail.com
+Eric Blake                          eblake@redhat.com
+Fernando Basso                      fernandobasso.br@gmail.com
+Florian La Roche                    laroche@redhat.com
+François Pinard                     pinard@iro.umontreal.ca
+Gerald Stoller                      gerald_stoller@hotmail.com
+Grant McDorman                      grant@isgtec.com
+Greg Boyd                           gboyd.ccsf@gmail.com
+Greg Louis                          glouis@dynamicro.on.ca
+Grisha Levit                        grishalevit@gmail.com
+Gro-Tsen                            https://twitter.com/gro_tsen
+Guglielmo 'bond' Bondioni           g.bondioni@libero.it
+H. Merijn Brand                     h.m.brand@hccnet.nl
+Hans-Bernhard Broeker               broeker@physik.rwth-aachen.de
+Harald Hanche-Olsen                 hanche@math.ntnu.no
+Heikki Korpela                      heko@iki.fi
+Helge Kreutzmann                    debian@helgefjell.de
+Igor O. Ladygin                     assa@zabtrans.ru
+Ilya Basin                          basinilya@gmail.com
+Isamu Hasegawa                      isamu@yamato.ibm.com
+Jaroslav Škarvada                   jskarvad@redhat.com
+Javier Villavicencio                the_paya@gentoo.org
+Jeff Bailey                         jbailey@nisa.net
+Jim Hand                            jhand@austx.tandem.com
+Jim Meyering                        jim@meyering.net
+Jim Meyering                        meyering@meta.com
+Jochen Hein                         jochen.hein@delphi.central.de
+Joel N. Weber II                    devnull@gnu.org
+Johan Walles                        johan.walles@gmail.com
+John Hughes                         john@nitelite.calvacom.fr
+Jorge Stolfi                        stolfi@dcc.unicamp.br
+Josh Soref                          jsoref@gmail.com
+Juan Manuel Guerrero                juan.guerrero@gmx.de
+Julian Foad                         julianfoad@btopenworld.com
+Karl Berry                          karl@gnu.org
+Karl Heuer                          kwzh@gnu.org
+Karl Pettersson                     karl.pettersson@klpn.se
+Kaveh R. Ghazi                      ghazi@caip.rutgers.edu
+Kazuro Furukawa                     furukawa@apricot.kek.jp
+Keith Bostic                        bostic@bsdi.com
+Kevin Locke                         kevin@kevinlocke.name
+Koen Claessen                       koen@chalmers.se
+Krishna Sethuraman                  krishna@sgihub.corp.sgi.com
+Kurt D Schwehr                      kdschweh@insci14.ucsd.edu
+Ludovic Courtès                     ludo@gnu.org
+Marc Aldorasi                       m101010a@gmail.com
+Marek Suppa                         mr@shu.io
+Mark Veltzer                        mark.veltzer@gmail.com
+Mark Waite                          markw@mddmew.fc.hp.com
+Martin P.J. Zinser                  zinser@decus.de
+Martin Rex                          martin.rex@sap-ag.de
+Mateusz Okulus                      mmokulus@gmail.com
+Matthew Burgess                     matthew@linuxfromscratch.org
+Michael Aichlmayr                   mikla@nx.com
+Mike Frysinger                      vapier@gentoo.org
+Mike Haertel                        mike@ducky.net
+Miles Bader                         miles@ccs.mt.nec.co.jp
+Mirraz Mirraz                       mirraz1@rambler.ru
+Nelson H. F. Beebe                  beebe@math.utah.edu
+Nicolas Vigier                      boklm@mars-attacks.org
+Nima Aghdaii                        naghdaii@fb.com
+Norihiro Tanaka                     noritnk@kcn.ne.jp
+Olaf Kirch                          okir@ns.lst.de
+Ondřej Fiala                        temp.xanomes@volny.cz
+Pádraig Brady                       P@draigBrady.com
+Paolo Bonzini                       bonzini@gnu.org
+Patrick Boyd                        pboyd04@gmail.com
+Paul Eggert                         eggert@cs.ucla.edu
+Paul Kimoto                         kimoto@spacenet.tn.cornell.edu
+Péter Radics                        mitchnull@gmail.com
+Petr Písař                          petr.pisar@atlas.cz
+Petr Pisar                          ppisar@redhat.com
+Philip Hazel                        ph10@cus.cam.ac.uk
+Philipp Kohlbecher                  xt28@gmx.de
+Philippe Defert                     Philippe.Defert@cern.ch
+Philippe De Muyter                  phdm@info.ucl.ac.be
+Phillip C. Brisco                   phillip.craig.brisco@ccmail.census.gov
+Rainer Orth                         ro@cebitec.uni-bielefeld.de
+Reuben Thomas                       rrt@sc3d.org
+Roland Roberts                      rroberts@muller.com
+Ruslan Ermilov                      ru@freebsd.org
+Santiago Ruano Rincón               santiago@debian.org
+Santiago Vila                       sanvila@unex.es
+Sebastian Carlos                    sebaaa1754@gmail.com
+Shannon Hill                        hill@synnet.com
+Sotiris Vassilopoulos               Sotiris.Vassilopoulos@betatech.gr
+Standish Parsley                    adsspamtrap01@yahoo.com
+Stefano Lattarini                   stefano.lattarini@gmail.com
+Stepan Kasal                        kasal@ucw.cz
+Stephan T. Lavavej                  stl@nuwen.net
+Stephane Chazelas                   stephane.chazelas@gmail.com
+Stewart Levin                       stew@sep.stanford.edu
+Strahinja Kustudic                  kustodian@gmail.com
+Sven Joachim                        svenjoac@gmx.de
+Sydoruk Stepan                      step@unitex.kiev.ua
+Tapani Tarvainen                    tt@mit.jyu.fi
+Tim Waugh                           twaugh@redhat.com
+Tom 'moof' Spindler                 dogcow@ccs.neu.edu
+Tom Tromey                          tromey@creche.cygnus.com
+Tony Abou-Assaleh                   taa@acm.org
+UEBAYASHI Masao                     masao@nf.enveng.titech.ac.jp
+Ulrich Drepper                      drepper@cygnus.com
+Ulrich Eckhardt                     ulrich.eckhardt@base-42.de
+Uwe H. Steinfeld                    usteinfeld@gmx.net
+Volker Borchert                     bt@teknon.de
+Wichert Akkerman                    wichert@cistron.nl
+William Bader                       william@nscs.fast.net
+Wolfgang Schludi                    schludi@syscomp.de
+Yuliy Pisetsky                      ypisetsky@fb.com
+Zev Weiss                           zev@bewilderbeest.net
+Zoltan Herczeg                      hzmester@freemail.hu
+
+;; Local Variables:
+;; coding: utf-8
+;; End:
