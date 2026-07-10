@@ -55,6 +55,11 @@ const { command, class: className } = Astro.props;
 		>
 			<path d="M20 6 9 17l-5-5"></path>
 		</svg>
-		<span data-copy-label>Copy</span>
+		{/* Reserve the width of the longest label so the button doesn't resize
+		    on copy and shove the flex-1 chip. Same trick as SetupWithAgent. */}
+		<span class="grid place-items-center">
+			<span class="invisible col-start-1 row-start-1" aria-hidden="true">Copied</span>
+			<span data-copy-label class="col-start-1 row-start-1">Copy</span>
+		</span>
 	</button>
 </div>

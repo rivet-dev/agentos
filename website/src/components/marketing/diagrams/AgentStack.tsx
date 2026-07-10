@@ -5,16 +5,15 @@ import { EASE, VIEWPORT } from '../motion';
 
 // ---------------------------------------------------------------------------
 // The architecture as containment: your backend is the outer box. Inside it,
-// your code drives sessions through the agentOS SDK into per-agent agentOS
-// VMs. Each VM pairs a guest — an off-the-shelf agent like Pi, or one you
-// build with a framework like Eve or Flue, on Node, Python, and shell,
-// running on V8 isolates and WASM — with its own virtual kernel that services
-// every syscall. The VMs land on the actor base: each VM is hosted as one
-// Rivet Actor with durable state. The library hosts the VMs in a sidecar
-// process it manages, so "your backend" is the deployment boundary rather
-// than a literal single process — and there is no hypervisor or container in
-// the path. White cards are elements of your backend, light chips are guest
-// workloads, ink bars are the agentOS system layers.
+// your code drives sessions into per-agent agentOS VMs. Each VM pairs a
+// guest — an off-the-shelf agent like Pi, or one you build with a framework
+// like Eve or Flue, on Node, Python, and shell, running on V8 isolates and
+// WASM — with its own virtual kernel that services every syscall. The
+// library hosts the VMs in a sidecar process it manages, so "your backend"
+// is the deployment boundary rather than a literal single process — and
+// there is no hypervisor or container in the path. White cards are elements
+// of your backend, light chips are guest workloads, ink bars are the
+// per-VM kernels.
 // ---------------------------------------------------------------------------
 
 // Eve's mark is its wordmark, so it renders wider and shorter than the
@@ -69,7 +68,7 @@ export const AgentStack = () => {
 	return (
 		<div
 			role='img'
-			aria-label='agentOS architecture: inside your backend, your code drives sessions into per-agent agentOS VMs. In each VM an agent, such as Pi or one you build with a framework like Eve or Flue, runs Node, Python, and shell on V8 isolates and WebAssembly, and every syscall is served by that VM&apos;s own virtual kernel: file system, processes, sockets, and deny-by-default permissions. Each VM runs as one Rivet Actor with durable state, sleep and wake, and cron, with no hypervisor or containers in the path.'
+			aria-label='agentOS architecture: inside your backend, your code drives sessions into per-agent agentOS VMs. In each VM an agent, such as Pi or one you build with a framework like Eve or Flue, runs Node, Python, and shell on V8 isolates and WebAssembly, and every syscall is served by that VM&apos;s own virtual kernel: file system, processes, sockets, and deny-by-default permissions. There is no hypervisor or container in the path.'
 			className='rounded-2xl bg-white/45 p-4 ring-1 ring-ink/[0.09] shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_8px_24px_-14px_rgba(20,20,22,0.20)] md:p-5'
 		>
 			{/* Outer box: your backend */}
@@ -79,7 +78,7 @@ export const AgentStack = () => {
 
 			{/* The driver: your code holds the sessions */}
 			<Appear at={0.05} reduced={reduced}>
-				<div className='rounded-xl bg-white px-3 py-2.5 ring-1 ring-ink/[0.09] shadow-[0_1px_2px_rgba(20,20,22,0.06),0_4px_10px_-6px_rgba(20,20,22,0.12)]'>
+				<div className='rounded-xl bg-white px-3 py-2.5 text-center ring-1 ring-ink/[0.09] shadow-[0_1px_2px_rgba(20,20,22,0.06),0_4px_10px_-6px_rgba(20,20,22,0.12)]'>
 					<span className='text-[13px] font-medium text-ink'>your code</span>
 				</div>
 			</Appear>
@@ -124,25 +123,8 @@ export const AgentStack = () => {
 				))}
 			</div>
 
-			{/* VMs -> actor base: nothing in between */}
-			<div className='relative grid grid-cols-2 gap-3'>
-				<Connector reduced={reduced} delay={1.2} />
-				<Connector reduced={reduced} delay={1.7} />
-				<span className='absolute inset-x-0 top-1/2 -translate-y-1/2 text-center font-mono text-[10px] text-ink-faint'>
-					<span className='bg-[#efefef] px-2'>no hypervisor · no containers</span>
-				</span>
-			</div>
-
-			{/* In-stack base: how each VM is hosted and persisted */}
-			<Appear at={0.4} reduced={reduced}>
-				<div className='flex items-center justify-between gap-4 rounded-lg bg-ink px-4 py-2.5'>
-					<div className='flex items-center gap-2'>
-						<img src='/rivet-icon.svg' alt='' aria-hidden='true' className='h-4 w-4 object-contain' />
-						<span className='text-[13px] font-medium text-cream'>one Rivet Actor per VM</span>
-					</div>
-					<span className='font-mono text-[10px] text-cream/55'>durable state · sleep &amp; wake · cron</span>
-				</div>
-			</Appear>
+			{/* What is not in the path */}
+			<p className='mt-3 text-center font-mono text-[10px] text-ink-faint'>no hypervisor · no containers</p>
 		</div>
 	);
 };
