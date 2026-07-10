@@ -1,18 +1,19 @@
 'use client';
 
-import { useEffect, useMemo, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useLayoutEffect, useRef, useState } from 'react';
 import { FileCode2, FileText, Play, RotateCcw, SquarePen } from 'lucide-react';
-import { motion, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { InkPanel } from '../editorial/InkPanel';
 
 // ---------------------------------------------------------------------------
 // Recorded agent coding sessions, played back line by line inside an ink
-// terminal. The three runtime cards double as the tabs: picking a runtime
-// replays the same task with the agent writing that language. A filesystem
-// rail on the right shows /home/agentos changing as the session runs, so the
-// script visibly works against a whole OS rather than a chat box. The Python
-// session runs the interpreter natively (no shell lines); Node and bash keep
-// their commands.
+// terminal. A segmented control picks the runtime and replays the same task
+// with the agent writing that language; the active runtime's description and
+// docs link sit under the control and swap with it. A filesystem rail on the
+// right shows /home/agentos changing as the session runs, so the script
+// visibly works against a whole OS rather than a chat box. The Python session
+// runs the interpreter natively (no shell lines); Node and bash keep their
+// commands.
 // ---------------------------------------------------------------------------
 
 type SessionLineKind = 'user' | 'agent' | 'cmd' | 'run' | 'out' | 'script';
@@ -429,33 +430,75 @@ const FileRail = ({ files, schedule, clock }: { files: SessionFile[]; schedule: 
 // The runtime cards are the tabs: real buttons with no interactive content
 // nested inside them. The active runtime's docs link lives in the terminal's
 // caption instead, so a card is one target that does one thing.
-const RuntimeCardTabs = ({ active, onChange }: { active: number; onChange: (idx: number) => void }) => (
-	<div role='tablist' aria-label='Execution runtimes' className='mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3'>
-		{TABS.map((tab, idx) => {
-			const selected = active === idx;
-			return (
-				<button
-					key={tab.key}
-					type='button'
-					role='tab'
-					aria-selected={selected}
-					onClick={() => onChange(idx)}
-					className={`flex flex-col rounded-2xl bg-gradient-to-b from-white to-[#f9f9fa] p-5 text-left transition-[box-shadow,--tw-ring-color] duration-300 motion-reduce:transition-none ${
-						selected
-							? 'ring-1 ring-ink/40 shadow-[inset_0_1px_0_rgba(255,255,255,0.95),0_2px_4px_-1px_rgba(20,20,22,0.12),0_12px_30px_-12px_rgba(20,20,22,0.26)]'
-							: 'ring-1 ring-ink/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_2px_-1px_rgba(20,20,22,0.10),0_8px_24px_-14px_rgba(20,20,22,0.20)] hover:ring-ink/[0.16]'
-					}`}
-				>
-					<div className='mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-ink/5'>
-						<img src={tab.iconSrc} alt='' aria-hidden='true' className='h-5 w-5 object-contain' />
-					</div>
-					<h3 className='mb-1.5 text-base font-medium tracking-[-0.015em] text-ink'>{tab.title}</h3>
-					<p className='text-sm leading-relaxed text-ink-soft'>{tab.description}</p>
-				</button>
-			);
-		})}
-	</div>
-);
+// A segmented control (same vocabulary as the benchmark workload toggle, so
+// it unambiguously reads as a switch) plus the active runtime's one-line
+// description with its docs link inline, swapping with the selection.
+const RuntimeTabs = ({ active, onChange }: { active: number; onChange: (idx: number) => void }) => {
+	const indicatorId = useId();
+	const tab = TABS[active];
+	return (
+		<div className='mb-5'>
+			<div
+				role='tablist'
+				aria-label='Execution runtimes'
+				className='flex w-fit flex-wrap gap-1 rounded-lg border border-ink/10 bg-white/55 p-1'
+			>
+				{TABS.map((t, idx) => {
+					const selected = active === idx;
+					return (
+						<button
+							key={t.key}
+							type='button'
+							role='tab'
+							aria-selected={selected}
+							onClick={() => onChange(idx)}
+							className={`relative flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+								selected ? 'text-cream' : 'text-ink-soft hover:text-ink'
+							}`}
+						>
+							{selected && (
+								<motion.span
+									layoutId={`runtime-tab-${indicatorId}`}
+									className='absolute inset-0 rounded-md bg-ink'
+									transition={{ type: 'spring', stiffness: 480, damping: 38 }}
+								/>
+							)}
+							<span className='relative z-[1] flex items-center gap-2'>
+								<img
+									src={t.iconSrc}
+									alt=''
+									aria-hidden='true'
+									className={`h-4 w-4 object-contain transition-[filter] ${selected ? 'brightness-0 invert' : ''}`}
+								/>
+								{t.title}
+							</span>
+						</button>
+					);
+				})}
+			</div>
+			<div className='mt-3 min-h-[2.75rem] sm:min-h-[1.5rem]'>
+				<AnimatePresence mode='wait' initial={false}>
+					<motion.p
+						key={tab.key}
+						initial={{ opacity: 0, y: 4 }}
+						animate={{ opacity: 1, y: 0 }}
+						exit={{ opacity: 0, y: -4 }}
+						transition={{ duration: 0.18, ease: 'easeOut' }}
+						className='max-w-4xl text-sm leading-relaxed text-ink-soft'
+					>
+						{tab.description}{' '}
+						<a
+							href={tab.docsHref}
+							className='whitespace-nowrap text-ink underline underline-offset-2 transition-colors hover:text-ink/80'
+						>
+							{tab.docsLabel} <span aria-hidden='true'>→</span>
+						</a>
+					</motion.p>
+				</AnimatePresence>
+			</div>
+		</div>
+	);
+};
 
 export const AgentSessionDemo = () => {
 	const reduced = useReducedMotion() ?? false;
@@ -494,16 +537,9 @@ export const AgentSessionDemo = () => {
 			onViewportEnter={() => setStarted(true)}
 			viewport={{ once: true, margin: '-20% 0px' }}
 		>
-			<RuntimeCardTabs active={active} onChange={handleTabChange} />
+			<RuntimeTabs active={active} onChange={handleTabChange} />
 
-			<InkPanel
-				caption={CAPTION}
-				captionAside={
-					<a href={tab.docsHref} className='text-cream/60 underline underline-offset-2 transition-colors hover:text-cream'>
-						{tab.docsLabel} <span aria-hidden='true'>→</span>
-					</a>
-				}
-			>
+			<InkPanel caption={CAPTION}>
 				<div className='flex items-center gap-2 border-b border-cream/10 px-4 py-3'>
 					<div className='h-3 w-3 rounded-full bg-cream/15' />
 					<div className='h-3 w-3 rounded-full bg-cream/15' />
