@@ -1,0 +1,25 @@
+Expose process waiting and pthread signal-mask declarations already supported by
+the AgentOS process/signal layers.
+
+diff --git a/scripts/install-include-headers.sh b/scripts/install-include-headers.sh
+--- a/scripts/install-include-headers.sh
++++ b/scripts/install-include-headers.sh
+@@ -59,5 +59,5 @@ MUSL_OMIT_HEADERS+=("sys/procfs.h" "sys/user.h" "sys/kd.h" "sys/vt.h" \
+     "bits/sem.h" "bits/shm.h" "bits/msg.h" "bits/ipc.h" "bits/ptrace.h" \
+-    "bits/statfs.h" "sys/vfs.h" "syslog.h" "sys/syslog.h" "wait.h" \
+-    "sys/wait.h" "ucontext.h" "sys/ucontext.h" "paths.h" "utmp.h" "utmpx.h" \
++    "bits/statfs.h" "sys/vfs.h" "syslog.h" "sys/syslog.h" \
++    "ucontext.h" "sys/ucontext.h" "paths.h" "utmp.h" "utmpx.h" \
+     "lastlog.h" "sys/acct.h" "sys/cachectl.h" "sys/epoll.h" "sys/reboot.h" \
+     "sys/swap.h" "sys/sendfile.h" "sys/inotify.h" "sys/quota.h" "sys/klog.h" \
+diff --git a/libc-top-half/musl/include/signal.h b/libc-top-half/musl/include/signal.h
+--- a/libc-top-half/musl/include/signal.h
++++ b/libc-top-half/musl/include/signal.h
+@@ -269,6 +269,6 @@ int sigqueue(pid_t, int, union sigval);
+ #endif
+ 
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no threads yet */
+ int pthread_sigmask(int, const sigset_t *__restrict, sigset_t *__restrict);
++#ifdef __wasilibc_unmodified_upstream /* WASI has no pthread_kill yet */
+ int pthread_kill(pthread_t, int);
+ #endif

@@ -1,8 +1,8 @@
-Implement kill() via host_process WASM import.
+Implement kill() via agentos_posix_v1 WASM import.
 
 Un-ifdefs kill() declaration from signal.h (was hidden behind
 __wasilibc_unmodified_upstream) and provides an implementation
-that calls host_process.proc_kill. Other signal functions
+that calls agentos_posix_v1.proc_kill. Other signal functions
 (sigemptyset, sigaction, etc.) remain hidden.
 
 Also ensures pid_t is defined before the kill() declaration by
@@ -16,10 +16,10 @@ index 0000000..cbf9211
 --- /dev/null
 +++ b/libc-bottom-half/sources/host_kill.c
 @@ -0,0 +1,25 @@
-+// kill() via wasmVM host_process import.
++// kill() via wasmVM agentos_posix_v1 import.
 +//
 +// Replaces wasi-libc's hidden kill() declaration with an implementation
-+// that calls our custom host_process.proc_kill WASM import.
++// that calls our custom agentos_posix_v1.proc_kill WASM import.
 +//
 +// Import signature matches wasmvm/crates/wasi-ext/src/lib.rs exactly.
 +
@@ -30,7 +30,7 @@ index 0000000..cbf9211
 +#define WASM_IMPORT(mod, fn) \
 +    __attribute__((__import_module__(mod), __import_name__(fn)))
 +
-+WASM_IMPORT("host_process", "proc_kill")
++WASM_IMPORT("agentos_posix_v1", "proc_kill")
 +uint32_t __host_proc_kill(uint32_t pid, uint32_t signal);
 +
 +int kill(pid_t pid, int sig) {

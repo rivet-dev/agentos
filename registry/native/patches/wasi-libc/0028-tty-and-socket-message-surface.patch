@@ -1,0 +1,49 @@
+Expose TTY naming and socket message APIs implemented by the AgentOS libc
+compatibility layer, plus the Linux SO_BROADCAST option constant.
+
+diff --git a/libc-bottom-half/headers/public/__header_sys_socket.h b/libc-bottom-half/headers/public/__header_sys_socket.h
+index f8d72fe..b1c311f 100644
+--- a/libc-bottom-half/headers/public/__header_sys_socket.h
++++ b/libc-bottom-half/headers/public/__header_sys_socket.h
+@@ -99,6 +99,11 @@
+ #define SO_RCVBUF 8
+ #endif
+ 
++#ifndef SO_BROADCAST
++/* Linux socket(7): permit sending datagrams to a broadcast address. */
++#define SO_BROADCAST 6
++#endif
++
+ #ifndef SO_KEEPALIVE
+ #define SO_KEEPALIVE 9
+ #endif
+diff --git a/libc-top-half/musl/include/sys/socket.h b/libc-top-half/musl/include/sys/socket.h
+index 7dab2e1..7be8267 100644
+--- a/libc-top-half/musl/include/sys/socket.h
++++ b/libc-top-half/musl/include/sys/socket.h
+@@ -418,10 +418,8 @@ ssize_t send (int, const void *, size_t, int);
+ ssize_t recv (int, void *, size_t, int);
+ ssize_t sendto (int, const void *, size_t, int, const struct sockaddr *, socklen_t);
+ ssize_t recvfrom (int, void *__restrict, size_t, int, struct sockaddr *__restrict, socklen_t *__restrict);
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no sendmsg/recvmsg */
+ ssize_t sendmsg (int, const struct msghdr *, int);
+ ssize_t recvmsg (int, struct msghdr *, int);
+-#endif
+ 
+ int getsockopt (int, int, int, void *__restrict, socklen_t *__restrict);
+ int setsockopt (int, int, int, const void *, socklen_t);
+diff --git a/libc-top-half/musl/include/unistd.h b/libc-top-half/musl/include/unistd.h
+index cb62f56..a24c196 100644
+--- a/libc-top-half/musl/include/unistd.h
++++ b/libc-top-half/musl/include/unistd.h
+@@ -159,10 +159,8 @@ int setpgid(pid_t, pid_t);
+ pid_t setsid(void);
+ pid_t getsid(pid_t);
+ #endif
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no ttyname */
+ char *ttyname(int);
+ int ttyname_r(int, char *, size_t);
+-#endif
+ int isatty(int);
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no process groups */
+ pid_t tcgetpgrp(int);

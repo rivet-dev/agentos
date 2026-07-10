@@ -1,0 +1,46 @@
+Do not register fork handlers when the target has no fork operation.
+
+AgentOS process creation uses POSIX spawn through the shared syscall ABI, so
+libuv never enters a post-fork child in the runtime instance.
+
+diff --git a/src/threadpool.c b/src/threadpool.c
+index 3d2f51a..f877dcc 100644
+--- a/src/threadpool.c
++++ b/src/threadpool.c
+@@ -244,6 +244,6 @@ static void init_threads(void) {
+ }
+ 
+ 
+-#ifndef _WIN32
++#if !defined(_WIN32) && !defined(__wasm__)
+ static void reset_once(void) {
+   uv_once_t child_once = UV_ONCE_INIT;
+@@ -254,7 +254,7 @@ static void reset_once(void) {
+ static void init_once(void) {
+-#ifndef _WIN32
++#if !defined(_WIN32) && !defined(__wasm__)
+   /* Re-initialize the threadpool after fork.
+    * Note that this discards the global mutex and condition as well
+    * as the work queue.
+    */
+   if (pthread_atfork(NULL, NULL, &reset_once))
+     abort();
+diff --git a/src/unix/signal.c b/src/unix/signal.c
+index 193aaf4..09e0b11 100644
+--- a/src/unix/signal.c
++++ b/src/unix/signal.c
+@@ -63,5 +63,6 @@ static void uv__signal_global_reinit(void);
+ 
+ static void uv__signal_global_init(void) {
++#if !defined(__wasm__)
+   if (uv__signal_lock_pipefd[0] == -1)
+     /* pthread_atfork can register before and after handlers, one
+      * for each child. This only registers one for the child. That
+@@ -73,6 +74,7 @@ static void uv__signal_global_init(void) {
+      */
+     if (pthread_atfork(NULL, NULL, &uv__signal_global_reinit))
+       abort();
++#endif
+ 
+   uv__signal_global_reinit();
+ }

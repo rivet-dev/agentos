@@ -934,8 +934,7 @@ fn number_property_or_zero<'s>(
 }
 
 fn process_memory_usage_value<'s>(scope: &mut v8::HandleScope<'s>) -> v8::Local<'s, v8::Value> {
-    let mut stats = v8::HeapStatistics::default();
-    scope.get_heap_statistics(&mut stats);
+    let stats = scope.get_heap_statistics();
 
     let object = v8::Object::new(scope);
     set_object_number_property(scope, object, "rss", stats.total_physical_size() as f64);

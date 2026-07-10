@@ -1,0 +1,1481 @@
+{
+  "schema": 1,
+  "namespace": "agentos_posix_v1",
+  "sourceAbi": "docs-internal/node-runtime-wasm-abi/agentos_posix_v1.json",
+  "sourceAbiSha256": "9d3c6578709061417f482e95f6c2b6ba7ef86caff0795b124a219cea3f88a293",
+  "entryCount": 68,
+  "entries": [
+    {
+      "module": "agentos_posix_v1",
+      "name": "chmod",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "chmod",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0016-host-fs-mode-and-chmod.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/chmod.2.html",
+      "authorizationRule": "fs.write-or-metadata",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:chmod",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "clock_time_get",
+      "signature": "(func (param i32 i64 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "clock_time_get",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/clock_gettime.2.html",
+      "authorizationRule": "vm-runtime-intrinsic",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:clock_time_get",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "environ_get",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "environ_get",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man7/environ.7.html",
+      "authorizationRule": "vm-runtime-intrinsic",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:environ_get",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "environ_sizes_get",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "environ_sizes_get",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man7/environ.7.html",
+      "authorizationRule": "vm-runtime-intrinsic",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:environ_sizes_get",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fchmod",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fchmod",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0016-host-fs-mode-and-chmod.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/chmod.2.html",
+      "authorizationRule": "fs.write-or-metadata",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:fchmod",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_close",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_close",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/close.2.html",
+      "authorizationRule": "vm-runtime-intrinsic",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_close",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_dup_min",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_dup_min",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/fcntl.2.html",
+      "authorizationRule": "vm-runtime-intrinsic",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_dup_min",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_fdstat_get",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_fdstat_get",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/fcntl.2.html",
+      "authorizationRule": "vm-runtime-intrinsic",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_fdstat_get",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_fdstat_set_flags",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_fdstat_set_flags",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/fcntl.2.html",
+      "authorizationRule": "fs.open-fd-capability",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_fdstat_set_flags",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_filestat_get",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_filestat_get",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/fstat.2.html",
+      "authorizationRule": "fs.read",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_filestat_get",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_filestat_set_size",
+      "signature": "(func (param i32 i64) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_filestat_set_size",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/truncate.2.html",
+      "authorizationRule": "fs.write-or-metadata",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_filestat_set_size",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_filestat_set_times",
+      "signature": "(func (param i32 i64 i64 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_filestat_set_times",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/utimensat.2.html",
+      "authorizationRule": "fs.write-or-metadata",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_filestat_set_times",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_mode",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_mode",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0016-host-fs-mode-and-chmod.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/fstat.2.html",
+      "authorizationRule": "fs.read",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_mode",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_pipe",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_pipe",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0001-pipe-dup.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/pipe.2.html",
+      "authorizationRule": "vm-runtime-intrinsic",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "fds",
+        "pipe-buffer-bytes"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.maxOpenFiles"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_pipe",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_pread",
+      "signature": "(func (param i32 i32 i32 i64 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_pread",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/pread.2.html",
+      "authorizationRule": "fs.read",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "transfer-bytes"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.nodeRuntime.maxTransferBytes"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_pread",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_prestat_dir_name",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_prestat_dir_name",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/openat.2.html",
+      "authorizationRule": "fs.read",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_prestat_dir_name",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_prestat_get",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_prestat_get",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/openat.2.html",
+      "authorizationRule": "fs.read",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_prestat_get",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_pwrite",
+      "signature": "(func (param i32 i32 i32 i64 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_pwrite",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/pwrite.2.html",
+      "authorizationRule": "fs.write-or-metadata",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "transfer-bytes"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.nodeRuntime.maxTransferBytes"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_pwrite",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_read",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_read",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/read.2.html",
+      "authorizationRule": "fs.read",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "transfer-bytes"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.nodeRuntime.maxTransferBytes"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_read",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_readdir",
+      "signature": "(func (param i32 i32 i32 i64 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_readdir",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/getdents.2.html",
+      "authorizationRule": "fs.read",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "transfer-bytes"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.nodeRuntime.maxTransferBytes"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_readdir",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_seek",
+      "signature": "(func (param i32 i64 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_seek",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/lseek.2.html",
+      "authorizationRule": "vm-runtime-intrinsic",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_seek",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_size",
+      "signature": "(func (param i32) (result i64))",
+      "resultClassification": "u64-size-or-max-sentinel",
+      "libcEntryPoint": "fd_size",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0016-host-fs-mode-and-chmod.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/fstat.2.html",
+      "authorizationRule": "fs.read",
+      "errnoMapping": "u64-size-or-max-sentinel",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_size",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_sync",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_sync",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/fsync.2.html",
+      "authorizationRule": "fs.write-or-metadata",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_sync",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_write",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "fd_write",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/write.2.html",
+      "authorizationRule": "fs.write-or-metadata",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "transfer-bytes"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.nodeRuntime.maxTransferBytes"
+      ],
+      "testId": "posix:agentos_posix_v1:fd_write",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "ftruncate",
+      "signature": "(func (param i32 i64) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "ftruncate",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0016-host-fs-mode-and-chmod.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/truncate.2.html",
+      "authorizationRule": "fs.write-or-metadata",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:ftruncate",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "getegid",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "getegid",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0005-user-identity.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/getegid.2.html",
+      "authorizationRule": "process.virtual-identity",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:getegid",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "geteuid",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "geteuid",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0005-user-identity.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/geteuid.2.html",
+      "authorizationRule": "process.virtual-identity",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:geteuid",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "getgid",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "getgid",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0005-user-identity.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/getgid.2.html",
+      "authorizationRule": "process.virtual-identity",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:getgid",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "getpwuid",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "getpwuid",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0007-getpwuid.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man3/getpwuid.3.html",
+      "authorizationRule": "process.virtual-identity",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:getpwuid",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "getuid",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "getuid",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0005-user-identity.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/getuid.2.html",
+      "authorizationRule": "process.virtual-identity",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:getuid",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "isatty",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "isatty",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0006-isatty.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man3/isatty.3.html",
+      "authorizationRule": "vm-runtime-intrinsic",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:isatty",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_accept",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "net_accept",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0008-sockets.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/accept.2.html",
+      "authorizationRule": "network.socket-policy",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "fds",
+        "sockets"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.maxOpenFiles",
+        "limits.maxSockets"
+      ],
+      "testId": "posix:agentos_posix_v1:net_accept",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_bind",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "net_bind",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0008-sockets.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/bind.2.html",
+      "authorizationRule": "network.socket-policy",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:net_bind",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_connect",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "net_connect",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0008-sockets.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/connect.2.html",
+      "authorizationRule": "network.socket-policy",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:net_connect",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_getaddrinfo",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "net_getaddrinfo",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0008-sockets.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man3/getaddrinfo.3.html",
+      "authorizationRule": "network.socket-policy",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "transfer-bytes"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.nodeRuntime.maxTransferBytes"
+      ],
+      "testId": "posix:agentos_posix_v1:net_getaddrinfo",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_getpeername",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "net_getpeername",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0008-sockets.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/getpeername.2.html",
+      "authorizationRule": "network.socket-policy",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:net_getpeername",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_getsockname",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "net_getsockname",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0008-sockets.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/getsockname.2.html",
+      "authorizationRule": "network.socket-policy",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:net_getsockname",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_listen",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "net_listen",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0008-sockets.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/listen.2.html",
+      "authorizationRule": "network.socket-policy",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:net_listen",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_poll",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "net_poll",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0008-sockets.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/poll.2.html",
+      "authorizationRule": "network.socket-policy",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "poll-events"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.nodeRuntime.maxPollEvents"
+      ],
+      "testId": "posix:agentos_posix_v1:net_poll",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_recv",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "net_recv",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0008-sockets.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/recv.2.html",
+      "authorizationRule": "network.socket-policy",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "transfer-bytes"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.nodeRuntime.maxTransferBytes"
+      ],
+      "testId": "posix:agentos_posix_v1:net_recv",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_recvfrom",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "net_recvfrom",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0008-sockets.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/recvfrom.2.html",
+      "authorizationRule": "network.socket-policy",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "transfer-bytes"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.nodeRuntime.maxTransferBytes"
+      ],
+      "testId": "posix:agentos_posix_v1:net_recvfrom",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_send",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "net_send",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0008-sockets.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/send.2.html",
+      "authorizationRule": "network.socket-policy",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "transfer-bytes"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.nodeRuntime.maxTransferBytes"
+      ],
+      "testId": "posix:agentos_posix_v1:net_send",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_sendto",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "net_sendto",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0008-sockets.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/sendto.2.html",
+      "authorizationRule": "network.socket-policy",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "transfer-bytes"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.nodeRuntime.maxTransferBytes"
+      ],
+      "testId": "posix:agentos_posix_v1:net_sendto",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_setsockopt",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "net_setsockopt",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0008-sockets.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/setsockopt.2.html",
+      "authorizationRule": "network.socket-policy",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:net_setsockopt",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_socket",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "net_socket",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0008-sockets.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/socket.2.html",
+      "authorizationRule": "network.socket-policy",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "fds",
+        "sockets"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.maxOpenFiles",
+        "limits.maxSockets"
+      ],
+      "testId": "posix:agentos_posix_v1:net_socket",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_create_directory",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "path_create_directory",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/mkdirat.2.html",
+      "authorizationRule": "fs.write-or-metadata",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:path_create_directory",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_filestat_get",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "path_filestat_get",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/stat.2.html",
+      "authorizationRule": "fs.read",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:path_filestat_get",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_link",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "path_link",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/link.2.html",
+      "authorizationRule": "fs.write-or-metadata",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:path_link",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_mode",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "path_mode",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0016-host-fs-mode-and-chmod.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/stat.2.html",
+      "authorizationRule": "fs.read",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:path_mode",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_open",
+      "signature": "(func (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "path_open",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/openat.2.html",
+      "authorizationRule": "fs.open-derived-rights-and-flags",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:path_open",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_readlink",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "path_readlink",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/readlink.2.html",
+      "authorizationRule": "fs.read",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "transfer-bytes"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.nodeRuntime.maxTransferBytes"
+      ],
+      "testId": "posix:agentos_posix_v1:path_readlink",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_remove_directory",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "path_remove_directory",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/unlink.2.html",
+      "authorizationRule": "fs.write-or-metadata",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:path_remove_directory",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_rename",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "path_rename",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/rename.2.html",
+      "authorizationRule": "fs.write-or-metadata",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:path_rename",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_size",
+      "signature": "(func (param i32 i32 i32 i32) (result i64))",
+      "resultClassification": "u64-size-or-max-sentinel",
+      "libcEntryPoint": "path_size",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0016-host-fs-mode-and-chmod.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/stat.2.html",
+      "authorizationRule": "fs.read",
+      "errnoMapping": "u64-size-or-max-sentinel",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:path_size",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_symlink",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "path_symlink",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/symlink.2.html",
+      "authorizationRule": "fs.write-or-metadata",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:path_symlink",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_unlink_file",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "path_unlink_file",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/unlink.2.html",
+      "authorizationRule": "fs.write-or-metadata",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:path_unlink_file",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "poll_oneoff",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "poll_oneoff",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/poll.2.html",
+      "authorizationRule": "vm-runtime-intrinsic",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "poll-events"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.nodeRuntime.maxPollEvents"
+      ],
+      "testId": "posix:agentos_posix_v1:poll_oneoff",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "proc_exit",
+      "signature": "(func (param i32))",
+      "resultClassification": "noreturn",
+      "libcEntryPoint": "proc_exit",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/_exit.2.html",
+      "authorizationRule": "vm-runtime-intrinsic",
+      "errnoMapping": "noreturn",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:proc_exit",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "proc_getpid",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "proc_getpid",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0004-getpid.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/getpid.2.html",
+      "authorizationRule": "process.virtual-identity",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:proc_getpid",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "proc_getppid",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "proc_getppid",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0004-getpid.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/getppid.2.html",
+      "authorizationRule": "process.virtual-identity",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:proc_getppid",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "proc_kill",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "proc_kill",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0003-kill.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/kill.2.html",
+      "authorizationRule": "process.signal",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:proc_kill",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "proc_sigaction",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "proc_sigaction",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0011-sigaction.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/sigaction.2.html",
+      "authorizationRule": "process.signal",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:proc_sigaction",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "proc_spawn",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "proc_spawn",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0002-spawn-wait.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man3/posix_spawn.3.html",
+      "authorizationRule": "child_process.spawn",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls",
+        "processes",
+        "transfer-bytes"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.nodeRuntime.maxTransferBytes",
+        "limits.maxProcesses"
+      ],
+      "testId": "posix:agentos_posix_v1:proc_spawn",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "proc_waitpid",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "proc_waitpid",
+      "sourceDeclarations": [
+        "registry/native/patches/wasi-libc/0002-spawn-wait.patch"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/wait.2.html",
+      "authorizationRule": "process.wait-owned-child",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:proc_waitpid",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "random_get",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "random_get",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/getrandom.2.html",
+      "authorizationRule": "vm-runtime-intrinsic",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:random_get",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "sched_yield",
+      "signature": "(func (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "sched_yield",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/sched_yield.2.html",
+      "authorizationRule": "vm-runtime-intrinsic",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:sched_yield",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "sock_shutdown",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "wasi-errno",
+      "libcEntryPoint": "sock_shutdown",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man2/shutdown.2.html",
+      "authorizationRule": "network.socket-policy",
+      "errnoMapping": "wasi-preview1-errno",
+      "accountingClasses": [
+        "pending-syscalls"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls"
+      ],
+      "testId": "posix:agentos_posix_v1:sock_shutdown",
+      "status": "required-shared-provider-surface"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "thread-spawn",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "positive-thread-id-or-negative-error",
+      "libcEntryPoint": "thread_spawn",
+      "sourceDeclarations": [
+        "https://github.com/WebAssembly/wasi-libc/blob/wasi-sdk-25/libc-bottom-half/headers/public/wasi/api.h"
+      ],
+      "authoritativeReference": "https://man7.org/linux/man-pages/man3/pthread_create.3.html",
+      "authorizationRule": "runtime.thread-limit",
+      "errnoMapping": "positive-thread-id-or-negative-error",
+      "accountingClasses": [
+        "runtime-threads",
+        "aggregate-memory",
+        "cpu"
+      ],
+      "bounds": [
+        "limits.nodeRuntime.maxPendingSyscalls",
+        "limits.nodeRuntime.maxThreads"
+      ],
+      "testId": "posix:agentos_posix_v1:thread-spawn",
+      "status": "required-shared-provider-surface"
+    }
+  ]
+}

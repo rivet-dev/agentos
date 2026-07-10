@@ -2257,12 +2257,15 @@ ykAheWCsAteSEWVc0w==\n\
             panic!("process {process_id} did not write {needle:?}");
         }
 
-        fn wasm_stdout_module(message: &str) -> Vec<u8> {
+        fn wasm_agentos_posix_stdout_module(message: &str) -> Vec<u8> {
             wat::parse_str(format!(
                 r#"
 (module
   (type $fd_write_t (func (param i32 i32 i32 i32) (result i32)))
-  (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (type $fd_write_t)))
+  ;; write(2): https://man7.org/linux/man-pages/man2/write.2.html
+  ;; The versioned AgentOS POSIX namespace is the shared transport used by
+  ;; standalone WASM and node-runtime.wasm; this is not a Node-shaped service.
+  (import "agentos_posix_v1" "fd_write" (func $fd_write (type $fd_write_t)))
   (memory (export "memory") 1)
   (data (i32.const 16) "{message}\n")
   (func $_start (export "_start")
@@ -2282,6 +2285,77 @@ ykAheWCsAteSEWVc0w==\n\
                 length = message.len() + 1,
             ))
             .expect("compile wasm stdout fixture")
+        }
+
+        fn wasm_agentos_posix_poll_read_write_module() -> Vec<u8> {
+            wat::parse_str(
+                r#"
+(module
+  (type $poll_oneoff_t (func (param i32 i32 i32 i32) (result i32)))
+  (type $fd_read_t (func (param i32 i32 i32 i32) (result i32)))
+  (type $fd_write_t (func (param i32 i32 i32 i32) (result i32)))
+  ;; poll(2): https://man7.org/linux/man-pages/man2/poll.2.html
+  ;; read(2): https://man7.org/linux/man-pages/man2/read.2.html
+  ;; write(2): https://man7.org/linux/man-pages/man2/write.2.html
+  (import "agentos_posix_v1" "poll_oneoff" (func $poll_oneoff (type $poll_oneoff_t)))
+  (import "agentos_posix_v1" "fd_read" (func $fd_read (type $fd_read_t)))
+  (import "agentos_posix_v1" "fd_write" (func $fd_write (type $fd_write_t)))
+  (memory (export "memory") 1)
+  (func $_start (export "_start")
+    ;; One fd-read subscription for guest fd 0. Preview1 is only the packed
+    ;; libc transport layout; the versioned AgentOS namespace owns dispatch.
+    (i64.store (i32.const 0) (i64.const 1234))
+    (i32.store8 (i32.const 8) (i32.const 1))
+    (i32.store (i32.const 16) (i32.const 0))
+    (if
+      (i32.ne
+        (call $poll_oneoff
+          (i32.const 0)
+          (i32.const 48)
+          (i32.const 1)
+          (i32.const 96)
+        )
+        (i32.const 0)
+      )
+      (then unreachable)
+    )
+    (if (i32.ne (i32.load (i32.const 96)) (i32.const 1)) (then unreachable))
+    (if (i64.ne (i64.load (i32.const 48)) (i64.const 1234)) (then unreachable))
+    (if (i32.ne (i32.load8_u (i32.const 58)) (i32.const 1)) (then unreachable))
+
+    (i32.store (i32.const 104) (i32.const 128))
+    (i32.store (i32.const 108) (i32.const 64))
+    (if
+      (i32.ne
+        (call $fd_read
+          (i32.const 0)
+          (i32.const 104)
+          (i32.const 1)
+          (i32.const 112)
+        )
+        (i32.const 0)
+      )
+      (then unreachable)
+    )
+    (i32.store (i32.const 116) (i32.const 128))
+    (i32.store (i32.const 120) (i32.load (i32.const 112)))
+    (if
+      (i32.ne
+        (call $fd_write
+          (i32.const 1)
+          (i32.const 116)
+          (i32.const 1)
+          (i32.const 124)
+        )
+        (i32.const 0)
+      )
+      (then unreachable)
+    )
+  )
+)
+"#,
+            )
+            .expect("compile agentos_posix_v1 poll/read/write fixture")
         }
 
         fn wat_escape_ascii(input: &str) -> String {
@@ -2413,7 +2487,7 @@ ykAheWCsAteSEWVc0w==\n\
             vm_id: &str,
             cwd: &Path,
             process_id: &str,
-            attach_stdout_pty: bool,
+            attach_stdio_pty: bool,
         ) -> Option<u32> {
             let context = sidecar
                 .wasm_engine
@@ -2462,11 +2536,14 @@ ykAheWCsAteSEWVc0w==\n\
                     )
                     .expect("spawn kernel wasm process");
                 let kernel_pid = kernel_handle.pid();
-                let master_fd = if attach_stdout_pty {
+                let master_fd = if attach_stdio_pty {
                     let (master_fd, slave_fd, _pty_path) = vm
                         .kernel
                         .open_pty(EXECUTION_DRIVER_NAME, kernel_pid)
                         .expect("open kernel pty");
+                    vm.kernel
+                        .fd_dup2(EXECUTION_DRIVER_NAME, kernel_pid, slave_fd, 0)
+                        .expect("dup kernel pty slave onto fd 0");
                     vm.kernel
                         .fd_dup2(EXECUTION_DRIVER_NAME, kernel_pid, slave_fd, 1)
                         .expect("dup kernel pty slave onto fd 1");
@@ -9442,8 +9519,14 @@ ykAheWCsAteSEWVc0w==\n\
         fn wasm_fd_write_sync_rpc_keeps_stdout_isolated_per_vm() {
             let cwd_a = temp_dir("agentos-native-sidecar-wasm-stdio-vm-a");
             let cwd_b = temp_dir("agentos-native-sidecar-wasm-stdio-vm-b");
-            write_fixture(&cwd_a.join("guest.wasm"), wasm_stdout_module("VM_A_MARKER"));
-            write_fixture(&cwd_b.join("guest.wasm"), wasm_stdout_module("VM_B_MARKER"));
+            write_fixture(
+                &cwd_a.join("guest.wasm"),
+                wasm_agentos_posix_stdout_module("VM_A_MARKER"),
+            );
+            write_fixture(
+                &cwd_b.join("guest.wasm"),
+                wasm_agentos_posix_stdout_module("VM_B_MARKER"),
+            );
 
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
@@ -9649,7 +9732,10 @@ ykAheWCsAteSEWVc0w==\n\
 
         fn wasm_fd_write_sync_rpc_routes_stdout_into_kernel_pty() {
             let cwd = temp_dir("agentos-native-sidecar-wasm-stdio-pty");
-            write_fixture(&cwd.join("guest.wasm"), wasm_stdout_module("PTY_MARKER"));
+            write_fixture(
+                &cwd.join("guest.wasm"),
+                wasm_agentos_posix_stdout_module("PTY_MARKER"),
+            );
 
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
@@ -9751,6 +9837,119 @@ ykAheWCsAteSEWVc0w==\n\
             );
             assert_eq!(exit_code, Some(0), "stderr: {stderr}");
             assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+        }
+
+        fn wasm_agentos_posix_fd_read_write_poll_round_trip_uses_vm_kernel() {
+            let cwd = temp_dir("agentos-native-sidecar-wasm-posix-roundtrip");
+            write_fixture(
+                &cwd.join("guest.wasm"),
+                wasm_agentos_posix_poll_read_write_module(),
+            );
+
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+            let master_fd = start_fake_wasm_process(
+                &mut sidecar,
+                &vm_id,
+                &cwd,
+                "proc-wasm-posix-roundtrip",
+                true,
+            )
+            .expect("attach stdin/stdout pty");
+            let kernel_pid = sidecar
+                .vms
+                .get(&vm_id)
+                .and_then(|vm| vm.active_processes.get("proc-wasm-posix-roundtrip"))
+                .map(|process| process.kernel_pid)
+                .expect("active WASM kernel process");
+            sidecar
+                .vms
+                .get_mut(&vm_id)
+                .expect("wasm vm")
+                .kernel
+                .fd_write(
+                    EXECUTION_DRIVER_NAME,
+                    kernel_pid,
+                    master_fd,
+                    b"POSIX_ROUNDTRIP\n",
+                )
+                .expect("write pty input through VM kernel");
+
+            let mut pty_output = Vec::new();
+            let mut stderr = Vec::new();
+            let mut exit_code = None;
+            for _ in 0..64 {
+                let next_event = {
+                    let vm = sidecar.vms.get_mut(&vm_id).expect("active vm");
+                    vm.active_processes
+                        .get_mut("proc-wasm-posix-roundtrip")
+                        .and_then(|process| {
+                            process.pending_execution_events.pop_front().or_else(|| {
+                                process
+                                    .execution
+                                    .poll_event_blocking(Duration::from_secs(5))
+                                    .expect("poll WASM POSIX roundtrip event")
+                            })
+                        })
+                };
+                let Some(event) = next_event else {
+                    break;
+                };
+                if let ActiveExecutionEvent::Stderr(chunk) = &event {
+                    append_process_stream_chunk(
+                        &mut stderr,
+                        chunk,
+                        "proc-wasm-posix-roundtrip",
+                        "stderr",
+                    );
+                }
+                if let ActiveExecutionEvent::Exited(code) = &event {
+                    exit_code = Some(*code);
+                }
+
+                let vm = sidecar.vms.get_mut(&vm_id).expect("wasm vm");
+                let ready = vm
+                    .kernel
+                    .poll_targets(
+                        EXECUTION_DRIVER_NAME,
+                        kernel_pid,
+                        vec![PollTargetEntry::fd(master_fd, POLLIN)],
+                        0,
+                    )
+                    .expect("poll pty master");
+                if ready.ready_count > 0 {
+                    pty_output.extend(
+                        vm.kernel
+                            .fd_read(EXECUTION_DRIVER_NAME, kernel_pid, master_fd, 256)
+                            .expect("read pty master"),
+                    );
+                }
+                sidecar
+                    .handle_execution_event(&vm_id, "proc-wasm-posix-roundtrip", event)
+                    .expect("handle WASM POSIX roundtrip event");
+                if exit_code.is_some()
+                    && String::from_utf8_lossy(&pty_output).contains("POSIX_ROUNDTRIP")
+                {
+                    break;
+                }
+            }
+
+            let output = String::from_utf8(pty_output).expect("pty output utf8");
+            let stderr = process_stream_to_string(&stderr);
+            assert_eq!(exit_code, Some(0), "output: {output:?} stderr: {stderr}");
+            assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+            assert!(
+                output.replace("\r\n", "\n").contains("POSIX_ROUNDTRIP\n"),
+                "agentos_posix_v1 poll/read/write did not round-trip through the VM kernel PTY: {output:?}"
+            );
         }
         fn javascript_child_process_searches_path_for_mounted_wasm_commands() {
             let command_root = temp_dir("agentos-native-sidecar-command-path-root");
@@ -21520,6 +21719,10 @@ console.log(JSON.stringify({
                 }
                 "wasm-fs-write-permissions" => {
                     wasm_path_open_write_goes_through_kernel_filesystem_permissions();
+                }
+                "wasm-agentos-posix-stdio" => {
+                    wasm_fd_write_sync_rpc_routes_stdout_into_kernel_pty();
+                    wasm_agentos_posix_fd_read_write_poll_round_trip_uses_vm_kernel();
                 }
                 "http-oversized-incomplete-header" => {
                     javascript_http_socket_backed_server_rejects_oversized_incomplete_headers();

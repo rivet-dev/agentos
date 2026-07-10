@@ -1,0 +1,207 @@
+{
+  "schemaVersion": 1,
+  "baselineRevision": "0faec6268dd8b3d127234f8f76b90c9b143dd938",
+  "baselineBookmark": "main",
+  "immutableAfterMilestone": "R0",
+  "protectedGlobs": [
+    "docs-internal/networking-parity-spec.md",
+    "docs-internal/registry-networking-handoff.md",
+    "packages/runtime-core/commands/{curl,wget,git,git-*,ssh}",
+    "registry/native/Cargo.{toml,lock}",
+    "registry/native/c/Makefile",
+    "registry/native/c/curl-upstream-overlay/**",
+    "registry/native/c/mbedtls/**",
+    "registry/native/c/programs/wget.c",
+    "registry/native/c/scripts/build-{curl,wget,git,ssh}-upstream.sh",
+    "registry/native/crates/commands/{curl,git}/**",
+    "registry/native/crates/libs/git/**",
+    "registry/native/patches/git/**",
+    "registry/software/{curl,wget,git}/**",
+    "registry/tests/kernel/cross-runtime-network.test.ts",
+    "registry/tests/wasmvm/{curl,wget,git}.test.ts",
+    "software/{curl,wget,git,ssh}/**",
+    "toolchain/c/mbedtls/**",
+    "toolchain/c/patches/git/**",
+    "toolchain/c/scripts/build-{curl,wget,git,ssh}-upstream.sh",
+    "toolchain/std-patches/wasi-libc/0029-openssh-compat-header-surface.patch",
+    "toolchain/std-patches/wasi-libc-overrides/openssh_compat.c"
+  ],
+  "blackBoxArtifactPolicy": {
+    "dependencyMode": "published-digest-only",
+    "sourceStackMutable": false
+  },
+  "baselineFiles": [
+    {
+      "path": "packages/runtime-core/commands/curl",
+      "sha256": "868707c743c0e4e8f615a419ced03d5e18ce3e993085d416b12211d7f99babfc"
+    },
+    {
+      "path": "packages/runtime-core/commands/git",
+      "sha256": "c82e1b17ba4d76359057687266f0b1dc37be104e19d4f4f99fc32b7f11174e6b"
+    },
+    {
+      "path": "packages/runtime-core/commands/git-remote-http",
+      "sha256": "c82e1b17ba4d76359057687266f0b1dc37be104e19d4f4f99fc32b7f11174e6b"
+    },
+    {
+      "path": "packages/runtime-core/commands/git-remote-https",
+      "sha256": "c82e1b17ba4d76359057687266f0b1dc37be104e19d4f4f99fc32b7f11174e6b"
+    },
+    {
+      "path": "registry/native/Cargo.lock",
+      "sha256": "6c4ad8439f1aab3788d42268a991d3bcef02f07f3d6d73b766f375fcb569ef8b"
+    },
+    {
+      "path": "registry/native/Cargo.toml",
+      "sha256": "5d91f3bafdd926ecda8bcf0d5cc9a8cddb1ea45d9ed136cce4768fca8cf4fe33"
+    },
+    {
+      "path": "registry/native/c/Makefile",
+      "sha256": "edcc46ab427eb727e0e360f2aca90a4c64427497475230396c7a7ead99a2732a"
+    },
+    {
+      "path": "registry/native/c/curl-upstream-overlay/lib/curl_setup.h",
+      "sha256": "4c539b358bc75f5317e6ff7c588d5bb371b0507638f95eb0df3ab497a5d25363"
+    },
+    {
+      "path": "registry/native/c/curl-upstream-overlay/lib/hostip.c",
+      "sha256": "7dbec5508909b2eeadd613f8bad40864a90c4defc8bf04d7db693202531c0660"
+    },
+    {
+      "path": "registry/native/c/curl-upstream-overlay/lib/hostip.h",
+      "sha256": "66cdc72a9134ad415258092e50afa02d8be680ba0451e56af48a0bd79ca57b54"
+    },
+    {
+      "path": "registry/native/c/curl-upstream-overlay/lib/vtls/vtls.c",
+      "sha256": "219860c846ccb653297213fd189dd554ff228afe562b60cfe45e03f47439e30c"
+    },
+    {
+      "path": "registry/native/c/curl-upstream-overlay/lib/vtls/wasi_tls.c",
+      "sha256": "22372508aae33cef9759af317673294f8b73a4629c6d53582d36482a4cbc99b8"
+    },
+    {
+      "path": "registry/native/c/curl-upstream-overlay/lib/vtls/wasi_tls.h",
+      "sha256": "31a9894f918978f265c377b6e00d03bc1827ceecb75796718faf25dcada25f54"
+    },
+    {
+      "path": "registry/native/c/programs/wget.c",
+      "sha256": "c889ad6e962cdedef79de0027c80e28548d48efce59c536d6c7779754f97a800"
+    },
+    {
+      "path": "registry/native/c/scripts/build-curl-upstream.sh",
+      "sha256": "e4f1f3cf486dff822f27349cc06431a84ac22848728d08167fa1a65d9cbfe832"
+    },
+    {
+      "path": "registry/native/crates/commands/curl/Cargo.toml",
+      "sha256": "aeb77f3c94b0a8026a271221d051d377e0d0fd66ba1fc1178d1cf0d9a52de3c8"
+    },
+    {
+      "path": "registry/native/crates/commands/curl/src/main.rs",
+      "sha256": "000d466146d0d4a237ba77e87c59098442b54b73d2d94f89807532c41caa1b40"
+    },
+    {
+      "path": "registry/native/crates/commands/git/Cargo.toml",
+      "sha256": "229fbfe0db823be52b4f0877b86ba349d133f040d36282ab44a42f12dbc747f9"
+    },
+    {
+      "path": "registry/native/crates/commands/git/src/main.rs",
+      "sha256": "fcb63bde28eebef54c69f7e38408e1f456dfd92d37a09f272696253d6da17c6f"
+    },
+    {
+      "path": "registry/native/crates/libs/git/Cargo.toml",
+      "sha256": "ac518236b51b2f92edea995dc8e87d5a6df98b26d9925af5409697190ae6d43e"
+    },
+    {
+      "path": "registry/native/crates/libs/git/README.md",
+      "sha256": "6a2c38ba85f95f62e6edeefc8277970e5193774dca652f2e25a073bab3a212b0"
+    },
+    {
+      "path": "registry/native/crates/libs/git/src/lib.rs",
+      "sha256": "c927b0f2b18b69acf31a8f8a5861c02a78b7fa5a0b385c403f1211bf2123c50b"
+    },
+    {
+      "path": "registry/native/patches/git/README.md",
+      "sha256": "36cb780a3a633bf10bf96000f57d7de177a2ccd69d43d4fb8460b24be7be3dd0"
+    },
+    {
+      "path": "registry/software/curl/agentos-package.json",
+      "sha256": "8be722c04a6219df8f842be9d8572ae5707aeebec8fd1c7937f15e260ccaa6e8"
+    },
+    {
+      "path": "registry/software/curl/bin/curl",
+      "sha256": "868707c743c0e4e8f615a419ced03d5e18ce3e993085d416b12211d7f99babfc"
+    },
+    {
+      "path": "registry/software/curl/package.json",
+      "sha256": "b0127e42edd0de856490294f824174f0aadac7f7879bf886eda6fb0c0c335f62"
+    },
+    {
+      "path": "registry/software/curl/src/index.ts",
+      "sha256": "c0db06d8b18717c05b187bbc2565e8745516042346b91ed907dda229af57cdaf"
+    },
+    {
+      "path": "registry/software/curl/tsconfig.json",
+      "sha256": "59494555664f988fcf2b1cdcc5fbdad8692019eac6f34b565f203977200246a7"
+    },
+    {
+      "path": "registry/software/git/agentos-package.json",
+      "sha256": "06402e10b0530e533dd958a21f7a08a7ace1a8ab8ef8ca7e9157badd1f82339d"
+    },
+    {
+      "path": "registry/software/git/bin/git",
+      "sha256": "c82e1b17ba4d76359057687266f0b1dc37be104e19d4f4f99fc32b7f11174e6b"
+    },
+    {
+      "path": "registry/software/git/bin/git-remote-http",
+      "sha256": "c82e1b17ba4d76359057687266f0b1dc37be104e19d4f4f99fc32b7f11174e6b"
+    },
+    {
+      "path": "registry/software/git/bin/git-remote-https",
+      "sha256": "c82e1b17ba4d76359057687266f0b1dc37be104e19d4f4f99fc32b7f11174e6b"
+    },
+    {
+      "path": "registry/software/git/package.json",
+      "sha256": "b9f8af890de1a7021f81c11a19cab172ecc634c566dc7f39188645b395e03559"
+    },
+    {
+      "path": "registry/software/git/src/index.ts",
+      "sha256": "c0db06d8b18717c05b187bbc2565e8745516042346b91ed907dda229af57cdaf"
+    },
+    {
+      "path": "registry/software/git/tsconfig.json",
+      "sha256": "59494555664f988fcf2b1cdcc5fbdad8692019eac6f34b565f203977200246a7"
+    },
+    {
+      "path": "registry/software/wget/agentos-package.json",
+      "sha256": "b76cbff7ed7040a0140249bb8ea7dacef7d467d2cf5cab3c81aebc43c427fbee"
+    },
+    {
+      "path": "registry/software/wget/package.json",
+      "sha256": "1fb08d9e189ff677c2b4033167c8ba43c30c8fbfd68d1186b30727a52856d2b7"
+    },
+    {
+      "path": "registry/software/wget/src/index.ts",
+      "sha256": "c0db06d8b18717c05b187bbc2565e8745516042346b91ed907dda229af57cdaf"
+    },
+    {
+      "path": "registry/software/wget/tsconfig.json",
+      "sha256": "59494555664f988fcf2b1cdcc5fbdad8692019eac6f34b565f203977200246a7"
+    },
+    {
+      "path": "registry/tests/kernel/cross-runtime-network.test.ts",
+      "sha256": "aa0c12b42b1832ecf69f016eb799c3964f4cdeb3d43137274b112f6abc95c413"
+    },
+    {
+      "path": "registry/tests/wasmvm/curl.test.ts",
+      "sha256": "4c95d25b96be923cef9bde239ddf617f4ce10e73be5d2fe75f384d0333e97b25"
+    },
+    {
+      "path": "registry/tests/wasmvm/git.test.ts",
+      "sha256": "b6a4863583b388987d0e260b689526d0b5284d9323965a82dc059ea0c5bef188"
+    },
+    {
+      "path": "registry/tests/wasmvm/wget.test.ts",
+      "sha256": "e728e0f3260667c1be1e208657e1b7d75bbd537185a28100fd8b779648914065"
+    }
+  ]
+}

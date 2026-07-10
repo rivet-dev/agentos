@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "scope": "r0-production-toolchain-pthread-feasibility-probe",
+  "finalNodeRuntimeArtifact": false,
+  "source": {
+    "path": "probes/pthread-runtime.c",
+    "sha256": "00f5b05443d060ff93bfc0d975a8f9960c32dc19c7614b5a9d1e0b2ede833de1"
+  },
+  "artifact": {
+    "path": "artifacts/pthread-runtime.wasm",
+    "sha256": "780496ac08dc997aa9d677de5aecf7943335d5422f9475409d7dfa0f3992969d",
+    "byteLength": 18078,
+    "initialMemoryPages": 1024,
+    "maximumMemoryPages": 4096,
+    "sharedMemory": true,
+    "maximumWorkersIncludingRoot": 8
+  },
+  "imports": [
+    {
+      "module": "agentos_posix_v1",
+      "name": "proc_exit",
+      "authority": "vm-kernel-linux-posix"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "sched_yield",
+      "authority": "vm-kernel-linux-posix"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "thread-spawn",
+      "authority": "vm-kernel-linux-posix"
+    },
+    {
+      "module": "env",
+      "name": "memory",
+      "authority": "wasm-linear-memory"
+    }
+  ],
+  "exports": [
+    "_initialize",
+    "__indirect_function_table",
+    "agentos_pthread_probe_run",
+    "wasi_thread_start"
+  ],
+  "semantics": [
+    "pthread_create_join",
+    "mutex_condition_futex_wait_wake",
+    "tls_destructor",
+    "indirect_function_pointer",
+    "deferred_cancellation",
+    "pthread_exit_cleanup",
+    "bounded_worker_teardown"
+  ],
+  "v8Execution": {
+    "root": "existing root V8 session isolate",
+    "workers": "bounded internal V8 WASM-worker isolates",
+    "compiledModuleReuse": "v8::CompiledWasmModule",
+    "sharedMemoryTransfer": "V8 structured clone plus shared BackingStore",
+    "productionManager": "crates/v8-runtime/src/wasm_workers.rs",
+    "testIds": [
+      "wasm_workers::tests",
+      "embedded_runtime_session::pthread-runtime-probe",
+      "embedded_runtime_session::wasm-worker-termination"
+    ]
+  },
+  "sysroot": {
+    "libcSha256": "3e5546797060db4375c9ff2ed44c81bdae1ae6d281fd3ef551e2fc9a33f57834",
+    "libsetjmpSha256": "1dd24b0b1bbc05900cde3b50a1086f262aa61ebcad65e823006228f540a2ca81"
+  },
+  "toolchain": {
+    "clangVersion": "19.1.5-wasi-sdk",
+    "clangSha256": "30526c225dad03d986faf9051d1c24883b62682c6e7581f3efbf218adb92267e"
+  }
+}

@@ -9,7 +9,8 @@ use base64::Engine;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs;
-use std::os::unix::fs::symlink;
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::Path;
 use std::process::Command;
 use std::sync::mpsc;
@@ -120,7 +121,6 @@ fn write_fake_node_binary(path: &Path, log_path: &Path) {
     let mut permissions = fs::metadata(path)
         .expect("fake node metadata")
         .permissions();
-    use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
     fs::set_permissions(path, permissions).expect("chmod fake node binary");
 }
@@ -270,6 +270,23 @@ fn wasm_stdout_module() -> Vec<u8> {
 "#,
     )
     .expect("compile wasm fixture")
+}
+
+fn wasm_unknown_fd_fchmod_module(fd: i32) -> Vec<u8> {
+    wat::parse_str(format!(
+        r#"
+(module
+  (import "host_fs" "fchmod" (func $fchmod (param i32 i32) (result i32)))
+  (func $_start (export "_start")
+    (if
+      (i32.eqz (call $fchmod (i32.const {fd}) (i32.const 511)))
+      (then unreachable)
+    )
+  )
+)
+"#
+    ))
+    .expect("compile hostile unknown-fd wasm fixture")
 }
 
 fn wasm_stdin_echo_module() -> Vec<u8> {
@@ -930,6 +947,62 @@ fn wasm_execution_runs_guest_module_through_v8() {
 
     let stdout = String::from_utf8(result.stdout).expect("stdout utf8");
     assert!(stdout.contains("stdout:wasm-smoke"));
+}
+
+fn wasm_unknown_guest_fd_cannot_mutate_same_numbered_host_fd() {
+    const CANARY_FD: i32 = 200;
+
+    struct CanaryFdGuard(i32);
+    impl Drop for CanaryFdGuard {
+        fn drop(&mut self) {
+            let _ = nix::unistd::close(self.0);
+        }
+    }
+
+    let temp = tempdir().expect("create host-fd canary temp dir");
+    let canary_path = temp.path().join("host-fd-canary");
+    let canary = fs::OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .open(&canary_path)
+        .expect("create host-fd canary");
+    let mut permissions = canary.metadata().expect("canary metadata").permissions();
+    permissions.set_mode(0o600);
+    canary
+        .set_permissions(permissions)
+        .expect("set canary permissions");
+    nix::unistd::dup2(canary.as_raw_fd(), CANARY_FD).expect("install fixed host-fd canary");
+    let _canary_fd_guard = CanaryFdGuard(CANARY_FD);
+
+    write_fixture(
+        &temp.path().join("guest.wasm"),
+        &wasm_unknown_fd_fchmod_module(CANARY_FD),
+    );
+    let mut engine = WasmExecutionEngine::default();
+    let context = engine.create_context(CreateWasmContextRequest {
+        vm_id: String::from("vm-wasm"),
+        module_path: Some(String::from("./guest.wasm")),
+    });
+    let (stdout, stderr, exit_code) = run_wasm_execution(
+        &mut engine,
+        context.context_id,
+        temp.path(),
+        Vec::new(),
+        BTreeMap::new(),
+        WasmPermissionTier::Full,
+    );
+
+    assert_eq!(exit_code, 0, "stdout={stdout} stderr={stderr}");
+    assert_eq!(
+        fs::metadata(&canary_path)
+            .expect("canary metadata after hostile guest")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600,
+        "unknown guest fd must not alias and chmod the same-numbered host fd"
+    );
 }
 
 fn wasm_snapshot_runner_block_round_trips_twice() {
@@ -2752,9 +2825,19 @@ fn wasm_deep_recursion_respects_configured_stack_byte_limit() {
 // the coverage stays collapsed here.
 #[test]
 fn wasm_suite() {
+    if let Ok(case) = std::env::var("AGENTOS_WASM_SUITE_CASE") {
+        match case.as_str() {
+            "unknown-guest-fd-host-canary" => {
+                wasm_unknown_guest_fd_cannot_mutate_same_numbered_host_fd();
+                return;
+            }
+            _ => panic!("unknown AGENTOS_WASM_SUITE_CASE: {case}"),
+        }
+    }
     wasm_contexts_preserve_vm_and_module_configuration();
     wasm_execution_stays_inside_v8_runtime_without_host_node_launches();
     wasm_execution_runs_guest_module_through_v8();
+    wasm_unknown_guest_fd_cannot_mutate_same_numbered_host_fd();
     wasm_snapshot_runner_block_round_trips_twice();
     wasm_snapshot_runner_warm_worker_pool_hits();
     wasm_snapshot_runner_warm_worker_pool_disabled_falls_back();

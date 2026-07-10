@@ -1,0 +1,39 @@
+Expose the standard group lookup and secure temporary-file surfaces.
+
+Both implementations are bounded libc compatibility layers over existing
+identity, filesystem, and random primitives.
+
+diff --git a/scripts/install-include-headers.sh b/scripts/install-include-headers.sh
+--- a/scripts/install-include-headers.sh
++++ b/scripts/install-include-headers.sh
+@@ -67,6 +67,6 @@ MUSL_OMIT_HEADERS+=("sys/procfs.h" "sys/user.h" "sys/kd.h" "sys/vt.h" \
+     "sys/fanotify.h" "sys/personality.h" "elf.h" "link.h" "bits/link.h" \
+     "scsi/scsi.h" "scsi/scsi_ioctl.h" "scsi/sg.h" "sys/auxv.h" \
+-    "shadow.h" "grp.h" "mntent.h" "resolv.h" "pty.h" "ulimit.h" "sys/xattr.h" \
++    "shadow.h" "mntent.h" "resolv.h" "pty.h" "ulimit.h" "sys/xattr.h" \
+     "wordexp.h" "spawn.h" "sys/membarrier.h" "sys/signalfd.h" \
+     "sys/termios.h" "net/if_arp.h" \
+     "net/ethernet.h" "net/route.h" "netinet/if_ether.h" "netinet/ether.h" \
+diff --git a/libc-top-half/musl/include/stdlib.h b/libc-top-half/musl/include/stdlib.h
+--- a/libc-top-half/musl/include/stdlib.h
++++ b/libc-top-half/musl/include/stdlib.h
+@@ -115,9 +115,7 @@ int posix_memalign (void **, size_t, size_t);
+ int setenv (const char *, const char *, int);
+ int unsetenv (const char *);
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no temp directories */
+ int mkstemp (char *);
+ int mkostemp (char *, int);
+ char *mkdtemp (char *);
+-#endif
+ int getsubopt (char **, char *const *, char **);
+ int rand_r (unsigned *);
+@@ -157,9 +155,7 @@ char *setstate (char *);
+ #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+ #include <alloca.h>
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no temp directories */
+ char *mktemp (char *);
+ int mkstemps (char *, int);
+ int mkostemps (char *, int, int);
+-#endif
+ #ifdef __wasilibc_unmodified_upstream /* WASI libc doesn't build the legacy functions */
+ void *valloc (size_t);

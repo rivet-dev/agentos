@@ -1,9 +1,9 @@
-Implement getpid() and getppid() via host_process WASM imports.
+Implement getpid() and getppid() via agentos_posix_v1 WASM imports.
 
 Replaces wasi-libc's hardcoded getpid (returns 42) with a real
-implementation that calls host_process.proc_getpid. Un-ifdefs
+implementation that calls agentos_posix_v1.proc_getpid. Un-ifdefs
 getppid() from unistd.h and provides implementation via
-host_process.proc_getppid.
+agentos_posix_v1.proc_getppid.
 
 Header changes:
 - getpid(): remove _WASI_EMULATED_GETPID conditional and deprecation
@@ -27,7 +27,7 @@ index d2920ac..c8de71d 100644
 -    return 42;
 -}
 +// getpid() is now provided by host_getpid.c in libc-bottom-half/sources/
-+// via the host_process.proc_getpid WASM import (returns real virtual PID).
++// via the agentos_posix_v1.proc_getpid WASM import (returns real virtual PID).
 +// This file is kept empty to avoid duplicate symbols.
 diff --git a/libc-bottom-half/sources/host_getpid.c b/libc-bottom-half/sources/host_getpid.c
 new file mode 100644
@@ -35,11 +35,11 @@ index 0000000..b20aeb0
 --- /dev/null
 +++ b/libc-bottom-half/sources/host_getpid.c
 @@ -0,0 +1,34 @@
-+// getpid() and getppid() via wasmVM host_process imports.
++// getpid() and getppid() via wasmVM agentos_posix_v1 imports.
 +//
 +// Replaces wasi-libc's hardcoded getpid (which returns 42) and
 +// adds getppid (which was #ifdef'd out) with implementations that
-+// call our host_process.proc_getpid and host_process.proc_getppid.
++// call our agentos_posix_v1.proc_getpid and agentos_posix_v1.proc_getppid.
 +//
 +// Import signatures match wasmvm/crates/wasi-ext/src/lib.rs exactly.
 +
@@ -50,10 +50,10 @@ index 0000000..b20aeb0
 +#define WASM_IMPORT(mod, fn) \
 +    __attribute__((__import_module__(mod), __import_name__(fn)))
 +
-+WASM_IMPORT("host_process", "proc_getpid")
++WASM_IMPORT("agentos_posix_v1", "proc_getpid")
 +uint32_t __host_proc_getpid(uint32_t *ret_pid);
 +
-+WASM_IMPORT("host_process", "proc_getppid")
++WASM_IMPORT("agentos_posix_v1", "proc_getppid")
 +uint32_t __host_proc_getppid(uint32_t *ret_pid);
 +
 +pid_t getpid(void) {

@@ -1,0 +1,10 @@
+[package]
+name = "agentos-wasm-posix-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared generated Linux/POSIX import provider core for AgentOS WASM guests"
+
+[lib]
+doctest = false

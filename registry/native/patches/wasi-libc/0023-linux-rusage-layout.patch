@@ -1,0 +1,49 @@
+Match the Linux/POSIX struct rusage layout expected by unmodified consumers.
+
+Counters not yet tracked by the process-clock emulation remain zero through its
+designated initializer, while user and system CPU times retain their values.
+
+diff --git a/libc-bottom-half/headers/public/__struct_rusage.h b/libc-bottom-half/headers/public/__struct_rusage.h
+--- a/libc-bottom-half/headers/public/__struct_rusage.h
++++ b/libc-bottom-half/headers/public/__struct_rusage.h
+@@ -4,10 +4,24 @@
+ 
+ #include <__struct_timeval.h>
+ 
+-/* TODO: Add more features here. */
++/* Linux getrusage(2) userspace ABI; see include/uapi/linux/resource.h. */
+ struct rusage {
+     struct timeval ru_utime;
+     struct timeval ru_stime;
++    long ru_maxrss;
++    long ru_ixrss;
++    long ru_idrss;
++    long ru_isrss;
++    long ru_minflt;
++    long ru_majflt;
++    long ru_nswap;
++    long ru_inblock;
++    long ru_oublock;
++    long ru_msgsnd;
++    long ru_msgrcv;
++    long ru_nsignals;
++    long ru_nvcsw;
++    long ru_nivcsw;
+ };
+ 
+ #endif
+diff --git a/libc-bottom-half/headers/public/__header_sys_resource.h b/libc-bottom-half/headers/public/__header_sys_resource.h
+--- a/libc-bottom-half/headers/public/__header_sys_resource.h
++++ b/libc-bottom-half/headers/public/__header_sys_resource.h
+@@ -3,8 +3,9 @@
+ 
+ #include <__struct_rusage.h>
+ 
+-#define RUSAGE_SELF 1
+-#define RUSAGE_CHILDREN 2
++#define RUSAGE_SELF 0
++#define RUSAGE_CHILDREN (-1)
++#define RUSAGE_THREAD 1
+ 
+ #ifdef __cplusplus
+ extern "C" {

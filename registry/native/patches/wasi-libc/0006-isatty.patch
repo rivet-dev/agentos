@@ -1,8 +1,8 @@
-Implement isatty() via host_user WASM import.
+Implement isatty() via agentos_posix_v1 WASM import.
 
 Replaces wasi-libc's basic filetype heuristic (fd_fdstat_get check
 for CHARACTER_DEVICE without SEEK/TELL rights) with a call to our
-host_user.isatty import, which checks actual PTY state on the host.
+agentos_posix_v1.isatty import, which checks actual PTY state on the host.
 
 Preserves the __isatty / isatty weak alias pattern used by musl's
 __stdout_write.c and __fdopen.c.
@@ -14,10 +14,10 @@ Import signature matches wasmvm/crates/wasi-ext/src/lib.rs exactly.
 @@ -1,22 +1,28 @@
 -#include <wasi/api.h>
 -#include <__errno.h>
-+// isatty() via wasmVM host_user import.
++// isatty() via wasmVM agentos_posix_v1 import.
 +//
 +// Replaces wasi-libc's fdstat-based heuristic with a call to our
-+// host_user.isatty import which checks actual PTY state on the host.
++// agentos_posix_v1.isatty import which checks actual PTY state on the host.
 +//
 +// Import signature matches wasmvm/crates/wasi-ext/src/lib.rs exactly.
 +
@@ -28,8 +28,8 @@ Import signature matches wasmvm/crates/wasi-ext/src/lib.rs exactly.
 +#define WASM_IMPORT(mod, fn) \
 +    __attribute__((__import_module__(mod), __import_name__(fn)))
 +
-+// host_user.isatty(fd: u32, ret_bool: *mut u32) -> errno
-+WASM_IMPORT("host_user", "isatty")
++// agentos_posix_v1.isatty(fd: u32, ret_bool: *mut u32) -> errno
++WASM_IMPORT("agentos_posix_v1", "isatty")
 +uint32_t __host_isatty(uint32_t fd, uint32_t *ret_bool);
 +
  int __isatty(int fd) {

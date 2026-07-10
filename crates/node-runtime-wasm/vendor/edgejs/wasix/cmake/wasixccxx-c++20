@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+
+. "$(dirname "$0")/wasixcc-env.sh" wasixcc++
+
+case "${WASIXCC_COMPILER_POST_FLAGS_CXX:-}" in
+  *-std=c++20*)
+    ;;
+  "")
+    export WASIXCC_COMPILER_POST_FLAGS_CXX="-std=c++20"
+    ;;
+  *)
+    export WASIXCC_COMPILER_POST_FLAGS_CXX="${WASIXCC_COMPILER_POST_FLAGS_CXX} -std=c++20"
+    ;;
+esac
+
+exec wasixcc++ "$@"

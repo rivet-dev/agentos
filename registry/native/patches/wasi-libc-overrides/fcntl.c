@@ -5,7 +5,7 @@
  * because WASI has no exec(). It also returns EINVAL for F_DUPFD and
  * F_DUPFD_CLOEXEC. This fix properly tracks per-fd cloexec flags,
  * delegates F_GETFL/F_SETFL to the original WASI fd_fdstat interface,
- * and routes F_DUPFD/F_DUPFD_CLOEXEC through the host_process bridge.
+ * and routes F_DUPFD/F_DUPFD_CLOEXEC through the agentos_posix_v1 bridge.
  *
  * Installed into the patched sysroot so ALL WASM programs get correct
  * fcntl behavior, not just test binaries.
@@ -25,7 +25,7 @@
 #endif
 
 /* Host import for dup with minimum fd (F_DUPFD semantics) */
-__attribute__((import_module("host_process"), import_name("fd_dup_min")))
+__attribute__((import_module("agentos_posix_v1"), import_name("fd_dup_min")))
 int __host_fd_dup_min(int fd, int min_fd, int *ret_new_fd);
 
 /* Per-fd cloexec tracking (up to 256 FDs) */

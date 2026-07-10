@@ -1,0 +1,18 @@
+Expose socketpair(2) from the owned POSIX sysroot.
+
+AgentOS supplies the connected pair in libc over the existing standard socket
+surface, so consumers do not need an application patch or another host import.
+
+diff --git a/libc-top-half/musl/include/sys/socket.h b/libc-top-half/musl/include/sys/socket.h
+--- a/libc-top-half/musl/include/sys/socket.h
++++ b/libc-top-half/musl/include/sys/socket.h
+@@ -401,9 +401,7 @@ struct sockaddr_storage {
+ 
+ int socket (int, int, int);
+ 
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no socketpair */
+ int socketpair (int, int, int, int [2]);
+-#endif
+ 
+ int shutdown (int, int);
+ 

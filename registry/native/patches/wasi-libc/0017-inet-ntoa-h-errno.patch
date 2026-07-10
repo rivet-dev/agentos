@@ -1,0 +1,62 @@
+Expose the standard inet_ntoa(3) and h_errno(3) compatibility surface.
+
+OpenSSL and other unmodified POSIX consumers still use these interfaces. Keep
+the implementation in libc; no application patch or host operation is needed.
+
+diff --git a/libc-top-half/musl/include/arpa/inet.h b/libc-top-half/musl/include/arpa/inet.h
+--- a/libc-top-half/musl/include/arpa/inet.h
++++ b/libc-top-half/musl/include/arpa/inet.h
+@@ -12,11 +12,11 @@
+ uint16_t htons(uint16_t);
+ uint32_t ntohl(uint32_t);
+ uint16_t ntohs(uint16_t);
+ 
++char *inet_ntoa (struct in_addr);
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no inet_addr */
+ in_addr_t inet_addr (const char *);
+ in_addr_t inet_network (const char *);
+-char *inet_ntoa (struct in_addr);
+ #endif
+ int inet_pton (int, const char *__restrict, void *__restrict);
+ const char *inet_ntop (int, const void *__restrict, char *__restrict, socklen_t);
+diff --git a/libc-top-half/musl/include/netdb.h b/libc-top-half/musl/include/netdb.h
+--- a/libc-top-half/musl/include/netdb.h
++++ b/libc-top-half/musl/include/netdb.h
+@@ -121,7 +121,7 @@ struct hostent *gethostbyaddr (const void *, socklen_t, int);
+ #ifdef __wasilibc_unmodified_upstream
+ int *__h_errno_location(void);
+ #define h_errno (*__h_errno_location())
+-#elif (defined __wasilibc_use_wasip2)
++#else
+ extern _Thread_local int h_errno;
+ #define h_errno h_errno
+ #endif
+diff --git a/libc-bottom-half/sources/inet_compat.c b/libc-bottom-half/sources/inet_compat.c
+new file mode 100644
+--- /dev/null
++++ b/libc-bottom-half/sources/inet_compat.c
+@@ -0,0 +1,24 @@
++#include <arpa/inet.h>
++#include <netdb.h>
++#include <stdio.h>
++
++/*
++ * POSIX inet_ntoa(3p) permits a statically allocated result. A thread-local
++ * buffer avoids cross-worker corruption without adding a host capability.
++ * https://pubs.opengroup.org/onlinepubs/9799919799/functions/inet_ntoa.html
++ */
++char *inet_ntoa(struct in_addr address) {
++    static _Thread_local char buffer[INET_ADDRSTRLEN];
++    const unsigned char *bytes = (const unsigned char *)&address;
++    int written = snprintf(buffer, sizeof(buffer), "%u.%u.%u.%u",
++                           bytes[0], bytes[1], bytes[2], bytes[3]);
++    return written > 0 && written < (int)sizeof(buffer) ? buffer : NULL;
++}
++
++/*
++ * h_errno is legacy but remains part of netdb.h on Linux. Keep it worker-local
++ * as described by h_errno(3); resolver adapters may set it when appropriate.
++ * https://man7.org/linux/man-pages/man3/h_errno.3.html
++ */
++#undef h_errno
++_Thread_local int h_errno;

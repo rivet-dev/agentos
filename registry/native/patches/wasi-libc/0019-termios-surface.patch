@@ -1,0 +1,48 @@
+Expose the standard Linux/POSIX termios surface from the owned sysroot.
+
+The implementation is supplied by the AgentOS libc override and routes terminal
+operations through ioctl request numbers instead of adding application-specific
+imports or patches.
+
+diff --git a/scripts/install-include-headers.sh b/scripts/install-include-headers.sh
+--- a/scripts/install-include-headers.sh
++++ b/scripts/install-include-headers.sh
+@@ -68,6 +68,6 @@ MUSL_OMIT_HEADERS+=("sys/procfs.h" "sys/user.h" "sys/kd.h" "sys/vt.h" \
+     "scsi/scsi.h" "scsi/scsi_ioctl.h" "scsi/sg.h" "sys/auxv.h" \
+     "shadow.h" "grp.h" "mntent.h" "resolv.h" "pty.h" "ulimit.h" "sys/xattr.h" \
+-    "wordexp.h" "spawn.h" "sys/membarrier.h" "sys/signalfd.h" "termios.h" \
+-    "sys/termios.h" "bits/termios.h" "net/if.h" "net/if_arp.h" \
++    "wordexp.h" "spawn.h" "sys/membarrier.h" "sys/signalfd.h" \
++    "sys/termios.h" "net/if.h" "net/if_arp.h" \
+     "net/ethernet.h" "net/route.h" "netinet/if_ether.h" "netinet/ether.h" \
+     "sys/timerfd.h" "libintl.h" "sys/sysmacros.h" "aio.h")
+diff --git a/libc-bottom-half/headers/public/__header_sys_ioctl.h b/libc-bottom-half/headers/public/__header_sys_ioctl.h
+--- a/libc-bottom-half/headers/public/__header_sys_ioctl.h
++++ b/libc-bottom-half/headers/public/__header_sys_ioctl.h
+@@ -1,8 +1,24 @@
+ #ifndef __wasilibc___header_sys_ioctl_h
+ #define __wasilibc___header_sys_ioctl_h
+ 
+-#define FIONREAD 1
+-#define FIONBIO 2
++/* Linux asm-generic/ioctls.h request ABI. */
++#define TCGETS 0x5401
++#define TCSETS 0x5402
++#define TCSETSW 0x5403
++#define TCSETSF 0x5404
++#define TCSBRK 0x5409
++#define TCXONC 0x540A
++#define TCFLSH 0x540B
++#define TIOCGPGRP 0x540F
++#define TIOCSPGRP 0x5410
++#define TIOCGWINSZ 0x5413
++#define TIOCSWINSZ 0x5414
++#define FIONREAD 0x541B
++#define FIONBIO 0x5421
++#define TIOCGSID 0x5429
++
++#define __NEED_struct_winsize
++#include <bits/alltypes.h>
+ 
+ #ifdef __cplusplus
+ extern "C" {

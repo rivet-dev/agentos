@@ -16,6 +16,13 @@
   resource access from `node-runtime.wasm` must use the generated AgentOS
   Linux/POSIX syscall ABI from the shared sysroot and the same policy-checked
   provider as standalone WASM; never add arbitrary raw syscall passthrough.
+- The root session isolate owns Node and user JavaScript. Real WASM pthreads
+  require bounded internal V8 worker isolates because isolates are
+  thread-affine. Recreate workers only from V8's shared compiled-module API and
+  structured-cloned shared `WebAssembly.Memory`; expose only
+  `wasi_thread_start`, the shared POSIX provider, and the explicitly
+  thread-safe Node-API subset. This is not public `worker_threads` and must not
+  grow a second engine or user JavaScript context.
 - The Node-API provider is a sandbox boundary. Treat the calling module as fully
   malicious: use typed, generation-checked, isolate-bound handle indexes; check
   every linear-memory pointer/length and arithmetic operation; reject stale and

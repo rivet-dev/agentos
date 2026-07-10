@@ -2375,6 +2375,11 @@ fn build_wasm_internal_env(
         WASM_MAX_MEMORY_BYTES_ENV,
         request.limits.max_memory_bytes,
     );
+    insert_optional_u64_env(
+        &mut internal_env,
+        WASM_MAX_STACK_BYTES_ENV,
+        wasm_stack_limit_bytes(request)?,
+    );
     internal_env.insert(
         WASM_MODULE_PATH_ENV.to_string(),
         resolved_module.specifier.clone(),
@@ -4005,7 +4010,7 @@ mod tests {
     }
 
     #[test]
-    fn wasm_internal_env_scrubs_migrated_limit_env_keys() {
+    fn wasm_internal_env_uses_typed_runtime_limits_not_legacy_env_values() {
         let request = request_with_typed_limits_and_misleading_env(WasmExecutionLimits {
             max_fuel: Some(25),
             max_memory_bytes: Some(65_536),
@@ -4025,7 +4030,10 @@ mod tests {
             internal_env.get(WASM_MAX_MEMORY_BYTES_ENV),
             Some(&String::from("65536"))
         );
-        assert!(!internal_env.contains_key(WASM_MAX_STACK_BYTES_ENV));
+        assert_eq!(
+            internal_env.get(WASM_MAX_STACK_BYTES_ENV),
+            Some(&String::from("131072"))
+        );
         assert!(!internal_env.contains_key(WASM_MAX_FUEL_ENV));
         assert!(!internal_env.contains_key("AGENTOS_WASM_PREWARM_TIMEOUT_MS"));
         assert!(!internal_env.contains_key("AGENTOS_WASM_RUNNER_HEAP_LIMIT_MB"));

@@ -1,8 +1,8 @@
-Implement pipe(), dup(), dup2() via host_process WASM imports.
+Implement pipe(), dup(), dup2() via agentos_posix_v1 WASM imports.
 
 Replaces the wasi-libc stubs (which return -ENOSYS or are #ifdef'd out)
-with implementations that call our host_process.fd_pipe, host_process.fd_dup,
-and host_process.fd_dup2 WASM imports.
+with implementations that call our agentos_posix_v1.fd_pipe, agentos_posix_v1.fd_dup,
+and agentos_posix_v1.fd_dup2 WASM imports.
 
 Import signatures match wasmvm/crates/wasi-ext/src/lib.rs exactly.
 
@@ -12,12 +12,12 @@ index 0000000..08a1b92
 --- /dev/null
 +++ b/libc-bottom-half/sources/host_pipe_dup.c
 @@ -0,0 +1,55 @@
-+// Pipe and FD duplication via wasmVM host_process imports.
++// Pipe and FD duplication via wasmVM agentos_posix_v1 imports.
 +//
 +// Replaces wasi-libc's ENOSYS stubs with calls to our custom WASM imports:
-+//   host_process.fd_pipe  -> pipe()
-+//   host_process.fd_dup   -> dup()
-+//   host_process.fd_dup2  -> dup2()
++//   agentos_posix_v1.fd_pipe  -> pipe()
++//   agentos_posix_v1.fd_dup   -> dup()
++//   agentos_posix_v1.fd_dup2  -> dup2()
 +//
 +// Import signatures match wasmvm/crates/wasi-ext/src/lib.rs exactly.
 +
@@ -28,13 +28,13 @@ index 0000000..08a1b92
 +#define WASM_IMPORT(mod, fn) \
 +    __attribute__((__import_module__(mod), __import_name__(fn)))
 +
-+WASM_IMPORT("host_process", "fd_pipe")
++WASM_IMPORT("agentos_posix_v1", "fd_pipe")
 +uint32_t __host_fd_pipe(uint32_t *ret_read_fd, uint32_t *ret_write_fd);
 +
-+WASM_IMPORT("host_process", "fd_dup")
++WASM_IMPORT("agentos_posix_v1", "fd_dup")
 +uint32_t __host_fd_dup(uint32_t fd, uint32_t *ret_new_fd);
 +
-+WASM_IMPORT("host_process", "fd_dup2")
++WASM_IMPORT("agentos_posix_v1", "fd_dup2")
 +uint32_t __host_fd_dup2(uint32_t old_fd, uint32_t new_fd);
 +
 +int pipe(int fd[2]) {

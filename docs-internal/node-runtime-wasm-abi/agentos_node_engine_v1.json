@@ -1,0 +1,773 @@
+{
+  "schema": 1,
+  "source": "docs-internal/node-runtime-wasm-abi.json",
+  "wasmSha256": "25220668e04ba9a4ee055e48abfe5089d089089cea9643e0b890fbb828b80aeb",
+  "namespace": "agentos_node_engine_v1",
+  "entries": [
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_arraybuffer_view_has_buffer",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_arraybuffer_view_has_buffer"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_bytecode_compile",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_bytecode_compile"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_bytecode_deserialize",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_bytecode_deserialize"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_bytecode_release",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_bytecode_release"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_bytecode_serialize",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_bytecode_serialize"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_cancel_terminate_execution",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_cancel_terminate_execution"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_contextify_compile_function",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_contextify_compile_function"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_contextify_contains_module_syntax",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_contextify_contains_module_syntax"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_contextify_make_context",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_contextify_make_context"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_contextify_run_script",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i64 i32 i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_contextify_run_script"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_create_env",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_create_env"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_create_env_with_options",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_create_env_with_options"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_create_private_symbol",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_create_private_symbol"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_create_serdes_binding",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_create_serdes_binding"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_deserialize_value",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_deserialize_value"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_enqueue_microtask",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_enqueue_microtask"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_free_buffer",
+      "kind": "function",
+      "signature": "(func (param i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "void",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_free_buffer"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_get_call_sites",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_call_sites"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_get_constructor_name",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_constructor_name"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_get_continuation_preserved_embedder_data",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_continuation_preserved_embedder_data"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_get_error_source_line_for_stderr",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_error_source_line_for_stderr"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_get_error_source_positions",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_error_source_positions"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_get_error_thrown_at",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_error_thrown_at"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_get_hash_seed",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_hash_seed"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_get_heap_code_statistics",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_heap_code_statistics"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_get_heap_space_count",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_heap_space_count"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_get_heap_space_statistics",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_heap_space_statistics"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_get_heap_statistics",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_heap_statistics"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_get_own_non_index_properties",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_own_non_index_properties"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_get_process_memory_info",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_process_memory_info"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_get_promise_details",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_promise_details"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_get_proxy_details",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_proxy_details"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_low_memory_notification",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_low_memory_notification"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_mark_promise_as_handled",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_mark_promise_as_handled"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_check_unsettled_top_level_await",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_check_unsettled_top_level_await"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_create_cached_data",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_create_cached_data"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_create_required_module_facade",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_create_required_module_facade"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_create_source_text",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_create_source_text"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_create_synthetic",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_create_synthetic"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_destroy",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_destroy"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_evaluate",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i64 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_evaluate"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_evaluate_sync",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_evaluate_sync"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_get_error",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_get_error"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_get_module_requests",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_get_module_requests"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_get_module_source_object",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_get_module_source_object"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_get_namespace",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_get_namespace"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_get_status",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_get_status"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_has_async_graph",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_has_async_graph"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_has_top_level_await",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_has_top_level_await"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_instantiate",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_instantiate"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_link",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_link"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_set_export",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_set_export"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_set_import_module_dynamically_callback",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_set_import_module_dynamically_callback"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_set_initialize_import_meta_object_callback",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_set_initialize_import_meta_object_callback"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_module_wrap_set_module_source_object",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_set_module_source_object"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_notify_datetime_configuration_change",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_notify_datetime_configuration_change"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_preserve_error_source_message",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_preserve_error_source_message"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_preview_entries",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_preview_entries"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_process_microtasks",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_process_microtasks"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_release_env",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_release_env"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_release_env_with_loop",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_release_env_with_loop"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_release_serialized_value",
+      "kind": "function",
+      "signature": "(func (param i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "void",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_release_serialized_value"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_remove_near_heap_limit_callback",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_remove_near_heap_limit_callback"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_request_gc_for_testing",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_request_gc_for_testing"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_request_interrupt",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_request_interrupt"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_serialize_value",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_serialize_value"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_set_continuation_preserved_embedder_data",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_continuation_preserved_embedder_data"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_set_embedder_hooks",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_embedder_hooks"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_set_enqueue_foreground_task_callback",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_enqueue_foreground_task_callback"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_set_fatal_error_callbacks",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_fatal_error_callbacks"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_set_get_source_map_error_source_callback",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_get_source_map_error_source_callback"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_set_near_heap_limit_callback",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_near_heap_limit_callback"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_set_prepare_stack_trace_callback",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_prepare_stack_trace_callback"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_set_promise_hooks",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_promise_hooks"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_set_source_maps_enabled",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_source_maps_enabled"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_set_stack_limit",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_stack_limit"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_start_cpu_profile",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_start_cpu_profile"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_start_heap_profile",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_start_heap_profile"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_stop_cpu_profile",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_stop_cpu_profile"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_stop_heap_profile",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_stop_heap_profile"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_structured_clone",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_structured_clone"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_structured_clone_with_transfer",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_structured_clone_with_transfer"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_take_heap_snapshot",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_take_heap_snapshot"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_take_preserved_error_formatting",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_take_preserved_error_formatting"
+    },
+    {
+      "module": "agentos_node_engine_v1",
+      "name": "unofficial_napi_terminate_execution",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "isolate-local-v8",
+      "resultClassification": "napi-status",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_terminate_execution"
+    }
+  ]
+}

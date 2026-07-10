@@ -11377,6 +11377,30 @@ for (let index = 0; index < 520; index += 1) {
     }
 
     #[test]
+    fn wasm_runner_never_reuses_unknown_guest_fds_or_paths_as_host_objects() {
+        assert!(NODE_WASM_RUNNER_SOURCE
+            .contains("A guest fd is a capability in the VM fd table, never a host-process fd"));
+        assert!(NODE_WASM_RUNNER_SOURCE.contains("if (!handle) {\n      return 0;\n    }"));
+        assert!(NODE_WASM_RUNNER_SOURCE
+            .contains("if (!handle) {\n        return (1n << 64n) - 1n;\n      }"));
+        assert!(NODE_WASM_RUNNER_SOURCE
+            .contains("if (!handle || handle.readOnly === true) {\n        return 1;\n      }"));
+
+        for forbidden in [
+            "fsModule.fstatSync(descriptor)",
+            "fsModule.fchmodSync(descriptor",
+            "fsModule.statSync(handle.guestPath)",
+            "fsModule.lstatSync(handle.guestPath)",
+            "fsModule.openSync(handle.guestPath",
+        ] {
+            assert!(
+                !NODE_WASM_RUNNER_SOURCE.contains(forbidden),
+                "runner must not contain direct guest-to-host fallback {forbidden}"
+            );
+        }
+    }
+
+    #[test]
     fn ensure_materialized_writes_tls_builtin_asset() {
         let import_cache = NodeImportCache::default();
         import_cache

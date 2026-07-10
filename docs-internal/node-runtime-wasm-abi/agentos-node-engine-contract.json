@@ -1,0 +1,1767 @@
+{
+  "schema": 1,
+  "namespace": "agentos_node_engine_v1",
+  "source": "docs-internal/node-runtime-wasm-abi/agentos_node_engine_v1.json",
+  "wasmSha256": "25220668e04ba9a4ee055e48abfe5089d089089cea9643e0b890fbb828b80aeb",
+  "contract": "V8 isolate-local engine operations only; filesystem, network, process, crypto, compression, protocol, and unrestricted host operations are forbidden.",
+  "entries": [
+    {
+      "name": "unofficial_napi_arraybuffer_view_has_buffer",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "v8-inspection",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_util.cc:1147"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2570",
+      "referenceV8Apis": [
+        "v8::ArrayBufferView",
+        "v8::Local",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_arraybuffer_view_has_buffer"
+    },
+    {
+      "name": "unofficial_napi_bytecode_compile",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "context-and-compilation",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:1079",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3268",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3373",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3821",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3962",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_precompile.cc:202",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:512"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:1754",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::HandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::NewStringType::kNormal",
+        "v8::String",
+        "v8::String::NewFromUtf8",
+        "v8::Symbol",
+        "v8::TryCatch",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_bytecode_compile"
+    },
+    {
+      "name": "unofficial_napi_bytecode_deserialize",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "context-and-compilation",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:1060",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3354",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3799",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3938",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:455",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:496"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:1826",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::HandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::Symbol",
+        "v8::TryCatch",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_bytecode_deserialize"
+    },
+    {
+      "name": "unofficial_napi_bytecode_release",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "context-and-compilation",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:1073",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:1298",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:1746",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3282",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3419",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3850",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3882",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:4013",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:5183",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_precompile.cc:231",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:566"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:1906",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_bytecode_release"
+    },
+    {
+      "name": "unofficial_napi_bytecode_serialize",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "context-and-compilation",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:1098",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3281",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3403",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3866",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3984",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_precompile.cc:230",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:524"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:1884",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::EscapableHandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_bytecode_serialize"
+    },
+    {
+      "name": "unofficial_napi_cancel_terminate_execution",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "heap-and-termination",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_errors_binding.cc:321",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_errors_binding.cc:375",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime.cc:1216",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime.cc:1348",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime.cc:3377",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:1257"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2088",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_cancel_terminate_execution"
+    },
+    {
+      "name": "unofficial_napi_contextify_compile_function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "context-and-compilation",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:1288",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:1736",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3839",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:4003"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2103",
+      "referenceV8Apis": [
+        "v8::Array",
+        "v8::Boolean::New",
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::EscapableHandleScope",
+        "v8::Exception::SyntaxError",
+        "v8::Function",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::MaybeLocal",
+        "v8::MicrotaskQueue",
+        "v8::NewStringType::kNormal",
+        "v8::Object",
+        "v8::Object::New",
+        "v8::ScriptCompiler::CachedData",
+        "v8::ScriptCompiler::CachedData::BufferNotOwned",
+        "v8::ScriptCompiler::CompileFunction",
+        "v8::ScriptCompiler::CompileOptions",
+        "v8::ScriptCompiler::NoCacheReason::kNoCacheNoReason",
+        "v8::ScriptCompiler::Source",
+        "v8::ScriptCompiler::kConsumeCodeCache",
+        "v8::ScriptCompiler::kNoCompileOptions",
+        "v8::ScriptOrigin",
+        "v8::String",
+        "v8::String::NewFromUtf8",
+        "v8::String::NewFromUtf8Literal",
+        "v8::Symbol",
+        "v8::TryCatch",
+        "v8::Undefined",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_contextify_compile_function"
+    },
+    {
+      "name": "unofficial_napi_contextify_contains_module_syntax",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "context-and-compilation",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:4028",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:4077"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2421",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::Function",
+        "v8::HandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::String",
+        "v8::TryCatch"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_contextify_contains_module_syntax"
+    },
+    {
+      "name": "unofficial_napi_contextify_make_context",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "context-and-compilation",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3697"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:1646",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::New",
+        "v8::Context::Scope",
+        "v8::DeserializeInternalFieldsCallback",
+        "v8::EscapableHandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::MaybeLocal",
+        "v8::MicrotaskQueue",
+        "v8::MicrotaskQueue::New",
+        "v8::MicrotasksPolicy::kExplicit",
+        "v8::Object",
+        "v8::ObjectTemplate",
+        "v8::Symbol",
+        "v8::Undefined",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_contextify_make_context"
+    },
+    {
+      "name": "unofficial_napi_contextify_run_script",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i64 i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "context-and-compilation",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:3476",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_module_loader.cc:5171",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:4654"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:1912",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::EscapableHandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::MaybeLocal",
+        "v8::MicrotaskQueue",
+        "v8::NewStringType::kNormal",
+        "v8::Script",
+        "v8::ScriptCompiler::CachedData",
+        "v8::ScriptCompiler::CachedData::BufferNotOwned",
+        "v8::ScriptCompiler::CompileUnboundScript",
+        "v8::ScriptCompiler::NoCacheReason::kNoCacheNoReason",
+        "v8::ScriptCompiler::Source",
+        "v8::ScriptCompiler::kConsumeCodeCache",
+        "v8::ScriptCompiler::kNoCompileOptions",
+        "v8::ScriptOrigin",
+        "v8::String",
+        "v8::String::NewFromUtf8",
+        "v8::Symbol",
+        "v8::TryCatch",
+        "v8::UnboundScript",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_contextify_run_script"
+    },
+    {
+      "name": "unofficial_napi_create_env",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "runtime-lifecycle-hooks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_cli.cc:233",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:1175"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:1849",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_create_env"
+    },
+    {
+      "name": "unofficial_napi_create_env_with_options",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "runtime-lifecycle-hooks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:1175"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:1852",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::New",
+        "v8::Isolate",
+        "v8::Isolate::CreateParams",
+        "v8::Local"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_create_env_with_options"
+    },
+    {
+      "name": "unofficial_napi_create_private_symbol",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "v8-inspection",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_util.cc:1188"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2614",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::EscapableHandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::NewStringType::kInternalized",
+        "v8::Object",
+        "v8::ObjectTemplate",
+        "v8::ObjectTemplate::New",
+        "v8::Private",
+        "v8::Private::ForApi",
+        "v8::String",
+        "v8::String::NewFromUtf8",
+        "v8::String::NewFromUtf8Literal",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_create_private_symbol"
+    },
+    {
+      "name": "unofficial_napi_create_serdes_binding",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "structured-clone",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_serdes.cc:10"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:3005",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::External",
+        "v8::External::New",
+        "v8::FunctionTemplate",
+        "v8::FunctionTemplate::New",
+        "v8::HandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::Object",
+        "v8::Object::New"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_create_serdes_binding"
+    },
+    {
+      "name": "unofficial_napi_deserialize_value",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "structured-clone",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:3484",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:4779"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2193",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::EscapableHandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_deserialize_value"
+    },
+    {
+      "name": "unofficial_napi_enqueue_microtask",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "microtasks-and-foreground-tasks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_task_queue.cc:48"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2226",
+      "referenceV8Apis": [
+        "v8::Function",
+        "v8::Local",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_enqueue_microtask"
+    },
+    {
+      "name": "unofficial_napi_free_buffer",
+      "signature": "(func (param i32))",
+      "resultClassification": "void",
+      "capabilityFamily": "runtime-lifecycle-hooks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:579"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2968",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_free_buffer"
+    },
+    {
+      "name": "unofficial_napi_get_call_sites",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "v8-inspection",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_util.cc:549",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_util.cc:934",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_util.cc:1166",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_watchdog.cc:116"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2531",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_call_sites"
+    },
+    {
+      "name": "unofficial_napi_get_constructor_name",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "v8-inspection",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_util.cc:846"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2580",
+      "referenceV8Apis": [
+        "v8::Local",
+        "v8::Object",
+        "v8::String",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_constructor_name"
+    },
+    {
+      "name": "unofficial_napi_get_continuation_preserved_embedder_data",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "runtime-lifecycle-hooks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_async_wrap.cc:140",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_async_context_frame.cc:32"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2972",
+      "referenceV8Apis": [
+        "v8::Local",
+        "v8::Undefined",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_continuation_preserved_embedder_data"
+    },
+    {
+      "name": "unofficial_napi_get_error_source_line_for_stderr",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "v8-inspection",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime.cc:396"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2346",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_error_source_line_for_stderr"
+    },
+    {
+      "name": "unofficial_napi_get_error_source_positions",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "v8-inspection",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_errors_binding.cc:263",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime.cc:405"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2327",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_error_source_positions"
+    },
+    {
+      "name": "unofficial_napi_get_error_thrown_at",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "v8-inspection",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime.cc:545",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime.cc:562",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime.cc:656"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2353",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_error_thrown_at"
+    },
+    {
+      "name": "unofficial_napi_get_hash_seed",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "runtime-lifecycle-hooks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_v8.cc:262"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2681",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_hash_seed"
+    },
+    {
+      "name": "unofficial_napi_get_heap_code_statistics",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "heap-and-termination",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_v8.cc:239"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2764",
+      "referenceV8Apis": [
+        "v8::HeapCodeStatistics"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_heap_code_statistics"
+    },
+    {
+      "name": "unofficial_napi_get_heap_space_count",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "heap-and-termination",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_v8.cc:316"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2725",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_heap_space_count"
+    },
+    {
+      "name": "unofficial_napi_get_heap_space_statistics",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "heap-and-termination",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_v8.cc:219",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_v8.cc:321"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2736",
+      "referenceV8Apis": [
+        "v8::HeapSpaceStatistics"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_heap_space_statistics"
+    },
+    {
+      "name": "unofficial_napi_get_heap_statistics",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "heap-and-termination",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_v8.cc:181",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:776"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2698",
+      "referenceV8Apis": [
+        "v8::HeapStatistics"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_heap_statistics"
+    },
+    {
+      "name": "unofficial_napi_get_own_non_index_properties",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "runtime-lifecycle-hooks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_util.cc:799",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:1675",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:2197",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:2286",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:3127",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:3329"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2591",
+      "referenceV8Apis": [
+        "v8::Array",
+        "v8::IndexFilter::kSkipIndices",
+        "v8::KeyCollectionMode::kOwnOnly",
+        "v8::Local",
+        "v8::Object",
+        "v8::PropertyFilter",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_own_non_index_properties"
+    },
+    {
+      "name": "unofficial_napi_get_process_memory_info",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "heap-and-termination",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_process.cc:1798",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_process.cc:2732",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_process.cc:4532"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2651",
+      "referenceV8Apis": [
+        "v8::HeapStatistics"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_process_memory_info"
+    },
+    {
+      "name": "unofficial_napi_get_promise_details",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "promise-hooks-and-details",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime.cc:1395",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime.cc:1637",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_util.cc:888",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:944"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2300",
+      "referenceV8Apis": [
+        "v8::Local",
+        "v8::Promise",
+        "v8::Promise::PromiseState",
+        "v8::Promise::PromiseState::kPending",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_promise_details"
+    },
+    {
+      "name": "unofficial_napi_get_proxy_details",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "v8-inspection",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_util.cc:913",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_util.cc:1347"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2423",
+      "referenceV8Apis": [
+        "v8::Local",
+        "v8::Proxy",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_get_proxy_details"
+    },
+    {
+      "name": "unofficial_napi_low_memory_notification",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "heap-and-termination",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:1264"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:1977",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_low_memory_notification"
+    },
+    {
+      "name": "unofficial_napi_mark_promise_as_handled",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "promise-hooks-and-details",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:949"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2375",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::Function",
+        "v8::HandleScope",
+        "v8::Integer::New",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::MaybeLocal",
+        "v8::Promise",
+        "v8::Promise::PromiseState::kRejected",
+        "v8::PromiseRejectEvent::kPromiseHandlerAddedAfterReject",
+        "v8::TryCatch",
+        "v8::Undefined",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_mark_promise_as_handled"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_check_unsettled_top_level_await",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime.cc:1602"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2947",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::HandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::Module"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_check_unsettled_top_level_await"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_create_cached_data",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:755"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:3026",
+      "referenceV8Apis": [
+        "v8::EscapableHandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::Module",
+        "v8::ScriptCompiler::CachedData",
+        "v8::ScriptCompiler::CreateCodeCache",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_create_cached_data"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_create_required_module_facade",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:928"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:3108",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::EscapableHandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::Module",
+        "v8::ScriptCompiler::CompileModule",
+        "v8::ScriptCompiler::Source",
+        "v8::ScriptOrigin",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_create_required_module_facade"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_create_source_text",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:557"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2484",
+      "referenceV8Apis": [
+        "v8::Boolean::New",
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::HandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::Module",
+        "v8::NewStringType::kNormal",
+        "v8::Object",
+        "v8::ScriptCompiler::CachedData",
+        "v8::ScriptCompiler::CachedData::BufferNotOwned",
+        "v8::ScriptCompiler::CompileModule",
+        "v8::ScriptCompiler::NoCacheReason::kNoCacheNoReason",
+        "v8::ScriptCompiler::Source",
+        "v8::ScriptCompiler::kConsumeCodeCache",
+        "v8::ScriptCompiler::kNoCompileOptions",
+        "v8::ScriptOrigin",
+        "v8::String",
+        "v8::String::NewFromUtf8",
+        "v8::Symbol",
+        "v8::Symbol::New",
+        "v8::TryCatch",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_create_source_text"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_create_synthetic",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:410"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2619",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::HandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::MemorySpan",
+        "v8::Module",
+        "v8::Module::CreateSyntheticModule",
+        "v8::Object",
+        "v8::String",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_create_synthetic"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_destroy",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:101"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2678",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_destroy"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_evaluate",
+      "signature": "(func (param i32 i32 i64 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:670",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:695"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2790",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::EscapableHandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::Module",
+        "v8::TryCatch",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_evaluate"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_evaluate_sync",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:670"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2816",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::EscapableHandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::Module",
+        "v8::TryCatch",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_evaluate_sync"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_get_error",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:829"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2910",
+      "referenceV8Apis": [
+        "v8::EscapableHandleScope",
+        "v8::Isolate"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_get_error"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_get_module_requests",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:633"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2693",
+      "referenceV8Apis": [
+        "v8::Array",
+        "v8::Array::New",
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::EscapableHandleScope",
+        "v8::Integer::New",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::Name",
+        "v8::Object",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_get_module_requests"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_get_module_source_object",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:737"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:3016",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_get_module_source_object"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_get_namespace",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:800"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2881",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::EscapableHandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::Module",
+        "v8::Module::Status::kInstantiated"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_get_namespace"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_get_status",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:814"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2900",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_get_status"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_has_async_graph",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:857"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2932",
+      "referenceV8Apis": [
+        "v8::Local",
+        "v8::Module",
+        "v8::Module::Status::kInstantiated"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_has_async_graph"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_has_top_level_await",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:581",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:843"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2922",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_has_top_level_await"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_instantiate",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:650"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2770",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::HandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::Module",
+        "v8::TryCatch"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_instantiate"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_link",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:620"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2737",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_link"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_set_export",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:709"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:2986",
+      "referenceV8Apis": [
+        "v8::Local",
+        "v8::String",
+        "v8::Undefined",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_set_export"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_set_import_module_dynamically_callback",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:873"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:3051",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_set_import_module_dynamically_callback"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_set_initialize_import_meta_object_callback",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:884"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:3065",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_set_initialize_import_meta_object_callback"
+    },
+    {
+      "name": "unofficial_napi_module_wrap_set_module_source_object",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "es-modules",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_module_wrap.cc:723"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi_contextify.cc:3003",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_module_wrap_set_module_source_object"
+    },
+    {
+      "name": "unofficial_napi_notify_datetime_configuration_change",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "runtime-lifecycle-hooks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_process.cc:3055",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_process.cc:3923",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_process.cc:3958"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2993",
+      "referenceV8Apis": [
+        "v8::Isolate::TimeZoneDetection::kRedetect"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_notify_datetime_configuration_change"
+    },
+    {
+      "name": "unofficial_napi_preserve_error_source_message",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "v8-inspection",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_errors_binding.cc:349"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2369",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_preserve_error_source_message"
+    },
+    {
+      "name": "unofficial_napi_preview_entries",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "v8-inspection",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_util.cc:965"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2441",
+      "referenceV8Apis": [
+        "v8::Array",
+        "v8::Local",
+        "v8::Object",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_preview_entries"
+    },
+    {
+      "name": "unofficial_napi_process_microtasks",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "microtasks-and-foreground-tasks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime.cc:1876",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime.cc:3348",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_task_queue.cc:69"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2074",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_process_microtasks"
+    },
+    {
+      "name": "unofficial_napi_release_env",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "runtime-lifecycle-hooks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_cli.cc:249",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_cli.cc:258",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_cli.cc:278",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:1189",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:1268"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:1968",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_release_env"
+    },
+    {
+      "name": "unofficial_napi_release_env_with_loop",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "runtime-lifecycle-hooks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:1189",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:1268"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:1972",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_release_env_with_loop"
+    },
+    {
+      "name": "unofficial_napi_release_serialized_value",
+      "signature": "(func (param i32))",
+      "resultClassification": "void",
+      "capabilityFamily": "structured-clone",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:2495",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:3372",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:3381",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:3426",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:3473",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:3491",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:3882",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:3899",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:3921",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:3972",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:4766",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:4782"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2222",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_release_serialized_value"
+    },
+    {
+      "name": "unofficial_napi_remove_near_heap_limit_callback",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "heap-and-termination",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:1260"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:1823",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_remove_near_heap_limit_callback"
+    },
+    {
+      "name": "unofficial_napi_request_gc_for_testing",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "heap-and-termination",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime.cc:2308",
+        "crates/node-runtime-wasm/vendor/edgejs/src/unofficial_napi_testing_until_gc.cc:129",
+        "crates/node-runtime-wasm/vendor/edgejs/src/unofficial_napi_testing_until_gc.cc:130"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2065",
+      "referenceV8Apis": [
+        "v8::Isolate::GarbageCollectionType::kFullGarbageCollection"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_request_gc_for_testing"
+    },
+    {
+      "name": "unofficial_napi_request_interrupt",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "runtime-lifecycle-hooks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_environment.cc:1363",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_watchdog.cc:187",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:953",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:1834"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2106",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::HandleScope",
+        "v8::Isolate",
+        "v8::Local"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_request_interrupt"
+    },
+    {
+      "name": "unofficial_napi_serialize_value",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "structured-clone",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:2817"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2154",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Context::Scope",
+        "v8::HandleScope",
+        "v8::Isolate",
+        "v8::Local",
+        "v8::Value",
+        "v8::ValueSerializer"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_serialize_value"
+    },
+    {
+      "name": "unofficial_napi_set_continuation_preserved_embedder_data",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "runtime-lifecycle-hooks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_async_wrap.cc:151",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_async_context_frame.cc:48"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2982",
+      "referenceV8Apis": [
+        "v8::Local",
+        "v8::Undefined",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_continuation_preserved_embedder_data"
+    },
+    {
+      "name": "unofficial_napi_set_embedder_hooks",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "runtime-lifecycle-hooks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_napi_embedder_hooks.cc:46"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:1647",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_embedder_hooks"
+    },
+    {
+      "name": "unofficial_napi_set_enqueue_foreground_task_callback",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "microtasks-and-foreground-tasks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime_platform_v8.cc:417",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime_platform_v8.cc:428"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:1658",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_enqueue_foreground_task_callback"
+    },
+    {
+      "name": "unofficial_napi_set_fatal_error_callbacks",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "v8-inspection",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_process.cc:5391"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:1789",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_fatal_error_callbacks"
+    },
+    {
+      "name": "unofficial_napi_set_get_source_map_error_source_callback",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "v8-inspection",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_errors_binding.cc:200",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_errors_binding.cc:202"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2340",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_get_source_map_error_source_callback"
+    },
+    {
+      "name": "unofficial_napi_set_near_heap_limit_callback",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "heap-and-termination",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:1198"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:1807",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_near_heap_limit_callback"
+    },
+    {
+      "name": "unofficial_napi_set_prepare_stack_trace_callback",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "runtime-lifecycle-hooks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_errors_binding.cc:186",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_errors_binding.cc:188"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:1991",
+      "referenceV8Apis": [
+        "v8::Context",
+        "v8::Function",
+        "v8::Local",
+        "v8::Value"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_prepare_stack_trace_callback"
+    },
+    {
+      "name": "unofficial_napi_set_promise_hooks",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "promise-hooks-and-details",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_async_wrap.cc:465"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2250",
+      "referenceV8Apis": [
+        "v8::Function",
+        "v8::Global",
+        "v8::Local"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_promise_hooks"
+    },
+    {
+      "name": "unofficial_napi_set_source_maps_enabled",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "runtime-lifecycle-hooks",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_errors_binding.cc:217",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_errors_binding.cc:417"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2334",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_source_maps_enabled"
+    },
+    {
+      "name": "unofficial_napi_set_stack_limit",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "heap-and-termination",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:1196"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:1835",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_set_stack_limit"
+    },
+    {
+      "name": "unofficial_napi_start_cpu_profile",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "diagnostics-and-profiling",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:785"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2781",
+      "referenceV8Apis": [
+        "v8::CpuProfiler::New",
+        "v8::CpuProfilingMode::kLeafNodeLineNumbers",
+        "v8::CpuProfilingOptions",
+        "v8::CpuProfilingOptions::kNoSampleLimit",
+        "v8::CpuProfilingResult",
+        "v8::CpuProfilingStatus::kErrorTooManyProfilers",
+        "v8::CpuProfilingStatus::kStarted"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_start_cpu_profile"
+    },
+    {
+      "name": "unofficial_napi_start_heap_profile",
+      "signature": "(func (param i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "heap-and-termination",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:804"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2873",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_start_heap_profile"
+    },
+    {
+      "name": "unofficial_napi_stop_cpu_profile",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "diagnostics-and-profiling",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:795"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2825",
+      "referenceV8Apis": [
+        "v8::CpuProfile",
+        "v8::CpuProfile::SerializationFormat::kJSON",
+        "v8::CpuProfiler"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_stop_cpu_profile"
+    },
+    {
+      "name": "unofficial_napi_stop_heap_profile",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "heap-and-termination",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:812"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2891",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_stop_heap_profile"
+    },
+    {
+      "name": "unofficial_napi_structured_clone",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "structured-clone",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:1457",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:1538",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:1739",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:1758",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:2715",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:2768"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2139",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_structured_clone"
+    },
+    {
+      "name": "unofficial_napi_structured_clone_with_transfer",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "structured-clone",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_messaging.cc:2715"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2146",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_structured_clone_with_transfer"
+    },
+    {
+      "name": "unofficial_napi_take_heap_snapshot",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "heap-and-termination",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:821"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2932",
+      "referenceV8Apis": [
+        "v8::HeapProfiler::HeapSnapshotMode::kExposeInternals",
+        "v8::HeapProfiler::HeapSnapshotMode::kRegular",
+        "v8::HeapProfiler::HeapSnapshotOptions",
+        "v8::HeapProfiler::NumericsMode::kExposeNumericValues",
+        "v8::HeapProfiler::NumericsMode::kHideNumericValues",
+        "v8::HeapSnapshot",
+        "v8::HeapSnapshot::kJSON"
+      ],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_take_heap_snapshot"
+    },
+    {
+      "name": "unofficial_napi_take_preserved_error_formatting",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "v8-inspection",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_runtime.cc:523"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2360",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_take_preserved_error_formatting"
+    },
+    {
+      "name": "unofficial_napi_terminate_execution",
+      "signature": "(func (param i32) (result i32))",
+      "resultClassification": "napi-status",
+      "capabilityFamily": "heap-and-termination",
+      "authorization": "isolate-local-v8-only",
+      "hostOsEffectsAllowed": false,
+      "callers": [
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_environment.cc:449",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_environment_runtime.cc:39",
+        "crates/node-runtime-wasm/vendor/edgejs/src/edge_process.cc:3856",
+        "crates/node-runtime-wasm/vendor/edgejs/src/internal_binding/binding_worker.cc:296"
+      ],
+      "referenceImplementation": "crates/node-runtime-wasm/vendor/napi/v8/src/unofficial_napi.cc:2082",
+      "referenceV8Apis": [],
+      "providerStatus": "required-unimplemented",
+      "testId": "abi:import:agentos_node_engine_v1:unofficial_napi_terminate_execution"
+    }
+  ]
+}

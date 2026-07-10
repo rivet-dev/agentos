@@ -1,0 +1,32 @@
+Expose standard path constants and SO_LINGER for libuv without adding any
+non-POSIX runtime interface.
+
+diff --git a/libc-bottom-half/headers/public/__header_sys_socket.h b/libc-bottom-half/headers/public/__header_sys_socket.h
+index 3965794..f8d72fe 100644
+--- a/libc-bottom-half/headers/public/__header_sys_socket.h
++++ b/libc-bottom-half/headers/public/__header_sys_socket.h
+@@ -103,6 +103,11 @@
+ #define SO_KEEPALIVE 9
+ #endif
+ 
++#ifndef SO_LINGER
++/* Linux socket(7): SO_LINGER uses the standard struct linger payload. */
++#define SO_LINGER 13
++#endif
++
+ #ifndef SO_ACCEPTCONN
+ #define SO_ACCEPTCONN 30
+ #endif
+diff --git a/scripts/install-include-headers.sh b/scripts/install-include-headers.sh
+index 2cca3be..516a488 100755
+--- a/scripts/install-include-headers.sh
++++ b/scripts/install-include-headers.sh
+@@ -57,7 +57,7 @@ MUSL_OMIT_HEADERS+=("sys/procfs.h" "sys/user.h" "sys/kd.h" "sys/vt.h" \
+     "sys/ptrace.h" "sys/statfs.h" "bits/kd.h" "bits/vt.h" "bits/soundcard.h" \
+     "bits/sem.h" "bits/shm.h" "bits/msg.h" "bits/ipc.h" "bits/ptrace.h" \
+     "bits/statfs.h" "sys/vfs.h" "syslog.h" "sys/syslog.h" \
+-    "ucontext.h" "sys/ucontext.h" "paths.h" "utmp.h" "utmpx.h" \
++    "ucontext.h" "sys/ucontext.h" "utmp.h" "utmpx.h" \
+     "lastlog.h" "sys/acct.h" "sys/cachectl.h" "sys/epoll.h" "sys/reboot.h" \
+     "sys/swap.h" "sys/sendfile.h" "sys/inotify.h" "sys/quota.h" "sys/klog.h" \
+     "sys/fsuid.h" "sys/io.h" "sys/prctl.h" "sys/mtio.h" "sys/mount.h" \

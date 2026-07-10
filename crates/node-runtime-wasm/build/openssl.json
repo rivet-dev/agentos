@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "node": {
+    "tag": "v24.15.0",
+    "commit": "848430679556aed0bd073f2bc263331ad84fa119",
+    "sourceDateEpoch": 1775854510
+  },
+  "openssl": {
+    "version": "3.5.5",
+    "nodeTree": "a900f65ce3f4bb57792a1d8e18b125f751a0d14e"
+  },
+  "target": "wasm32-wasip1",
+  "clangTarget": "wasm32-wasi-threads",
+  "sysrootSubdir": "wasm32-wasi-threads",
+  "configureTarget": "linux-generic32",
+  "configureFlags": [
+    "no-shared",
+    "no-pic",
+    "no-asm",
+    "no-tests",
+    "no-apps",
+    "no-afalgeng",
+    "no-async",
+    "no-dso",
+    "no-module",
+    "threads"
+  ],
+  "linkLibraries": [
+    "wasi-emulated-mman",
+    "wasi-emulated-process-clocks"
+  ]
+}

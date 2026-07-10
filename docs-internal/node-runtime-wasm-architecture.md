@@ -22,11 +22,13 @@ runtime below `internalBinding()` into WebAssembly:
 ```text
 trusted host / AgentOS kernel
   ↕ only host OS-capability surface: generated AgentOS Linux/POSIX syscall ABI
-existing native V8 isolate
-  ├─ pinned Node and user JavaScript
+existing native V8 engine
+  ├─ root session isolate: pinned Node and user JavaScript
   │    ↕ isolate-local Node-API/engine calls (no OS/service capabilities)
-  └─ V8 WebAssembly.Module / WebAssembly.Instance
-       └─ node-runtime.wasm
+  │    └─ V8 WebAssembly.Module / WebAssembly.Instance
+  │         └─ root node-runtime.wasm instance and shared memory
+  └─ bounded internal WASM-worker isolates (no user JavaScript surface)
+       └─ same compiled V8 module + shared memory; wasi_thread_start only
            ├─ Node-compatible native/internal bindings
            ├─ libuv and its event loop
            ├─ OpenSSL/ncrypto
@@ -34,7 +36,11 @@ existing native V8 isolate
            └─ zlib, Brotli, zstd, and other Node native dependencies
 ```
 
-V8 runs both JavaScript and `node-runtime.wasm` in the existing isolate. There
+V8 runs JavaScript and the root `node-runtime.wasm` instance in the existing
+session isolate. Concurrent WASM pthreads use bounded internal V8 worker
+isolates because a V8 isolate is single-thread-affine; they receive the same
+compiled V8 module and shared `WebAssembly.Memory`, expose no user JavaScript or
+public `worker_threads`, and may call only the worker-safe ABI subset. There
 is no Wasmer, second Store, second compiler runtime, or cross-engine callback
 bridge. AgentOS instantiates the module through V8's native
 `WebAssembly.Module`/`WebAssembly.Instance` path already used by guest WASM and
@@ -52,8 +58,9 @@ Linux/POSIX syscall ABI produced from the same sysroot used by standalone WASM.
 The ABI is a fixed, versioned, policy-checked import table—not unrestricted
 `syscall(number, ...)` passthrough to the host kernel.
 
-Each Node process owns one coherent runtime instance paired with one V8
-isolate. Its upstream libraries remain separate static archives and build
+Each Node process owns one coherent runtime instance paired with one root V8
+session isolate plus at most seven internal V8 WASM-worker isolates under the
+frozen eight-thread aggregate cap. Its upstream libraries remain separate static archives and build
 targets but link into the root `node-runtime.wasm` module so libuv, OpenSSL,
 binding handles, and the allocator share one bounded linear memory. A bounded
 source-built Node-API addon may load only as a validated WASM side module into
@@ -77,13 +84,45 @@ surface remain implementation work. JavaScript-expressible operations belong
 in a closure-private bootstrap import object; only irreducible engine hooks
 belong in bounded native rusty_v8 callbacks.
 
+The generated
+`docs-internal/node-runtime-wasm-abi/agentos-node-engine-contract.json`
+freezes all 85 currently imported engine extensions with their WASM signature,
+result semantics, pinned EdgeJS callers, reference V8 implementation/API use,
+capability family, and stable test ID. Every row currently remains
+`required-unimplemented`; the inventory is a fail-closed implementation
+contract, not evidence that the production rusty_v8 provider exists. Every row
+forbids host OS effects.
+
+`crates/node-api-v8` now owns the first isolate-local Node-API capability
+primitive. Guest handles are globally non-reused opaque nonzero wasm32 IDs,
+never host pointers; the table bounds live entries, validates kind and scope,
+recursively drops nested-scope children, rejects zero/stale/cross-environment
+IDs, and drops `v8::Global` values before isolate teardown. The generated 155
+function Node-API provider and its callback/async/finalizer families remain R1
+implementation work; this handle table alone is not a complete provider.
+
 Other repository gaps are architecture gates, not reasons to introduce another
-engine. The current rusty_v8 crate uses V8 13.0 while pinned Node carries V8
-13.6; the WASM OpenSSL artifact is built without threads, PIC, DSOs, or
-modules; the libc conformance ledger excludes `dlopen`/`dlsym` and DSO TLS;
-and no production V8-WASM pthread path has yet been proven. R0 must resolve the
-V8 compatibility delta and prove shared-memory threads, bounded termination,
-and addon side-module loading inside the existing V8 stack.
+engine. R0 aligns rusty_v8 with V8 13.6, builds Node's OpenSSL with the owned
+threaded sysroot, and proves create/join, mutex/condition/atomics, TLS
+destructors, function pointers, deferred cancellation, and teardown using a
+shared compiled V8 module and shared memory across internal worker isolates.
+`crates/v8-runtime/src/wasm_workers.rs` now owns the production worker cap,
+fixed host-thread stack reservation, rate-limited threshold warning, compiled
+module reuse, structured-cloned shared backing store, V8 termination handles,
+panic/error propagation, completion accounting, and deadline-bound all-worker
+join barrier. The production Node bootstrap still has to connect that manager
+to the shared POSIX provider; futex/poll/thread-safe-function cancellation and
+addon side-module loading remain R0 gates inside the same V8 stack.
+
+`crates/wasm-posix-host` now provides the shared Rust provider core: its
+68-entry fixed syscall enum/table is generated from the checked POSIX contract,
+and it enforces typed WASM signatures, bounded pending-call reservations, and
+whole-range-validated copy-in/copy-out. `crates/v8-runtime/src/wasm_posix.rs`
+builds the closure-private 68-function V8 import object and reads shared memory
+through atomic copies from the current backing store on every call. It is not
+yet R0 production wiring: the standalone and Node bootstrap paths still have
+to bind this adapter to the real VM kernel dispatcher, and no release proof may
+use the legacy JavaScript import assembly after that cutover.
 
 ## Boundaries and trust model
 

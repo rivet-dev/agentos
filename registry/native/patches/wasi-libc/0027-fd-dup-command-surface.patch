@@ -1,0 +1,17 @@
+Expose the Linux/POSIX fcntl duplication commands already implemented by the
+AgentOS libc override.
+
+diff --git a/libc-bottom-half/headers/public/__header_fcntl.h b/libc-bottom-half/headers/public/__header_fcntl.h
+--- a/libc-bottom-half/headers/public/__header_fcntl.h
++++ b/libc-bottom-half/headers/public/__header_fcntl.h
+@@ -45,6 +45,10 @@
+ #define F_GETFL (3)
+ #define F_SETFL (4)
+ 
++/* Linux fcntl(2); both commands route through fd_dup_min in AgentOS. */
++#define F_DUPFD (0)
++#define F_DUPFD_CLOEXEC (1030)
++
+ #define FD_CLOEXEC (1)
+ 
+ #define AT_EACCESS          (0x0)

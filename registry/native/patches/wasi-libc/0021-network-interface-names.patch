@@ -1,0 +1,16 @@
+Expose net/if.h from the owned POSIX sysroot.
+
+The runtime exposes a bounded loopback-only interface view until the shared
+Linux syscall manifest gains full interface enumeration.
+
+diff --git a/scripts/install-include-headers.sh b/scripts/install-include-headers.sh
+--- a/scripts/install-include-headers.sh
++++ b/scripts/install-include-headers.sh
+@@ -69,6 +69,6 @@ MUSL_OMIT_HEADERS+=("sys/procfs.h" "sys/user.h" "sys/kd.h" "sys/vt.h" \
+     "scsi/scsi.h" "scsi/scsi_ioctl.h" "scsi/sg.h" "sys/auxv.h" \
+     "shadow.h" "grp.h" "mntent.h" "resolv.h" "pty.h" "ulimit.h" "sys/xattr.h" \
+     "wordexp.h" "spawn.h" "sys/membarrier.h" "sys/signalfd.h" \
+-    "sys/termios.h" "net/if.h" "net/if_arp.h" \
++    "sys/termios.h" "net/if_arp.h" \
+     "net/ethernet.h" "net/route.h" "netinet/if_ether.h" "netinet/ether.h" \
+     "sys/timerfd.h" "libintl.h" "sys/sysmacros.h" "aio.h")

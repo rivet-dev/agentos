@@ -72,4 +72,4 @@ vfs = { workspace = true }
 serde_bare = "0.5"
 tar = "0.4"
 wat = "1.0"
-v8 = "130"
+v8 = "136"

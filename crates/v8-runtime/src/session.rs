@@ -105,6 +105,7 @@ struct SessionAssignment {
 #[cfg(not(test))]
 struct PrecreatedIsolate {
     isolate: v8::OwnedIsolate,
+    snapshot_variant: SnapshotVariantReservation,
     context: v8::Global<v8::Context>,
     bridge_code: String,
     userland_code: String,
@@ -112,6 +113,50 @@ struct PrecreatedIsolate {
 
 #[cfg(test)]
 struct PrecreatedIsolate;
+
+#[cfg(not(test))]
+#[derive(Default)]
+struct SnapshotVariantState {
+    key: Option<SnapshotCacheKey>,
+    users: usize,
+}
+
+#[cfg(not(test))]
+static SNAPSHOT_VARIANT_STATE: OnceLock<Mutex<SnapshotVariantState>> = OnceLock::new();
+
+#[cfg(not(test))]
+struct SnapshotVariantReservation;
+
+#[cfg(not(test))]
+impl Drop for SnapshotVariantReservation {
+    fn drop(&mut self) {
+        let mut state = SNAPSHOT_VARIANT_STATE
+            .get_or_init(|| Mutex::new(SnapshotVariantState::default()))
+            .lock()
+            .expect("snapshot variant state lock poisoned");
+        state.users = state
+            .users
+            .checked_sub(1)
+            .expect("snapshot variant reservation underflow");
+        if state.users == 0 {
+            state.key = None;
+        }
+    }
+}
+
+#[cfg(not(test))]
+fn reserve_snapshot_variant(key: SnapshotCacheKey) -> Option<SnapshotVariantReservation> {
+    let mut state = SNAPSHOT_VARIANT_STATE
+        .get_or_init(|| Mutex::new(SnapshotVariantState::default()))
+        .lock()
+        .expect("snapshot variant state lock poisoned");
+    if state.users != 0 && state.key != Some(key) {
+        return None;
+    }
+    state.key = Some(key);
+    state.users += 1;
+    Some(SnapshotVariantReservation)
+}
 
 #[cfg(not(test))]
 #[derive(Default)]
@@ -431,6 +476,13 @@ fn precreate_warm_isolate(
     heap_limit_mb: Option<u32>,
 ) -> Result<PrecreatedIsolate, String> {
     isolate::init_v8_platform();
+    let key = snapshot_cache_key(
+        &bridge_code,
+        (!userland_code.is_empty()).then_some(userland_code.as_str()),
+    );
+    let snapshot_variant = reserve_snapshot_variant(key).ok_or_else(|| {
+        String::from("mixed V8 startup snapshot variants cannot be live in one isolate group")
+    })?;
     let snapshot_blob = snapshot_cache.get_or_create_with_userland(
         &bridge_code,
         (!userland_code.is_empty()).then_some(userland_code.as_str()),
@@ -443,6 +495,7 @@ fn precreate_warm_isolate(
     let context = isolate::create_context(&mut isolate);
     Ok(PrecreatedIsolate {
         isolate,
+        snapshot_variant,
         context,
         bridge_code,
         userland_code,
@@ -1290,6 +1343,7 @@ fn session_thread(
     #[cfg(not(test))]
     let (
         mut v8_isolate,
+        mut snapshot_variant_reservation,
         mut _v8_context,
         mut from_snapshot,
         mut isolate_bridge_code,
@@ -1297,12 +1351,13 @@ fn session_thread(
     ) = match precreated_isolate {
         Some(precreated) => (
             Some(precreated.isolate),
+            Some(precreated.snapshot_variant),
             Some(precreated.context),
             true,
             Some(precreated.bridge_code),
             Some(precreated.userland_code),
         ),
-        None => (None, None, false, None, None),
+        None => (None, None, None, false, None, None),
     };
 
     #[cfg(not(test))]
@@ -1442,6 +1497,7 @@ fn session_thread(
                             reset_pending_promises(&mut pending);
                             drop(_v8_context.take());
                             isolate::drop_isolate(v8_isolate.take());
+                            drop(snapshot_variant_reservation.take());
                             from_snapshot = false;
                             isolate_bridge_code = None;
                             isolate_userland_code = None;
@@ -1454,28 +1510,50 @@ fn session_thread(
                             // agent-SDK userland bundle, keyed process-wide by both, so
                             // the SDK is evaluated once per sidecar and reused here.
                             let phase_start = Instant::now();
-                            let snapshot_blob = match snapshot_cache.get_or_create_with_userland(
+                            let snapshot_key = snapshot_cache_key(
                                 &effective_bridge_code,
                                 (!effective_userland_code.is_empty())
                                     .then_some(effective_userland_code.as_str()),
-                            ) {
-                                Ok(blob) => Some(blob),
-                                Err(message) => {
-                                    // Snapshot creation runs in a helper subprocess; if
-                                    // that fails (unsupported platform, spawn failure),
-                                    // degrade to a fresh isolate that evaluates the
-                                    // bridge in-context rather than failing the session.
-                                    eprintln!(
-                                        "agentos-v8-runtime: snapshot creation failed, \
-                                         falling back to fresh isolate: {message}"
-                                    );
-                                    None
+                            );
+                            // V8 isolate groups share read-only heap artifacts and verify
+                            // that every concurrently live isolate uses the same snapshot
+                            // checksum. See V8's ReadOnlyArtifacts::VerifyChecksum:
+                            // https://chromium.googlesource.com/v8/v8/+/refs/heads/main/src/heap/read-only-spaces.cc
+                            // A different bridge/userland snapshot therefore falls back
+                            // to a fresh isolate until the current variant drains.
+                            let mut pending_snapshot_variant =
+                                reserve_snapshot_variant(snapshot_key);
+                            let snapshot_blob = if pending_snapshot_variant.is_some() {
+                                match snapshot_cache.get_or_create_with_userland(
+                                    &effective_bridge_code,
+                                    (!effective_userland_code.is_empty())
+                                        .then_some(effective_userland_code.as_str()),
+                                ) {
+                                    Ok(blob) => Some(blob),
+                                    Err(message) => {
+                                        // Snapshot creation runs in a helper subprocess; if
+                                        // that fails (unsupported platform, spawn failure),
+                                        // degrade to a fresh isolate that evaluates the
+                                        // bridge in-context rather than failing the session.
+                                        eprintln!(
+                                            "agentos-v8-runtime: snapshot creation failed, \
+                                             falling back to fresh isolate: {message}"
+                                        );
+                                        None
+                                    }
                                 }
+                            } else {
+                                eprintln!(
+                                    "agentos-v8-runtime: mixed live snapshot variant; \
+                                     falling back to fresh isolate"
+                                );
+                                None
                             };
                             record_v8_session_phase("snapshot_get", phase_start.elapsed());
                             let mut iso = match snapshot_blob {
                                 Some(blob) => {
                                     from_snapshot = true;
+                                    snapshot_variant_reservation = pending_snapshot_variant.take();
                                     eprintln!(
                                         "agentos-v8-runtime: restored session isolate from_snapshot=true"
                                     );
@@ -1494,6 +1572,7 @@ fn session_thread(
                                     isolate
                                 }
                                 None => {
+                                    drop(pending_snapshot_variant.take());
                                     from_snapshot = false;
                                     let phase_start = Instant::now();
                                     let isolate = isolate::create_isolate(heap_limit_mb);
@@ -2116,6 +2195,7 @@ fn session_thread(
         reset_pending_promises(&mut pending);
         drop(_v8_context.take());
         isolate::drop_isolate(v8_isolate.take());
+        drop(snapshot_variant_reservation.take());
     }
 
     // Release concurrency slot

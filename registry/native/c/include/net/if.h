@@ -1,6 +1,8 @@
 #ifndef REGISTRY_NATIVE_C_INCLUDE_NET_IF_H
 #define REGISTRY_NATIVE_C_INCLUDE_NET_IF_H
 
+#include_next <net/if.h>
+
 #ifndef IFNAMSIZ
 #define IFNAMSIZ 16
 #endif

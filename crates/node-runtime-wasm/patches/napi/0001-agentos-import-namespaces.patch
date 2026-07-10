@@ -1,0 +1,41 @@
+Use the versioned isolate-local AgentOS import namespaces.
+
+The standard Node-API surface and the extra engine operations are separate ABI
+families. Neither namespace may expose host OS capabilities.
+
+diff --git a/include/js_native_api.h b/include/js_native_api.h
+index ac1f4f5..411c1fd 100644
+--- a/include/js_native_api.h
++++ b/include/js_native_api.h
+@@ -15,7 +15,7 @@
+ #elif defined(__wasm__)
+ #define NAPI_EXTERN                                                            \
+   __attribute__((visibility("default")))                                       \
+-  __attribute__((__import_module__("napi")))
++  __attribute__((__import_module__("agentos_napi_v1")))
+ #else
+ #define NAPI_EXTERN __attribute__((visibility("default")))
+ #endif
+@@ -27,7 +27,7 @@
+ #elif defined(__wasm__)
+ #define NAPI_EXTENSION_WASMER_EXTERN                                                            \
+   __attribute__((visibility("default")))                                       \
+-  __attribute__((__import_module__("napi_extension_wasmer_v0")))
++  __attribute__((__import_module__("agentos_node_engine_v1")))
+ #else
+ #define NAPI_EXTENSION_WASMER_EXTERN __attribute__((visibility("default")))
+ #endif
+diff --git a/include/node_api.h b/include/node_api.h
+index bb003b4..86325a7 100644
+--- a/include/node_api.h
++++ b/include/node_api.h
+@@ -6,7 +6,7 @@
+ #ifdef _WIN32
+ // Building native addon against node
+ #define NAPI_EXTERN __declspec(dllimport)
+ #elif defined(__wasm__)
+-#define NAPI_EXTERN __attribute__((__import_module__("napi")))
++#define NAPI_EXTERN __attribute__((__import_module__("agentos_napi_v1")))
+ #endif
+ #endif
+ #include "js_native_api.h"

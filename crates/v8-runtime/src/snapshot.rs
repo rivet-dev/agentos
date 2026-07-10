@@ -869,9 +869,25 @@ pub fn run_snapshot_consolidated_checks() {
         // Verify both are usable
         let mut iso_a = create_isolate_from_snapshot((*arc_a).clone(), None);
         assert_eq!(eval(&mut iso_a, "1 + 1"), "2");
+        assert_eq!(
+            eval(&mut iso_a, "String(globalThis.__a)"),
+            "1",
+            "snapshot A should restore its captured default context"
+        );
+        crate::isolate::drop_isolate(Some(iso_a));
 
         let mut iso_b = create_isolate_from_snapshot((*arc_b).clone(), None);
         assert_eq!(eval(&mut iso_b, "2 + 2"), "4");
+        assert_eq!(
+            eval(&mut iso_b, "String(globalThis.__b)"),
+            "2",
+            "snapshot B should restore its captured default context after snapshot A drains"
+        );
+        assert_eq!(
+            eval(&mut iso_b, "typeof globalThis.__a"),
+            "undefined",
+            "different snapshot variants must not share captured globals"
+        );
     }
 
     // --- Part 8: LRU eviction removes oldest entry ---

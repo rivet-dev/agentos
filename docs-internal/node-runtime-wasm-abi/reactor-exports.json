@@ -1,0 +1,152 @@
+{
+  "schema": 1,
+  "source": "docs-internal/node-runtime-wasm-abi.json",
+  "wasmSha256": "25220668e04ba9a4ee055e48abfe5089d089089cea9643e0b890fbb828b80aeb",
+  "namespace": "node-runtime-wasm-exports",
+  "entries": [
+    {
+      "module": null,
+      "name": "__indirect_function_table",
+      "kind": "table",
+      "signature": "table(min=10485,max=10485,shared=false,table64=false,element=funcref)",
+      "authority": "wasm-reactor",
+      "resultClassification": "exported-resource",
+      "testId": "abi:export:__indirect_function_table"
+    },
+    {
+      "module": null,
+      "name": "__wasi_signal_trampoline",
+      "kind": "function",
+      "signature": "(func (param i32))",
+      "authority": "wasm-reactor",
+      "resultClassification": "direct-value",
+      "testId": "abi:export:__wasi_signal_trampoline"
+    },
+    {
+      "module": null,
+      "name": "_initialize",
+      "kind": "function",
+      "signature": "(func)",
+      "authority": "wasm-reactor",
+      "resultClassification": "void",
+      "testId": "abi:export:_initialize"
+    },
+    {
+      "module": null,
+      "name": "agentos_node_runtime_alloc",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "wasm-reactor",
+      "resultClassification": "guest-pointer-or-zero",
+      "testId": "abi:export:agentos_node_runtime_alloc"
+    },
+    {
+      "module": null,
+      "name": "agentos_node_runtime_allocated_bytes",
+      "kind": "function",
+      "signature": "(func (result i32))",
+      "authority": "wasm-reactor",
+      "resultClassification": "nonnegative-counter",
+      "testId": "abi:export:agentos_node_runtime_allocated_bytes"
+    },
+    {
+      "module": null,
+      "name": "agentos_node_runtime_allocation_count",
+      "kind": "function",
+      "signature": "(func (result i32))",
+      "authority": "wasm-reactor",
+      "resultClassification": "nonnegative-counter",
+      "testId": "abi:export:agentos_node_runtime_allocation_count"
+    },
+    {
+      "module": null,
+      "name": "agentos_node_runtime_bootstrap",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "wasm-reactor",
+      "resultClassification": "reactor-status",
+      "testId": "abi:export:agentos_node_runtime_bootstrap"
+    },
+    {
+      "module": null,
+      "name": "agentos_node_runtime_create",
+      "kind": "function",
+      "signature": "(func (result i32))",
+      "authority": "wasm-reactor",
+      "resultClassification": "reactor-status",
+      "testId": "abi:export:agentos_node_runtime_create"
+    },
+    {
+      "module": null,
+      "name": "agentos_node_runtime_free",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "wasm-reactor",
+      "resultClassification": "reactor-status",
+      "testId": "abi:export:agentos_node_runtime_free"
+    },
+    {
+      "module": null,
+      "name": "agentos_node_runtime_interrupt",
+      "kind": "function",
+      "signature": "(func (result i32))",
+      "authority": "wasm-reactor",
+      "resultClassification": "reactor-status",
+      "testId": "abi:export:agentos_node_runtime_interrupt"
+    },
+    {
+      "module": null,
+      "name": "agentos_node_runtime_last_error",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "wasm-reactor",
+      "resultClassification": "length-or-negative-status",
+      "testId": "abi:export:agentos_node_runtime_last_error"
+    },
+    {
+      "module": null,
+      "name": "agentos_node_runtime_quiescence",
+      "kind": "function",
+      "signature": "(func (result i32))",
+      "authority": "wasm-reactor",
+      "resultClassification": "boolean-i32",
+      "testId": "abi:export:agentos_node_runtime_quiescence"
+    },
+    {
+      "module": null,
+      "name": "agentos_node_runtime_run",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "wasm-reactor",
+      "resultClassification": "reactor-status",
+      "testId": "abi:export:agentos_node_runtime_run"
+    },
+    {
+      "module": null,
+      "name": "agentos_node_runtime_teardown",
+      "kind": "function",
+      "signature": "(func (result i32))",
+      "authority": "wasm-reactor",
+      "resultClassification": "reactor-status",
+      "testId": "abi:export:agentos_node_runtime_teardown"
+    },
+    {
+      "module": null,
+      "name": "unofficial_napi_guest_malloc",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "wasm-reactor",
+      "resultClassification": "direct-value",
+      "testId": "abi:export:unofficial_napi_guest_malloc"
+    },
+    {
+      "module": null,
+      "name": "wasi_thread_start",
+      "kind": "function",
+      "signature": "(func (param i32 i32))",
+      "authority": "wasm-reactor",
+      "resultClassification": "direct-value",
+      "testId": "abi:export:wasi_thread_start"
+    }
+  ]
+}

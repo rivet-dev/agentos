@@ -1,0 +1,18 @@
+[package]
+name = "agentos-node-runtime-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Build orchestration and manifests for the AgentOS Node runtime WebAssembly module"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+wasm-encoder = { version = "0.252", features = ["wasmparser"] }
+wasmparser = "0.252"
+
+[lib]
+path = "src/lib.rs"

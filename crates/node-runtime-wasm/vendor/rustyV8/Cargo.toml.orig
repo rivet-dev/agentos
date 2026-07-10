@@ -1,0 +1,145 @@
+[package]
+name = "v8"
+version = "136.0.0"
+description = "Rust bindings to V8"
+readme = "README.md"
+authors = ["the Deno authors"]
+license = "MIT"
+edition = "2024"
+repository = "https://github.com/denoland/rusty_v8"
+exclude = [
+  # To keep the package under the 10mb limit imposed by crates.io we exclude
+  # a lot of files that are not needed for the build.
+  "*.css",
+  "*.gyp",
+  "*.gypi",
+  "*.html",
+  "*.m4",
+  "*.md",
+  "*.settings",
+  "*.txt",
+  "*OWNERS*",
+  ".*",
+  "AUTHORS",
+  "Doxyfile*",
+  "LICENSE*",
+  "Makefile*",
+  "README*",
+  "build/android/",
+  "build/chromeos/",
+  "build/fuchsia/",
+  "buildtools/checkdeps/",
+  "buildtools/clang_format/",
+  "third_party/libc++/src/benchmarks/",
+  "third_party/libc++/src/docs/",
+  "third_party/libc++/src/lib/",
+  "third_party/libc++/src/test/",
+  "third_party/libc++/src/utils/",
+  "third_party/libc++/src/www/",
+  "third_party/libc++abi/src/test/",
+  "third_party/llvm-libc/src/benchmarks/",
+  "third_party/llvm-libc/src/docs/",
+  "third_party/llvm-libc/src/fuzzing/",
+  "third_party/llvm-libc/src/test/",
+  "third_party/llvm-libc/src/utils/docgen",
+  "third_party/icu/android/",
+  "third_party/icu/android_small/",
+  "third_party/icu/cast/",
+  "third_party/icu/chromeos/",
+  "third_party/icu/common/icudtl.dat",
+  "third_party/icu/common/icudtb.dat",
+  "third_party/icu/flutter/",
+  "third_party/icu/ios/",
+  "third_party/icu/patches/",
+  "third_party/icu/source/config/",
+  "third_party/icu/source/data/",
+  "third_party/icu/source/extra/",
+  "third_party/icu/source/io/",
+  "third_party/icu/source/python/",
+  "third_party/icu/source/samples/",
+  "third_party/icu/source/test/",
+  "third_party/icu/source/tools/",
+  "third_party/icu/tzres/",
+  "third_party/abseil-cpp/*.def",
+  "third_party/abseil-cpp/absl/time/internal/cctz/testdata",
+  "third_party/highway/src/hwy/tests",
+  "third_party/highway/src/docs",
+  "third_party/highway/src/g3doc",
+  "third_party/fp16/src/test",
+  "third_party/fast_float/src/tests",
+  "tools/clang",
+  "v8/ChangeLog",
+  "v8/benchmarks/",
+  "v8/docs/",
+  "v8/samples/",
+  "v8/test/",
+  "v8/tools/",
+  # These files are required for the build.
+  "!.gn",
+  "!BUILD.gn",
+  "!tools/clang/scripts/update.py",
+  "!v8/test/torque/test-torque.tq",
+  "!v8/tools/gen-postmortem-metadata.py",
+  "!v8/tools/gen-v8-gn.py",
+  "!v8/tools/js2c.py",
+  "!v8/tools/run.py",
+  "!v8/tools/snapshot/asm_to_inline_asm.py",
+  "!v8/tools/testrunner/utils/dump_build_config.py",
+]
+
+[profile.dev]
+# rusty_v8 may miscompile at opt-level=0.
+# https://github.com/rust-lang/rust/issues/87215
+# https://github.com/rust-lang/rust/issues/75839
+# https://github.com/rust-lang/rust/issues/121028
+opt-level = 1
+
+[features]
+default = ["use_custom_libcxx"]
+use_custom_libcxx = []
+v8_enable_pointer_compression = []
+
+[dependencies]
+bitflags = "2.5"
+paste = "1.0"
+
+[build-dependencies]
+miniz_oxide = "0.7.2"
+gzip-header = "1.0.0"
+fslock = "0.2"
+which = "6"
+home = "0"
+bindgen = "0.71"
+
+[dev-dependencies]
+miniz_oxide = "0.7.3"
+gzip-header = "1.0.0"
+bytes = "1"
+align-data = "0.1.0"
+fslock = "0.2"
+trybuild = "1.0.96"
+which = "6"
+home = "0"
+rustversion = "1"
+bindgen = "0.71"
+
+[[example]]
+name = "hello_world"
+
+[[example]]
+name = "shell"
+
+[[example]]
+name = "process"
+
+[[test]]
+name = "build"
+path = "build.rs"
+
+[[bench]]
+name = "function"
+path = "benches/function.rs"
+harness = false
+
+[workspace]
+members = ["examples/android"]

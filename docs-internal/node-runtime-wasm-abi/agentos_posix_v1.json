@@ -1,0 +1,620 @@
+{
+  "schema": 1,
+  "source": "docs-internal/node-runtime-wasm-abi.json",
+  "wasmSha256": "25220668e04ba9a4ee055e48abfe5089d089089cea9643e0b890fbb828b80aeb",
+  "namespace": "agentos_posix_v1",
+  "entries": [
+    {
+      "module": "agentos_posix_v1",
+      "name": "chmod",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:chmod"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "clock_time_get",
+      "kind": "function",
+      "signature": "(func (param i32 i64 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:clock_time_get"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "environ_get",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:environ_get"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "environ_sizes_get",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:environ_sizes_get"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fchmod",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fchmod"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_close",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_close"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_dup_min",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_dup_min"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_fdstat_get",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_fdstat_get"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_fdstat_set_flags",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_fdstat_set_flags"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_filestat_get",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_filestat_get"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_filestat_set_size",
+      "kind": "function",
+      "signature": "(func (param i32 i64) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_filestat_set_size"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_filestat_set_times",
+      "kind": "function",
+      "signature": "(func (param i32 i64 i64 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_filestat_set_times"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_mode",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_mode"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_pipe",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_pipe"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_pread",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i64 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_pread"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_prestat_dir_name",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_prestat_dir_name"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_prestat_get",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_prestat_get"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_pwrite",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i64 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_pwrite"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_read",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_read"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_readdir",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i64 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_readdir"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_seek",
+      "kind": "function",
+      "signature": "(func (param i32 i64 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_seek"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_size",
+      "kind": "function",
+      "signature": "(func (param i32) (result i64))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "u64-size-or-max-sentinel",
+      "testId": "abi:import:agentos_posix_v1:fd_size"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_sync",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_sync"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "fd_write",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:fd_write"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "ftruncate",
+      "kind": "function",
+      "signature": "(func (param i32 i64) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:ftruncate"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "getegid",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:getegid"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "geteuid",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:geteuid"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "getgid",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:getgid"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "getpwuid",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:getpwuid"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "getuid",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:getuid"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "isatty",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:isatty"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_accept",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:net_accept"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_bind",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:net_bind"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_connect",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:net_connect"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_getaddrinfo",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:net_getaddrinfo"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_getpeername",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:net_getpeername"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_getsockname",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:net_getsockname"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_listen",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:net_listen"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_poll",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:net_poll"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_recv",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:net_recv"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_recvfrom",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:net_recvfrom"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_send",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:net_send"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_sendto",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:net_sendto"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_setsockopt",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:net_setsockopt"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "net_socket",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:net_socket"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_create_directory",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:path_create_directory"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_filestat_get",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:path_filestat_get"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_link",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:path_link"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_mode",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:path_mode"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_open",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:path_open"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_readlink",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:path_readlink"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_remove_directory",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:path_remove_directory"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_rename",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:path_rename"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_size",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i64))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "u64-size-or-max-sentinel",
+      "testId": "abi:import:agentos_posix_v1:path_size"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_symlink",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:path_symlink"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "path_unlink_file",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:path_unlink_file"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "poll_oneoff",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:poll_oneoff"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "proc_exit",
+      "kind": "function",
+      "signature": "(func (param i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "noreturn",
+      "testId": "abi:import:agentos_posix_v1:proc_exit"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "proc_getpid",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:proc_getpid"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "proc_getppid",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:proc_getppid"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "proc_kill",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:proc_kill"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "proc_sigaction",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:proc_sigaction"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "proc_spawn",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:proc_spawn"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "proc_waitpid",
+      "kind": "function",
+      "signature": "(func (param i32 i32 i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:proc_waitpid"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "random_get",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:random_get"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "sched_yield",
+      "kind": "function",
+      "signature": "(func (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:sched_yield"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "sock_shutdown",
+      "kind": "function",
+      "signature": "(func (param i32 i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "wasi-errno",
+      "testId": "abi:import:agentos_posix_v1:sock_shutdown"
+    },
+    {
+      "module": "agentos_posix_v1",
+      "name": "thread-spawn",
+      "kind": "function",
+      "signature": "(func (param i32) (result i32))",
+      "authority": "vm-kernel-linux-posix",
+      "resultClassification": "positive-thread-id-or-negative-error",
+      "testId": "abi:import:agentos_posix_v1:thread-spawn"
+    }
+  ]
+}

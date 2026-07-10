@@ -1,0 +1,52 @@
+Expose the remaining standard process identity, execve, and umask declarations.
+
+The implementations are supplied by the AgentOS-owned libc override layer.
+
+diff --git a/libc-top-half/musl/include/sys/stat.h b/libc-top-half/musl/include/sys/stat.h
+index 515d1bf..d4f8f68 100644
+--- a/libc-top-half/musl/include/sys/stat.h
++++ b/libc-top-half/musl/include/sys/stat.h
+@@ -81,8 +81,6 @@ int chmod(const char *, mode_t);
+ int fchmod(int, mode_t);
+ int fchmodat(int, const char *, mode_t, int);
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no umask */
+ mode_t umask(mode_t);
+-#endif
+ int mkdir(const char *, mode_t);
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no fifo */
+ int mkfifo(const char *, mode_t);
+diff --git a/libc-top-half/musl/include/unistd.h b/libc-top-half/musl/include/unistd.h
+index 0dcd59d..5d08bd6 100644
+--- a/libc-top-half/musl/include/unistd.h
++++ b/libc-top-half/musl/include/unistd.h
+@@ -139,7 +139,6 @@ int pause(void);
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no fork/exec */
+ pid_t fork(void);
+ pid_t _Fork(void);
+-int execve(const char *, char *const [], char *const []);
+ int execv(const char *, char *const []);
+ int execle(const char *, const char *, ...);
+ int execl(const char *, const char *, ...);
+@@ -147,6 +146,7 @@ int execvp(const char *, char *const []);
+ int execlp(const char *, const char *, ...);
+ int fexecve(int, char *const [], char *const []);
+ #endif
++int execve(const char *, char *const [], char *const []);
+ _Noreturn void _exit(int);
+ 
+ pid_t getpid(void);
+@@ -176,14 +176,11 @@ uid_t getuid(void);
+ uid_t geteuid(void);
+ gid_t getgid(void);
+ gid_t getegid(void);
+-
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no setuid etc. */
+ int getgroups(int, gid_t []);
+ int setuid(uid_t);
+ int seteuid(uid_t);
+ int setgid(gid_t);
+ int setegid(gid_t);
+-#endif
+ 
+ char *getlogin(void);
+ int getlogin_r(char *, size_t);

@@ -1,0 +1,2286 @@
+{
+  "schema": 1,
+  "status": "r0-baselines-required",
+  "purpose": "Frozen three-way before/after benchmark contract. Null result slots are failing, never skipped or passing evidence.",
+  "implementations": {
+    "nativeNode": {
+      "source": "pinned upstream Node v24.15.0 native Linux release build",
+      "revision": "v24.15.0"
+    },
+    "legacyAgentos": {
+      "source": "frozen pre-refactor AgentOS implementation at main",
+      "revision": "0faec6268dd8b3d127234f8f76b90c9b143dd938"
+    },
+    "nodeRuntimeWasm": {
+      "source": "candidate node-runtime.wasm in the existing AgentOS V8 stack",
+      "revision": "candidate"
+    }
+  },
+  "hostProtocol": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "cpuGovernor": "performance",
+    "samePhysicalHostRequired": true,
+    "noConcurrentWorkloads": true,
+    "record": [
+      "cpuModel",
+      "logicalCpuCount",
+      "memoryBytes",
+      "kernel",
+      "compiler",
+      "backend",
+      "moduleSha256"
+    ]
+  },
+  "concurrencyGates": {
+    "offenderTerminationCeilingMs": 5000,
+    "controlVmAbsoluteP99CeilingMs": 50,
+    "controlVmLoadedToUnloadedP99MaximumRatio": 2
+  },
+  "rows": [
+    {
+      "id": "cold-compile",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/startup/cold-compile.mjs",
+      "unit": "ms",
+      "lowerIsBetter": true,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case cold-compile --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case cold-compile --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case cold-compile --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "clean-bootstrap",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/startup/clean-bootstrap.mjs",
+      "unit": "ms",
+      "lowerIsBetter": true,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case clean-bootstrap --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case clean-bootstrap --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case clean-bootstrap --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "cached-bootstrap",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/startup/cached-bootstrap.mjs",
+      "unit": "ms",
+      "lowerIsBetter": true,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case cached-bootstrap --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case cached-bootstrap --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case cached-bootstrap --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "cjs-import-storm",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/modules/cjs-import-storm.cjs",
+      "unit": "ms",
+      "lowerIsBetter": true,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case cjs-import-storm --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case cjs-import-storm --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case cjs-import-storm --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "esm-import-storm",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/modules/esm-import-storm.mjs",
+      "unit": "ms",
+      "lowerIsBetter": true,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case esm-import-storm --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case esm-import-storm --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case esm-import-storm --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "fs-read-4k",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/fs/read.mjs?bytes=4096",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-read-4k --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-read-4k --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-read-4k --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "fs-read-1m",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/fs/read.mjs?bytes=1048576",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-read-1m --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-read-1m --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-read-1m --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "fs-write-4k",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/fs/write.mjs?bytes=4096",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-write-4k --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-write-4k --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-write-4k --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "fs-write-1m",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/fs/write.mjs?bytes=1048576",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-write-1m --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-write-1m --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-write-1m --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "fs-stat-readdir-storm",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/fs/stat-readdir-storm.mjs",
+      "unit": "ops/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-stat-readdir-storm --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-stat-readdir-storm --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-stat-readdir-storm --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "fs-stream-copy",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/fs/stream-copy.mjs",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-stream-copy --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-stream-copy --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case fs-stream-copy --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "tcp-stream-1b",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/net/tcp-stream.mjs?chunk=1",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case tcp-stream-1b --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case tcp-stream-1b --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case tcp-stream-1b --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "tcp-stream-16k",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/net/tcp-stream.mjs?chunk=16384",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case tcp-stream-16k --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case tcp-stream-16k --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case tcp-stream-16k --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "http-stream-1b",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/net/http-stream.mjs?chunk=1",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case http-stream-1b --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case http-stream-1b --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case http-stream-1b --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "http-stream-16k",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/net/http-stream.mjs?chunk=16384",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case http-stream-16k --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case http-stream-16k --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case http-stream-16k --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "http-request-throughput",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/net/http-throughput.mjs",
+      "unit": "requests/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case http-request-throughput --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case http-request-throughput --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case http-request-throughput --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "http-backpressure",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/net/http-backpressure.mjs",
+      "unit": "ms",
+      "lowerIsBetter": true,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case http-backpressure --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case http-backpressure --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case http-backpressure --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "tls-handshake",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/tls/handshake.mjs",
+      "unit": "handshakes/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case tls-handshake --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case tls-handshake --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case tls-handshake --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "tls-resumption",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/tls/resumption.mjs",
+      "unit": "handshakes/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case tls-resumption --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case tls-resumption --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case tls-resumption --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "tls-small-record",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/tls/small-record.mjs",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case tls-small-record --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case tls-small-record --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case tls-small-record --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "crypto-sha256",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/crypto/sha256.mjs",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case crypto-sha256 --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case crypto-sha256 --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case crypto-sha256 --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "crypto-aes-gcm",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/crypto/aes-gcm.mjs",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case crypto-aes-gcm --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case crypto-aes-gcm --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case crypto-aes-gcm --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "crypto-rsa",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/crypto/rsa.mjs",
+      "unit": "ops/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case crypto-rsa --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case crypto-rsa --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case crypto-rsa --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "crypto-kdf",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/crypto/kdf.mjs",
+      "unit": "ops/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case crypto-kdf --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case crypto-kdf --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case crypto-kdf --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "compression-zlib",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/compression/zlib.mjs",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case compression-zlib --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case compression-zlib --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case compression-zlib --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "compression-brotli",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/compression/brotli.mjs",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case compression-brotli --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case compression-brotli --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case compression-brotli --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "compression-zstd",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/compression/zstd.mjs",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case compression-zstd --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case compression-zstd --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case compression-zstd --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "napi-scalar",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/napi/scalar.mjs",
+      "unit": "ns/op",
+      "lowerIsBetter": true,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case napi-scalar --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case napi-scalar --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case napi-scalar --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "napi-property",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/napi/property.mjs",
+      "unit": "ns/op",
+      "lowerIsBetter": true,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case napi-property --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case napi-property --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case napi-property --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "napi-callback",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/napi/callback.mjs",
+      "unit": "ns/op",
+      "lowerIsBetter": true,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case napi-callback --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case napi-callback --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case napi-callback --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "napi-buffer-copy",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/napi/buffer-copy.mjs",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case napi-buffer-copy --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case napi-buffer-copy --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case napi-buffer-copy --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "napi-buffer-pinned",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/napi/buffer-pinned.mjs",
+      "unit": "MiB/s",
+      "lowerIsBetter": false,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 5,
+      "samples": 30,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case napi-buffer-pinned --implementation nativeNode --warmup 5 --samples 30 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case napi-buffer-pinned --implementation legacyAgentos --warmup 5 --samples 30 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case napi-buffer-pinned --implementation nodeRuntimeWasm --warmup 5 --samples 30 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "idle-runtime-rss",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/memory/idle-runtime.mjs",
+      "unit": "bytes",
+      "lowerIsBetter": true,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 3,
+      "samples": 20,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case idle-runtime-rss --implementation nativeNode --warmup 3 --samples 20 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case idle-runtime-rss --implementation legacyAgentos --warmup 3 --samples 20 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case idle-runtime-rss --implementation nodeRuntimeWasm --warmup 3 --samples 20 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    },
+    {
+      "id": "concurrent-vm-rss",
+      "fixture": "scripts/benchmarks/node-runtime-wasm-fixtures/memory/concurrent-vms.mjs",
+      "unit": "bytes/vm",
+      "lowerIsBetter": true,
+      "buildProfile": "release-lto-pinned",
+      "warmup": 3,
+      "samples": 20,
+      "statistic": "p99",
+      "noiseRule": "rerun all three lanes when either baseline repeat differs by more than 5%; use the slower baseline run",
+      "thresholds": {
+        "maximumRegressionVersusLegacyPercent": 10,
+        "missingComparatorFails": true,
+        "percentageOnlyFails": true
+      },
+      "commands": {
+        "nativeNode": "node scripts/run-node-runtime-wasm-benchmark.mjs --case concurrent-vm-rss --implementation nativeNode --warmup 3 --samples 20 --profile release-lto-pinned",
+        "legacyAgentos": "node scripts/run-node-runtime-wasm-benchmark.mjs --case concurrent-vm-rss --implementation legacyAgentos --warmup 3 --samples 20 --profile release-lto-pinned",
+        "nodeRuntimeWasm": "node scripts/run-node-runtime-wasm-benchmark.mjs --case concurrent-vm-rss --implementation nodeRuntimeWasm --warmup 3 --samples 20 --profile release-lto-pinned"
+      },
+      "results": {
+        "nativeNode": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "legacyAgentos": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "nodeRuntimeWasm": {
+          "status": "required-not-measured",
+          "absolute": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "iqr": null,
+          "min": null,
+          "max": null,
+          "samples": []
+        },
+        "newVersusNative": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        },
+        "newVersusLegacy": {
+          "absoluteDelta": null,
+          "ratio": null,
+          "percent": null
+        }
+      }
+    }
+  ]
+}

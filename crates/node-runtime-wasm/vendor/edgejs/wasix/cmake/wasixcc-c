@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+
+. "$(dirname "$0")/wasixcc-env.sh" wasixcc
+
+exec wasixcc "$@"

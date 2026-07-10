@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "scope": "r0-nested-bootstrap-probe-only",
+  "finalNodeRuntimeArtifact": false,
+  "source": {
+    "path": "probes/nested-bootstrap.c",
+    "sha256": "7926e5b8ed1a1f16afa49efa99cbf2eaa47f7e9c39563c52f7307ea5330189cc"
+  },
+  "artifact": {
+    "path": "artifacts/nested-bootstrap.wasm",
+    "sha256": "0f626cb857164db9f3776da60c22e7f76360848695458f98b5fbbac44b36c12f",
+    "byteLength": 295,
+    "initialMemoryPages": 2,
+    "maximumMemoryPages": 4
+  },
+  "imports": [
+    {
+      "module": "agentos_napi_v1",
+      "name": "call_js",
+      "kind": "function",
+      "signature": "(i32) -> i32",
+      "capabilityClass": "isolate-local-engine-only",
+      "osEffects": false
+    }
+  ],
+  "exports": [
+    { "name": "memory", "kind": "memory" },
+    { "name": "start", "kind": "function", "signature": "(i32) -> i32" },
+    { "name": "reenter", "kind": "function", "signature": "(i32) -> i32" },
+    { "name": "grow_memory", "kind": "function", "signature": "(i32) -> i32" },
+    { "name": "trap", "kind": "function", "signature": "() -> unreachable" }
+  ],
+  "toolchain": {
+    "clangVersion": "Homebrew clang version 22.1.8",
+    "clangSha256": "ab50a44e219c787b1a6ba0b8e07172080a4b3619c3f619b801ef058a7bdfad2a",
+    "wasmLdVersion": "LLD 21.1.8 (/checkout/src/llvm-project/llvm 00d23d10dc48c6bb9d57ba96d4a748d85d77d0c7)",
+    "wasmLdSha256": "4ce7771edd9ca19b30899a3db6a49cc9327b9586eaad6d1019cd0a906dd8e203",
+    "rustcVersion": "rustc 1.94.0 (4a4ef493e 2026-03-02)"
+  }
+}

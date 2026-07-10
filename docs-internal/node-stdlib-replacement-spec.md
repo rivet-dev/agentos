@@ -34,7 +34,11 @@ changes them.
    bootstrap creates `node-runtime.wasm` with V8's native
    `WebAssembly.Module` and `WebAssembly.Instance`, exactly like the existing
    guest-WASM path. There is no Wasmer, second Store, or cross-engine bridge.
-   The root instance runs on the isolate's existing dedicated session thread.
+   The root instance runs on the root isolate's existing dedicated session
+   thread. Bounded internal V8 worker isolates execute only cloned
+   `wasi_thread_start` instances over the same compiled module and shared
+   memory; they expose no user JavaScript or public worker API and do not form a
+   second engine/runtime.
 4. **There are two interface families but one host OS-capability boundary.**
    - the versioned `agentos_napi_v1` WASM wire ABI implements Node-API v1-v10
      semantics, while `agentos_node_engine_v1` exposes the additional generic
@@ -328,7 +332,7 @@ features:
 - cold compile, cached load, bootstrap, fs, HTTP, crypto, and compression;
 - binary size and resident memory.
 
-Each Node process receives one V8 isolate/context, one root WebAssembly
+Each Node process receives one root V8 isolate/context, one root WebAssembly
 instance, its own memory/tables, closure-private Node-API handle tables,
 syscall context, and limits. Nested `WASM export → import function → JavaScript
 callback → Node builtin → WASM export` stays on V8's supported call stack. R0
@@ -394,6 +398,15 @@ replicated at identical indices, or synchronized on loader updates; it does not
 assume table sharing. Defaults are bounded; the initial runtime thread cap is 8
 including the main thread, with warning at 80 percent and a typed error naming
 `limits.nodeRuntime.maxThreads`.
+
+V8 isolates are thread-affine. The root session isolate continues to own all
+Node/user JavaScript and engine imports; each concurrent pthread therefore uses
+one bounded internal V8 WASM-worker isolate reconstructed from V8's supported
+`CompiledWasmModule` sharing and structured-cloned shared-memory backing store.
+The worker executes only `wasi_thread_start`, receives no user global/context,
+and rejects isolate-local engine operations except the explicitly thread-safe
+Node-API subset. This is multiple isolates inside the one existing V8 engine,
+not a second Store or a second runtime instance.
 
 Thread creation reserves stack and aggregate VM memory before launch. Every
 thread is attributed to the VM for CPU and cancellation. On teardown, futex
@@ -736,10 +749,28 @@ rows are:
 - Node-API scalar calls, property access, callbacks, Buffer copy/pinned paths;
 - idle runtime RSS and aggregate RSS under concurrent VMs.
 
+Every required benchmark is a three-way before/after comparison run with the
+same fixture, input, host, build profile, warmup, sample count, and statistic:
+
+1. pinned upstream Node 24.15.0 running natively on Linux (`nativeNode`);
+2. the frozen pre-refactor AgentOS Node implementation (`legacyAgentos`); and
+3. the new Node-in-WASM implementation in the existing V8 stack
+   (`nodeRuntimeWasm`).
+
+The machine-readable row and human report show the absolute result for all
+three implementations plus the new implementation's numeric delta and ratio
+against both native Node and the legacy implementation. A missing comparator,
+an incomparable workload, or a result reported only as a percentage fails the
+gate. The legacy executable and fixture inputs are frozen in R0 and retained as
+benchmark-only release evidence after the implementation itself is deleted;
+they are never reachable from the shipped runtime after R7.
+
 Before implementation measurements, R0 commits
 `docs-internal/node-runtime-wasm-performance.json` with the exact command,
 fixture, host/build profile, samples, statistic, native/legacy baseline, noise
-rule, and numeric threshold for every row. It includes numeric offender
+rule, and numeric threshold for every row. Each row has explicit
+`nativeNode`, `legacyAgentos`, and `nodeRuntimeWasm` result slots plus computed
+new-versus-native and new-versus-legacy deltas. It includes numeric offender
 termination and control-VM p99 latency ceilings; under hostile concurrency the
 control VM must also remain at or below twice its unloaded p99. Missing or
 post-hoc thresholds fail the gate.
@@ -813,7 +844,8 @@ logs, accepted required failures, or deferred follow-ups do not pass.
 Documentation and implementation-site guidance are part of the gate, not R7
 cleanup. R0 updates this spec, the architecture authority, and the root,
 `crates/v8-runtime`, `crates/execution`, and `crates/kernel` CLAUDE files to say:
-one existing V8 isolate; isolate-local engine calls; one shared Linux/POSIX
+one existing V8 engine with one root session isolate and bounded internal WASM
+worker isolates; root-isolate engine calls; one shared Linux/POSIX
 host OS-capability ABI. Each milestone updates those documents when the contract
 changes. The checker rejects stale second-engine/host-binding claims, any
 OS-capability engine import, any Node-shaped host import, any syscall absent

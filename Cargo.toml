@@ -15,12 +15,15 @@ members = [
     "crates/native-sidecar",
     "crates/native-sidecar-browser",
     "crates/native-sidecar-core",
+    "crates/node-api-v8",
+    "crates/node-runtime-wasm",
     "crates/sidecar-client",
     "crates/sidecar-protocol",
     "crates/v8-runtime",
     "crates/vfs",
     "crates/vfs-store",
     "crates/vm-config",
+    "crates/wasm-posix-host",
 ]
 
 [workspace.package]
@@ -40,6 +43,7 @@ agentos-native-baseline = { path = "crates/native-baseline", version = "0.0.1" }
 agentos-native-sidecar = { path = "crates/native-sidecar", version = "0.0.1" }
 agentos-native-sidecar-browser = { path = "crates/native-sidecar-browser", version = "0.0.1" }
 agentos-native-sidecar-core = { path = "crates/native-sidecar-core", version = "0.0.1" }
+agentos-node-api-v8 = { path = "crates/node-api-v8", version = "0.0.1" }
 agentos-protocol = { path = "crates/agentos-protocol", version = "0.0.1" }
 agentos-sidecar-client = { path = "crates/sidecar-client", version = "0.0.1" }
 agentos-sidecar-core = { path = "crates/agentos-sidecar-core", version = "0.0.1" }
@@ -49,6 +53,7 @@ agentos-sidecar-protocol = { path = "crates/sidecar-protocol", version = "0.0.1"
 agentos-v8-runtime = { path = "crates/v8-runtime", version = "0.0.1" }
 agentos-vfs = { path = "crates/vfs-store", version = "0.0.1" }
 agentos-vm-config = { path = "crates/vm-config", version = "0.0.1" }
+agentos-wasm-posix-host = { path = "crates/wasm-posix-host", version = "0.0.1" }
 vfs = { package = "agentos-vfs-core", path = "crates/vfs", version = "0.0.1" }
 vbare = "0.0.4"
 vbare-compiler = { package = "rivet-vbare-compiler", version = "0.0.5" }

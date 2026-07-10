@@ -1,0 +1,22 @@
+[package]
+entrypoint = "edgejs"
+name = "wasmer/edgejs"
+version = "0.0.1"
+
+# [fs]
+# "/node-lib" = "./lib"
+[fs]
+"/usr/local/ssl" = "./ssl-certs"
+
+[[module]]
+name = "edgejs"
+source = "./build-wasix/edgejs.wasm"
+
+[[command]]
+name = "edgejs"
+module = "edgejs"
+runner = "https://webc.org/runner/wasi"
+
+[command.annotations.wasi]
+atom = "edgejs"
+# env = ["EDGEJS_LIB_DIR=/node-lib"]

@@ -1,0 +1,253 @@
+Build the AgentOS runtime without EdgeJS's second-engine compatibility path.
+
+The AgentOS target runs inside the existing V8 isolate and uses the owned
+POSIX spawn surface. It must neither configure QuickJS's Wasmer backend nor
+compile the Edge safe-mode launcher. Also correct the simdjson source-relative
+include used by the CLI.
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 118b6db..d57ce13 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -17,7 +17,6 @@ include("${PROJECT_ROOT}/cmake/EdgeNapiProvider.cmake")
+ include("${PROJECT_ROOT}/cmake/EdgeOpenSSL.cmake")
+ include("${PROJECT_ROOT}/cmake/EdgeOptions.cmake")
+ include("${PROJECT_ROOT}/cmake/EdgeVendoredDeps.cmake")
+-include("${PROJECT_ROOT}/cmake/EdgeWasmer.cmake")
+ 
+ set(EDGE_VERSION_COMMIT "unknown")
+ if(GIT_FOUND)
+@@ -43,7 +42,6 @@ endif()
+ 
+ edge_configure_options()
+ edge_configure_napi_provider()
+-edge_configure_quickjs_webassembly()
+ 
+ # Hard gate: edge runtime/library sources must never directly reference V8.
+ file(GLOB_RECURSE EDGE_PURE_SRC_FILES
+@@ -307,9 +305,14 @@ if(EDGE_IS_WASIX_TARGET)
+   target_compile_definitions(edge_runtime PRIVATE NODE_OPENSSL_CERT_STORE=1)
+ endif()
+ 
++set(EDGE_COMPAT_EXEC_SOURCE src/edge_compat_exec.cc)
++if(EDGE_AGENTOS_RUNTIME)
++  set(EDGE_COMPAT_EXEC_SOURCE src/edge_agentos_exec.cc)
++endif()
++
+ add_library(edge_cli STATIC
+   src/edge_cli.cc
+-  src/edge_compat_exec.cc
++  ${EDGE_COMPAT_EXEC_SOURCE}
+ )
+ target_include_directories(edge_cli
+   PUBLIC
+@@ -327,11 +330,12 @@ target_compile_definitions(edge_cli
+   PRIVATE
+     EDGE_VERSION_COMMIT="${EDGE_VERSION_COMMIT}"
+     EDGE_VERSION_SUFFIX="${EDGE_VERSION_SUFFIX}"
++    $<$<BOOL:${EDGE_AGENTOS_RUNTIME}>:EDGE_AGENTOS_RUNTIME=1>
+ )
+ if(ENABLE_TRACING)
+   target_compile_definitions(edge_cli PRIVATE ENABLE_TRACING=1)
+ endif()
+-if(NOT EDGE_DEFAULT_WASMER_PACKAGE STREQUAL "")
++if(NOT EDGE_AGENTOS_RUNTIME AND NOT EDGE_DEFAULT_WASMER_PACKAGE STREQUAL "")
+   target_compile_definitions(edge_cli
+     PRIVATE
+       EDGE_DEFAULT_WASMER_PACKAGE="${EDGE_DEFAULT_WASMER_PACKAGE}"
+diff --git a/cmake/EdgeOptions.cmake b/cmake/EdgeOptions.cmake
+index c0afc8c..0f2df36 100644
+--- a/cmake/EdgeOptions.cmake
++++ b/cmake/EdgeOptions.cmake
+@@ -1,4 +1,8 @@
+ function(edge_configure_options)
++  option(EDGE_AGENTOS_RUNTIME
++    "Build the Node runtime for the AgentOS V8 guest-WASM architecture"
++    OFF
++  )
+   set(EDGE_DEFAULT_WASMER_PACKAGE
+     "$ENV{EDGE_WASMER_PACKAGE}"
+     CACHE STRING "Default Wasmer package used by edge --safe"
+@@ -69,6 +73,7 @@ function(edge_configure_options)
+   endif()
+ 
+   set(EDGE_DEFAULT_WASMER_PACKAGE "${EDGE_DEFAULT_WASMER_PACKAGE}" PARENT_SCOPE)
++  set(EDGE_AGENTOS_RUNTIME "${EDGE_AGENTOS_RUNTIME}" PARENT_SCOPE)
+   set(EDGE_EXTERNAL_NAPI_V8 "${EDGE_EXTERNAL_NAPI_V8}" PARENT_SCOPE)
+   set(EDGE_ALLOW_UNDEFINED_IMPORTS "${EDGE_ALLOW_UNDEFINED_IMPORTS}" PARENT_SCOPE)
+   set(EDGE_PREFER_REPO_LOCAL_V8 "${EDGE_PREFER_REPO_LOCAL_V8}" PARENT_SCOPE)
+diff --git a/src/edge_agentos_exec.cc b/src/edge_agentos_exec.cc
+new file mode 100644
+index 0000000..9539c4b
+--- /dev/null
++++ b/src/edge_agentos_exec.cc
+@@ -0,0 +1,136 @@
++#include "edge_compat_exec.h"
++
++#include <cerrno>
++#include <cstdlib>
++#include <cstring>
++#include <filesystem>
++#include <spawn.h>
++#include <string>
++#include <string_view>
++#include <sys/wait.h>
++#include <unistd.h>
++#include <vector>
++
++#include "edge_process.h"
++
++extern char** environ;
++
++namespace {
++
++std::string BuildEdgeBinaryPath() {
++  namespace fs = std::filesystem;
++  fs::path exec_path = EdgeGetProcessExecPath();
++  if (exec_path.empty()) exec_path = "edge";
++  return exec_path.lexically_normal().string();
++}
++
++std::string BuildCompatWrappedPathPrefix() {
++  namespace fs = std::filesystem;
++  fs::path exec_path = EdgeGetProcessExecPath();
++  if (exec_path.empty()) exec_path = "edge";
++  const fs::path exec_dir = exec_path.parent_path();
++  const fs::path compat_dir = (exec_dir / ".." / "bin-compat").lexically_normal();
++
++  std::string updated_path = compat_dir.string();
++  const char* current_path = std::getenv("PATH");
++  if (current_path != nullptr && current_path[0] != '\0') {
++    updated_path.push_back(':');
++    updated_path += current_path;
++  }
++  return updated_path;
++}
++
++std::vector<char*> BuildChildEnvironment(const std::string& path,
++                                         const std::string& edge_binary_path,
++                                         std::string* path_entry,
++                                         std::string* edge_entry) {
++  *path_entry = "PATH=" + path;
++  *edge_entry = "EDGE_BINARY_PATH=" + edge_binary_path;
++
++  std::vector<char*> child_env;
++  if (environ != nullptr) {
++    for (char** current = environ; *current != nullptr; ++current) {
++      const std::string_view entry(*current);
++      if (entry.starts_with("PATH=") || entry.starts_with("EDGE_BINARY_PATH=")) continue;
++      child_env.push_back(*current);
++    }
++  }
++  child_env.push_back(path_entry->data());
++  child_env.push_back(edge_entry->data());
++  child_env.push_back(nullptr);
++  return child_env;
++}
++
++int WaitForChild(pid_t child_pid, std::string* error_out) {
++  int status = 0;
++  while (waitpid(child_pid, &status, 0) < 0) {
++    if (errno == EINTR) continue;
++    if (error_out != nullptr) {
++      *error_out = "waitpid failed for compat command: " + std::string(std::strerror(errno));
++    }
++    return 1;
++  }
++  if (WIFEXITED(status)) return WEXITSTATUS(status);
++  if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
++  if (error_out != nullptr) *error_out = "compat command ended unexpectedly";
++  return 1;
++}
++
++}  // namespace
++
++bool EdgeShouldWrapCompatCommand(std::string_view command) {
++  static constexpr std::string_view kWrappedCommands[] = {
++      "node", "npm", "npx", "pnpm", "pnpx", "yarn", "bun", "deno",
++  };
++  for (const auto candidate : kWrappedCommands) {
++    if (command == candidate) return true;
++  }
++  return false;
++}
++
++int EdgeRunCompatCommand(int argc, const char* const* argv, std::string* error_out) {
++  if (argc <= 1 || argv == nullptr || argv[1] == nullptr) {
++    if (error_out != nullptr) *error_out = "Missing wrapped command";
++    return 1;
++  }
++
++  std::vector<char*> child_argv;
++  child_argv.reserve(static_cast<size_t>(argc));
++  for (int i = 1; i < argc; ++i) {
++    if (argv[i] != nullptr) child_argv.push_back(const_cast<char*>(argv[i]));
++  }
++  child_argv.push_back(nullptr);
++
++  std::string path_entry;
++  std::string edge_entry;
++  const std::vector<char*> child_env =
++      BuildChildEnvironment(BuildCompatWrappedPathPrefix(), BuildEdgeBinaryPath(),
++                            &path_entry, &edge_entry);
++
++  // POSIX.1-2024 spawn contract: https://pubs.opengroup.org/onlinepubs/9799919799/functions/posix_spawn.html
++  pid_t child_pid = -1;
++  const int spawn_error =
++      posix_spawnp(&child_pid, child_argv[0], nullptr, nullptr, child_argv.data(),
++                   child_env.data());
++  if (spawn_error != 0) {
++    if (error_out != nullptr) {
++      *error_out = "spawn failed for compat command: " + std::string(child_argv[0]) +
++                   ": " + std::string(std::strerror(spawn_error));
++    }
++    return spawn_error == ENOENT ? 127 : 1;
++  }
++  return WaitForChild(child_pid, error_out);
++}
++
++int EdgeRunSafeModeCommand(const std::vector<std::string>& forwarded_args,
++                           std::string_view runtime_binary,
++                           std::string_view runtime_package,
++                           std::string* error_out) {
++  (void)forwarded_args;
++  (void)runtime_binary;
++  (void)runtime_package;
++  if (error_out != nullptr) {
++    *error_out = "safe mode is unavailable in the AgentOS Node runtime";
++  }
++  return 1;
++}
+diff --git a/src/edge_cli.cc b/src/edge_cli.cc
+index 5e59546..e73543c 100644
+--- a/src/edge_cli.cc
++++ b/src/edge_cli.cc
+@@ -1279,6 +1279,7 @@ int EdgeRunCli(int argc, const char* const* argv, std::string* error_out) {
+     EDGE_STARTUP_TRACE(startup_trace, "cli.dispatch.compat-command");
+     return EdgeRunCompatCommand(argc, argv, error_out);
+   }
++#if !defined(EDGE_AGENTOS_RUNTIME)
+   const bool env_safe_mode = EdgeIsTruthyEnvVar(std::getenv("EDGE_SAFE"));
+   bool cli_safe_mode = false;
+   for (int i = 1; i < argc; ++i) {
+@@ -1385,6 +1386,7 @@ int EdgeRunCli(int argc, const char* const* argv, std::string* error_out) {
+     EDGE_STARTUP_TRACE(startup_trace, "cli.dispatch.safe-mode");
+     return EdgeRunSafeModeCommand(forwarded_args, wasmer_bin, wasmer_package, error_out);
+   }
++#endif
+   if (argc > 1 && argv[1] != nullptr &&
+       (std::strcmp(argv[1], "-v") == 0 || std::strcmp(argv[1], "--version") == 0)) {
+     EDGE_STARTUP_TRACE(startup_trace, "cli.dispatch.version");
+diff --git a/src/edge_option_helpers.h b/src/edge_option_helpers.h
+index 09569e8..360a21c 100644
+--- a/src/edge_option_helpers.h
++++ b/src/edge_option_helpers.h
+@@ -15,7 +15,7 @@
+ #include <unordered_set>
+ #include <vector>
+ 
+-#include "../../deps/simdjson/simdjson.h"
++#include "../deps/simdjson/simdjson.h"
+ 
+ namespace edge_options {
+ 

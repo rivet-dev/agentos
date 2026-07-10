@@ -1,29 +1,29 @@
-Implement getuid(), geteuid(), getgid(), getegid() via host_user WASM imports.
+Implement getuid(), geteuid(), getgid(), getegid() via agentos_posix_v1 WASM imports.
 
 Un-ifdefs the four user identity functions from unistd.h (they were
 hidden behind __wasilibc_unmodified_upstream). Keeps getgroups, setuid,
 seteuid, setgid, setegid hidden since we don't implement those.
 
 Adds a new source file with implementations that call our
-host_user.getuid, host_user.getgid, host_user.geteuid, host_user.getegid
+agentos_posix_v1.getuid, agentos_posix_v1.getgid, agentos_posix_v1.geteuid, agentos_posix_v1.getegid
 WASM imports.
 
 Import signatures match wasmvm/crates/wasi-ext/src/lib.rs exactly.
 
-diff --git a/libc-bottom-half/sources/host_user_identity.c b/libc-bottom-half/sources/host_user_identity.c
+diff --git a/libc-bottom-half/sources/agentos_posix_v1_identity.c b/libc-bottom-half/sources/agentos_posix_v1_identity.c
 new file mode 100644
 index 0000000..dea8001
 --- /dev/null
-+++ b/libc-bottom-half/sources/host_user_identity.c
++++ b/libc-bottom-half/sources/agentos_posix_v1_identity.c
 @@ -0,0 +1,57 @@
-+// User/group identity via wasmVM host_user imports.
++// User/group identity via wasmVM agentos_posix_v1 imports.
 +//
 +// Replaces wasi-libc's #ifdef'd out stubs with implementations that
 +// call our custom WASM imports:
-+//   host_user.getuid   -> getuid()
-+//   host_user.getgid   -> getgid()
-+//   host_user.geteuid  -> geteuid()
-+//   host_user.getegid  -> getegid()
++//   agentos_posix_v1.getuid   -> getuid()
++//   agentos_posix_v1.getgid   -> getgid()
++//   agentos_posix_v1.geteuid  -> geteuid()
++//   agentos_posix_v1.getegid  -> getegid()
 +//
 +// Import signatures match wasmvm/crates/wasi-ext/src/lib.rs exactly.
 +
@@ -34,16 +34,16 @@ index 0000000..dea8001
 +#define WASM_IMPORT(mod, fn) \
 +    __attribute__((__import_module__(mod), __import_name__(fn)))
 +
-+WASM_IMPORT("host_user", "getuid")
++WASM_IMPORT("agentos_posix_v1", "getuid")
 +uint32_t __host_getuid(uint32_t *ret_uid);
 +
-+WASM_IMPORT("host_user", "getgid")
++WASM_IMPORT("agentos_posix_v1", "getgid")
 +uint32_t __host_getgid(uint32_t *ret_gid);
 +
-+WASM_IMPORT("host_user", "geteuid")
++WASM_IMPORT("agentos_posix_v1", "geteuid")
 +uint32_t __host_geteuid(uint32_t *ret_uid);
 +
-+WASM_IMPORT("host_user", "getegid")
++WASM_IMPORT("agentos_posix_v1", "getegid")
 +uint32_t __host_getegid(uint32_t *ret_gid);
 +
 +uid_t getuid(void) {

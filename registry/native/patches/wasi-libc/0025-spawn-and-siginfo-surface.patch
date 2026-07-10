@@ -1,0 +1,100 @@
+Expose the standard posix_spawn and siginfo_t surfaces already backed by the
+AgentOS process and cooperative-signal implementations.
+
+diff --git a/libc-top-half/musl/include/signal.h b/libc-top-half/musl/include/signal.h
+index b9bd44e..707b5d8 100644
+--- a/libc-top-half/musl/include/signal.h
++++ b/libc-top-half/musl/include/signal.h
+@@ -17,8 +17,12 @@ extern "C" {
+ 
+ #ifndef __wasilibc_unmodified_upstream
+ #define __NEED_pid_t
++#define __NEED_uid_t
++#define __NEED_clock_t
+ #define __NEED_sigset_t
+ #include <bits/alltypes.h>
++/* POSIX.1-2024 signal.h; Linux UAPI: include/uapi/asm-generic/siginfo.h. */
++union sigval { int sival_int; void *sival_ptr; };
+ #define SIG_BLOCK     0
+ #define SIG_UNBLOCK   1
+ #define SIG_SETMASK   2
+@@ -63,10 +67,65 @@ typedef struct sigaltstack stack_t;
+ #include <bits/signal.h>
+ 
+ #ifndef __wasilibc_unmodified_upstream
++#define SI_ASYNCNL (-60)
++#define SI_TKILL (-6)
++#define SI_SIGIO (-5)
++#define SI_ASYNCIO (-4)
++#define SI_MESGQ (-3)
++#define SI_TIMER (-2)
++#define SI_QUEUE (-1)
++#define SI_USER 0
++#define SI_KERNEL 128
++
++#define CLD_EXITED 1
++#define CLD_KILLED 2
++#define CLD_DUMPED 3
++#define CLD_TRAPPED 4
++#define CLD_STOPPED 5
++#define CLD_CONTINUED 6
++
++/* Keep Linux's fixed 128-byte siginfo ABI for waitid and SA_SIGINFO. */
++typedef struct {
++#ifdef __SI_SWAP_ERRNO_CODE
++	int si_signo, si_code, si_errno;
++#else
++	int si_signo, si_errno, si_code;
++#endif
++	union {
++		char __pad[128 - 2*sizeof(int) - sizeof(long)];
++		struct {
++			union {
++				struct { pid_t si_pid; uid_t si_uid; } __piduid;
++				struct { int si_timerid; int si_overrun; } __timer;
++			} __first;
++			union {
++				union sigval si_value;
++				struct { int si_status; clock_t si_utime, si_stime; } __sigchld;
++			} __second;
++		} __si_common;
++		struct { void *si_addr; short si_addr_lsb; } __sigfault;
++		struct { long si_band; int si_fd; } __sigpoll;
++	} __si_fields;
++} siginfo_t;
++#define si_pid     __si_fields.__si_common.__first.__piduid.si_pid
++#define si_uid     __si_fields.__si_common.__first.__piduid.si_uid
++#define si_status  __si_fields.__si_common.__second.__sigchld.si_status
++#define si_utime   __si_fields.__si_common.__second.__sigchld.si_utime
++#define si_stime   __si_fields.__si_common.__second.__sigchld.si_stime
++#define si_value   __si_fields.__si_common.__second.si_value
++#define si_addr    __si_fields.__sigfault.si_addr
++#define si_addr_lsb __si_fields.__sigfault.si_addr_lsb
++#define si_band    __si_fields.__sigpoll.si_band
++#define si_fd      __si_fields.__sigpoll.si_fd
++#define si_timerid __si_fields.__si_common.__first.__timer.si_timerid
++#define si_overrun __si_fields.__si_common.__first.__timer.si_overrun
++#define si_ptr     si_value.sival_ptr
++#define si_int     si_value.sival_int
++
+ struct sigaction {
+ 	union {
+ 		void (*sa_handler)(int);
+-		void (*sa_sigaction)(int, void *, void *);
++		void (*sa_sigaction)(int, siginfo_t *, void *);
+ 	} __sa_handler;
+ 	sigset_t sa_mask;
+ 	int sa_flags;
+diff --git a/scripts/install-include-headers.sh b/scripts/install-include-headers.sh
+index 2766987..2cca3be 100755
+--- a/scripts/install-include-headers.sh
++++ b/scripts/install-include-headers.sh
+@@ -64,7 +64,7 @@ MUSL_OMIT_HEADERS+=("sys/procfs.h" "sys/user.h" "sys/kd.h" "sys/vt.h" \
+     "sys/fanotify.h" "sys/personality.h" "elf.h" "link.h" "bits/link.h" \
+     "scsi/scsi.h" "scsi/scsi_ioctl.h" "scsi/sg.h" "sys/auxv.h" \
+     "shadow.h" "mntent.h" "resolv.h" "pty.h" "ulimit.h" "sys/xattr.h" \
+-    "wordexp.h" "spawn.h" "sys/membarrier.h" "sys/signalfd.h" \
++    "wordexp.h" "sys/membarrier.h" "sys/signalfd.h" \
+     "sys/termios.h" "net/if_arp.h" \
+     "net/ethernet.h" "net/route.h" "netinet/if_ether.h" "netinet/ether.h" \
+     "sys/timerfd.h" "libintl.h" "sys/sysmacros.h" "aio.h")

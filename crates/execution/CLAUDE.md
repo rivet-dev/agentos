@@ -6,11 +6,15 @@ Runtime execution for Node.js (JavaScript/TypeScript) and Python (Pyodide) guest
 
 When simplifying native V8 embedding, prefer concrete native types over new traits unless there is a real need for multiple interchangeable native V8 backends. Do not introduce a native-internal `V8Runtime` abstraction and then treat it like a second portability layer.
 
-**⚠️ ABSOLUTE RULE — NO EXCEPTIONS, NO FALLBACKS, NO "TEMPORARY" WORKAROUNDS:**
-
-**ALL guest code MUST execute inside V8 isolates with kernel-backed polyfills. NEVER spawn real host Node.js processes for guest code. NEVER use `Command::new("node")` for guest execution. NEVER add a "legacy node mode", "host execution fallback", or "execution mode flag" that routes guest code through real host processes. There is exactly ONE execution path for guest JavaScript: V8 isolates managed by `crates/v8-runtime/` with polyfills that route through the kernel. Any code path where guest code reaches the real host — even as a "temporary" measure, even behind a flag, even for "compatibility" — is a critical security violation and MUST NOT be merged.**
-
-If tests fail because they were written for the old `Command::new("node")` path, **fix or delete the tests** — do NOT restore host execution to make them pass.
+**All guest JavaScript executes in the existing native V8 root session
+isolate.** Never spawn
+host Node.js for guest code, add another JavaScript/WASM engine, or introduce a
+fallback that moves guest execution outside the isolate. Node's native runtime
+state belongs in the isolate's `node-runtime.wasm` instance; its only host
+OS-capability surface is the generated AgentOS Linux/POSIX syscall ABI.
+Bounded internal V8 isolates may execute only `wasi_thread_start` for real WASM
+pthreads over the root instance's compiled module and shared memory; they are
+not guest JavaScript contexts or a public worker API.
 
 ## Node.js Isolation Model
 
@@ -27,11 +31,11 @@ services or arbitrary raw-host passthrough. Module loading is fully intercepted
 and guest code never touches real host APIs. See
 `docs-internal/node-runtime-wasm-architecture.md`.
 
-**Current state (⚠️ STILL INCOMPLETE -- see `~/.agents/todo/node-isolation-gaps.md`):**
+**Current migration state:**
 
 Guest JavaScript entrypoints in `javascript.rs` now run only through the shared
 V8 runtime. The current host-reimplemented bindings/event pump and public
-polyfills are migration inputs. Remaining target work belongs in the Node
+polyfills are legacy surfaces to delete. Remaining target work belongs in the Node
 runtime WASM port, the new Node-API engine provider, the shared sysroot/syscall
 implementation, and the kernel—not in new public polyfills or Node-specific
 sidecar services. Restoring a host-Node guest execution fallback is not allowed.
@@ -39,67 +43,24 @@ sidecar services. Restoring a host-Node guest execution fallback is not allowed.
 - Keep any real-host Node helpers isolated to clearly host-only modules used by benchmarks or import-cache tests. Guest JS/WASM/Python runtime code should depend only on neutral shared helpers (for example signal metadata or path resolution), not on files that also own host launch behavior.
 - Guest-side WebAssembly inside the V8 isolate must stay enabled on both fresh isolates and snapshot restores. Real npm packages rely on `WebAssembly.Module`, `WebAssembly.Instance`, and `WebAssembly.instantiate*`, and allowing those APIs does not violate the kernel-isolation boundary because compilation stays inside the isolate. Do not reintroduce an embedder callback that blocks WASM; rely on V8's own implementation limits instead.
 
-**Recovery reference:** The complete working polyfill + V8 isolate code from the original `@secure-exec/core` + `@secure-exec/nodejs` + `@secure-exec/v8` packages has been recovered to `~/.agents/recovery/secure-exec/`. Key files to port:
-- `nodejs/src/bridge/fs.ts` (3,974 lines) -- full kernel-backed `fs`/`fs/promises` polyfill
-- `nodejs/src/bridge/network.ts` (11,149 lines) -- full `net`/`dgram`/`dns` polyfill via kernel socket table
-- `nodejs/src/bridge/child-process.ts` (1,058 lines) -- `child_process` polyfill via kernel process table
-- `nodejs/src/bridge/process.ts` (2,251 lines) -- virtualized `process` global (env, cwd, pid, signals)
-- `nodejs/src/bridge/polyfills.ts` (914 lines) -- polyfill registration and module hijacking
-- `nodejs/src/bridge-handlers.ts` (6,405 lines) -- host-side bridge handlers for all kernel syscalls
-- `nodejs/src/execution-driver.ts` (1,693 lines) -- V8 isolate session lifecycle + bridge setup
-- `kernel/` -- the JS kernel (VFS, process table, socket table, PTY, pipes)
-- `v8/` -- V8 runtime process manager, IPC binary protocol
+- `agentos_napi_v1` and `agentos_node_engine_v1` are isolate-local V8 value
+  operations. They may not open files, sockets, processes, clocks, entropy, or
+  implement Node modules.
+- `agentos_posix_v1` is the only host OS-capability import object. It is a fixed,
+  generated table of typed Linux/POSIX operations backed by the VM-bound kernel
+  provider; it is not a guest-selected raw syscall-number interface.
+- Legacy loader interception, bridge RPC, public builtin replacements, and
+  host-side Node protocol implementations may remain only while their deleting
+  milestone is recorded in `docs-internal/node-runtime-wasm-forbidden.json`.
+  Do not add behavior to them.
 
-The original source repo is at `/home/nathan/secure-exec-1/` (tagged `v0.2.1`).
+## Legacy migration implementation rules (delete by R7)
 
-**Prior art -- the original JS kernel had full polyfills:**
-
-Before the Rust sidecar (commit `5a43882`), the JS kernel (`@secure-exec/core` + `@secure-exec/nodejs` + `packages/posix/`) had complete kernel-backed polyfills for all builtins. The pattern was:
-- **Kernel socket table** -- `kernel.socketTable.create/connect/send/recv` managed all TCP/UDP. Loopback stayed in-kernel; external connections went through a `HostNetworkAdapter`.
-- **Kernel VFS** -- All `fs` operations routed through the kernel VFS via syscall RPC.
-- **Kernel process table** -- `child_process.spawn` routed through `kernel.spawn()`.
-- **SharedArrayBuffer RPC** -- Synchronous syscalls from worker threads used `Atomics.wait` + shared memory buffers (same pattern the Pyodide VFS bridge uses today).
-- **Module hijacking** -- `require('net')` returned the kernel-backed socket implementation, not real `node:net`.
-
-The Rust sidecar kernel already has the VFS, process table, pipe manager, PTY manager, and permission system. What's missing is porting the **polyfill layer**. This is a port of proven patterns, not a greenfield design.
-
-### Current reality vs required state
-
-| Builtin | Required | Current | Gap |
-|---------|----------|---------|-----|
-| `fs` / `fs/promises` | Kernel VFS polyfill | Path-translating wrapper over real `node:fs` | Port: route through kernel VFS via RPC |
-| `child_process` | Kernel process table polyfill | Path-translating wrapper over real `node:child_process` | Port: route through kernel process table |
-| `net` | Kernel socket table polyfill | **No wrapper -- falls through to real `node:net`** | Port: kernel socket table polyfill |
-| `dgram` | Kernel socket table polyfill | **No wrapper -- falls through to real `node:dgram`** | Port: kernel socket table polyfill |
-| `dns` | Kernel DNS resolver polyfill | **No wrapper -- falls through to real `node:dns`** | Port: kernel DNS resolver polyfill |
-| `http` / `https` / `http2` | Built on kernel `net` polyfill | **No wrapper -- falls through to real module** | Port: builds on `net` polyfill |
-| `tls` | Kernel TLS polyfill | Guest-owned polyfill in `node_import_cache.rs` wraps the existing guest `net` transport with host TLS state | Keep client/server entrypoints on guest sockets and avoid direct host `node:tls` listeners/connections |
-| `os` | Kernel-provided values | Guest-owned polyfill in `node_import_cache.rs` virtualizes hostname, CPU, memory, loopback networking, home, and user info | Keep future `os` additions aligned with VM defaults |
-| `vm` | Guest-owned compatibility shim for package loading | Guest-owned compatibility builtin for `Script`, `createContext`, `isContext`, `runInNewContext`, `runInThisContext` | Keep it limited to the compatibility surface; do not fall through to host `node:vm` |
-| `worker_threads` | Guest-owned compatibility shim for package loading | Guest-owned compatibility builtin exposing `isMainThread` plus inert ports; `Worker` construction stays unavailable | Keep it importable for feature detection, but never spawn real threads |
-| `inspector` | Must be denied | **No wrapper -- falls through to real module** | Must stay denied |
-| `v8` | Guest-owned compatibility shim for package loading | Guest-owned compatibility builtin for safe inspection/serialization helpers | Keep it limited to the compatibility surface; do not fall through to host `node:v8` |
-
-### Loader interception (`node_import_cache.rs`)
-
-ESM loader hooks (`loader.mjs`) and CJS `Module._load` patches (`runner.mjs`) are generated from Rust string templates. Every `import`/`require` is intercepted:
-1. `resolveBuiltinAsset()` -- checks `BUILTIN_ASSETS` list. Redirects to a kernel-backed polyfill file.
-2. `resolveDeniedBuiltin()` -- checks `DENIED_BUILTINS` set. Redirects to a stub that throws `ERR_ACCESS_DENIED`. A builtin is in `DENIED_BUILTINS` only if it is NOT in `ALLOWED_BUILTINS`.
-3. **Fall through to `nextResolve()`** -- Node.js default resolution. Returns the real host module. **This must never happen for any builtin that guest code can import.**
-
-`AGENTOS_ALLOWED_NODE_BUILTINS` (JSON string array env var) controls which builtins the host-node loader removes from the deny list. The default list `DEFAULT_ALLOWED_NODE_BUILTINS` lives in `crates/sidecar/src/execution.rs`. Note the live shared-V8 path enforces builtin denial at the Rust resolver (`LocalBridgeState::resolve_module` in `crates/execution/src/javascript.rs`, gated by `AGENTOS_JS_BUILTIN_ALLOWLIST`), not via this env var — see the `jsRuntime` config.
-
-- CommonJS `require` wrappers in `packages/build-tools/bridge-src/` must expose Node-compatible metadata on every per-module require function, not just on `Module.createRequire(...)`. Real packages call `delete require.cache[__filename]`, inspect `require.extensions`, and expect `require.main` to exist while running inside nested CommonJS modules.
-- The builtin `buffer` module wrapper must re-export `Blob` and `File` alongside `Buffer` constants. Next.js bundles `undici` through `require("buffer")`, and missing `buffer.Blob` / `buffer.File` breaks `fetch` support even when global `Blob` / `File` exist.
-- Keep the custom `events.EventEmitter` implementation function-constructible rather than a strict ES class. Legacy npm packages still use `util.inherits(..., EventEmitter)` plus `EventEmitter.call(this)`, and that pattern must stay compatible.
-- Local bridge module resolution must accept `file:` specifiers by converting them back to guest paths before package/path resolution. Next.js and other ESM loaders use `import(pathToFileURL(path).href)` for config and plugin loading.
-
-### Additional hardening layers (defense-in-depth, NOT primary isolation)
-
-1. **`globalThis.fetch` hardening** -- Replaced with `restrictedFetch` (loopback-only on exempt ports). Does NOT cover `http.request()`, `net.connect()`, or `dgram.createSocket()`.
-2. **Node.js `--permission` flag** -- OS-level backstop for filesystem and child_process only. No network restrictions. This is a safety net, not the isolation boundary.
-3. **Guest env stripping** -- `NODE_OPTIONS`, `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `LD_LIBRARY_PATH` stripped before spawn.
-4. **Permissioned Pyodide host launches still need `--allow-worker`.** `python.rs` bootstraps through Node's internal ESM loader worker, so the host process must keep `--allow-worker` enabled even though the guest `node:worker_threads` surface is limited to a compatibility shim and does not permit real worker creation.
+The sections below document behavior that must remain safe while the old
+bridge/polyfill path is still checked in. They are not the target Node
+architecture and must not be used to justify new public behavior. Equivalent
+target behavior belongs in pinned Node JavaScript, `node-runtime.wasm`, the
+shared POSIX provider, or the kernel.
 
 ## Guest `fs` and `fs/promises` Binding Rules
 

@@ -1,0 +1,59 @@
+[package]
+name = "wasmer-napi"
+version = "0.702.0"
+description = "NAPI library for Wasmer WebAssembly runtime"
+edition = "2024"
+license = "MIT"
+resolver = "2"
+
+[features]
+cli = [
+  "dep:wasmer-wasix",
+  "dep:wasmer-cache",
+  "dep:wasmer-compiler-llvm",
+  "dep:wasmer-c-api-imports",
+  "wasmer-c-api-imports/llvm",
+  "dep:tokio",
+  "dep:virtual-fs",
+  "dep:wasmer-types",
+]
+
+[dependencies]
+anyhow = "1"
+# Vendored-in-Wasmer default: when this crate lives at `lib/napi`, resolve the
+# sibling Wasmer crates from the repo checkout.
+#
+# Cargo cannot override a direct `path = ...` dependency back to crates.io via
+# `[patch]`, so standalone builds of this repo should use
+# `./cargo-standalone.sh`, which selects `Cargo.standalone.toml` when the
+# sibling `../api`, `../wasix`, etc. tree is not present.
+wasmer = { version = "=7.2.0", path = "../api" }
+
+# This dependencies are ONLY needed for testing napi in Wasm locally
+wasmer-cache = { version = "=7.2.0", path = "../cache", optional = true }
+wasmer-c-api-imports = { version = "=7.2.0", path = "../c-api-imports", optional = true, default-features = false }
+wasmer-compiler-llvm = { version = "=7.2.0", path = "../compiler-llvm", optional = true }
+wasmer-types = { version = "=7.2.0", path = "../types", optional = true }
+wasmer-wasix = { version = "=0.702.0", path = "../wasix", optional = true }
+virtual-fs = { version = "=0.702.0", path = "../virtual-fs", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
+enum-iterator = "2.3.0"
+
+[build-dependencies]
+cc = "1"
+tar = "0.4"
+ureq = "2"
+xz = "0.1"
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wat = "1"
+
+[package.metadata.docs.rs]
+rustc-args = ["--cfg", "docsrs"]
+
+[[bin]]
+name = "napi_wasmer"
+path = "src/bin/napi_wasmer.rs"
+required-features = ["cli"]

@@ -1,7 +1,7 @@
 Teach WASI libc about host filesystem mode bits and chmod.
 
 WASI preview1 filestat exposes file type but not POSIX permission bits. Agent OS
-provides those bits through the shared host_fs import so native C tools can use
+provides those bits through the shared agentos_posix_v1 import so native C tools can use
 ordinary stat/access/chmod semantics without per-program patches.
 
 --- a/libc-bottom-half/cloudlibc/src/libc/sys/stat/stat_impl.h
@@ -20,24 +20,24 @@ ordinary stat/access/chmod semantics without per-program patches.
 -static inline void to_public_stat(const __wasi_filestat_t *in,
 -                                  struct stat *out) {
 +uint32_t __agentos_host_fd_mode(uint32_t fd) __attribute__((
-+  __import_module__("host_fs"),
++  __import_module__("agentos_posix_v1"),
 +  __import_name__("fd_mode")
 +));
 +
 +uint32_t __agentos_host_path_mode(uint32_t fd, const char *path, size_t path_len,
 +                                  uint32_t follow_symlinks) __attribute__((
-+  __import_module__("host_fs"),
++  __import_module__("agentos_posix_v1"),
 +  __import_name__("path_mode")
 +));
 +
 +uint64_t __agentos_host_fd_size(uint32_t fd) __attribute__((
-+  __import_module__("host_fs"),
++  __import_module__("agentos_posix_v1"),
 +  __import_name__("fd_size")
 +));
 +
 +uint64_t __agentos_host_path_size(uint32_t fd, const char *path, size_t path_len,
 +                                  uint32_t follow_symlinks) __attribute__((
-+  __import_module__("host_fs"),
++  __import_module__("agentos_posix_v1"),
 +  __import_name__("path_size")
 +));
 +
@@ -117,7 +117,7 @@ ordinary stat/access/chmod semantics without per-program patches.
  #include <unistd.h>
  
 +uint32_t __agentos_host_ftruncate(uint32_t fd, uint64_t length) __attribute__((
-+  __import_module__("host_fs"),
++  __import_module__("agentos_posix_v1"),
 +  __import_name__("ftruncate")
 +));
 +
@@ -149,7 +149,7 @@ ordinary stat/access/chmod semantics without per-program patches.
  
 +uint32_t __agentos_host_path_mode(uint32_t fd, const char *path, size_t path_len,
 +                                  uint32_t follow_symlinks) __attribute__((
-+  __import_module__("host_fs"),
++  __import_module__("agentos_posix_v1"),
 +  __import_name__("path_mode")
 +));
 +
@@ -190,12 +190,12 @@ ordinary stat/access/chmod semantics without per-program patches.
 +
 +uint32_t __agentos_host_chmod(uint32_t fd, const char *path, size_t path_len,
 +                              uint32_t mode) __attribute__((
-+    __import_module__("host_fs"),
++    __import_module__("agentos_posix_v1"),
 +    __import_name__("chmod")
 +));
 +
 +uint32_t __agentos_host_fchmod(uint32_t fd, uint32_t mode) __attribute__((
-+    __import_module__("host_fs"),
++    __import_module__("agentos_posix_v1"),
 +    __import_name__("fchmod")
 +));
 +

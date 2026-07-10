@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "architecture": "docs-internal/node-runtime-wasm-architecture.md",
+  "abiBaseline": "docs-internal/node-runtime-wasm-abi.json",
+  "abiInventories": {
+    "agentos_napi_v1": "docs-internal/node-runtime-wasm-abi/agentos_napi_v1.json",
+    "agentos_node_engine_v1": "docs-internal/node-runtime-wasm-abi/agentos_node_engine_v1.json",
+    "agentos_posix_v1": "docs-internal/node-runtime-wasm-abi/agentos_posix_v1.json",
+    "node-runtime-wasm-exports": "docs-internal/node-runtime-wasm-abi/reactor-exports.json"
+  },
+  "nodeApiStableContract": "docs-internal/node-runtime-wasm-abi/node-api-v1-v10.json",
+  "posixContract": "docs-internal/node-runtime-wasm-abi/agentos-posix-contract.json",
+  "napiRuntimeExperimentalImports": [
+    "node_api_create_sharedarraybuffer",
+    "node_api_is_sharedarraybuffer",
+    "node_api_set_prototype"
+  ],
+  "requiredImportModules": {
+    "agentos_napi_v1": "isolate-local-v8",
+    "agentos_node_engine_v1": "isolate-local-v8",
+    "agentos_posix_v1": "vm-kernel-linux-posix",
+    "env": "wasm-linear-memory"
+  },
+  "forbiddenImportModules": [
+    "wasi",
+    "wasi_snapshot_preview1",
+    "wasi_unstable",
+    "napi",
+    "napi_extension_wasmer_v0",
+    "napi_extension_wasmer_v1",
+    "wasix_32v1",
+    "wasix_64v1"
+  ],
+  "forbiddenCargoPackagePrefixes": [
+    "wasmer",
+    "wasmtime",
+    "wasmedge",
+    "wasmi",
+    "wasm3",
+    "wamr"
+  ],
+  "forbiddenPosixNamePatterns": [
+    "^(node|napi|libuv|uv_|openssl|tls|http|https)_",
+    "^(read_file|write_file|fetch|resolve_module|load_module)$"
+  ],
+  "temporaryFileOnlyAllowlist": [
+    {
+      "path": "crates/node-runtime-wasm/vendor/**",
+      "deleteBy": "R7",
+      "reason": "Pinned source-porting inputs may retain unreachable upstream Wasmer/WASIX implementation files."
+    },
+    {
+      "path": "crates/node-runtime-wasm/patches/**",
+      "deleteBy": "R7",
+      "reason": "Patches necessarily quote removed upstream import names and engine paths."
+    },
+    {
+      "path": "crates/node-runtime-wasm/scripts/vendor-sources.mjs",
+      "deleteBy": "R7",
+      "reason": "The source inventory names upstream Wasmer metadata that is retained only as a pinned porting reference."
+    },
+    {
+      "path": "crates/node-runtime-wasm/src/bin/normalize-runtime-imports.rs",
+      "deleteBy": "R7",
+      "reason": "The build-time normalizer recognizes historical wasi-libc transport names but rejects them from the final module."
+    }
+  ],
+  "legacyMigrationPaths": [
+    {
+      "path": "crates/execution/src/node_import_cache.rs",
+      "deleteBy": "R7",
+      "reason": "Host-Node runner materialization and public Node polyfill source."
+    },
+    {
+      "path": "crates/execution/assets/polyfill-registry.json",
+      "deleteBy": "R7",
+      "reason": "Public Node builtin replacement inventory."
+    },
+    {
+      "path": "packages/build-tools/bridge-src/**",
+      "deleteBy": "R7",
+      "reason": "Host-reimplemented Node module and bridge behavior superseded by the WASM runtime."
+    },
+    {
+      "path": "crates/bridge/bridge-contract.json",
+      "deleteBy": "R7",
+      "reason": "Legacy Node-shaped bridge opcodes must be removed while generic non-Node bridge behavior is retained elsewhere."
+    }
+  ]
+}

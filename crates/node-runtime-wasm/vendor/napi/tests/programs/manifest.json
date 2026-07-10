@@ -1,0 +1,169 @@
+{
+  "tests": [
+    {
+      "name": "hello_napi_test",
+      "description": "Basic string, int32, double creation and readback",
+      "expected_stdout": "HELLO_NAPI_TEST_OK=1\n"
+    },
+    {
+      "name": "typeof_test",
+      "description": "napi_typeof for undefined, null, boolean, number, string, object",
+      "expected_stdout": "TYPEOF_TEST_OK=1\n"
+    },
+    {
+      "name": "object_roundtrip_test",
+      "description": "Object property set/get with named and keyed properties",
+      "expected_stdout": "OBJECT_ROUNDTRIP_TEST_OK=1\n"
+    },
+    {
+      "name": "array_test",
+      "description": "Array creation, element set/get, and length check",
+      "expected_stdout": "ARRAY_TEST_OK=1\n"
+    },
+    {
+      "name": "run_script_test",
+      "description": "Run JavaScript via napi_run_script and verify results",
+      "expected_stdout": "RUN_SCRIPT_TEST_OK=1\n"
+    },
+    {
+      "name": "test_string",
+      "description": "String encoding: UTF-8 and Latin-1 create/readback, auto-length, truncation",
+      "expected_stdout": "TEST_STRING_OK=1\n"
+    },
+    {
+      "name": "test_number",
+      "description": "Complete number types: int32, uint32, int64, double with edge cases",
+      "expected_stdout": "TEST_NUMBER_OK=1\n"
+    },
+    {
+      "name": "test_error",
+      "description": "Error creation (Error/TypeError/RangeError), is_error, throw/exception handling",
+      "expected_stdout": "TEST_ERROR_OK=1\n"
+    },
+    {
+      "name": "test_coercion",
+      "description": "Type coercion: coerce_to_bool/number/string/object",
+      "expected_stdout": "TEST_COERCION_OK=1\n"
+    },
+    {
+      "name": "test_symbol",
+      "description": "Symbol creation with/without description, typeof, identity, as property key",
+      "expected_stdout": "TEST_SYMBOL_OK=1\n"
+    },
+    {
+      "name": "test_object_properties",
+      "description": "Advanced object property operations: has/delete, property names, freeze, seal, prototype",
+      "expected_stdout": "TEST_OBJECT_PROPERTIES_OK=1\n"
+    },
+    {
+      "name": "test_bigint",
+      "description": "BigInt int64/uint64 roundtrip, lossless flag, typeof",
+      "expected_stdout": "TEST_BIGINT_OK=1\n"
+    },
+    {
+      "name": "test_date",
+      "description": "Date creation, is_date, get_date_value",
+      "expected_stdout": "TEST_DATE_OK=1\n"
+    },
+    {
+      "name": "test_promise",
+      "description": "Promise creation, is_promise, resolve_deferred",
+      "expected_stdout": "TEST_PROMISE_OK=1\n"
+    },
+    {
+      "name": "test_arraybuffer",
+      "description": "ArrayBuffer creation, is_arraybuffer, info, detach, is_detached",
+      "expected_stdout": "TEST_ARRAYBUFFER_OK=1\n"
+    },
+    {
+      "name": "test_typedarray",
+      "description": "TypedArray creation (Uint8Array), is_typedarray, info",
+      "expected_stdout": "TEST_TYPEDARRAY_OK=1\n"
+    },
+    {
+      "name": "test_dataview",
+      "description": "DataView creation, is_dataview, info",
+      "expected_stdout": "TEST_DATAVIEW_OK=1\n"
+    },
+    {
+      "name": "test_reference",
+      "description": "Reference create/get_value/ref/unref/delete lifecycle",
+      "expected_stdout": "TEST_REFERENCE_OK=1\n"
+    },
+    {
+      "name": "test_external",
+      "description": "External value creation, typeof, get_value_external",
+      "expected_stdout": "TEST_EXTERNAL_OK=1\n"
+    },
+    {
+      "name": "test_type_tag",
+      "description": "Type tag object, check matching/non-matching tags",
+      "expected_stdout": "TEST_TYPE_TAG_OK=1\n"
+    },
+    {
+      "name": "test_escapable_handle_scope",
+      "description": "Open/escape/close escapable handle scope",
+      "expected_stdout": "TEST_ESCAPABLE_HANDLE_SCOPE_OK=1\n"
+    },
+    {
+      "name": "test_function_call",
+      "description": "Call JS functions via napi_call_function with arguments",
+      "expected_stdout": "TEST_FUNCTION_CALL_OK=1\n"
+    },
+    {
+      "name": "test_string_utf16",
+      "description": "UTF-16 string creation and readback",
+      "expected_stdout": "TEST_STRING_UTF16_OK=1\n"
+    },
+    {
+      "name": "test_bigint_words",
+      "description": "BigInt arbitrary-precision words create/readback",
+      "expected_stdout": "TEST_BIGINT_WORDS_OK=1\n"
+    },
+    {
+      "name": "test_instance_data",
+      "description": "Instance data set/get and adjust_external_memory",
+      "expected_stdout": "TEST_INSTANCE_DATA_OK=1\n"
+    },
+    {
+      "name": "test_buffer",
+      "description": "Node Buffer create/copy/is_buffer/get_buffer_info",
+      "expected_stdout": "TEST_BUFFER_OK=1\n"
+    },
+    {
+      "name": "test_node_api_misc",
+      "description": "napi_get_node_version",
+      "expected_stdout": "TEST_NODE_API_MISC_OK=1\n"
+    },
+    {
+      "name": "test_wrap",
+      "description": "Object wrap/unwrap/remove_wrap and add_finalizer",
+      "expected_stdout": "TEST_WRAP_OK=1\n"
+    },
+    {
+      "name": "test_callback",
+      "description": "napi_create_function, napi_get_cb_info, callback dispatch",
+      "expected_stdout": "TEST_CALLBACK_OK=1\n"
+    },
+    {
+      "name": "test_define_properties",
+      "description": "Object methods via napi_create_function + set_named_property",
+      "expected_stdout": "TEST_DEFINE_PROPERTIES_OK=1\n"
+    },
+    {
+      "name": "test_constructor",
+      "description": "napi_new_instance, napi_get_new_target, instanceof",
+      "expected_stdout": "TEST_CONSTRUCTOR_OK=1\n"
+    },
+    {
+      "name": "test_define_class",
+      "description": "napi_define_class with constructor and methods",
+      "expected_stdout": "TEST_DEFINE_CLASS_OK=1\n"
+    },
+    {
+      "name": "test_unofficial_extension",
+      "description": "Wasmer extension import resolves via napi_extension_wasmer_v0",
+      "expected_stdout": "TEST_UNOFFICIAL_EXTENSION_OK=1\n"
+    }
+  ]
+}

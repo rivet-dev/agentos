@@ -1683,11 +1683,15 @@ function readSpawnStdinRedirectBytes(fd) {
     if (handle.guestPath === '/dev/null') {
       return Buffer.alloc(0);
     }
-    const stats = fsModule.statSync(handle.guestPath);
+    const mapping = resolveHostFsMapping(handle.guestPath);
+    if (!mapping || typeof mapping.hostPath !== 'string') {
+      return null;
+    }
+    const stats = fsModule.statSync(mapping.hostPath);
     if (!stats.isFile()) {
       return null;
     }
-    return Buffer.from(fsModule.readFileSync(handle.guestPath));
+    return Buffer.from(fsModule.readFileSync(mapping.hostPath));
   }
 
   return null;
@@ -4309,6 +4313,12 @@ function resolveHostFsMapping(value, fromGuestDir = HOST_FS_GUEST_CWD) {
   return resolveModuleGuestPathToHostMapping(guestPath);
 }
 
+// A guest fd is a capability in the VM fd table, never a host-process fd
+// number. Unknown descriptors must fail closed like EBADF; see fstat(2),
+// fchmod(2), and ftruncate(2):
+// https://man7.org/linux/man-pages/man2/stat.2.html
+// https://man7.org/linux/man-pages/man2/fchmod.2.html
+// https://man7.org/linux/man-pages/man2/ftruncate.2.html
 const hostFsImport = {
   fd_mode(fd) {
     const descriptor = Number(fd) >>> 0;
@@ -4320,23 +4330,39 @@ const hostFsImport = {
     if (handle?.kind === 'pipe-read' || handle?.kind === 'pipe-write') {
       return HOST_FS_MODE_FIFO;
     }
+    if (!handle) {
+      return 0;
+    }
 
     try {
+      if (typeof handle.guestPath === 'string') {
+        const mapping = resolveHostFsMapping(handle.guestPath);
+        if (!mapping || typeof mapping.hostPath !== 'string') {
+          return 0;
+        }
+        return hostFsModeFromStat(fsModule.statSync(mapping.hostPath));
+      }
       const targetFd =
-        typeof handle?.ioFd === 'number'
+        typeof handle.ioFd === 'number'
           ? Number(handle.ioFd) >>> 0
-          : typeof handle?.targetFd === 'number'
+          : typeof handle.targetFd === 'number'
             ? Number(handle.targetFd) >>> 0
-            : descriptor;
-      return hostFsModeFromStat(fsModule.fstatSync(targetFd)) || HOST_FS_MODE_REGULAR;
+            : null;
+      if (targetFd == null) {
+        return 0;
+      }
+      return hostFsModeFromStat(fsModule.fstatSync(targetFd));
     } catch {
-      return HOST_FS_MODE_REGULAR;
+      return 0;
     }
   },
   fd_size(fd) {
     const descriptor = Number(fd) >>> 0;
     try {
       const handle = lookupFdHandle(descriptor);
+      if (!handle) {
+        return (1n << 64n) - 1n;
+      }
       const rememberedSize = rememberedHostFsSize(handle?.guestPath);
       if (rememberedSize != null) {
         return rememberedSize;
@@ -4345,15 +4371,18 @@ const hostFsImport = {
         return BigInt(fsModule.fstatSync(Number(handle.ioFd) >>> 0).size ?? -1);
       }
       if (typeof handle?.guestPath === 'string') {
-        const hostPath = resolveHostFsPath(handle.guestPath);
-        if (typeof hostPath === 'string') {
-          return BigInt(fsModule.statSync(hostPath).size ?? -1);
+        const mapping = resolveHostFsMapping(handle.guestPath);
+        if (mapping && typeof mapping.hostPath === 'string') {
+          return BigInt(fsModule.statSync(mapping.hostPath).size ?? -1);
         }
-        return BigInt(fsModule.statSync(handle.guestPath).size ?? -1);
+        return (1n << 64n) - 1n;
       }
       const targetFd = typeof handle?.targetFd === 'number'
         ? Number(handle.targetFd) >>> 0
-        : descriptor;
+        : null;
+      if (targetFd == null) {
+        return (1n << 64n) - 1n;
+      }
       return BigInt(fsModule.fstatSync(targetFd).size ?? -1);
     } catch {
       return (1n << 64n) - 1n;
@@ -4405,11 +4434,7 @@ const hostFsImport = {
             : fsModule.statSync(hostPath);
         return BigInt(stat?.size ?? -1);
       }
-      const guestStat =
-        Number(followSymlinks) === 0
-          ? fsModule.lstatSync(target)
-          : fsModule.statSync(target);
-      return BigInt(guestStat?.size ?? -1);
+      return (1n << 64n) - 1n;
     } catch {
       return (1n << 64n) - 1n;
     }
@@ -4443,7 +4468,7 @@ const hostFsImport = {
     try {
       const descriptor = Number(fd) >>> 0;
       const handle = lookupFdHandle(descriptor);
-      if (handle?.readOnly === true) {
+      if (!handle || handle.readOnly === true) {
         return 1;
       }
       if (typeof handle?.guestPath === 'string') {
@@ -4455,7 +4480,14 @@ const hostFsImport = {
         return 0;
       }
       const targetFd =
-        typeof handle?.targetFd === 'number' ? Number(handle.targetFd) >>> 0 : descriptor;
+        typeof handle.ioFd === 'number'
+          ? Number(handle.ioFd) >>> 0
+          : typeof handle.targetFd === 'number'
+            ? Number(handle.targetFd) >>> 0
+            : null;
+      if (targetFd == null) {
+        return 1;
+      }
       fsModule.fchmodSync(targetFd, Number(mode) >>> 0);
       return 0;
     } catch {
@@ -4471,7 +4503,7 @@ const hostFsImport = {
         return 1;
       }
       const handle = lookupFdHandle(descriptor);
-      if (handle?.readOnly === true) {
+      if (!handle || handle.readOnly === true) {
         return 1;
       }
       if (typeof handle?.ioFd === 'number') {
@@ -4483,7 +4515,11 @@ const hostFsImport = {
         return 0;
       }
       if (typeof handle?.guestPath === 'string') {
-        const pathFd = fsModule.openSync(handle.guestPath, 0o1, 0o666);
+        const mapping = resolveHostFsMapping(handle.guestPath);
+        if (!mapping || typeof mapping.hostPath !== 'string' || mapping.readOnly) {
+          return 1;
+        }
+        const pathFd = fsModule.openSync(mapping.hostPath, 0o1, 0o666);
         try {
           fsModule.ftruncateSync(pathFd, nextSize);
           if ((handle.position ?? 0) > nextSize) {
@@ -5404,8 +5440,15 @@ wasiImport.fd_filestat_set_size = (fd, size) => {
     }
     if (typeof handle.guestPath === 'string') {
       try {
+        const mapping = resolveHostFsMapping(handle.guestPath);
+        if (!mapping || typeof mapping.hostPath !== 'string') {
+          return WASI_ERRNO_BADF;
+        }
+        if (mapping.readOnly) {
+          return WASI_ERRNO_ROFS;
+        }
         const nextSize = Number(size);
-        const pathFd = fsModule.openSync(handle.guestPath, 0o1, 0o666);
+        const pathFd = fsModule.openSync(mapping.hostPath, 0o1, 0o666);
         try {
           fsModule.ftruncateSync(pathFd, nextSize);
           if ((handle.position ?? 0) > nextSize) {
@@ -6004,9 +6047,27 @@ if (__agentOSWasiSyscallPhasesEnabled) {
   }
 }
 
+// Shared versioned Linux/POSIX transport used by both standalone WASM and the
+// Node runtime. Individual functions retain the same syscall semantics,
+// authorization, errno mapping, and accounting as their wasi-libc declarations;
+// this merged namespace is not a new Node-shaped service surface.
+// See POSIX.1-2024: https://pubs.opengroup.org/onlinepubs/9799919799/
+const agentosPosixImport = Object.freeze({
+  ...wasiImport,
+  ...hostUserImport,
+  ...hostFsImport,
+  ...(permissionTier === 'full'
+    ? hostProcessImport
+    : permissionTier === 'isolated'
+      ? {}
+      : limitedHostProcessImport),
+  ...(permissionTier === 'full' ? hostNetImport : {}),
+});
+
 const instance = __agentOSWasmMeasurePhase('WebAssembly.Instance', () => new WebAssembly.Instance(module, {
   wasi_snapshot_preview1: wasiImport,
   wasi_unstable: wasiImport,
+  agentos_posix_v1: agentosPosixImport,
   host_tty: hostTtyImport,
   // Read-write commands like DuckDB need fd_dup_min from the patched
   // wasi-libc surface, but broader host_process capabilities stay

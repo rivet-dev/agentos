@@ -1,8 +1,8 @@
-Implement posix_spawn(), posix_spawnp(), waitpid(), wait() via host_process WASM imports.
+Implement posix_spawn(), posix_spawnp(), waitpid(), wait() via agentos_posix_v1 WASM imports.
 
 Replaces musl's posix_spawn (which uses fork/clone, unavailable in WASI)
 and waitpid (which uses SYS_wait4) with implementations that call our
-host_process.proc_spawn and host_process.proc_waitpid WASM imports.
+agentos_posix_v1.proc_spawn and agentos_posix_v1.proc_waitpid WASM imports.
 
 Also provides posix_spawn_file_actions and posix_spawnattr helpers since
 musl's versions (in process/) are not compiled for WASI.
@@ -18,12 +18,12 @@ Import signatures match wasmvm/crates/wasi-ext/src/lib.rs exactly.
 --- /dev/null	2026-03-16 11:59:07.564000026 -0700
 +++ b/libc-bottom-half/sources/host_spawn_wait.c	2026-03-19 20:51:08.698271081 -0700
 @@ -0,0 +1,316 @@
-+// Process spawning and waiting via wasmVM host_process imports.
++// Process spawning and waiting via wasmVM agentos_posix_v1 imports.
 +//
 +// Replaces musl's posix_spawn (which uses fork/clone, unavailable in WASI)
 +// and waitpid (which uses SYS_wait4) with our custom WASM imports:
-+//   host_process.proc_spawn   -> posix_spawn(), posix_spawnp()
-+//   host_process.proc_waitpid -> waitpid(), wait()
++//   agentos_posix_v1.proc_spawn   -> posix_spawn(), posix_spawnp()
++//   agentos_posix_v1.proc_waitpid -> waitpid(), wait()
 +//
 +// Also provides posix_spawn_file_actions and posix_spawnattr helpers
 +// (musl's process/ directory is not compiled for WASI).
@@ -66,9 +66,9 @@ Import signatures match wasmvm/crates/wasi-ext/src/lib.rs exactly.
 +#define WASM_IMPORT(mod, fn) \
 +    __attribute__((__import_module__(mod), __import_name__(fn)))
 +
-+// host_process.proc_spawn(argv_ptr, argv_len, envp_ptr, envp_len,
++// agentos_posix_v1.proc_spawn(argv_ptr, argv_len, envp_ptr, envp_len,
 +//   stdin_fd, stdout_fd, stderr_fd, cwd_ptr, cwd_len, ret_pid) -> errno
-+WASM_IMPORT("host_process", "proc_spawn")
++WASM_IMPORT("agentos_posix_v1", "proc_spawn")
 +uint32_t __host_proc_spawn(
 +    const uint8_t *argv_ptr, uint32_t argv_len,
 +    const uint8_t *envp_ptr, uint32_t envp_len,
@@ -76,8 +76,8 @@ Import signatures match wasmvm/crates/wasi-ext/src/lib.rs exactly.
 +    const uint8_t *cwd_ptr, uint32_t cwd_len,
 +    uint32_t *ret_pid);
 +
-+// host_process.proc_waitpid(pid, options, ret_status, ret_pid) -> errno
-+WASM_IMPORT("host_process", "proc_waitpid")
++// agentos_posix_v1.proc_waitpid(pid, options, ret_status, ret_pid) -> errno
++WASM_IMPORT("agentos_posix_v1", "proc_waitpid")
 +uint32_t __host_proc_waitpid(uint32_t pid, uint32_t options,
 +    uint32_t *ret_status, uint32_t *ret_pid);
 +

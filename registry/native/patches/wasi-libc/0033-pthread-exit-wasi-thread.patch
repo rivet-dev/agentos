@@ -1,0 +1,91 @@
+Implement pthread_exit through the WASI thread trampoline.
+
+The wasi-threads host ABI ends a worker when its exported wasi_thread_start
+returns, but stock wasi-libc keeps __pthread_exit private and returning. Install
+a thread-local setjmp boundary at that export so pthread_exit and deferred
+cancellation can run musl cleanup/TLS destructors, then unwind to the trampoline
+without adding a Node-shaped or unrestricted host import.
+
+Reference: POSIX pthread_exit(3p):
+https://pubs.opengroup.org/onlinepubs/9799919799/functions/pthread_exit.html
+
+diff --git a/libc-top-half/musl/src/thread/pthread_create.c b/libc-top-half/musl/src/thread/pthread_create.c
+--- a/libc-top-half/musl/src/thread/pthread_create.c
++++ b/libc-top-half/musl/src/thread/pthread_create.c
+@@ -8,6 +8,7 @@
+ #include <string.h>
+ #include <stddef.h>
+ #ifndef __wasilibc_unmodified_upstream
++#include <setjmp.h>
+ #include <stdatomic.h>
+ #endif
+ 
+@@ -64,4 +65,6 @@ static void process_map_base_deferred_free()
+ 	free(map_base_deferred_free);
+ 	map_base_deferred_free = NULL;
+ }
++static _Thread_local jmp_buf wasi_thread_exit_jmp;
++static _Thread_local int wasi_thread_exit_jmp_active;
+ #endif
+@@ -75,7 +78,7 @@ static void process_map_base_deferred_free()
+ #ifdef __wasilibc_unmodified_upstream
+ _Noreturn void __pthread_exit(void *result)
+ #else
+-static void __pthread_exit(void *result)
++void __pthread_exit(void *result)
+ #endif
+ {
+ 	pthread_t self = __pthread_self();
+@@ -208,7 +211,7 @@ static void __pthread_exit(void *result)
+ 		process_map_base_deferred_free();
+ 		map_base_deferred_free = self->map_base;
+ 		// Can't use `exit()` here, because it is too high level
+-		return;
++		goto wasi_thread_exit;
+ 	}
+ #endif
+ 
+@@ -239,2 +242,6 @@ static void __pthread_exit(void *result)
+ #endif
++#ifndef __wasilibc_unmodified_upstream
++wasi_thread_exit:
++	if (wasi_thread_exit_jmp_active) longjmp(wasi_thread_exit_jmp, 1);
++#endif
+ }
+@@ -314,8 +321,12 @@ hidden void __wasi_thread_start_C(int tid, void *p)
+ 	// whichever thread (parent or child) reaches this point first can proceed
+ 	// without waiting.
+ 	atomic_store((atomic_int *) &(self->tid), tid);
+-	// Execute the user's start function.
+-	__pthread_exit(args->start_func(args->start_arg));
++	// Returning from this export is the wasi-threads worker-exit operation.
++	wasi_thread_exit_jmp_active = 1;
++	if (setjmp(wasi_thread_exit_jmp) == 0) {
++		__pthread_exit(args->start_func(args->start_arg));
++	}
++	wasi_thread_exit_jmp_active = 0;
+ }
+ #endif
+ 
+@@ -610,7 +622,5 @@ fail:
+ 	return EAGAIN;
+ }
+ 
+-#ifdef __wasilibc_unmodified_upstream
+ weak_alias(__pthread_exit, pthread_exit);
+-#endif
+ weak_alias(__pthread_create, pthread_create);
+diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -649,6 +649,10 @@ $(BULK_MEMORY_OBJS) $(BULK_MEMORY_SO_OBJS): CFLAGS += \
+ $(LIBSETJMP_OBJS) $(LIBSETJMP_SO_OBJS): CFLAGS += \
+         -mllvm -wasm-enable-sjlj
+ 
++$(filter %/thread/pthread_create.o,$(LIBC_TOP_HALF_ALL_OBJS)) \
++$(filter %/thread/pthread_create.pic.o,$(LIBC_TOP_HALF_ALL_SO_OBJS)): CFLAGS += \
++        -mllvm -wasm-enable-sjlj
++
+ $(LIBWASI_EMULATED_SIGNAL_MUSL_OBJS) $(LIBWASI_EMULATED_SIGNAL_MUSL_SO_OBJS): CFLAGS += \
+ 	    -D_WASI_EMULATED_SIGNAL
+ 

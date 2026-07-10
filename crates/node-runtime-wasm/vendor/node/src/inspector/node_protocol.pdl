@@ -1,0 +1,11 @@
+# Please notify @nodejs/v8-inspector and @nodejs/trace-events before modifying this file
+version
+  major 1
+  minor 0
+
+include domain_io.pdl
+include domain_network.pdl
+include domain_node_runtime.pdl
+include domain_node_tracing.pdl
+include domain_node_worker.pdl
+include domain_target.pdl

@@ -1,0 +1,19 @@
+Expose pthread_exit(3p) when the POSIX thread model is enabled.
+
+wasi-libc already compiles the real pthread_exit implementation into threaded
+libc.a, but its public header accidentally omits the declaration in the
+_REENTRANT branch. Unmodified threaded consumers such as OpenSSL require the
+standard declaration.
+
+diff --git a/libc-top-half/musl/include/pthread.h b/libc-top-half/musl/include/pthread.h
+--- a/libc-top-half/musl/include/pthread.h
++++ b/libc-top-half/musl/include/pthread.h
+@@ -85,6 +85,8 @@ int pthread_join(pthread_t, void **);
+ #else
+ #if defined(_WASI_EMULATED_PTHREAD) || defined(_REENTRANT)
+ int pthread_create(pthread_t *__restrict, const pthread_attr_t *__restrict, void *(*)(void *), void *__restrict);
++/* POSIX pthread_exit(3p): https://pubs.opengroup.org/onlinepubs/9799919799/functions/pthread_exit.html */
++_Noreturn void pthread_exit(void *);
+ int pthread_detach(pthread_t);
+ int pthread_join(pthread_t, void **);
+ #else

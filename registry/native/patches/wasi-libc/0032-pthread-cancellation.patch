@@ -1,0 +1,63 @@
+Expose and implement POSIX deferred pthread cancellation for the owned sysroot.
+
+Stock wasi-libc hides pthread_cancel(3) and replaces it with ENOTSUP even in its
+real thread model. AgentOS treats the target as POSIX and owns cancellation and
+worker teardown. The implementation below provides deferred cancellation at
+pthread cancellation points without depending on host signals; runtime teardown
+separately wakes blocked kernel/readiness waits before cancellation is observed.
+
+Reference: POSIX pthread_cancel(3p) and pthread_testcancel(3p):
+https://pubs.opengroup.org/onlinepubs/9799919799/functions/pthread_cancel.html
+
+diff --git a/libc-top-half/musl/include/pthread.h b/libc-top-half/musl/include/pthread.h
+--- a/libc-top-half/musl/include/pthread.h
++++ b/libc-top-half/musl/include/pthread.h
+@@ -115,9 +115,9 @@ int pthread_equal(pthread_t, pthread_t);
+ 
+ int pthread_setcancelstate(int, int *);
+ int pthread_setcanceltype(int, int *);
++#ifdef _REENTRANT
++int pthread_cancel(pthread_t);
++#endif
+ void pthread_testcancel(void);
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no cancellation support. */
+-int pthread_cancel(pthread_t);
+-#endif
+ 
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no CPU scheduling support. */
+ int pthread_getschedparam(pthread_t, int *__restrict, struct sched_param *__restrict);
+diff --git a/libc-top-half/musl/src/thread/pthread_cancel.c b/libc-top-half/musl/src/thread/pthread_cancel.c
+--- a/libc-top-half/musl/src/thread/pthread_cancel.c
++++ b/libc-top-half/musl/src/thread/pthread_cancel.c
+@@ -101,8 +101,30 @@ int pthread_cancel(pthread_t t)
+ 	return pthread_kill(t, SIGCANCEL);
+ }
+ #else
++#ifdef _REENTRANT
++void __testcancel()
++{
++	pthread_t self = __pthread_self();
++	if (self->cancel && self->canceldisable == PTHREAD_CANCEL_ENABLE)
++		pthread_exit(PTHREAD_CANCELED);
++}
++
+ int pthread_cancel(pthread_t t)
+ {
+-	return ENOTSUP;
++	/*
++	 * AgentOS WASM threads have shared memory/atomics but no host signal
++	 * delivery. Set the same per-thread cancellation flag used by musl and
++	 * let the target observe it at the next POSIX cancellation point.
++	 */
++	a_store(&t->cancel, 1);
++	if (t == pthread_self())
++		__testcancel();
++	return 0;
+ }
++#else
++int pthread_cancel(pthread_t t)
++{
++	return ENOTSUP;
++}
++#endif
+ #endif

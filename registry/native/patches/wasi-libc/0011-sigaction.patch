@@ -31,7 +31,7 @@ index 0000000..303734f
 --- /dev/null
 +++ b/libc-bottom-half/sources/host_sigaction.c
 @@ -0,0 +1,196 @@
-+// sigaction() / signal() / __wasi_signal_trampoline via wasmVM host_process import.
++// sigaction() / signal() / __wasi_signal_trampoline via wasmVM agentos_posix_v1 import.
 +//
 +// Cooperative signal handling for WasmVM:
 +// 1. C program registers a disposition with sigaction()
@@ -54,7 +54,7 @@ index 0000000..303734f
 +#define WASM_IMPORT(mod, fn) \
 +    __attribute__((__import_module__(mod), __import_name__(fn)))
 +
-+WASM_IMPORT("host_process", "proc_sigaction")
++WASM_IMPORT("agentos_posix_v1", "proc_sigaction")
 +uint32_t __host_proc_sigaction(
 +    uint32_t signal,
 +    uint32_t action,

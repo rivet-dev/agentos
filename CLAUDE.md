@@ -78,6 +78,11 @@ approved architecture is recorded in
   layer, libuv, and native dependencies into one bounded `node-runtime.wasm`
   instance per agent. The kernel plays Linux's role; actual libuv in WASM owns
   Node handle, timer, callback-phase, and protocol semantics.
+- **Bounded V8 WASM workers are internal.** The root session isolate owns all
+  Node/user JavaScript. A pthread may execute `wasi_thread_start` in a bounded
+  internal V8 worker isolate over the same compiled module and shared memory;
+  it exposes no public worker API or second engine and cannot use root-isolate
+  engine operations outside the explicitly thread-safe Node-API subset.
 - **One host OS-capability boundary.** Calls between Node JavaScript and
   `node-runtime.wasm` use isolate-local Node-API/engine imports; those imports
   may manipulate V8 values but may not expose filesystem, network, process,

@@ -1,0 +1,3 @@
+set(EDGE_BINDING_REGISTRY_SOURCES
+  "${CMAKE_CURRENT_LIST_DIR}/binding_registry.cc"
+)
