@@ -1519,9 +1519,10 @@ const WhatItIsSection = () => (
 								agentOS is an open-source library that boots a small virtual operating system
 								for each agent VM you run: a virtual kernel with a file system, processes,
 								networking, and deny-by-default permissions, inside your backend. Agents like
-								Pi, Claude Code, Codex, and OpenCode run in it, and your code, or a framework
-								like Eve or Flue, drives them through sessions, bindings, and workflows. Each
-								VM runs as a Rivet Actor, so it sleeps and wakes with durable state.
+								Pi, Claude Code, Codex, and OpenCode run in it, along with agents you build
+								on frameworks like Eve or Flue, and your code drives them through sessions,
+								bindings, and workflows. Each VM runs as a Rivet Actor, so it sleeps and
+								wakes with durable state.
 							</>
 						}
 					/>

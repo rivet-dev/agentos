@@ -29,7 +29,10 @@ const SANDBOX_STEPS = [
 ];
 const MAGNIFICATION = Math.round(AXIS_MAX_MS / INSET_MAX_MS);
 const TICKS = [0, 500, 1000, 1500, 2000, 2500, 3000, 3500];
-const INSET_FILL_SEC = AXIS_MAX_MS * K * (COLDSTART_P99_MS / INSET_MAX_MS);
+// The magnified fill is a near-instant sweep: on the shared clock the whole
+// agentOS boot is ~6 timeline-ms, so it must read as already finished while
+// the sandbox is still on its first step, matching the tick on the main axis.
+const INSET_FILL_SEC = 0.22;
 
 const pct = (ms: number) => `${(ms / AXIS_MAX_MS) * 100}%`;
 

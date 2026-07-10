@@ -3,8 +3,9 @@ import Layout from "../../layouts/Layout.astro";
 import { Navigation } from "../../components/Navigation";
 import { Footer } from "../../components/Footer";
 import { registry } from "../../data/registry";
-import { InkChip, InkPanel } from "../../components/marketing/editorial/InkPanel";
+import { InkPanel } from "../../components/marketing/editorial/InkPanel";
 import { RegistryIconTile } from "../../components/marketing/registry/RegistryIconTile";
+import InstallRow from "../../components/marketing/registry/InstallRow.astro";
 // Use the docs theme's Shiki highlighter so registry code matches the docs
 // code blocks exactly (ayu-dark), instead of the old custom light palette.
 import { highlightCode as highlightCodeHtml } from "@rivet-dev/docs-theme/lib/highlight";
@@ -327,16 +328,7 @@ const ribbon: MetaCell[] = [
 					) : isSoftware ? (
 						<>
 							<h2 class="mb-3 text-xl font-medium text-ink">1. Install</h2>
-							<div class="mb-8 flex items-stretch gap-3">
-								<InkChip command={installCommand!} className="min-w-0 flex-1" />
-								<button
-									type="button"
-									data-copy-command={installCommand}
-									class="w-20 shrink-0 cursor-pointer rounded-md border border-ink/15 text-center text-sm font-medium text-ink-soft transition-colors hover:border-ink/40 hover:text-ink"
-								>
-									Copy
-								</button>
-							</div>
+							<InstallRow command={installCommand!} class="mb-8" />
 
 							<h2 class="mb-3 text-xl font-medium text-ink">2. Add to agentOS</h2>
 							<p class="mb-4 text-sm text-ink-soft">
@@ -351,16 +343,7 @@ const ribbon: MetaCell[] = [
 					) : isSandboxExt || isTool ? (
 						<>
 							<h2 class="mb-3 text-xl font-medium text-ink">1. Install</h2>
-							<div class="mb-8 flex items-stretch gap-3">
-								<InkChip command={installCommand!} className="min-w-0 flex-1" />
-								<button
-									type="button"
-									data-copy-command={installCommand}
-									class="w-20 shrink-0 cursor-pointer rounded-md border border-ink/15 text-center text-sm font-medium text-ink-soft transition-colors hover:border-ink/40 hover:text-ink"
-								>
-									Copy
-								</button>
-							</div>
+							<InstallRow command={installCommand!} class="mb-8" />
 
 							<h2 class="mb-3 text-xl font-medium text-ink">2. Add to agentOS</h2>
 							<p class="mb-4 text-sm text-ink-soft">
@@ -384,16 +367,7 @@ const ribbon: MetaCell[] = [
 					) : isAvailableAgent ? (
 						<>
 							<h2 class="mb-3 text-xl font-medium text-ink">1. Install</h2>
-							<div class="mb-8 flex items-stretch gap-3">
-								<InkChip command={installCommand!} className="min-w-0 flex-1" />
-								<button
-									type="button"
-									data-copy-command={installCommand}
-									class="w-20 shrink-0 cursor-pointer rounded-md border border-ink/15 text-center text-sm font-medium text-ink-soft transition-colors hover:border-ink/40 hover:text-ink"
-								>
-									Copy
-								</button>
-							</div>
+							<InstallRow command={installCommand!} class="mb-8" />
 
 							<h2 class="mb-3 text-xl font-medium text-ink">2. Add to agentOS</h2>
 							<p class="mb-4 text-sm text-ink-soft">
@@ -409,16 +383,7 @@ const ribbon: MetaCell[] = [
 					) : (
 						<>
 							<h2 class="mb-3 text-xl font-medium text-ink">1. Install</h2>
-							<div class="mb-6 flex items-stretch gap-3">
-								<InkChip command={installCommand!} className="min-w-0 flex-1" />
-								<button
-									type="button"
-									data-copy-command={installCommand}
-									class="w-20 shrink-0 cursor-pointer rounded-md border border-ink/15 text-center text-sm font-medium text-ink-soft transition-colors hover:border-ink/40 hover:text-ink"
-								>
-									Copy
-								</button>
-							</div>
+							<InstallRow command={installCommand!} class="mb-6" />
 						</>
 					)}
 				</section>
@@ -429,19 +394,28 @@ const ribbon: MetaCell[] = [
 </Layout>
 
 <script>
-	// "Copy" buttons next to install commands: copy the command and flip the
-	// label briefly so the action is visible.
+	// "Copy" buttons next to install commands: copy the command, then briefly
+	// swap the label to "Copied" and show the check icon so the action is
+	// visible. Toggling the label span (not the button's textContent) keeps the
+	// icons intact.
 	for (const button of document.querySelectorAll<HTMLButtonElement>(
 		"button[data-copy-command]",
 	)) {
+		const label = button.querySelector<HTMLElement>("[data-copy-label]");
+		const copyIcon = button.querySelector<SVGElement>('[data-copy-icon="copy"]');
+		const checkIcon = button.querySelector<SVGElement>('[data-copy-icon="check"]');
 		let timer: number | undefined;
 		button.addEventListener("click", async () => {
 			try {
 				await navigator.clipboard.writeText(button.dataset.copyCommand ?? "");
-				button.textContent = "Copied";
+				if (label) label.textContent = "Copied";
+				copyIcon?.classList.add("hidden");
+				checkIcon?.classList.remove("hidden");
 				window.clearTimeout(timer);
 				timer = window.setTimeout(() => {
-					button.textContent = "Copy";
+					if (label) label.textContent = "Copy";
+					checkIcon?.classList.add("hidden");
+					copyIcon?.classList.remove("hidden");
 				}, 1500);
 			} catch (error) {
 				console.error("copying the install command failed", error);
