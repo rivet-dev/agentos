@@ -194,6 +194,38 @@ fn identify(data: &[u8]) -> (String, String) {
         return ("empty".to_string(), "inode/x-empty".to_string());
     }
 
+    // Check for shebang scripts
+    if data.len() >= 2 && data[0] == b'#' && data[1] == b'!' {
+        let first_line = data
+            .iter()
+            .take(128)
+            .take_while(|&&b| b != b'\n')
+            .copied()
+            .collect::<Vec<u8>>();
+        if let Ok(line) = std::str::from_utf8(&first_line) {
+            let interp = line.trim_start_matches("#!");
+            let interp = interp.trim();
+            // Extract interpreter name
+            let name = interp.split_whitespace().next().unwrap_or(interp);
+            let basename = match name.rfind('/') {
+                Some(pos) => &name[pos + 1..],
+                None => name,
+            };
+            // Handle "env <prog>" pattern
+            if basename == "env" {
+                let prog = interp.split_whitespace().nth(1).unwrap_or("script");
+                return (
+                    format!("{} script, ASCII text executable", prog),
+                    "text/x-script".to_string(),
+                );
+            }
+            return (
+                format!("{} script, ASCII text executable", basename),
+                "text/x-script".to_string(),
+            );
+        }
+    }
+
     // Try infer crate for magic byte detection
     if let Some(kind) = infer::get(data) {
         let desc = match kind.mime_type() {
@@ -229,38 +261,6 @@ fn identify(data: &[u8]) -> (String, String) {
             _ => kind.mime_type(),
         };
         return (desc.to_string(), kind.mime_type().to_string());
-    }
-
-    // Check for shebang scripts
-    if data.len() >= 2 && data[0] == b'#' && data[1] == b'!' {
-        let first_line = data
-            .iter()
-            .take(128)
-            .take_while(|&&b| b != b'\n')
-            .copied()
-            .collect::<Vec<u8>>();
-        if let Ok(line) = std::str::from_utf8(&first_line) {
-            let interp = line.trim_start_matches("#!");
-            let interp = interp.trim();
-            // Extract interpreter name
-            let name = interp.split_whitespace().next().unwrap_or(interp);
-            let basename = match name.rfind('/') {
-                Some(pos) => &name[pos + 1..],
-                None => name,
-            };
-            // Handle "env <prog>" pattern
-            if basename == "env" {
-                let prog = interp.split_whitespace().nth(1).unwrap_or("script");
-                return (
-                    format!("{} script, ASCII text executable", prog),
-                    "text/x-script".to_string(),
-                );
-            }
-            return (
-                format!("{} script, ASCII text executable", basename),
-                "text/x-script".to_string(),
-            );
-        }
     }
 
     // Check for known text patterns

@@ -1,0 +1,34 @@
+Allow AgentOS builds to raise FD_SETSIZE when needed.
+
+AgentOS guest file descriptors are virtual ids and may be greater than the
+traditional 1024 select limit. The sysroot fd_set representation is list-based,
+so consumers that can tolerate a larger fd_set should be able to opt in by
+predefining FD_SETSIZE.
+
+diff --git a/libc-bottom-half/headers/public/__macro_FD_SETSIZE.h b/libc-bottom-half/headers/public/__macro_FD_SETSIZE.h
+index c5854c0..bc93827 100644
+--- a/libc-bottom-half/headers/public/__macro_FD_SETSIZE.h
++++ b/libc-bottom-half/headers/public/__macro_FD_SETSIZE.h
+@@ -1,6 +1,8 @@
+ #ifndef __wasilibc___macro_FD_SETSIZE_h
+ #define __wasilibc___macro_FD_SETSIZE_h
+ 
++#ifndef FD_SETSIZE
+ #define FD_SETSIZE 1024
++#endif
+ 
+ #endif
+diff --git a/libc-top-half/musl/include/sys/select.h b/libc-top-half/musl/include/sys/select.h
+index 11ebe93..351c547 100644
+--- a/libc-top-half/musl/include/sys/select.h
++++ b/libc-top-half/musl/include/sys/select.h
+@@ -15,7 +15,9 @@ extern "C" {
+ 
+ #include <bits/alltypes.h>
+ 
++#ifndef FD_SETSIZE
+ #define FD_SETSIZE 1024
++#endif
+ 
+ #ifdef __wasilibc_unmodified_upstream /* Use alternate WASI libc headers */
+ typedef unsigned long fd_mask;

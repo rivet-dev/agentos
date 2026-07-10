@@ -77,7 +77,7 @@ The default native build (`toolchain`) compiles the fast command gate to
 `wasm-opt -O3`, and drops the binaries in
 `toolchain/target/wasm32-wasip1/release/commands/`. The bulk gate
 intentionally excludes slow/heavy or non-default commands: `git`, `duckdb`,
-`vim`, `wget`, and the external `codex`/`codex-exec` fork build. Build those explicitly with
+`vim` and the external `codex`/`codex-exec` fork build. Build those explicitly with
 `just toolchain-cmd <name>` when working on them. Package builds then run
 `agentos-toolchain stage` (with `--if-missing skip`, so a checkout without the
 native build still assembles valid empty placeholders) followed by `tsc` and

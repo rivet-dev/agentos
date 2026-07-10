@@ -149,8 +149,8 @@ fn wasm_command_mounts() -> Vec<MountConfig> {
 
 /// Locate the materialized coreutils package under the in-repo registry build.
 pub fn coreutils_package_dir() -> Option<PathBuf> {
-    let registry_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../software/coreutils/dist/package");
+    let registry_dir =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../software/coreutils/dist/package");
     if registry_dir.join("agentos-package.json").is_file() {
         return std::fs::canonicalize(registry_dir).ok();
     }

@@ -10,18 +10,15 @@ import { configDefaults, defineConfig } from "vitest/config";
 const SLOW_E2E_FILES = [
 	"tests/wasm-commands.test.ts", // ~24m
 	"tests/session-cleanup.test.ts", // ~12m
-	"tests/claude-session.test.ts", // ~7.5m
 	"tests/execute.test.ts",
 	"tests/filesystem.test.ts",
 	"tests/native-sidecar-process.test.ts",
 	"tests/pi-vanilla-bash.test.ts",
 	"tests/opencode-session.test.ts",
-	"tests/git-quickstart.test.ts",
 	"tests/filesystem-move-delete.test.ts",
 	"tests/batch-file-ops.test.ts",
 	"tests/agentos-base-filesystem.test.ts",
 	"tests/pi-sdk-boot-probe.test.ts",
-	"tests/pi-headless.test.ts",
 	"tests/pi-tool-llmock.test.ts",
 	"tests/native-sidecar-process-permissions.test.ts",
 	"tests/pi-extensions.test.ts",
@@ -29,7 +26,6 @@ const SLOW_E2E_FILES = [
 	"tests/child-process-detached.test.ts",
 	"tests/readdir-recursive.test.ts",
 	"tests/cron-integration.test.ts",
-	"tests/pi-cli-headless.test.ts",
 ];
 
 // Pre-existing failures NOT caused by this branch (they were red before CI ever
@@ -50,15 +46,8 @@ const KNOWN_FAILING_E2E_FILES = [
 	"tests/pi-acp-adapter.test.ts",
 	"tests/process-lifecycle.test.ts",
 	// Registry-artifact / shell-behavior failures (red in both CI and local):
-	//  - duckdb-package: imports secure-exec software/duckdb/dist (unbuilt WASM in CI).
 	//  - shell-flat-api: openShell/writeShell/onShellData yields empty output.
-	"tests/duckdb-package.test.ts",
 	"tests/shell-flat-api.test.ts",
-	// codex-fullturn: the pinned @agentos-software/codex package intentionally
-	// stubs the turn ("codex-exec --session-turn is disabled until the real Codex
-	// agent package is wired"). Pre-existing unwired-feature state, not a
-	// regression — re-enable once the real Codex agent package is wired.
-	"tests/codex-fullturn.test.ts",
 ];
 
 // Real-API, real-install matrix (agent × package manager). Hits a live LLM API

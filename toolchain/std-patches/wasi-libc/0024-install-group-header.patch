@@ -1,0 +1,22 @@
+Install POSIX group lookup declarations in the AgentOS WASI sysroot.
+
+Upstream tools such as tree include <grp.h> for optional group-name display.
+The patched sysroot already carries musl's group lookup implementation and
+AgentOS exposes deterministic gid/getgroups behavior, so the header should be
+installed instead of forcing application-level WASI branches.
+
+diff --git a/scripts/install-include-headers.sh b/scripts/install-include-headers.sh
+index 4a9f079..d589a77 100755
+--- a/scripts/install-include-headers.sh
++++ b/scripts/install-include-headers.sh
+@@ -62,7 +62,7 @@ MUSL_OMIT_HEADERS+=("sys/procfs.h" "sys/user.h" "sys/kd.h" "sys/vt.h" \
+     "sys/swap.h" "sys/sendfile.h" "sys/inotify.h" "sys/quota.h" "sys/klog.h" \
+     "sys/fsuid.h" "sys/io.h" "sys/prctl.h" "sys/mtio.h" "sys/mount.h" \
+     "sys/fanotify.h" "sys/personality.h" "elf.h" "link.h" "bits/link.h" \
+-    "scsi/scsi.h" "scsi/scsi_ioctl.h" "scsi/sg.h" "sys/auxv.h" \
+-    "shadow.h" "grp.h" "mntent.h" "resolv.h" "pty.h" "ulimit.h" "sys/xattr.h" \
++    "scsi/scsi.h" "scsi/scsi_ioctl.h" "scsi/sg.h" "sys/auxv.h" \
++    "shadow.h" "mntent.h" "resolv.h" "pty.h" "ulimit.h" "sys/xattr.h" \
+     "wordexp.h" "sys/membarrier.h" "sys/signalfd.h" \
+     "net/if.h" "net/if_arp.h" \
+     "net/ethernet.h" "net/route.h" "netinet/if_ether.h" "netinet/ether.h" \

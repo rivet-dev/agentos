@@ -2544,9 +2544,6 @@ importers:
       '@agentos-software/gzip':
         specifier: workspace:*
         version: link:../../software/gzip
-      '@agentos-software/http-get':
-        specifier: workspace:*
-        version: link:../../software/http-get
       '@agentos-software/jq':
         specifier: workspace:*
         version: link:../../software/jq
@@ -2565,6 +2562,9 @@ importers:
       '@agentos-software/vim':
         specifier: workspace:*
         version: link:../../software/vim
+      '@agentos-software/wget':
+        specifier: workspace:*
+        version: link:../../software/wget
       '@agentos-software/yq':
         specifier: workspace:*
         version: link:../../software/yq
@@ -2850,9 +2850,6 @@ importers:
       '@agentos-software/gzip':
         specifier: workspace:*
         version: link:../../software/gzip
-      '@agentos-software/http-get':
-        specifier: workspace:*
-        version: link:../../software/http-get
       '@agentos-software/jq':
         specifier: workspace:*
         version: link:../../software/jq
@@ -3260,6 +3257,12 @@ importers:
       '@agentos-software/diffutils':
         specifier: workspace:*
         version: link:../diffutils
+      '@agentos-software/duckdb':
+        specifier: workspace:*
+        version: link:../duckdb
+      '@agentos-software/envsubst':
+        specifier: workspace:*
+        version: link:../envsubst
       '@agentos-software/fd':
         specifier: workspace:*
         version: link:../fd
@@ -3272,6 +3275,9 @@ importers:
       '@agentos-software/gawk':
         specifier: workspace:*
         version: link:../gawk
+      '@agentos-software/git':
+        specifier: workspace:*
+        version: link:../git
       '@agentos-software/grep':
         specifier: workspace:*
         version: link:../grep
@@ -3287,6 +3293,9 @@ importers:
       '@agentos-software/sed':
         specifier: workspace:*
         version: link:../sed
+      '@agentos-software/sqlite3':
+        specifier: workspace:*
+        version: link:../sqlite3
       '@agentos-software/tar':
         specifier: workspace:*
         version: link:../tar
@@ -3296,6 +3305,12 @@ importers:
       '@agentos-software/unzip':
         specifier: workspace:*
         version: link:../unzip
+      '@agentos-software/vim':
+        specifier: workspace:*
+        version: link:../vim
+      '@agentos-software/wget':
+        specifier: workspace:*
+        version: link:../wget
       '@agentos-software/yq':
         specifier: workspace:*
         version: link:../yq
@@ -3446,27 +3461,6 @@ importers:
         version: 2.1.9(@types/node@22.19.15)
 
   software/gzip:
-    devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../packages/manifest
-      '@agentos/test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
-      '@rivet-dev/agentos-toolchain':
-        specifier: workspace:*
-        version: link:../../packages/agentos-toolchain
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.9
-        version: 2.1.9(@types/node@22.19.15)
-
-  software/http-get:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*

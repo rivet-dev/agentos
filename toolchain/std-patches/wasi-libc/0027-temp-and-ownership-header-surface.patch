@@ -1,0 +1,66 @@
+--- a/libc-top-half/musl/include/stdlib.h
++++ b/libc-top-half/musl/include/stdlib.h
+@@ -115,11 +115,9 @@ size_t __ctype_get_mb_cur_max(void);
+ int posix_memalign (void **, size_t, size_t);
+ int setenv (const char *, const char *, int);
+ int unsetenv (const char *);
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no temp directories */
+ int mkstemp (char *);
+ int mkostemp (char *, int);
+ char *mkdtemp (char *);
+-#endif
+ int getsubopt (char **, char *const *, char **);
+ int rand_r (unsigned *);
+ 
+@@ -156,11 +154,9 @@ void lcong48 (unsigned short [7]);
+ 
+ #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+ #include <alloca.h>
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no temp directories */
+ char *mktemp (char *);
+ int mkstemps (char *, int);
+ int mkostemps (char *, int, int);
+-#endif
+ #ifdef __wasilibc_unmodified_upstream /* WASI libc doesn't build the legacy functions */
+ void *valloc (size_t);
+ void *memalign(size_t, size_t);
+--- a/libc-top-half/musl/include/sys/stat.h
++++ b/libc-top-half/musl/include/sys/stat.h
+@@ -81,9 +81,7 @@ int fstatat(int, const char *__restrict, struct stat *__restrict, int);
+ int chmod(const char *, mode_t);
+ int fchmod(int, mode_t);
+ int fchmodat(int, const char *, mode_t, int);
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no umask */
+ mode_t umask(mode_t);
+-#endif
+ int mkdir(const char *, mode_t);
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no fifo */
+ int mkfifo(const char *, mode_t);
+--- a/libc-top-half/musl/include/unistd.h
++++ b/libc-top-half/musl/include/unistd.h
+@@ -93,12 +93,10 @@ ssize_t write(int, const void *, size_t);
+ ssize_t pread(int, void *, size_t, off_t);
+ ssize_t pwrite(int, const void *, size_t, off_t);
+ 
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no chown */
+ int chown(const char *, uid_t, gid_t);
+ int fchown(int, uid_t, gid_t);
+ int lchown(const char *, uid_t, gid_t);
+ int fchownat(int, const char *, uid_t, gid_t, int);
+-#endif
+ 
+ int link(const char *, const char *);
+ int linkat(int, const char *, int, const char *, int);
+--- a/libc-top-half/musl/include/stdio.h
++++ b/libc-top-half/musl/include/stdio.h
+@@ -159,10 +159,8 @@ FILE *fmemopen(void *__restrict, size_t, const char *__restrict);
+ FILE *fmemopen(void *__restrict, size_t, const char *__restrict);
+ FILE *open_memstream(char **, size_t *);
+ FILE *fdopen(int, const char *);
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no popen */
+ FILE *popen(const char *, const char *);
+ int pclose(FILE *);
+-#endif
+ int fileno(FILE *);
+ int fseeko(FILE *, off_t, int);
+ off_t ftello(FILE *);

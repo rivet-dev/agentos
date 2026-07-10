@@ -1,0 +1,18 @@
+# path-dedot 3.1.1 gates its unix `parse_dot`/`parse_dot_from` impl (the `mod unix`
+# at src/lib.rs:290) on `any(unix, all(target_family = "wasm", feature =
+# "use_unix_paths_on_wasm"))`. On wasm32-wasip1 without that opt-in feature the unix
+# module vanishes and those methods disappear -> codex-core fails to compile. The VM
+# uses unix-style absolute paths, so route ALL `target_family = "wasm"` to the unix
+# impl (equivalent to enabling `use_unix_paths_on_wasm`). Same author/pattern as
+# path-absolutize. See std-patches/crates/path-dedot/wasi.md.
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -287,7 +287,7 @@
+ #[macro_use]
+ mod macros;
+
+-#[cfg(any(unix, all(target_family = "wasm", feature = "use_unix_paths_on_wasm")))]
++#[cfg(any(unix, target_family = "wasm"))]
+ mod unix;
+
+ #[cfg(windows)]

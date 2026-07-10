@@ -1,0 +1,6 @@
+# Reproducible codex WASI build scratch: the shallow fork clone, its cargo
+# vendor tree, and its wasm32-wasip1 target/ all live here. Never snapshot it.
+.codex-build/
+
+# cargo vendor output for `make wasm` (the command build) and any codex vendor.
+vendor/

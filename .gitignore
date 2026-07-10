@@ -38,14 +38,21 @@ core.[0-9]*
 secrets/**/*
 
 # Registry build artifacts
+toolchain/c/build/
+toolchain/c/vendor/
+toolchain/c/libs/
+toolchain/c/sysroot/
+software/*/bin/
 registry/native/target/
 registry/native/vendor/
 registry/native/c/build/
 registry/native/c/vendor/
 registry/native/c/libs/
 registry/native/c/.cache/
+toolchain/c/.cache/
 registry/native/c/sysroot/
 registry/software/*/wasm/
+software/*/wasm/
 registry/software/*/agentos-package.meta.json
 registry/.last-publish-hash
 registry/software/*/.last-publish-hash

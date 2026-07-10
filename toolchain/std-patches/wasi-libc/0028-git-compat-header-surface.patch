@@ -1,0 +1,100 @@
+Expose small POSIX compatibility surfaces needed by upstream Git.
+
+Git's process runner is patched to use the existing AgentOS posix_spawn
+broker on WASI, but some linked translation units still reference standard
+headers and functions such as syslog, paths, exec, alarm, network lookup,
+and interval timers. Expose those declarations in the owned sysroot and
+provide runtime shims in libc-bottom-half overrides.
+
+--- a/libc-top-half/musl/include/unistd.h
++++ b/libc-top-half/musl/include/unistd.h
+@@ -116,6 +116,7 @@
+ #define W_OK 2
+ #define X_OK 1
+ #endif
++unsigned alarm(unsigned);
+ 
+ int access(const char *, int);
+ int faccessat(int, const char *, int, int);
+@@ -137,6 +138,7 @@
+ pid_t fork(void);
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no fork/exec */
+ pid_t _Fork(void);
++#endif
+ int execve(const char *, char *const [], char *const []);
+ int execv(const char *, char *const []);
+ int execle(const char *, const char *, ...);
+@@ -144,7 +146,6 @@
+ int execvp(const char *, char *const []);
+ int execlp(const char *, const char *, ...);
+ int fexecve(int, char *const [], char *const []);
+-#endif
+ _Noreturn void _exit(int);
+ 
+ pid_t getpid(void);
+@@ -153,6 +154,7 @@
+ pid_t getpgrp(void);
+ pid_t setsid(void);
++pid_t getpgid(pid_t);
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no full process groups */
+ pid_t getpgid(pid_t);
+ int setpgid(pid_t, pid_t);
+ pid_t getsid(pid_t);
+--- a/libc-top-half/musl/include/sys/time.h
++++ b/libc-top-half/musl/include/sys/time.h
+@@ -10,7 +10,6 @@
+ 
+ int gettimeofday (struct timeval *__restrict, void *__restrict);
+ 
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no getitimer */
+ #define ITIMER_REAL    0
+ #define ITIMER_VIRTUAL 1
+ #define ITIMER_PROF    2
+@@ -22,7 +21,6 @@
+ 
+ int getitimer (int, struct itimerval *);
+ int setitimer (int, const struct itimerval *__restrict, struct itimerval *__restrict);
+-#endif
+ int utimes (const char *, const struct timeval [2]);
+ 
+ #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+--- a/libc-top-half/musl/include/arpa/inet.h
++++ b/libc-top-half/musl/include/arpa/inet.h
+@@ -16,8 +16,8 @@
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no inet_addr */
+ in_addr_t inet_addr (const char *);
+ in_addr_t inet_network (const char *);
+-char *inet_ntoa (struct in_addr);
+ #endif
++char *inet_ntoa (struct in_addr);
+ int inet_pton (int, const char *__restrict, void *__restrict);
+ const char *inet_ntop (int, const void *__restrict, char *__restrict, socklen_t);
+ 
+--- a/libc-top-half/musl/include/netdb.h
++++ b/libc-top-half/musl/include/netdb.h
+@@ -132,6 +132,12 @@
+ #define NO_ADDRESS     NO_DATA
+ #endif
+ 
++#ifndef h_errno
++int *__h_errno_location(void);
++#define h_errno (*__h_errno_location())
++#endif
++const char *hstrerror(int);
++
+ #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+ void herror(const char *);
+ const char *hstrerror(int);
+--- a/scripts/install-include-headers.sh
++++ b/scripts/install-include-headers.sh
+@@ -56,8 +56,8 @@
+     "sys/soundcard.h" "sys/sem.h" "sys/shm.h" "sys/msg.h" "sys/ipc.h" \
+     "sys/ptrace.h" "sys/statfs.h" "bits/kd.h" "bits/vt.h" "bits/soundcard.h" \
+     "bits/sem.h" "bits/shm.h" "bits/msg.h" "bits/ipc.h" "bits/ptrace.h" \
+-    "bits/statfs.h" "sys/vfs.h" "syslog.h" "sys/syslog.h" "wait.h" \
+-    "ucontext.h" "sys/ucontext.h" "paths.h" "utmp.h" "utmpx.h" \
++    "bits/statfs.h" "sys/vfs.h" "sys/syslog.h" "wait.h" \
++    "ucontext.h" "sys/ucontext.h" "utmp.h" "utmpx.h" \
+     "lastlog.h" "sys/acct.h" "sys/cachectl.h" "sys/epoll.h" "sys/reboot.h" \
+     "sys/swap.h" "sys/sendfile.h" "sys/inotify.h" "sys/quota.h" "sys/klog.h" \
+     "sys/fsuid.h" "sys/io.h" "sys/prctl.h" "sys/mtio.h" "sys/mount.h" \

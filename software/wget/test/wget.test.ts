@@ -1,239 +1,162 @@
-/**
- * Integration tests for wget C command (libcurl-based).
- *
- * Verifies HTTP download operations via kernel.exec() with real WASM binaries:
- *   - Basic GET download to file
- *   - Download to specified file (-O)
- *   - Quiet mode (-q)
- *   - Error handling for 404 URLs
- *   - Follow redirects (default behavior)
- *
- * Tests start a local HTTP server in beforeAll and make wget requests against it.
- */
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
+import {
+	createServer,
+	type IncomingMessage,
+	type Server,
+	type ServerResponse,
+} from "node:http";
+import { resolve } from "node:path";
+import { createWasmVmRuntime } from "@agentos/test-harness";
+import {
+	allowAll,
+	C_BUILD_DIR,
+	COMMANDS_DIR,
+	createInMemoryFileSystem,
+	createKernel,
+	describeIf,
+} from "@agentos/test-harness";
+import type { Kernel } from "@agentos/test-harness";
 
-import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
-import { createWasmVmRuntime } from '@agentos/test-harness';
-import { C_BUILD_DIR, COMMANDS_DIR, createKernel, describeIf, hasCWasmBinaries } from '@agentos/test-harness';
-import type { Kernel } from '@agentos/test-harness';
-import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
+const WGET_COMMAND_DIRS = [C_BUILD_DIR, COMMANDS_DIR].filter((dir) =>
+	existsSync(dir),
+);
+const hasWgetBinary = WGET_COMMAND_DIRS.some((dir) =>
+	existsSync(resolve(dir, "wget")),
+);
+const WGET_EXEC_TIMEOUT_MS = 10_000;
 
-// Minimal in-memory VFS for kernel tests
-class SimpleVFS {
-  private files = new Map<string, Uint8Array>();
-  private dirs = new Set<string>(['/']);
+describeIf(hasWgetBinary, "wget command", () => {
+	let kernel: Kernel;
+	let server: Server;
+	let port: number;
 
-  async readFile(path: string): Promise<Uint8Array> {
-    const data = this.files.get(path);
-    if (!data) throw new Error(`ENOENT: ${path}`);
-    return data;
-  }
-  async readTextFile(path: string): Promise<string> {
-    return new TextDecoder().decode(await this.readFile(path));
-  }
-  async readDir(path: string): Promise<string[]> {
-    const prefix = path === '/' ? '/' : path + '/';
-    const entries: string[] = [];
-    for (const p of [...this.files.keys(), ...this.dirs]) {
-      if (p !== path && p.startsWith(prefix)) {
-        const rest = p.slice(prefix.length);
-        if (!rest.includes('/')) entries.push(rest);
-      }
-    }
-    return entries;
-  }
-  async readDirWithTypes(path: string) {
-    return (await this.readDir(path)).map(name => ({
-      name,
-      isDirectory: this.dirs.has(path === '/' ? `/${name}` : `${path}/${name}`),
-    }));
-  }
-  async writeFile(path: string, content: string | Uint8Array): Promise<void> {
-    const data = typeof content === 'string' ? new TextEncoder().encode(content) : content;
-    this.files.set(path, new Uint8Array(data));
-    const parts = path.split('/').filter(Boolean);
-    for (let i = 1; i < parts.length; i++) {
-      this.dirs.add('/' + parts.slice(0, i).join('/'));
-    }
-  }
-  async createDir(path: string) { this.dirs.add(path); }
-  async mkdir(path: string, _options?: { recursive?: boolean }) {
-    this.dirs.add(path);
-    const parts = path.split('/').filter(Boolean);
-    for (let i = 1; i < parts.length; i++) {
-      this.dirs.add('/' + parts.slice(0, i).join('/'));
-    }
-  }
-  async exists(path: string): Promise<boolean> {
-    return this.files.has(path) || this.dirs.has(path);
-  }
-  async stat(path: string) {
-    const isDir = this.dirs.has(path);
-    const data = this.files.get(path);
-    if (!isDir && !data) throw new Error(`ENOENT: ${path}`);
-    return {
-      mode: isDir ? 0o40755 : 0o100644,
-      size: data?.length ?? 0,
-      isDirectory: isDir,
-      isSymbolicLink: false,
-      atimeMs: Date.now(),
-      mtimeMs: Date.now(),
-      ctimeMs: Date.now(),
-      birthtimeMs: Date.now(),
-      ino: 0,
-      nlink: 1,
-      uid: 1000,
-      gid: 1000,
-    };
-  }
-  async chmod(_path: string, _mode: number) {}
-  async lstat(path: string) { return this.stat(path); }
-  async removeFile(path: string) { this.files.delete(path); }
-  async removeDir(path: string) { this.dirs.delete(path); }
-  async rename(oldPath: string, newPath: string) {
-    const data = this.files.get(oldPath);
-    if (data) {
-      this.files.set(newPath, data);
-      this.files.delete(oldPath);
-    }
-  }
-  async pread(path: string, buffer: Uint8Array, offset: number, length: number, position: number): Promise<number> {
-    const data = this.files.get(path);
-    if (!data) throw new Error(`ENOENT: ${path}`);
-    const available = Math.min(length, data.length - position);
-    if (available <= 0) return 0;
-    buffer.set(data.subarray(position, position + available), offset);
-    return available;
-  }
+	beforeAll(async () => {
+		server = createServer((req: IncomingMessage, res: ServerResponse) => {
+			const url = req.url ?? "/";
 
-  has(path: string): boolean {
-    return this.files.has(path);
-  }
-  getContent(path: string): string | undefined {
-    const data = this.files.get(path);
-    return data ? new TextDecoder().decode(data) : undefined;
-  }
-  getRawContent(path: string): Uint8Array | undefined {
-    return this.files.get(path);
-  }
-}
+			if (url === "/file.txt") {
+				res.writeHead(200, { "Content-Type": "text/plain" });
+				res.end("downloaded content");
+				return;
+			}
 
-// TODO(P6): requires wget WASM artifact, intentionally excluded from the fast software-build gate.
-describeIf(hasCWasmBinaries('wget'), 'wget command', () => {
-  let kernel: Kernel;
-  let server: Server;
-  let port: number;
+			if (url === "/data.json") {
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ status: "ok" }));
+				return;
+			}
 
-  beforeAll(async () => {
-    server = createServer((req: IncomingMessage, res: ServerResponse) => {
-      const url = req.url ?? '/';
+			if (url === "/redirect") {
+				res.writeHead(302, {
+					Location: `http://127.0.0.1:${port}/redirected`,
+				});
+				res.end();
+				return;
+			}
 
-      if (url === '/file.txt') {
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('downloaded content');
-        return;
-      }
+			if (url === "/redirected") {
+				res.writeHead(200, { "Content-Type": "text/plain" });
+				res.end("arrived after redirect");
+				return;
+			}
 
-      if (url === '/data.json') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok' }));
-        return;
-      }
+			res.writeHead(404, { "Content-Type": "text/plain" });
+			res.end("not found");
+		});
 
-      if (url === '/redirect') {
-        const addr = server.address() as import('node:net').AddressInfo;
-        res.writeHead(302, { 'Location': `http://127.0.0.1:${addr.port}/redirected` });
-        res.end();
-        return;
-      }
+		await new Promise<void>((resolveListen) =>
+			server.listen(0, "127.0.0.1", resolveListen),
+		);
+		port = (server.address() as import("node:net").AddressInfo).port;
+	});
 
-      if (url === '/redirected') {
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('arrived after redirect');
-        return;
-      }
+	afterAll(async () => {
+		await new Promise<void>((resolveClose) =>
+			server.close(() => resolveClose()),
+		);
+	});
 
-      if (url === '/binary') {
-        const buf = Buffer.alloc(1024);
-        for (let i = 0; i < buf.length; i++) buf[i] = i & 0xff;
-        res.writeHead(200, {
-          'Content-Type': 'application/octet-stream',
-          'Content-Length': String(buf.length),
-        });
-        res.end(buf);
-        return;
-      }
+	afterEach(async () => {
+		await kernel?.dispose();
+	});
 
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('not found');
-    });
+	async function mountKernel() {
+		const filesystem = createInMemoryFileSystem();
+		kernel = createKernel({
+			filesystem,
+			permissions: allowAll,
+			loopbackExemptPorts: [port],
+		});
+		await kernel.mount(createWasmVmRuntime({ commandDirs: WGET_COMMAND_DIRS }));
+		return filesystem;
+	}
 
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    port = (server.address() as import('node:net').AddressInfo).port;
-  });
+	it("downloads a file using the URL basename", async () => {
+		const filesystem = await mountKernel();
 
-  afterAll(async () => {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  });
+		const result = await kernel.exec(`wget http://127.0.0.1:${port}/file.txt`, {
+			timeout: WGET_EXEC_TIMEOUT_MS,
+		});
 
-  afterEach(async () => {
-    await kernel?.dispose();
-  });
+		expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+		expect(await filesystem.readTextFile("/workspace/file.txt")).toBe(
+			"downloaded content",
+		);
+	}, 15_000);
 
-  it('downloads file to VFS using URL basename', async () => {
-    const vfs = new SimpleVFS();
-    kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+	it("-O saves to the requested output path", async () => {
+		const filesystem = await mountKernel();
 
-    await kernel.exec(`wget http://127.0.0.1:${port}/file.txt`);
+		const result = await kernel.exec(
+			`wget -O /output.txt http://127.0.0.1:${port}/data.json`,
+			{ timeout: WGET_EXEC_TIMEOUT_MS },
+		);
 
-    const content = vfs.getContent('/file.txt');
-    expect(content).toBe('downloaded content');
-  });
+		expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+		expect(await filesystem.readTextFile("/output.txt")).toContain(
+			'"status":"ok"',
+		);
+	}, 15_000);
 
-  it('-O saves to specified filename', async () => {
-    const vfs = new SimpleVFS();
-    kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+	it("-q suppresses progress output", async () => {
+		const filesystem = await mountKernel();
 
-    await kernel.exec(`wget -O /output.txt http://127.0.0.1:${port}/data.json`);
+		const result = await kernel.exec(
+			`wget -q -O /quiet.txt http://127.0.0.1:${port}/file.txt`,
+			{ timeout: WGET_EXEC_TIMEOUT_MS },
+		);
 
-    const content = vfs.getContent('/output.txt');
-    expect(content).toBeDefined();
-    expect(content).toContain('"status":"ok"');
-  });
+		expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+		expect(result.stderr).toBe("");
+		expect(await filesystem.readTextFile("/quiet.txt")).toBe(
+			"downloaded content",
+		);
+	}, 15_000);
 
-  it('-q suppresses progress output', async () => {
-    const vfs = new SimpleVFS();
-    kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+	it("reports failure for a 404 URL", async () => {
+		await mountKernel();
 
-    const result = await kernel.exec(`wget -q -O /output.txt http://127.0.0.1:${port}/file.txt`);
+		const result = await kernel.exec(
+			`wget http://127.0.0.1:${port}/missing.txt`,
+			{ timeout: WGET_EXEC_TIMEOUT_MS },
+		);
 
-    // Quiet mode should produce no stderr
-    expect(result.stderr).toBe('');
-    // File should still be downloaded
-    expect(vfs.getContent('/output.txt')).toBe('downloaded content');
-  });
+		expect(result.exitCode).not.toBe(0);
+		expect(result.stderr).toMatch(/404|not found|error/i);
+	}, 15_000);
 
-  it('returns non-zero exit code for 404 URL', async () => {
-    const vfs = new SimpleVFS();
-    kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+	it("follows redirects by default", async () => {
+		const filesystem = await mountKernel();
 
-    const result = await kernel.exec(`wget http://127.0.0.1:${port}/nonexistent`);
+		const result = await kernel.exec(
+			`wget -O /redirected.txt http://127.0.0.1:${port}/redirect`,
+			{ timeout: WGET_EXEC_TIMEOUT_MS },
+		);
 
-    // Should report error on stderr
-    expect(result.stderr).toMatch(/wget|404|error|server/i);
-  });
-
-  it('follows redirects by default', async () => {
-    const vfs = new SimpleVFS();
-    kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
-
-    await kernel.exec(`wget -O /output.txt http://127.0.0.1:${port}/redirect`);
-
-    const content = vfs.getContent('/output.txt');
-    expect(content).toBe('arrived after redirect');
-  });
+		expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+		expect(await filesystem.readTextFile("/redirected.txt")).toBe(
+			"arrived after redirect",
+		);
+	}, 15_000);
 });

@@ -60,6 +60,23 @@ describeIf(hasWasmBinaries, "findutils commands", { timeout: 10_000 }, () => {
 		]);
 	});
 
+	it("find supports depth limits", async () => {
+		const vfs = createInMemoryFileSystem();
+		await vfs.mkdir("/project/src/nested", { recursive: true });
+		await vfs.mkdir("/project/docs", { recursive: true });
+		await vfs.writeFile("/project/src/main.js", "console.log('main')\n");
+		await vfs.writeFile("/project/src/nested/helper.ts", "export {}\n");
+		await vfs.writeFile("/project/docs/readme.md", "# Readme\n");
+
+		kernel = createKernel({ filesystem: vfs });
+		await kernel.mount(createWasmVmRuntime({ commandDirs: [COMMANDS_DIR] }));
+
+		const result = await kernel.exec(
+			"find /project -mindepth 2 -maxdepth 2 -type f -name '*.js'",
+		);
+		expect(parseLines(result.stdout)).toEqual(["/project/src/main.js"]);
+	});
+
 	it("xargs passes stdin arguments to a command", async () => {
 		const vfs = createInMemoryFileSystem();
 		await vfs.writeFile("/args.txt", "alpha\nbeta\n");
@@ -69,5 +86,20 @@ describeIf(hasWasmBinaries, "findutils commands", { timeout: 10_000 }, () => {
 
 		const result = await kernel.exec("xargs echo < /args.txt");
 		expect(result.stdout.trim()).toBe("alpha beta");
+	});
+
+	it("xargs batches arguments across spawned commands", async () => {
+		const vfs = createInMemoryFileSystem();
+		await vfs.writeFile("/args.txt", "one two three four five\n");
+
+		kernel = createKernel({ filesystem: vfs });
+		await kernel.mount(createWasmVmRuntime({ commandDirs: [COMMANDS_DIR] }));
+
+		const result = await kernel.exec("xargs -n 2 echo < /args.txt");
+		expect(result.stdout.trim().split("\n")).toEqual([
+			"one two",
+			"three four",
+			"five",
+		]);
 	});
 });

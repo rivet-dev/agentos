@@ -26,8 +26,7 @@ fn coreutils_package_path() -> Option<PathBuf> {
         }
     }
     for dir in [
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../software/coreutils/dist/package"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../software/coreutils/dist/package"),
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../node_modules/@agentos-software/coreutils/dist/package"),
     ] {

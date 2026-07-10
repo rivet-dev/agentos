@@ -157,7 +157,6 @@ Browse pre-built agents, tools, filesystems, and software packages at the [agent
 | `@agentos-software/git` | git | git version control | rust | - | - |
 | `@agentos-software/grep` | grep | GNU grep pattern matching (grep, egrep, fgrep) | rust | - | - |
 | `@agentos-software/gzip` | gzip | GNU gzip compression (gzip, gunzip, zcat) | rust | - | - |
-| `@agentos-software/http-get` | http-get | Minimal HTTP GET fetch helper | c | - | - |
 | `@agentos-software/jq` | jq | jq JSON processor | rust | - | - |
 | `@agentos-software/ripgrep` | ripgrep | ripgrep fast recursive search | rust | - | - |
 | `@agentos-software/sed` | sed | GNU sed stream editor | rust | - | - |
@@ -165,7 +164,7 @@ Browse pre-built agents, tools, filesystems, and software packages at the [agent
 | `@agentos-software/tar` | tar | GNU tar archiver | rust | - | - |
 | `@agentos-software/tree` | tree | tree directory listing | rust | - | - |
 | `@agentos-software/unzip` | unzip | unzip archive extraction | c | - | - |
-| `@agentos-software/wget` | wget | GNU wget HTTP client | c | - | - |
+| `@agentos-software/wget` | wget | GNU Wget file downloader | c | - | - |
 | `@agentos-software/yq` | yq | yq YAML/JSON processor | rust | - | - |
 | `@agentos-software/zip` | zip | zip archive creation | c | - | - |
 
@@ -175,7 +174,7 @@ Browse pre-built agents, tools, filesystems, and software packages at the [agent
 |---------|-------------|----------|
 | `@agentos-software/build-essential` | Build-essential WASM command set (standard + make + git + curl) | standard, make, git, curl |
 | `@agentos-software/common` | Common WASM command set (coreutils + sed + grep + gawk + findutils + diffutils + tar + gzip) | coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip |
-| `@agentos-software/everything` | All available WASM command packages in a single bundle | coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip, curl, zip, unzip, jq, ripgrep, fd, tree, file, yq, codex-cli |
+| `@agentos-software/everything` | All available WASM command packages in a single bundle | coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip, curl, wget, zip, unzip, jq, ripgrep, fd, tree, file, yq, codex-cli |
 <!-- END PACKAGE TABLE -->
 
 ## License

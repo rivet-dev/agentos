@@ -1,13 +1,13 @@
 Implement socket(), connect(), bind(), listen(), accept(), send(),
 recv(), sendto(), recvfrom(), getaddrinfo(), freeaddrinfo(),
-gai_strerror(), gethostname(), setsockopt(), poll(), and select()
+gai_strerror(), gethostname(), setsockopt(), getsockopt(), poll(), and select()
 via host_net WASM imports.
 
 Replaces the wasi-libc stubs (which return -ENOSYS or are #ifdef'd out)
 with implementations that call our host_net.net_socket, net_connect,
 net_bind, net_listen, net_accept, net_send, net_recv, net_sendto,
-net_recvfrom, net_getaddrinfo, net_close, net_setsockopt, and net_poll
-WASM imports.
+net_recvfrom, net_getaddrinfo, net_close, net_setsockopt, net_getsockopt,
+and net_poll WASM imports.
 
 Un-omits netdb.h from the sysroot headers so C programs can use
 getaddrinfo/freeaddrinfo/gai_strerror. Un-gates bind() and listen()
@@ -101,7 +101,7 @@ new file mode 100644
 index 0000000..975e62a
 --- /dev/null
 +++ b/libc-bottom-half/sources/host_socket.c
-@@ -0,0 +1,729 @@
+@@ -0,0 +1,752 @@
 +// Socket API via wasmVM host_net imports.
 +//
 +// Replaces wasi-libc's ENOSYS stubs with calls to our custom WASM imports:
@@ -192,6 +192,11 @@ index 0000000..975e62a
 +WASM_IMPORT("host_net", "net_setsockopt")
 +uint32_t __host_net_setsockopt(uint32_t fd, uint32_t level, uint32_t optname,
 +    const uint8_t *optval_ptr, uint32_t optval_len);
++
++// host_net.net_getsockopt(fd, level, optname, optval_ptr, optval_len) -> errno
++WASM_IMPORT("host_net", "net_getsockopt")
++uint32_t __host_net_getsockopt(uint32_t fd, uint32_t level, uint32_t optname,
++    uint8_t *optval_ptr, uint32_t *optval_len);
 +
 +// host_net.net_getsockname(fd, ret_addr, ret_addr_len) -> errno
 +WASM_IMPORT("host_net", "net_getsockname")
@@ -482,6 +487,24 @@ index 0000000..975e62a
 +        errno = (int)err;
 +        return -1;
 +    }
++    return 0;
++}
++
++int getsockopt(int sockfd, int level, int optname, void *restrict optval, socklen_t *restrict optlen) {
++    if (optval == NULL || optlen == NULL) {
++        errno = EINVAL;
++        return -1;
++    }
++
++    uint32_t len = (uint32_t)*optlen;
++    uint32_t err = __host_net_getsockopt(
++        (uint32_t)sockfd, (uint32_t)level, (uint32_t)optname,
++        (uint8_t *)optval, &len);
++    if (err != 0) {
++        errno = (int)err;
++        return -1;
++    }
++    *optlen = (socklen_t)len;
 +    return 0;
 +}
 +

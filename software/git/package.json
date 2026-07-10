@@ -2,8 +2,8 @@
 	"name": "@agentos-software/git",
 	"version": "0.3.3",
 	"type": "module",
-	"license": "Apache-2.0",
-	"description": "git version control for secure-exec VMs (planned)",
+	"license": "GPL-2.0-only",
+	"description": "Upstream Git version control for AgentOS VMs",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"files": [

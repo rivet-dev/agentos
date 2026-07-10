@@ -5,6 +5,7 @@
 //! rather than using uutils versions.
 
 pub mod env;
+pub mod grep_alias;
 pub mod nice;
 pub mod nohup;
 pub mod stdbuf;

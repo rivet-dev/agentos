@@ -1,0 +1,97 @@
+Expose process signal-mask helpers in the AgentOS WASI sysroot.
+
+The patched signal surface uses musl's struct sigset_t layout. Let upstream
+programs use the sysroot's sigprocmask/pthread_sigmask declarations instead of
+falling back to gnulib replacements that assume sigset_t is an integer.
+
+diff --git a/libc-bottom-half/sources/host_sigprocmask.c b/libc-bottom-half/sources/host_sigprocmask.c
+new file mode 100644
+index 0000000..7e5a037
+--- /dev/null
++++ b/libc-bottom-half/sources/host_sigprocmask.c
+@@ -0,0 +1,61 @@
++// Process signal mask compatibility for AgentOS WASI commands.
++
++#include <errno.h>
++#include <signal.h>
++
++static sigset_t process_signal_mask;
++
++static int copy_sigset(sigset_t *dst, const sigset_t *src) {
++    if (dst == NULL || src == NULL) {
++        errno = EINVAL;
++        return -1;
++    }
++    *dst = *src;
++    return 0;
++}
++
++int sigprocmask(int how, const sigset_t *restrict set, sigset_t *restrict oldset) {
++    sigset_t next_mask;
++
++    if (oldset != NULL) {
++        *oldset = process_signal_mask;
++    }
++
++    if (set == NULL) {
++        return 0;
++    }
++
++    next_mask = process_signal_mask;
++    switch (how) {
++    case SIG_BLOCK:
++        for (int signum = 1; signum < NSIG; signum++) {
++            if (sigismember(set, signum) == 1) {
++                sigaddset(&next_mask, signum);
++            }
++        }
++        break;
++    case SIG_UNBLOCK:
++        for (int signum = 1; signum < NSIG; signum++) {
++            if (sigismember(set, signum) == 1) {
++                sigdelset(&next_mask, signum);
++            }
++        }
++        break;
++    case SIG_SETMASK:
++        if (copy_sigset(&next_mask, set) != 0) return -1;
++        break;
++    default:
++        errno = EINVAL;
++        return -1;
++    }
++
++    process_signal_mask = next_mask;
++    return 0;
++}
++
++int pthread_sigmask(int how, const sigset_t *restrict set, sigset_t *restrict oldset) {
++    if (sigprocmask(how, set, oldset) != 0) {
++        return errno;
++    }
++    return 0;
++}
+diff --git a/libc-top-half/musl/include/signal.h b/libc-top-half/musl/include/signal.h
+index 6830b5b..7f1bfcc 100644
+--- a/libc-top-half/musl/include/signal.h
++++ b/libc-top-half/musl/include/signal.h
+@@ -263,9 +263,9 @@ int sigaddset(sigset_t *, int);
+ int sigdelset(sigset_t *, int);
+ int sigismember(const sigset_t *, int);
+ int sigaction(int, const struct sigaction *__restrict, struct sigaction *__restrict);
++int sigprocmask(int, const sigset_t *__restrict, sigset_t *__restrict);
+ 
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no signal sets */
+-int sigprocmask(int, const sigset_t *__restrict, sigset_t *__restrict);
+ int sigsuspend(const sigset_t *);
+ int sigpending(sigset_t *);
+ int sigwait(const sigset_t *__restrict, int *__restrict);
+@@ -273,7 +273,7 @@ int sigtimedwait(const sigset_t *__restrict, siginfo_t *__restrict, const struct
+ int sigqueue(pid_t, int, union sigval);
+ #endif
+ 
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no threads yet */
+ int pthread_sigmask(int, const sigset_t *__restrict, sigset_t *__restrict);
++#ifdef __wasilibc_unmodified_upstream /* WASI has no full thread signal APIs */
+ int pthread_kill(pthread_t, int);
+ #endif

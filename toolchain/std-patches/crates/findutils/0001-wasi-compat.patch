@@ -1,0 +1,331 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,6 +4,8 @@
+ // license that can be found in the LICENSE file or at
+ // https://opensource.org/licenses/MIT.
+ 
++#![cfg_attr(target_os = "wasi", feature(wasi_ext))]
++
+ pub mod find;
+ pub mod locate;
+ pub mod updatedb;
+--- a/src/find/matchers/group.rs
++++ b/src/find/matchers/group.rs
+@@ -9,6 +9,8 @@
+ use nix::unistd::Group;
+ #[cfg(unix)]
+ use std::os::unix::fs::MetadataExt;
++#[cfg(target_os = "wasi")]
++use std::os::wasi::fs::MetadataExt;
+ 
+ pub struct GroupMatcher {
+     gid: ComparableValue,
+@@ -31,14 +33,14 @@
+         Self { gid }
+     }
+ 
+-    #[cfg(windows)]
++    #[cfg(not(unix))]
+     pub fn from_group_name(_group: &str) -> Option<Self> {
+         None
+     }
+ }
+ 
+ impl Matcher for GroupMatcher {
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     fn matches(&self, file_info: &WalkEntry, _: &mut MatcherIO) -> bool {
+         match file_info.metadata() {
+             Ok(metadata) => self.gid.matches(metadata.gid().into()),
+@@ -46,7 +48,7 @@
+         }
+     }
+ 
+-    #[cfg(windows)]
++    #[cfg(not(any(unix, target_os = "wasi")))]
+     fn matches(&self, _file_info: &WalkEntry, _: &mut MatcherIO) -> bool {
+         // The user group acquisition function for Windows systems is not implemented in MetadataExt,
+         // so it is somewhat difficult to implement it. :(
+@@ -80,7 +82,7 @@
+         false
+     }
+ 
+-    #[cfg(windows)]
++    #[cfg(not(unix))]
+     fn matches(&self, _file_info: &WalkEntry, _: &mut MatcherIO) -> bool {
+         false
+     }
+--- a/src/find/matchers/ls.rs
++++ b/src/find/matchers/ls.rs
+@@ -11,7 +11,7 @@
+ 
+ use super::{Matcher, MatcherIO, WalkEntry};
+ 
+-#[cfg(unix)]
++#[cfg(any(unix, target_os = "wasi"))]
+ fn format_permissions(mode: uucore::libc::mode_t) -> String {
+     let file_type = match mode & (uucore::libc::S_IFMT as uucore::libc::mode_t) {
+         uucore::libc::S_IFDIR => "d",
+@@ -118,7 +118,7 @@
+         Self { output_file }
+     }
+ 
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     fn print(
+         &self,
+         file_info: &WalkEntry,
+@@ -126,8 +126,12 @@
+         mut out: impl Write,
+         print_error_message: bool,
+     ) {
++        #[cfg(unix)]
+         use nix::unistd::{Gid, Group, Uid, User};
++        #[cfg(unix)]
+         use std::os::unix::fs::{MetadataExt, PermissionsExt};
++        #[cfg(target_os = "wasi")]
++        use std::os::wasi::fs::MetadataExt;
+ 
+         let metadata = file_info.metadata().unwrap();
+ 
+@@ -147,17 +151,32 @@
+                 number_of_blocks + (4 - (remainder))
+             }
+         };
+-        let permission =
+-            { format_permissions(metadata.permissions().mode() as uucore::libc::mode_t) };
++        #[cfg(unix)]
++        let mode = metadata.permissions().mode();
++        #[cfg(target_os = "wasi")]
++        let mode = metadata.mode();
++        let permission = { format_permissions(mode as uucore::libc::mode_t) };
+         let hard_links = metadata.nlink();
++        #[cfg(unix)]
+         let user = {
+             let uid = metadata.uid();
+             User::from_uid(Uid::from_raw(uid)).unwrap().unwrap().name
+         };
++        #[cfg(target_os = "wasi")]
++        let user = {
++            let uid = metadata.uid();
++            uid.to_string()
++        };
++        #[cfg(unix)]
+         let group = {
+             let gid = metadata.gid();
+             Group::from_gid(Gid::from_raw(gid)).unwrap().unwrap().name
+         };
++        #[cfg(target_os = "wasi")]
++        let group = {
++            let gid = metadata.gid();
++            gid.to_string()
++        };
+         let size = metadata.size();
+         let last_modified = {
+             let system_time = metadata.modified().unwrap();
+@@ -195,7 +214,7 @@
+         }
+     }
+ 
+-    #[cfg(windows)]
++    #[cfg(not(any(unix, target_os = "wasi")))]
+     fn print(
+         &self,
+         file_info: &WalkEntry,
+@@ -288,7 +307,7 @@
+ #[cfg(test)]
+ mod tests {
+     #[test]
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     fn test_format_permissions() {
+         use super::format_permissions;
+ 
+--- a/src/find/matchers/mod.rs
++++ b/src/find/matchers/mod.rs
+@@ -25,7 +25,7 @@
+ mod regex;
+ mod samefile;
+ mod size;
+-#[cfg(unix)]
++#[cfg(any(unix, target_os = "wasi"))]
+ mod stat;
+ pub mod time;
+ mod type_matcher;
+@@ -50,7 +50,7 @@
+ use self::regex::RegexMatcher;
+ use self::samefile::SameFileMatcher;
+ use self::size::SizeMatcher;
+-#[cfg(unix)]
++#[cfg(any(unix, target_os = "wasi"))]
+ use self::stat::{InodeMatcher, LinksMatcher};
+ use self::time::{
+     FileAgeRangeMatcher, FileTimeMatcher, FileTimeType, NewerMatcher, NewerOptionMatcher,
+@@ -702,7 +702,7 @@
+                     .into_box(),
+                 )
+             }
+-            #[cfg(unix)]
++            #[cfg(any(unix, target_os = "wasi"))]
+             "-inum" => {
+                 if i >= args.len() - 1 {
+                     return Err(From::from(format!("missing argument to {}", args[i])));
+@@ -711,13 +711,13 @@
+                 i += 1;
+                 Some(InodeMatcher::new(inum).into_box())
+             }
+-            #[cfg(not(unix))]
++            #[cfg(not(any(unix, target_os = "wasi")))]
+             "-inum" => {
+                 return Err(From::from(
+                     "Inode numbers are not available on this platform",
+                 ));
+             }
+-            #[cfg(unix)]
++            #[cfg(any(unix, target_os = "wasi"))]
+             "-links" => {
+                 if i >= args.len() - 1 {
+                     return Err(From::from(format!("missing argument to {}", args[i])));
+@@ -726,7 +726,7 @@
+                 i += 1;
+                 Some(LinksMatcher::new(inum).into_box())
+             }
+-            #[cfg(not(unix))]
++            #[cfg(not(any(unix, target_os = "wasi")))]
+             "-links" => {
+                 return Err(From::from("Link counts are not available on this platform"));
+             }
+--- a/src/find/matchers/name.rs
++++ b/src/find/matchers/name.rs
+@@ -24,14 +24,14 @@
+     fn matches(&self, file_info: &WalkEntry, _: &mut MatcherIO) -> bool {
+         let name = file_info.file_name().to_string_lossy();
+ 
+-        #[cfg(unix)]
++        #[cfg(any(unix, target_os = "wasi"))]
+         if name.len() > 1 && name.chars().all(|x| x == '/') {
+             self.pattern.matches("/")
+         } else {
+             self.pattern.matches(&name)
+         }
+ 
+-        #[cfg(windows)]
++        #[cfg(not(any(unix, target_os = "wasi")))]
+         self.pattern.matches(&name)
+     }
+ }
+--- a/src/find/matchers/stat.rs
++++ b/src/find/matchers/stat.rs
+@@ -4,7 +4,10 @@
+ // license that can be found in the LICENSE file or at
+ // https://opensource.org/licenses/MIT.
+ 
++#[cfg(unix)]
+ use std::os::unix::fs::MetadataExt;
++#[cfg(target_os = "wasi")]
++use std::os::wasi::fs::MetadataExt;
+ 
+ use super::{ComparableValue, Matcher, MatcherIO, WalkEntry};
+ 
+--- a/src/find/matchers/user.rs
++++ b/src/find/matchers/user.rs
+@@ -9,6 +9,8 @@
+ use nix::unistd::User;
+ #[cfg(unix)]
+ use std::os::unix::fs::MetadataExt;
++#[cfg(target_os = "wasi")]
++use std::os::wasi::fs::MetadataExt;
+ 
+ pub struct UserMatcher {
+     uid: ComparableValue,
+@@ -31,14 +33,14 @@
+         Self { uid }
+     }
+ 
+-    #[cfg(windows)]
++    #[cfg(not(unix))]
+     pub fn from_user_name(_user: &str) -> Option<Self> {
+         None
+     }
+ }
+ 
+ impl Matcher for UserMatcher {
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     fn matches(&self, file_info: &WalkEntry, _: &mut MatcherIO) -> bool {
+         match file_info.metadata() {
+             Ok(metadata) => self.uid.matches(metadata.uid().into()),
+@@ -46,7 +48,7 @@
+         }
+     }
+ 
+-    #[cfg(windows)]
++    #[cfg(not(any(unix, target_os = "wasi")))]
+     fn matches(&self, _file_info: &WalkEntry, _: &mut MatcherIO) -> bool {
+         false
+     }
+@@ -78,7 +80,7 @@
+         false
+     }
+ 
+-    #[cfg(windows)]
++    #[cfg(not(unix))]
+     fn matches(&self, _file_info: &WalkEntry, _: &mut MatcherIO) -> bool {
+         false
+     }
+--- a/src/xargs/mod.rs
++++ b/src/xargs/mod.rs
+@@ -145,9 +145,12 @@
+     s.encode_wide().count() + 1
+ }
+ 
+-#[cfg(unix)]
++#[cfg(any(unix, target_os = "wasi"))]
+ fn count_osstr_chars_for_exec(s: &OsStr) -> usize {
++    #[cfg(unix)]
+     use std::os::unix::ffi::OsStrExt;
++    #[cfg(target_os = "wasi")]
++    use std::os::wasi::ffi::OsStrExt;
+     // Include +1 for the null terminator.
+     s.as_bytes().len() + 1
+ }
+@@ -173,12 +176,15 @@
+         MaxCharsCommandSizeLimiter::new(MAX_CMDLINE)
+     }
+ 
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     fn new_system(env: &HashMap<OsString, OsString>) -> Self {
+         // POSIX requires that we leave 2048 bytes of space so that the child processes
+         // can have room to set their own environment variables.
+         const ARG_HEADROOM: usize = 2048;
++        #[cfg(unix)]
+         let arg_max = unsafe { uucore::libc::sysconf(uucore::libc::_SC_ARG_MAX) } as usize;
++        #[cfg(target_os = "wasi")]
++        let arg_max = 131072usize;
+ 
+         let env_size: usize = env
+             .iter()
+@@ -454,9 +460,12 @@
+                             Ok(CommandResult::Failure)
+                         }
+                     } else {
+-                        #[cfg(unix)]
++                        #[cfg(any(unix, target_os = "wasi"))]
+                         {
++                            #[cfg(unix)]
+                             use std::os::unix::process::ExitStatusExt;
++                            #[cfg(target_os = "wasi")]
++                            use std::os::wasi::process::ExitStatusExt;
+                             if let Some(signal) = status.signal() {
+                                 Err(CommandExecutionError::Killed { signal })
+                             } else {
+@@ -464,7 +473,7 @@
+                             }
+                         }
+ 
+-                        #[cfg(not(unix))]
++                        #[cfg(not(any(unix, target_os = "wasi")))]
+                         Err(CommandExecutionError::Unknown)
+                     }
+                 }

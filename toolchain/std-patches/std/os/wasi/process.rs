@@ -60,11 +60,22 @@ pub trait ExitStatusExt {
     /// Construct an `ExitStatus` from the given raw code.
     #[stable(feature = "exit_status_from", since = "1.12.0")]
     fn from_raw(raw: i32) -> Self;
+
+    /// If the process was terminated by a signal, returns that signal.
+    ///
+    /// AgentOS process statuses are reported as exit codes by the wasi-spawn
+    /// broker, so there is no POSIX signal payload to expose here.
+    #[stable(feature = "process_extensions", since = "1.2.0")]
+    fn signal(&self) -> Option<i32>;
 }
 
 #[stable(feature = "exit_status_from", since = "1.12.0")]
 impl ExitStatusExt for process::ExitStatus {
     fn from_raw(raw: i32) -> Self {
         process::ExitStatus::from_inner(crate::sys::process::ExitStatus::from(raw))
+    }
+
+    fn signal(&self) -> Option<i32> {
+        None
     }
 }

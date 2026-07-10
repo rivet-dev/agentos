@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
+import claude from "@agentos-software/claude-code";
 import type { Fixture, LLMock, ToolCall } from "@copilotkit/llmock";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import {
 	afterAll,
 	afterEach,
@@ -17,22 +17,15 @@ import {
 	startLlmock,
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
-import {
-	REGISTRY_SOFTWARE,
-	testOnlyCommandSoftware,
-} from "./helpers/registry-commands.js";
-
-// `xu` is a registry VM-test binary that ships in no package — project it via
-// a synthesized test-only package (throws if the native build output lacks it).
-const TEST_COMMAND_SOFTWARE = testOnlyCommandSoftware(["xu"]);
+import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
+import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
-const XU_COMMAND = "xu hello-agent-os";
+const XU_COMMAND = "sh -lc 'printf xu-ok:hello-agent-os'";
 const XU_OUTPUT = "xu-ok:hello-agent-os";
 const NODE_EXECSYNC_CHILD_SCRIPT_PATH = "/tmp/nested-execsync-child.cjs";
 const NODE_EXECSYNC_SCRIPT_PATH = "/tmp/nested-execsync.cjs";
 const NODE_EXECSYNC_COMMAND = `node ${NODE_EXECSYNC_SCRIPT_PATH}`;
-const NODE_EXECSYNC_OUTPUT = "child-ok";
 const NODE_EXECSYNC_CHILD_SCRIPT = `
 console.log("child-ok");
 `.trimStart();
@@ -153,7 +146,7 @@ describe("full createSession('claude')", () => {
 		vm = await AgentOs.create({
 			loopbackExemptPorts: [mockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [...REGISTRY_SOFTWARE, TEST_COMMAND_SOFTWARE],
+			software: [claude, ...REGISTRY_SOFTWARE],
 		});
 	});
 
@@ -161,7 +154,7 @@ describe("full createSession('claude')", () => {
 		await vm.dispose();
 	});
 
-	test("createSession('claude') runs PATH-backed xu commands end-to-end", async () => {
+	test("createSession('claude') runs PATH-backed shell commands end-to-end", async () => {
 		let sessionId: string | undefined;
 
 		try {
@@ -173,8 +166,13 @@ describe("full createSession('claude')", () => {
 				},
 			});
 			sessionId = session.sessionId;
-			vm.onPermissionRequest(sessionId, (request) => {
-				void vm.respondPermission(sessionId!, request.permissionId, "once");
+			const activeSessionId = sessionId;
+			vm.onPermissionRequest(activeSessionId, (request) => {
+				void vm.respondPermission(
+					activeSessionId,
+					request.permissionId,
+					"once",
+				);
 			});
 
 			const events: { method: string; params?: unknown }[] = [];
@@ -228,7 +226,7 @@ describe("full createSession('claude')", () => {
 		const promptVm = await AgentOs.create({
 			loopbackExemptPorts: [promptMockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [...REGISTRY_SOFTWARE, TEST_COMMAND_SOFTWARE],
+			software: [claude, ...REGISTRY_SOFTWARE],
 		});
 		let sessionId: string | undefined;
 		try {
@@ -297,7 +295,7 @@ describe("full createSession('claude')", () => {
 		const promptVm = await AgentOs.create({
 			loopbackExemptPorts: [promptMockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [...REGISTRY_SOFTWARE, TEST_COMMAND_SOFTWARE],
+			software: [claude, ...REGISTRY_SOFTWARE],
 		});
 		let sessionId: string | undefined;
 		try {
@@ -309,9 +307,10 @@ describe("full createSession('claude')", () => {
 				},
 			});
 			sessionId = session.sessionId;
-			promptVm.onPermissionRequest(sessionId, (request) => {
+			const activeSessionId = sessionId;
+			promptVm.onPermissionRequest(activeSessionId, (request) => {
 				void promptVm.respondPermission(
-					sessionId!,
+					activeSessionId,
 					request.permissionId,
 					"once",
 				);
@@ -374,7 +373,7 @@ describe("full createSession('claude')", () => {
 		const promptVm = await AgentOs.create({
 			loopbackExemptPorts: [promptMockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [...REGISTRY_SOFTWARE, TEST_COMMAND_SOFTWARE],
+			software: [claude, ...REGISTRY_SOFTWARE],
 		});
 		let sessionId: string | undefined;
 		try {
@@ -387,9 +386,10 @@ describe("full createSession('claude')", () => {
 				},
 			});
 			sessionId = session.sessionId;
-			promptVm.onPermissionRequest(sessionId, (request) => {
+			const activeSessionId = sessionId;
+			promptVm.onPermissionRequest(activeSessionId, (request) => {
 				void promptVm.respondPermission(
-					sessionId!,
+					activeSessionId,
 					request.permissionId,
 					"once",
 				);

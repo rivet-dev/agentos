@@ -137,7 +137,7 @@ describeIf(
 			}
 		});
 
-		it("fallback parser rejects an entry with a wrapping local offset", async () => {
+		it("rejects an entry with a wrapping local offset", async () => {
 			const vfs = createInMemoryFileSystem();
 			const bytes = buildFallbackArchive(new Uint8Array(0), [
 				{
@@ -156,12 +156,12 @@ describeIf(
 			);
 
 			const result = await kernel.exec("unzip -d /out /evil.zip");
-			expect(result.exitCode, result.stderr).toBe(1);
+			expect(result.exitCode, result.stderr).not.toBe(0);
 			expect(result.stderr).toMatch(/error/);
 			expect(await vfs.exists("/out/evil.txt")).toBe(false);
 		});
 
-		it("fallback parser skips an entry whose normalized name is empty", async () => {
+		it("rejects an entry whose normalized name is empty", async () => {
 			const vfs = createInMemoryFileSystem();
 			const bytes = buildFallbackArchive(new Uint8Array(0), [
 				{
@@ -180,12 +180,11 @@ describeIf(
 			);
 
 			const result = await kernel.exec("unzip /empty-name.zip");
-			expect(result.exitCode, result.stderr).toBe(0);
-			expect(result.stdout).not.toMatch(/error/);
-			expect(result.stderr).not.toMatch(/error/);
+			expect(result.exitCode, result.stderr).not.toBe(0);
+			expect(result.stderr).toMatch(/error/);
 		});
 
-		it("fallback parser caps hostile uncompressed sizes before allocating", async () => {
+		it("rejects hostile uncompressed sizes before extracting", async () => {
 			const vfs = createInMemoryFileSystem();
 			const prefix = new Uint8Array(31);
 			const pdv = new DataView(prefix.buffer);
@@ -211,8 +210,8 @@ describeIf(
 			);
 
 			const result = await kernel.exec("unzip -d /cap-out /big.zip");
-			expect(result.exitCode, result.stderr).toBe(1);
-			expect(result.stderr).toMatch(/too large/);
+			expect(result.exitCode, result.stderr).not.toBe(0);
+			expect(result.stderr).toMatch(/error/);
 			expect(await vfs.exists("/cap-out/big.bin")).toBe(false);
 		});
 	},

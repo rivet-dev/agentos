@@ -5,10 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "fd standalone binary for secure-exec VM"
-
-[[bin]]
-name = "fd"
-path = "src/main.rs"
+publish = false
 
 [dependencies]
-secureexec-fd = { path = "../fd" }
+# fd-find is a bin-only crate. `toolchain/Makefile` builds its upstream `fd`
+# binary directly; this local package exists only so `cmd/fd` is discoverable
+# and the upstream package is present in Cargo's resolved/vendor set.
+fd-find = { version = "10.4.2", default-features = false }

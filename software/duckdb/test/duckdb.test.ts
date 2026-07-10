@@ -33,7 +33,6 @@ import { setTimeout as sleep } from 'node:timers/promises';
 const hasWasmDuckDB = existsSync(resolve(C_BUILD_DIR, 'duckdb'));
 const hasWasmCurl =
   (existsSync(resolve(COMMANDS_DIR, 'curl')) || existsSync(resolve(C_BUILD_DIR, 'curl')));
-const hasWasmHttpGet = existsSync(resolve(C_BUILD_DIR, 'http_get'));
 
 async function mountKernel(
   filesystem: ReturnType<typeof createInMemoryFileSystem>,
@@ -52,7 +51,7 @@ async function mountKernel(
       commandDirs,
       permissions: {
         duckdb: 'read-write',
-        http_get: 'full',
+        curl: 'full',
       },
     })
   );
@@ -215,7 +214,7 @@ describeIf(hasWasmDuckDB, 'duckdb command', { timeout: 120_000 }, () => {
   });
 
   itIf(
-    hasWasmCurl || hasWasmHttpGet,
+    hasWasmCurl,
     'queries data fetched over the network through the shared VFS',
     async () => {
       const filesystem = createInMemoryFileSystem();
@@ -243,18 +242,10 @@ describeIf(hasWasmDuckDB, 'duckdb command', { timeout: 120_000 }, () => {
           loopbackExemptPorts: [address.port],
         });
 
-        let result;
-        if (hasWasmHttpGet) {
-          result = await kernel.exec(
-            `http_get ${address.port} /remote.csv /tmp/remote.csv`
-          );
-          expect(result.exitCode).toBe(0);
-        } else {
-          result = await kernel.exec(
-            `curl -fsS -o /tmp/remote.csv http://127.0.0.1:${address.port}/remote.csv`
-          );
-          expect(result.exitCode).toBe(0);
-        }
+        let result = await kernel.exec(
+          `curl -fsS -o /tmp/remote.csv http://127.0.0.1:${address.port}/remote.csv`
+        );
+        expect(result.exitCode).toBe(0);
 
         expect(await filesystem.readTextFile('/tmp/remote.csv')).toContain('city,value');
 

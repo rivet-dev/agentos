@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-fgrep"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "fgrep launcher for GNU grep"
+
+[[bin]]
+name = "fgrep"
+path = "src/main.rs"
+
+[dependencies]
+shims = { package = "secureexec-shims", path = "../../../../../toolchain/crates/libs/shims" }

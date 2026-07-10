@@ -35,7 +35,6 @@ import gawk from "@agentos-software/gawk";
 import git from "@agentos-software/git";
 import grep from "@agentos-software/grep";
 import gzip from "@agentos-software/gzip";
-import httpGet from "@agentos-software/http-get";
 import jq from "@agentos-software/jq";
 import ripgrep from "@agentos-software/ripgrep";
 import sed from "@agentos-software/sed";
@@ -44,6 +43,7 @@ import vim from "@agentos-software/vim";
 import tar from "@agentos-software/tar";
 import tree from "@agentos-software/tree";
 import unzip from "@agentos-software/unzip";
+import wget from "@agentos-software/wget";
 import yq from "@agentos-software/yq";
 import zip from "@agentos-software/zip";
 import type { MountConfig, SoftwareInput } from "@rivet-dev/agentos-core";
@@ -152,8 +152,8 @@ const software: SoftwareInput[] = [
 	yq,
 	codex,
 	git,
-	httpGet,
 	sqlite3,
+	wget,
 ]
 	.map(withLocalCommandFallback)
 	.filter((input): input is SoftwareInput => input !== null);
