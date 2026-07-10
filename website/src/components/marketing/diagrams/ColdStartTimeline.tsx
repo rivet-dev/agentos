@@ -1,6 +1,7 @@
 'use client';
 
 import { animate, motion, useMotionValue, useMotionValueEvent, useReducedMotion } from 'framer-motion';
+import { X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { COLDSTART_P99_MS, SANDBOX_COLDSTART_MS } from '../../../data/bench';
 
@@ -51,7 +52,7 @@ const CARD_CLASS =
 	'rounded-2xl bg-gradient-to-b from-white to-[#f9f9fa] ring-1 ring-ink/[0.08] ' +
 	'shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_2px_-1px_rgba(20,20,22,0.10),0_8px_24px_-14px_rgba(20,20,22,0.20)]';
 
-export const ColdStartTimeline = () => {
+export const ColdStartTimeline = ({ onClose }: { onClose?: () => void }) => {
 	const reduced = useReducedMotion();
 	const [run, setRun] = useState(false);
 	const clock = useMotionValue(0);
@@ -97,12 +98,25 @@ export const ColdStartTimeline = () => {
 
 	return (
 		<div>
-			{/* Header: title + running clock */}
-			<div className='mb-4 flex items-baseline justify-between'>
-				<span className='text-sm font-medium text-ink'>Cold-start timeline</span>
-				<span className='font-mono text-xs tabular-nums text-ink-soft'>
-					t = <span ref={clockRef}>0</span> ms
-				</span>
+			{/* Header: title left; the running clock and close control share the
+			    right side with real spacing instead of stacking in the corner. */}
+			<div className='mb-6 flex items-center justify-between gap-4'>
+				<span className='text-base font-medium text-ink'>Cold-start timeline</span>
+				<div className='flex items-center gap-3'>
+					<span className='font-mono text-xs tabular-nums text-ink-soft'>
+						t = <span ref={clockRef}>0</span> ms
+					</span>
+					{onClose && (
+						<button
+							type='button'
+							onClick={onClose}
+							aria-label='Close'
+							className='-my-1 flex h-8 w-8 items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-ink/[0.05] hover:text-ink'
+						>
+							<X className='h-4 w-4' />
+						</button>
+					)}
+				</div>
 			</div>
 
 			{/* Sandbox waterfall */}

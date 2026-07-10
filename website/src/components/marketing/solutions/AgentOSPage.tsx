@@ -18,7 +18,6 @@ import {
 	ChevronRight,
 	Copy,
 	Check,
-	X,
 	ShieldCheck,
 	Package,
 	Server,
@@ -1603,17 +1602,9 @@ const ColdStartModal = ({ open, onClose }: { open: boolean; onClose: () => void 
 						exit={{ opacity: 0, y: 10, scale: 0.98 }}
 						transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
 						onClick={(e) => e.stopPropagation()}
-						className='relative max-h-full w-full max-w-3xl overflow-y-auto rounded-2xl bg-paper p-5 shadow-[0_24px_70px_-20px_rgba(20,20,22,0.45)] ring-1 ring-ink/10 md:p-8'
+						className='relative max-h-full w-full max-w-3xl overflow-y-auto rounded-2xl bg-paper p-6 shadow-[0_24px_70px_-20px_rgba(20,20,22,0.45)] ring-1 ring-ink/10 md:p-9'
 					>
-						<button
-							type='button'
-							onClick={onClose}
-							aria-label='Close'
-							className='absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-ink/[0.05] hover:text-ink'
-						>
-							<X className='h-4 w-4' />
-						</button>
-						<ColdStartTimeline />
+						<ColdStartTimeline onClose={onClose} />
 					</motion.div>
 				</motion.div>
 			)}
