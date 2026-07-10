@@ -125,93 +125,113 @@ export const AnimatedAgentOSLogo = ({ className, displayedAgent, drawDurationSec
 				const strokePath = strokeLayer.querySelector('path');
 				if (!strokePath) return;
 
-				const strokeStyle =
-					'fill:none; stroke:white; stroke-width:10.57px; stroke-linecap:round; stroke-linejoin:round;';
-
-				// Split the path data into main path and short tail path
+				// The wordmark reveals the real glyphs through a mask that follows
+				// the pen path, so the finished logo is the brand mark itself and
+				// nothing settles or swaps after the pen stops. Three strokes per
+				// subpath keep the reveal honest at self-intersections: a wide white
+				// stroke reveals the written portion, a black stroke over the
+				// unwritten remainder conceals ink the pen has not reached yet (the
+				// hanging edges at crossings), and a narrower white stroke on top
+				// restores the written line where the unwritten portion crosses it.
+				// pathLength=100 normalizes the dash math so one keyframe pair
+				// serves every stroke regardless of geometric length.
 				const fullD = strokePath.getAttribute('d') || '';
 				const lastM = fullD.lastIndexOf('M');
 				const mainD = fullD.substring(0, lastM);
 				const tailD = fullD.substring(lastM);
 
-				// Create mask
 				const defs = document.createElementNS(ns, 'defs');
 				svg.insertBefore(defs, svg.firstChild);
-
 				const mask = document.createElementNS(ns, 'mask');
-				mask.setAttribute('id', 'reveal-mask');
+				mask.setAttribute('id', 'agentos-reveal-mask');
 				mask.setAttribute('maskUnits', 'userSpaceOnUse');
 				mask.setAttribute('x', '0');
 				mask.setAttribute('y', '0');
 				mask.setAttribute('width', '99999');
 				mask.setAttribute('height', '99999');
-
-				// Clone the stroke group transform wrapper for both paths
 				const groupTransform = strokeLayer.getAttribute('transform') || '';
-
-				// Main path
-				const mainGroup = document.createElementNS(ns, 'g');
-				mainGroup.setAttribute('transform', groupTransform);
-				const mainPath = document.createElementNS(ns, 'path');
-				mainPath.setAttribute('d', mainD);
-				mainPath.setAttribute('style', strokeStyle);
-				mainGroup.appendChild(mainPath);
-				mask.appendChild(mainGroup);
-
-				// Tail path
-				const tailGroup = document.createElementNS(ns, 'g');
-				tailGroup.setAttribute('transform', groupTransform);
-				const tailPath = document.createElementNS(ns, 'path');
-				tailPath.setAttribute('d', tailD);
-				tailPath.setAttribute('style', strokeStyle);
-				tailGroup.appendChild(tailPath);
-				mask.appendChild(tailGroup);
-
+				const makeMaskStroke = (d: string, color: string, width: number, cap: string) => {
+					const group = document.createElementNS(ns, 'g');
+					group.setAttribute('transform', groupTransform);
+					const path = document.createElementNS(ns, 'path');
+					path.setAttribute('d', d);
+					path.setAttribute('pathLength', '100');
+					path.setAttribute(
+						'style',
+						`fill:none; stroke:${color}; stroke-width:${width}px; stroke-linecap:${cap}; stroke-linejoin:round;`,
+					);
+					// The gap exceeds the dash by 1 so no offset ever lands a
+					// zero-length dash on the path end — with round caps that
+					// degenerate dash renders as a floating dot.
+					path.style.strokeDasharray = '100 101';
+					group.appendChild(path);
+					mask.appendChild(group);
+					return path;
+				};
+				// Paint order matters: reveal below, conceal above it, restore on top.
+				// The conceal stroke uses butt caps so it ends exactly at the pen tip
+				// instead of eating half a cap backwards into fresh ink. The restore
+				// stroke is only a hair wider than the letterform (~6.8 in this
+				// space): any wider and it re-reveals concealed ink where an
+				// unwritten stroke crosses a written one.
+				const reveals = [makeMaskStroke(mainD, 'white', 10.57, 'round'), makeMaskStroke(tailD, 'white', 10.57, 'round')];
+				const conceals = [makeMaskStroke(mainD, 'black', 10.57, 'butt'), makeMaskStroke(tailD, 'black', 10.57, 'butt')];
+				const restores = [makeMaskStroke(mainD, 'white', 7.6, 'round'), makeMaskStroke(tailD, 'white', 7.6, 'round')];
 				defs.appendChild(mask);
 
 				// Wrap text layer in a masked group
-				const parent = textLayer.parentNode;
-				if (parent) {
+				const textParent = textLayer.parentNode;
+				if (textParent) {
 					const wrapper = document.createElementNS(ns, 'g');
-					wrapper.setAttribute('mask', 'url(#reveal-mask)');
-					parent.insertBefore(wrapper, textLayer);
+					wrapper.setAttribute('mask', 'url(#agentos-reveal-mask)');
+					textParent.insertBefore(wrapper, textLayer);
 					wrapper.appendChild(textLayer);
 				}
-
-				// Remove the original stroke layer
 				strokeLayer.remove();
 
-				// Measure path lengths
-				const mainLength = mainPath.getTotalLength();
-				const tailLength = tailPath.getTotalLength();
-
-				// Set up dash offsets (hidden initially)
-				mainPath.style.strokeDasharray = String(mainLength);
-				mainPath.style.strokeDashoffset = String(mainLength);
-				tailPath.style.strokeDasharray = String(tailLength);
-				tailPath.style.strokeDashoffset = String(tailLength);
-
-				// Animate: main path first, then tail after main finishes
+				// Animate like a real pen. The word must keep drawing at near-constant
+				// speed to the end: an ease-out crawl leaves the "t" sitting uncrossed
+				// and half-drawn for the last ~second of the animation. The crossbar
+				// follows after a brief pen lift as a quick flick.
 				const mainDuration = drawDurationSec;
-				const tailDuration = 0.3;
+				const penLift = 0.09;
+				const tailDuration = 0.16;
 
 				// Add keyframes if not already present
 				if (!document.querySelector('#agentos-logo-animation-style')) {
 					const style = document.createElement('style');
 					style.id = 'agentos-logo-animation-style';
 					style.textContent = `
-						@keyframes reveal-main {
+						@keyframes agentos-draw {
 							to { stroke-dashoffset: 0; }
 						}
-						@keyframes reveal-tail {
-							to { stroke-dashoffset: 0; }
+						@keyframes agentos-conceal {
+							to { stroke-dashoffset: -100; }
 						}
 					`;
 					document.head.appendChild(style);
 				}
 
-				mainPath.style.animation = `reveal-main ${mainDuration}s ease forwards`;
-				tailPath.style.animation = `reveal-tail ${tailDuration}s ease ${mainDuration}s forwards`;
+				if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+					// Static: mask fully open, filled glyphs shown immediately.
+					for (const path of [...reveals, ...restores]) path.style.strokeDashoffset = '0';
+					for (const path of conceals) path.style.strokeDashoffset = '-100';
+				} else {
+					const timings = [
+						`${mainDuration}s cubic-bezier(0.3, 0, 0.75, 0.85) 0s`,
+						`${tailDuration}s cubic-bezier(0.3, 0, 0.6, 1) ${mainDuration + penLift}s`,
+					];
+					[reveals, restores].forEach((pair) =>
+						pair.forEach((path, i) => {
+							path.style.strokeDashoffset = '100.5';
+							path.style.animation = `agentos-draw ${timings[i]} forwards`;
+						}),
+					);
+					conceals.forEach((path, i) => {
+						path.style.strokeDashoffset = '0';
+						path.style.animation = `agentos-conceal ${timings[i]} forwards`;
+					});
+				}
 
 				setIsReady(true);
 			});
@@ -422,7 +442,6 @@ const agents = [
 const frameworks = [
 	{ src: '/images/frameworks/eve.svg', name: 'Eve', wordmark: true, href: 'https://vercel.com/eve' },
 	{ src: '/images/frameworks/flue.svg', name: 'Flue', href: 'https://flueframework.com' },
-	{ src: '/rivet-icon.svg', name: 'RivetKit', href: 'https://rivet.dev' },
 ];
 // Tab metadata for the orchestration code panel, leading with agents
 // coordinating other agents. Filters the highlighted-snippet array passed
@@ -631,7 +650,7 @@ const Hero = () => {
 						</span>
 						<motion.div className='flex items-center pl-1.5' initial='rest' whileHover='spread' animate='rest'>
 							{frameworks.map((framework, i) => {
-								const tilt = [-14, 6, 15][i] ?? 0;
+								const tilt = [-10, 10][i] ?? 0;
 								return (
 									<motion.a
 										key={framework.name}
@@ -860,11 +879,11 @@ const CapabilityCard = ({
 // Maps the OS-needs list one-to-one: persistence, memory, integrations,
 // human-in-the-loop, and state previews, with execution covered by its own
 // section. Each tile links to an existing docs page.
-// Bento layout: "Any agent harness" leads as the headline tile. The span
+// Bento layout: "Any harness & framework" leads as the headline tile. The span
 // pattern (one 2×2 + two 1×1 + three col-span-2) tiles a 4-column grid exactly
 // with `grid-flow-row-dense`.
 const osFeatures = [
-	{ icon: Bot, title: 'Any agent harness', description: 'Claude Code, Codex, OpenCode, and Pi all run behind one unified API. Swap or add agents without touching your infrastructure.', docsHref: '/docs/sessions', featured: true, span: 'lg:col-span-2 lg:row-span-2' },
+	{ icon: Bot, title: 'Any harness & framework', description: 'Claude Code, Codex, OpenCode, and Pi run behind one unified API, alongside frameworks like Eve, Flue, and RivetKit. Swap or add agents without touching your infrastructure.', docsHref: '/docs/sessions', featured: true, span: 'lg:col-span-2 lg:row-span-2' },
 	{ icon: FolderOpen, title: 'Persistent file system', description: 'Mount a host directory, S3, Google Drive, or a custom JavaScript file system. State survives sleep and wake.', docsHref: '/docs/filesystem' },
 	{ icon: Globe, title: 'State previews', description: 'Every app the agent runs gets its own unique preview URL, served straight from the VM.', docsHref: '/docs/networking' },
 	{ icon: Wrench, title: 'Integrations', description: 'Bindings turn your JavaScript functions into CLI commands inside the VM. Connect MCP servers, skills, and other agents.', docsHref: '/docs/bindings', span: 'lg:col-span-2' },
@@ -872,7 +891,7 @@ const osFeatures = [
 	{ icon: HardDrive, title: 'Memory', description: 'Sessions persist automatically with replayable transcripts, and sqlite3 runs inside the VM for structured agent memory.', docsHref: '/docs/persistence', span: 'lg:col-span-2' },
 ];
 
-// --- Floating agent logos for the featured "Any agent harness" tile ---
+// --- Floating agent logos for the featured "Any harness & framework" tile ---
 // Each tile idles with a gentle bob and drifts with the cursor (parallax) while
 // the card is hovered. `depth` varies per tile so nearer logos move further.
 const FLOATING_AGENTS = [
@@ -905,7 +924,7 @@ const FloatingAgentTile = ({ agent, mx, my, reduce }: { agent: FloatingAgent; mx
 };
 
 // Featured bento tile: the floating agent logos drift behind the copy, with a
-// cursor-driven parallax. Used for the OS section's "Any agent harness" card.
+// cursor-driven parallax. Used for the OS section's "Any harness & framework" card.
 const FeaturedHarnessCard = ({ feature }: { feature: { title: string; description: string; docsHref?: string; span?: string } }) => {
 	const reduce = useReducedMotion() ?? false;
 	const mxRaw = useMotionValue(0);
@@ -1515,13 +1534,12 @@ const WhatItIsSection = () => (
 						title='What agentOS is.'
 						subtitle={
 							<>
-								agentOS is an open-source library that boots a small virtual operating system
-								for each agent VM you run: a virtual kernel with a file system, processes,
-								networking, and deny-by-default permissions, inside your backend. Agents like
-								Pi, Claude Code, Codex, and OpenCode run in it, along with agents you build
-								on frameworks like Eve or Flue, and your code drives them through sessions,
-								bindings, and workflows. Each VM runs as a Rivet Actor, so it sleeps and
-								wakes with durable state.
+								agentOS is an open-source library that boots a small virtual OS for each
+								agent, inside your backend: a virtual kernel with a file system, processes,
+								networking, and deny-by-default permissions. It runs Pi, Claude Code, Codex,
+								OpenCode, or agents you build with Eve or Flue, and your code drives them
+								through sessions. Each VM is a Rivet Actor that sleeps and wakes with
+								durable state.
 							</>
 						}
 					/>
