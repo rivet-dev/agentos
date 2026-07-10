@@ -556,7 +556,14 @@ mod shadow_root {
             base_guest_filesystem_request(GuestFilesystemOperation::WriteFile, &survivor_file);
         survivor.content = Some(String::from("survivor\n"));
         survivor.encoding = Some(RootFilesystemEntryEncoding::Utf8);
-        guest_filesystem_call(&mut sidecar, &connection_id, &session_id, &vm_id, 22, survivor);
+        guest_filesystem_call(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            22,
+            survivor,
+        );
 
         // This read-side call walks the shadow tree and records the inventory
         // the deletion reconcile diffs against.
@@ -572,9 +579,7 @@ mod shadow_root {
         // Locate this VM's shadow root through the mirrored unique file, then
         // delete the subtree exactly as a host-side guest runtime would: on
         // the shadow filesystem only, with no kernel-direct unlink.
-        let marker_rel = format!(
-            "workspace/reconcile-{nonce}/nested/probe.txt"
-        );
+        let marker_rel = format!("workspace/reconcile-{nonce}/nested/probe.txt");
         let shadow_root = std::fs::read_dir(std::env::temp_dir())
             .expect("list temp dir")
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))

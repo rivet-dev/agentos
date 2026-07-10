@@ -1,0 +1,176 @@
+{
+  "schema": 1,
+  "generatedAt": "2026-07-09T22:42:48-07:00",
+  "node": "v24.17.0",
+  "module": {
+    "name": "openssl_handshake_smoke",
+    "bytes": 2437405,
+    "sha256": "ad9013ff7ac503a55ef0042621676a485914af4c1c4caaaa2eec16216ca851c2"
+  },
+  "protocol": {
+    "iterations": 5,
+    "warmup": 1,
+    "isolate": "fresh Node process per sample; worker isolate pair per sample",
+    "cache": "V8 --wasm-native-module-cache on/off"
+  },
+  "lanes": {
+    "cacheDisabled": {
+      "v8NativeModuleCache": false,
+      "compileCold": {
+        "samples": 5,
+        "p50Ms": 3.5872,
+        "p99Ms": 3.6515,
+        "iqrMs": 0.0287,
+        "minMs": 3.5626,
+        "maxMs": 3.6515
+      },
+      "compileWarmSameBytes": {
+        "samples": 5,
+        "p50Ms": 3.213,
+        "p99Ms": 3.3709,
+        "iqrMs": 0.0642,
+        "minMs": 3.1733,
+        "maxMs": 3.3709
+      },
+      "instantiateCold": {
+        "samples": 5,
+        "p50Ms": 0.6562,
+        "p99Ms": 0.6828,
+        "iqrMs": 0.0154,
+        "minMs": 0.6335,
+        "maxMs": 0.6828
+      },
+      "instantiateWarm": {
+        "samples": 5,
+        "p50Ms": 0.5713,
+        "p99Ms": 0.5785,
+        "iqrMs": 0.0032,
+        "minMs": 0.5515,
+        "maxMs": 0.5785
+      },
+      "crossIsolateWithoutSharing": {
+        "compile": {
+          "samples": 5,
+          "p50Ms": 3.7468,
+          "p99Ms": 6.8989,
+          "iqrMs": 0.7098,
+          "minMs": 3.6717,
+          "maxMs": 6.8989
+        },
+        "instantiate": {
+          "samples": 5,
+          "p50Ms": 0.7209,
+          "p99Ms": 0.7477,
+          "iqrMs": 0.0248,
+          "minMs": 0.7142,
+          "maxMs": 0.7477
+        },
+        "wall": {
+          "samples": 5,
+          "p50Ms": 49.5148,
+          "p99Ms": 51.2073,
+          "iqrMs": 2.764,
+          "minMs": 47.5692,
+          "maxMs": 51.2073
+        }
+      },
+      "crossIsolateWithModuleSharing": {
+        "instantiate": {
+          "samples": 5,
+          "p50Ms": 0.6988,
+          "p99Ms": 0.7396,
+          "iqrMs": 0.022,
+          "minMs": 0.681,
+          "maxMs": 0.7396
+        },
+        "wall": {
+          "samples": 5,
+          "p50Ms": 25.0035,
+          "p99Ms": 26.9533,
+          "iqrMs": 0.1233,
+          "minMs": 24.6867,
+          "maxMs": 26.9533
+        }
+      }
+    },
+    "cacheEnabled": {
+      "v8NativeModuleCache": true,
+      "compileCold": {
+        "samples": 5,
+        "p50Ms": 3.7382,
+        "p99Ms": 7.0153,
+        "iqrMs": 0.4071,
+        "minMs": 3.5799,
+        "maxMs": 7.0153
+      },
+      "compileWarmSameBytes": {
+        "samples": 5,
+        "p50Ms": 3.3678,
+        "p99Ms": 3.4957,
+        "iqrMs": 0.145,
+        "minMs": 3.2152,
+        "maxMs": 3.4957
+      },
+      "instantiateCold": {
+        "samples": 5,
+        "p50Ms": 0.5987,
+        "p99Ms": 0.6113,
+        "iqrMs": 0.0139,
+        "minMs": 0.5937,
+        "maxMs": 0.6113
+      },
+      "instantiateWarm": {
+        "samples": 5,
+        "p50Ms": 0.5484,
+        "p99Ms": 0.5596,
+        "iqrMs": 0.0065,
+        "minMs": 0.5383,
+        "maxMs": 0.5596
+      },
+      "crossIsolateWithoutSharing": {
+        "compile": {
+          "samples": 5,
+          "p50Ms": 3.8627,
+          "p99Ms": 3.9573,
+          "iqrMs": 0.1228,
+          "minMs": 3.654,
+          "maxMs": 3.9573
+        },
+        "instantiate": {
+          "samples": 5,
+          "p50Ms": 0.6851,
+          "p99Ms": 0.706,
+          "iqrMs": 0.0157,
+          "minMs": 0.6672,
+          "maxMs": 0.706
+        },
+        "wall": {
+          "samples": 5,
+          "p50Ms": 30.5368,
+          "p99Ms": 33.5035,
+          "iqrMs": 0.3774,
+          "minMs": 30.0058,
+          "maxMs": 33.5035
+        }
+      },
+      "crossIsolateWithModuleSharing": {
+        "instantiate": {
+          "samples": 5,
+          "p50Ms": 0.7266,
+          "p99Ms": 0.7437,
+          "iqrMs": 0.0339,
+          "minMs": 0.6917,
+          "maxMs": 0.7437
+        },
+        "wall": {
+          "samples": 5,
+          "p50Ms": 21.9446,
+          "p99Ms": 24.0058,
+          "iqrMs": 0.1666,
+          "minMs": 21.6024,
+          "maxMs": 24.0058
+        }
+      }
+    }
+  }
+}

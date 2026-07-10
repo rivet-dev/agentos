@@ -15,7 +15,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
@@ -30,9 +30,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: |
           if grep -qE '^[[:space:]]*-[[:space:]]*website[[:space:]]*$' pnpm-workspace.yaml; then
-            npx turbo build --filter='!@agentos/website'
+            npx turbo build --filter='!@agentos/website' --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-playground'
           else
-            npx turbo build
+            npx turbo build --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-playground'
           fi
       - run: pnpm --dir scripts/publish run check-types
       - run: pnpm --dir scripts/publish test
@@ -56,7 +56,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@nightly
@@ -67,13 +67,25 @@ jobs:
           workspaces: toolchain -> toolchain/target
           cache-workspace-crates: true
           key: wasm-commands-${{ hashFiles('toolchain/Cargo.lock') }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            toolchain/c/vendor/wasi-sdk
+            toolchain/c/sysroot
+          key: c-sysroot-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('toolchain/std-patches/wasi-libc/**', 'toolchain/std-patches/wasi-libc-overrides/**', 'toolchain/c/patches/llvm-project/**', 'toolchain/scripts/patch-wasi-libc.sh', 'toolchain/c/scripts/build-llvm-runtimes.sh', 'toolchain/c/Makefile') }}
       - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-runtime-core...'
       - run: make -C toolchain commands
+      - run: make -C toolchain/c openssl-smoke
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
       - uses: actions/upload-artifact@v4
         with:
           name: wasm-commands
           path: packages/runtime-core/commands
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-openssl-smoke
+          path: toolchain/c/build/openssl_handshake_smoke
           if-no-files-found: error
 
   rust:
@@ -85,7 +97,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -100,25 +112,37 @@ jobs:
           rm -rf website/vendor/theme && mkdir -p website/vendor
           cp -r /tmp/docs-theme/packages/theme website/vendor/theme
       - run: pnpm install --frozen-lockfile
-      - name: Install Playwright Chromium
-        run: pnpm --dir packages/browser exec playwright install --with-deps chromium
       - uses: actions/download-artifact@v4
         with:
           name: wasm-commands
           path: packages/runtime-core/commands
+      - uses: actions/download-artifact@v4
+        with:
+          name: node-openssl-smoke
+          path: toolchain/c/build
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
       - run: |
           if grep -qE '^[[:space:]]*-[[:space:]]*website[[:space:]]*$' pnpm-workspace.yaml; then
-            npx turbo build --filter='!@agentos/website'
+            npx turbo build --filter='!@agentos/website' --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-playground'
           else
-            npx turbo build
+            npx turbo build --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-playground'
           fi
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --exclude agentos-native-sidecar-browser --exclude agentos-sidecar-browser --all-targets -- -D warnings
       - run: cargo test -p agentos-protocol -- --test-threads=1
       - run: cargo test -p agentos-sidecar -- --test-threads=1
       - run: cargo test -p agentos-client -- --test-threads=1
         env:
           AGENT_OS_CLIENT_ALLOW_E2E_SKIPS: '1'
+      - name: Node 24 suite sanity (legacy)
+        run: pnpm --silent --dir test-harness node-suite -- --slice sanity --batch-size 50 --ledger node-suite/ledger-sanity.json
+        env:
+          AGENTOS_JS_STDLIB: legacy
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-native-sidecar
+      - name: Node 24 suite sanity (real stdlib)
+        run: pnpm --silent --dir test-harness node-suite -- --slice sanity --batch-size 50 --ledger node-suite/ledger-sanity.json
+        env:
+          AGENTOS_JS_STDLIB: real
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-native-sidecar
       - name: Reclaim Cargo target space before package tests
         run: |
           df -h .

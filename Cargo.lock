@@ -239,6 +239,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentos-node-stdlib"
+version = "0.0.1"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "agentos-protocol"
 version = "0.0.1"
 dependencies = [
@@ -319,6 +326,7 @@ version = "0.0.1"
 dependencies = [
  "agentos-bridge",
  "agentos-build-support",
+ "agentos-node-stdlib",
  "ciborium",
  "crossbeam-channel",
  "libc",

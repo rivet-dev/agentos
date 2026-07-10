@@ -9,7 +9,12 @@
 import { readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createBenchSidecar, createBenchVm, type BenchVm } from "../lib/vm.js";
+import {
+	createBenchSidecar,
+	createBenchVm,
+	formatPacificIso,
+	type BenchVm,
+} from "../lib/vm.js";
 import type { SidecarProcess } from "@rivet-dev/agentos-runtime-core";
 import { getHardware, printTable, round, stats } from "../lib/perf-utils.js";
 
@@ -373,7 +378,7 @@ async function main(): Promise<void> {
 			JSON.stringify(
 				{
 					benchmark: "sync-bridge-floor",
-					generatedAt: new Date().toISOString(),
+					generatedAt: formatPacificIso(new Date()),
 					hardware,
 					iterations,
 					warmup,

@@ -2,8 +2,8 @@
 //! embedded V8 runtime, with `internalBinding()` provided by JS shims
 //! (tests/node_stdlib_poc/bootstrap.js) instead of node's C++ core.
 //!
-//! Node lib sources are read from NODE_SRC_DIR (default /home/nathan/misc/node);
-//! the test is skipped when the checkout is absent. See
+//! Node lib sources are read from NODE_SRC_DIR; the test is skipped when the
+//! variable is unset or the checkout is absent. See
 //! tests/node_stdlib_poc/preflight.mjs for a fast host-node iteration loop over
 //! the same bootstrap + checks.
 
@@ -69,9 +69,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 fn node_src_dir() -> Option<PathBuf> {
-    let dir = std::env::var("NODE_SRC_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/home/nathan/misc/node"));
+    let dir = std::env::var("NODE_SRC_DIR").ok().map(PathBuf::from)?;
     dir.join("lib").is_dir().then_some(dir)
 }
 
@@ -119,7 +117,7 @@ fn wait_for_execution_result(
 #[test]
 fn real_node_path_and_buffer_run_in_isolate() {
     let Some(node_src) = node_src_dir() else {
-        eprintln!("skipping: node checkout not found (set NODE_SRC_DIR or clone to /home/nathan/misc/node)");
+        eprintln!("skipping: pinned node checkout not found (set NODE_SRC_DIR)");
         return;
     };
 

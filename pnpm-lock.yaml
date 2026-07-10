@@ -3876,6 +3876,9 @@ importers:
         specifier: workspace:*
         version: link:../packages/vm-test-harness
     devDependencies:
+      tsx:
+        specifier: ^4.0.0
+        version: 4.21.0
       typescript:
         specifier: ^5.9.2
         version: 5.9.3

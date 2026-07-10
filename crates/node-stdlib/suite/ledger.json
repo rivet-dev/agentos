@@ -1,0 +1,494 @@
+{
+  "schema": 1,
+  "node": "24.15.0",
+  "scope": "M0 guest user-loader compatibility ledger; the isolated real realm require-all gate is separately 71/71",
+  "generated_at_pst": "2026-07-09T19:36:00-07:00",
+  "cases": [
+    {
+      "id": "_http_agent",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "_http_client",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "_http_common",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "_http_incoming",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "_http_outgoing",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "_http_server",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "_stream_duplex",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "_stream_passthrough",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "_stream_readable",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "_stream_transform",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "_stream_wrap",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "_stream_writable",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "_tls_common",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "_tls_wrap",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "assert/strict",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "assert",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "async_hooks",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "buffer",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "child_process",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "cluster",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "console",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "constants",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "crypto",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "dgram",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "diagnostics_channel",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "dns/promises",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "dns",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "domain",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "events",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "fs/promises",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "fs",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "http",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "http2",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "https",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "inspector/promises",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "inspector",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "module",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "net",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "os",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "path/posix",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "path/win32",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "path",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "perf_hooks",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "process",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "punycode",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "querystring",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "readline/promises",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "readline",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "repl",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "sea",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "stream/consumers",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "stream/promises",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "stream/web",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "stream",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "string_decoder",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "sys",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "test/reporters",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "test",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "timers/promises",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "timers",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "tls",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "trace_events",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "tty",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "url",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "util/types",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "util",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "v8",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "vm",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "wasi",
+      "category": "public-builtin",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "M0 sanctioned legacy user-loader exception; native realm load is green and M1 ports the user CJS loader",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1"
+    },
+    {
+      "id": "worker_threads",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "zlib",
+      "category": "public-builtin",
+      "legacy": "pass",
+      "real": "pass"
+    }
+  ],
+  "set_diff": {
+    "legacy_only": [],
+    "real_only": []
+  },
+  "policy": {
+    "unexpected_pass": "fail",
+    "regression": "fail"
+  }
+}

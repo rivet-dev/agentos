@@ -10,6 +10,10 @@
 		"bench:gate": "tsx src/quick-gate.ts",
 		"bench:memory": "node --expose-gc --import tsx/esm memory.bench.ts",
 		"bench:matrix": "tsx src/run-all.ts",
+		"bench:node-stdlib-floor": "tsx src/node-stdlib/native-codec-floor.ts",
+		"bench:node-stdlib-wasm": "node src/node-stdlib/wasm-lifecycle.mjs",
+		"bench:node-stdlib-ab": "tsx src/node-stdlib/ab-runner.ts",
+		"bench:node-stdlib-delta": "tsx src/node-stdlib/delta-report.ts",
 		"check-types": "pnpm --dir ../runtime-core build && tsc --noEmit"
 	},
 	"dependencies": {

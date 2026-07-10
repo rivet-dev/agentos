@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated_at": "2026-07-09T22:36:37-07:00",
+  "node": "24.15.0",
+  "flavor": "real",
+  "slice": "sanity",
+  "counts": {
+    "pass": 1,
+    "fail-accepted": 1,
+    "skip": 0
+  },
+  "results": [
+    {
+      "id": "parallel/test-regression-object-prototype.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-global-console-exists.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    }
+  ]
+}

@@ -14,7 +14,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -25,16 +25,36 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: make -C toolchain commands
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
-      - run: cargo check --workspace
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo check --workspace --exclude agentos-native-sidecar-browser --exclude agentos-sidecar-browser
+      - run: cargo clippy --workspace --exclude agentos-native-sidecar-browser --exclude agentos-sidecar-browser --all-targets -- -D warnings
       - run: pnpm check-types
       - run: pnpm test
         env:
           AGENTOS_E2E_NETWORK: '1'
-      - run: cargo test --workspace -- --test-threads=1
+      - run: cargo test --workspace --exclude agentos-native-sidecar-browser --exclude agentos-sidecar-browser -- --test-threads=1
       - run: cargo build --release -p agentos-native-sidecar
       - run: cargo build --release -p agentos-native-baseline
       - run: cargo build --release --target wasm32-wasip1 -p agentos-native-baseline
+      - name: Node 24 suite smoke (legacy)
+        run: pnpm --silent --dir test-harness node-suite -- --slice smoke --timeout 2000 --batch-size 50 --ledger node-suite/ledger-smoke.json --write node-suite-smoke-legacy.json
+        env:
+          AGENTOS_JS_STDLIB: legacy
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/release/agentos-native-sidecar
+      - name: Node 24 suite smoke (real stdlib)
+        run: pnpm --silent --dir test-harness node-suite -- --slice smoke --timeout 2000 --batch-size 50 --ledger node-suite/ledger-smoke.json --write node-suite-smoke-real.json
+        env:
+          AGENTOS_JS_STDLIB: real
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/release/agentos-native-sidecar
+      - name: Node 24 full suite (legacy)
+        run: pnpm --silent --dir test-harness node-suite -- --slice full --timeout 2000 --batch-size 50 --ledger node-suite/ledger.json --write node-suite-full-legacy.json
+        env:
+          AGENTOS_JS_STDLIB: legacy
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/release/agentos-native-sidecar
+      - name: Node 24 full suite (real stdlib)
+        run: pnpm --silent --dir test-harness node-suite -- --slice full --timeout 2000 --batch-size 50 --ledger node-suite/ledger.json --write node-suite-full-real.json
+        env:
+          AGENTOS_JS_STDLIB: real
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/release/agentos-native-sidecar
       - run: pnpm --dir packages/runtime-benchmarks bench:matrix
         env:
           AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/release/agentos-native-sidecar
@@ -45,4 +65,10 @@ jobs:
         with:
           name: nightly-benchmark-results
           path: packages/runtime-benchmarks/results
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: node-suite-smoke-results
+          path: node-suite-*.json
           if-no-files-found: warn

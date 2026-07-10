@@ -2213,7 +2213,6 @@ mod tests {
         CA_CERTIFICATES_GUEST_PATH, CA_CERTIFICATES_SYMLINK_PATH, CA_CERTIFICATES_SYMLINK_TARGET,
         KERNEL_COMMAND_STUB,
     };
-    use std::path::Path;
     use crate::plugins::chunked_local::ChunkedLocalMountPlugin;
     use crate::protocol::{
         RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemEntryKind,
@@ -2229,6 +2228,7 @@ mod tests {
     use agentos_kernel::vfs::VirtualFileSystem;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -2275,8 +2275,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock should be monotonic")
             .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("agentos-native-sidecar-ca-test-{unique}"));
+        let root = std::env::temp_dir().join(format!("agentos-native-sidecar-ca-test-{unique}"));
         fs::create_dir_all(&root).expect("temp shadow root should be created");
 
         bootstrap_shadow_root(&root).expect("shadow bootstrap should succeed");

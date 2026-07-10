@@ -23,10 +23,10 @@ cargo build --release -p agentos-native-sidecar
 Run the full benchmark suite:
 
 ```bash
-pnpm --dir packages/benchmarks bench
+pnpm --dir packages/runtime-benchmarks bench
 ```
 
-This writes timestamped files under `packages/benchmarks/results/`:
+This writes timestamped files under `packages/runtime-benchmarks/results/`:
 
 ```text
 coldstart-YYYYMMDD-HHMMSS.json
@@ -35,32 +35,84 @@ memory-YYYYMMDD-HHMMSS.json
 memory-YYYYMMDD-HHMMSS.log
 ```
 
+## Node stdlib migration measurements
+
+The checked-in M0 early-warning capture is
+`results/node-stdlib-m0-baseline.json`; its compact review table is
+`results/node-stdlib-m0-delta.md`. It is a debug-sidecar development capture,
+not the release-profile M5 cutover baseline. Run the same-machine legacy/real
+matrix in one invocation with:
+
+```bash
+AGENTOS_SIDECAR_BIN="$PWD/target/release/agentos-native-sidecar" \
+NATIVE_BASELINE_BIN="$PWD/target/release/agentos-native-baseline" \
+pnpm --dir packages/runtime-benchmarks bench:node-stdlib-ab \
+  > packages/runtime-benchmarks/results/node-stdlib-ab.json
+pnpm --dir packages/runtime-benchmarks bench:node-stdlib-delta \
+  results/node-stdlib-ab.json
+```
+
+The runner holds the sidecar, machine, op order, payloads, warmup, and sample
+count constant. Both AgentOS flavors use the same in-memory VM `/tmp`; native
+Node codec rows are memory-only, and native filesystem lanes in the existing
+matrix must be pointed at tmpfs on release hardware. It covers binding RTT,
+4 KiB/1 MiB reads, stat, 1,000-entry readdir, 1 MiB stream copy, CommonJS and
+npm import storms, RSS, and a coldstart program that imports both `fs` and
+`http`. The native codec floor is also independently runnable:
+
+```bash
+pnpm --dir packages/runtime-benchmarks bench:node-stdlib-floor
+```
+
+Snapshot blob/build and per-builtin compile metrics are produced by:
+
+```bash
+cargo run -p agentos-v8-runtime --example node_stdlib_snapshot_metrics
+```
+
+The focused wasm lifecycle floor measures compile and instantiate cold/warm,
+V8's WASM native-module cache enabled/disabled, and cross-isolate execution
+with/without a shared compiled module. It prefers the shared OpenSSL handshake
+module when that build artifact exists and records the exact hash:
+
+```bash
+pnpm --dir packages/runtime-benchmarks bench:node-stdlib-wasm
+```
+
+The authoritative environment-keyed baselines remain `results/baseline-local.json`
+and `results/baseline-ci.json`.
+
+The secondary root harness is intentionally separate and runs with
+`pnpm bench`; its environment-keyed artifacts are under the root benchmark
+script's output directory. Capture both harnesses for early warning, but only
+compare same-day, same-machine legacy/real results for milestone gates.
+
 Run one focused lane by name:
 
 ```bash
-BENCH_ONLY=sync-bridge-floor pnpm --dir packages/benchmarks bench
-BENCH_ONLY=ls-serial pnpm --dir packages/benchmarks bench
-BENCH_ONLY=process-spawn pnpm --dir packages/benchmarks bench
+BENCH_ONLY=sync-bridge-floor pnpm --dir packages/runtime-benchmarks bench
+BENCH_ONLY=ls-serial pnpm --dir packages/runtime-benchmarks bench
+BENCH_ONLY=process-spawn pnpm --dir packages/runtime-benchmarks bench
 ```
 
 Run one matrix family:
 
 ```bash
-BENCH_FAMILIES=fs pnpm --dir packages/benchmarks bench:matrix
-BENCH_FAMILIES=modules pnpm --dir packages/benchmarks bench:matrix
-BENCH_FAMILIES=ecosystem pnpm --dir packages/benchmarks bench:matrix
-BENCH_FAMILIES=permissions pnpm --dir packages/benchmarks bench:matrix
+BENCH_FAMILIES=fs pnpm --dir packages/runtime-benchmarks bench:matrix
+BENCH_FAMILIES=modules pnpm --dir packages/runtime-benchmarks bench:matrix
+BENCH_FAMILIES=ecosystem pnpm --dir packages/runtime-benchmarks bench:matrix
+BENCH_FAMILIES=permissions pnpm --dir packages/runtime-benchmarks bench:matrix
 ```
 
 Run one matrix op:
 
 ```bash
-BENCH_FAMILIES=net BENCH_OP_FILTER=tls_loopback_get pnpm --dir packages/benchmarks bench:matrix
+BENCH_FAMILIES=net BENCH_OP_FILTER=tls_loopback_get pnpm --dir packages/runtime-benchmarks bench:matrix
 ```
 
 ## Baseline And PR Gate
 
-The committed local baseline is `packages/benchmarks/results/baseline-local.json`. It is generated from the full 70-row latency matrix and records:
+The committed local baseline is `packages/runtime-benchmarks/results/baseline-local.json`. It is generated from the full 70-row latency matrix and records:
 
 - **Hardware**: `getHardware()` output for the canonical machine.
 - **Sidecar provenance**: binary path, inferred profile, mtime, and size.
@@ -75,12 +127,12 @@ cargo build --release -p agentos-native-sidecar
 cargo build --release -p native-baseline
 cargo build --release -p native-baseline --target wasm32-wasip1
 AGENTOS_SIDECAR_BIN="$PWD/target/release/agentos-native-sidecar" \
-	pnpm --dir packages/benchmarks bench:baseline
+	pnpm --dir packages/runtime-benchmarks bench:baseline
 ```
 
 `bench:baseline` refuses debug sidecars and refuses filtered matrix runs. A complete baseline has `engine.rowCount = 70`.
 
-`pnpm --dir packages/benchmarks bench:gate` runs the deterministic PR subset with 9 measured iterations and 3 warmup iterations, then compares p50 against the baseline:
+`pnpm --dir packages/runtime-benchmarks bench:gate` runs the deterministic PR subset with 9 measured iterations and 3 warmup iterations, then compares p50 against the baseline:
 
 - **Threshold**: fail when current p50 is greater than `2.0x` the baseline p50. Override with `BENCH_GATE_THRESHOLD`.
 - **Tiny-row floor**: rows with baseline p50 below `0.3ms` are ignored unless current p50 reaches at least `1ms`, so sub-millisecond timer noise does not flap the gate.
@@ -104,11 +156,11 @@ Gate rows:
 | `control/cpu_loop` | `wasm` | WASM runtime lane sanity check. |
 | `ecosystem/ls_100` | `vmCmd` | End-to-end WASM command tier. |
 
-The CI baseline is environment-specific because GitHub-hosted runner hardware differs from the canonical machine. In CI, `bench:gate` uses `packages/benchmarks/results/baseline-ci.json`. If it is missing, PR gates skip loudly. The nightly workflow runs the full matrix, writes a candidate `baseline-ci.json`, and uploads it as an artifact. Bootstrap is:
+The CI baseline is environment-specific because GitHub-hosted runner hardware differs from the canonical machine. In CI, `bench:gate` uses `packages/runtime-benchmarks/results/baseline-ci.json`. If it is missing, PR gates skip loudly. The nightly workflow runs the full matrix, writes a candidate `baseline-ci.json`, and uploads it as an artifact. Bootstrap is:
 
 1. Let the first nightly workflow finish.
 2. Download `baseline-ci.json` from the `nightly-benchmark-results` artifact.
-3. Commit it at `packages/benchmarks/results/baseline-ci.json`.
+3. Commit it at `packages/runtime-benchmarks/results/baseline-ci.json`.
 4. Future PRs enforce the quick gate against that CI baseline.
 
 ### Latency Matrix VM Lifecycle
@@ -169,7 +221,7 @@ The shell/coreutils focused lanes use the local `NodeRuntime` command-dir resolu
 
 ## Net Family
 
-`BENCH_FAMILIES=net pnpm --dir packages/benchmarks bench:matrix` runs loopback networking rows through the host Node and guest VM lanes, plus native/WASM lanes where a baseline exists.
+`BENCH_FAMILIES=net pnpm --dir packages/runtime-benchmarks bench:matrix` runs loopback networking rows through the host Node and guest VM lanes, plus native/WASM lanes where a baseline exists.
 
 Rows:
 
@@ -202,7 +254,7 @@ Payload-sensitive matrix rows use exactly two tiers named `<op>_small` and `<op>
 
 ## Permissions Family
 
-`BENCH_FAMILIES=permissions pnpm --dir packages/benchmarks bench:matrix` runs a guest-only policy-overhead A/B over hot fs and net rows. Each reused op has an `<op>_allow` row using the benchmark default allow-all VM permissions and an `<op>_policy` row using a realistic restrictive policy.
+`BENCH_FAMILIES=permissions pnpm --dir packages/runtime-benchmarks bench:matrix` runs a guest-only policy-overhead A/B over hot fs and net rows. Each reused op has an `<op>_allow` row using the benchmark default allow-all VM permissions and an `<op>_policy` row using a realistic restrictive policy.
 
 Policy shape:
 
@@ -214,7 +266,7 @@ The matrix prints a dedicated permissions table and writes `permissionPolicyTax`
 
 ## Modules Family
 
-`BENCH_FAMILIES=modules pnpm --dir packages/benchmarks bench:matrix` runs JavaScript module-resolution and import-heavy rows through the host Node and guest VM lanes. Native and WASM lanes are unsupported because module resolution is a JS-runtime surface.
+`BENCH_FAMILIES=modules pnpm --dir packages/runtime-benchmarks bench:matrix` runs JavaScript module-resolution and import-heavy rows through the host Node and guest VM lanes. Native and WASM lanes are unsupported because module resolution is a JS-runtime surface.
 
 These rows cap the default matrix sample budget at five measured iterations plus one warmup so each row still loads 100 unique files per iteration without making debug-sidecar runs impractical.
 
@@ -227,7 +279,7 @@ Rows:
 
 ## Ecosystem Family
 
-`BENCH_FAMILIES=ecosystem pnpm --dir packages/benchmarks bench:matrix` runs end-to-end command workloads through two lanes:
+`BENCH_FAMILIES=ecosystem pnpm --dir packages/runtime-benchmarks bench:matrix` runs end-to-end command workloads through two lanes:
 
 - **`hostCmd`**: real host binaries via `child_process`.
 - **`vmCmd`**: the same command in the VM through the WASM command tier.
@@ -251,9 +303,9 @@ Run only the cold-start matrix:
 
 ```bash
 AGENTOS_SIDECAR_BIN="$PWD/target/release/agentos-native-sidecar" \
-	pnpm --silent --dir packages/benchmarks bench:coldstart \
-	> packages/benchmarks/results/coldstart-local.json \
-	2> packages/benchmarks/results/coldstart-local.log
+	pnpm --silent --dir packages/runtime-benchmarks bench:coldstart \
+	> packages/runtime-benchmarks/results/coldstart-local.json \
+	2> packages/runtime-benchmarks/results/coldstart-local.log
 ```
 
 Quick smoke run:
@@ -264,7 +316,7 @@ BENCH_ITERATIONS=1 \
 BENCH_WARMUP=0 \
 BENCH_SCENARIOS=owned-sidecar,shared-sidecar,resident-runner \
 AGENTOS_SIDECAR_BIN="$PWD/target/release/agentos-native-sidecar" \
-	pnpm --silent --dir packages/benchmarks bench:coldstart
+	pnpm --silent --dir packages/runtime-benchmarks bench:coldstart
 ```
 
 Useful knobs:

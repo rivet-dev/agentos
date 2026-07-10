@@ -17,12 +17,10 @@ export const RUST_CRATE_ORDER = [
 	"agentos-native-sidecar-core",
 	"agentos-sidecar-client",
 	"agentos-native-sidecar",
-	"agentos-native-sidecar-browser",
 	"agentos-protocol",
 	"agentos-sidecar-core",
 	"agentos-client",
 	"agentos-sidecar",
-	"agentos-sidecar-browser",
 ] as const;
 
 export type PublishableRustCrate = (typeof RUST_CRATE_ORDER)[number];

@@ -1,0 +1,4532 @@
+{
+  "schema": 1,
+  "generator": "crates/node-stdlib/scripts/reconcile-bindings.mjs",
+  "pinned_node": {
+    "commit": "848430679556aed0bd073f2bc263331ad84fa119",
+    "unique_count": 69,
+    "occurrence_count": 358,
+    "names": [
+      "async_context_frame",
+      "async_wrap",
+      "blob",
+      "block_list",
+      "buffer",
+      "builtins",
+      "cares_wrap",
+      "cjs_lexer",
+      "config",
+      "constants",
+      "contextify",
+      "credentials",
+      "crypto",
+      "diagnostics_channel",
+      "encoding_binding",
+      "errors",
+      "fs",
+      "fs_dir",
+      "fs_event_wrap",
+      "heap_utils",
+      "http2",
+      "http_parser",
+      "icu",
+      "inspector",
+      "internal_only_v8",
+      "js_stream",
+      "locks",
+      "messaging",
+      "mksnapshot",
+      "module_wrap",
+      "modules",
+      "options",
+      "os",
+      "performance",
+      "permission",
+      "pipe_wrap",
+      "process_methods",
+      "process_wrap",
+      "profiler",
+      "quic",
+      "report",
+      "sea",
+      "serdes",
+      "signal_wrap",
+      "spawn_sync",
+      "sqlite",
+      "stream_pipe",
+      "stream_wrap",
+      "string_decoder",
+      "symbols",
+      "task_queue",
+      "tcp_wrap",
+      "timers",
+      "tls_wrap",
+      "trace_events",
+      "tty_wrap",
+      "types",
+      "udp_wrap",
+      "url",
+      "url_pattern",
+      "util",
+      "uv",
+      "v8",
+      "wasi",
+      "wasm_web_api",
+      "watchdog",
+      "webstorage",
+      "worker",
+      "zlib"
+    ],
+    "occurrences": [
+      {
+        "binding": "async_context_frame",
+        "kind": "internalBinding",
+        "file": "internal/async_context_frame.js",
+        "line": 11
+      },
+      {
+        "binding": "async_wrap",
+        "kind": "internalBinding",
+        "file": "internal/async_hooks.js",
+        "line": 13
+      },
+      {
+        "binding": "async_wrap",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 227
+      },
+      {
+        "binding": "async_wrap",
+        "kind": "internalBinding",
+        "file": "internal/promise_hooks.js",
+        "line": 11
+      },
+      {
+        "binding": "async_wrap",
+        "kind": "internalBinding",
+        "file": "internal/trace_events_async_hooks.js",
+        "line": 11
+      },
+      {
+        "binding": "blob",
+        "kind": "internalBinding",
+        "file": "internal/blob.js",
+        "line": 28
+      },
+      {
+        "binding": "blob",
+        "kind": "internalBinding",
+        "file": "internal/url.js",
+        "line": 1192
+      },
+      {
+        "binding": "block_list",
+        "kind": "internalBinding",
+        "file": "internal/blocklist.js",
+        "line": 14
+      },
+      {
+        "binding": "block_list",
+        "kind": "internalBinding",
+        "file": "internal/socketaddress.js",
+        "line": 12
+      },
+      {
+        "binding": "buffer",
+        "kind": "internalBinding",
+        "file": "buffer.js",
+        "line": 87
+      },
+      {
+        "binding": "buffer",
+        "kind": "internalBinding",
+        "file": "internal/blob.js",
+        "line": 31
+      },
+      {
+        "binding": "buffer",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 454
+      },
+      {
+        "binding": "buffer",
+        "kind": "internalBinding",
+        "file": "internal/buffer.js",
+        "line": 38
+      },
+      {
+        "binding": "buffer",
+        "kind": "internalBinding",
+        "file": "internal/util/comparisons.js",
+        "line": 56
+      },
+      {
+        "binding": "buffer",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/util.js",
+        "line": 31
+      },
+      {
+        "binding": "builtins",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 133
+      },
+      {
+        "binding": "builtins",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/realm.js",
+        "line": 197
+      },
+      {
+        "binding": "builtins",
+        "kind": "internalBinding",
+        "file": "internal/debugger/inspect_repl.js",
+        "line": 122
+      },
+      {
+        "binding": "builtins",
+        "kind": "internalBinding",
+        "file": "internal/legacy/processbinding.js",
+        "line": 37
+      },
+      {
+        "binding": "builtins",
+        "kind": "internalBinding",
+        "file": "internal/main/prof_process.js",
+        "line": 20
+      },
+      {
+        "binding": "cares_wrap",
+        "kind": "internalBinding",
+        "file": "dns.js",
+        "line": 30
+      },
+      {
+        "binding": "cares_wrap",
+        "kind": "internalBinding",
+        "file": "internal/dns/callback_resolver.js",
+        "line": 29
+      },
+      {
+        "binding": "cares_wrap",
+        "kind": "internalBinding",
+        "file": "internal/dns/promises.js",
+        "line": 67
+      },
+      {
+        "binding": "cares_wrap",
+        "kind": "internalBinding",
+        "file": "internal/dns/utils.js",
+        "line": 32
+      },
+      {
+        "binding": "cares_wrap",
+        "kind": "internalBinding",
+        "file": "net.js",
+        "line": 69
+      },
+      {
+        "binding": "cares_wrap",
+        "kind": "internalBinding",
+        "file": "tls.js",
+        "line": 68
+      },
+      {
+        "binding": "cjs_lexer",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/translators.js",
+        "line": 63
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "buffer.js",
+        "line": 1334
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "inspector.js",
+        "line": 23
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 68
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/is_main_thread.js",
+        "line": 305
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/web/exposed-wildcard.js",
+        "line": 18
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/web/exposed-window-or-worker.js",
+        "line": 106
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/console/constructor.js",
+        "line": 692
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/encoding.js",
+        "line": 59
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/inspector_async_hook.js",
+        "line": 9
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/main/eval_string.js",
+        "line": 44
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/main/print_help.js",
+        "line": 35
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/navigator.js",
+        "line": 34
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 501
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 511
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 561
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/util/inspect.js",
+        "line": 2664
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/util/inspector.js",
+        "line": 49
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "trace_events.js",
+        "line": 8
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "v8.js",
+        "line": 55
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "constants.js",
+        "line": 33
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "crypto.js",
+        "line": 42
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "dgram.js",
+        "line": 77
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "fs.js",
+        "line": 50
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/crypto/cipher.js",
+        "line": 23
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/crypto/diffiehellman.js",
+        "line": 73
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/crypto/keys.js",
+        "line": 38
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/crypto/sig.js",
+        "line": 52
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/crypto/util.js",
+        "line": 53
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/fs/cp/cp-sync.js",
+        "line": 20
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/fs/cp/cp.js",
+        "line": 36
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/fs/promises.js",
+        "line": 23
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/fs/utils.js",
+        "line": 108
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/get_format.js",
+        "line": 14
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/process/per_thread.js",
+        "line": 60
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/process/signal.js",
+        "line": 12
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/tls/common.js",
+        "line": 45
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/tls/secure-context.js",
+        "line": 44
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 63
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/validators.js",
+        "line": 40
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/adapters.js",
+        "line": 106
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "os.js",
+        "line": 34
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "zlib.js",
+        "line": 77
+      },
+      {
+        "binding": "contextify",
+        "kind": "internalBinding",
+        "file": "internal/main/embedding.js",
+        "line": 21
+      },
+      {
+        "binding": "contextify",
+        "kind": "internalBinding",
+        "file": "internal/modules/cjs/loader.js",
+        "line": 155
+      },
+      {
+        "binding": "contextify",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/get_format.js",
+        "line": 69
+      },
+      {
+        "binding": "contextify",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/translators.js",
+        "line": 22
+      },
+      {
+        "binding": "contextify",
+        "kind": "internalBinding",
+        "file": "internal/process/execution.js",
+        "line": 37
+      },
+      {
+        "binding": "contextify",
+        "kind": "internalBinding",
+        "file": "internal/vm.js",
+        "line": 11
+      },
+      {
+        "binding": "contextify",
+        "kind": "internalBinding",
+        "file": "repl.js",
+        "line": 169
+      },
+      {
+        "binding": "contextify",
+        "kind": "internalBinding",
+        "file": "vm.js",
+        "line": 37
+      },
+      {
+        "binding": "credentials",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 213
+      },
+      {
+        "binding": "credentials",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/does_not_own_process_state.js",
+        "line": 3
+      },
+      {
+        "binding": "credentials",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/does_own_process_state.js",
+        "line": 3
+      },
+      {
+        "binding": "credentials",
+        "kind": "internalBinding",
+        "file": "internal/modules/cjs/loader.js",
+        "line": 161
+      },
+      {
+        "binding": "credentials",
+        "kind": "internalBinding",
+        "file": "os.js",
+        "line": 33
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "crypto.js",
+        "line": 48
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/aes.js",
+        "line": 28
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/argon2.js",
+        "line": 20
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/certificate.js",
+        "line": 7
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/cfrg.js",
+        "line": 19
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/chacha20_poly1305.js",
+        "line": 12
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/cipher.js",
+        "line": 16
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/diffiehellman.js",
+        "line": 24
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/ec.js",
+        "line": 16
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/hash.js",
+        "line": 17
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/hkdf.js",
+        "line": 12
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/kem.js",
+        "line": 22
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/keygen.js",
+        "line": 44
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/keys.js",
+        "line": 31
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/mac.js",
+        "line": 16
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/ml_dsa.js",
+        "line": 25
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/ml_kem.js",
+        "line": 23
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/pbkdf2.js",
+        "line": 15
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/random.js",
+        "line": 32
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/rsa.js",
+        "line": 23
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/scrypt.js",
+        "line": 13
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/sig.js",
+        "line": 32
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/util.js",
+        "line": 45
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/webcrypto.js",
+        "line": 24
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/x509.js",
+        "line": 17
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/tls/common.js",
+        "line": 70
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/tls/wrap.js",
+        "line": 60
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "tls.js",
+        "line": 51
+      },
+      {
+        "binding": "diagnostics_channel",
+        "kind": "internalBinding",
+        "file": "diagnostics_channel.js",
+        "line": 34
+      },
+      {
+        "binding": "diagnostics_channel",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 613
+      },
+      {
+        "binding": "encoding_binding",
+        "kind": "internalBinding",
+        "file": "internal/encoding.js",
+        "line": 60
+      },
+      {
+        "binding": "encoding_binding",
+        "kind": "internalBinding",
+        "file": "url.js",
+        "line": 39
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "diagnostics_channel.js",
+        "line": 32
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/async_hooks.js",
+        "line": 11
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 378
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/realm.js",
+        "line": 447
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/cluster/child.js",
+        "line": 19
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/debugger/inspect.js",
+        "line": 47
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/errors/error_source.js",
+        "line": 10
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/main/prof_process.js",
+        "line": 21
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/main/repl.js",
+        "line": 19
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/main/test_runner.js",
+        "line": 14
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/main/watch_mode.js",
+        "line": 20
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/main/worker_thread.js",
+        "line": 60
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/worker.js",
+        "line": 308
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/modules/run_main.js",
+        "line": 18
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/process/execution.js",
+        "line": 21
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/process/per_thread.js",
+        "line": 66
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/process/promises.js",
+        "line": 29
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/promise_hooks.js",
+        "line": 12
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/source_map/prepare_stack_trace.js",
+        "line": 22
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/source_map/source_map_cache.js",
+        "line": 26
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/test_runner/harness.js",
+        "line": 23
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/test_runner/runner.js",
+        "line": 99
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/test_runner/test.js",
+        "line": 36
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "fs.js",
+        "line": 68
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/fs/cp/cp-sync.js",
+        "line": 5
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/fs/cp/cp.js",
+        "line": 57
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/fs/dir.js",
+        "line": 15
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/fs/promises.js",
+        "line": 32
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/fs/read/context.js",
+        "line": 18
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/fs/watchers.js",
+        "line": 35
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/http2/core.js",
+        "line": 183
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/modules/cjs/loader.js",
+        "line": 160
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/get_format.js",
+        "line": 13
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/resolve.js",
+        "line": 35
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/resolve.js",
+        "line": 52
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/modules/package_json_reader.js",
+        "line": 30
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/net.js",
+        "line": 10
+      },
+      {
+        "binding": "fs_dir",
+        "kind": "internalBinding",
+        "file": "internal/fs/dir.js",
+        "line": 16
+      },
+      {
+        "binding": "fs_event_wrap",
+        "kind": "internalBinding",
+        "file": "internal/fs/watchers.js",
+        "line": 37
+      },
+      {
+        "binding": "heap_utils",
+        "kind": "internalBinding",
+        "file": "v8.js",
+        "line": 66
+      },
+      {
+        "binding": "http_parser",
+        "kind": "internalBinding",
+        "file": "_http_common.js",
+        "line": 31
+      },
+      {
+        "binding": "http_parser",
+        "kind": "internalBinding",
+        "file": "_http_server.js",
+        "line": 51
+      },
+      {
+        "binding": "http_parser",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 81
+      },
+      {
+        "binding": "http2",
+        "kind": "internalBinding",
+        "file": "internal/http2/compat.js",
+        "line": 32
+      },
+      {
+        "binding": "http2",
+        "kind": "internalBinding",
+        "file": "internal/http2/core.js",
+        "line": 184
+      },
+      {
+        "binding": "http2",
+        "kind": "internalBinding",
+        "file": "internal/http2/util.js",
+        "line": 21
+      },
+      {
+        "binding": "http2",
+        "kind": "internalBinding",
+        "file": "internal/inspector/network_http2.js",
+        "line": 30
+      },
+      {
+        "binding": "icu",
+        "kind": "internalBinding",
+        "file": "buffer.js",
+        "line": 1338
+      },
+      {
+        "binding": "icu",
+        "kind": "internalBinding",
+        "file": "internal/encoding.js",
+        "line": 418
+      },
+      {
+        "binding": "icu",
+        "kind": "internalBinding",
+        "file": "internal/util/inspect.js",
+        "line": 2665
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "inspector.js",
+        "line": 52
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/web/exposed-wildcard.js",
+        "line": 59
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/console/constructor.js",
+        "line": 695
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/inspector_async_hook.js",
+        "line": 7
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/inspector/network_resources.js",
+        "line": 5
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/modules/cjs/loader.js",
+        "line": 1826
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/module_job.js",
+        "line": 323
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 506
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 516
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/util/inspector.js",
+        "line": 85
+      },
+      {
+        "binding": "internal_only_v8",
+        "kind": "internalBinding",
+        "file": "internal/heap_utils.js",
+        "line": 26
+      },
+      {
+        "binding": "js_stream",
+        "kind": "internalBinding",
+        "file": "internal/js_stream_socket.js",
+        "line": 10
+      },
+      {
+        "binding": "locks",
+        "kind": "internalBinding",
+        "file": "internal/locks.js",
+        "line": 34
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/abort_controller.js",
+        "line": 59
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/web/exposed-wildcard.js",
+        "line": 19
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 711
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 716
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/readablestream.js",
+        "line": 46
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/transfer.js",
+        "line": 17
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/transformstream.js",
+        "line": 24
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/writablestream.js",
+        "line": 31
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/worker/clone_dom_exception.js",
+        "line": 5
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/worker/io.js",
+        "line": 48
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/worker/js_transferable.js",
+        "line": 21
+      },
+      {
+        "binding": "mksnapshot",
+        "kind": "internalBinding",
+        "file": "internal/main/mksnapshot.js",
+        "line": 16
+      },
+      {
+        "binding": "mksnapshot",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 699
+      },
+      {
+        "binding": "mksnapshot",
+        "kind": "internalBinding",
+        "file": "internal/v8/startup_snapshot.js",
+        "line": 19
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/realm.js",
+        "line": 199
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/is_main_thread.js",
+        "line": 297
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/main/check_syntax.js",
+        "line": 71
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/modules/cjs/loader.js",
+        "line": 78
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/loader.js",
+        "line": 54
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/module_job.js",
+        "line": 34
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/translators.js",
+        "line": 58
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/utils.js",
+        "line": 28
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/process/execution.js",
+        "line": 25
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/vm/module.js",
+        "line": 58
+      },
+      {
+        "binding": "modules",
+        "kind": "internalBinding",
+        "file": "internal/main/embedding.js",
+        "line": 28
+      },
+      {
+        "binding": "modules",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/initialize_import_meta.js",
+        "line": 10
+      },
+      {
+        "binding": "modules",
+        "kind": "internalBinding",
+        "file": "internal/modules/helpers.js",
+        "line": 41
+      },
+      {
+        "binding": "modules",
+        "kind": "internalBinding",
+        "file": "internal/modules/package_json_reader.js",
+        "line": 27
+      },
+      {
+        "binding": "modules",
+        "kind": "internalBinding",
+        "file": "internal/modules/run_main.js",
+        "line": 8
+      },
+      {
+        "binding": "modules",
+        "kind": "internalBinding",
+        "file": "internal/modules/typescript.js",
+        "line": 29
+      },
+      {
+        "binding": "options",
+        "kind": "internalBinding",
+        "file": "internal/main/print_help.js",
+        "line": 19
+      },
+      {
+        "binding": "options",
+        "kind": "internalBinding",
+        "file": "internal/options.js",
+        "line": 18
+      },
+      {
+        "binding": "options",
+        "kind": "internalBinding",
+        "file": "internal/process/per_thread.js",
+        "line": 389
+      },
+      {
+        "binding": "os",
+        "kind": "internalBinding",
+        "file": "internal/errors.js",
+        "line": 911
+      },
+      {
+        "binding": "os",
+        "kind": "internalBinding",
+        "file": "internal/navigator.js",
+        "line": 22
+      },
+      {
+        "binding": "os",
+        "kind": "internalBinding",
+        "file": "os.js",
+        "line": 61
+      },
+      {
+        "binding": "performance",
+        "kind": "internalBinding",
+        "file": "internal/histogram.js",
+        "line": 16
+      },
+      {
+        "binding": "performance",
+        "kind": "internalBinding",
+        "file": "internal/perf/event_loop_delay.js",
+        "line": 18
+      },
+      {
+        "binding": "performance",
+        "kind": "internalBinding",
+        "file": "internal/perf/event_loop_utilization.js",
+        "line": 9
+      },
+      {
+        "binding": "performance",
+        "kind": "internalBinding",
+        "file": "internal/perf/nodetiming.js",
+        "line": 32
+      },
+      {
+        "binding": "performance",
+        "kind": "internalBinding",
+        "file": "internal/perf/observe.js",
+        "line": 36
+      },
+      {
+        "binding": "performance",
+        "kind": "internalBinding",
+        "file": "internal/perf/utils.js",
+        "line": 10
+      },
+      {
+        "binding": "performance",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 716
+      },
+      {
+        "binding": "performance",
+        "kind": "internalBinding",
+        "file": "perf_hooks.js",
+        "line": 9
+      },
+      {
+        "binding": "permission",
+        "kind": "internalBinding",
+        "file": "internal/process/permission.js",
+        "line": 7
+      },
+      {
+        "binding": "pipe_wrap",
+        "kind": "internalBinding",
+        "file": "child_process.js",
+        "line": 64
+      },
+      {
+        "binding": "pipe_wrap",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 53
+      },
+      {
+        "binding": "pipe_wrap",
+        "kind": "internalBinding",
+        "file": "internal/tls/wrap.js",
+        "line": 57
+      },
+      {
+        "binding": "pipe_wrap",
+        "kind": "internalBinding",
+        "file": "net.js",
+        "line": 82
+      },
+      {
+        "binding": "process_methods",
+        "kind": "internalBinding",
+        "file": "inspector.js",
+        "line": 38
+      },
+      {
+        "binding": "process_methods",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 153
+      },
+      {
+        "binding": "process_methods",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 343
+      },
+      {
+        "binding": "process_methods",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/does_not_own_process_state.js",
+        "line": 4
+      },
+      {
+        "binding": "process_methods",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/does_own_process_state.js",
+        "line": 4
+      },
+      {
+        "binding": "process_methods",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/is_main_thread.js",
+        "line": 7
+      },
+      {
+        "binding": "process_methods",
+        "kind": "internalBinding",
+        "file": "internal/process/per_thread.js",
+        "line": 68
+      },
+      {
+        "binding": "process_methods",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 262
+      },
+      {
+        "binding": "process_wrap",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 45
+      },
+      {
+        "binding": "profiler",
+        "kind": "internalBinding",
+        "file": "internal/test_runner/coverage.js",
+        "line": 137
+      },
+      {
+        "binding": "profiler",
+        "kind": "internalBinding",
+        "file": "internal/test_runner/coverage.js",
+        "line": 291
+      },
+      {
+        "binding": "profiler",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 835
+      },
+      {
+        "binding": "profiler",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 836
+      },
+      {
+        "binding": "profiler",
+        "kind": "internalBinding",
+        "file": "v8.js",
+        "line": 56
+      },
+      {
+        "binding": "quic",
+        "kind": "internalBinding",
+        "file": "internal/quic/quic.js",
+        "line": 55
+      },
+      {
+        "binding": "quic",
+        "kind": "internalBinding",
+        "file": "internal/quic/state.js",
+        "line": 80
+      },
+      {
+        "binding": "quic",
+        "kind": "internalBinding",
+        "file": "internal/quic/stats.js",
+        "line": 87
+      },
+      {
+        "binding": "report",
+        "kind": "internalBinding",
+        "file": "internal/process/report.js",
+        "line": 17
+      },
+      {
+        "binding": "sea",
+        "kind": "internalBinding",
+        "file": "internal/main/embedding.js",
+        "line": 15
+      },
+      {
+        "binding": "sea",
+        "kind": "internalBinding",
+        "file": "internal/main/mksnapshot.js",
+        "line": 18
+      },
+      {
+        "binding": "sea",
+        "kind": "internalBinding",
+        "file": "sea.js",
+        "line": 6
+      },
+      {
+        "binding": "serdes",
+        "kind": "internalBinding",
+        "file": "v8.js",
+        "line": 49
+      },
+      {
+        "binding": "signal_wrap",
+        "kind": "internalBinding",
+        "file": "internal/process/signal.js",
+        "line": 25
+      },
+      {
+        "binding": "spawn_sync",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 61
+      },
+      {
+        "binding": "sqlite",
+        "kind": "internalBinding",
+        "file": "sqlite.js",
+        "line": 3
+      },
+      {
+        "binding": "stream_pipe",
+        "kind": "internalBinding",
+        "file": "internal/http2/core.js",
+        "line": 192
+      },
+      {
+        "binding": "stream_wrap",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 52
+      },
+      {
+        "binding": "stream_wrap",
+        "kind": "internalBinding",
+        "file": "internal/child_process/serialization.js",
+        "line": 16
+      },
+      {
+        "binding": "stream_wrap",
+        "kind": "internalBinding",
+        "file": "internal/http2/core.js",
+        "line": 189
+      },
+      {
+        "binding": "stream_wrap",
+        "kind": "internalBinding",
+        "file": "internal/stream_base_commons.js",
+        "line": 17
+      },
+      {
+        "binding": "stream_wrap",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/adapters.js",
+        "line": 91
+      },
+      {
+        "binding": "stream_wrap",
+        "kind": "internalBinding",
+        "file": "net.js",
+        "line": 72
+      },
+      {
+        "binding": "string_decoder",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 77
+      },
+      {
+        "binding": "string_decoder",
+        "kind": "internalBinding",
+        "file": "string_decoder.js",
+        "line": 41
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/async_hooks.js",
+        "line": 84
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/async_hooks.js",
+        "line": 96
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/blocklist.js",
+        "line": 34
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/modules/cjs/loader.js",
+        "line": 189
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/loader.js",
+        "line": 23
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/utils.js",
+        "line": 22
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 92
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/tls/wrap.js",
+        "line": 80
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/vm.js",
+        "line": 20
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/worker/io.js",
+        "line": 30
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/worker/js_transferable.js",
+        "line": 17
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "vm.js",
+        "line": 69
+      },
+      {
+        "binding": "task_queue",
+        "kind": "internalBinding",
+        "file": "internal/async_hooks.js",
+        "line": 83
+      },
+      {
+        "binding": "task_queue",
+        "kind": "internalBinding",
+        "file": "internal/process/promises.js",
+        "line": 21
+      },
+      {
+        "binding": "task_queue",
+        "kind": "internalBinding",
+        "file": "internal/process/task_queues.js",
+        "line": 17
+      },
+      {
+        "binding": "tcp_wrap",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 54
+      },
+      {
+        "binding": "tcp_wrap",
+        "kind": "internalBinding",
+        "file": "internal/cluster/round_robin_handle.js",
+        "line": 13
+      },
+      {
+        "binding": "tcp_wrap",
+        "kind": "internalBinding",
+        "file": "internal/tls/wrap.js",
+        "line": 55
+      },
+      {
+        "binding": "tcp_wrap",
+        "kind": "internalBinding",
+        "file": "net.js",
+        "line": 77
+      },
+      {
+        "binding": "timers",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 357
+      },
+      {
+        "binding": "timers",
+        "kind": "internalBinding",
+        "file": "internal/timers.js",
+        "line": 85
+      },
+      {
+        "binding": "timers",
+        "kind": "internalBinding",
+        "file": "timers.js",
+        "line": 32
+      },
+      {
+        "binding": "tls_wrap",
+        "kind": "internalBinding",
+        "file": "internal/tls/wrap.js",
+        "line": 56
+      },
+      {
+        "binding": "trace_events",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 241
+      },
+      {
+        "binding": "trace_events",
+        "kind": "internalBinding",
+        "file": "internal/console/constructor.js",
+        "line": 38
+      },
+      {
+        "binding": "trace_events",
+        "kind": "internalBinding",
+        "file": "internal/http.js",
+        "line": 12
+      },
+      {
+        "binding": "trace_events",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 490
+      },
+      {
+        "binding": "trace_events",
+        "kind": "internalBinding",
+        "file": "internal/trace_events_async_hooks.js",
+        "line": 10
+      },
+      {
+        "binding": "trace_events",
+        "kind": "internalBinding",
+        "file": "internal/util/debuglog.js",
+        "line": 23
+      },
+      {
+        "binding": "trace_events",
+        "kind": "internalBinding",
+        "file": "trace_events.js",
+        "line": 21
+      },
+      {
+        "binding": "tty_wrap",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 55
+      },
+      {
+        "binding": "tty_wrap",
+        "kind": "internalBinding",
+        "file": "tty.js",
+        "line": 30
+      },
+      {
+        "binding": "types",
+        "kind": "internalBinding",
+        "file": "internal/test_runner/reporter/tap.js",
+        "line": 179
+      },
+      {
+        "binding": "types",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 74
+      },
+      {
+        "binding": "types",
+        "kind": "internalBinding",
+        "file": "internal/util/types.js",
+        "line": 62
+      },
+      {
+        "binding": "udp_wrap",
+        "kind": "internalBinding",
+        "file": "dgram.js",
+        "line": 83
+      },
+      {
+        "binding": "udp_wrap",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 56
+      },
+      {
+        "binding": "udp_wrap",
+        "kind": "internalBinding",
+        "file": "internal/dgram.js",
+        "line": 11
+      },
+      {
+        "binding": "url",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/hooks.js",
+        "line": 31
+      },
+      {
+        "binding": "url",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/resolve.js",
+        "line": 34
+      },
+      {
+        "binding": "url",
+        "kind": "internalBinding",
+        "file": "internal/modules/helpers.js",
+        "line": 35
+      },
+      {
+        "binding": "url",
+        "kind": "internalBinding",
+        "file": "internal/modules/package_json_reader.js",
+        "line": 18
+      },
+      {
+        "binding": "url",
+        "kind": "internalBinding",
+        "file": "internal/url.js",
+        "line": 100
+      },
+      {
+        "binding": "url",
+        "kind": "internalBinding",
+        "file": "url.js",
+        "line": 72
+      },
+      {
+        "binding": "url_pattern",
+        "kind": "internalBinding",
+        "file": "internal/url.js",
+        "line": 36
+      },
+      {
+        "binding": "url_pattern",
+        "kind": "internalBinding",
+        "file": "url.js",
+        "line": 38
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "buffer.js",
+        "line": 95
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 83
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/buffer.js",
+        "line": 44
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/console/constructor.js",
+        "line": 52
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/errors.js",
+        "line": 941
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/modules/cjs/loader.js",
+        "line": 76
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/module_job.js",
+        "line": 39
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/utils.js",
+        "line": 15
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/modules/run_main.js",
+        "line": 23
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/process/execution.js",
+        "line": 44
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 89
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 528
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/repl/completion.js",
+        "line": 62
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/source_map/source_map_cache_map.js",
+        "line": 15
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/test_runner/harness.js",
+        "line": 12
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/test_runner/test.js",
+        "line": 35
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 73
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/util/comparisons.js",
+        "line": 128
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/util/inspect.js",
+        "line": 149
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/vm.js",
+        "line": 32
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/util.js",
+        "line": 42
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/worker/io.js",
+        "line": 38
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/worker/js_transferable.js",
+        "line": 31
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "punycode.js",
+        "line": 4
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "url.js",
+        "line": 55
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "util.js",
+        "line": 83
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 76
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/dgram.js",
+        "line": 17
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/errors.js",
+        "line": 619
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/fs/watchers.js",
+        "line": 38
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/http2/core.js",
+        "line": 190
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/js_stream_socket.js",
+        "line": 11
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/stream_base_commons.js",
+        "line": 18
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 92
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/adapters.js",
+        "line": 95
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "net.js",
+        "line": 68
+      },
+      {
+        "binding": "v8",
+        "kind": "internalBinding",
+        "file": "v8.js",
+        "line": 111
+      },
+      {
+        "binding": "wasi",
+        "kind": "internalBinding",
+        "file": "wasi.js",
+        "line": 45
+      },
+      {
+        "binding": "wasi",
+        "kind": "internalBinding",
+        "file": "wasi.js",
+        "line": 49
+      },
+      {
+        "binding": "wasm_web_api",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/is_main_thread.js",
+        "line": 309
+      },
+      {
+        "binding": "wasm_web_api",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/web/exposed-window-or-worker.js",
+        "line": 101
+      },
+      {
+        "binding": "watchdog",
+        "kind": "internalBinding",
+        "file": "internal/watchdog.js",
+        "line": 5
+      },
+      {
+        "binding": "webstorage",
+        "kind": "internalBinding",
+        "file": "internal/webstorage.js",
+        "line": 8
+      },
+      {
+        "binding": "worker",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/is_main_thread.js",
+        "line": 311
+      },
+      {
+        "binding": "worker",
+        "kind": "internalBinding",
+        "file": "internal/main/worker_thread.js",
+        "line": 25
+      },
+      {
+        "binding": "worker",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 140
+      },
+      {
+        "binding": "worker",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 161
+      },
+      {
+        "binding": "worker",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 738
+      },
+      {
+        "binding": "worker",
+        "kind": "internalBinding",
+        "file": "internal/worker.js",
+        "line": 84
+      },
+      {
+        "binding": "worker",
+        "kind": "internalBinding",
+        "file": "internal/worker/io.js",
+        "line": 51
+      },
+      {
+        "binding": "worker",
+        "kind": "internalBinding",
+        "file": "internal/worker/messaging.js",
+        "line": 14
+      },
+      {
+        "binding": "zlib",
+        "kind": "internalBinding",
+        "file": "zlib.js",
+        "line": 58
+      }
+    ],
+    "legacy_process_binding": {
+      "names": [
+        "natives",
+        "util"
+      ],
+      "occurrences": [
+        {
+          "binding": "natives",
+          "kind": "process.binding",
+          "file": "internal/legacy/processbinding.js",
+          "line": 38
+        },
+        {
+          "binding": "util",
+          "kind": "process.binding",
+          "file": "internal/process/pre_execution.js",
+          "line": 526
+        }
+      ]
+    }
+  },
+  "v26_poc": {
+    "commit": "fbf82766d623fd9855fdb2fde32aeb6794af84e9",
+    "unique_count": 69,
+    "occurrence_count": 363,
+    "names": [
+      "async_context_frame",
+      "async_wrap",
+      "blob",
+      "block_list",
+      "buffer",
+      "builtins",
+      "cares_wrap",
+      "cjs_lexer",
+      "config",
+      "constants",
+      "contextify",
+      "credentials",
+      "crypto",
+      "diagnostics_channel",
+      "encoding_binding",
+      "errors",
+      "fs",
+      "fs_dir",
+      "fs_event_wrap",
+      "heap_utils",
+      "http2",
+      "http_parser",
+      "icu",
+      "inspector",
+      "internal_only_v8",
+      "js_stream",
+      "locks",
+      "messaging",
+      "mksnapshot",
+      "module_wrap",
+      "modules",
+      "options",
+      "os",
+      "performance",
+      "permission",
+      "pipe_wrap",
+      "process_methods",
+      "process_wrap",
+      "profiler",
+      "quic",
+      "report",
+      "sea",
+      "serdes",
+      "signal_wrap",
+      "spawn_sync",
+      "sqlite",
+      "stream_pipe",
+      "stream_wrap",
+      "string_decoder",
+      "symbols",
+      "task_queue",
+      "tcp_wrap",
+      "timers",
+      "tls_wrap",
+      "trace_events",
+      "tty_wrap",
+      "types",
+      "udp_wrap",
+      "url",
+      "url_pattern",
+      "util",
+      "uv",
+      "v8",
+      "wasi",
+      "wasm_web_api",
+      "watchdog",
+      "webstorage",
+      "worker",
+      "zlib"
+    ],
+    "occurrences": [
+      {
+        "binding": "async_context_frame",
+        "kind": "internalBinding",
+        "file": "internal/async_context_frame.js",
+        "line": 11
+      },
+      {
+        "binding": "async_wrap",
+        "kind": "internalBinding",
+        "file": "internal/async_hooks.js",
+        "line": 14
+      },
+      {
+        "binding": "async_wrap",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 227
+      },
+      {
+        "binding": "async_wrap",
+        "kind": "internalBinding",
+        "file": "internal/promise_hooks.js",
+        "line": 11
+      },
+      {
+        "binding": "async_wrap",
+        "kind": "internalBinding",
+        "file": "internal/trace_events_async_hooks.js",
+        "line": 11
+      },
+      {
+        "binding": "blob",
+        "kind": "internalBinding",
+        "file": "internal/blob.js",
+        "line": 28
+      },
+      {
+        "binding": "blob",
+        "kind": "internalBinding",
+        "file": "internal/url.js",
+        "line": 1192
+      },
+      {
+        "binding": "block_list",
+        "kind": "internalBinding",
+        "file": "internal/blocklist.js",
+        "line": 14
+      },
+      {
+        "binding": "block_list",
+        "kind": "internalBinding",
+        "file": "internal/socketaddress.js",
+        "line": 12
+      },
+      {
+        "binding": "buffer",
+        "kind": "internalBinding",
+        "file": "buffer.js",
+        "line": 86
+      },
+      {
+        "binding": "buffer",
+        "kind": "internalBinding",
+        "file": "internal/blob.js",
+        "line": 31
+      },
+      {
+        "binding": "buffer",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 463
+      },
+      {
+        "binding": "buffer",
+        "kind": "internalBinding",
+        "file": "internal/buffer.js",
+        "line": 38
+      },
+      {
+        "binding": "buffer",
+        "kind": "internalBinding",
+        "file": "internal/util/comparisons.js",
+        "line": 56
+      },
+      {
+        "binding": "buffer",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/util.js",
+        "line": 31
+      },
+      {
+        "binding": "builtins",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 133
+      },
+      {
+        "binding": "builtins",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/realm.js",
+        "line": 197
+      },
+      {
+        "binding": "builtins",
+        "kind": "internalBinding",
+        "file": "internal/debugger/inspect_repl.js",
+        "line": 122
+      },
+      {
+        "binding": "builtins",
+        "kind": "internalBinding",
+        "file": "internal/legacy/processbinding.js",
+        "line": 37
+      },
+      {
+        "binding": "builtins",
+        "kind": "internalBinding",
+        "file": "internal/main/prof_process.js",
+        "line": 20
+      },
+      {
+        "binding": "cares_wrap",
+        "kind": "internalBinding",
+        "file": "dns.js",
+        "line": 30
+      },
+      {
+        "binding": "cares_wrap",
+        "kind": "internalBinding",
+        "file": "internal/dns/callback_resolver.js",
+        "line": 29
+      },
+      {
+        "binding": "cares_wrap",
+        "kind": "internalBinding",
+        "file": "internal/dns/promises.js",
+        "line": 66
+      },
+      {
+        "binding": "cares_wrap",
+        "kind": "internalBinding",
+        "file": "internal/dns/utils.js",
+        "line": 32
+      },
+      {
+        "binding": "cares_wrap",
+        "kind": "internalBinding",
+        "file": "net.js",
+        "line": 69
+      },
+      {
+        "binding": "cares_wrap",
+        "kind": "internalBinding",
+        "file": "tls.js",
+        "line": 68
+      },
+      {
+        "binding": "cjs_lexer",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/translators.js",
+        "line": 62
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "buffer.js",
+        "line": 1322
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "inspector.js",
+        "line": 23
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 68
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/is_main_thread.js",
+        "line": 305
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/web/exposed-wildcard.js",
+        "line": 18
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/web/exposed-window-or-worker.js",
+        "line": 106
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/console/constructor.js",
+        "line": 692
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/encoding.js",
+        "line": 58
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/inspector_async_hook.js",
+        "line": 9
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/main/eval_string.js",
+        "line": 44
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/main/print_help.js",
+        "line": 35
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/navigator.js",
+        "line": 34
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 530
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 540
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 590
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/util/inspect.js",
+        "line": 2936
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "internal/util/inspector.js",
+        "line": 49
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "trace_events.js",
+        "line": 8
+      },
+      {
+        "binding": "config",
+        "kind": "internalBinding",
+        "file": "v8.js",
+        "line": 55
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "constants.js",
+        "line": 33
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "crypto.js",
+        "line": 42
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "dgram.js",
+        "line": 76
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "fs.js",
+        "line": 50
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/crypto/cipher.js",
+        "line": 23
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/crypto/diffiehellman.js",
+        "line": 74
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/crypto/ec.js",
+        "line": 27
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/crypto/keys.js",
+        "line": 35
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/crypto/sig.js",
+        "line": 52
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/crypto/util.js",
+        "line": 53
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/fs/cp/cp-sync.js",
+        "line": 20
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/fs/cp/cp.js",
+        "line": 36
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/fs/promises.js",
+        "line": 26
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/fs/utils.js",
+        "line": 108
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/get_format.js",
+        "line": 14
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/process/per_thread.js",
+        "line": 60
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/process/signal.js",
+        "line": 12
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/streams/iter/transform.js",
+        "line": 47
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/tls/common.js",
+        "line": 45
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/tls/secure-context.js",
+        "line": 44
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 63
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/validators.js",
+        "line": 40
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/adapters.js",
+        "line": 107
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "os.js",
+        "line": 34
+      },
+      {
+        "binding": "constants",
+        "kind": "internalBinding",
+        "file": "zlib.js",
+        "line": 77
+      },
+      {
+        "binding": "contextify",
+        "kind": "internalBinding",
+        "file": "internal/main/embedding.js",
+        "line": 19
+      },
+      {
+        "binding": "contextify",
+        "kind": "internalBinding",
+        "file": "internal/modules/cjs/loader.js",
+        "line": 155
+      },
+      {
+        "binding": "contextify",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/get_format.js",
+        "line": 69
+      },
+      {
+        "binding": "contextify",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/translators.js",
+        "line": 21
+      },
+      {
+        "binding": "contextify",
+        "kind": "internalBinding",
+        "file": "internal/process/execution.js",
+        "line": 39
+      },
+      {
+        "binding": "contextify",
+        "kind": "internalBinding",
+        "file": "internal/vm.js",
+        "line": 11
+      },
+      {
+        "binding": "contextify",
+        "kind": "internalBinding",
+        "file": "repl.js",
+        "line": 167
+      },
+      {
+        "binding": "contextify",
+        "kind": "internalBinding",
+        "file": "vm.js",
+        "line": 37
+      },
+      {
+        "binding": "credentials",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 213
+      },
+      {
+        "binding": "credentials",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/does_not_own_process_state.js",
+        "line": 3
+      },
+      {
+        "binding": "credentials",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/does_own_process_state.js",
+        "line": 3
+      },
+      {
+        "binding": "credentials",
+        "kind": "internalBinding",
+        "file": "internal/modules/cjs/loader.js",
+        "line": 161
+      },
+      {
+        "binding": "credentials",
+        "kind": "internalBinding",
+        "file": "os.js",
+        "line": 33
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "crypto.js",
+        "line": 48
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/aes.js",
+        "line": 28
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/argon2.js",
+        "line": 20
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/certificate.js",
+        "line": 7
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/cfrg.js",
+        "line": 23
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/chacha20_poly1305.js",
+        "line": 12
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/cipher.js",
+        "line": 16
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/diffiehellman.js",
+        "line": 24
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/ec.js",
+        "line": 21
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/hash.js",
+        "line": 19
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/hkdf.js",
+        "line": 12
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/kem.js",
+        "line": 22
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/keygen.js",
+        "line": 44
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/keys.js",
+        "line": 28
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/mac.js",
+        "line": 16
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/ml_dsa.js",
+        "line": 24
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/ml_kem.js",
+        "line": 22
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/pbkdf2.js",
+        "line": 15
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/random.js",
+        "line": 32
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/rsa.js",
+        "line": 24
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/scrypt.js",
+        "line": 13
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/sig.js",
+        "line": 32
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/util.js",
+        "line": 45
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/webcrypto.js",
+        "line": 24
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/crypto/x509.js",
+        "line": 17
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/tls/common.js",
+        "line": 70
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "internal/tls/wrap.js",
+        "line": 60
+      },
+      {
+        "binding": "crypto",
+        "kind": "internalBinding",
+        "file": "tls.js",
+        "line": 51
+      },
+      {
+        "binding": "diagnostics_channel",
+        "kind": "internalBinding",
+        "file": "diagnostics_channel.js",
+        "line": 30
+      },
+      {
+        "binding": "diagnostics_channel",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 642
+      },
+      {
+        "binding": "encoding_binding",
+        "kind": "internalBinding",
+        "file": "internal/encoding.js",
+        "line": 59
+      },
+      {
+        "binding": "encoding_binding",
+        "kind": "internalBinding",
+        "file": "url.js",
+        "line": 39
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "diagnostics_channel.js",
+        "line": 28
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/async_hooks.js",
+        "line": 12
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 387
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/realm.js",
+        "line": 447
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/cluster/child.js",
+        "line": 19
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/debugger/inspect.js",
+        "line": 47
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/errors/error_source.js",
+        "line": 10
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/main/prof_process.js",
+        "line": 21
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/main/repl.js",
+        "line": 19
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/main/test_runner.js",
+        "line": 14
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/main/watch_mode.js",
+        "line": 20
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/main/worker_thread.js",
+        "line": 60
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/worker.js",
+        "line": 308
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/modules/run_main.js",
+        "line": 18
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/process/execution.js",
+        "line": 23
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/process/per_thread.js",
+        "line": 66
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/process/promises.js",
+        "line": 27
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/promise_hooks.js",
+        "line": 12
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/source_map/prepare_stack_trace.js",
+        "line": 22
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/source_map/source_map_cache.js",
+        "line": 26
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/test_runner/harness.js",
+        "line": 23
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/test_runner/runner.js",
+        "line": 99
+      },
+      {
+        "binding": "errors",
+        "kind": "internalBinding",
+        "file": "internal/test_runner/test.js",
+        "line": 36
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "fs.js",
+        "line": 65
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/fs/cp/cp-sync.js",
+        "line": 5
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/fs/cp/cp.js",
+        "line": 57
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/fs/dir.js",
+        "line": 15
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/fs/promises.js",
+        "line": 35
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/fs/read/context.js",
+        "line": 18
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/fs/watchers.js",
+        "line": 35
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/http2/core.js",
+        "line": 183
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/modules/cjs/loader.js",
+        "line": 160
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/get_format.js",
+        "line": 13
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/resolve.js",
+        "line": 35
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/resolve.js",
+        "line": 52
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/modules/package_json_reader.js",
+        "line": 30
+      },
+      {
+        "binding": "fs",
+        "kind": "internalBinding",
+        "file": "internal/net.js",
+        "line": 10
+      },
+      {
+        "binding": "fs_dir",
+        "kind": "internalBinding",
+        "file": "internal/fs/dir.js",
+        "line": 16
+      },
+      {
+        "binding": "fs_event_wrap",
+        "kind": "internalBinding",
+        "file": "internal/fs/watchers.js",
+        "line": 37
+      },
+      {
+        "binding": "heap_utils",
+        "kind": "internalBinding",
+        "file": "v8.js",
+        "line": 66
+      },
+      {
+        "binding": "http_parser",
+        "kind": "internalBinding",
+        "file": "_http_common.js",
+        "line": 31
+      },
+      {
+        "binding": "http_parser",
+        "kind": "internalBinding",
+        "file": "_http_server.js",
+        "line": 53
+      },
+      {
+        "binding": "http_parser",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 80
+      },
+      {
+        "binding": "http2",
+        "kind": "internalBinding",
+        "file": "internal/http2/compat.js",
+        "line": 32
+      },
+      {
+        "binding": "http2",
+        "kind": "internalBinding",
+        "file": "internal/http2/core.js",
+        "line": 184
+      },
+      {
+        "binding": "http2",
+        "kind": "internalBinding",
+        "file": "internal/http2/util.js",
+        "line": 21
+      },
+      {
+        "binding": "http2",
+        "kind": "internalBinding",
+        "file": "internal/inspector/network_http2.js",
+        "line": 30
+      },
+      {
+        "binding": "icu",
+        "kind": "internalBinding",
+        "file": "buffer.js",
+        "line": 1326
+      },
+      {
+        "binding": "icu",
+        "kind": "internalBinding",
+        "file": "internal/encoding.js",
+        "line": 417
+      },
+      {
+        "binding": "icu",
+        "kind": "internalBinding",
+        "file": "internal/util/inspect.js",
+        "line": 2937
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "inspector.js",
+        "line": 52
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/web/exposed-wildcard.js",
+        "line": 64
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/console/constructor.js",
+        "line": 695
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/inspector_async_hook.js",
+        "line": 7
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/inspector/network_resources.js",
+        "line": 5
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/modules/cjs/loader.js",
+        "line": 1825
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/module_job.js",
+        "line": 323
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 535
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 545
+      },
+      {
+        "binding": "inspector",
+        "kind": "internalBinding",
+        "file": "internal/util/inspector.js",
+        "line": 85
+      },
+      {
+        "binding": "internal_only_v8",
+        "kind": "internalBinding",
+        "file": "internal/heap_utils.js",
+        "line": 26
+      },
+      {
+        "binding": "js_stream",
+        "kind": "internalBinding",
+        "file": "internal/js_stream_socket.js",
+        "line": 10
+      },
+      {
+        "binding": "locks",
+        "kind": "internalBinding",
+        "file": "internal/locks.js",
+        "line": 34
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/abort_controller.js",
+        "line": 59
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/web/exposed-wildcard.js",
+        "line": 19
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/crypto/random.js",
+        "line": 331
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 711
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 716
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/readablestream.js",
+        "line": 46
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/transfer.js",
+        "line": 17
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/transformstream.js",
+        "line": 24
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/writablestream.js",
+        "line": 31
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/worker/clone_dom_exception.js",
+        "line": 4
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/worker/io.js",
+        "line": 48
+      },
+      {
+        "binding": "messaging",
+        "kind": "internalBinding",
+        "file": "internal/worker/js_transferable.js",
+        "line": 21
+      },
+      {
+        "binding": "mksnapshot",
+        "kind": "internalBinding",
+        "file": "internal/main/mksnapshot.js",
+        "line": 16
+      },
+      {
+        "binding": "mksnapshot",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 739
+      },
+      {
+        "binding": "mksnapshot",
+        "kind": "internalBinding",
+        "file": "internal/v8/startup_snapshot.js",
+        "line": 19
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/realm.js",
+        "line": 199
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/is_main_thread.js",
+        "line": 297
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/main/check_syntax.js",
+        "line": 71
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/modules/cjs/loader.js",
+        "line": 78
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/loader.js",
+        "line": 56
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/module_job.js",
+        "line": 34
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/translators.js",
+        "line": 57
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/utils.js",
+        "line": 29
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/process/execution.js",
+        "line": 27
+      },
+      {
+        "binding": "module_wrap",
+        "kind": "internalBinding",
+        "file": "internal/vm/module.js",
+        "line": 58
+      },
+      {
+        "binding": "modules",
+        "kind": "internalBinding",
+        "file": "internal/main/embedding.js",
+        "line": 24
+      },
+      {
+        "binding": "modules",
+        "kind": "internalBinding",
+        "file": "internal/modules/helpers.js",
+        "line": 43
+      },
+      {
+        "binding": "modules",
+        "kind": "internalBinding",
+        "file": "internal/modules/package_json_reader.js",
+        "line": 27
+      },
+      {
+        "binding": "modules",
+        "kind": "internalBinding",
+        "file": "internal/modules/run_main.js",
+        "line": 8
+      },
+      {
+        "binding": "modules",
+        "kind": "internalBinding",
+        "file": "internal/modules/typescript.js",
+        "line": 28
+      },
+      {
+        "binding": "options",
+        "kind": "internalBinding",
+        "file": "internal/main/print_help.js",
+        "line": 19
+      },
+      {
+        "binding": "options",
+        "kind": "internalBinding",
+        "file": "internal/options.js",
+        "line": 19
+      },
+      {
+        "binding": "options",
+        "kind": "internalBinding",
+        "file": "internal/process/per_thread.js",
+        "line": 389
+      },
+      {
+        "binding": "os",
+        "kind": "internalBinding",
+        "file": "internal/errors.js",
+        "line": 924
+      },
+      {
+        "binding": "os",
+        "kind": "internalBinding",
+        "file": "internal/navigator.js",
+        "line": 22
+      },
+      {
+        "binding": "os",
+        "kind": "internalBinding",
+        "file": "os.js",
+        "line": 61
+      },
+      {
+        "binding": "performance",
+        "kind": "internalBinding",
+        "file": "internal/histogram.js",
+        "line": 16
+      },
+      {
+        "binding": "performance",
+        "kind": "internalBinding",
+        "file": "internal/perf/event_loop_delay.js",
+        "line": 18
+      },
+      {
+        "binding": "performance",
+        "kind": "internalBinding",
+        "file": "internal/perf/event_loop_utilization.js",
+        "line": 9
+      },
+      {
+        "binding": "performance",
+        "kind": "internalBinding",
+        "file": "internal/perf/nodetiming.js",
+        "line": 32
+      },
+      {
+        "binding": "performance",
+        "kind": "internalBinding",
+        "file": "internal/perf/observe.js",
+        "line": 35
+      },
+      {
+        "binding": "performance",
+        "kind": "internalBinding",
+        "file": "internal/perf/utils.js",
+        "line": 10
+      },
+      {
+        "binding": "performance",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 756
+      },
+      {
+        "binding": "performance",
+        "kind": "internalBinding",
+        "file": "perf_hooks.js",
+        "line": 9
+      },
+      {
+        "binding": "permission",
+        "kind": "internalBinding",
+        "file": "internal/process/permission.js",
+        "line": 7
+      },
+      {
+        "binding": "pipe_wrap",
+        "kind": "internalBinding",
+        "file": "child_process.js",
+        "line": 63
+      },
+      {
+        "binding": "pipe_wrap",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 52
+      },
+      {
+        "binding": "pipe_wrap",
+        "kind": "internalBinding",
+        "file": "internal/tls/wrap.js",
+        "line": 57
+      },
+      {
+        "binding": "pipe_wrap",
+        "kind": "internalBinding",
+        "file": "net.js",
+        "line": 82
+      },
+      {
+        "binding": "process_methods",
+        "kind": "internalBinding",
+        "file": "inspector.js",
+        "line": 38
+      },
+      {
+        "binding": "process_methods",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 153
+      },
+      {
+        "binding": "process_methods",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 352
+      },
+      {
+        "binding": "process_methods",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/does_not_own_process_state.js",
+        "line": 4
+      },
+      {
+        "binding": "process_methods",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/does_own_process_state.js",
+        "line": 4
+      },
+      {
+        "binding": "process_methods",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/is_main_thread.js",
+        "line": 7
+      },
+      {
+        "binding": "process_methods",
+        "kind": "internalBinding",
+        "file": "internal/process/per_thread.js",
+        "line": 68
+      },
+      {
+        "binding": "process_methods",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 263
+      },
+      {
+        "binding": "process_wrap",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 44
+      },
+      {
+        "binding": "profiler",
+        "kind": "internalBinding",
+        "file": "internal/test_runner/coverage.js",
+        "line": 137
+      },
+      {
+        "binding": "profiler",
+        "kind": "internalBinding",
+        "file": "internal/test_runner/coverage.js",
+        "line": 291
+      },
+      {
+        "binding": "profiler",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 835
+      },
+      {
+        "binding": "profiler",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 836
+      },
+      {
+        "binding": "profiler",
+        "kind": "internalBinding",
+        "file": "v8.js",
+        "line": 56
+      },
+      {
+        "binding": "quic",
+        "kind": "internalBinding",
+        "file": "internal/quic/quic.js",
+        "line": 58
+      },
+      {
+        "binding": "quic",
+        "kind": "internalBinding",
+        "file": "internal/quic/state.js",
+        "line": 88
+      },
+      {
+        "binding": "quic",
+        "kind": "internalBinding",
+        "file": "internal/quic/stats.js",
+        "line": 95
+      },
+      {
+        "binding": "report",
+        "kind": "internalBinding",
+        "file": "internal/process/report.js",
+        "line": 17
+      },
+      {
+        "binding": "sea",
+        "kind": "internalBinding",
+        "file": "internal/main/embedding.js",
+        "line": 15
+      },
+      {
+        "binding": "sea",
+        "kind": "internalBinding",
+        "file": "internal/main/mksnapshot.js",
+        "line": 18
+      },
+      {
+        "binding": "sea",
+        "kind": "internalBinding",
+        "file": "internal/modules/helpers.js",
+        "line": 135
+      },
+      {
+        "binding": "sea",
+        "kind": "internalBinding",
+        "file": "sea.js",
+        "line": 6
+      },
+      {
+        "binding": "serdes",
+        "kind": "internalBinding",
+        "file": "v8.js",
+        "line": 49
+      },
+      {
+        "binding": "signal_wrap",
+        "kind": "internalBinding",
+        "file": "internal/process/signal.js",
+        "line": 25
+      },
+      {
+        "binding": "spawn_sync",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 60
+      },
+      {
+        "binding": "sqlite",
+        "kind": "internalBinding",
+        "file": "sqlite.js",
+        "line": 3
+      },
+      {
+        "binding": "stream_pipe",
+        "kind": "internalBinding",
+        "file": "internal/http2/core.js",
+        "line": 192
+      },
+      {
+        "binding": "stream_wrap",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 51
+      },
+      {
+        "binding": "stream_wrap",
+        "kind": "internalBinding",
+        "file": "internal/child_process/serialization.js",
+        "line": 16
+      },
+      {
+        "binding": "stream_wrap",
+        "kind": "internalBinding",
+        "file": "internal/http2/core.js",
+        "line": 189
+      },
+      {
+        "binding": "stream_wrap",
+        "kind": "internalBinding",
+        "file": "internal/stream_base_commons.js",
+        "line": 17
+      },
+      {
+        "binding": "stream_wrap",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/adapters.js",
+        "line": 92
+      },
+      {
+        "binding": "stream_wrap",
+        "kind": "internalBinding",
+        "file": "net.js",
+        "line": 72
+      },
+      {
+        "binding": "string_decoder",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 77
+      },
+      {
+        "binding": "string_decoder",
+        "kind": "internalBinding",
+        "file": "string_decoder.js",
+        "line": 41
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/async_hooks.js",
+        "line": 85
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/async_hooks.js",
+        "line": 97
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/blocklist.js",
+        "line": 34
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/modules/cjs/loader.js",
+        "line": 189
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/loader.js",
+        "line": 23
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/utils.js",
+        "line": 23
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 92
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/tls/wrap.js",
+        "line": 80
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/vm.js",
+        "line": 20
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/worker/io.js",
+        "line": 30
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "internal/worker/js_transferable.js",
+        "line": 17
+      },
+      {
+        "binding": "symbols",
+        "kind": "internalBinding",
+        "file": "vm.js",
+        "line": 69
+      },
+      {
+        "binding": "task_queue",
+        "kind": "internalBinding",
+        "file": "internal/async_hooks.js",
+        "line": 84
+      },
+      {
+        "binding": "task_queue",
+        "kind": "internalBinding",
+        "file": "internal/process/promises.js",
+        "line": 21
+      },
+      {
+        "binding": "task_queue",
+        "kind": "internalBinding",
+        "file": "internal/process/task_queues.js",
+        "line": 17
+      },
+      {
+        "binding": "tcp_wrap",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 53
+      },
+      {
+        "binding": "tcp_wrap",
+        "kind": "internalBinding",
+        "file": "internal/cluster/round_robin_handle.js",
+        "line": 13
+      },
+      {
+        "binding": "tcp_wrap",
+        "kind": "internalBinding",
+        "file": "internal/tls/wrap.js",
+        "line": 55
+      },
+      {
+        "binding": "tcp_wrap",
+        "kind": "internalBinding",
+        "file": "net.js",
+        "line": 77
+      },
+      {
+        "binding": "timers",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 366
+      },
+      {
+        "binding": "timers",
+        "kind": "internalBinding",
+        "file": "internal/timers.js",
+        "line": 85
+      },
+      {
+        "binding": "timers",
+        "kind": "internalBinding",
+        "file": "timers.js",
+        "line": 32
+      },
+      {
+        "binding": "tls_wrap",
+        "kind": "internalBinding",
+        "file": "internal/tls/wrap.js",
+        "line": 56
+      },
+      {
+        "binding": "trace_events",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 241
+      },
+      {
+        "binding": "trace_events",
+        "kind": "internalBinding",
+        "file": "internal/console/constructor.js",
+        "line": 38
+      },
+      {
+        "binding": "trace_events",
+        "kind": "internalBinding",
+        "file": "internal/http.js",
+        "line": 12
+      },
+      {
+        "binding": "trace_events",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 519
+      },
+      {
+        "binding": "trace_events",
+        "kind": "internalBinding",
+        "file": "internal/trace_events_async_hooks.js",
+        "line": 10
+      },
+      {
+        "binding": "trace_events",
+        "kind": "internalBinding",
+        "file": "internal/util/debuglog.js",
+        "line": 23
+      },
+      {
+        "binding": "trace_events",
+        "kind": "internalBinding",
+        "file": "trace_events.js",
+        "line": 21
+      },
+      {
+        "binding": "tty_wrap",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 54
+      },
+      {
+        "binding": "tty_wrap",
+        "kind": "internalBinding",
+        "file": "tty.js",
+        "line": 30
+      },
+      {
+        "binding": "types",
+        "kind": "internalBinding",
+        "file": "internal/test_runner/reporter/tap.js",
+        "line": 179
+      },
+      {
+        "binding": "types",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 74
+      },
+      {
+        "binding": "types",
+        "kind": "internalBinding",
+        "file": "internal/util/types.js",
+        "line": 62
+      },
+      {
+        "binding": "udp_wrap",
+        "kind": "internalBinding",
+        "file": "dgram.js",
+        "line": 82
+      },
+      {
+        "binding": "udp_wrap",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 55
+      },
+      {
+        "binding": "udp_wrap",
+        "kind": "internalBinding",
+        "file": "internal/dgram.js",
+        "line": 11
+      },
+      {
+        "binding": "url",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/hooks.js",
+        "line": 31
+      },
+      {
+        "binding": "url",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/resolve.js",
+        "line": 34
+      },
+      {
+        "binding": "url",
+        "kind": "internalBinding",
+        "file": "internal/modules/helpers.js",
+        "line": 37
+      },
+      {
+        "binding": "url",
+        "kind": "internalBinding",
+        "file": "internal/modules/package_json_reader.js",
+        "line": 18
+      },
+      {
+        "binding": "url",
+        "kind": "internalBinding",
+        "file": "internal/url.js",
+        "line": 100
+      },
+      {
+        "binding": "url",
+        "kind": "internalBinding",
+        "file": "url.js",
+        "line": 73
+      },
+      {
+        "binding": "url_pattern",
+        "kind": "internalBinding",
+        "file": "internal/url.js",
+        "line": 36
+      },
+      {
+        "binding": "url_pattern",
+        "kind": "internalBinding",
+        "file": "url.js",
+        "line": 38
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "buffer.js",
+        "line": 94
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/node.js",
+        "line": 83
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/buffer.js",
+        "line": 44
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/console/constructor.js",
+        "line": 52
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/errors.js",
+        "line": 954
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/modules/cjs/loader.js",
+        "line": 76
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/module_job.js",
+        "line": 39
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/modules/esm/utils.js",
+        "line": 15
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/modules/run_main.js",
+        "line": 23
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/process/execution.js",
+        "line": 46
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 89
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 557
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/repl/completion.js",
+        "line": 62
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/source_map/source_map_cache_map.js",
+        "line": 15
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/test_runner/harness.js",
+        "line": 12
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/test_runner/test.js",
+        "line": 35
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 73
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/util/comparisons.js",
+        "line": 128
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/util/inspect.js",
+        "line": 149
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/vm.js",
+        "line": 32
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/util.js",
+        "line": 42
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/worker/io.js",
+        "line": 38
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "internal/worker/js_transferable.js",
+        "line": 31
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "punycode.js",
+        "line": 4
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "url.js",
+        "line": 56
+      },
+      {
+        "binding": "util",
+        "kind": "internalBinding",
+        "file": "util.js",
+        "line": 83
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/child_process.js",
+        "line": 75
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/dgram.js",
+        "line": 17
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/errors.js",
+        "line": 623
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/fs/watchers.js",
+        "line": 38
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/http2/core.js",
+        "line": 190
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/js_stream_socket.js",
+        "line": 11
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/stream_base_commons.js",
+        "line": 18
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/util.js",
+        "line": 92
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "internal/webstreams/adapters.js",
+        "line": 96
+      },
+      {
+        "binding": "uv",
+        "kind": "internalBinding",
+        "file": "net.js",
+        "line": 68
+      },
+      {
+        "binding": "v8",
+        "kind": "internalBinding",
+        "file": "v8.js",
+        "line": 111
+      },
+      {
+        "binding": "wasi",
+        "kind": "internalBinding",
+        "file": "wasi.js",
+        "line": 45
+      },
+      {
+        "binding": "wasi",
+        "kind": "internalBinding",
+        "file": "wasi.js",
+        "line": 49
+      },
+      {
+        "binding": "wasm_web_api",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/is_main_thread.js",
+        "line": 309
+      },
+      {
+        "binding": "wasm_web_api",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/web/exposed-window-or-worker.js",
+        "line": 101
+      },
+      {
+        "binding": "watchdog",
+        "kind": "internalBinding",
+        "file": "internal/watchdog.js",
+        "line": 5
+      },
+      {
+        "binding": "webstorage",
+        "kind": "internalBinding",
+        "file": "internal/webstorage.js",
+        "line": 6
+      },
+      {
+        "binding": "worker",
+        "kind": "internalBinding",
+        "file": "internal/bootstrap/switches/is_main_thread.js",
+        "line": 311
+      },
+      {
+        "binding": "worker",
+        "kind": "internalBinding",
+        "file": "internal/main/worker_thread.js",
+        "line": 25
+      },
+      {
+        "binding": "worker",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 141
+      },
+      {
+        "binding": "worker",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 162
+      },
+      {
+        "binding": "worker",
+        "kind": "internalBinding",
+        "file": "internal/process/pre_execution.js",
+        "line": 778
+      },
+      {
+        "binding": "worker",
+        "kind": "internalBinding",
+        "file": "internal/worker.js",
+        "line": 85
+      },
+      {
+        "binding": "worker",
+        "kind": "internalBinding",
+        "file": "internal/worker/io.js",
+        "line": 51
+      },
+      {
+        "binding": "worker",
+        "kind": "internalBinding",
+        "file": "internal/worker/messaging.js",
+        "line": 14
+      },
+      {
+        "binding": "zlib",
+        "kind": "internalBinding",
+        "file": "internal/streams/iter/transform.js",
+        "line": 5
+      },
+      {
+        "binding": "zlib",
+        "kind": "internalBinding",
+        "file": "internal/streams/iter/transform.js",
+        "line": 46
+      },
+      {
+        "binding": "zlib",
+        "kind": "internalBinding",
+        "file": "zlib.js",
+        "line": 58
+      }
+    ],
+    "legacy_process_binding": {
+      "names": [
+        "natives",
+        "util"
+      ],
+      "occurrences": [
+        {
+          "binding": "natives",
+          "kind": "process.binding",
+          "file": "internal/legacy/processbinding.js",
+          "line": 38
+        },
+        {
+          "binding": "util",
+          "kind": "process.binding",
+          "file": "internal/process/pre_execution.js",
+          "line": 555
+        }
+      ]
+    }
+  },
+  "reconciliation": {
+    "added_in_pinned_v24": [],
+    "absent_from_pinned_v24": [],
+    "common_count": 69
+  },
+  "content_sha256": "4bbd0b1fda0417a7132f89d4d1ad6f7503af30232cb40b392c3fdd0b4d31d88b"
+}

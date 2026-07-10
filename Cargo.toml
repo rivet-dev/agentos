@@ -16,6 +16,7 @@ members = [
     "crates/native-sidecar",
     "crates/native-sidecar-browser",
     "crates/native-sidecar-core",
+    "crates/node-stdlib",
     "crates/sidecar-client",
     "crates/sidecar-protocol",
     "crates/v8-runtime",
@@ -41,6 +42,7 @@ agentos-native-baseline = { path = "crates/native-baseline", version = "0.0.1" }
 agentos-native-sidecar = { path = "crates/native-sidecar", version = "0.0.1" }
 agentos-native-sidecar-browser = { path = "crates/native-sidecar-browser", version = "0.0.1" }
 agentos-native-sidecar-core = { path = "crates/native-sidecar-core", version = "0.0.1" }
+agentos-node-stdlib = { path = "crates/node-stdlib", version = "0.0.1" }
 agentos-protocol = { path = "crates/agentos-protocol", version = "0.0.1" }
 agentos-sidecar-client = { path = "crates/sidecar-client", version = "0.0.1" }
 agentos-sidecar-core = { path = "crates/agentos-sidecar-core", version = "0.0.1" }

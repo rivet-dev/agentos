@@ -1,5 +1,6 @@
 // V8 startup snapshots: fast isolate creation from pre-compiled bridge code
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
@@ -596,6 +597,46 @@ where
 
 pub type SnapshotCacheKey = [u8; 32];
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StdlibFlavor {
+    Legacy,
+    Real,
+}
+
+impl StdlibFlavor {
+    pub fn from_environment() -> Result<Self, String> {
+        match std::env::var("AGENTOS_JS_STDLIB") {
+            Ok(value) => Self::from_value(Some(&value)),
+            Err(std::env::VarError::NotPresent) => Self::from_value(None),
+            Err(error) => Err(format!(
+                "ERR_INVALID_JS_STDLIB_FLAVOR: cannot read AGENTOS_JS_STDLIB: {error}"
+            )),
+        }
+    }
+
+    fn from_value(value: Option<&str>) -> Result<Self, String> {
+        match value {
+            Some("real") => Ok(Self::Real),
+            Some("legacy") | None => Ok(Self::Legacy),
+            Some(value) => Err(format!(
+                "ERR_INVALID_JS_STDLIB_FLAVOR: AGENTOS_JS_STDLIB must be real or legacy, got {value:?}"
+            )),
+        }
+    }
+}
+
+pub fn bridge_code_for_flavor<'a>(flavor: StdlibFlavor, bridge_code: &'a str) -> Cow<'a, str> {
+    match flavor {
+        StdlibFlavor::Legacy => Cow::Borrowed(bridge_code),
+        StdlibFlavor::Real => Cow::Owned(format!(
+            "{}\n{}\n{}",
+            agentos_node_stdlib::INERT_BINDING_BOOTSTRAP_SOURCE,
+            bridge_code,
+            agentos_node_stdlib::PROCESS_BOOTSTRAP_SOURCE,
+        )),
+    }
+}
+
 /// Thread-safe snapshot cache keyed by bridge code digest.
 ///
 /// Uses two-phase locking with per-key in-flight tracking so concurrent
@@ -609,6 +650,7 @@ pub struct SnapshotCache {
 
 struct CacheInner {
     entries: Vec<CacheEntry>,
+    failures: Vec<CacheFailureEntry>,
     /// Per-key in-flight tracking: callers for the same digest wait on the
     /// condvar instead of creating duplicate snapshots.
     in_flight: HashMap<SnapshotCacheKey, Arc<InFlightEntry>>,
@@ -620,6 +662,12 @@ struct CacheEntry {
     /// Stored as Vec<u8> rather than StartupData because StartupData
     /// contains raw pointers that are not Send/Sync.
     blob: Arc<Vec<u8>>,
+}
+
+struct CacheFailureEntry {
+    key: SnapshotCacheKey,
+    error: String,
+    reported: bool,
 }
 
 /// Shared state for an in-flight snapshot creation. The creator thread
@@ -634,6 +682,7 @@ impl SnapshotCache {
         SnapshotCache {
             inner: Mutex::new(CacheInner {
                 entries: Vec::new(),
+                failures: Vec::new(),
                 in_flight: HashMap::new(),
             }),
             max_entries,
@@ -656,7 +705,16 @@ impl SnapshotCache {
         bridge_code: &str,
         userland_code: Option<&str>,
     ) -> Option<Arc<Vec<u8>>> {
-        let key = snapshot_cache_key(bridge_code, userland_code);
+        self.try_get_with_flavor(StdlibFlavor::Legacy, bridge_code, userland_code)
+    }
+
+    pub fn try_get_with_flavor(
+        &self,
+        flavor: StdlibFlavor,
+        bridge_code: &str,
+        userland_code: Option<&str>,
+    ) -> Option<Arc<Vec<u8>>> {
+        let key = snapshot_cache_key_for(flavor, bridge_code, userland_code);
         let mut inner = self.inner.lock().unwrap();
         if let Some(pos) = inner.entries.iter().position(|e| e.key == key) {
             let entry = inner.entries.remove(pos);
@@ -677,7 +735,16 @@ impl SnapshotCache {
         bridge_code: &str,
         userland_code: Option<&str>,
     ) -> Result<Arc<Vec<u8>>, String> {
-        let key = snapshot_cache_key(bridge_code, userland_code);
+        self.get_or_create_with_flavor(StdlibFlavor::Legacy, bridge_code, userland_code)
+    }
+
+    pub fn get_or_create_with_flavor(
+        &self,
+        flavor: StdlibFlavor,
+        bridge_code: &str,
+        userland_code: Option<&str>,
+    ) -> Result<Arc<Vec<u8>>, String> {
+        let key = snapshot_cache_key_for(flavor, bridge_code, userland_code);
 
         // Phase 1: short lock — check cache, check in-flight, or claim creation
         let in_flight = {
@@ -689,6 +756,17 @@ impl SnapshotCache {
                 let blob = Arc::clone(&entry.blob);
                 inner.entries.push(entry);
                 return Ok(blob);
+            }
+
+            // A deterministic creation failure uses the same defined fresh-
+            // context fallback as its first occurrence. Cache it so a busy
+            // sidecar does not recreate the helper process and repeat the
+            // same host-visible warning for every execution.
+            if let Some(pos) = inner.failures.iter().position(|e| e.key == key) {
+                let entry = inner.failures.remove(pos);
+                let error = entry.error.clone();
+                inner.failures.push(entry);
+                return Err(error);
             }
 
             // Another thread is already creating this snapshot — wait on it
@@ -723,12 +801,29 @@ impl SnapshotCache {
 
             if let Ok(ref arc) = creation_result {
                 // LRU eviction: remove oldest (front) entry when at capacity
-                if inner.entries.len() >= self.max_entries {
-                    inner.entries.remove(0);
+                if inner.entries.len() + inner.failures.len() >= self.max_entries {
+                    if inner.entries.is_empty() {
+                        inner.failures.remove(0);
+                    } else {
+                        inner.entries.remove(0);
+                    }
                 }
                 inner.entries.push(CacheEntry {
                     key,
                     blob: Arc::clone(arc),
+                });
+            } else if let Err(ref error) = creation_result {
+                if inner.entries.len() + inner.failures.len() >= self.max_entries {
+                    if inner.failures.is_empty() {
+                        inner.entries.remove(0);
+                    } else {
+                        inner.failures.remove(0);
+                    }
+                }
+                inner.failures.push(CacheFailureEntry {
+                    key,
+                    error: error.clone(),
+                    reported: false,
                 });
             }
 
@@ -742,28 +837,76 @@ impl SnapshotCache {
 
         creation_result
     }
+
+    /// Return true exactly once for a negatively cached snapshot key. The
+    /// caller uses this to emit one host-visible fallback warning without
+    /// flooding stderr on every session that takes the same fallback.
+    pub fn mark_failure_reported(
+        &self,
+        flavor: StdlibFlavor,
+        bridge_code: &str,
+        userland_code: Option<&str>,
+    ) -> bool {
+        let key = snapshot_cache_key_for(flavor, bridge_code, userland_code);
+        let mut inner = self.inner.lock().unwrap();
+        let Some(entry) = inner.failures.iter_mut().find(|entry| entry.key == key) else {
+            return true;
+        };
+        if entry.reported {
+            false
+        } else {
+            entry.reported = true;
+            true
+        }
+    }
 }
 
 /// Cache key over bridge + optional userland code. With no userland this is just
 /// the sha256 of the bridge code (a NUL separator is only added when userland is
 /// present), so existing bridge-only entries keep their historical keys.
 pub fn snapshot_cache_key(bridge_code: &str, userland_code: Option<&str>) -> SnapshotCacheKey {
-    match userland_code {
-        None => {
-            let mut hasher = Sha256::new();
-            hasher.update(bridge_code.as_bytes());
-            hasher.finalize().into()
-        }
-        Some(userland_code) => {
-            let mut buf = Vec::with_capacity(bridge_code.len() + 1 + userland_code.len());
-            buf.extend_from_slice(bridge_code.as_bytes());
-            buf.push(0);
-            buf.extend_from_slice(userland_code.as_bytes());
-            let mut hasher = Sha256::new();
-            hasher.update(&buf);
-            hasher.finalize().into()
-        }
+    snapshot_cache_key_for(StdlibFlavor::Legacy, bridge_code, userland_code)
+}
+
+/// The real-stdlib key includes both a flavor domain and the pinned vendor
+/// manifest. This prevents an A/B process from restoring a legacy context as a
+/// Node context, and invalidates Node snapshots on every source-manifest change.
+pub fn snapshot_cache_key_for(
+    flavor: StdlibFlavor,
+    bridge_code: &str,
+    userland_code: Option<&str>,
+) -> SnapshotCacheKey {
+    if flavor == StdlibFlavor::Legacy {
+        return match userland_code {
+            None => {
+                let mut hasher = Sha256::new();
+                hasher.update(bridge_code.as_bytes());
+                hasher.finalize().into()
+            }
+            Some(userland_code) => {
+                let mut buf = Vec::with_capacity(bridge_code.len() + 1 + userland_code.len());
+                buf.extend_from_slice(bridge_code.as_bytes());
+                buf.push(0);
+                buf.extend_from_slice(userland_code.as_bytes());
+                let mut hasher = Sha256::new();
+                hasher.update(&buf);
+                hasher.finalize().into()
+            }
+        };
     }
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"agentos-node-stdlib-snapshot-v2\0real\0");
+    hasher.update(agentos_node_stdlib::VENDOR_MANIFEST_JSON.as_bytes());
+    hasher.update(b"\0adapter\0");
+    hasher.update(agentos_node_stdlib::REAL_STDLIB_BOOTSTRAP_SOURCE.as_bytes());
+    hasher.update(b"\0bridge\0");
+    hasher.update(bridge_code.as_bytes());
+    if let Some(userland_code) = userland_code {
+        hasher.update(b"\0userland\0");
+        hasher.update(userland_code.as_bytes());
+    }
+    hasher.finalize().into()
 }
 
 #[doc(hidden)]
@@ -2023,6 +2166,90 @@ pub fn run_snapshot_consolidated_checks() {
              not the frozen snapshot-build-time static identity (H-1 regression)"
         );
     }
+
+    // --- Part 26: M0 Node flavor bootstrap and CPED build capability. ---
+    // Node's async_context_frame binding requires V8 continuation-preserved
+    // embedder data. The rusty_v8 130 build enables this API by default in
+    // v8/BUILD.gn; exercising it here verifies the linked artifact, not only the
+    // vendored GN default.
+    {
+        let mut isolate = crate::isolate::create_isolate(None);
+        let scope = &mut v8::HandleScope::new(&mut isolate);
+        let context = v8::Context::new(scope, Default::default());
+        let scope = &mut v8::ContextScope::new(scope, context);
+        assert!(scope
+            .get_continuation_preserved_embedder_data()
+            .is_undefined());
+        let value = v8::String::new(scope, "agentos-cped").unwrap();
+        scope.set_continuation_preserved_embedder_data(value.into());
+        assert_eq!(
+            scope
+                .get_continuation_preserved_embedder_data()
+                .to_rust_string_lossy(scope),
+            "agentos-cped"
+        );
+    }
+
+    {
+        let mut isolate = crate::isolate::create_isolate(None);
+        let scope = &mut v8::HandleScope::new(&mut isolate);
+        let context = v8::Context::new(scope, Default::default());
+        let scope = &mut v8::ContextScope::new(scope, context);
+        let require_all_bootstrap = format!(
+            "{}\n{}\nglobalThis.__agentOSNodeLoadAll = true;\n{}",
+            agentos_node_stdlib::PROCESS_BOOTSTRAP_SOURCE,
+            agentos_node_stdlib::INERT_BINDING_BOOTSTRAP_SOURCE,
+            agentos_node_stdlib::REAL_STDLIB_BOOTSTRAP_SOURCE,
+        );
+        run_snapshot_script(
+            scope,
+            &require_all_bootstrap,
+            "real stdlib require-all",
+            false,
+        )
+        .expect("all pinned Node public modules should load in a fresh V8 realm");
+        let source = v8::String::new(
+            scope,
+            "[__agentOSNodeStdlib.loaded.length, __agentOSNodeStdlib.publicIds.length].join('/')",
+        )
+        .unwrap();
+        let script = v8::Script::compile(scope, source, None).unwrap();
+        let result = script.run(scope).unwrap();
+        assert_eq!(result.to_rust_string_lossy(scope), "71/71");
+    }
+
+    {
+        let bridge_code = bridge_code_for_flavor(
+            StdlibFlavor::Real,
+            "globalThis.__agentOSRealStdlibSnapshot = true;",
+        );
+        let blob = create_snapshot(&bridge_code).expect("real stdlib M0 snapshot bootstrap");
+        let mut isolate = create_isolate_from_snapshot(blob, None);
+        let scope = &mut v8::HandleScope::new(&mut isolate);
+        let context = v8::Context::new(scope, Default::default());
+        let scope = &mut v8::ContextScope::new(scope, context);
+        run_snapshot_script(
+            scope,
+            agentos_node_stdlib::REAL_STDLIB_BOOTSTRAP_SOURCE,
+            "real stdlib post-restore eager bootstrap",
+            false,
+        )
+        .expect("real stdlib eager set should boot after snapshot restore");
+        let source = v8::String::new(
+            scope,
+            "[process.platform, __agentOSNodeProcessIdentity.node, __agentOSNodeProcessIdentity.openssl, \
+             typeof __agentOSGetInternalBinding('worker'), \
+             __agentOSNodeStdlib.loaded.length, __agentOSNodeStdlib.publicIds.length, \
+             String(__agentOSRealStdlibSnapshot)].join(',')",
+        )
+        .unwrap();
+        let script = v8::Script::compile(scope, source, None).unwrap();
+        let result = script.run(scope).unwrap();
+        assert_eq!(
+            result.to_rust_string_lossy(scope),
+            "linux,24.15.0,3.5.5,function,7,71,true"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -2057,7 +2284,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_cache_rejects_oversized_bridge_code_without_retaining_in_flight_state() {
+    fn snapshot_cache_negatively_caches_deterministic_creation_failures() {
         let cache = SnapshotCache::new(1);
         let bridge_code = " ".repeat(MAX_V8_BRIDGE_CODE_BYTES + 1);
 
@@ -2069,6 +2296,8 @@ mod tests {
 
             assert!(error.contains(V8_BRIDGE_CODE_LIMIT_ERROR_CODE));
         }
+        assert!(cache.mark_failure_reported(StdlibFlavor::Legacy, &bridge_code, None));
+        assert!(!cache.mark_failure_reported(StdlibFlavor::Legacy, &bridge_code, None));
     }
 
     #[test]
@@ -2097,6 +2326,39 @@ mod tests {
             snapshot_cache_key("a", Some("bc")),
             "the bridge/userland split must be unambiguous"
         );
+    }
+
+    #[test]
+    fn real_stdlib_snapshot_key_is_flavor_and_vendor_manifest_scoped() {
+        let legacy = snapshot_cache_key_for(StdlibFlavor::Legacy, "bridge", Some("userland"));
+        let real = snapshot_cache_key_for(StdlibFlavor::Real, "bridge", Some("userland"));
+        assert_ne!(
+            legacy, real,
+            "real snapshots must never alias legacy snapshots"
+        );
+        assert_eq!(
+            real,
+            snapshot_cache_key_for(StdlibFlavor::Real, "bridge", Some("userland")),
+        );
+
+        let cache = SnapshotCache::new(2);
+        assert!(cache
+            .try_get_with_flavor(StdlibFlavor::Real, "bridge", None)
+            .is_none());
+    }
+
+    #[test]
+    fn stdlib_flavor_defaults_to_legacy_and_rejects_unknown_values() {
+        assert_eq!(
+            StdlibFlavor::from_value(None).unwrap(),
+            StdlibFlavor::Legacy
+        );
+        assert_eq!(
+            StdlibFlavor::from_value(Some("real")).unwrap(),
+            StdlibFlavor::Real
+        );
+        let error = StdlibFlavor::from_value(Some("unknown")).unwrap_err();
+        assert!(error.contains("ERR_INVALID_JS_STDLIB_FLAVOR"));
     }
 
     #[test]

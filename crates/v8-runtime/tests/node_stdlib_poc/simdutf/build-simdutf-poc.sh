@@ -3,10 +3,10 @@
 # against the agentOS patched sysroot, exported behind a flat C ABI
 # (wrapper.cpp) as a wasm reactor for instantiation inside the V8 isolate.
 #
-# The C toolchain (wasi-sdk + patched sysroot) lives on the reg-tests branch,
-# not on main, so its location is taken as input:
+# The C toolchain (wasi-sdk + patched sysroot) is owned by this repository;
+# its location can still be overridden for isolated toolchain builds:
 #   AGENTOS_C_TOOLCHAIN  root containing vendor/wasi-sdk and sysroot/
-#                        (default: the reg-tests workspace checkout)
+#                        (default: repository toolchain/c)
 #
 # Output: build/simdutf-poc.wasm next to this script. The cargo tests pick it
 # up automatically (or via AGENTOS_SIMDUTF_POC_WASM) and skip the wasm-backed
@@ -19,7 +19,7 @@ SIMDUTF_SHA256="c47c68cd51025ec66509bc36215b4c4f1f0f0a98129139ee55c541531b652526
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="$SCRIPT_DIR/build"
-TOOLCHAIN="${AGENTOS_C_TOOLCHAIN:-/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c}"
+TOOLCHAIN="${AGENTOS_C_TOOLCHAIN:-$SCRIPT_DIR/../../../../../toolchain/c}"
 CLANGXX="$TOOLCHAIN/vendor/wasi-sdk/bin/clang++"
 SYSROOT="$TOOLCHAIN/sysroot"
 

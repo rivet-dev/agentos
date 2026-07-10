@@ -82,3 +82,9 @@ test("sanity check passes for the agent-os workspace", () => {
 
 	assert.doesNotThrow(() => assertDiscoverySanity(packages));
 });
+
+test("disabled browser packages are absent from publish discovery", () => {
+	const names = discoverPackages(repoRoot).map((pkg) => pkg.name);
+	assert(!names.includes("@rivet-dev/agentos-runtime-browser"));
+	assert(!names.includes("@rivet-dev/agentos-browser"));
+});

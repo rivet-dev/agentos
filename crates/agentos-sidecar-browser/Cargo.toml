@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Browser Agent OS sidecar wrapper"
+publish = false
 
 # cdylib for the wasm32 browser build (wasm-pack); rlib so native tests + the
 # workspace can still link it as a library.

@@ -10,12 +10,14 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "node-suite": "tsx node-suite/run.ts"
   },
   "dependencies": {
     "@rivet-dev/agentos-vm-test-harness": "workspace:*"
   },
   "devDependencies": {
+    "tsx": "^4.0.0",
     "typescript": "^5.9.2"
   }
 }

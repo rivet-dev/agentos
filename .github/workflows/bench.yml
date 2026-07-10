@@ -1,5 +1,9 @@
 name: bench
 
+permissions:
+  contents: read
+  pull-requests: write
+
 on:
   pull_request:
     branches: [main]
@@ -16,7 +20,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
@@ -38,3 +42,20 @@ jobs:
           AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/release/agentos-native-sidecar
           NATIVE_BASELINE_BIN: ${{ github.workspace }}/target/release/agentos-native-baseline
           NATIVE_BASELINE_WASM: ${{ github.workspace }}/target/wasm32-wasip1/release/agentos-native-baseline.wasm
+      - name: Measure Node stdlib legacy/real delta
+        if: github.event_name == 'pull_request'
+        run: |
+          pnpm --silent --dir packages/runtime-benchmarks bench:node-stdlib-ab > node-stdlib-ab.json
+          pnpm --silent --dir packages/runtime-benchmarks bench:node-stdlib-delta node-stdlib-ab.json > node-stdlib-delta.md
+          cat node-stdlib-delta.md >> "$GITHUB_STEP_SUMMARY"
+        env:
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/release/agentos-native-sidecar
+          NATIVE_BASELINE_BIN: ${{ github.workspace }}/target/release/agentos-native-baseline
+          NATIVE_BASELINE_WASM: ${{ github.workspace }}/target/wasm32-wasip1/release/agentos-native-baseline.wasm
+          BENCH_NODE_STDLIB_ITERATIONS: 5
+          BENCH_NODE_STDLIB_WARMUP: 1
+      - uses: marocchino/sticky-pull-request-comment@v2
+        if: github.event_name == 'pull_request'
+        with:
+          header: node-stdlib-benchmark-delta
+          path: node-stdlib-delta.md

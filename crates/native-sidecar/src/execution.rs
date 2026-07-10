@@ -42,10 +42,9 @@ use crate::state::{
     JavascriptUnixListenerEvent, KernelSocketReadinessEvent, KernelSocketReadinessRegistry,
     KernelSocketReadinessTarget, LoopbackTlsPendingWriteHandle, LoopbackTlsPendingWriteState,
     NetworkResourceCounts, PendingKernelStdin, PendingTcpSocket, PendingUnixSocket, ProcNetEntry,
-    ProcessEventEnvelope,
-    PythonHostSocket, ResolvedChildProcessExecution, ResolvedTcpConnectAddr, SharedBridge,
-    SharedSidecarRequestClient, SidecarKernel, SocketQueryKind, ToolExecution, VmDnsConfig,
-    VmListenPolicy, VmState, DEFAULT_JAVASCRIPT_NET_BACKLOG, EXECUTION_DRIVER_NAME,
+    ProcessEventEnvelope, PythonHostSocket, ResolvedChildProcessExecution, ResolvedTcpConnectAddr,
+    SharedBridge, SharedSidecarRequestClient, SidecarKernel, SocketQueryKind, ToolExecution,
+    VmDnsConfig, VmListenPolicy, VmState, DEFAULT_JAVASCRIPT_NET_BACKLOG, EXECUTION_DRIVER_NAME,
     EXECUTION_SANDBOX_ROOT_ENV, JAVASCRIPT_COMMAND, LOOPBACK_EXEMPT_PORTS_ENV,
     MAPPED_HOST_FD_START, PYTHON_COMMAND, TOOL_DRIVER_NAME,
     VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY, WASM_COMMAND, WASM_STDIO_SYNC_RPC_ENV,
@@ -10006,9 +10005,7 @@ fn propagate_shadow_deletions_to_kernel(vm: &mut VmState, current: &BTreeSet<Str
         .cloned()
         .collect();
     for path in stale {
-        if path == "/"
-            || should_skip_shadow_sync_path(vm, &path)
-            || is_shadow_bootstrap_dir(&path)
+        if path == "/" || should_skip_shadow_sync_path(vm, &path) || is_shadow_bootstrap_dir(&path)
         {
             continue;
         }
@@ -19727,8 +19724,10 @@ pub(crate) fn flush_pending_kernel_stdin(
         let slice = &front[offset..];
         match kernel.fd_write(EXECUTION_DRIVER_NAME, process.kernel_pid, writer_fd, slice) {
             Ok(written) if written >= slice.len() => {
-                process.pending_kernel_stdin.total =
-                    process.pending_kernel_stdin.total.saturating_sub(slice.len());
+                process.pending_kernel_stdin.total = process
+                    .pending_kernel_stdin
+                    .total
+                    .saturating_sub(slice.len());
                 process.pending_kernel_stdin.front_offset = 0;
             }
             Ok(written) => {

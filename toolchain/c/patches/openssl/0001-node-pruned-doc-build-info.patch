@@ -1,0 +1,12 @@
+diff --git a/doc/build.info b/doc/build.info
+new file mode 100644
+index 0000000000..a8d73d91d3
+--- /dev/null
++++ b/doc/build.info
+@@ -0,0 +1,6 @@
++# Node's bundled OpenSSL source omits documentation inputs after generating its
++# checked-in build metadata, but OpenSSL Configure still loads doc/build.info.
++# There are no documentation targets in the AgentOS static-library build.
++# Node's vendoring process is documented here:
++# https://github.com/nodejs/node/blob/v24.15.0/doc/contributing/maintaining/maintaining-openssl.md
++# OpenSSL build.info syntax: https://github.com/openssl/openssl/blob/openssl-3.5.5/Configurations/README.md

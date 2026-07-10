@@ -69,8 +69,15 @@ jobs:
           workspaces: toolchain -> toolchain/target
           cache-workspace-crates: true
           key: wasm-commands-${{ hashFiles('toolchain/Cargo.lock') }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            toolchain/c/vendor/wasi-sdk
+            toolchain/c/sysroot
+          key: c-sysroot-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('toolchain/std-patches/wasi-libc/**', 'toolchain/std-patches/wasi-libc-overrides/**', 'toolchain/c/patches/llvm-project/**', 'toolchain/scripts/patch-wasi-libc.sh', 'toolchain/c/scripts/build-llvm-runtimes.sh', 'toolchain/c/Makefile') }}
       - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-runtime-core...'
       - run: make -C toolchain commands
+      - run: make -C toolchain/c openssl-smoke
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
       - uses: actions/upload-artifact@v4
         with:
@@ -243,10 +250,50 @@ jobs:
           path: target/plugin-artifacts/${{ matrix.platform }}
           if-no-files-found: error
 
+  node-suite-full:
+    needs: [wasm-commands, build-sidecar]
+    name: Node 24 full suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-commands
+          path: packages/runtime-core/commands
+      - uses: actions/download-artifact@v4
+        with:
+          name: sidecar-linux-x64-gnu
+          path: target/node-suite-sidecar
+      - run: chmod +x target/node-suite-sidecar/agentos-native-sidecar
+      - name: Node 24 full suite (legacy)
+        run: pnpm --silent --dir test-harness node-suite -- --slice full --timeout 2000 --batch-size 50 --ledger node-suite/ledger.json --write node-suite-full-legacy.json
+        env:
+          AGENTOS_JS_STDLIB: legacy
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/node-suite-sidecar/agentos-native-sidecar
+      - name: Node 24 full suite (real stdlib)
+        run: pnpm --silent --dir test-harness node-suite -- --slice full --timeout 2000 --batch-size 50 --ledger node-suite/ledger.json --write node-suite-full-real.json
+        env:
+          AGENTOS_JS_STDLIB: real
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/node-suite-sidecar/agentos-native-sidecar
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: node-suite-full-results
+          path: node-suite-full-*.json
+          if-no-files-found: warn
+
   publish-npm:
-    needs: [context, wasm-commands, build-sidecar, build-sidecar-darwin]
+    needs: [context, wasm-commands, build-sidecar, build-sidecar-darwin, node-suite-full]
     name: Publish npm
-    if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
+    if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' && needs.node-suite-full.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -313,6 +360,8 @@ jobs:
         run: |
           npx turbo build \
             --filter='!@rivet-dev/agentos-plugin' \
+            --filter='!@rivet-dev/agentos-runtime-browser' \
+            --filter='!@rivet-dev/agentos-browser' \
             --filter='!@rivet-dev/agentos-playground' \
             --filter='!./examples/*' \
             --filter='!./examples/quickstart/*'
@@ -331,9 +380,9 @@ jobs:
             ${{ needs.context.outputs.trigger == 'release' && '--release-mode' || '' }}
 
   release-assets:
-    needs: [context, build-sidecar, build-sidecar-darwin]
+    needs: [context, build-sidecar, build-sidecar-darwin, node-suite-full]
     name: Release assets
-    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
+    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' && needs.node-suite-full.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

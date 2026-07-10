@@ -33,7 +33,9 @@ export const ITERATIONS = num("BENCH_ITERATIONS", 5);
 export const WARMUP_ITERATIONS = num("BENCH_WARMUP", 1);
 export const MEMORY_ITERATIONS = num("BENCH_MEMORY_ITERATIONS", 5);
 
-export const TRIVIAL_CODE = "export const x = 1;";
+export const TRIVIAL_CODE = process.env.BENCH_COLDSTART_STDLIB === "1"
+	? 'import fs from "node:fs"; import http from "node:http"; export const x = fs.constants !== undefined && typeof http.createServer === "function";'
+	: "export const x = 1;";
 export const RESIDENT_TRIVIAL_CODE =
 	"globalThis.__benchValue = (globalThis.__benchValue ?? 0) + 1;";
 

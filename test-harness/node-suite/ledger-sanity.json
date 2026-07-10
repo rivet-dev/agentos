@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "node": "24.15.0",
+  "states": ["pass", "fail-accepted", "skip"],
+  "cases": [
+    {
+      "id": "parallel/test-global-console-exists.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-regression-object-prototype.js",
+      "legacy": "pass",
+      "real": "pass"
+    }
+  ]
+}

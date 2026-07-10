@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "node": {
+    "tag": "v24.15.0",
+    "commit": "848430679556aed0bd073f2bc263331ad84fa119",
+    "archive_url": "https://nodejs.org/dist/v24.15.0/node-v24.15.0.tar.xz",
+    "archive_sha256": "a4f653d79ed140aaad921e8c22a3b585ca85cfdab80d4030f6309e4663a8a1c8"
+  },
+  "openssl": {
+    "version": "3.5.5",
+    "node_tree": "a900f65ce3f4bb57792a1d8e18b125f751a0d14e"
+  },
+  "target": "wasm32-wasip1",
+  "configure_target": "linux-generic32",
+  "configure_flags": [
+    "no-shared",
+    "no-pic",
+    "no-asm",
+    "no-tests",
+    "no-apps",
+    "no-afalgeng",
+    "no-async",
+    "no-dso",
+    "no-module",
+    "no-threads"
+  ],
+  "expected_outputs": [
+    "include/openssl/ssl.h",
+    "lib/libcrypto.a",
+    "lib/libssl.a",
+    "manifest.json"
+  ]
+}

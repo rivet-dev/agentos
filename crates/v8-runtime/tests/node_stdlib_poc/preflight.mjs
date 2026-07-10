@@ -6,7 +6,8 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import vm from 'node:vm';
 
-const NODE_SRC = process.env.NODE_SRC_DIR ?? '/home/nathan/misc/node';
+if (!process.env.NODE_SRC_DIR) throw new Error('NODE_SRC_DIR is required');
+const NODE_SRC = process.env.NODE_SRC_DIR;
 const HERE = new URL('.', import.meta.url).pathname;
 
 const sources = {};

@@ -292,7 +292,7 @@ Milestones then make families *behave*, not *exist*.
 | icu | STUB (inert) | `hasIntl:false`; guest `Intl` is unaffected (V8's own ICU, `isolate.rs:18-19,106`); see §4.6 for what degrades |
 | url | WASM | ada from the pinned node tag; WHATWG URL spec cited at parse sites |
 | url_pattern | JS/HOST | **not** plain ada-wasm: node's URLPattern uses ada with a `regex_provider` backed by V8 RegExp (`ada.h:4393-4649`); a wasm build would substitute a non-ECMAScript regex engine = forbidden deviation. Either route regex compile/exec back to JS `RegExp` via wasm imports, or implement the provider host-side |
-| cjs_lexer | JS | `deps/cjs-module-lexer` (vendored JS) |
+| cjs_lexer | WASM | Node 24 replaced `cjs-module-lexer` with the pinned `deps/merve` native lexer; compile that exact source as an in-isolate wasm leaf library |
 | fs, fs_dir | BRIDGE | §7.1; fd-level 1:1; errno via uv map; `open(2)`/`stat(2)` |
 | fs_event_wrap | BRIDGE (new kernel primitive) | §7.2, `inotify(7)` |
 | uv | JS (fixture) | `uv_errmap` generated from real node on Linux, vendored fixture |
@@ -595,35 +595,48 @@ Spec:
   `require_100_small` (existing modules-bench rows) before/after real
   loader — the loader must not multiply bridge calls.
 
-### 8.3 Budgets — measured-floor × headroom (set in M0, gated per §11.3)
-Numbers below are **provisional targets**; M0 replaces each with
-`measured floor × stated headroom` after running the floor benches
-(`sync-bridge-floor.bench.ts` exists today; native-node codec bench added in
-M0). If a floor already exceeds a target, the budget is renegotiated in the
-regression ledger — budgets are not aspirations detached from instruments.
+### 8.3 Budgets — measured-floor × headroom (M0 amendment, 2026-07-09 PST)
+The M0 debug-sidecar early-warning capture is
+`packages/runtime-benchmarks/results/node-stdlib-m0-baseline.json`. Release
+milestones rerun the identical protocol on pinned hardware; these formulas,
+not the debug timings, are normative. A floor that already exceeds its budget
+is recorded in `node-stdlib-regression-ledger.json` rather than hidden by
+moving the target.
 - **Primary migration-parity gate (Decision 7):** at default flip and M5,
   every applicable p50 metric is no more than 10% slower than the same-day,
   same-machine legacy path. p99 and dispersion are published and any material
   tail regression requires a ledger entry. Native-node comparisons remain
   optimization targets; they do not excuse a regression from what ships now.
-- Sync binding RTT: target p50 ≤ max(10µs, 1.2× measured no-op floor);
+- Sync binding RTT: M0 legacy floor p50 0.04ms, p99 0.05ms (five measured
+  samples after warmup); target p50 ≤ `max(10µs, 1.2 × floor)` = 0.048ms;
   p99 ≤ 5× p50. Metric: **p50/p99 of ≥1000 iterations, ≥5 runs, IQR
-  dispersion reported**.
-- `readFileSync` 4KB / 1MB: ≤ 3× native node at M1 exit (fairness protocol
-  §11.2), ≤ 1.5× after backing-store transport is proven (also M1 — the two
-  bounds are pre/post the M1 transport A/B).
-- Buffer codec ops: ≤ 2× native node (i.e. ≥ native/2 throughput), measured
-  vs native node's C++ path, not vs our old JS shims.
+  dispersion reported**. The release floor run expands the M0 five-sample
+  smoke to the full iteration/run count before this gate can fail a release.
+- `readFileSync` 4KB / 1MB: M0 native-Node floors are 0.02ms / 0.28ms p50;
+  M1 pre-transport budgets are `3 × floor` = 0.06ms / 0.84ms and post-
+  backing-store budgets are `1.5 × floor` = 0.03ms / 0.42ms.
+- Buffer codec ops over the 128KiB fixture: native Node floors are 0.34ms
+  UTF-8 and 0.2664ms base64 round trip (nine samples; p99 0.8231ms / 0.6515ms;
+  IQR 0.0428ms / 0.0208ms). Budgets are `2 × floor` = 0.68ms / 0.5328ms.
 - Stream throughput (100MB fs pipe): ≥ 70% of native node at M3 exit.
-- npm-import storm (`npm zod import`, `require_100_small`): ≤ 1.5× legacy
-  stdlib at M5 entry (uses existing modules-bench baselines).
-- Session coldstart: ≤ +10% vs same-day legacy A/B; **snapshot blob size**
-  budget: ≤ 2× legacy blob; snapshot build time ≤ 1.5× legacy; per-builtin
-  lazy-compile p50 recorded (no budget, tracked).
+- npm-import storm (`npm zod import`, `require_100_small`): M0 legacy floors
+  are 174.49ms / 46.50ms p50; M5-entry budgets are `1.5 × floor` =
+  261.74ms / 69.75ms.
+- Session coldstart: M0 `fs`+`http` legacy floor is 518.92ms p50; budget is
+  `1.1 × floor` = 570.81ms. **Snapshot blob size:** legacy 463,234 bytes,
+  budget `2 × floor` = 926,468 bytes (real M0: 479,509). Snapshot build:
+  legacy 12.798ms, budget `1.5 × floor` = 19.197ms (real M0: 13.343ms).
+  All 71 per-builtin compile timings are recorded with no hard budget.
 - **Crypto blob (Decision 2):** OpenSSL wasm ≤ 8MB stripped (measured at
   first build; renegotiated via ledger if the floor lands higher);
   first-`require('crypto')` lazy instantiation ≤ 50ms p50 warm (code-cache
   assisted); sessions that never touch crypto pay zero (lazy, §3.3).
+- **Wasm lifecycle:** the 2,437,405-byte shared OpenSSL handshake module has
+  cold compile p50 3.60ms, cold instantiate p50 0.59ms, and warm instantiate
+  p50 0.54ms with V8's native-module cache enabled (five fresh-isolate samples).
+  Sharing the compiled module across isolates reduces worker wall p50 from
+  30.62ms to 21.56ms; the full cache-on/cache-off distributions and module hash
+  are in `results/node-stdlib-m0-wasm-lifecycle.json`.
 - `bench:baseline`/`bench:matrix`: no metric regresses >10% (nightly gate,
   §11.3) without a ledger entry.
 

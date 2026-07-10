@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "generated_at": "2026-07-09T22:36:37-07:00",
+  "node": "24.15.0",
+  "total_per_flavor": 3950,
+  "legacy": {
+    "pass": 647,
+    "fail-accepted": 2015,
+    "skip": 1288
+  },
+  "real": {
+    "pass": 647,
+    "fail-accepted": 2015,
+    "skip": 1288
+  },
+  "smoke_per_flavor": {
+    "pass": 28,
+    "fail-accepted": 95,
+    "skip": 77
+  },
+  "sanity_per_flavor": {
+    "pass": 1,
+    "fail-accepted": 1,
+    "skip": 0
+  },
+  "legacy_only_passes": [
+    "parallel/test-http-url.parse-basic.js",
+    "parallel/test-net-local-address-port.js",
+    "parallel/test-stringbytes-external.js"
+  ],
+  "real_only_passes": [
+    "parallel/test-fs-read-stream-double-close.js",
+    "parallel/test-module-strip-types.js",
+    "parallel/test-process-uptime.js"
+  ]
+}

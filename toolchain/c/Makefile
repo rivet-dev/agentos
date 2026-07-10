@@ -108,15 +108,53 @@ NATIVE_OUTPUTS := $(addprefix $(NATIVE_DIR)/,$(NATIVE_PROG_NAMES))
 
 HAS_WASM_OPT := $(shell command -v wasm-opt >/dev/null 2>&1 && echo 1 || echo 0)
 
+OPENSSL_MANIFEST := openssl/manifest.json
+OPENSSL_BUILD_DIR := $(BUILD_DIR)/openssl-source
+OPENSSL_OUTPUT_DIR := $(BUILD_DIR)/openssl
+OPENSSL_PATCH_DIR := patches/openssl
+OPENSSL_OUTPUT_MANIFEST := $(OPENSSL_OUTPUT_DIR)/manifest.json
+
 all: programs
+
+.PHONY: openssl openssl-smoke
+
+openssl: $(OPENSSL_OUTPUT_MANIFEST)
+
+openssl-smoke: $(BUILD_DIR)/openssl_handshake_smoke
+
+$(OPENSSL_OUTPUT_MANIFEST): scripts/build-openssl-upstream.sh $(OPENSSL_MANIFEST) $(wildcard $(OPENSSL_PATCH_DIR)/*.patch) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a | wasi-sdk
+	bash scripts/build-openssl-upstream.sh \
+		--manifest "$(abspath $(OPENSSL_MANIFEST))" \
+		--cache-dir "$(abspath .cache/openssl)" \
+		--build-dir "$(abspath $(OPENSSL_BUILD_DIR))" \
+		--patch-dir "$(abspath $(OPENSSL_PATCH_DIR))" \
+		--sysroot "$(abspath $(PATCHED_SYSROOT))" \
+		--cc "$(abspath $(WASI_SDK_DIR)/bin/clang)" \
+		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
+		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
+		--output-dir "$(abspath $(OPENSSL_OUTPUT_DIR))"
+
+$(BUILD_DIR)/openssl_handshake_smoke: $(TEST_PROGRAMS_DIR)/openssl_handshake_smoke.c $(OPENSSL_OUTPUT_MANIFEST)
+	$(CC) --target=wasm32-wasip1 --sysroot=$(PATCHED_SYSROOT) -O2 \
+		-I$(OPENSSL_OUTPUT_DIR)/include $< \
+		-L$(OPENSSL_OUTPUT_DIR)/lib -lssl -lcrypto \
+		-lwasi-emulated-mman -lwasi-emulated-process-clocks \
+		-Wl,-z,stack-size=2097152 -Wl,--stack-first -o $@
 
 # --- wasi-sdk download and cache ---
 
 wasi-sdk: $(WASI_SDK_DIR)/bin/clang
+	@if ! "$(WASI_SDK_DIR)/bin/clang" --version >/dev/null 2>&1 || \
+		! "$(WASI_SDK_DIR)/bin/llvm-ar" --version >/dev/null 2>&1; then \
+		echo "=== Replacing incomplete wasi-sdk $(WASI_SDK_MAJOR) cache ==="; \
+		rm -rf "$(WASI_SDK_DIR)"; \
+		$(MAKE) --no-print-directory "$(WASI_SDK_DIR)/bin/clang"; \
+	fi
 
 $(WASI_SDK_DIR)/bin/clang:
 	@echo "=== Downloading wasi-sdk $(WASI_SDK_MAJOR) ==="
 	@mkdir -p $(VENDOR_DIR)
+	@rm -rf "$(WASI_SDK_DIR)" "$(VENDOR_DIR)/.wasi-sdk-install"
 	@if command -v curl >/dev/null 2>&1; then \
 		curl -fSL "$(WASI_SDK_URL)" -o "$(VENDOR_DIR)/$(WASI_SDK_TARBALL)"; \
 	elif command -v wget >/dev/null 2>&1; then \
@@ -125,8 +163,10 @@ $(WASI_SDK_DIR)/bin/clang:
 		echo "Error: neither curl nor wget found"; exit 1; \
 	fi
 	@echo "Extracting..."
-	@tar -xzf "$(VENDOR_DIR)/$(WASI_SDK_TARBALL)" -C "$(VENDOR_DIR)"
-	@mv "$(VENDOR_DIR)/wasi-sdk-$(WASI_SDK_MAJOR)-$(WASI_SDK_ARCH)-$(WASI_SDK_PLATFORM)" "$(WASI_SDK_DIR)"
+	@mkdir -p "$(VENDOR_DIR)/.wasi-sdk-install"
+	@tar -xzf "$(VENDOR_DIR)/$(WASI_SDK_TARBALL)" -C "$(VENDOR_DIR)/.wasi-sdk-install"
+	@mv "$(VENDOR_DIR)/.wasi-sdk-install/wasi-sdk-$(WASI_SDK_MAJOR)-$(WASI_SDK_ARCH)-$(WASI_SDK_PLATFORM)" "$(WASI_SDK_DIR)"
+	@rm -rf "$(VENDOR_DIR)/.wasi-sdk-install"
 	@rm -f "$(VENDOR_DIR)/$(WASI_SDK_TARBALL)"
 	@echo "wasi-sdk $(WASI_SDK_MAJOR) installed to $(WASI_SDK_DIR)"
 
@@ -479,7 +519,7 @@ WASI_LIBC_PATCHES := $(wildcard ../std-patches/wasi-libc/*.patch)
 WASI_LIBC_OVERRIDES := $(wildcard ../std-patches/wasi-libc-overrides/*.c)
 LLVM_RUNTIME_PATCHES := $(wildcard patches/llvm-project/*.patch)
 
-$(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a: wasi-sdk ../scripts/patch-wasi-libc.sh scripts/build-llvm-runtimes.sh $(WASI_LIBC_PATCHES) $(WASI_LIBC_OVERRIDES) $(LLVM_RUNTIME_PATCHES)
+$(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a: ../scripts/patch-wasi-libc.sh scripts/build-llvm-runtimes.sh $(WASI_LIBC_PATCHES) $(WASI_LIBC_OVERRIDES) $(LLVM_RUNTIME_PATCHES) | wasi-sdk
 	../scripts/patch-wasi-libc.sh
 
 sysroot: $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a

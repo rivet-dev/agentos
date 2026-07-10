@@ -2029,10 +2029,12 @@ mod tests {
         overlay
             .symlink("testing", "/repo/probe")
             .expect("create dangling symlink");
-        assert!(overlay
-            .lstat("/repo/probe")
-            .expect("lstat dangling symlink")
-            .is_symbolic_link);
+        assert!(
+            overlay
+                .lstat("/repo/probe")
+                .expect("lstat dangling symlink")
+                .is_symbolic_link
+        );
 
         overlay
             .remove_file("/repo/probe")

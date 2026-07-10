@@ -1,0 +1,596 @@
+{
+  "generatedAt": "2026-07-09T22:45:07.983-07:00",
+  "hardware": {
+    "cpu": "12th Gen Intel(R) Core(TM) i7-12700KF",
+    "cores": 20,
+    "ram": "62.6 GB",
+    "node": "v24.17.0",
+    "os": "Linux 6.1.0-41-amd64",
+    "arch": "x64"
+  },
+  "sidecar": {
+    "path": "agentos-native-sidecar",
+    "profile": "debug",
+    "mtimeMs": 1783658359410.5308,
+    "mtimeIso": "2026-07-09T21:39:19.411-07:00",
+    "sizeBytes": 175463976
+  },
+  "matrixMode": {
+    "cold": false,
+    "sharedVm": true
+  },
+  "wallTimeMs": 40426.291254,
+  "iterations": 5,
+  "warmup": 1,
+  "resourceSnapshotStubbed": false,
+  "latency": [
+    {
+      "family": "fs",
+      "op": "stat_storm",
+      "fileLine": "crates/kernel/src/kernel.rs:1950",
+      "reproducer": "node fs.statSync('/tmp/fuzz-perf-stat.txt') inside VM",
+      "layers": {
+        "native": {
+          "mean": 0.07,
+          "p50": 0.03,
+          "p95": 0.21,
+          "p99": 0.21,
+          "min": 0.03,
+          "max": 0.21,
+          "memBytes": 4096,
+          "memProvenance": "direct child spawn with /proc/<pid>/status VmHWM sampling minus native-baseline cpu_loop --iters 1 startup baseline, floored to one page"
+        },
+        "node": {
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.05,
+          "p99": 0.05,
+          "min": 0.01,
+          "max": 0.05,
+          "memBytes": 3051520,
+          "memProvenance": "direct child spawn with /proc/<pid>/status VmHWM sampling minus node -e \"\" startup baseline, floored to one page"
+        },
+        "guest": {
+          "mean": 0.39,
+          "p50": 0.28,
+          "p95": 0.81,
+          "p99": 0.81,
+          "min": 0.25,
+          "max": 0.81,
+          "memBytes": 47382528,
+          "memProvenance": "/proc/<sidecarPid>/clear_refs=5, baseline VmRSS, post-op VmHWM, max(VmHWM - baseline, 0)"
+        },
+        "wasm": {
+          "mean": 10.4,
+          "p50": 9,
+          "p95": 14,
+          "p99": 14,
+          "min": 8,
+          "max": 14,
+          "memBytes": 110825472,
+          "memProvenance": "/proc/<sidecarPid>/clear_refs=5, baseline VmRSS, post-op VmHWM, max(VmHWM - baseline, 0)"
+        }
+      },
+      "unsupported": {},
+      "tax": {
+        "emulation": 14,
+        "total": 9.33,
+        "wasm": 300,
+        "mem": 11568
+      }
+    },
+    {
+      "family": "fs",
+      "op": "fs_read_small",
+      "fileLine": "crates/kernel/src/mount_table.rs:814",
+      "reproducer": "node fs.readFileSync('/tmp/fuzz-perf-read-4096.bin')",
+      "layers": {
+        "native": {
+          "mean": 0,
+          "p50": 0,
+          "p95": 0,
+          "p99": 0,
+          "min": 0,
+          "max": 0,
+          "memBytes": 4096,
+          "memProvenance": "direct child spawn with /proc/<pid>/status VmHWM sampling minus native-baseline cpu_loop --iters 1 startup baseline, floored to one page"
+        },
+        "node": {
+          "mean": 0.03,
+          "p50": 0.02,
+          "p95": 0.06,
+          "p99": 0.06,
+          "min": 0.02,
+          "max": 0.06,
+          "memBytes": 3047424,
+          "memProvenance": "direct child spawn with /proc/<pid>/status VmHWM sampling minus node -e \"\" startup baseline, floored to one page"
+        },
+        "guest": {
+          "mean": 0.43,
+          "p50": 0.4,
+          "p95": 0.55,
+          "p99": 0.55,
+          "min": 0.35,
+          "max": 0.55,
+          "memBytes": 29331456,
+          "memProvenance": "/proc/<sidecarPid>/clear_refs=5, baseline VmRSS, post-op VmHWM, max(VmHWM - baseline, 0)"
+        },
+        "wasm": {
+          "mean": 10.2,
+          "p50": 10,
+          "p95": 11,
+          "p99": 11,
+          "min": 9,
+          "max": 11,
+          "memBytes": 108773376,
+          "memProvenance": "/proc/<sidecarPid>/clear_refs=5, baseline VmRSS, post-op VmHWM, max(VmHWM - baseline, 0)"
+        }
+      },
+      "unsupported": {},
+      "tax": {
+        "emulation": 20,
+        "total": null,
+        "wasm": null,
+        "mem": 7161
+      }
+    },
+    {
+      "family": "fs",
+      "op": "fs_read_big",
+      "fileLine": "crates/kernel/src/mount_table.rs:814",
+      "reproducer": "node fs.readFileSync('/tmp/fuzz-perf-read-1048576.bin')",
+      "layers": {
+        "native": {
+          "mean": 0.12,
+          "p50": 0.1,
+          "p95": 0.2,
+          "p99": 0.2,
+          "min": 0.1,
+          "max": 0.2,
+          "memBytes": 2207744,
+          "memProvenance": "direct child spawn with /proc/<pid>/status VmHWM sampling minus native-baseline cpu_loop --iters 1 startup baseline, floored to one page"
+        },
+        "node": {
+          "mean": 0.31,
+          "p50": 0.29,
+          "p95": 0.35,
+          "p99": 0.35,
+          "min": 0.29,
+          "max": 0.35,
+          "memBytes": 9146368,
+          "memProvenance": "direct child spawn with /proc/<pid>/status VmHWM sampling minus node -e \"\" startup baseline, floored to one page"
+        },
+        "guest": {
+          "mean": 20.59,
+          "p50": 20.59,
+          "p95": 20.76,
+          "p99": 20.76,
+          "min": 20.33,
+          "max": 20.76,
+          "memBytes": 37793792,
+          "memProvenance": "/proc/<sidecarPid>/clear_refs=5, baseline VmRSS, post-op VmHWM, max(VmHWM - baseline, 0)"
+        },
+        "wasm": {
+          "mean": 11.4,
+          "p50": 11,
+          "p95": 13,
+          "p99": 13,
+          "min": 11,
+          "max": 13,
+          "memBytes": 109412352,
+          "memProvenance": "/proc/<sidecarPid>/clear_refs=5, baseline VmRSS, post-op VmHWM, max(VmHWM - baseline, 0)"
+        }
+      },
+      "unsupported": {},
+      "tax": {
+        "emulation": 71,
+        "total": 205.9,
+        "wasm": 110,
+        "mem": 17.12
+      }
+    },
+    {
+      "family": "fs",
+      "op": "readdir_big",
+      "fileLine": "crates/kernel/src/mount_table.rs:814",
+      "reproducer": "readdirSync over a 1000-entry VM directory",
+      "layers": {
+        "native": {
+          "mean": 0.19,
+          "p50": 0.19,
+          "p95": 0.19,
+          "p99": 0.19,
+          "min": 0.18,
+          "max": 0.19,
+          "memBytes": 4096,
+          "memProvenance": "direct child spawn with /proc/<pid>/status VmHWM sampling minus native-baseline cpu_loop --iters 1 startup baseline, floored to one page"
+        },
+        "node": {
+          "mean": 0.32,
+          "p50": 0.31,
+          "p95": 0.33,
+          "p99": 0.33,
+          "min": 0.31,
+          "max": 0.33,
+          "memBytes": 5632000,
+          "memProvenance": "direct child spawn with /proc/<pid>/status VmHWM sampling minus node -e \"\" startup baseline, floored to one page"
+        },
+        "guest": {
+          "mean": 1.67,
+          "p50": 1.42,
+          "p95": 2.53,
+          "p99": 2.53,
+          "min": 1.34,
+          "max": 2.53,
+          "memBytes": 30060544,
+          "memProvenance": "/proc/<sidecarPid>/clear_refs=5, baseline VmRSS, post-op VmHWM, max(VmHWM - baseline, 0)"
+        },
+        "wasm": {
+          "mean": 16.4,
+          "p50": 17,
+          "p95": 17,
+          "p99": 17,
+          "min": 15,
+          "max": 17,
+          "memBytes": 109518848,
+          "memProvenance": "/proc/<sidecarPid>/clear_refs=5, baseline VmRSS, post-op VmHWM, max(VmHWM - baseline, 0)"
+        }
+      },
+      "unsupported": {},
+      "tax": {
+        "emulation": 4.58,
+        "total": 7.47,
+        "wasm": 89.47,
+        "mem": 7339
+      }
+    },
+    {
+      "family": "fs",
+      "op": "stream_copy_big",
+      "fileLine": "crates/kernel/src/mount_table.rs:814",
+      "reproducer": "stream pipeline copies one 1048576 byte file inside VM",
+      "layers": {
+        "native": {
+          "mean": 0.41,
+          "p50": 0.4,
+          "p95": 0.46,
+          "p99": 0.46,
+          "min": 0.39,
+          "max": 0.46,
+          "memBytes": 4096,
+          "memProvenance": "direct child spawn with /proc/<pid>/status VmHWM sampling minus native-baseline cpu_loop --iters 1 startup baseline, floored to one page"
+        },
+        "node": {
+          "mean": 1.23,
+          "p50": 1.2,
+          "p95": 1.49,
+          "p99": 1.49,
+          "min": 1.08,
+          "max": 1.49,
+          "memBytes": 10473472,
+          "memProvenance": "direct child spawn with /proc/<pid>/status VmHWM sampling minus node -e \"\" startup baseline, floored to one page"
+        },
+        "guest": {
+          "mean": 35.36,
+          "p50": 33.47,
+          "p95": 43.83,
+          "p99": 43.83,
+          "min": 30.73,
+          "max": 43.83,
+          "memBytes": 34639872,
+          "memProvenance": "/proc/<sidecarPid>/clear_refs=5, baseline VmRSS, post-op VmHWM, max(VmHWM - baseline, 0)"
+        },
+        "wasm": {
+          "mean": 229.6,
+          "p50": 227,
+          "p95": 253,
+          "p99": 253,
+          "min": 218,
+          "max": 253,
+          "memBytes": 115433472,
+          "memProvenance": "/proc/<sidecarPid>/clear_refs=5, baseline VmRSS, post-op VmHWM, max(VmHWM - baseline, 0)"
+        }
+      },
+      "unsupported": {},
+      "tax": {
+        "emulation": 27.89,
+        "total": 83.68,
+        "wasm": 567.5,
+        "mem": 8457
+      }
+    },
+    {
+      "family": "modules",
+      "op": "require_100_small",
+      "fileLine": "crates/execution/src/node_import_cache.rs:4750",
+      "reproducer": "stage 100 unique tiny CJS files per iteration, require them, and verify exported sum",
+      "layers": {
+        "node": {
+          "mean": 2.31,
+          "p50": 2.36,
+          "p95": 2.45,
+          "p99": 2.45,
+          "min": 2.07,
+          "max": 2.45,
+          "memBytes": 19922944,
+          "memProvenance": "direct child spawn with /proc/<pid>/status VmHWM sampling minus node -e \"\" startup baseline, floored to one page"
+        },
+        "guest": {
+          "mean": 43.04,
+          "p50": 43.54,
+          "p95": 45.92,
+          "p99": 45.92,
+          "min": 40.05,
+          "max": 45.92,
+          "memBytes": 30425088,
+          "memProvenance": "/proc/<sidecarPid>/clear_refs=5, baseline VmRSS, post-op VmHWM, max(VmHWM - baseline, 0)"
+        }
+      },
+      "unsupported": {
+        "native": "module resolution is a JS-runtime surface",
+        "wasm": "module resolution is a JS-runtime surface"
+      },
+      "tax": {
+        "emulation": 18.45
+      }
+    },
+    {
+      "family": "modules",
+      "op": "import_npm_package",
+      "fileLine": "crates/execution/src/node_import_cache.rs:4750",
+      "reproducer": "dynamic-import zod@4.3.6 from a read-only mounted package tree (76 transitive ESM files) and verify z.object",
+      "layers": {
+        "node": {
+          "mean": 41.88,
+          "p50": 42.46,
+          "p95": 42.91,
+          "p99": 42.91,
+          "min": 39.36,
+          "max": 42.91
+        },
+        "guest": {
+          "mean": 539.73,
+          "p50": 539.53,
+          "p95": 552.8,
+          "p99": 552.8,
+          "min": 530.34,
+          "max": 552.8,
+          "memBytes": 81809408,
+          "memProvenance": "/proc/<sidecarPid>/clear_refs=5, baseline VmRSS, post-op VmHWM, max(VmHWM - baseline, 0)"
+        }
+      },
+      "unsupported": {
+        "native": "module resolution is a JS-runtime surface",
+        "wasm": "module resolution is a JS-runtime surface"
+      },
+      "tax": {
+        "emulation": 12.71
+      }
+    },
+    {
+      "family": "pipes",
+      "op": "pass_through_big",
+      "fileLine": "crates/v8-runtime/src/host_call.rs:276",
+      "reproducer": "node PassThrough write/read one 65536 byte payload inside VM",
+      "layers": {
+        "native": {
+          "mean": 0.07,
+          "p50": 0.08,
+          "p95": 0.09,
+          "p99": 0.09,
+          "min": 0.03,
+          "max": 0.09,
+          "memBytes": 4096,
+          "memProvenance": "direct child spawn with /proc/<pid>/status VmHWM sampling minus native-baseline cpu_loop --iters 1 startup baseline, floored to one page"
+        },
+        "node": {
+          "mean": 0.13,
+          "p50": 0.12,
+          "p95": 0.2,
+          "p99": 0.2,
+          "min": 0.09,
+          "max": 0.2,
+          "memBytes": 2220032,
+          "memProvenance": "direct child spawn with /proc/<pid>/status VmHWM sampling minus node -e \"\" startup baseline, floored to one page"
+        },
+        "guest": {
+          "mean": 0.23,
+          "p50": 0.2,
+          "p95": 0.29,
+          "p99": 0.29,
+          "min": 0.18,
+          "max": 0.29,
+          "memBytes": 29294592,
+          "memProvenance": "/proc/<sidecarPid>/clear_refs=5, baseline VmRSS, post-op VmHWM, max(VmHWM - baseline, 0)"
+        }
+      },
+      "unsupported": {
+        "wasm": "pipe primitives are not supported in the native-baseline wasm lane"
+      },
+      "tax": {
+        "emulation": 1.67,
+        "total": 2.5,
+        "mem": 7152
+      }
+    },
+    {
+      "family": "control",
+      "op": "cpu_loop",
+      "fileLine": "crates/execution/src/javascript.rs:1741",
+      "reproducer": "bounded integer loop inside one node process",
+      "expectedRatio": "control",
+      "layers": {
+        "native": {
+          "mean": 9.84,
+          "p50": 9.88,
+          "p95": 9.94,
+          "p99": 9.94,
+          "min": 9.62,
+          "max": 9.94,
+          "memBytes": 4096,
+          "memProvenance": "direct child spawn with /proc/<pid>/status VmHWM sampling minus native-baseline cpu_loop --iters 1 startup baseline, floored to one page"
+        },
+        "node": {
+          "mean": 7.85,
+          "p50": 7.84,
+          "p95": 7.92,
+          "p99": 7.92,
+          "min": 7.81,
+          "max": 7.92,
+          "memBytes": 7520256,
+          "memProvenance": "direct child spawn with /proc/<pid>/status VmHWM sampling minus node -e \"\" startup baseline, floored to one page"
+        },
+        "guest": {
+          "mean": 7.88,
+          "p50": 7.92,
+          "p95": 7.94,
+          "p99": 7.94,
+          "min": 7.77,
+          "max": 7.94,
+          "memBytes": 29429760,
+          "memProvenance": "/proc/<sidecarPid>/clear_refs=5, baseline VmRSS, post-op VmHWM, max(VmHWM - baseline, 0)"
+        },
+        "wasm": {
+          "mean": 9.8,
+          "p50": 10,
+          "p95": 10,
+          "p99": 10,
+          "min": 9,
+          "max": 10,
+          "memBytes": 111734784,
+          "memProvenance": "/proc/<sidecarPid>/clear_refs=5, baseline VmRSS, post-op VmHWM, max(VmHWM - baseline, 0)"
+        }
+      },
+      "unsupported": {},
+      "tax": {
+        "emulation": 1.01,
+        "total": 0.8,
+        "wasm": 1.01,
+        "mem": 7185
+      }
+    }
+  ],
+  "permissionPolicyTax": [],
+  "fuzz": {
+    "programs": [],
+    "findings": [],
+    "refuted": []
+  },
+  "leak": {
+    "findings": [],
+    "streams": []
+  },
+  "footprint": {
+    "findings": [],
+    "components": []
+  },
+  "findings": [
+    {
+      "op": "fs_read_big",
+      "family": "fs",
+      "emulation_ratio": 71,
+      "total_ratio": 205.9,
+      "confirmed": true,
+      "suspected_cause": "single sync filesystem bridge/VFS round trip floor on tiny filesystem operations",
+      "file_line": "crates/kernel/src/mount_table.rs:814",
+      "reproducer": "node fs.readFileSync('/tmp/fuzz-perf-read-1048576.bin')",
+      "evidence": "p50 native=0.1ms node=0.29ms guest=20.59ms"
+    },
+    {
+      "op": "stream_copy_big",
+      "family": "fs",
+      "emulation_ratio": 27.89,
+      "total_ratio": 83.68,
+      "confirmed": true,
+      "suspected_cause": "single sync filesystem bridge/VFS round trip floor on tiny filesystem operations",
+      "file_line": "crates/kernel/src/mount_table.rs:814",
+      "reproducer": "stream pipeline copies one 1048576 byte file inside VM",
+      "evidence": "p50 native=0.4ms node=1.2ms guest=33.47ms"
+    },
+    {
+      "op": "fs_read_small",
+      "family": "fs",
+      "emulation_ratio": 20,
+      "total_ratio": null,
+      "confirmed": true,
+      "suspected_cause": "single sync filesystem bridge/VFS round trip floor on tiny filesystem operations",
+      "file_line": "crates/kernel/src/mount_table.rs:814",
+      "reproducer": "node fs.readFileSync('/tmp/fuzz-perf-read-4096.bin')",
+      "evidence": "p50 native=0ms node=0.02ms guest=0.4ms"
+    },
+    {
+      "op": "require_100_small",
+      "family": "modules",
+      "emulation_ratio": 18.45,
+      "total_ratio": 0,
+      "confirmed": true,
+      "suspected_cause": "module resolution, source loading, and import cache behavior in the guest JavaScript runtime",
+      "file_line": "crates/execution/src/node_import_cache.rs:4750",
+      "reproducer": "stage 100 unique tiny CJS files per iteration, require them, and verify exported sum",
+      "evidence": "p50 native=unsupported (module resolution is a JS-runtime surface) node=2.36ms guest=43.54ms"
+    },
+    {
+      "op": "stat_storm",
+      "family": "fs",
+      "emulation_ratio": 14,
+      "total_ratio": 9.33,
+      "confirmed": true,
+      "suspected_cause": "single sync filesystem bridge/VFS round trip floor on tiny filesystem operations",
+      "file_line": "crates/kernel/src/kernel.rs:1950",
+      "reproducer": "node fs.statSync('/tmp/fuzz-perf-stat.txt') inside VM",
+      "evidence": "p50 native=0.03ms node=0.02ms guest=0.28ms"
+    },
+    {
+      "op": "import_npm_package",
+      "family": "modules",
+      "emulation_ratio": 12.71,
+      "total_ratio": 0,
+      "confirmed": true,
+      "suspected_cause": "module resolution, source loading, and import cache behavior in the guest JavaScript runtime",
+      "file_line": "crates/execution/src/node_import_cache.rs:4750",
+      "reproducer": "dynamic-import zod@4.3.6 from a read-only mounted package tree (76 transitive ESM files) and verify z.object",
+      "evidence": "p50 native=unsupported (module resolution is a JS-runtime surface) node=42.46ms guest=539.53ms"
+    },
+    {
+      "op": "readdir_big",
+      "family": "fs",
+      "emulation_ratio": 4.58,
+      "total_ratio": 7.47,
+      "confirmed": true,
+      "suspected_cause": "single sync filesystem bridge/VFS round trip floor on tiny filesystem operations",
+      "file_line": "crates/kernel/src/mount_table.rs:814",
+      "reproducer": "readdirSync over a 1000-entry VM directory",
+      "evidence": "p50 native=0.19ms node=0.31ms guest=1.42ms"
+    }
+  ],
+  "refuted": [
+    {
+      "op": "pass_through_big",
+      "family": "pipes",
+      "reason": "emulation tax stayed below the confirmed-offender threshold",
+      "evidence": "guest/node=1.67; p50 native=0.08ms node=0.12ms guest=0.2ms"
+    },
+    {
+      "op": "cpu_loop",
+      "family": "control",
+      "reason": "control workload stayed within the methodology guardrail",
+      "evidence": "guest/node=1.01; p50 native=9.88ms node=7.84ms guest=7.92ms"
+    },
+    {
+      "family": "net",
+      "op": "udp_echo_small",
+      "reason": "guest UDP datagrams are unsupported in the current kernel-backed V8 bridge",
+      "evidence": "ERR_NOT_IMPLEMENTED: external UDP datagrams are not yet supported by the kernel-backed V8 bridge"
+    }
+  ],
+  "critic_gaps": [
+    "missing fixed op process/fanout_spawn_8",
+    "missing fixed op process/wait_reap_storm_8",
+    "missing fixed op fs/readdir_small",
+    "missing fixed op dns/resolve_concurrent_4",
+    "missing fixed op pipes/backpressure_chunks",
+    "unsupported fixed op net/udp_echo_small: guest dgram send returns ERR_NOT_IMPLEMENTED for external UDP datagrams",
+    "fuzz did not confirm the non-P2 stdout fanout slow path",
+    "footprint run did not emit component attribution"
+  ]
+}

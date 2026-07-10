@@ -1,6 +1,8 @@
 // Session management: create/destroy sessions with V8 isolates on dedicated threads
 
 #[cfg(not(test))]
+use std::borrow::Cow;
+#[cfg(not(test))]
 use std::collections::BTreeMap;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::AtomicU64;
@@ -24,7 +26,9 @@ use crate::ipc_binary::ExecutionErrorBin;
 use crate::runtime_protocol::{
     BridgeResponse, RuntimeEvent, SessionMessage, StreamEvent, WarmSessionHint,
 };
-use crate::snapshot::{snapshot_cache_key, SnapshotCache, SnapshotCacheKey};
+#[cfg(not(test))]
+use crate::snapshot::bridge_code_for_flavor;
+use crate::snapshot::{snapshot_cache_key_for, SnapshotCache, SnapshotCacheKey, StdlibFlavor};
 #[cfg(not(test))]
 use crate::{bridge, isolate, snapshot};
 
@@ -108,6 +112,7 @@ struct PrecreatedIsolate {
     context: v8::Global<v8::Context>,
     bridge_code: String,
     userland_code: String,
+    stdlib_flavor: StdlibFlavor,
 }
 
 #[cfg(test)]
@@ -195,14 +200,16 @@ fn warm_pool_key(
     bridge_code: &str,
     userland_code: &str,
     heap_limit_mb: Option<u32>,
-) -> WarmPoolKey {
-    WarmPoolKey {
-        snapshot_key_digest: snapshot_cache_key(
+) -> Result<WarmPoolKey, String> {
+    let flavor = StdlibFlavor::from_environment()?;
+    Ok(WarmPoolKey {
+        snapshot_key_digest: snapshot_cache_key_for(
+            flavor,
             bridge_code,
             (!userland_code.is_empty()).then_some(userland_code),
         ),
         heap_limit_mb: effective_heap_limit_mb(heap_limit_mb),
-    }
+    })
 }
 
 fn warm_key_prefix(key: &WarmPoolKey) -> String {
@@ -247,7 +254,13 @@ impl WarmWorkerPool {
         }
 
         let target_count = requested_count.min(capacity);
-        let key = warm_pool_key(&bridge_code, &userland_code, heap_limit_mb);
+        let key = match warm_pool_key(&bridge_code, &userland_code, heap_limit_mb) {
+            Ok(key) => key,
+            Err(error) => {
+                eprintln!("agentos-v8-runtime: warm worker disabled: {error}");
+                return;
+            }
+        };
         {
             let mut state = self.state.lock().expect("warm worker pool lock poisoned");
             let current = state.workers.get(&key).map_or(0, Vec::len);
@@ -431,8 +444,11 @@ fn precreate_warm_isolate(
     heap_limit_mb: Option<u32>,
 ) -> Result<PrecreatedIsolate, String> {
     isolate::init_v8_platform();
-    let snapshot_blob = snapshot_cache.get_or_create_with_userland(
-        &bridge_code,
+    let stdlib_flavor = StdlibFlavor::from_environment()?;
+    let snapshot_bridge_code = bridge_code_for_flavor(stdlib_flavor, &bridge_code);
+    let snapshot_blob = snapshot_cache.get_or_create_with_flavor(
+        stdlib_flavor,
+        &snapshot_bridge_code,
         (!userland_code.is_empty()).then_some(userland_code.as_str()),
     )?;
     let snapshot_blob = (*snapshot_blob).clone();
@@ -446,6 +462,7 @@ fn precreate_warm_isolate(
         context,
         bridge_code,
         userland_code,
+        stdlib_flavor,
     })
 }
 
@@ -769,7 +786,13 @@ impl SessionManager {
             return Err(assignment);
         }
 
-        let key = warm_pool_key(&hint.bridge_code, &hint.userland_code, hint.heap_limit_mb);
+        let key = match warm_pool_key(&hint.bridge_code, &hint.userland_code, hint.heap_limit_mb) {
+            Ok(key) => key,
+            Err(error) => {
+                eprintln!("agentos-v8-runtime: warm worker claim skipped: {error}");
+                return Err(assignment);
+            }
+        };
         let Some(worker) = self.warm_pool.claim(&key) else {
             record_warm_worker_miss();
             eprintln!(
@@ -1294,6 +1317,7 @@ fn session_thread(
         mut from_snapshot,
         mut isolate_bridge_code,
         mut isolate_userland_code,
+        mut isolate_stdlib_flavor,
     ) = match precreated_isolate {
         Some(precreated) => (
             Some(precreated.isolate),
@@ -1301,8 +1325,9 @@ fn session_thread(
             true,
             Some(precreated.bridge_code),
             Some(precreated.userland_code),
+            Some(precreated.stdlib_flavor),
         ),
-        None => (None, None, false, None, None),
+        None => (None, None, false, None, None, None),
     };
 
     #[cfg(not(test))]
@@ -1398,9 +1423,33 @@ fn session_thread(
                         } else {
                             userland_code
                         };
+                        let stdlib_flavor = match StdlibFlavor::from_environment() {
+                            Ok(flavor) => flavor,
+                            Err(message) => {
+                                let result_frame = RuntimeEvent::ExecutionResult {
+                                    session_id,
+                                    exit_code: 1,
+                                    exports: None,
+                                    error: Some(ExecutionErrorBin {
+                                        error_type: "Error".into(),
+                                        message,
+                                        stack: String::new(),
+                                        code: "ERR_INVALID_JS_STDLIB_FLAVOR".into(),
+                                    }),
+                                };
+                                send_event_with_generation(
+                                    &event_tx,
+                                    output_generation,
+                                    result_frame,
+                                );
+                                continue;
+                            }
+                        };
+                        let snapshot_bridge_code =
+                            bridge_code_for_flavor(stdlib_flavor, &effective_bridge_code);
 
                         if let Err(message) =
-                            snapshot::validate_bridge_code_size(&effective_bridge_code)
+                            snapshot::validate_bridge_code_size(&snapshot_bridge_code)
                         {
                             let result_frame = RuntimeEvent::ExecutionResult {
                                 session_id,
@@ -1428,7 +1477,8 @@ fn session_thread(
                             && (isolate_bridge_code.as_deref()
                                 != Some(effective_bridge_code.as_str())
                                 || isolate_userland_code.as_deref()
-                                    != Some(effective_userland_code.as_str()))
+                                    != Some(effective_userland_code.as_str())
+                                || isolate_stdlib_flavor != Some(stdlib_flavor))
                         {
                             *isolate_handle
                                 .lock()
@@ -1445,6 +1495,7 @@ fn session_thread(
                             from_snapshot = false;
                             isolate_bridge_code = None;
                             isolate_userland_code = None;
+                            isolate_stdlib_flavor = None;
                         }
 
                         // Deferred isolate creation: create on first Execute using snapshot cache
@@ -1454,21 +1505,30 @@ fn session_thread(
                             // agent-SDK userland bundle, keyed process-wide by both, so
                             // the SDK is evaluated once per sidecar and reused here.
                             let phase_start = Instant::now();
-                            let snapshot_blob = match snapshot_cache.get_or_create_with_userland(
-                                &effective_bridge_code,
+                            let snapshot_blob = match snapshot_cache.get_or_create_with_flavor(
+                                stdlib_flavor,
+                                &snapshot_bridge_code,
                                 (!effective_userland_code.is_empty())
                                     .then_some(effective_userland_code.as_str()),
                             ) {
                                 Ok(blob) => Some(blob),
                                 Err(message) => {
-                                    // Snapshot creation runs in a helper subprocess; if
-                                    // that fails (unsupported platform, spawn failure),
-                                    // degrade to a fresh isolate that evaluates the
-                                    // bridge in-context rather than failing the session.
-                                    eprintln!(
-                                        "agentos-v8-runtime: snapshot creation failed, \
-                                         falling back to fresh isolate: {message}"
-                                    );
+                                    // Defined fallback: run the exact same flavor-specific
+                                    // bootstrap in a fresh context. If that bootstrap fails,
+                                    // normal execution returns its typed JS error; the real
+                                    // flavor never silently enters a legacy environment.
+                                    if snapshot_cache.mark_failure_reported(
+                                        stdlib_flavor,
+                                        &snapshot_bridge_code,
+                                        (!effective_userland_code.is_empty())
+                                            .then_some(effective_userland_code.as_str()),
+                                    ) {
+                                        eprintln!(
+                                            "agentos-v8-runtime: snapshot creation failed, \
+                                             using defined in-context stdlib bootstrap \
+                                             flavor={stdlib_flavor:?}: {message}"
+                                        );
+                                    }
                                     None
                                 }
                             };
@@ -1517,6 +1577,7 @@ fn session_thread(
                             v8_isolate = Some(iso);
                             isolate_bridge_code = Some(effective_bridge_code.clone());
                             isolate_userland_code = Some(effective_userland_code.clone());
+                            isolate_stdlib_flavor = Some(stdlib_flavor);
                         }
 
                         let iso = v8_isolate.as_mut().unwrap();
@@ -1610,6 +1671,51 @@ fn session_thread(
                                 sync_bridge_fns,
                                 async_bridge_fns,
                             );
+                        }
+
+                        // M0's sanctioned dual-loader window boots the inert real
+                        // stdlib in an isolated realm. This proves the eager graph
+                        // without letting Node's realm bootstrap mutate the legacy
+                        // user-execution context; M1 replaces this with the real CJS
+                        // loader and removes the isolation exception.
+                        if stdlib_flavor == StdlibFlavor::Real {
+                            let stdlib_context = isolate::create_context(iso);
+                            let scope = &mut v8::HandleScope::new(iso);
+                            let ctx = v8::Local::new(scope, &stdlib_context);
+                            let scope = &mut v8::ContextScope::new(scope, ctx);
+                            let fresh_bootstrap;
+                            let stdlib_bootstrap = if from_snapshot {
+                                agentos_node_stdlib::REAL_STDLIB_BOOTSTRAP_SOURCE
+                            } else {
+                                fresh_bootstrap = format!(
+                                    "{}\n{}\n{}",
+                                    agentos_node_stdlib::PROCESS_BOOTSTRAP_SOURCE,
+                                    agentos_node_stdlib::INERT_BINDING_BOOTSTRAP_SOURCE,
+                                    agentos_node_stdlib::REAL_STDLIB_BOOTSTRAP_SOURCE,
+                                );
+                                &fresh_bootstrap
+                            };
+                            let (stdlib_code, stdlib_error) =
+                                execution::run_init_script(scope, stdlib_bootstrap);
+                            if stdlib_code != 0 {
+                                let result_frame = RuntimeEvent::ExecutionResult {
+                                    session_id,
+                                    exit_code: stdlib_code,
+                                    exports: None,
+                                    error: stdlib_error.map(|error| ExecutionErrorBin {
+                                        error_type: error.error_type,
+                                        message: error.message,
+                                        stack: error.stack,
+                                        code: error.code.unwrap_or_default(),
+                                    }),
+                                };
+                                send_event_with_generation(
+                                    &event_tx,
+                                    output_generation,
+                                    result_frame,
+                                );
+                                continue;
+                            }
                         }
 
                         // Run post-restore init script (config, mutable state reset)
@@ -1793,9 +1899,9 @@ fn session_thread(
                         // snapshot) and run user code only. On fresh context, run full
                         // bridge code + user code as before.
                         let bridge_code_for_exec = if from_snapshot {
-                            ""
+                            Cow::Borrowed("")
                         } else {
-                            &effective_bridge_code
+                            snapshot_bridge_code
                         };
                         let file_path_opt = if file_path.is_empty() {
                             None
@@ -1810,7 +1916,7 @@ fn session_thread(
                             let (c, e) = execution::execute_script_with_options(
                                 scope,
                                 Some(&bridge_ctx),
-                                bridge_code_for_exec,
+                                &bridge_code_for_exec,
                                 &user_code,
                                 file_path_opt,
                                 &mut bridge_cache,
@@ -1823,7 +1929,7 @@ fn session_thread(
                             execution::execute_module(
                                 scope,
                                 &bridge_ctx,
-                                bridge_code_for_exec,
+                                &bridge_code_for_exec,
                                 &user_code,
                                 file_path_opt,
                                 &mut bridge_cache,

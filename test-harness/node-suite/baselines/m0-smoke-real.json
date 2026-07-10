@@ -1,0 +1,986 @@
+{
+  "schema": 1,
+  "generated_at": "2026-07-09T22:35:17-07:00",
+  "node": "24.15.0",
+  "flavor": "real",
+  "slice": "smoke",
+  "counts": {
+    "pass": 28,
+    "fail-accepted": 95,
+    "skip": 77
+  },
+  "results": [
+    {
+      "id": "parallel/test-abort-controller-any-timeout.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-assert-esm-cjs-message-verify.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-async-hooks-enable-disable.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-async-hooks-stack-overflow.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-async-wrap-destroyid.js",
+      "state": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-broadcastchannel-custom-inspect.js",
+      "state": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-buffer-copy.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-buffer-over-max-length.js",
+      "state": "skip",
+      "reason": "resource-limit"
+    },
+    {
+      "id": "parallel/test-buffer-tostring-4gb.js",
+      "state": "skip",
+      "reason": "resource-limit"
+    },
+    {
+      "id": "parallel/test-child-process-constructor.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-child-process-exec-timeout-expire.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-child-process-fork-exec-path.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-child-process-no-deprecation.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-child-process-spawn-timeout-kill-signal.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-child-process-stdio.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-cli-syntax-eval.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-cluster-dgram-reuseport.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-cluster-kill-infinite-loop.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-cluster-send-deadlock.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-cluster-worker-events.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-compile-cache-api-flush.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-compile-cache-typescript-strip-sourcemaps.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-console-not-call-toString.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-crypto-certificate.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-crypto-dh.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-crypto-key-objects.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-crypto-keygen-eddsa.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-crypto-oaep-zero-length.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-crypto-randomfillsync-regression.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-cwd-enoent-preload.js",
+      "state": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-debugger-profile-command.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-dgram-bind-fd-error.js",
+      "state": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-dgram-connect-send-empty-array.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-dgram-multicast-set-interface.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-dgram-send-empty-packet.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-diagnostics-channel-gc-maintains-subcriptions.js",
+      "state": "skip",
+      "reason": "flag:--expose-gc"
+    },
+    {
+      "id": "parallel/test-diagnostics-channel-http2-server-stream-created.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-diagnostics-channel-tracing-channel-callback-error.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-disable-proto-throw.js",
+      "state": "skip",
+      "reason": "flag:--disable-proto=throw"
+    },
+    {
+      "id": "parallel/test-dns-resolve-promises.js",
+      "state": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-domain-ee-implicit.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-domain-no-error-handler-abort-on-uncaught-2.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-domain-top-level-error-handler-clears-stack.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-error-format-list.js",
+      "state": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-eslint-duplicate-requires.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-esm-loader-hooks-inspect-wait.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-event-emitter-method-names.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-events-once.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-fastutf8stream-minlength.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-fileurltopathbuffer.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-fs-close-errors.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-fs-lchmod.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-fs-open-numeric-flags.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-fs-promises-file-handle-truncate.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-fs-read-file-sync.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-fs-read-zero-length.js",
+      "state": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-fs-readfile-zero-byte-liar.js",
+      "state": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-fs-rmdir-recursive-sync-warns-on-file.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-fs-symlink-buffer-path.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-fs-watch-encoding.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-fs-watch-recursive-linux-parallel-remove.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-fs-write-file-invalid-path.js",
+      "state": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-fs-write-stream-fs.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-global-encoder.js",
+      "state": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-heap-prof-name.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-http-agent-false.js",
+      "state": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-http-allow-req-after-204-res.js",
+      "state": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-http-client-abort-response-event.js",
+      "state": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-http-client-headers-host-array.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http-client-reject-unexpected-agent.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http-client-upload-buf.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-http-dont-set-default-headers-with-set-header.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http-get-pipeline-problem.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http-incoming-matchKnownFields.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http-keep-alive-timeout-custom.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-http-missing-header-separator-cr.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http-outgoing-message-inheritance.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http-pause-resume-one-end.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-http-request-end-twice.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-http-response-remove-header-after-sent.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-http-server-delete-parser.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http-server-options-highwatermark.js",
+      "state": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-http-server.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http-uncaught-from-request-callback.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http-url.parse-search.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-http2-buffersize.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http2-client-set-priority.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http2-compat-method-connect.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http2-compat-serverresponse-headers.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http2-compat-write-head-destroyed.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http2-empty-frame-without-eof.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http2-invalidheaderfields-client.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http2-multiheaders-raw.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http2-ping.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http2-respond-file-compat.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-http2-sensitive-headers.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http2-server-set-header.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http2-single-headers-validation-disabled.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-http2-update-settings.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-https-agent-getname.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-https-close.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-https-selfsigned-no-keycertsign-no-crash.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-icu-data-dir.js",
+      "state": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-inspector-break-e.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-inspector-heap-allocation-tracker.js",
+      "state": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-inspector-open-coverage.js",
+      "state": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-inspector-waiting-for-disconnect.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-internal-socket-list-send.js",
+      "state": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-listen-fd-detached-inherit.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-module-cache.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-module-readonly.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-net-autoselectfamily.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-net-connect-call-socket-connect.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-net-dns-custom-lookup.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-net-listen-exclusive-random-ports.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-net-pipe-connect-errors.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-net-server-max-connections-close-makes-more-available.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-net-socket-end-before-connect.js",
+      "state": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-net-write-after-end-nt.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-nodeeventtarget.js",
+      "state": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-path-extname.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-perf-hooks-histogram.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-performance-resourcetimingbuffersize.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-permission-fs-symlink-target-write.js",
+      "state": "skip",
+      "reason": "flag:--permission"
+    },
+    {
+      "id": "parallel/test-pipe-address.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-process-available-memory.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-process-env-allowed-flags.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-process-execve-permission-fail.js",
+      "state": "skip",
+      "reason": "flag:--permission"
+    },
+    {
+      "id": "parallel/test-process-getactiveresources-track-interval-lifetime.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-process-ref-unref.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-promise-hook-on-before.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-promises-warning-on-unhandled-rejection.js",
+      "state": "skip",
+      "reason": "flag:--unhandled-rejections=warn"
+    },
+    {
+      "id": "parallel/test-readline-async-iterators-destroy.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-readline.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-repl-dynamic-import.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-repl-multiline-navigation.js",
+      "state": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-repl-require-after-write.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-repl-syntax-error-handling.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-repl-uncaught-exception-async.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-require-extensions-same-filename-as-dir.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-runner-cli-timeout.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-runner-import-no-scheme.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-runner-test-fullname.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-shadow-realm-import-value-resolve.js",
+      "state": "skip",
+      "reason": "flag:--experimental-shadow-realm"
+    },
+    {
+      "id": "parallel/test-snapshot-cwd.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-socket-address.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-sqlite-session.js",
+      "state": "skip",
+      "reason": "flag:--experimental-sqlite"
+    },
+    {
+      "id": "parallel/test-stdin-resume-pause.js",
+      "state": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-stream-await-drain-writers-in-synchronously-recursion-write.js",
+      "state": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-stream-duplex-readable-writable.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-stream-passthrough-drain.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-stream-pipe-without-listenerCount.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-stream-readable-data.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-stream-readable-next-no-null.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-stream-reduce.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-stream-wrap-drain.js",
+      "state": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-stream-writable-invalid-chunk.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-stream2-decode-partial.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-stream2-transform.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-tcp-wrap-listen.js",
+      "state": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-timers-immediate-unref-simple.js",
+      "state": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-timers-process-tampering.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-timers-unrefd-interval-still-fires.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-tls-cert-ext-encoding.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-tls-client-reject-12.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-tls-connect-keepalive-nodelay.js",
+      "state": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-tls-empty-sni-context.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-tls-get-ca-certificates-error.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-tls-js-stream.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-tls-no-sslv3.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-tls-reduced-SECLEVEL-in-cipher.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-tls-set-default-ca-certificates-array-buffer.js",
+      "state": "skip",
+      "reason": "flag:--no-use-system-ca"
+    },
+    {
+      "id": "parallel/test-tls-socket-default-options.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-tls-wrap-econnreset-pipe.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-trace-events-bootstrap.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-trace-events-vm.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-url-fileurltopath.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-util-deprecate-invalid-code.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-util-stripvtcontrolcharacters.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-v8-flags.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-vm-cached-data.js",
+      "state": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-vm-global-configurable-properties.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-vm-module-cached-data.js",
+      "state": "skip",
+      "reason": "flag:--experimental-vm-modules"
+    },
+    {
+      "id": "parallel/test-vm-module-reevaluate.js",
+      "state": "skip",
+      "reason": "flag:--experimental-vm-modules"
+    },
+    {
+      "id": "parallel/test-vm-set-proto-null-on-globalthis.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-web-locks.js",
+      "state": "skip",
+      "reason": "flag:--expose-gc"
+    },
+    {
+      "id": "parallel/test-webcrypto-export-import-ec.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    },
+    {
+      "id": "parallel/test-websocket-disabled.js",
+      "state": "skip",
+      "reason": "flag:--no-experimental-websocket"
+    },
+    {
+      "id": "parallel/test-whatwg-encoding-custom-internals.js",
+      "state": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-whatwg-transformstream.js",
+      "state": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-whatwg-url-custom-searchparams-sort.js",
+      "state": "pass"
+    },
+    {
+      "id": "parallel/test-whatwg-webstreams-transfer.js",
+      "state": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-worker-crypto-sign-transfer-result.js",
+      "state": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-worker-fs-stat-watcher.js",
+      "state": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-worker-message-port-close.js",
+      "state": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-worker-message-port-transfer-target.js",
+      "state": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-worker-no-stdin-stdout-interaction.js",
+      "state": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-worker-stack-overflow-stack-size.js",
+      "state": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-worker-uncaught-exception-async.js",
+      "state": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-zlib-brotli-from-brotli.js",
+      "state": "fail-accepted",
+      "reason": "node-test-failure"
+    }
+  ]
+}

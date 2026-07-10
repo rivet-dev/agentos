@@ -1,0 +1,1278 @@
+{
+  "schema": 1,
+  "node": "24.15.0",
+  "states": [
+    "pass",
+    "fail-accepted",
+    "skip"
+  ],
+  "cases": [
+    {
+      "id": "parallel/test-abort-controller-any-timeout.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-assert-esm-cjs-message-verify.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-async-hooks-enable-disable.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-async-hooks-stack-overflow.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-async-wrap-destroyid.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-broadcastchannel-custom-inspect.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-buffer-copy.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-buffer-over-max-length.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "resource-limit"
+    },
+    {
+      "id": "parallel/test-buffer-tostring-4gb.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "resource-limit"
+    },
+    {
+      "id": "parallel/test-child-process-constructor.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-child-process-exec-timeout-expire.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-child-process-fork-exec-path.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-child-process-no-deprecation.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-child-process-spawn-timeout-kill-signal.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-child-process-stdio.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-cli-syntax-eval.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-cluster-dgram-reuseport.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-cluster-kill-infinite-loop.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m4-native-bindings"
+    },
+    {
+      "id": "parallel/test-cluster-send-deadlock.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m4-native-bindings"
+    },
+    {
+      "id": "parallel/test-cluster-worker-events.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-compile-cache-api-flush.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-compile-cache-typescript-strip-sourcemaps.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-console-not-call-toString.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-crypto-certificate.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m4-native-bindings"
+    },
+    {
+      "id": "parallel/test-crypto-dh.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m4-native-bindings"
+    },
+    {
+      "id": "parallel/test-crypto-key-objects.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m4-native-bindings"
+    },
+    {
+      "id": "parallel/test-crypto-keygen-eddsa.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m4-native-bindings"
+    },
+    {
+      "id": "parallel/test-crypto-oaep-zero-length.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m4-native-bindings"
+    },
+    {
+      "id": "parallel/test-crypto-randomfillsync-regression.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-cwd-enoent-preload.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-debugger-profile-command.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-dgram-bind-fd-error.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-dgram-connect-send-empty-array.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-dgram-multicast-set-interface.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-dgram-send-empty-packet.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-diagnostics-channel-gc-maintains-subcriptions.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-gc"
+    },
+    {
+      "id": "parallel/test-diagnostics-channel-http2-server-stream-created.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-diagnostics-channel-tracing-channel-callback-error.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-disable-proto-throw.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--disable-proto=throw"
+    },
+    {
+      "id": "parallel/test-dns-resolve-promises.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-domain-ee-implicit.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-domain-no-error-handler-abort-on-uncaught-2.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-domain-top-level-error-handler-clears-stack.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-error-format-list.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-eslint-duplicate-requires.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-esm-loader-hooks-inspect-wait.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-event-emitter-method-names.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-events-once.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-fastutf8stream-minlength.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-fileurltopathbuffer.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-fs-close-errors.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-fs-lchmod.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-fs-open-numeric-flags.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m1-fs"
+    },
+    {
+      "id": "parallel/test-fs-promises-file-handle-truncate.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m1-fs"
+    },
+    {
+      "id": "parallel/test-fs-read-file-sync.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m1-fs"
+    },
+    {
+      "id": "parallel/test-fs-read-zero-length.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-fs-readfile-zero-byte-liar.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-fs-rmdir-recursive-sync-warns-on-file.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m1-fs"
+    },
+    {
+      "id": "parallel/test-fs-symlink-buffer-path.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m1-fs"
+    },
+    {
+      "id": "parallel/test-fs-watch-encoding.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m1-fs"
+    },
+    {
+      "id": "parallel/test-fs-watch-recursive-linux-parallel-remove.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-fs-write-file-invalid-path.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-fs-write-stream-fs.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m1-fs"
+    },
+    {
+      "id": "parallel/test-global-encoder.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-heap-prof-name.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-http-agent-false.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-http-allow-req-after-204-res.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-http-client-abort-response-event.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-http-client-headers-host-array.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http-client-reject-unexpected-agent.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http-client-upload-buf.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-http-dont-set-default-headers-with-set-header.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http-get-pipeline-problem.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http-incoming-matchKnownFields.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http-keep-alive-timeout-custom.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-http-missing-header-separator-cr.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http-outgoing-message-inheritance.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-http-pause-resume-one-end.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-http-request-end-twice.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-http-response-remove-header-after-sent.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-http-server-delete-parser.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http-server-options-highwatermark.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-http-server.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http-uncaught-from-request-callback.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http-url.parse-search.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-http2-buffersize.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http2-client-set-priority.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http2-compat-method-connect.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http2-compat-serverresponse-headers.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http2-compat-write-head-destroyed.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http2-empty-frame-without-eof.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http2-invalidheaderfields-client.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http2-multiheaders-raw.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http2-ping.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http2-respond-file-compat.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-http2-sensitive-headers.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http2-server-set-header.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http2-single-headers-validation-disabled.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-http2-update-settings.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-https-agent-getname.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-https-close.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-https-selfsigned-no-keycertsign-no-crash.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-icu-data-dir.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-inspector-break-e.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-inspector-heap-allocation-tracker.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-inspector-open-coverage.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-inspector-waiting-for-disconnect.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-internal-socket-list-send.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-listen-fd-detached-inherit.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-module-cache.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m5-loader"
+    },
+    {
+      "id": "parallel/test-module-readonly.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-net-autoselectfamily.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-net-connect-call-socket-connect.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-net-dns-custom-lookup.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-net-listen-exclusive-random-ports.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-net-pipe-connect-errors.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-net-server-max-connections-close-makes-more-available.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-net-socket-end-before-connect.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-net-write-after-end-nt.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m3-networking"
+    },
+    {
+      "id": "parallel/test-nodeeventtarget.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-path-extname.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-perf-hooks-histogram.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-performance-resourcetimingbuffersize.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-permission-fs-symlink-target-write.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--permission"
+    },
+    {
+      "id": "parallel/test-pipe-address.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-process-available-memory.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-process-env-allowed-flags.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-process-execve-permission-fail.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--permission"
+    },
+    {
+      "id": "parallel/test-process-getactiveresources-track-interval-lifetime.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-process-ref-unref.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-promise-hook-on-before.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-promises-warning-on-unhandled-rejection.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--unhandled-rejections=warn"
+    },
+    {
+      "id": "parallel/test-readline-async-iterators-destroy.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-readline.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-repl-dynamic-import.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-repl-multiline-navigation.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-repl-require-after-write.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-repl-syntax-error-handling.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-repl-uncaught-exception-async.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-require-extensions-same-filename-as-dir.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-runner-cli-timeout.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-runner-import-no-scheme.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-runner-test-fullname.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-shadow-realm-import-value-resolve.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--experimental-shadow-realm"
+    },
+    {
+      "id": "parallel/test-snapshot-cwd.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-socket-address.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-sqlite-session.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--experimental-sqlite"
+    },
+    {
+      "id": "parallel/test-stdin-resume-pause.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-stream-await-drain-writers-in-synchronously-recursion-write.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "tier-variance"
+    },
+    {
+      "id": "parallel/test-stream-duplex-readable-writable.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-stream-passthrough-drain.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-stream-pipe-without-listenerCount.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-stream-readable-data.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-stream-readable-next-no-null.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-stream-reduce.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-stream-wrap-drain.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-stream-writable-invalid-chunk.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-stream2-decode-partial.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-stream2-transform.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-tcp-wrap-listen.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-timers-immediate-unref-simple.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-timers-process-tampering.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-timers-unrefd-interval-still-fires.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-tls-cert-ext-encoding.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-tls-client-reject-12.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m4-native-bindings"
+    },
+    {
+      "id": "parallel/test-tls-connect-keepalive-nodelay.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-tls-empty-sni-context.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m4-native-bindings"
+    },
+    {
+      "id": "parallel/test-tls-get-ca-certificates-error.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m4-native-bindings"
+    },
+    {
+      "id": "parallel/test-tls-js-stream.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m2-event-loop"
+    },
+    {
+      "id": "parallel/test-tls-no-sslv3.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-tls-reduced-SECLEVEL-in-cipher.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m4-native-bindings"
+    },
+    {
+      "id": "parallel/test-tls-set-default-ca-certificates-array-buffer.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--no-use-system-ca"
+    },
+    {
+      "id": "parallel/test-tls-socket-default-options.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m4-native-bindings"
+    },
+    {
+      "id": "parallel/test-tls-wrap-econnreset-pipe.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-trace-events-bootstrap.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-trace-events-vm.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-url-fileurltopath.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-util-deprecate-invalid-code.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-util-stripvtcontrolcharacters.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-v8-flags.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-migration"
+    },
+    {
+      "id": "parallel/test-vm-cached-data.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "self-spawn"
+    },
+    {
+      "id": "parallel/test-vm-global-configurable-properties.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m5-loader"
+    },
+    {
+      "id": "parallel/test-vm-module-cached-data.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--experimental-vm-modules"
+    },
+    {
+      "id": "parallel/test-vm-module-reevaluate.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--experimental-vm-modules"
+    },
+    {
+      "id": "parallel/test-vm-set-proto-null-on-globalthis.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m5-loader"
+    },
+    {
+      "id": "parallel/test-web-locks.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-gc"
+    },
+    {
+      "id": "parallel/test-webcrypto-export-import-ec.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m4-native-bindings"
+    },
+    {
+      "id": "parallel/test-websocket-disabled.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--no-experimental-websocket"
+    },
+    {
+      "id": "parallel/test-whatwg-encoding-custom-internals.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-whatwg-transformstream.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-whatwg-url-custom-searchparams-sort.js",
+      "legacy": "pass",
+      "real": "pass"
+    },
+    {
+      "id": "parallel/test-whatwg-webstreams-transfer.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "flag:--expose-internals"
+    },
+    {
+      "id": "parallel/test-worker-crypto-sign-transfer-result.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-worker-fs-stat-watcher.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-worker-message-port-close.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-worker-message-port-transfer-target.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-worker-no-stdin-stdout-interaction.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-worker-stack-overflow-stack-size.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-worker-uncaught-exception-async.js",
+      "legacy": "skip",
+      "real": "skip",
+      "reason": "worker"
+    },
+    {
+      "id": "parallel/test-zlib-brotli-from-brotli.js",
+      "legacy": "fail-accepted",
+      "real": "fail-accepted",
+      "reason": "node-test-failure",
+      "issue": "node-stdlib-m4-native-bindings"
+    }
+  ]
+}

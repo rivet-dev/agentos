@@ -4,6 +4,9 @@
 		"includes": [
 			"packages/**/*.ts",
 			"examples/**/*.ts",
+			"!packages/runtime-browser/**",
+			"!packages/browser/**",
+			"!packages/playground/**",
 			"!packages/core/src/sidecar/generated-protocol.ts",
 			"!_secure-exec-sibling",
 			"!/**/node_modules"

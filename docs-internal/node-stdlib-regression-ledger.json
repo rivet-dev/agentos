@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "measured_at_pst": "2026-07-09T22:45:27-07:00",
+  "entries": [
+    {
+      "bench": "node-stdlib-ab",
+      "metric": "modules/import_npm_package guest p50",
+      "delta": "+209.20% real vs legacy",
+      "cause": "M0 boots the inert real eager graph in an isolated realm on each execution; M1 must park/reuse the realm with the real CJS loader",
+      "disposition": "fix",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1",
+      "approver": "runtime lead"
+    },
+    {
+      "bench": "node-stdlib-coldstart-fs-http",
+      "metric": "shared-sidecar sequential cold p50",
+      "delta": "+70.44% real vs legacy",
+      "cause": "M0 isolated-realm eager bootstrap is paid during execution rather than reused as the M1 real-loader state",
+      "disposition": "fix",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M1",
+      "approver": "runtime lead"
+    },
+    {
+      "bench": "node-stdlib-ab",
+      "metric": "pipes/pass_through_big guest p50",
+      "delta": "+11.11% real vs legacy",
+      "cause": "five-sample debug-sidecar dispersion around the stream callback path; rerun at release profile and fix with the M2 event-loop bridge if reproduced",
+      "disposition": "fix",
+      "issue": "docs-internal/node-stdlib-replacement-spec.md#M2",
+      "approver": "runtime lead"
+    }
+  ]
+}

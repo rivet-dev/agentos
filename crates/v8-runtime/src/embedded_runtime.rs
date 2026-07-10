@@ -112,8 +112,12 @@ impl EmbeddedV8Runtime {
         if userland_code.is_empty() {
             return true;
         }
+        let Ok(flavor) = crate::snapshot::StdlibFlavor::from_environment() else {
+            return false;
+        };
+        let bridge_code = crate::snapshot::bridge_code_for_flavor(flavor, bridge_code);
         self.snapshot_cache
-            .try_get_with_userland(bridge_code, Some(userland_code))
+            .try_get_with_flavor(flavor, &bridge_code, Some(userland_code))
             .is_some()
     }
 
@@ -713,13 +717,19 @@ fn dispatch_runtime_command(
         RuntimeCommand::WarmSnapshot {
             bridge_code,
             userland_code,
-        } => snapshot_cache
-            .get_or_create_with_userland(
-                &bridge_code,
-                (!userland_code.is_empty()).then_some(userland_code.as_str()),
-            )
-            .map(|_| ())
-            .map_err(other_io_error),
+        } => {
+            let flavor =
+                crate::snapshot::StdlibFlavor::from_environment().map_err(other_io_error)?;
+            let bridge_code = crate::snapshot::bridge_code_for_flavor(flavor, &bridge_code);
+            snapshot_cache
+                .get_or_create_with_flavor(
+                    flavor,
+                    &bridge_code,
+                    (!userland_code.is_empty()).then_some(userland_code.as_str()),
+                )
+                .map(|_| ())
+                .map_err(other_io_error)
+        }
     }
 }
 

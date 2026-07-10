@@ -245,6 +245,9 @@ run_tsx "wasm-command-floor-debug" \
 	--stdout-sizes="${BENCH_WASM_COMMAND_DEBUG_STDOUT_SIZES:-0,1}" \
 	--wasm-warmup-debug
 
+run_node "node-stdlib-wasm-lifecycle" \
+	"$HERE/src/node-stdlib/wasm-lifecycle.mjs"
+
 run_tsx "mount-readdir" \
 	"$HERE/src/focused/mount-readdir.bench.ts" \
 	--iterations="${BENCH_MOUNT_READDIR_ITERATIONS:-20}" \
