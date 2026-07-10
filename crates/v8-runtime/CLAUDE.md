@@ -1,5 +1,35 @@
 # V8 Runtime
 
+- `src/session.rs` coordinates native V8 with the Node runtime WASM reactor and
+  kernel readiness; it is not the final implementation of libuv. Actual libuv
+  runs inside `node-runtime.wasm` and owns phases, handle/request liveness,
+  ref/unref, timer caching, and callback order. Do not expand host phase queues
+  as the permanent solution. See
+  `docs-internal/node-runtime-wasm-architecture.md`.
+- AgentOS does not yet implement the required WASM Node-API import provider.
+  Build it over rusty_v8 as a generic engine boundary, not a collection of Node
+  module services. Inventory the chosen Node-API version/functions from pinned
+  EdgeJS/Node sources and document any non-standard engine extensions.
+- The Node-API/engine import provider is isolate-local and engine-only. It may
+  manipulate V8 values and schedule V8 work, but it must not expose host
+  filesystem, network, process, clock, entropy, or protocol services. All host
+  resource access from `node-runtime.wasm` must use the generated AgentOS
+  Linux/POSIX syscall ABI from the shared sysroot and the same policy-checked
+  provider as standalone WASM; never add arbitrary raw syscall passthrough.
+- The Node-API provider is a sandbox boundary. Treat the calling module as fully
+  malicious: use typed, generation-checked, isolate-bound handle indexes; check
+  every linear-memory pointer/length and arithmetic operation; reject stale and
+  cross-isolate handles; and never accept raw host pointers or guest-selected VM
+  identities.
+- The host retains only engine responsibilities such as V8 value access,
+  callbacks, handle scopes, promises/microtasks, contexts, module compilation,
+  termination, and accounting. Node/libuv semantics and protocol state stay in
+  WASM unless a narrowly documented V8 capability cannot be expressed through
+  Node-API.
+- Node startup uses a V8 snapshot plus a separately cached compiled WASM module
+  and quiescent initialized-memory template. Snapshot no fds, threads, timers,
+  entropy, pending libuv requests, or Node-API handles; recreate them after
+  restore and bind a fresh VM syscall context.
 - Guest WebAssembly compilation is enabled by default. Do not install a `set_allow_wasm_code_generation_callback` deny hook on fresh isolates or snapshot restores; package compatibility depends on `WebAssembly.Module` and `WebAssembly.Instance` working inside the isolate.
 - WebAssembly safety still comes from V8's built-in limits. Conformance coverage should prove guest WASM works while oversized memory declarations still fail with V8 errors instead of reintroducing an embedder-level deny path.
 - Async guest WASM (`await WebAssembly.instantiate(...)` / `await WebAssembly.compile(...)`) only settles once the session driver pumps both halves of V8's deferred work: `run_event_loop()` must keep calling `pump_v8_message_loop()` to drain platform foreground tasks posted by async WASM compilation, then `perform_microtask_checkpoint()` to settle the returned Promise. If either step is skipped, sync `WebAssembly.Module` still works while async WASM appears to hang until the outer wall-clock timeout.
@@ -11,5 +41,9 @@
 - Session-quota regressions now live in `src/embedded_runtime.rs`, not a removed daemon `main.rs`: keep one `SessionManager` per `EmbeddedV8Runtime`, share it across every runtime handle/connection to that instance, and cover quota behavior in `tests/embedded_runtime_session.rs`.
 - In `tests/embedded_runtime_session.rs`, shared-quota assertions must saturate the runtime slots before registering any session that is supposed to stay queued. `SessionManager` acquires slots during `CreateSession`, so relying on creation order alone makes queued-session tests race with the sessions meant to hold the slots.
 - Guest `process.memoryUsage()`, `process.cpuUsage()`, `process.resourceUsage()`, and live `process.versions.v8` should be resolved locally on the V8 session thread in `src/bridge.rs`, using `v8::HeapStatistics`, `getrusage(RUSAGE_THREAD)`, and the bundled library version APIs. Do not reintroduce stale JS literals or route these per-isolate values back through sidecar RPC.
-- Guest crypto is served by pure-Rust crates (RustCrypto), not OpenSSL, so there is no live OpenSSL library to query. `process.versions.openssl` is therefore a pinned constant (`EMULATED_OPENSSL_VERSION`) matching the OpenSSL release bundled by the emulated Node version; keep it in sync with the browser executor's `process.versions.openssl` so both runtimes present an identical identity.
+- The real Node stdlib target serves `crypto` and TLS through the one shared
+  OpenSSL 3.5.x WASM build selected by the pinned Node release. RustCrypto and a
+  pinned `EMULATED_OPENSSL_VERSION` are legacy migration surfaces, not the final
+  backend; do not add new real-stdlib behavior to them. At cutover,
+  `process.versions.openssl` must describe the live shared OpenSSL build.
 - Guest `node:vm` isolation belongs in `src/bridge.rs` local bridge calls (`_vmCreateContext`, `_vmRunInContext`, `_vmRunInThisContext`), not sidecar RPC. Those callbacks must keep sandbox-to-context mirroring, restricted-global scrubbing (`Buffer`, `require`, etc.), and timeout-driven `terminate_execution()` behavior aligned with the JavaScript-facing shims in `crates/execution`.

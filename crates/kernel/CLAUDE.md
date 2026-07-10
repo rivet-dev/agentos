@@ -4,6 +4,12 @@ The kernel provides a POSIX-like userspace environment. The goal is that a progr
 
 ## Linux Compatibility
 
+- **One syscall contract for every runtime.** Standalone WASM and
+  `node-runtime.wasm` must use the same generated ABI from the AgentOS-owned
+  sysroot and the same policy-checked kernel provider. Keep the surface generic
+  and Linux/POSIX-shaped: never add Node-module, libuv-phase, protocol, or
+  object-shaped host services, and never expose unrestricted raw host syscall
+  passthrough.
 - **Correct errno values.** Every kernel operation that fails must return the correct POSIX errno (`ENOENT`, `EACCES`, `EEXIST`, `EISDIR`, `ENOTDIR`, `EXDEV`, `EBADF`, `EPERM`, `ENOSYS`, etc.). Agents check errno values to decide control flow -- wrong errnos cause cascading failures.
 - **Standard `/proc` layout.** `/proc/self/`, `/proc/[pid]/`, `/proc/[pid]/fd/`, `/proc/[pid]/environ`, `/proc/[pid]/cwd`, `/proc/[pid]/cmdline` should contain the expected content.
 - **Extend procfs surfaces together.** When adding a new `/proc` entry in `crates/kernel/src/kernel.rs`, update path resolution, `read_dir`, read-bytes helpers, stat/lstat sizing, filetype/inode/canonical-path switches, and the focused `crates/kernel/tests/identity.rs` truth suite in the same change so the synthetic proc layer stays internally consistent.

@@ -14,11 +14,27 @@ If tests fail because they were written for the old `Command::new("node")` path,
 
 ## Node.js Isolation Model
 
-**Desired state:** Guest JS/TS runs inside isolated V8 contexts managed by the execution engine. All Node.js builtins (`fs`, `net`, `child_process`, `dns`, `http`, `os`, etc.) are kernel-backed polyfills that route through the kernel VFS, socket table, and process table. Module loading is fully intercepted — guest code never touches real host APIs. The execution engine previously had this working via `@secure-exec/core` + `@secure-exec/nodejs` with full kernel-backed polyfills for all builtins.
+**Desired state:** Guest JS/TS runs inside isolated V8 contexts managed by the
+execution engine. Node.js builtins (`fs`, `net`, `child_process`, `dns`, `http`,
+`os`, etc.) are the pinned upstream Node JavaScript, loaded through Node's realm
+and loaders. Their `internalBinding()` calls terminate in an untrusted
+Node binding/libuv WASM runtime, which reaches native V8 through a generic
+isolate-local Node-API provider and reaches the VM only through the generated
+Linux/POSIX syscall ABI from the AgentOS sysroot, backed by the same
+policy-checked provider as standalone WASM software. The engine imports may not
+provide OS/service capabilities, and the syscall imports may not grow Node-shaped
+services or arbitrary raw-host passthrough. Module loading is fully intercepted
+and guest code never touches real host APIs. See
+`docs-internal/node-runtime-wasm-architecture.md`.
 
 **Current state (⚠️ STILL INCOMPLETE -- see `~/.agents/todo/node-isolation-gaps.md`):**
 
-Guest JavaScript entrypoints in `javascript.rs` now run only through the shared V8 runtime. The remaining gaps are polyfill completeness and builtin isolation parity: some builtins still need deeper kernel-backed implementations or broader conformance coverage, but restoring a host-Node guest execution fallback is not allowed.
+Guest JavaScript entrypoints in `javascript.rs` now run only through the shared
+V8 runtime. The current host-reimplemented bindings/event pump and public
+polyfills are migration inputs. Remaining target work belongs in the Node
+runtime WASM port, the new Node-API engine provider, the shared sysroot/syscall
+implementation, and the kernel—not in new public polyfills or Node-specific
+sidecar services. Restoring a host-Node guest execution fallback is not allowed.
 
 - Keep any real-host Node helpers isolated to clearly host-only modules used by benchmarks or import-cache tests. Guest JS/WASM/Python runtime code should depend only on neutral shared helpers (for example signal metadata or path resolution), not on files that also own host launch behavior.
 - Guest-side WebAssembly inside the V8 isolate must stay enabled on both fresh isolates and snapshot restores. Real npm packages rely on `WebAssembly.Module`, `WebAssembly.Instance`, and `WebAssembly.instantiate*`, and allowing those APIs does not violate the kernel-isolation boundary because compilation stays inside the isolate. Do not reintroduce an embedder callback that blocks WASM; rely on V8's own implementation limits instead.
@@ -85,18 +101,25 @@ ESM loader hooks (`loader.mjs`) and CJS `Module._load` patches (`runner.mjs`) ar
 3. **Guest env stripping** -- `NODE_OPTIONS`, `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `LD_LIBRARY_PATH` stripped before spawn.
 4. **Permissioned Pyodide host launches still need `--allow-worker`.** `python.rs` bootstraps through Node's internal ESM loader worker, so the host process must keep `--allow-worker` enabled even though the guest `node:worker_threads` surface is limited to a compatibility shim and does not permit real worker creation.
 
-## Guest `fs` and `fs/promises` Polyfill Rules
+## Guest `fs` and `fs/promises` Binding Rules
 
-- Guest Node `fs` and `fs/promises` polyfills share the JavaScript sync-RPC transport between `node_import_cache.rs` and `crates/sidecar/src/service.rs`.
+- Real Node `fs` and `fs/promises` own the public behavior. In the target path,
+  their binding and libuv filesystem requests live in `node-runtime.wasm` and
+  call the shared fd/path syscalls. The JavaScript sync-RPC adapter rules below
+  describe the migration path only; do not make that transport the final ABI.
 - Node-facing `readdir` results must filter `.`/`..`.
 - Async methods should dispatch under `fs.promises.*`.
 - `fs.promises` methods that need real concurrency must use dedicated async bridge globals in `packages/build-tools/bridge-src/`; wrapping `fs.*Sync` inside `async` functions still serializes `Promise.all(...)` behind the first sidecar response.
-- When adding WASI guest imports in `registry/native/crates/wasi-ext`, mirror the required module/object in `crates/execution/src/node_import_cache.rs`'s inline `NODE_WASM_RUNNER_SOURCE`; missing modules fail at `WebAssembly.instantiate()` before guest `main()` runs.
+- When adding WASI guest imports in `toolchain/crates/wasi-ext`, mirror the required module/object in `crates/execution/src/node_import_cache.rs`'s inline `NODE_WASM_RUNNER_SOURCE`; missing modules fail at `WebAssembly.instantiate()` before guest `main()` runs.
 - Keep the embedded WASI shim in `crates/execution/src/wasm.rs` aligned with the patched wasi-libc surface used by the C command suite; overrides like `fcntl(F_SETFL)` now depend on `fd_fdstat_set_flags`, and missing imports fail at instantiation time before the guest command can do real work.
 - The shared-V8 WASM runner now resolves its own module loads plus internal guest `fs.openSync` / `fs.readSync` / `fs.writeSync` / `fs.closeSync` traffic inside `crates/execution/src/wasm.rs`; if the embedded runner gains more internal file syscalls, extend that internal sync-RPC handling there instead of surfacing those requests to callers or reintroducing a host-Node runtime path.
 - fd-based APIs (`open`, `read`, `write`, `close`, `fstat`) plus `createReadStream`/`createWriteStream` should ride the same bridge.
 - Creation-oriented V8 `fs` helpers must preserve the guest `mode` option and resolve it against the current guest `process.umask()` before dispatching kernel-backed RPCs; dropping the `mode` field or relying on host defaults breaks Node parity for `fs.openSync`, `fs.mkdirSync`, and stream constructors that create paths.
-- Guest `fs.watch` / `fs.watchFile` currently stay guest-owned polling wrappers over `fs.statSync`; keep them in `bridge-src` unless the kernel grows a real notification API.
+- `fs.watch` must consume a kernel-owned, bounded notification primitive with
+  Linux/inotify-compatible errno, overflow, rename, and lifecycle behavior;
+  stat polling is acceptable only for Node's `watchFile()` contract. Reference
+  `inotify(7)`, pinned Node `src/fs_event_wrap.cc`, and the upstream tests at the
+  kernel emitter and binding adapter.
 - Runner-internal pipe/control writes must keep snapped host `node:fs` bindings because `syncBuiltinModuleExports(...)` mutates the builtin module for guests.
 
 ## JavaScript Sync RPC
@@ -192,6 +215,13 @@ ESM loader hooks (`loader.mjs`) and CJS `Module._load` patches (`runner.mjs`) ar
 
 ## Guest Networking Rules
 
+- This section's bridge/polyfill details describe the legacy migration path.
+  The target path uses real Node `net`, HTTP, undici, DNS, and stream JavaScript
+  over binding/libuv implementations inside `node-runtime.wasm`, backed only by
+  generic socket/readiness syscalls. Do not extend a legacy public networking
+  implementation or Node-specific sidecar service when behavior belongs in the
+  WASM runtime, sysroot, or kernel socket layer.
+
 - Guest Node `net` Unix-socket support follows the same split as TCP: resolve guest socket paths against `host_dir` mounts when possible, otherwise map them under the VM sandbox root on the host, keep active Unix listeners/sockets in `crates/sidecar/src/service.rs`, and mirror non-mounted listener paths into the kernel VFS so guest `fs` APIs can see the socket file.
 - When proving guest `http.request()` uses the kernel socket path instead of the legacy loopback shortcut, point it at a guest `net.createServer()` that speaks raw HTTP. `http.createServer()` can still succeed through the deprecated `net.http_request` loopback dispatch, so a plain TCP listener is the reliable regression target.
 - Guest `http.request()` / `http.get()` calls targeting a guest loopback `http.createServer()` must stay on the bridge's raw-socket HTTP path. Do not send `socket._loopbackServer` sockets through the undici dispatcher; the sidecar-managed loopback transport already speaks raw HTTP bytes and the undici path can hang waiting on semantics that never arrive.
@@ -205,7 +235,10 @@ ESM loader hooks (`loader.mjs`) and CJS `Module._load` patches (`runner.mjs`) ar
 
 ## Guest `tls`
 
-- Guest Node `tls` should stay layered on the guest `net` polyfill rather than importing host `node:tls` directly.
+- The target `tls` module is pinned upstream Node JavaScript layered on the real
+  net/libuv path inside `node-runtime.wasm`, with OpenSSL/ncrypto linked into the
+  same bounded module. Never import host `node:tls` or add host TLS session
+  services; legacy guest-net polyfill layering is transition-only.
 - Client connections must pass a preconnected guest socket into `tls.connect({ socket })`.
 - Server handshakes should wrap accepted guest sockets with `new TLSSocket(..., { isServer: true })` and emit `secureConnection` from the wrapped socket's `secure` event.
 

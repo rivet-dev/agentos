@@ -65,6 +65,96 @@ the guest — over inventing a softer fallback that hides the failure.
 - Agent adapters must use real upstream SDKs. Do not replace SDK adapters with
   direct API-call stubs.
 
+## Node.js Runtime Architecture
+
+The target Node runtime is the pinned upstream Node release's real
+`lib/**/*.js`, loaded through Node's own realm and module loaders inside the
+native V8 isolate. AgentOS must not maintain parallel public implementations of
+`fs`, streams, `net`, HTTP, undici, TLS, loaders, or other Node modules. The
+approved architecture is recorded in
+`docs-internal/node-runtime-wasm-architecture.md`.
+
+- **Native V8, WASM Node runtime.** Keep V8 native. Port Node's native binding
+  layer, libuv, and native dependencies into one bounded `node-runtime.wasm`
+  instance per agent. The kernel plays Linux's role; actual libuv in WASM owns
+  Node handle, timer, callback-phase, and protocol semantics.
+- **One host OS-capability boundary.** Calls between Node JavaScript and
+  `node-runtime.wasm` use isolate-local Node-API/engine imports; those imports
+  may manipulate V8 values but may not expose filesystem, network, process,
+  clock, entropy, or other OS/service capabilities. The only host OS
+  capabilities callable from the isolate are the generated, versioned
+  Linux/POSIX syscall imports
+  from the AgentOS sysroot, backed by the same provider as standalone WASM.
+  Never expose arbitrary raw host syscalls or add a Node-shaped host service.
+  AgentOS does not currently have the Node-API provider; implementing its
+  engine-only surface over rusty_v8 is a required, security-critical workstream.
+- **Treat the whole Node runtime as hostile.** User JS, Node JS, libuv, binding
+  code, native addons, and every library inside the module share one untrusted
+  agent boundary. Node-API handles are typed, generation-checked, isolate-bound
+  capabilities—not pointers. Validate every WASM handle, pointer, length, and
+  integer before touching V8 or the kernel.
+- **No permanent Node services in the host.** Do not add final-path `_crypto*`,
+  `_http*`, `_tls*`, `_zlib*`, `_tcp*`, or object-shaped filesystem services,
+  host protocol state machines, or host-emulated libuv queues. Existing bridge
+  adapters and public polyfills are migration paths to delete.
+- **One Linux contract.** Node and registry software use the same in-repo
+  sysroot, libc headers/wrappers, generated syscall manifest, host provider, fd
+  tables, errno, readiness, process, socket, and filesystem semantics. A
+  versioned transport name such as `agentos_posix_v1` does not permit different
+  behavior. Fix missing behavior one layer down rather than in Node or a tool.
+- **Charge all caused work.** Per-agent resource accounting includes V8 CPU and
+  heap, WASM CPU and memory, engine-import work, syscall/kernel work, host handle
+  tables, and kernel resources. Waiting for readiness is not active CPU. No
+  agent may create unbounded work on an unattributed shared host thread.
+- **Use a two-layer startup image.** Keep Node JavaScript in the V8 snapshot and
+  separately share the compiled WASM module plus a quiescent initialized memory
+  template. Recreate Node-API handles, entropy, fds, timers, and VM bindings
+  after restore; never snapshot live external resources.
+- **Migration paths expire.** The real and legacy flavors may coexist only for
+  staged validation. Do not add new public behavior to the legacy polyfill path
+  or expand the host-reimplemented binding/event-loop path when the work belongs
+  in `node-runtime.wasm`, the engine provider, sysroot, or kernel.
+
+## Software Build (WASM Toolchain)
+
+Registry software is **real upstream Linux software** (GNU coreutils, grep, sed,
+gawk, real curl/sqlite/duckdb/vim, …) compiled to `wasm32-wasip1` against a
+**sysroot we fully own** — a patched Rust std + libc whose gaps are filled by
+custom host-syscall imports. Treat that target as **native POSIX**;
+`wasm32-wasip1` is an implementation detail, not a feature ceiling.
+
+- **We do not depend on stock WASI / wasi-libc.** The sysroot is ours. A missing
+  libc/POSIX API (`getrlimit`/`RLIMIT_NOFILE`, `getgroups`, spawn, fd dup, …) is
+  never a blocker — implement it (real, or a sane stub) in the patched
+  std/libc/host-import layer. "WASI doesn't have X" is not a reason to stop; X is
+  ours to add.
+- **Fix portability one layer down, in the sysroot** — a new std/libc patch or a
+  new host import — not with `cfg(target_*)` branches or shims in the tool's own
+  source. A WASM-specific branch in application code usually means the fix
+  belongs in the libc layer.
+- **Patch the real upstream tool only as a fallback**, when the fix genuinely
+  cannot live in the sysroot. Patching the real tool is allowed; reimplementing
+  it is not.
+- **"NOT POSSIBLE" is reserved for genuine impossibility** after exhausting both
+  sysroot patches and tool patches — never for a missing syscall we could
+  implement. Document the specific wall if you claim it.
+- **Working in `software/`, you may (and should) fix the layer underneath.** When
+  a package behaves differently from real Linux, the root cause is usually not the
+  package — it's the runtime. It is in-scope and expected to fix the underlying
+  implementation: the Node-compat / bridge layer, the WASM execution runtime, the
+  kernel/VFS syscalls, or the patched sysroot/libc. Do **not** paper over a
+  Linux-deviating behavior in the package, its wrapper, or its test — chase it
+  down into whichever runtime layer owns it and make that layer match Linux.
+- **Cite the authoritative spec at the implementation site.** When you implement
+  against an external spec or wire/file format — `/proc`, network protocols,
+  syscall ABIs, on-disk layouts, TLS/crypto — put the reference **in a code
+  comment right where the format is emitted or parsed**: the man-page section
+  (e.g. `proc(5)`), the kernel source path (e.g. `fs/proc/array.c`), the RFC
+  (e.g. RFC 4253 for SSH transport), and/or the consumer's parser we must satisfy
+  (e.g. procps-ng `readproc.c`). A format emitter or protocol handler without a
+  doc link is incomplete. Conformance tests should name the captured real-Linux
+  fixture they validate against, so the chain spec → impl → test is explicit.
+
 ## Publishing
 
 - `scripts/publish` is the source of truth for npm/crates discovery, version
