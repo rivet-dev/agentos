@@ -28,7 +28,6 @@ import { REGISTRY_ICONS } from '../../../data/registry-icons';
 import { AGENT_PROMPT } from '../agentPrompt';
 import { HERO_H1_CLASS, SectionHeading } from '../typography';
 import { AgentOsTopologyCell, SandboxTopologyCell } from '../diagrams/TopologyCells';
-import { AgentStack } from '../diagrams/AgentStack';
 import { ColdStartTimeline } from '../diagrams/ColdStartTimeline';
 import { AgentSessionDemo } from '../diagrams/AgentSessionDemo';
 import { Reveal } from '../motion';
@@ -554,9 +553,11 @@ const Hero = () => {
 						transition={{ duration: 0.5, delay: 0.13 }}
 						className='mb-7 max-w-xl text-base leading-relaxed text-ink-soft md:text-lg'
 					>
-						A lightweight library for giving your agents an OS. No containers, no VMs
-						&mdash; just file system, networking, and npm-compatible binaries. Powered by
-						the same tech as Cloudflare Workers (and Chromium).
+						<span className='block'>A lightweight library for giving your agents an OS.</span>
+						<span className='mt-2 block'>
+							No containers, no VMs &mdash; just file system, networking, bash, Python, and
+							Node.
+						</span>
 					</motion.p>
 
 					{/* Benchmark highlights — proof for "faster, lighter, cheaper", linked to the benchmarks below */}
@@ -577,7 +578,6 @@ const Hero = () => {
 									<span className='text-xl font-medium text-pine md:text-2xl'>{stat.value}</span>
 									<span className='text-sm text-ink-soft transition-colors group-hover:text-ink md:text-base'>{stat.label}</span>
 								</span>
-								<span className='font-mono text-[11px] text-ink-faint'>{stat.sub}</span>
 							</a>
 						))}
 					</motion.div>
@@ -862,7 +862,7 @@ const CapabilityCard = ({
 // (one 2×2 + two 1×1 + three col-span-2) tiles a 4-column grid exactly with
 // `grid-flow-row-dense`.
 const osFeatures = [
-	{ icon: Bot, title: 'Any harness', description: 'Pi, Claude Code, Codex, OpenCode, Eve, and Flue behind one API.', docsHref: '/docs/sessions', featured: true, span: 'lg:col-span-2 lg:row-span-2' },
+	{ icon: Bot, title: 'Any harness and framework', description: 'Pi, Claude Code, Codex, OpenCode, Eve, and Flue behind one API.', docsHref: '/docs/sessions', featured: true, span: 'lg:col-span-2 lg:row-span-2' },
 	{ icon: FolderOpen, title: 'File system', description: 'Mount a host directory, S3, or Google Drive. State survives sleep.', docsHref: '/docs/filesystem' },
 	{ icon: Layers, title: 'Execution', description: 'Node, Python, and shell behind one exec API. Real host capabilities, not stubs.', docsHref: '/docs/processes' },
 	{ icon: Wrench, title: 'Bindings', description: 'Agents call your JavaScript functions host-side. Credentials never enter the VM.', docsHref: '/docs/bindings', span: 'lg:col-span-2' },
@@ -1498,17 +1498,18 @@ const WhatItIsSection = () => (
 		<div className='mx-auto grid max-w-7xl items-center gap-12 md:grid-cols-2'>
 			<div>
 				<Reveal>
-					<SectionHeading
-						title='A whole computer, inside your process.'
-						subtitle={
-							<>
-								agentOS boots a small virtual OS per agent: kernel, file system, processes,
-								sockets, deny-by-default permissions. It runs on V8 isolates, the same
-								primitive behind Cloudflare Workers and every browser tab. No hypervisor, no
-								containers, no network gap.
-							</>
-						}
-					/>
+					<SectionHeading title='A lightweight computer as a library.' />
+					<ul className='mt-4 list-disc space-y-2 pl-5 text-base leading-relaxed text-ink-soft'>
+						<li>
+							agentOS boots a small virtual OS per agent: kernel, file system, processes,
+							sockets, deny-by-default permissions.
+						</li>
+						<li>
+							It runs on V8 isolates, the same primitive behind Cloudflare Workers and
+							every browser tab.
+						</li>
+						<li>No hypervisor, no containers, no network gap.</li>
+					</ul>
 				</Reveal>
 				<Reveal>
 					<div className='mt-8'>
@@ -1516,8 +1517,19 @@ const WhatItIsSection = () => (
 					</div>
 				</Reveal>
 			</div>
+			{/* Before/after topology: the sandbox fleet across a network gap vs
+			    the same agents as VMs inside the backend process. */}
 			<Reveal>
-				<AgentStack />
+				<div className='flex flex-col gap-4'>
+					<div>
+						<p className='mb-2 text-sm text-ink-faint'>Before: a sandbox service</p>
+						<SandboxTopologyCell />
+					</div>
+					<div>
+						<p className='mb-2 text-sm text-ink-faint'>After: agentOS</p>
+						<AgentOsTopologyCell />
+					</div>
+				</div>
 			</Reveal>
 		</div>
 	</section>
@@ -1547,6 +1559,7 @@ interface LedgerCell {
 }
 
 const SANDBOX_COMPARISON: { label: string; agentOS: LedgerCell; sandbox: LedgerCell }[] = [
+	{ label: 'Where agents run', agentOS: { ok: true, text: 'Inside your backend process' }, sandbox: { ok: false, text: 'On vendor hosts, across the network' } },
 	{ label: 'Setup', agentOS: { ok: true, text: 'npm install' }, sandbox: { ok: false, text: 'Vendor account and API keys' } },
 	{ label: 'Cold start', agentOS: { ok: true, text: <BenchLink href='#bench-cold-start'>Up to {COLD_START_UP_TO}× faster</BenchLink> }, sandbox: { ok: false, text: 'Boots a microVM' } },
 	{ label: 'Price', agentOS: { ok: true, text: <BenchLink href='#bench-cost'>Up to {COST_UP_TO}× cheaper</BenchLink> }, sandbox: { ok: false, text: 'Per-second VM billing' } },
@@ -1636,7 +1649,7 @@ const ArgumentSection = () => {
 					subtitle={
 						<>
 							Sandbox services run VM fleets across a network gap, behind vendor accounts
-							and API keys. agentOS runs in your process.
+							and API keys. agentOS runs in your process, in your VPC or on-prem.
 						</>
 					}
 					className='mb-10 max-w-3xl md:mb-12'
@@ -1652,11 +1665,6 @@ const ArgumentSection = () => {
 						<span className='hidden sm:block' aria-hidden='true' />
 						<span className='text-sm font-medium text-pine'>agentOS</span>
 						<span className='text-sm font-medium text-ink-faint'>Sandbox service</span>
-					</div>
-					<div className='grid grid-cols-2 gap-x-6 border-b border-ink/[0.06] py-4 sm:grid-cols-[minmax(0,0.7fr),1fr,1fr]'>
-						<span className='hidden self-center text-sm text-ink-faint sm:block'>Where agents run</span>
-						<AgentOsTopologyCell />
-						<SandboxTopologyCell />
 					</div>
 					{SANDBOX_COMPARISON.map((row) => (
 						<div
