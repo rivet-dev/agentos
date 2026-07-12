@@ -24,7 +24,9 @@ describe("agentos-shell cli", () => {
 		expect(result.status).toBe(0);
 		expect(result.stdout).toContain("agentos-shell");
 		expect(result.stdout).toContain("-i, --interactive");
+		expect(result.stdout).toContain("--no-interactive");
 		expect(result.stdout).toContain("-t, --tty");
+		expect(result.stdout).toContain("--no-tty");
 		expect(result.stdout).toContain("-e, --env <env>");
 		expect(result.stdout).toContain("-v, --volume <spec>");
 		expect(result.stderr).not.toContain("agent-os shell");
@@ -62,11 +64,21 @@ describe("agentos-shell cli", () => {
 		expect(result.stdout).toContain("mounted");
 	});
 
-	test("keeps stdin attached when -i is set", () => {
-		const result = runCli(["--interactive", "--", "bash"], "echo hello\n");
+	test("keeps stdin attached by default", () => {
+		const result = runCli(["--", "bash"], "echo hello\n");
 
 		expect(result.status).toBe(0);
 		expect(result.stdout).toContain("hello");
+	});
+
+	test("detaches stdin when --no-interactive is set", () => {
+		const result = runCli(
+			["--no-interactive", "--", "bash"],
+			"echo should-not-run\n",
+		);
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).not.toContain("should-not-run");
 	});
 
 	test("runs a command through terminal mode when -t is set", () => {
@@ -85,7 +97,7 @@ describe("agentos-shell cli", () => {
 	});
 
 	test("default terminal mode launches bash instead of the synthetic shell", () => {
-		const result = runCli(["--interactive", "--tty"], "echo $0\nexit\n");
+		const result = runCli([], "echo $0\nexit\n");
 
 		expect(result.status).toBe(0);
 		expect(result.stdout).toContain("bash");

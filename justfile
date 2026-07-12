@@ -50,7 +50,86 @@ install-shell:
 	(cd packages/shell && PATH="$global_bin_dir:$PATH" pnpm link --global)
 
 shell *args:
-	NODE_OPTIONS="--no-deprecation ${NODE_OPTIONS:-}" pnpm --filter @rivet-dev/agentos-shell exec tsx src/main.ts -i -t "$@"
+	#!/usr/bin/env bash
+	set -euo pipefail
+	actor_mode=false
+	for arg in "$@"; do
+		if [[ "$arg" == "--actor" ]]; then
+			actor_mode=true
+		fi
+	done
+	if [[ ! -x packages/shell/node_modules/.bin/tsx \
+		|| ! -e packages/shell/node_modules/@agentos-software/codex-cli \
+		|| ! -d packages/build-tools/node_modules ]]; then
+		pnpm install --force
+	fi
+	missing_registry_packages=()
+	for package_json in packages/shell/node_modules/@agentos-software/*/package.json; do
+		IFS=$'\t' read -r package_name package_main < <(node -e '
+			const manifest = require(require("node:path").resolve(process.argv[1]));
+			console.log(`${manifest.name}\t${manifest.main ?? ""}`);
+		' "$package_json")
+		package_dir="${package_json%/package.json}"
+		if [[ -n "$package_main" && ( ! -e "$package_dir/${package_main#./}" \
+			|| ! -e "$package_dir/dist/package.aospkg" ) ]]; then
+			missing_registry_packages+=("$package_name")
+		fi
+	done
+	if (( ${#missing_registry_packages[@]} > 0 )); then
+		pnpm --filter @agentos-software/manifest build
+		pnpm --filter @rivet-dev/agentos-toolchain build
+		registry_filters=()
+		for package_name in "${missing_registry_packages[@]}"; do
+			registry_filters+=(--filter "$package_name")
+		done
+		pnpm "${registry_filters[@]}" build
+	fi
+	if [[ ! -e registry/software/common/dist/index.js ]]; then
+		pnpm --filter @agentos-software/common build
+	fi
+	if [[ ! -e packages/runtime-core/dist/index.js \
+		|| ! -e packages/core/dist/index.js \
+		|| ! -e packages/agentos/dist/index.js ]]; then
+		pnpm --filter @rivet-dev/agentos-runtime-core build
+		pnpm --filter @rivet-dev/agentos-core build
+		pnpm --filter @rivet-dev/agentos build
+	fi
+	if [[ "$actor_mode" == true ]]; then
+		r6_root="${AGENTOS_R6_ROOT:-$PWD/../r6}"
+		rivetkit_loader="$r6_root/rivetkit-typescript/packages/rivetkit/node_modules/tsx/dist/loader.mjs"
+		if [[ ! -e "$r6_root/pnpm-lock.yaml" ]]; then
+			echo "just shell --actor requires the Rivet repo at $r6_root (override with AGENTOS_R6_ROOT)" >&2
+			exit 1
+		fi
+		if [[ ! -e "$rivetkit_loader" ]]; then
+			pnpm --dir "$r6_root" install --frozen-lockfile --filter 'rivetkit...'
+		fi
+		if [[ ! -e "$r6_root/shared/typescript/virtual-websocket/dist/mod.js" \
+			|| ! -e "$r6_root/rivetkit-typescript/packages/traces/dist/tsup/index.js" \
+			|| ! -e "$r6_root/rivetkit-typescript/packages/workflow-engine/dist/tsup/index.js" \
+			|| ! -e "$r6_root/engine/sdks/typescript/envoy-protocol/dist/index.js" \
+			|| ! -e "$r6_root/rivetkit-typescript/packages/rivetkit-wasm/pkg/rivetkit_wasm.js" ]]; then
+			pnpm --dir "$r6_root" --filter 'rivetkit...' build
+		fi
+	fi
+	cargo_packages=(-p agentos-sidecar)
+	if [[ "$actor_mode" == true ]]; then
+		cargo_packages+=(-p agentos-actor-plugin)
+	fi
+	CARGO_TARGET_DIR="$PWD/target" cargo build "${cargo_packages[@]}"
+	actor_env=()
+	if [[ "$actor_mode" == true ]]; then
+		case "$(uname -s)" in
+			Darwin) plugin_name=libagentos_actor_plugin.dylib ;;
+			Linux) plugin_name=libagentos_actor_plugin.so ;;
+			*) plugin_name=agentos_actor_plugin.dll ;;
+		esac
+		actor_env+=(AGENTOS_PLUGIN_BIN="$PWD/target/debug/$plugin_name")
+	fi
+	env "${actor_env[@]}" \
+		AGENTOS_SIDECAR_BIN="$PWD/target/debug/agentos-sidecar" \
+		NODE_OPTIONS="--no-deprecation ${NODE_OPTIONS:-}" \
+		pnpm --filter @rivet-dev/agentos-shell exec tsx src/main.ts "$@"
 
 # Run the agentos-sdk.dev site (landing + /docs) locally with hot reload
 docs:

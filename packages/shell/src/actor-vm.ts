@@ -30,6 +30,7 @@ const POOL_NAME = "agentos-shell";
 export interface ActorShellVmOptions {
 	software: SoftwareInput[];
 	mounts: MountConfig[];
+	defaultSoftware?: boolean;
 	limits?: unknown;
 }
 
@@ -256,6 +257,7 @@ export async function createActorShellVm(
 				AGENTOS_SHELL_ACTOR_OPTIONS: JSON.stringify({
 					software: options.software,
 					mounts: options.mounts,
+					defaultSoftware: options.defaultSoftware,
 					...(options.limits ? { limits: options.limits } : {}),
 				}),
 				AGENTOS_R6_ROOT: r6,

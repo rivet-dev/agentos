@@ -4,7 +4,8 @@
  * Goal: `agentos-shell` should feel like the VM equivalent of `docker run`.
  *
  * Keep the CLI surface intentionally close to Docker's process flags:
- * `-i/--interactive` keeps stdin attached, `-t/--tty` connects a terminal,
+ * stdin and TTY mode default on; `--no-interactive` and `--no-tty` disable them.
+ * `-i/--interactive` and `-t/--tty` remain accepted for Docker CLI familiarity,
  * `-e/--env` and `--env-file` inject environment variables, `-v/--volume`
  * and `--mount type=bind,...` mount host paths, and `-w/--workdir` chooses
  * the guest cwd. When TTY mode is requested, the guest command goes through
@@ -239,9 +240,11 @@ function parseCli(argv: string[]): CliOptions {
 		.argument("[command]", "guest command to run", "bash")
 		.argument("[args...]", "guest command arguments")
 		.addOption(
-			new Option("-i, --interactive", "keep stdin attached").default(false),
+			new Option("-i, --interactive", "keep stdin attached").default(true),
 		)
-		.addOption(new Option("-t, --tty", "connect a terminal").default(false))
+		.addOption(new Option("--no-interactive", "detach stdin"))
+		.addOption(new Option("-t, --tty", "connect a terminal").default(true))
+		.addOption(new Option("--no-tty", "disable terminal mode"))
 		.addOption(
 			new Option(
 				"--actor",
@@ -688,11 +691,12 @@ const env = buildEnv(cli);
 const mounts = buildMounts(cli);
 
 const vm: ShellVmHandle = cli.actor
-	? await createActorShellVm({ software, mounts })
+	? await createActorShellVm({ software, mounts, defaultSoftware: false })
 	: await AgentOs.create({
 			mounts,
 			permissions: allowAll,
 			software,
+			defaultSoftware: false,
 		});
 
 let exitCode = 1;
