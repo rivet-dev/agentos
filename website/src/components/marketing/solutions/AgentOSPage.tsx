@@ -544,7 +544,7 @@ const Hero = () => {
 						transition={{ duration: 0.5, delay: 0.1 }}
 						className={`mb-4 max-w-2xl ${HERO_H1_CLASS}`}
 					>
-						Agent sandboxing as a library.
+						Secure operating system without a sandbox.
 					</motion.h1>
 
 					{/* Description */}
@@ -554,8 +554,9 @@ const Hero = () => {
 						transition={{ duration: 0.5, delay: 0.13 }}
 						className='mb-7 max-w-xl text-base leading-relaxed text-ink-soft md:text-lg'
 					>
-						One npm install boots a virtual OS for every agent inside the backend you
-						already run.
+						A lightweight library for giving your agents an OS. No containers, no VMs
+						&mdash; just file system, networking, and npm-compatible binaries. Powered by
+						the same tech as Cloudflare Workers (and Chromium).
 					</motion.p>
 
 					{/* Benchmark highlights — proof for "faster, lighter, cheaper", linked to the benchmarks below */}
@@ -863,9 +864,9 @@ const CapabilityCard = ({
 const osFeatures = [
 	{ icon: Bot, title: 'Any harness', description: 'Pi, Claude Code, Codex, OpenCode, Eve, and Flue behind one API.', docsHref: '/docs/sessions', featured: true, span: 'lg:col-span-2 lg:row-span-2' },
 	{ icon: FolderOpen, title: 'File system', description: 'Mount a host directory, S3, or Google Drive. State survives sleep.', docsHref: '/docs/filesystem' },
-	{ icon: Layers, title: 'Execution', description: 'Agents write Node, Python, and shell behind one exec API.', docsHref: '/docs/processes' },
+	{ icon: Layers, title: 'Execution', description: 'Node, Python, and shell behind one exec API. Real host capabilities, not stubs.', docsHref: '/docs/processes' },
 	{ icon: Wrench, title: 'Bindings', description: 'Agents call your JavaScript functions host-side. Credentials never enter the VM.', docsHref: '/docs/bindings', span: 'lg:col-span-2' },
-	{ icon: ShieldCheck, title: 'Human in the loop', description: 'Your app approves or denies every tool call, in your UI.', docsHref: '/docs/approvals', span: 'lg:col-span-2' },
+	{ icon: ShieldCheck, title: 'Human in the loop', description: 'Deny by default. Your app approves every tool call, in your UI.', docsHref: '/docs/approvals', span: 'lg:col-span-2' },
 	{ icon: HardDrive, title: 'Memory', description: 'Sessions persist with replayable transcripts. sqlite3 runs inside the VM.', docsHref: '/docs/persistence', span: 'lg:col-span-2' },
 ];
 
@@ -1502,8 +1503,9 @@ const WhatItIsSection = () => (
 						subtitle={
 							<>
 								agentOS boots a small virtual OS per agent: kernel, file system, processes,
-								sockets, deny-by-default permissions. It runs on V8 isolates and WASM. No
-								hypervisor, no containers, no network gap.
+								sockets, deny-by-default permissions. It runs on V8 isolates, the same
+								primitive behind Cloudflare Workers and every browser tab. No hypervisor, no
+								containers, no network gap.
 							</>
 						}
 					/>
@@ -1752,8 +1754,7 @@ const DeploymentSection = () => (
 					transition={{ duration: 0.5, delay: 0.1 }}
 					className='max-w-xl text-base leading-relaxed text-ink-soft'
 				>
-					Each VM is a Rivet Actor with durable state. Run it as a library, managed, or
-					self-hosted.
+					Each VM is a Rivet Actor with durable state. Your existing deployment works.
 				</motion.p>
 			</div>
 
