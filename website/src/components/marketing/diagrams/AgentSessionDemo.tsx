@@ -60,10 +60,12 @@ for (const { labels } of issues)
   for (const { name } of labels) counts[name] = (counts[name] ?? 0) + 1;
 
 const rows = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-writeFileSync("report.md", [
+const report = [
   \`# Issues, last 7 days: \${issues.length}\`,
   ...rows.map(([label, n]) => \`- \${label}: \${n}\`),
-].join("\\n"));`;
+].join("\\n");
+writeFileSync("report.md", report);
+console.log(report);`;
 
 const REPORT_PY = `import json, datetime, urllib.request
 from collections import Counter
@@ -106,13 +108,14 @@ const shellSession = (runCmd: string, reportLines: string[]): SessionLine[] => [
 	{ kind: 'agent', text: '23 issues last week; bug reports lead with 9.' },
 ];
 
-// Python runs on the native interpreter: the run step replaces shell lines
-// and the script prints the report it just wrote.
-const pythonSession: SessionLine[] = [
+// JavaScript and Python run on their native runtimes through the exec API:
+// a run step replaces shell lines and the script prints the report it wrote.
+// Only bash shows shell commands, because bash is the shell.
+const runSession = (runLabel: string): SessionLine[] => [
 	{ kind: 'user', text: "generate a report of last week's issues" },
 	{ kind: 'agent', text: 'Writing a script to fetch them and build the report.' },
 	{ kind: 'script', text: '' },
-	{ kind: 'run', text: 'Run report.py' },
+	{ kind: 'run', text: runLabel },
 	{ kind: 'out', text: '# Issues, last 7 days: 23' },
 	...REPORT_OUT.map((text): SessionLine => ({ kind: 'out', text })),
 	{ kind: 'agent', text: '23 issues last week; bug reports lead with 9.' },
@@ -127,7 +130,7 @@ const TABS: SessionTab[] = [
 		docsLabel: 'Node.js runtime docs',
 		iconSrc: '/images/registry/nodejs.svg',
 		script: { fileName: 'report.mjs', lang: 'js', code: REPORT_JS },
-		session: shellSession('node report.mjs', REPORT_OUT),
+		session: runSession('Run report.mjs'),
 		files: [
 			{ name: 'report.mjs', size: '486 B', kind: 'code', afterIndex: 2 },
 			{ name: 'report.md', size: '96 B', kind: 'data', afterIndex: 3 },
@@ -141,7 +144,7 @@ const TABS: SessionTab[] = [
 		docsLabel: 'Python runtime docs',
 		iconSrc: '/images/registry/python.svg',
 		script: { fileName: 'report.py', lang: 'python', code: REPORT_PY },
-		session: pythonSession,
+		session: runSession('Run report.py'),
 		files: [
 			{ name: 'report.py', size: '451 B', kind: 'code', afterIndex: 2 },
 			{ name: 'report.md', size: '96 B', kind: 'data', afterIndex: 3 },
@@ -149,7 +152,7 @@ const TABS: SessionTab[] = [
 	},
 	{
 		key: 'bash',
-		title: 'Linux shell',
+		title: 'bash',
 		description: 'A POSIX userland with a process table, PTYs, TCP and UDP with DNS, and deny-by-default permissions.',
 		docsHref: '/docs/architecture',
 		docsLabel: 'Kernel & shell docs',
@@ -400,10 +403,6 @@ const FileRail = ({ files, schedule, clock }: { files: SessionFile[]; schedule: 
 		<aside className='hidden border-l border-cream/10 md:block'>
 			<div className='border-b border-cream/10 px-4 py-2.5 font-mono text-[11px] text-cream/45'>/home/agentos</div>
 			<div className='flex flex-col gap-0.5 p-3'>
-				<div className='flex items-center gap-2 rounded-md px-2 py-1.5 text-[12px] text-cream/35'>
-					<FileText aria-hidden='true' className='h-3.5 w-3.5 shrink-0' />
-					<span className='truncate font-mono'>.profile</span>
-				</div>
 				{visibleFiles.map((file) => (
 					<motion.div
 						key={file.name}
@@ -437,7 +436,7 @@ const RuntimeTabs = ({ active, onChange }: { active: number; onChange: (idx: num
 	const indicatorId = useId();
 	const tab = TABS[active];
 	return (
-		<div className='mb-5'>
+		<div className='mb-5 flex flex-wrap items-center justify-between gap-3'>
 			<div
 				role='tablist'
 				aria-label='Execution runtimes'
@@ -476,26 +475,23 @@ const RuntimeTabs = ({ active, onChange }: { active: number; onChange: (idx: num
 					);
 				})}
 			</div>
-			<div className='mt-3 min-h-[2.75rem] sm:min-h-[1.5rem]'>
-				<AnimatePresence mode='wait' initial={false}>
-					<motion.p
-						key={tab.key}
-						initial={{ opacity: 0, y: 4 }}
-						animate={{ opacity: 1, y: 0 }}
-						exit={{ opacity: 0, y: -4 }}
-						transition={{ duration: 0.18, ease: 'easeOut' }}
-						className='max-w-4xl text-sm leading-relaxed text-ink-soft'
+			<AnimatePresence mode='wait' initial={false}>
+				<motion.p
+					key={tab.key}
+					initial={{ opacity: 0, y: 4 }}
+					animate={{ opacity: 1, y: 0 }}
+					exit={{ opacity: 0, y: -4 }}
+					transition={{ duration: 0.18, ease: 'easeOut' }}
+					className='text-sm leading-relaxed'
+				>
+					<a
+						href={tab.docsHref}
+						className='whitespace-nowrap text-accent-deep underline underline-offset-2 transition-colors hover:text-accent'
 					>
-						{tab.description}{' '}
-						<a
-							href={tab.docsHref}
-							className='whitespace-nowrap text-accent-deep underline underline-offset-2 transition-colors hover:text-accent'
-						>
-							{tab.docsLabel} <span aria-hidden='true'>→</span>
-						</a>
-					</motion.p>
-				</AnimatePresence>
-			</div>
+						{tab.docsLabel} <span aria-hidden='true'>→</span>
+					</a>
+				</motion.p>
+			</AnimatePresence>
 		</div>
 	);
 };
