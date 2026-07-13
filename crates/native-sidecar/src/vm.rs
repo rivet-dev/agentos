@@ -8,6 +8,7 @@ use crate::bootstrap::{
     root_snapshot_entry, root_snapshot_from_entries,
 };
 use crate::bridge::{bridge_permissions, MountPluginContext};
+use crate::filesystem::refresh_guest_shadow_subtree;
 use crate::protocol::{
     AgentosProjectedAgent, ConfigureVmRequest, CreateLayerRequest, CreateOverlayRequest,
     DisposeReason, EventFrame, ExportSnapshotRequest, ImportSnapshotRequest, LinkPackageRequest,
@@ -43,13 +44,16 @@ use agentos_kernel::root_fs::{
     RootFilesystemImportLimits, ROOT_FILESYSTEM_SNAPSHOT_FORMAT,
 };
 use agentos_kernel::socket_table::{SocketReadiness, SocketReadinessKind};
-use agentos_native_sidecar_core::permissions::{allow_all_policy, deny_all_policy};
+use agentos_native_sidecar_core::permissions::{
+    allow_all_policy, deny_all_policy, permissions_with_allow_all_defaults,
+};
 use agentos_native_sidecar_core::{
-    layer_created_response, layer_sealed_response, overlay_created_response,
-    package_linked_response, protocol_root_filesystem_mode, provided_commands_response,
-    root_filesystem_bootstrapped_response, root_filesystem_protocol_descriptor_from_config,
-    root_filesystem_snapshot_response, snapshot_exported_response, snapshot_imported_response,
-    vm_configured_response, vm_created_response, vm_disposed_response, VmLayerStore,
+    guest_environment_with_overrides, layer_created_response, layer_sealed_response,
+    overlay_created_response, package_linked_response, protocol_root_filesystem_mode,
+    provided_commands_response, root_filesystem_bootstrapped_response,
+    root_filesystem_protocol_descriptor_from_config, root_filesystem_snapshot_response,
+    snapshot_exported_response, snapshot_imported_response, vm_configured_response,
+    vm_created_response, vm_disposed_response, VmLayerStore, DEFAULT_GUEST_PATH_ENV,
 };
 use agentos_vm_config as vm_config;
 use base64::Engine;
@@ -137,8 +141,6 @@ fn send_kernel_socket_readiness_event(
     let _ = target.session.send_stream_event("net_socket", payload);
 }
 
-pub(crate) const DEFAULT_GUEST_PATH_ENV: &str =
-    "/usr/local/sbin:/usr/local/bin:/opt/agentos/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 #[cfg(test)]
 const KERNEL_COMMAND_STUB: &[u8] = b"#!/bin/sh\n# kernel command stub\n";
 
@@ -186,12 +188,11 @@ where
             .map_err(|error| {
                 SidecarError::InvalidState(format!("invalid create VM config: {error}"))
             })?;
+        let root_filesystem_config = create_config.root_filesystem.clone().unwrap_or_default();
         let root_filesystem =
-            root_filesystem_protocol_descriptor_from_config(&create_config.root_filesystem);
-        let permissions_policy = create_config
-            .permissions
-            .clone()
-            .unwrap_or_else(deny_all_policy);
+            root_filesystem_protocol_descriptor_from_config(&root_filesystem_config);
+        let permissions_policy =
+            permissions_with_allow_all_defaults(create_config.permissions.clone());
         validate_permissions_policy(&permissions_policy)?;
 
         self.next_vm_id += 1;
@@ -209,13 +210,19 @@ where
         let listen_policy = vm_listen_policy_from_config(create_config.listen.as_ref())?;
         let create_loopback_exempt_ports: BTreeSet<u16> = create_config
             .loopback_exempt_ports
+            .as_deref()
+            .unwrap_or_default()
             .iter()
             .copied()
             .collect();
         self.bridge
             .set_vm_permissions(&vm_id, &permissions_policy)?;
         let permissions = bridge_permissions(self.bridge.clone(), &vm_id);
-        let mut guest_env = filter_env(&vm_id, &create_config.env, &permissions);
+        let empty_guest_env = BTreeMap::new();
+        let requested_guest_env = guest_environment_with_overrides(
+            create_config.env.as_ref().unwrap_or(&empty_guest_env),
+        );
+        let mut guest_env = filter_env(&vm_id, &requested_guest_env, &permissions);
         // Sidecar-owned bootstrap work still needs to reconcile command stubs and the root
         // filesystem before the guest-visible policy takes effect.
         self.bridge
@@ -264,7 +271,7 @@ where
             )?
         } else {
             agentos_native_sidecar_core::build_root_mount_table_with_loaded_snapshot(
-                &create_config.root_filesystem,
+                &root_filesystem_config,
                 loaded_snapshot.as_ref(),
                 &resource_limits,
             )
@@ -295,9 +302,6 @@ where
             String::from("python3"),
             String::from(WASM_COMMAND),
         ];
-        if let Some(bootstrap_commands) = &create_config.bootstrap_commands {
-            execution_commands.extend(bootstrap_commands.iter().cloned());
-        }
         execution_commands.extend(command_guest_paths.keys().cloned());
         kernel
             .register_driver(CommandDriver::new(
@@ -333,10 +337,11 @@ where
                 dns,
                 listen_policy,
                 create_loopback_exempt_ports,
-                guest_env,
+                guest_env: guest_env.clone(),
                 requested_runtime: payload.runtime,
-                root_filesystem_mode: protocol_root_filesystem_mode(root_filesystem.mode),
-                guest_cwd,
+                root_filesystem_mode: protocol_root_filesystem_mode(Some(root_filesystem.mode)),
+                guest_cwd: guest_cwd.clone(),
+                agent_additional_instructions: create_config.agent_additional_instructions.clone(),
                 cwd,
                 host_cwd,
                 kernel,
@@ -373,7 +378,12 @@ where
 
         tracing::info!(target: "agentos_native_sidecar::perf", phase = "create_vm", elapsed_ms = __t.elapsed().as_millis() as u64, "vm phase");
         Ok(DispatchResult {
-            response: vm_created_response(request, vm_id),
+            response: vm_created_response(
+                request,
+                vm_id,
+                guest_cwd,
+                guest_env.into_iter().collect(),
+            ),
             events,
         })
     }
@@ -434,43 +444,85 @@ where
             .permissions
             .clone()
             .map(crate::wire::permissions_policy_config_from_wire)
+            .map(|permissions| permissions_with_allow_all_defaults(Some(permissions)))
             .unwrap_or_else(|| original_permissions.clone());
         validate_permissions_policy(&configured_permissions)?;
         bridge.set_vm_permissions(&vm_id, &allow_all_policy())?;
-        let mut effective_mounts = payload.mounts.clone();
-        append_module_access_mount(&mut effective_mounts, payload.module_access_cwd.as_ref())?;
-        let package_descriptors = package_descriptors_from_wire(&payload.packages)?;
-        let mut provided_commands: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for descriptor in &package_descriptors {
-            provided_commands.insert(
-                descriptor.name.clone(),
-                descriptor
-                    .commands
-                    .iter()
-                    .map(|target| target.command.clone())
-                    .collect(),
-            );
-        }
-        let snapshot_userland_code = resolve_agent_snapshot_bundle(&package_descriptors)?;
-        let package_mounts =
-            build_packages_projection(&vm_id, &package_descriptors, &payload.packages_mount_at)?;
+        let operator_mounts = payload
+            .mounts
+            .clone()
+            .unwrap_or_else(|| vm.configuration.operator_mounts.clone());
+        let mut effective_mounts = operator_mounts.clone();
+        let replaces_packages = payload.packages.is_some();
+        let package_descriptors =
+            package_descriptors_from_wire(payload.packages.as_deref().unwrap_or_default())?;
+        let provided_commands = if replaces_packages {
+            package_descriptors
+                .iter()
+                .map(|descriptor| {
+                    (
+                        descriptor.name.clone(),
+                        descriptor
+                            .commands
+                            .iter()
+                            .map(|target| target.command.clone())
+                            .collect(),
+                    )
+                })
+                .collect()
+        } else {
+            vm.provided_commands.clone()
+        };
+        let snapshot_userland_code = if replaces_packages {
+            resolve_agent_snapshot_bundle(&package_descriptors)?
+        } else {
+            vm.configuration.snapshot_userland_code.clone()
+        };
+        let package_mounts = if replaces_packages {
+            build_packages_projection(
+                &vm_id,
+                &package_descriptors,
+                payload.packages_mount_at.as_deref().unwrap_or_default(),
+            )?
+        } else {
+            vm.configuration
+                .mounts
+                .iter()
+                .filter(|mount| mount.plugin.id == "agentos_packages")
+                .cloned()
+                .collect()
+        };
         effective_mounts.extend(package_mounts);
         apply_package_provides_env(&mut vm.guest_env, &package_descriptors);
         append_package_provides_mounts(&mut effective_mounts, &package_descriptors)?;
-        let reconfigure_result = reconcile_mounts(
-            mount_plugins,
-            vm,
-            &effective_mounts,
-            MountPluginContext {
-                bridge: bridge.clone(),
-                connection_id: connection_id.clone(),
-                session_id: session_id.clone(),
-                vm_id: vm_id.clone(),
-                sidecar_requests: self.sidecar_requests.clone(),
-                max_pread_bytes,
-            },
-        )
-        .and_then(|()| {
+        let configured_command_permissions = payload
+            .command_permissions
+            .clone()
+            .map(|permissions| permissions.into_iter().collect())
+            .unwrap_or_else(|| vm.command_permissions.clone());
+        let configured_loopback_exempt_ports = payload
+            .loopback_exempt_ports
+            .clone()
+            .unwrap_or_else(|| vm.configuration.loopback_exempt_ports.clone());
+        let mount_context = MountPluginContext {
+            bridge: bridge.clone(),
+            connection_id: connection_id.clone(),
+            session_id: session_id.clone(),
+            vm_id: vm_id.clone(),
+            sidecar_requests: self.sidecar_requests.clone(),
+            max_pread_bytes,
+        };
+        let mount_result = if replaces_packages {
+            reconcile_mounts(mount_plugins, vm, &effective_mounts, mount_context)
+        } else {
+            reconcile_mounts_preserving_agentos_packages(
+                mount_plugins,
+                vm,
+                &operator_mounts,
+                mount_context,
+            )
+        };
+        let reconfigure_result = mount_result.and_then(|()| {
             vm.command_guest_paths = discover_command_guest_paths(&mut vm.kernel);
             // The `{ packageDir }` projection lands each package's `bin/<cmd>` at
             // `/opt/agentos/bin/<cmd>` (on `$PATH`) but does NOT populate
@@ -492,8 +544,6 @@ where
             refresh_guest_command_path_env(&mut vm.guest_env, &vm.command_guest_paths);
             let mut execution_commands =
                 vec![String::from(JAVASCRIPT_COMMAND), String::from(WASM_COMMAND)];
-            execution_commands.extend(payload.bootstrap_commands.iter().cloned());
-            execution_commands.extend(payload.tool_shim_commands.iter().cloned());
             execution_commands.extend(vm.command_guest_paths.keys().cloned());
             vm.kernel
                 .register_driver(CommandDriver::new(
@@ -501,23 +551,20 @@ where
                     execution_commands,
                 ))
                 .map_err(kernel_error)?;
-            vm.command_permissions = payload.command_permissions.clone().into_iter().collect();
+            vm.command_permissions = configured_command_permissions.clone();
             let mut loopback_exempt_ports = vm.create_loopback_exempt_ports.clone();
-            loopback_exempt_ports.extend(payload.loopback_exempt_ports.iter().copied());
+            loopback_exempt_ports.extend(configured_loopback_exempt_ports.iter().copied());
             vm.kernel.set_loopback_exempt_ports(loopback_exempt_ports);
             vm.configuration = VmConfiguration {
+                operator_mounts: operator_mounts.clone(),
                 mounts: effective_mounts.clone(),
-                software: payload.software.clone(),
                 permissions: configured_permissions.clone(),
-                module_access_cwd: payload.module_access_cwd.clone(),
-                instructions: payload.instructions.clone(),
-                projected_modules: payload.projected_modules.clone(),
-                command_permissions: payload.command_permissions.clone().into_iter().collect(),
+                command_permissions: configured_command_permissions.clone(),
                 provided_commands: provided_commands.clone(),
                 // jsRuntime is create-time only; preserve what create_vm stored.
                 js_runtime: vm.configuration.js_runtime.clone(),
                 snapshot_userland_code: snapshot_userland_code.clone(),
-                loopback_exempt_ports: payload.loopback_exempt_ports.clone(),
+                loopback_exempt_ports: configured_loopback_exempt_ports.clone(),
             };
             vm.provided_commands = provided_commands;
             Ok(())
@@ -547,10 +594,27 @@ where
         }
 
         let applied_mounts = effective_mounts.len() as u32;
-        let configured_software = payload.software.len() as u32;
         let projected_commands = projected_commands_from_guest_paths(&vm.command_guest_paths);
-        let agents = projected_agents_from_descriptors(&package_descriptors);
-        vm.projected_agent_launch = projected_agent_launch_from_descriptors(&package_descriptors);
+        let agents = if replaces_packages {
+            projected_agents_from_descriptors(&package_descriptors)
+        } else {
+            vm.projected_agent_launch
+                .iter()
+                .map(|(id, launch)| AgentosProjectedAgent {
+                    id: id.clone(),
+                    acp_entrypoint: launch.acp_entrypoint.clone(),
+                    adapter_entrypoint: format!(
+                        "{}/{}",
+                        crate::package_projection::OPT_AGENTOS_BIN,
+                        launch.acp_entrypoint
+                    ),
+                })
+                .collect()
+        };
+        if replaces_packages {
+            vm.projected_agent_launch =
+                projected_agent_launch_from_descriptors(&package_descriptors);
+        }
         let _ = vm;
         // Pre-warm the agent-SDK snapshot when a configured package opts in with
         // `agent.snapshot`. The sidecar reads the bundle from the host package dir
@@ -567,13 +631,7 @@ where
 
         tracing::info!(target: "agentos_native_sidecar::perf", phase = "configure_vm", elapsed_ms = __t.elapsed().as_millis() as u64, applied_mounts = applied_mounts as u64, "vm phase");
         Ok(DispatchResult {
-            response: vm_configured_response(
-                request,
-                applied_mounts,
-                configured_software,
-                projected_commands,
-                agents,
-            ),
+            response: vm_configured_response(request, applied_mounts, projected_commands, agents),
             events: Vec::new(),
         })
     }
@@ -893,7 +951,7 @@ where
             sidecar_requests: self.sidecar_requests.clone(),
             max_pread_bytes: vm.kernel.resource_limits().max_pread_bytes,
         };
-        let _ = shutdown_configured_mounts(&mut vm, &mount_context, "dispose_vm", true);
+        let _ = shutdown_configured_mounts(&mut vm, &mount_context, "dispose_vm", true, false);
 
         // Snapshot/flush/kernel-dispose/permission-reset can each fail; run them
         // in a helper whose result is captured so cleanup below is unconditional.
@@ -1048,17 +1106,23 @@ fn native_root_plugin_from_config(
     let Some(config) = config else {
         return Ok(None);
     };
-    let plugin_config = serde_json::to_string(&config.plugin.config).map_err(|error| {
-        SidecarError::InvalidState(format!(
-            "failed to serialize nativeRoot.plugin.config: {error}"
-        ))
-    })?;
+    let plugin_config = config
+        .plugin
+        .config
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| {
+            SidecarError::InvalidState(format!(
+                "failed to serialize nativeRoot.plugin.config: {error}"
+            ))
+        })?;
     Ok(Some(NativeRootPluginConfig {
         plugin: MountPluginDescriptor {
             id: config.plugin.id.clone(),
             config: plugin_config,
         },
-        read_only: config.read_only,
+        read_only: config.effective_read_only(),
     }))
 }
 
@@ -1141,8 +1205,8 @@ where
         )));
     }
 
-    let config_value: serde_json::Value = serde_json::from_str(&native_root.plugin.config)
-        .map_err(|error| {
+    let config_value: serde_json::Value =
+        serde_json::from_str(native_root.plugin.effective_config()).map_err(|error| {
             SidecarError::InvalidState(format!(
                 "root native plugin config for {} is not valid JSON: {error}",
                 native_root.plugin.id
@@ -1251,7 +1315,21 @@ where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
-    shutdown_configured_mounts(vm, &context, "configure_vm", false)?;
+    shutdown_configured_mounts(vm, &context, "configure_vm", false, false)?;
+    mount_leaf_descriptors(mount_plugins, vm, mounts, context)
+}
+
+fn reconcile_mounts_preserving_agentos_packages<B>(
+    mount_plugins: &agentos_kernel::mount_plugin::FileSystemPluginRegistry<MountPluginContext<B>>,
+    vm: &mut VmState,
+    mounts: &[crate::protocol::MountDescriptor],
+    context: MountPluginContext<B>,
+) -> Result<(), SidecarError>
+where
+    B: NativeSidecarBridge + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    shutdown_configured_mounts(vm, &context, "configure_vm", false, true)?;
     mount_leaf_descriptors(mount_plugins, vm, mounts, context)
 }
 
@@ -1266,8 +1344,9 @@ where
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
     for mount in mounts {
-        let config_value: serde_json::Value =
-            serde_json::from_str(&mount.plugin.config).map_err(|error| {
+        let read_only = mount.effective_read_only();
+        let config_value: serde_json::Value = serde_json::from_str(mount.plugin.effective_config())
+            .map_err(|error| {
                 SidecarError::InvalidState(format!(
                     "mount plugin config for {} is not valid JSON: {error}",
                     mount.plugin.id
@@ -1279,7 +1358,7 @@ where
                 OpenFileSystemPluginRequest {
                     vm_id: &context.vm_id,
                     guest_path: &mount.guest_path,
-                    read_only: mount.read_only,
+                    read_only,
                     config: &config_value,
                     context: &context,
                 },
@@ -1290,7 +1369,7 @@ where
             .mount_boxed_filesystem(
                 &mount.guest_path,
                 filesystem,
-                MountOptions::new(mount.plugin.id.clone()).read_only(mount.read_only),
+                MountOptions::new(mount.plugin.id.clone()).read_only(read_only),
             )
             .map_err(kernel_error)?;
         emit_security_audit_event(
@@ -1300,7 +1379,7 @@ where
             audit_fields([
                 (String::from("guest_path"), mount.guest_path.clone()),
                 (String::from("plugin_id"), mount.plugin.id.clone()),
-                (String::from("read_only"), mount.read_only.to_string()),
+                (String::from("read_only"), read_only.to_string()),
             ]),
         );
     }
@@ -1313,23 +1392,35 @@ fn shutdown_configured_mounts<B>(
     context: &MountPluginContext<B>,
     phase: &str,
     continue_on_error: bool,
+    preserve_agentos_packages: bool,
 ) -> Result<(), SidecarError>
 where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
     for existing in vm.configuration.mounts.clone() {
+        if preserve_agentos_packages && existing.plugin.id == "agentos_packages" {
+            continue;
+        }
         match vm.kernel.unmount_filesystem(&existing.guest_path) {
-            Ok(()) => emit_security_audit_event(
-                &context.bridge,
-                &context.vm_id,
-                "security.mount.unmounted",
-                audit_fields([
-                    (String::from("guest_path"), existing.guest_path.clone()),
-                    (String::from("plugin_id"), existing.plugin.id.clone()),
-                    (String::from("read_only"), existing.read_only.to_string()),
-                ]),
-            ),
+            Ok(()) => {
+                if phase == "configure_vm" {
+                    refresh_guest_shadow_subtree(vm, &existing.guest_path)?;
+                }
+                emit_security_audit_event(
+                    &context.bridge,
+                    &context.vm_id,
+                    "security.mount.unmounted",
+                    audit_fields([
+                        (String::from("guest_path"), existing.guest_path.clone()),
+                        (String::from("plugin_id"), existing.plugin.id.clone()),
+                        (
+                            String::from("read_only"),
+                            existing.effective_read_only().to_string(),
+                        ),
+                    ]),
+                )
+            }
             Err(error) if error.code() == "EINVAL" => {}
             Err(error) => {
                 let _ = emit_structured_event(
@@ -1339,7 +1430,10 @@ where
                     audit_fields([
                         (String::from("guest_path"), existing.guest_path.clone()),
                         (String::from("plugin_id"), existing.plugin.id.clone()),
-                        (String::from("read_only"), existing.read_only.to_string()),
+                        (
+                            String::from("read_only"),
+                            existing.effective_read_only().to_string(),
+                        ),
                         (String::from("phase"), String::from(phase)),
                         (String::from("error_code"), String::from(error.code())),
                         (String::from("error"), error.to_string()),
@@ -1387,16 +1481,18 @@ fn package_leaf_mount_to_descriptor(
             root,
         } => MountDescriptor {
             guest_path,
-            read_only: true,
+            read_only: Some(true),
             plugin: MountPluginDescriptor {
                 id: String::from("agentos_packages"),
-                config: serde_json::json!({
-                    "kind": "tar",
-                    "tarPath": tar_path,
-                    "root": root,
-                    "readOnly": true,
-                })
-                .to_string(),
+                config: Some(
+                    serde_json::json!({
+                        "kind": "tar",
+                        "tarPath": tar_path,
+                        "root": root,
+                        "readOnly": true,
+                    })
+                    .to_string(),
+                ),
             },
         },
         crate::package_projection::PackageLeafMount::HostDir {
@@ -1404,29 +1500,33 @@ fn package_leaf_mount_to_descriptor(
             host_path,
         } => MountDescriptor {
             guest_path,
-            read_only: true,
+            read_only: Some(true),
             plugin: MountPluginDescriptor {
                 id: String::from("agentos_packages"),
-                config: serde_json::json!({
-                    "kind": "hostDir",
-                    "hostPath": host_path,
-                    "readOnly": true,
-                })
-                .to_string(),
+                config: Some(
+                    serde_json::json!({
+                        "kind": "hostDir",
+                        "hostPath": host_path,
+                        "readOnly": true,
+                    })
+                    .to_string(),
+                ),
             },
         },
         crate::package_projection::PackageLeafMount::SingleSymlink { guest_path, target } => {
             MountDescriptor {
                 guest_path,
-                read_only: true,
+                read_only: Some(true),
                 plugin: MountPluginDescriptor {
                     id: String::from("agentos_packages"),
-                    config: serde_json::json!({
-                        "kind": "singleSymlink",
-                        "target": target,
-                        "readOnly": true,
-                    })
-                    .to_string(),
+                    config: Some(
+                        serde_json::json!({
+                            "kind": "singleSymlink",
+                            "target": target,
+                            "readOnly": true,
+                        })
+                        .to_string(),
+                    ),
                 },
             }
         }
@@ -1536,133 +1636,6 @@ fn append_package_provides_mounts(
             }
         }
     }
-    Ok(())
-}
-
-fn append_module_access_mount(
-    mounts: &mut Vec<MountDescriptor>,
-    module_access_cwd: Option<&String>,
-) -> Result<(), SidecarError> {
-    if mounts
-        .iter()
-        .any(|mount| mount.guest_path == "/root/node_modules")
-    {
-        return Ok(());
-    }
-
-    let Some(module_access_cwd) = module_access_cwd else {
-        return Ok(());
-    };
-    let root = resolve_host_path(Some(module_access_cwd))?.join("node_modules");
-    if !root.is_dir() {
-        return Ok(());
-    }
-
-    mounts.push(MountDescriptor {
-        guest_path: String::from("/root/node_modules"),
-        read_only: true,
-        plugin: MountPluginDescriptor {
-            id: String::from("module_access"),
-            config: serde_json::json!({
-                "hostPath": root,
-            })
-            .to_string(),
-        },
-    });
-    append_module_access_symlink_mounts(mounts, &root)?;
-    Ok(())
-}
-
-fn append_module_access_symlink_mounts(
-    mounts: &mut Vec<MountDescriptor>,
-    node_modules_root: &Path,
-) -> Result<(), SidecarError> {
-    for entry in fs::read_dir(node_modules_root)
-        .map_err(|error| SidecarError::Io(format!("failed to read module_access root: {error}")))?
-    {
-        let entry = entry.map_err(|error| {
-            SidecarError::Io(format!("failed to inspect module_access root: {error}"))
-        })?;
-        let file_name = entry.file_name();
-        let name = file_name.to_string_lossy();
-        if name.starts_with('.') {
-            continue;
-        }
-        let path = entry.path();
-        let metadata = fs::symlink_metadata(&path).map_err(|error| {
-            SidecarError::Io(format!("failed to stat module_access entry: {error}"))
-        })?;
-        if metadata.file_type().is_symlink() {
-            append_module_access_symlink_mount(
-                mounts,
-                &format!("/root/node_modules/{name}"),
-                &path,
-            )?;
-            continue;
-        }
-        if !metadata.is_dir() || !name.starts_with('@') {
-            continue;
-        }
-        for scoped_entry in fs::read_dir(&path).map_err(|error| {
-            SidecarError::Io(format!("failed to read module_access scope: {error}"))
-        })? {
-            let scoped_entry = scoped_entry.map_err(|error| {
-                SidecarError::Io(format!("failed to inspect module_access scope: {error}"))
-            })?;
-            let scoped_name = scoped_entry.file_name().to_string_lossy().into_owned();
-            if scoped_name.starts_with('.') {
-                continue;
-            }
-            let scoped_path = scoped_entry.path();
-            let scoped_metadata = fs::symlink_metadata(&scoped_path).map_err(|error| {
-                SidecarError::Io(format!(
-                    "failed to stat module_access scoped entry: {error}"
-                ))
-            })?;
-            if scoped_metadata.file_type().is_symlink() {
-                append_module_access_symlink_mount(
-                    mounts,
-                    &format!("/root/node_modules/{name}/{scoped_name}"),
-                    &scoped_path,
-                )?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn append_module_access_symlink_mount(
-    mounts: &mut Vec<MountDescriptor>,
-    guest_path: &str,
-    symlink_path: &Path,
-) -> Result<(), SidecarError> {
-    if mounts.iter().any(|mount| mount.guest_path == guest_path) {
-        return Ok(());
-    }
-
-    let target = fs::canonicalize(symlink_path).map_err(|error| {
-        SidecarError::Io(format!(
-            "failed to resolve module_access package symlink {}: {error}",
-            symlink_path.display()
-        ))
-    })?;
-    if !target.is_dir() {
-        return Ok(());
-    }
-
-    mounts.push(MountDescriptor {
-        guest_path: guest_path.to_owned(),
-        read_only: true,
-        plugin: MountPluginDescriptor {
-            id: String::from("host_dir"),
-            config: serde_json::json!({
-                "hostPath": target,
-                "readOnly": true,
-            })
-            .to_string(),
-        },
-    });
     Ok(())
 }
 
@@ -2148,9 +2121,10 @@ fn prune_kernel_command_stub(
 #[cfg(test)]
 mod tests {
     use super::{
-        bootstrap_native_root_filesystem, bootstrap_shadow_root,
+        bootstrap_native_root_filesystem, bootstrap_shadow_root, guest_environment_with_overrides,
         materialize_shadow_root_snapshot_entries, native_root_plugin_from_config,
-        prune_kernel_command_stub, shadow_path_for_guest, KERNEL_COMMAND_STUB,
+        permissions_with_allow_all_defaults, prune_kernel_command_stub, shadow_path_for_guest,
+        DEFAULT_GUEST_PATH_ENV, KERNEL_COMMAND_STUB,
     };
     use crate::plugins::chunked_local::ChunkedLocalMountPlugin;
     use crate::protocol::{
@@ -2165,9 +2139,58 @@ mod tests {
     use agentos_kernel::resource_accounting::ResourceLimits;
     use agentos_kernel::root_fs::{encode_snapshot, FilesystemEntry, RootFilesystemSnapshot};
     use agentos_kernel::vfs::VirtualFileSystem;
+    use std::collections::BTreeMap;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn guest_environment_defaults_are_sidecar_owned_and_explicit_values_win() {
+        let environment = guest_environment_with_overrides(&BTreeMap::from([
+            (String::from("HOME"), String::from("/custom-home")),
+            (String::from("CUSTOM"), String::from("value")),
+        ]));
+
+        assert_eq!(
+            environment.get("HOME").map(String::as_str),
+            Some("/custom-home")
+        );
+        assert_eq!(environment.get("CUSTOM").map(String::as_str), Some("value"));
+        assert_eq!(environment.get("USER").map(String::as_str), Some("agentos"));
+        assert_eq!(
+            environment.get("SHELL").map(String::as_str),
+            Some("/bin/sh")
+        );
+        assert_eq!(
+            environment.get("PATH").map(String::as_str),
+            Some(DEFAULT_GUEST_PATH_ENV)
+        );
+        assert_eq!(environment.get("LANG").map(String::as_str), Some("C.UTF-8"));
+    }
+
+    #[test]
+    fn omitted_permission_domains_use_the_sidecar_allow_all_default() {
+        use agentos_vm_config::{FsPermissionScope, PermissionMode, PermissionsPolicy};
+
+        let permissions = permissions_with_allow_all_defaults(Some(PermissionsPolicy {
+            fs: Some(FsPermissionScope::Mode(PermissionMode::Deny)),
+            network: None,
+            child_process: None,
+            process: None,
+            env: None,
+            binding: None,
+        }));
+
+        assert!(matches!(
+            permissions.fs,
+            Some(FsPermissionScope::Mode(PermissionMode::Deny))
+        ));
+        assert!(permissions.network.is_some());
+        assert!(permissions.child_process.is_some());
+        assert!(permissions.process.is_some());
+        assert!(permissions.env.is_some());
+        assert!(permissions.binding.is_some());
+    }
 
     #[test]
     fn bootstrap_shadow_root_seeds_standard_directories() {
@@ -2221,17 +2244,17 @@ mod tests {
             native_root_plugin_from_config(Some(&agentos_vm_config::NativeRootFilesystemConfig {
                 plugin: agentos_vm_config::MountPluginDescriptor {
                     id: "chunked_local".to_string(),
-                    config: serde_json::json!({
+                    config: Some(serde_json::json!({
                         "metadataPath": database_path.to_string_lossy(),
                         "blockRoot": block_root.to_string_lossy(),
-                    }),
+                    })),
                 },
-                read_only: false,
+                read_only: Some(false),
             }))
             .expect("native root config should parse")
             .expect("native root should be present");
-        let config: serde_json::Value =
-            serde_json::from_str(&native_root.plugin.config).expect("valid plugin config");
+        let config: serde_json::Value = serde_json::from_str(native_root.plugin.effective_config())
+            .expect("valid plugin config");
         let plugin = ChunkedLocalMountPlugin;
         let mut filesystem = plugin
             .open(OpenFileSystemPluginRequest {

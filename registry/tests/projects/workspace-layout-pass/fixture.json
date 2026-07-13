@@ -1,5 +1,0 @@
-{
-	"entry": "packages/app/src/index.js",
-	"expectation": "pass",
-	"packageManager": "npm"
-}

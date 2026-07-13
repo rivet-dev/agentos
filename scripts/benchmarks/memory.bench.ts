@@ -149,7 +149,7 @@ async function measure(
 		vms.push(vm);
 
 		await sleep(workload.settleMs);
-		workload.verify(vm);
+		await workload.verify(vm);
 		const cur = await sampleMemory();
 
 		const rssDelta = cur.rss - prev.rss;

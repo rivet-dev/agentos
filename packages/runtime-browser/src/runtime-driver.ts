@@ -58,9 +58,9 @@ import type {
 	BrowserWorkerExtensionResponse,
 	BrowserWorkerInitPayload,
 	BrowserWorkerOutboundMessage,
+	BrowserWorkerPtyOpenedMessage,
 	BrowserWorkerRequestMessage,
 	BrowserWorkerResponseMessage,
-	BrowserWorkerPtyOpenedMessage,
 	BrowserWorkerStdioMessage,
 } from "./worker-protocol.js";
 
@@ -980,7 +980,9 @@ export class BrowserRuntimeDriver implements NodeRuntimeDriver {
 			operation,
 			args,
 			async () => {
-				throw new Error(`legacy PTY fallback is not available for ${operation}`);
+				throw new Error(
+					`legacy PTY fallback is not available for ${operation}`,
+				);
 			},
 		);
 	}
@@ -994,7 +996,9 @@ export class BrowserRuntimeDriver implements NodeRuntimeDriver {
 			{ fd, data: toUint8Array(data) },
 		]);
 		if (response.kind !== SYNC_BRIDGE_KIND_JSON) {
-			throw new Error(`Expected JSON response from pty.write, received ${response.kind}`);
+			throw new Error(
+				`Expected JSON response from pty.write, received ${response.kind}`,
+			);
 		}
 		return Number((response.value as { written?: unknown }).written ?? 0);
 	}
@@ -1012,7 +1016,9 @@ export class BrowserRuntimeDriver implements NodeRuntimeDriver {
 			},
 		]);
 		if (response.kind !== SYNC_BRIDGE_KIND_JSON) {
-			throw new Error(`Expected JSON response from pty.read, received ${response.kind}`);
+			throw new Error(
+				`Expected JSON response from pty.read, received ${response.kind}`,
+			);
 		}
 		const data = (response.value as { data?: unknown }).data;
 		return typeof data === "string" ? base64ToBytes(data) : null;
@@ -1057,20 +1063,6 @@ export class BrowserRuntimeDriver implements NodeRuntimeDriver {
 		this.cleanup(new Error("Browser runtime has been disposed"), {
 			terminateWorker: true,
 		});
-	}
-
-	/**
-	 * Snapshot the converged VM root filesystem (writable changes) so callers can
-	 * persist them to host storage across runtimes. Returns null in legacy mode.
-	 */
-	async snapshotConvergedRootFilesystem(): Promise<ReturnType<
-		ConvergedServicer["snapshotRootFilesystem"]
-	> | null> {
-		if (this.convergedReady === undefined) {
-			return null;
-		}
-		await this.convergedReady;
-		return this.convergedServicer?.snapshotRootFilesystem() ?? null;
 	}
 
 	async terminate(): Promise<void> {

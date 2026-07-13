@@ -39,5 +39,5 @@ const { text } = await vm.prompt(
 console.log("Response:", text);
 
 // Close the session
-vm.closeSession(sessionId);
+await vm.closeSession(sessionId);
 await vm.dispose();

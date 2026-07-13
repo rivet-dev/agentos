@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
-import type { Fixture, ToolCall } from "@copilotkit/llmock";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import common from "@agentos-software/common";
+import pi from "@agentos-software/pi";
+import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 import {
@@ -9,6 +9,7 @@ import {
 	startLlmock,
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
+import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 
@@ -55,7 +56,7 @@ async function createPiVm(mockUrl: string): Promise<AgentOs> {
 	return AgentOs.create({
 		loopbackExemptPorts: [Number(new URL(mockUrl).port)],
 		mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-		software: [common],
+		software: [common, pi],
 	});
 }
 
@@ -147,7 +148,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			expect(eventText.text()).toContain(workspaceDir);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -188,7 +189,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			expect(eventText.text()).toContain("vanilla");
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -234,7 +235,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			expect(events).toContain("3");
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -278,7 +279,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			).toBe("ok");
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -326,7 +327,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			expect(eventText.text().toLowerCase()).toContain("timed out");
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -389,18 +390,16 @@ describe("vanilla Pi bash tool inside the VM", () => {
 				?.stopReason;
 			expect(stopReason).toBe("cancelled");
 
-			const lingering = vm
-				.allProcesses()
-				.filter(
-					(proc) =>
-						proc.status === "running" &&
-						(proc.command.includes("sleep") ||
-							proc.args.some((arg) => arg.includes("sleep"))),
-				);
+			const lingering = (await vm.allProcesses()).filter(
+				(proc) =>
+					proc.status === "running" &&
+					(proc.command.includes("sleep") ||
+						proc.args.some((arg) => arg.includes("sleep"))),
+			);
 			expect(lingering).toEqual([]);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);

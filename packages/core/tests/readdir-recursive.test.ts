@@ -62,18 +62,4 @@ describe("readdirRecursive()", () => {
 			"/tmp/md/top.txt",
 		]);
 	});
-
-	test("exclude skips matching directories", async () => {
-		await vm.mkdir("/tmp/ex");
-		await vm.mkdir("/tmp/ex/node_modules");
-		await vm.mkdir("/tmp/ex/src");
-		await vm.writeFile("/tmp/ex/node_modules/pkg.js", "module");
-		await vm.writeFile("/tmp/ex/src/app.js", "app");
-
-		const entries = await vm.readdirRecursive("/tmp/ex", {
-			exclude: ["node_modules"],
-		});
-		const paths = entries.map((e) => e.path).sort();
-		expect(paths).toEqual(["/tmp/ex/src", "/tmp/ex/src/app.js"]);
-	});
 });

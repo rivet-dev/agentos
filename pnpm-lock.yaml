@@ -2438,27 +2438,12 @@ importers:
 
   packages/core:
     dependencies:
-      '@agentos-software/claude-code':
-        specifier: workspace:*
-        version: link:../../registry/agent/claude
-      '@agentos-software/codex-cli':
-        specifier: workspace:*
-        version: link:../../registry/software/codex-cli
       '@agentos-software/common':
         specifier: workspace:*
         version: link:../../registry/software/common
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../manifest
-      '@agentos-software/opencode':
-        specifier: workspace:*
-        version: link:../../registry/agent/opencode
-      '@agentos-software/pi':
-        specifier: workspace:*
-        version: link:../../registry/agent/pi
-      '@agentos-software/pi-cli':
-        specifier: workspace:*
-        version: link:../../registry/agent/pi-cli
       '@aws-sdk/client-s3':
         specifier: ^3.1019.0
         version: 3.1020.0
@@ -2477,9 +2462,6 @@ importers:
       better-sqlite3:
         specifier: ^12.8.0
         version: 12.8.0
-      croner:
-        specifier: ^10.0.1
-        version: 10.0.1
       googleapis:
         specifier: ^144.0.0
         version: 144.0.0
@@ -2499,9 +2481,15 @@ importers:
         specifier: ^3.25.2
         version: 3.25.2(zod@4.3.6)
     devDependencies:
+      '@agentos-software/claude-code':
+        specifier: workspace:*
+        version: link:../../registry/agent/claude
       '@agentos-software/codex':
         specifier: workspace:*
         version: link:../../registry/agent/codex
+      '@agentos-software/codex-cli':
+        specifier: workspace:*
+        version: link:../../registry/software/codex-cli
       '@agentos-software/coreutils':
         specifier: workspace:*
         version: link:../../registry/software/coreutils
@@ -2541,6 +2529,15 @@ importers:
       '@agentos-software/jq':
         specifier: workspace:*
         version: link:../../registry/software/jq
+      '@agentos-software/opencode':
+        specifier: workspace:*
+        version: link:../../registry/agent/opencode
+      '@agentos-software/pi':
+        specifier: workspace:*
+        version: link:../../registry/agent/pi
+      '@agentos-software/pi-cli':
+        specifier: workspace:*
+        version: link:../../registry/agent/pi-cli
       '@agentos-software/ripgrep':
         specifier: workspace:*
         version: link:../../registry/software/ripgrep
@@ -2685,6 +2682,9 @@ importers:
 
   packages/runtime-benchmarks:
     dependencies:
+      '@rivet-dev/agentos-core':
+        specifier: workspace:*
+        version: link:../core
       '@rivet-dev/agentos-runtime-core':
         specifier: workspace:*
         version: link:../runtime-core
@@ -2758,22 +2758,6 @@ importers:
   packages/runtime-sidecar/npm/linux-arm64-gnu: {}
 
   packages/runtime-sidecar/npm/linux-x64-gnu: {}
-
-  packages/secure-exec:
-    dependencies:
-      '@rivet-dev/agentos-core':
-        specifier: workspace:*
-        version: link:../core
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.19.15)
 
   packages/secure-exec-example-ai-agent-type-check:
     dependencies:
@@ -6396,10 +6380,6 @@ packages:
 
   create-require@1.1.1:
     resolution: {integrity: sha512-dcKFX3jn0MpIaXjisoRvexIJVEKzaq7z2rZKxf+MSr9TkdmHmsU4m2lcLojrj/FHl8mk5VxMmYA+ftRkP/3oKQ==}
-
-  croner@10.0.1:
-    resolution: {integrity: sha512-ixNtAJndqh173VQ4KodSdJEI6nuioBWI0V1ITNKhZZsO0pEMoDxz539T4FTTbSZ/xIOSuDnzxLVRqBVSvPNE2g==}
-    engines: {node: '>=18.0'}
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -12331,8 +12311,6 @@ snapshots:
       sha.js: 2.4.12
 
   create-require@1.1.1: {}
-
-  croner@10.0.1: {}
 
   cross-spawn@7.0.6:
     dependencies:

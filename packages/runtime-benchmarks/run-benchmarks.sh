@@ -80,23 +80,6 @@ run_tsx() {
 		2> >(tee "$RESULTS_DIR/${name}-$STAMP.log" >&2)
 }
 
-run_node() {
-	local name="$1"
-	shift
-	if ! should_run "$name"; then
-		echo "=== Skipping $name (BENCH_ONLY=$BENCH_ONLY) ===" >&2
-		return
-	fi
-	echo "" >&2
-	echo "=== Running $name ===" >&2
-	pnpm --dir packages/runtime-benchmarks exec node "$@" \
-		1> "$RESULTS_DIR/${name}-$STAMP.json" \
-		2> >(tee "$RESULTS_DIR/${name}-$STAMP.log" >&2)
-}
-
-run_tsx "coldstart" "$HERE/coldstart.bench.ts"
-run_node "memory" --expose-gc --import tsx/esm "$HERE/memory.bench.ts"
-
 run_tsx "echo-cold-warm" "$HERE/src/focused/echo.bench.ts"
 
 run_tsx "ls-serial" \

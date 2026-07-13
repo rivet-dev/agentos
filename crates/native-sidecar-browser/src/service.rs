@@ -29,14 +29,13 @@ use agentos_native_sidecar_core::{
     VM_FETCH_BUFFER_LIMIT_BYTES,
 };
 use agentos_native_sidecar_core::{
-    ensure_command_aliases_available, ensure_toolkit_name_available,
-    ensure_toolkit_registry_capacity, registered_tool_command_names, shared_guest_runtime_identity,
-    validate_toolkit_registration,
+    ensure_toolkit_name_available, ensure_toolkit_registry_capacity, registered_tool_command_names,
+    shared_guest_runtime_identity, validate_toolkit_registration,
 };
 use agentos_sidecar_protocol::protocol::{
     FindBoundUdpRequest, FindListenerRequest, GuestFilesystemCallRequest,
     GuestFilesystemResultResponse, GuestKernelCallRequest, GuestKernelResultResponse,
-    ProjectedModuleDescriptor, RegisterHostCallbacksRequest, RootFilesystemEntry,
+    RegisterHostCallbacksRequest, RootFilesystemEntry,
     SignalDispositionAction as ProtocolSignalDispositionAction,
     SignalHandlerRegistration as ProtocolSignalHandlerRegistration, SocketStateEntry,
     WasmPermissionTier,
@@ -88,6 +87,8 @@ impl Error for BrowserSidecarError {}
 
 struct VmState {
     kernel: BrowserKernel,
+    guest_cwd: String,
+    agent_additional_instructions: Option<String>,
     configuration: BrowserVmConfiguration,
     layers: VmLayerStore,
     toolkits: BTreeMap<String, RegisterHostCallbacksRequest>,
@@ -98,8 +99,6 @@ struct VmState {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct BrowserVmConfiguration {
-    instructions: Vec<String>,
-    projected_modules: Vec<ProjectedModuleDescriptor>,
     command_permissions: BTreeMap<String, WasmPermissionTier>,
     create_loopback_exempt_ports: BTreeSet<u16>,
     loopback_exempt_ports: Vec<u16>,
@@ -164,6 +163,11 @@ pub struct BrowserExtensionResponse {
 }
 
 pub trait BrowserExtensionHost {
+    fn agent_additional_instructions(
+        &mut self,
+        vm_id: &str,
+    ) -> Result<Option<String>, BrowserSidecarError>;
+
     fn write_file(
         &mut self,
         vm_id: &str,
@@ -249,6 +253,13 @@ impl<'a> BrowserExtensionContext<'a> {
     /// Owning connection of this request, if any.
     pub fn connection_id(&self) -> Option<&str> {
         self.connection_id.as_deref()
+    }
+
+    pub fn agent_additional_instructions(
+        &mut self,
+        vm_id: &str,
+    ) -> Result<Option<String>, BrowserSidecarError> {
+        self.host.agent_additional_instructions(vm_id)
     }
 
     pub fn write_file(
@@ -456,6 +467,26 @@ where
             .unwrap_or_default()
     }
 
+    pub fn guest_cwd(&self, vm_id: &str) -> Result<String, BrowserSidecarError> {
+        Ok(self.vm(vm_id)?.guest_cwd.clone())
+    }
+
+    pub fn set_agent_additional_instructions(
+        &mut self,
+        vm_id: &str,
+        instructions: Option<String>,
+    ) -> Result<(), BrowserSidecarError> {
+        self.vm_mut(vm_id)?.agent_additional_instructions = instructions;
+        Ok(())
+    }
+
+    pub fn agent_additional_instructions(
+        &self,
+        vm_id: &str,
+    ) -> Result<Option<String>, BrowserSidecarError> {
+        Ok(self.vm(vm_id)?.agent_additional_instructions.clone())
+    }
+
     pub fn create_vm(&mut self, config: KernelVmConfig) -> Result<(), BrowserSidecarError> {
         self.create_vm_with_root_filesystem(config, RootFilesystemConfig::default())
     }
@@ -464,10 +495,8 @@ where
         &mut self,
         vm_id: &str,
         permissions: Option<agentos_kernel::permissions::Permissions>,
-        instructions: Vec<String>,
-        projected_modules: Vec<ProjectedModuleDescriptor>,
-        command_permissions: BTreeMap<String, WasmPermissionTier>,
-        loopback_exempt_ports: impl IntoIterator<Item = u16>,
+        command_permissions: Option<BTreeMap<String, WasmPermissionTier>>,
+        loopback_exempt_ports: Option<Vec<u16>>,
     ) -> Result<(), BrowserSidecarError> {
         let vm = self
             .vms
@@ -476,14 +505,16 @@ where
         if let Some(permissions) = permissions {
             vm.kernel.set_permissions(permissions);
         }
-        let loopback_exempt_ports: Vec<u16> = loopback_exempt_ports.into_iter().collect();
-        vm.configuration.instructions = instructions;
-        vm.configuration.projected_modules = projected_modules;
-        vm.configuration.command_permissions = command_permissions;
-        vm.configuration.loopback_exempt_ports = loopback_exempt_ports.clone();
+        if let Some(command_permissions) = command_permissions {
+            vm.configuration.command_permissions = command_permissions;
+        }
+        if let Some(loopback_exempt_ports) = loopback_exempt_ports {
+            vm.configuration.loopback_exempt_ports = loopback_exempt_ports;
+        }
         let mut effective_loopback_exempt_ports =
             vm.configuration.create_loopback_exempt_ports.clone();
-        effective_loopback_exempt_ports.extend(loopback_exempt_ports);
+        effective_loopback_exempt_ports
+            .extend(vm.configuration.loopback_exempt_ports.iter().copied());
         vm.kernel
             .set_loopback_exempt_ports(effective_loopback_exempt_ports);
         Ok(())
@@ -509,6 +540,7 @@ where
             )),
         )?;
         let create_loopback_exempt_ports = config.loopback_exempt_ports.clone();
+        let guest_cwd = config.cwd.clone();
         self.vms.insert(
             vm_id.clone(),
             VmState {
@@ -517,6 +549,8 @@ where
                         .map_err(Self::sidecar_core_error)?,
                     config,
                 ),
+                guest_cwd,
+                agent_additional_instructions: None,
                 configuration: BrowserVmConfiguration {
                     create_loopback_exempt_ports,
                     ..BrowserVmConfiguration::default()
@@ -655,8 +689,6 @@ where
         let vm = self.vm_mut(vm_id)?;
         ensure_toolkit_name_available(&vm.toolkits, &payload.name)
             .map_err(|error| BrowserSidecarError::InvalidState(error.to_string()))?;
-        ensure_command_aliases_available(&vm.toolkits, &payload)
-            .map_err(|error| BrowserSidecarError::InvalidState(error.to_string()))?;
         ensure_toolkit_registry_capacity(&vm.toolkits, &payload)
             .map_err(|error| BrowserSidecarError::InvalidState(error.to_string()))?;
 
@@ -692,6 +724,9 @@ where
         payload: GuestFilesystemCallRequest,
     ) -> Result<GuestFilesystemResultResponse, BrowserSidecarError> {
         let vm = self.vm_mut(vm_id)?;
+        let payload =
+            agentos_native_sidecar_core::resolve_guest_filesystem_request(&vm.guest_cwd, payload)
+                .map_err(Self::sidecar_core_error)?;
         handle_guest_filesystem_call(&mut vm.kernel, payload).map_err(Self::sidecar_core_error)
     }
 
@@ -740,14 +775,9 @@ where
             .iter()
             .filter(|(_, execution)| execution.vm_id == vm_id)
             .filter_map(|(execution_id, execution)| {
-                process_table.get(&execution.kernel_pid).map(|info| {
-                    process_snapshot_entry_from_kernel(
-                        execution_id,
-                        info,
-                        execution.cwd.clone(),
-                        None,
-                    )
-                })
+                process_table
+                    .get(&execution.kernel_pid)
+                    .map(|info| process_snapshot_entry_from_kernel(execution_id, info, None))
             })
             .collect())
     }
@@ -1754,7 +1784,18 @@ where
     fn sidecar_core_error(
         error: agentos_native_sidecar_core::SidecarCoreError,
     ) -> BrowserSidecarError {
-        BrowserSidecarError::InvalidState(error.to_string())
+        let message = error.to_string();
+        if message.split_once(':').is_some_and(|(code, _)| {
+            code.len() >= 2
+                && code.starts_with('E')
+                && code[1..]
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+        }) {
+            BrowserSidecarError::Kernel(message)
+        } else {
+            BrowserSidecarError::InvalidState(message)
+        }
     }
 
     fn kernel_error(error: KernelError) -> BrowserSidecarError {
@@ -1827,6 +1868,13 @@ where
     B: BrowserSidecarBridge,
     BridgeError<B>: fmt::Debug,
 {
+    fn agent_additional_instructions(
+        &mut self,
+        vm_id: &str,
+    ) -> Result<Option<String>, BrowserSidecarError> {
+        BrowserSidecar::agent_additional_instructions(self, vm_id)
+    }
+
     fn write_file(
         &mut self,
         vm_id: &str,

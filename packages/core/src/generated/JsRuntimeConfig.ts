@@ -9,24 +9,25 @@ import type { JsRuntimePlatform } from "./JsRuntimePlatform.js";
  * modeled on esbuild's `platform`. Omitting this preserves full Node.js
  * emulation (`platform = node`).
  */
-export type JsRuntimeConfig = { 
-/**
- * Which host environment to emulate for guest JS. Default `node`.
- */
-platform: JsRuntimePlatform, 
-/**
- * How bare import specifiers resolve. Independent of `platform`.
- * Default `node`.
- */
-moduleResolution: JsModuleResolution, 
-/**
- * Node builtin-module allow-list. Only valid when `platform = node`.
- * `None` => engine default allow-list. `Some([])` => deny all builtins.
- * `Some([..])` => exactly those.
- */
-allowedBuiltins?: Array<string>, 
-/**
- * Opt in to a high-resolution monotonic guest clock. Default false keeps
- * the security-oriented 1ms timer resolution.
- */
-highResolutionTime?: boolean, };
+export type JsRuntimeConfig = {
+	/**
+	 * Which host environment to emulate for guest JS. Default `node`.
+	 */
+	platform?: JsRuntimePlatform;
+	/**
+	 * How bare import specifiers resolve. Independent of `platform`.
+	 * Default `node`.
+	 */
+	moduleResolution?: JsModuleResolution;
+	/**
+	 * Node builtin-module allow-list. Only valid when `platform = node`.
+	 * `None` => engine default allow-list. `Some([])` => deny all builtins.
+	 * `Some([..])` => exactly those.
+	 */
+	allowedBuiltins?: Array<string>;
+	/**
+	 * Opt in to a high-resolution monotonic guest clock. Default false keeps
+	 * the security-oriented 1ms timer resolution.
+	 */
+	highResolutionTime?: boolean;
+};

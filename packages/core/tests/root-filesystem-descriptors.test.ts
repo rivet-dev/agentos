@@ -19,7 +19,7 @@ function toExpectedSidecarEntry(entry: FilesystemEntry) {
 }
 
 describe("sidecar root filesystem descriptors", () => {
-	test("serializes explicit lowers and bootstrap snapshots without changing the host config shape", () => {
+	test("serializes only caller-provided root filesystem lowers", () => {
 		const configLower = createSnapshotExport([
 			{
 				path: "/workspace",
@@ -55,27 +55,12 @@ describe("sidecar root filesystem descriptors", () => {
 				target: "/workspace/run.sh",
 			},
 		]);
-		const bootstrapLower = createSnapshotExport([
-			{
-				path: "/bin/tool",
-				type: "file",
-				mode: "0755",
-				uid: 0,
-				gid: 0,
-				content: "#!/bin/sh\nexit 0\n",
-				encoding: "utf8",
-			},
-		]);
-
 		expect(
-			serializeRootFilesystemForSidecar(
-				{
-					mode: "read-only",
-					disableDefaultBaseLayer: true,
-					lowers: [configLower],
-				},
-				bootstrapLower,
-			),
+			serializeRootFilesystemForSidecar({
+				mode: "read-only",
+				disableDefaultBaseLayer: true,
+				lowers: [configLower],
+			}),
 		).toEqual({
 			mode: "read-only",
 			disableDefaultBaseLayer: true,
@@ -86,14 +71,7 @@ describe("sidecar root filesystem descriptors", () => {
 						toExpectedSidecarEntry,
 					),
 				},
-				{
-					kind: "snapshot",
-					entries: bootstrapLower.source.filesystem.entries.map(
-						toExpectedSidecarEntry,
-					),
-				},
 			],
-			bootstrapEntries: [],
 		});
 	});
 
@@ -103,12 +81,27 @@ describe("sidecar root filesystem descriptors", () => {
 			lowers: [{ kind: "bundled-base-filesystem" }],
 		});
 
-		expect(descriptor.mode).toBe("ephemeral");
+		expect(descriptor.mode).toBeUndefined();
 		expect(descriptor.disableDefaultBaseLayer).toBe(true);
-		expect(descriptor.bootstrapEntries).toEqual([]);
+		expect(descriptor.bootstrapEntries).toBeUndefined();
 		expect(descriptor.lowers).toHaveLength(1);
 		expect(descriptor.lowers[0]).toEqual({
 			kind: "bundledBaseFilesystem",
+		});
+	});
+
+	test("does not materialize omitted sidecar defaults", () => {
+		expect(serializeRootFilesystemForSidecar()).toEqual({});
+		expect(
+			serializeRootFilesystemForSidecar({
+				mode: "ephemeral",
+				disableDefaultBaseLayer: false,
+				lowers: [],
+			}),
+		).toEqual({
+			mode: "ephemeral",
+			disableDefaultBaseLayer: false,
+			lowers: [],
 		});
 	});
 });

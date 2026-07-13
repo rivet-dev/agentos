@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { NodeRuntimeResourceSnapshot } from "@rivet-dev/agentos-runtime-core";
 import { round, stats, type Stats } from "../lib/perf-utils.js";
 import {
 	formatPacificIso,
@@ -35,7 +34,6 @@ export interface ParticipantResult {
 	durationMs: number;
 	opsPerSec: number;
 	latencyMs: Stats;
-	resourceSnapshot?: NodeRuntimeResourceSnapshot;
 	sidecarVmHwmBytes?: number;
 	rawSampleCount: number;
 }
@@ -168,7 +166,6 @@ export async function participantFromLoop(
 		durationMs: round(loop.durationMs),
 		opsPerSec: round((loop.ops / loop.durationMs) * 1000, 2),
 		latencyMs: loop.latencyMs ?? stats(loop.samplesMs ?? []),
-		resourceSnapshot: await vm.getResourceSnapshot(),
 		sidecarVmHwmBytes: pid === null ? undefined : readVmHwmBytes(pid),
 		rawSampleCount: sampleCount,
 	};

@@ -1,7 +1,7 @@
 mod support;
 
 use agentos_native_sidecar::wire::{
-    EventPayload, GetSignalStateRequest, GuestRuntimeKind, KillProcessRequest,
+    EventPayload, ExecuteRequest, GetSignalStateRequest, GuestRuntimeKind, KillProcessRequest,
     ProcessSnapshotStatus, RequestPayload, ResponsePayload, SignalDispositionAction,
     SignalHandlerRegistration, StreamChannel,
 };
@@ -428,13 +428,130 @@ fn embedded_runtime_kill_process_rejects_invalid_signal_without_killing_process(
     sidecar
         .dispatch_wire_blocking(wire_request(
             6,
-            ownership,
+            ownership.clone(),
             RequestPayload::KillProcessRequest(KillProcessRequest {
                 process_id: String::from("invalid-signal"),
                 signal: String::from("SIGTERM"),
             }),
         ))
         .expect("terminate invalid-signal process");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let event = sidecar
+            .poll_event_wire_blocking(&ownership, Duration::from_millis(100))
+            .expect("poll terminated process");
+        if event.is_some_and(|event| {
+            matches!(
+                event.payload,
+                EventPayload::ProcessExitedEvent(exited)
+                    if exited.process_id == "invalid-signal"
+            )
+        }) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for terminated process exit"
+        );
+    }
+
+    let repeated = sidecar
+        .dispatch_wire_blocking(wire_request(
+            7,
+            ownership.clone(),
+            RequestPayload::KillProcessRequest(KillProcessRequest {
+                process_id: String::from("invalid-signal"),
+                signal: String::from("SIGKILL"),
+            }),
+        ))
+        .expect("signal an already-exited process idempotently");
+    assert!(matches!(
+        repeated.response.payload,
+        ResponsePayload::ProcessKilledResponse(_)
+    ));
+
+    let unknown = sidecar
+        .dispatch_wire_blocking(wire_request(
+            8,
+            ownership,
+            RequestPayload::KillProcessRequest(KillProcessRequest {
+                process_id: String::from("never-started"),
+                signal: String::from("SIGTERM"),
+            }),
+        ))
+        .expect("reject an unknown process");
+    assert!(matches!(
+        unknown.response.payload,
+        ResponsePayload::RejectedResponse(_)
+    ));
+}
+
+fn execute_timeout_is_enforced_by_the_sidecar() {
+    assert_node_available();
+
+    let mut sidecar = new_sidecar("sidecar-execute-timeout");
+    let cwd = temp_dir("sidecar-execute-timeout-cwd");
+    let entry = cwd.join("timeout.mjs");
+    write_fixture(&entry, "setInterval(() => {}, 25);");
+
+    let connection_id = authenticate_wire(&mut sidecar, "conn-sidecar-execute-timeout");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let (vm_id, _) = create_vm_wire_with_metadata(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::JavaScript,
+        &cwd,
+        HashMap::new(),
+    );
+    let ownership = wire_vm(&connection_id, &session_id, &vm_id);
+    let started = sidecar
+        .dispatch_wire_blocking(wire_request(
+            4,
+            ownership.clone(),
+            RequestPayload::ExecuteRequest(ExecuteRequest {
+                process_id: None,
+                command: None,
+                shell_command: None,
+                runtime: Some(GuestRuntimeKind::JavaScript),
+                entrypoint: Some(entry.to_string_lossy().into_owned()),
+                args: Vec::new(),
+                env: None,
+                cwd: None,
+                wasm_permission_tier: None,
+                pty: None,
+                keep_stdin_open: None,
+                timeout_ms: Some(25),
+            }),
+        ))
+        .expect("start process with sidecar timeout");
+    let process_id = match started.response.payload {
+        ResponsePayload::ProcessStartedResponse(started) => started.process_id,
+        other => panic!("unexpected execute response: {other:?}"),
+    };
+    assert!(
+        process_id.starts_with("sidecar-process-"),
+        "omitted process id should be allocated by the sidecar: {process_id}"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let event = sidecar
+            .poll_event_wire_blocking(&ownership, Duration::from_millis(100))
+            .expect("poll timed process");
+        if let Some(EventPayload::ProcessExitedEvent(exited)) = event.map(|event| event.payload) {
+            if exited.process_id == process_id {
+                assert_eq!(exited.exit_code, 128 + libc::SIGKILL);
+                break;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed process did not exit after its sidecar deadline"
+        );
+    }
 }
 
 fn embedded_runtime_process_kill_signal_zero_checks_child_liveness() {
@@ -885,6 +1002,7 @@ fn embedded_runtime_signal_suite() {
     embedded_runtime_signal_routes_sigterm_and_process_kill();
     embedded_runtime_signal_stop_continue_updates_kernel_state_and_guest_handler();
     embedded_runtime_kill_process_rejects_invalid_signal_without_killing_process();
+    execute_timeout_is_enforced_by_the_sidecar();
     embedded_runtime_process_kill_signal_zero_checks_child_liveness();
     embedded_runtime_process_group_kill_terminates_detached_tree();
     embedded_runtime_signal_delivers_sigchld_on_child_exit();

@@ -150,6 +150,7 @@ server.listen({port}, "0.0.0.0", () => console.log("READY"));
             ],
             Default::default(),
         )
+        .await
         .expect("spawn guest HTTP server");
     let mut server_stdout = os
         .on_process_stdout(server.pid)
@@ -244,6 +245,8 @@ server.listen({port}, "0.0.0.0", () => console.log("READY"));
         "the custom request header must reach the guest server (header round-trip)"
     );
 
-    os.kill_process(server.pid).expect("kill guest HTTP server");
+    os.kill_process(server.pid)
+        .await
+        .expect("kill guest HTTP server");
     os.shutdown().await.expect("shutdown");
 }

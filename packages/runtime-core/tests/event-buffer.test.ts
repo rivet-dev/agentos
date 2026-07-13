@@ -194,6 +194,51 @@ describe("event buffer helpers", () => {
 
 		expect(
 			fromGeneratedEventPayload({
+				tag: "CronDispatchEvent",
+				val: {
+					alarm: { generation: 7n, nextAlarmMs: 500n },
+					runs: [
+						{
+							runId: "run-1",
+							jobId: "job-1",
+							action: '{"type":"callback","callbackId":"route"}',
+						},
+					],
+					events: [
+						{
+							kind: protocol.CronEventKind.Complete,
+							jobId: "job-1",
+							timeMs: 400n,
+							durationMs: 25n,
+							error: null,
+						},
+					],
+				},
+			}),
+		).toEqual({
+			type: "cron_dispatch",
+			dispatch: {
+				alarm: { generation: 7, next_alarm_ms: 500 },
+				runs: [
+					{
+						run_id: "run-1",
+						job_id: "job-1",
+						action: { type: "callback", callbackId: "route" },
+					},
+				],
+				events: [
+					{
+						kind: "complete",
+						job_id: "job-1",
+						time_ms: 400,
+						duration_ms: 25,
+					},
+				],
+			},
+		});
+
+		expect(
+			fromGeneratedEventPayload({
 				tag: "StructuredEvent",
 				val: {
 					name: "tool",

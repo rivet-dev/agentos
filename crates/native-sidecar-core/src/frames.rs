@@ -125,10 +125,19 @@ pub fn reject(request: &RequestFrame, code: &str, message: &str) -> ResponseFram
     )
 }
 
-pub fn vm_created_response(request: &RequestFrame, vm_id: String) -> ResponseFrame {
+pub fn vm_created_response(
+    request: &RequestFrame,
+    vm_id: String,
+    guest_cwd: String,
+    guest_env: std::collections::HashMap<String, String>,
+) -> ResponseFrame {
     respond(
         request,
-        ResponsePayload::VmCreated(VmCreatedResponse { vm_id }),
+        ResponsePayload::VmCreated(VmCreatedResponse {
+            vm_id,
+            guest_cwd,
+            guest_env,
+        }),
     )
 }
 
@@ -154,7 +163,6 @@ pub fn root_filesystem_bootstrapped_response(
 pub fn vm_configured_response(
     request: &RequestFrame,
     applied_mounts: u32,
-    applied_software: u32,
     projected_commands: Vec<ProjectedCommand>,
     agents: Vec<AgentosProjectedAgent>,
 ) -> ResponseFrame {
@@ -162,7 +170,6 @@ pub fn vm_configured_response(
         request,
         ResponsePayload::VmConfigured(VmConfiguredResponse {
             applied_mounts,
-            applied_software,
             projected_commands,
             agents,
         }),
@@ -517,11 +524,23 @@ mod tests {
             RequestPayload::Authenticate(authenticate_request()),
         );
 
-        let created = vm_created_response(&request, String::from("vm-1"));
+        let created = vm_created_response(
+            &request,
+            String::from("vm-1"),
+            String::from("/workspace"),
+            std::collections::HashMap::from([(String::from("HOME"), String::from("/root"))]),
+        );
         assert_eq!(created.request_id, request.request_id);
         assert_eq!(created.ownership, request.ownership);
         match created.payload {
-            ResponsePayload::VmCreated(created) => assert_eq!(created.vm_id, "vm-1"),
+            ResponsePayload::VmCreated(created) => {
+                assert_eq!(created.vm_id, "vm-1");
+                assert_eq!(created.guest_cwd, "/workspace");
+                assert_eq!(
+                    created.guest_env.get("HOME").map(String::as_str),
+                    Some("/root")
+                );
+            }
             other => panic!("unexpected response payload: {other:?}"),
         }
 
@@ -581,10 +600,9 @@ mod tests {
             RequestPayload::Authenticate(authenticate_request()),
         );
 
-        match vm_configured_response(&request, 2, 3, Vec::new(), Vec::new()).payload {
+        match vm_configured_response(&request, 2, Vec::new(), Vec::new()).payload {
             ResponsePayload::VmConfigured(configured) => {
                 assert_eq!(configured.applied_mounts, 2);
-                assert_eq!(configured.applied_software, 3);
                 assert!(configured.projected_commands.is_empty());
             }
             other => panic!("unexpected response payload: {other:?}"),

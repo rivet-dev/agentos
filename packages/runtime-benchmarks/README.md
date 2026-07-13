@@ -1,16 +1,7 @@
-# Secure Exec Benchmarks
+# AgentOS Runtime Benchmarks
 
-These benchmarks measure the public `secure-exec` SDK paths used by consumers.
-
-## Cold Start Matrix
-
-`coldstart.bench.ts` writes machine-readable JSON to stdout and human-readable progress to stderr. It measures:
-
-- `owned-sidecar`: `NodeRuntime.create()` owns a fresh sidecar for each runtime.
-- `shared-sidecar`: a `Sidecar` is created once per batch and passed to `NodeRuntime.create({ sidecar })`; sidecar setup is measured separately and excluded from cold start.
-- `resident-runner`: a shared sidecar plus `runtime.createResidentRunner()`, so repeated tiny snippets reuse one live guest Node process.
-
-The result JSON includes hardware metadata, aggregate cold/warm latency, and phase timings such as `session_open`, `vm_create`, `runtime_mount_wasm`, `first_exec`, and resident-runner phases.
+These benchmarks measure the public thin `AgentOs` client and sidecar paths used
+by consumers. They do not construct a client-side kernel or runtime policy layer.
 
 ## Run
 
@@ -26,14 +17,7 @@ Run the full benchmark suite:
 pnpm --dir packages/benchmarks bench
 ```
 
-This writes timestamped files under `packages/benchmarks/results/`:
-
-```text
-coldstart-YYYYMMDD-HHMMSS.json
-coldstart-YYYYMMDD-HHMMSS.log
-memory-YYYYMMDD-HHMMSS.json
-memory-YYYYMMDD-HHMMSS.log
-```
+This writes timestamped files under `packages/runtime-benchmarks/results/`.
 
 Run one focused lane by name:
 
@@ -133,14 +117,14 @@ BENCH_SHARED_VM=1   Reuse a VM where op-specific VM options are not required. De
 
 Each matrix JSON records the sidecar binary used for the run:
 
-- **`sidecar.path`**: `NodeRuntime`-resolved sidecar binary path, including `AGENTOS_SIDECAR_BIN` overrides and local checkout fallbacks.
+- **`sidecar.path`**: resolved sidecar binary path, including `AGENTOS_SIDECAR_BIN` overrides and local checkout fallbacks.
 - **`sidecar.profile`**: inferred from the binary path (`debug`, `release`, or `unknown`).
 - **`sidecar.mtimeMs` / `sidecar.mtimeIso`**: sidecar binary modification time.
 - **`sidecar.sizeBytes`**: sidecar binary size in bytes.
 
 ## Focused Lanes
 
-Focused lanes live under `src/focused/` and preserve the legacy CLI flags, env vars, JSON shape, and stderr tables from the Agent OS benchmark scripts. They use `src/lib/vm.ts` over `NodeRuntime`.
+Focused lanes live under `src/focused/` and use `src/lib/vm.ts` over the public thin `AgentOs` client.
 
 - **`sync-bridge-floor`**: no-op sync bridge RPC floor. Knobs: `BENCH_SYNC_BRIDGE_ITERATIONS`, `BENCH_SYNC_BRIDGE_WARMUP`, `BENCH_SYNC_BRIDGE_CALL_COUNTS`, `BENCH_SYNC_BRIDGE_PAYLOAD_BYTES`, `BENCH_SYNC_BRIDGE_RPC_LATENCY`, `BENCH_SYNC_BRIDGE_PHASES`.
 - **`sync-bridge-floor-phases`**: bridge floor with latency and phase diagnostics enabled.
@@ -165,7 +149,7 @@ Focused lanes live under `src/focused/` and preserve the legacy CLI flags, env v
 - **`wasi-ls-scaling`**: focused `ls` command scaling. Knobs: `BENCH_WASI_LS_ITERATIONS`, `BENCH_WASI_LS_WARMUP`, `BENCH_WASI_LS_SERIAL_RUNS`, `BENCH_WASI_LS_FILE_COUNTS`, `BENCH_WASI_LS_VARIANTS`, `BENCH_WASI_LS_WASM_WARMUP_DEBUG`, `BENCH_WASI_LS_SYSCALL_COUNTERS`.
 - **`wasi-ls-scaling-counters`**: `ls` scaling with syscall counters.
 
-The shell/coreutils focused lanes use the local `NodeRuntime` command-dir resolution, which prefers `registry/native/target/wasm32-wasip1/release/commands` when `make -C registry/native wasm` has been run.
+The shell/coreutils focused lanes mount the packaged runtime command directory explicitly.
 
 ## Net Family
 
@@ -246,39 +230,6 @@ Rows:
 - **`gzip_small` / `gzip_big`**: `gzip` compresses/decompresses 4 KiB and 64 KiB fixtures, then diffs the round trip.
 - **`jq_extract`**: `jq` extracts a known JSON field.
 - **`git_init_commit`**: `git init && git add . && git commit`, then verifies `rev-parse HEAD`.
-
-Run only the cold-start matrix:
-
-```bash
-AGENTOS_SIDECAR_BIN="$PWD/target/release/agentos-native-sidecar" \
-	pnpm --silent --dir packages/benchmarks bench:coldstart \
-	> packages/benchmarks/results/coldstart-local.json \
-	2> packages/benchmarks/results/coldstart-local.log
-```
-
-Quick smoke run:
-
-```bash
-BENCH_BATCH_SIZES=1 \
-BENCH_ITERATIONS=1 \
-BENCH_WARMUP=0 \
-BENCH_SCENARIOS=owned-sidecar,shared-sidecar,resident-runner \
-AGENTOS_SIDECAR_BIN="$PWD/target/release/agentos-native-sidecar" \
-	pnpm --silent --dir packages/benchmarks bench:coldstart
-```
-
-Useful knobs:
-
-```text
-BENCH_BATCH_SIZES=1,10,50,100,200
-BENCH_ITERATIONS=5
-BENCH_WARMUP=1
-BENCH_SCENARIOS=owned-sidecar,shared-sidecar,resident-runner
-BENCH_MAX_LIVE_RUNTIMES=8
-BENCH_MAX_RESIDENT_RUNNERS=1
-BENCH_EXEC_TIMEOUT_MS=30000
-AGENTOS_SIDECAR_BIN=/abs/path/to/agentos-native-sidecar
-```
 
 ## Checked-In Results
 

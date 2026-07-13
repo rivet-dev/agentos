@@ -123,6 +123,16 @@ describe("agentos agent package (VM)", () => {
 	test("createSession launches the packaged agent via /opt/agentos/bin", async () => {
 		const session = await vm.createSession("mock-agent");
 		expect(session.sessionId).toBeTruthy();
+		expect(await vm.listSessions()).toContainEqual({
+			sessionId: session.sessionId,
+			agentType: "mock-agent",
+		});
 		await vm.closeSession(session.sessionId);
+		expect(await vm.listSessions()).not.toContainEqual({
+			sessionId: session.sessionId,
+			agentType: "mock-agent",
+		});
+		await expect(vm.closeSession(session.sessionId)).resolves.toBeUndefined();
+		await expect(vm.closeSession("never-created")).resolves.toBeUndefined();
 	});
 });

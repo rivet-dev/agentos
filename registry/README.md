@@ -61,7 +61,6 @@ just registry-native-cmd <name> # build ONE command binary, whatever its toolcha
 just registry-build             # stage + assemble every registry package
 just registry-build coreutils   # ... or just one
 just registry-status            # per-package state; --remote adds npm dist-tags
-just registry-test              # registry integration tests (registry/tests)
 ```
 
 `registry-native-cmd` (= `make -C registry/native cmd/<name>`) is the uniform

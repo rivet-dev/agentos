@@ -211,7 +211,6 @@ pub fn open_session_wire(
                         agentos_native_sidecar::wire::SidecarPlacement::SidecarPlacementShared(
                             agentos_native_sidecar::wire::SidecarPlacementShared { pool: None },
                         ),
-                    metadata: HashMap::new(),
                 },
             ),
         ))
@@ -304,14 +303,18 @@ pub fn execute_wire(
             wire_vm(connection_id, session_id, vm_id),
             agentos_native_sidecar::wire::RequestPayload::ExecuteRequest(
                 agentos_native_sidecar::wire::ExecuteRequest {
-                    process_id: process_id.to_owned(),
+                    process_id: Some(process_id.to_owned()),
                     command: None,
                     runtime: Some(runtime),
                     entrypoint: Some(entrypoint.to_string_lossy().into_owned()),
                     args,
-                    env: HashMap::new(),
+                    env: None,
                     cwd: None,
                     wasm_permission_tier: None,
+                    pty: None,
+                    shell_command: None,
+                    keep_stdin_open: None,
+                    timeout_ms: None,
                 },
             ),
         ))
@@ -375,6 +378,7 @@ pub fn collect_process_output_wire_with_timeout(
                     exit = Some((exited.exit_code, Instant::now()));
                 }
                 agentos_native_sidecar::wire::EventPayload::ProcessExitedEvent(_)
+                | agentos_native_sidecar::wire::EventPayload::CronDispatchEvent(_)
                 | agentos_native_sidecar::wire::EventPayload::VmLifecycleEvent(_)
                 | agentos_native_sidecar::wire::EventPayload::StructuredEvent(_)
                 | agentos_native_sidecar::wire::EventPayload::ExtEnvelope(_) => {}

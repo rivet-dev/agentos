@@ -1,12 +1,11 @@
 import { describe, expect, test } from "vitest";
-import * as protocol from "../src/generated-protocol.js";
 import {
 	decodeGuestFilesystemContent,
 	encodeGuestFilesystemContent,
 	fromGeneratedRootFilesystemEntry,
-	toGeneratedRootFilesystemDescriptor,
 	toGeneratedRootFilesystemEntry,
 } from "../src/filesystem.js";
+import * as protocol from "../src/generated-protocol.js";
 
 describe("guest filesystem content helpers", () => {
 	test("leaves string content as utf8 text", () => {
@@ -16,7 +15,9 @@ describe("guest filesystem content helpers", () => {
 	});
 
 	test("encodes and decodes binary content as base64", () => {
-		const encoded = encodeGuestFilesystemContent(new Uint8Array([0, 1, 2, 255]));
+		const encoded = encodeGuestFilesystemContent(
+			new Uint8Array([0, 1, 2, 255]),
+		);
 
 		expect(encoded).toEqual({
 			content: "AAEC/w==",
@@ -34,9 +35,18 @@ describe("guest filesystem content helpers", () => {
 	});
 
 	test("throws when read responses omit content", () => {
-		expect(() => decodeGuestFilesystemContent({ path: "/tmp/missing" })).toThrow(
-			"sidecar returned no file content for /tmp/missing",
-		);
+		expect(() =>
+			decodeGuestFilesystemContent({ path: "/tmp/missing" }),
+		).toThrow("sidecar returned no file content for /tmp/missing");
+	});
+
+	test("throws when read responses omit the sidecar-selected encoding", () => {
+		expect(() =>
+			decodeGuestFilesystemContent({
+				path: "/tmp/missing-encoding",
+				content: "hello",
+			}),
+		).toThrow("sidecar returned no file encoding for /tmp/missing-encoding");
 	});
 
 	test("maps live root filesystem entries to generated protocol entries", () => {
@@ -80,39 +90,6 @@ describe("guest filesystem content helpers", () => {
 			kind: "symlink",
 			target: "/target",
 			executable: false,
-		});
-	});
-
-	test("maps live root filesystem descriptors to generated descriptors", () => {
-		expect(
-			toGeneratedRootFilesystemDescriptor({
-				mode: "read_only",
-				disable_default_base_layer: true,
-				lowers: [
-					{
-						kind: "snapshot",
-						entries: [{ path: "/etc/app", kind: "directory" }],
-					},
-					{ kind: "bundled_base_filesystem" },
-				],
-				bootstrap_entries: [
-					{ path: "/etc/app/config.json", kind: "file", content: "{}" },
-				],
-			}),
-		).toMatchObject({
-			mode: protocol.RootFilesystemMode.ReadOnly,
-			disableDefaultBaseLayer: true,
-			lowers: [
-				{ tag: "SnapshotRootFilesystemLower" },
-				{ tag: "BundledBaseFilesystemLower", val: null },
-			],
-			bootstrapEntries: [
-				{
-					path: "/etc/app/config.json",
-					kind: protocol.RootFilesystemEntryKind.File,
-					content: "{}",
-				},
-			],
 		});
 	});
 });

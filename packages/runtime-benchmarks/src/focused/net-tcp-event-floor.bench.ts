@@ -7,8 +7,12 @@
  */
 
 import net from "node:net";
-import { createBenchSidecar, createBenchVm, type BenchVm } from "../lib/vm.js";
-import type { SidecarProcess } from "@rivet-dev/agentos-runtime-core";
+import {
+	createBenchSidecar,
+	createBenchVm,
+	type BenchSidecar,
+	type BenchVm,
+} from "../lib/vm.js";
 import { getHardware, printTable, round, stats } from "../lib/perf-utils.js";
 
 type Workload = "connectClose" | "echoOnce" | "burstWritesEchoOnce" | "pingPong" | "concurrentConnect";
@@ -671,7 +675,7 @@ async function runNode(row: NetTcpRow, iterations: number, warmup: number): Prom
 	return samples;
 }
 
-async function createVm(sidecar: SidecarProcess): Promise<BenchVm> {
+async function createVm(sidecar: BenchSidecar): Promise<BenchVm> {
 	return createBenchVm({
 		sidecar,
 	});
@@ -724,7 +728,7 @@ process.stdout.write(JSON.stringify({ samples, bridgeTrace: bridgeSnapshot, side
 	await vm.writeFile(scriptPath, source);
 	let stdout = "";
 	let stderr = "";
-	const proc = vm.spawn("node", [scriptPath], {
+	const proc = await vm.spawn("node", [scriptPath], {
 		env: {
 			BENCH_ITERATIONS: String(iterations),
 			BENCH_WARMUP: String(warmup),
@@ -1122,7 +1126,7 @@ async function runCase(
 	row: NetTcpRow,
 	iterations: number,
 	warmup: number,
-	sidecar: SidecarProcess,
+	sidecar: BenchSidecar,
 	netBridgeTrace: boolean,
 	netPollDelayMs?: number,
 ): Promise<NetTcpRowResult> {

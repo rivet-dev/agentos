@@ -26,7 +26,6 @@ describe("request payload conversion", () => {
 			toGeneratedRequestPayload({
 				type: "open_session",
 				placement: { kind: "shared", pool: "default" },
-				metadata: { owner: "test" },
 			}),
 		).toEqual({
 			tag: "OpenSessionRequest",
@@ -35,7 +34,22 @@ describe("request payload conversion", () => {
 					tag: "SidecarPlacementShared",
 					val: { pool: "default" },
 				},
-				metadata: new Map([["owner", "test"]]),
+			},
+		});
+	});
+
+	it("preserves an omitted overlay mode for the sidecar default", () => {
+		expect(
+			toGeneratedRequestPayload({
+				type: "create_overlay",
+				lower_layer_ids: [],
+			}),
+		).toEqual({
+			tag: "CreateOverlayRequest",
+			val: {
+				mode: null,
+				upperLayerId: null,
+				lowerLayerIds: [],
 			},
 		});
 	});
@@ -81,22 +95,96 @@ describe("request payload conversion", () => {
 						plugin: { id: "host", config: { source: "/src" } },
 					},
 				],
-				software: [{ package_name: "node", root: "/software/node" }],
-				instructions: ["use node"],
-				projected_modules: [
-					{ package_name: "@acme/tool", entrypoint: "dist/index.js" },
-				],
 				command_permissions: { node: "read-only" },
 				loopback_exempt_ports: [8080],
 			}),
 		).toMatchObject({
 			tag: "ConfigureVmRequest",
 			val: {
-				moduleAccessCwd: null,
-				instructions: ["use node"],
 				commandPermissions: new Map([
 					["node", protocol.WasmPermissionTier.ReadOnly],
 				]),
+			},
+		});
+
+		expect(
+			toGeneratedRequestPayload({
+				type: "configure_vm",
+			}),
+		).toMatchObject({
+			tag: "ConfigureVmRequest",
+			val: {
+				mounts: null,
+				commandPermissions: null,
+				loopbackExemptPorts: null,
+				packages: null,
+				packagesMountAt: null,
+			},
+		});
+	});
+
+	it("preserves omitted initialization fields for sidecar defaults", () => {
+		const payload = toGeneratedRequestPayload({
+			type: "initialize_vm",
+			runtime: "java_script",
+			config: {},
+			host_callbacks: [
+				{
+					name: "tools",
+					description: "demo tools",
+					callbacks: {
+						read: {
+							description: "read a file",
+							input_schema: { type: "object" },
+						},
+					},
+				},
+			],
+		});
+
+		expect(payload).toEqual({
+			tag: "InitializeVmRequest",
+			val: {
+				runtime: protocol.GuestRuntimeKind.JavaScript,
+				config: "{}",
+				mounts: null,
+				packages: null,
+				packagesMountAt: null,
+				hostCallbacks: [
+					{
+						name: "tools",
+						description: "demo tools",
+						callbacks: new Map([
+							[
+								"read",
+								{
+									description: "read a file",
+									inputSchema: '{"type":"object"}',
+									timeoutMs: null,
+									examples: [],
+								},
+							],
+						]),
+					},
+				],
+			},
+		});
+
+		const jsOverridePayload = toGeneratedRequestPayload({
+			type: "initialize_vm",
+			runtime: "java_script",
+			config: {
+				jsRuntime: {
+					allowedBuiltins: ["path"],
+					highResolutionTime: true,
+				},
+			},
+		});
+		expect(jsOverridePayload.val.hostCallbacks).toBeNull();
+		expect(JSON.parse(jsOverridePayload.val.config)).toEqual({
+			jsRuntime: {
+				allowedBuiltins: ["path"],
+				highResolutionTime: true,
 			},
 		});
 	});
@@ -109,14 +197,53 @@ describe("request payload conversion", () => {
 		).toEqual({ tag: "GetResourceSnapshotRequest", val: null });
 	});
 
+	it("preserves omitted cron defaults for the sidecar", () => {
+		expect(
+			toGeneratedRequestPayload({
+				type: "schedule_cron",
+				schedule: "* * * * *",
+				action: { type: "exec", command: "true" },
+			}),
+		).toEqual({
+			tag: "ScheduleCronRequest",
+			val: {
+				id: null,
+				schedule: "* * * * *",
+				action: '{"type":"exec","command":"true"}',
+				overlap: null,
+			},
+		});
+		expect(
+			toGeneratedRequestPayload({
+				type: "schedule_cron",
+				id: "job",
+				schedule: "* * * * *",
+				action: { type: "exec", command: "true" },
+				overlap: "queue",
+			}),
+		).toMatchObject({
+			tag: "ScheduleCronRequest",
+			val: { id: "job", overlap: protocol.CronOverlap.Queue },
+		});
+		expect(toGeneratedRequestPayload({ type: "export_cron_state" })).toEqual({
+			tag: "ExportCronStateRequest",
+			val: null,
+		});
+		const state = '{"version":1}';
+		expect(
+			toGeneratedRequestPayload({ type: "import_cron_state", state }),
+		).toEqual({
+			tag: "ImportCronStateRequest",
+			val: { state },
+		});
+	});
+
 	it("maps host callback registration JSON fields", () => {
 		expect(
 			toGeneratedRequestPayload({
 				type: "register_host_callbacks",
 				name: "tools",
 				description: "demo tools",
-				command_aliases: ["agentos-tools"],
-				registry_command_aliases: ["agentos"],
 				callbacks: {
 					read: {
 						description: "read a file",
@@ -131,8 +258,6 @@ describe("request payload conversion", () => {
 			val: {
 				name: "tools",
 				description: "demo tools",
-				commandAliases: ["agentos-tools"],
-				registryCommandAliases: ["agentos"],
 				callbacks: new Map([
 					[
 						"read",
@@ -172,7 +297,7 @@ describe("request payload conversion", () => {
 				target: null,
 				content: null,
 				encoding: protocol.RootFilesystemEntryEncoding.BasE64,
-				recursive: false,
+				recursive: null,
 				mode: null,
 				uid: null,
 				gid: null,
@@ -193,18 +318,57 @@ describe("request payload conversion", () => {
 				env: { A: "1" },
 				runtime: "java_script",
 				wasm_permission_tier: "isolated",
+				timeout_ms: 25,
 			}),
 		).toEqual({
 			tag: "ExecuteRequest",
 			val: {
 				processId: "proc",
 				command: "node",
+				shellCommand: null,
 				runtime: protocol.GuestRuntimeKind.JavaScript,
 				entrypoint: null,
 				args: ["-e", "0"],
 				env: new Map([["A", "1"]]),
 				cwd: null,
 				wasmPermissionTier: protocol.WasmPermissionTier.Isolated,
+				pty: null,
+				keepStdinOpen: null,
+				timeoutMs: 25n,
+			},
+		});
+
+		expect(
+			toGeneratedRequestPayload({
+				type: "execute",
+				command: "node",
+				args: [],
+			}),
+		).toMatchObject({
+			tag: "ExecuteRequest",
+			val: {
+				processId: null,
+				shellCommand: null,
+				env: null,
+				cwd: null,
+				pty: null,
+				keepStdinOpen: null,
+				timeoutMs: null,
+			},
+		});
+
+		expect(
+			toGeneratedRequestPayload({
+				type: "execute",
+				process_id: "proc-command-line",
+				shell_command: "echo a && echo b",
+				args: [],
+			}),
+		).toMatchObject({
+			tag: "ExecuteRequest",
+			val: {
+				command: null,
+				shellCommand: "echo a && echo b",
 			},
 		});
 	});

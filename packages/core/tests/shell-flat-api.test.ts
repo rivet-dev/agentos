@@ -23,10 +23,11 @@ describe("flat shell API", () => {
 			`process.stdin.on("data", (chunk) => { process.stdout.write("GOT:" + chunk); });`,
 		);
 
-		const { shellId } = vm.openShell({
+		const { shellId } = await vm.openShell({
 			command: "node",
 			args: ["/tmp/shell-echo.mjs"],
 		});
+		expect(shellId).toMatch(/^sidecar-process-/);
 
 		const chunks: string[] = [];
 		vm.onShellData(shellId, (data) => {
@@ -38,14 +39,16 @@ describe("flat shell API", () => {
 		// Wait for output to arrive
 		await new Promise((r) => setTimeout(r, 1000));
 
-		vm.closeShell(shellId);
+		await vm.closeShell(shellId);
+		const exitCode = await vm.waitShell(shellId);
+		await expect(vm.waitShell(shellId)).resolves.toBe(exitCode);
 
 		const output = chunks.join("");
 		expect(output).toContain("hello-flat-shell");
 	}, 30_000);
 
-	test("default shell echoes typed characters before newline", async () => {
-		const { shellId } = vm.openShell();
+	test("default shell executes through the sidecar PTY", async () => {
+		const { shellId } = await vm.openShell();
 
 		const chunks: string[] = [];
 		vm.onShellData(shellId, (data) => {
@@ -53,13 +56,17 @@ describe("flat shell API", () => {
 		});
 
 		await sleep(100);
-		vm.writeShell(shellId, "abc");
-		await sleep(100);
+		vm.writeShell(shellId, "printf real-shell; exit\n");
+		for (let attempt = 0; attempt < 20; attempt += 1) {
+			if (chunks.join("").includes("real-shell")) {
+				break;
+			}
+			await sleep(50);
+		}
 
-		vm.closeShell(shellId);
+		await vm.closeShell(shellId);
 
 		const output = chunks.join("");
-		expect(output).toContain("sh-0.4$ ");
-		expect(output).toContain("abc");
+		expect(output).toContain("real-shell");
 	}, 30_000);
 });

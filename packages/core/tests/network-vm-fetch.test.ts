@@ -28,7 +28,7 @@ test("vm.fetch reaches a guest http.createServer listener", async () => {
 			'  res.end(JSON.stringify({ status: "ok", method: req.method, url: req.url }));',
 			"});",
 			'server.listen(0, "0.0.0.0", () => {',
-			'  console.log(`LISTENING:${server.address().port}`);',
+			"  console.log(`LISTENING:${server.address().port}`);",
 			"});",
 		].join("\n"),
 	);
@@ -38,7 +38,7 @@ test("vm.fetch reaches a guest http.createServer listener", async () => {
 		resolvePort = resolve;
 	});
 
-	const { pid } = vm.spawn("node", ["/tmp/server.js"], {
+	const { pid } = await vm.spawn("node", ["/tmp/server.js"], {
 		onStdout: (chunk) => {
 			const text = textDecoder.decode(chunk);
 			const match = text.match(/LISTENING:(\d+)/);
@@ -62,7 +62,7 @@ test("vm.fetch reaches a guest http.createServer listener", async () => {
 			url: "/api/test",
 		});
 	} finally {
-		vm.stopProcess(pid);
+		await vm.stopProcess(pid);
 		await vm.waitProcess(pid).catch(() => {});
 	}
 });

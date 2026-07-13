@@ -1,11 +1,10 @@
-import * as protocol from "./generated-protocol.js";
+import type * as protocol from "./generated-protocol.js";
 import {
 	fromGeneratedRootFilesystemEntryEncoding,
 	fromGeneratedRootFilesystemEntryKind,
+	type LiveRootFilesystemEntryEncoding,
 	toGeneratedRootFilesystemEntryEncoding,
 	toGeneratedRootFilesystemEntryKind,
-	toGeneratedRootFilesystemMode,
-	type LiveRootFilesystemEntryEncoding,
 } from "./protocol-maps.js";
 
 export type { LiveRootFilesystemEntryEncoding } from "./protocol-maps.js";
@@ -39,13 +38,6 @@ export type LiveRootFilesystemLowerDescriptor =
 			kind: "bundled_base_filesystem";
 	  };
 
-export type LiveRootFilesystemDescriptor = {
-	mode?: "ephemeral" | "read_only";
-	disable_default_base_layer?: boolean;
-	lowers?: LiveRootFilesystemLowerDescriptor[];
-	bootstrap_entries?: LiveRootFilesystemEntry[];
-};
-
 export function encodeGuestFilesystemContent(content: string | Uint8Array): {
 	content: string;
 	encoding?: GuestFilesystemContentEncoding;
@@ -66,41 +58,15 @@ export function decodeGuestFilesystemContent(
 	if (response.content === undefined) {
 		throw new Error(`sidecar returned no file content for ${response.path}`);
 	}
+	if (response.encoding === undefined) {
+		throw new Error(`sidecar returned no file encoding for ${response.path}`);
+	}
 
 	if (response.encoding === "base64") {
 		return Buffer.from(response.content, "base64");
 	}
 
 	return Buffer.from(response.content, "utf8");
-}
-
-export function toGeneratedRootFilesystemDescriptor(
-	descriptor: LiveRootFilesystemDescriptor,
-): protocol.RootFilesystemDescriptor {
-	return {
-		mode: toGeneratedRootFilesystemMode(descriptor.mode ?? "ephemeral"),
-		disableDefaultBaseLayer: descriptor.disable_default_base_layer ?? false,
-		lowers: (descriptor.lowers ?? []).map(toGeneratedRootFilesystemLower),
-		bootstrapEntries: (descriptor.bootstrap_entries ?? []).map(
-			toGeneratedRootFilesystemEntry,
-		),
-	};
-}
-
-export function toGeneratedRootFilesystemLower(
-	lower: LiveRootFilesystemLowerDescriptor,
-): protocol.RootFilesystemLowerDescriptor {
-	switch (lower.kind) {
-		case "snapshot":
-			return {
-				tag: "SnapshotRootFilesystemLower",
-				val: {
-					entries: (lower.entries ?? []).map(toGeneratedRootFilesystemEntry),
-				},
-			};
-		case "bundled_base_filesystem":
-			return { tag: "BundledBaseFilesystemLower", val: null };
-	}
 }
 
 export function toGeneratedRootFilesystemEntry(

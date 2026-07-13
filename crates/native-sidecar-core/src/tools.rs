@@ -1,6 +1,6 @@
 use agentos_sidecar_protocol::protocol::RegisterHostCallbacksRequest;
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -47,15 +47,6 @@ pub fn validate_toolkit_registration(
         &format!("Toolkit \"{}\"", payload.name),
         &payload.description,
     )?;
-    validate_command_aliases("command alias", &payload.command_aliases)?;
-    validate_command_aliases("registry command alias", &payload.registry_command_aliases)?;
-    for alias in &payload.command_aliases {
-        if payload.registry_command_aliases.contains(alias) {
-            return Err(ToolRegistrationError::InvalidState(format!(
-                "host callback command alias must not also be a registry command alias: {alias}"
-            )));
-        }
-    }
     if payload.callbacks.is_empty() {
         return Err(ToolRegistrationError::InvalidState(format!(
             "toolkit {} must define at least one tool",
@@ -144,36 +135,6 @@ pub fn ensure_toolkit_name_available(
     Ok(())
 }
 
-pub fn ensure_command_aliases_available(
-    toolkits: &BTreeMap<String, RegisterHostCallbacksRequest>,
-    payload: &RegisterHostCallbacksRequest,
-) -> Result<(), ToolRegistrationError> {
-    let requested_command_aliases = payload.command_aliases.iter().collect::<BTreeSet<_>>();
-    let requested_registry_aliases = payload
-        .registry_command_aliases
-        .iter()
-        .collect::<BTreeSet<_>>();
-    for toolkit in toolkits.values() {
-        for alias in &toolkit.command_aliases {
-            if requested_command_aliases.contains(alias)
-                || requested_registry_aliases.contains(alias)
-            {
-                return Err(ToolRegistrationError::Conflict(format!(
-                    "host callback command alias already registered: {alias}"
-                )));
-            }
-        }
-        for alias in &toolkit.registry_command_aliases {
-            if requested_command_aliases.contains(alias) {
-                return Err(ToolRegistrationError::Conflict(format!(
-                    "host callback command alias already registered: {alias}"
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
 pub fn ensure_toolkit_registry_capacity(
     toolkits: &BTreeMap<String, RegisterHostCallbacksRequest>,
     payload: &RegisterHostCallbacksRequest,
@@ -208,20 +169,36 @@ pub fn ensure_toolkit_registry_capacity(
 pub fn registered_tool_command_names(
     toolkits: &BTreeMap<String, RegisterHostCallbacksRequest>,
 ) -> Vec<String> {
-    let mut seen = BTreeSet::new();
-    let mut commands = Vec::new();
-    for toolkit in toolkits.values() {
-        for alias in toolkit
-            .registry_command_aliases
-            .iter()
-            .chain(toolkit.command_aliases.iter())
-        {
-            if seen.insert(alias.clone()) {
-                commands.push(alias.clone());
-            }
-        }
+    if toolkits.is_empty() {
+        return Vec::new();
+    }
+    let mut commands = Vec::with_capacity(toolkits.len() + 1);
+    commands.push(String::from("agentos"));
+    for toolkit_name in toolkits.keys() {
+        commands.push(format!("agentos-{toolkit_name}"));
     }
     commands
+}
+
+pub fn toolkit_command_name(toolkit_name: &str) -> String {
+    format!("agentos-{toolkit_name}")
+}
+
+pub fn is_registry_command(command_name: &str) -> bool {
+    command_name == "agentos"
+}
+
+pub fn toolkit_name_for_command<'a>(
+    toolkits: &'a BTreeMap<String, RegisterHostCallbacksRequest>,
+    command_name: &str,
+) -> Option<&'a str> {
+    toolkits.keys().find_map(|toolkit_name| {
+        if toolkit_command_name(toolkit_name) == command_name {
+            Some(toolkit_name.as_str())
+        } else {
+            None
+        }
+    })
 }
 
 fn validate_toolkit_name(name: &str) -> Result<(), ToolRegistrationError> {
@@ -255,33 +232,6 @@ fn validate_tool_name(name: &str) -> Result<(), ToolRegistrationError> {
     {
         return Err(ToolRegistrationError::InvalidState(format!(
             "invalid tool name {name}; expected lowercase alphanumeric characters plus hyphens"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_command_aliases(label: &str, aliases: &[String]) -> Result<(), ToolRegistrationError> {
-    let mut seen = BTreeSet::new();
-    for alias in aliases {
-        validate_command_alias(label, alias)?;
-        if !seen.insert(alias) {
-            return Err(ToolRegistrationError::InvalidState(format!(
-                "duplicate host callback {label}: {alias}"
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn validate_command_alias(label: &str, alias: &str) -> Result<(), ToolRegistrationError> {
-    if alias.is_empty()
-        || alias == "."
-        || alias == ".."
-        || alias.contains('/')
-        || alias.contains('\0')
-    {
-        return Err(ToolRegistrationError::InvalidState(format!(
-            "invalid host callback {label}: {alias:?}"
         )));
     }
     Ok(())

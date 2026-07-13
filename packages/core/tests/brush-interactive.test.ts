@@ -59,10 +59,18 @@ function snapshot(label: string, term: Terminal): string {
 			`${String(row + 1).padStart(2, "0")}|${line ? line.translateToString(true).replace(/\s+$/, "") : ""}`,
 		);
 	}
-	return [`# ${label}`, `cursor=${buffer.cursorX},${buffer.cursorY}`, ...lines].join("\n");
+	return [
+		`# ${label}`,
+		`cursor=${buffer.cursorX},${buffer.cursorY}`,
+		...lines,
+	].join("\n");
 }
 
-async function waitFor(term: Terminal, text: string, timeoutMs = 20000): Promise<void> {
+async function waitFor(
+	term: Terminal,
+	text: string,
+	timeoutMs = 20000,
+): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
 		if (snapshot("w", term).includes(text)) {
@@ -71,143 +79,154 @@ async function waitFor(term: Terminal, text: string, timeoutMs = 20000): Promise
 		}
 		await new Promise((r) => setTimeout(r, 25));
 	}
-	throw new Error(`timeout waiting for ${JSON.stringify(text)}\n${snapshot("timeout", term)}`);
+	throw new Error(
+		`timeout waiting for ${JSON.stringify(text)}\n${snapshot("timeout", term)}`,
+	);
 }
 
 // Requires the vendored or locally-built `sh` wasm command. Skip when the
 // artifact is absent rather than failing suites that do not build WASM commands.
-describe.skipIf(REGISTRY_SH === undefined)("brush interactive PTY repaint", () => {
-	let vm: AgentOs | undefined;
-	let term: Terminal | undefined;
-	let shellId: string | undefined;
+describe.skipIf(REGISTRY_SH === undefined)(
+	"brush interactive PTY repaint",
+	() => {
+		let vm: AgentOs | undefined;
+		let term: Terminal | undefined;
+		let shellId: string | undefined;
 
-	beforeAll(() => {
-		// Materialize a self-contained `{ packageDir }` fixture: bin/<cmd> plus
-		// the agentos-package.json manifest the sidecar projection requires.
-		fixtureDir = mkdtempSync(join(tmpdir(), "brush-fixture-"));
-		const binDir = join(fixtureDir, "bin");
-		mkdirSync(binDir, { recursive: true });
-		copyFileSync(REGISTRY_SH as string, join(binDir, FIXTURE_COMMAND));
-		// A real external command (spawned as a CHILD of the shell) for the
-		// child-output regression below; a unique name avoids /bin/cat.
-		if (REGISTRY_CAT !== undefined) {
-			copyFileSync(REGISTRY_CAT, join(binDir, "childcat"));
-		}
-		writeFileSync(
-			join(fixtureDir, "package.json"),
-			JSON.stringify({ name: "brush-fixture", version: "0.0.0" }),
-		);
-		writeFileSync(
-			join(fixtureDir, "agentos-package.json"),
-			JSON.stringify({ name: "brush-fixture", version: "1.0.0" }),
-		);
-		process.env.AGENTOS_SIDECAR_BIN = SIDECAR_BINARY;
-	});
-
-	afterEach(async () => {
-		if (vm && shellId) {
-			try {
-				vm.closeShell(shellId);
-			} catch {
-				// already exited
+		beforeAll(() => {
+			// Materialize a self-contained `{ packageDir }` fixture: bin/<cmd> plus
+			// the agentos-package.json manifest the sidecar projection requires.
+			fixtureDir = mkdtempSync(join(tmpdir(), "brush-fixture-"));
+			const binDir = join(fixtureDir, "bin");
+			mkdirSync(binDir, { recursive: true });
+			copyFileSync(REGISTRY_SH as string, join(binDir, FIXTURE_COMMAND));
+			// A real external command (spawned as a CHILD of the shell) for the
+			// child-output regression below; a unique name avoids /bin/cat.
+			if (REGISTRY_CAT !== undefined) {
+				copyFileSync(REGISTRY_CAT, join(binDir, "childcat"));
 			}
-		}
-		term?.dispose();
-		if (vm) await vm.dispose();
-		vm = term = shellId = undefined;
-	});
-
-	test("Enter preserves scrollback; history and word-edit work", async () => {
-		const { AgentOs } = await import("../src/index.js");
-		term = new Terminal({ cols: 80, rows: 14, allowProposedApi: true });
-		vm = await AgentOs.create({
-			software: [{ packagePath: fixtureDir }],
+			writeFileSync(
+				join(fixtureDir, "package.json"),
+				JSON.stringify({ name: "brush-fixture", version: "0.0.0" }),
+			);
+			writeFileSync(
+				join(fixtureDir, "agentos-package.json"),
+				JSON.stringify({ name: "brush-fixture", version: "1.0.0" }),
+			);
+			process.env.AGENTOS_SIDECAR_BIN = SIDECAR_BINARY;
 		});
 
-		({ shellId } = vm.openShell({
-			command: FIXTURE_COMMAND,
-			args: ["--input-backend", "reedline", "-i"],
-			cols: term.cols,
-			rows: term.rows,
-			env: {
-				TERM: "xterm-256color",
-				PS1: "AOS$ ",
-				COLUMNS: "80",
-				LINES: "14",
-			},
-			// A real PTY merges stdout+stderr; brush paints its prompt on stderr.
-			onStderr: (d: Uint8Array) => term?.write(d),
-		}));
-		vm.onShellData(shellId, (d) => term?.write(d));
-		const t = term;
-		const s = shellId;
-		const v = vm;
-		// Forwarding xterm's responses back makes it answer DSR (`ESC[6n`) queries.
-		t.onData((d) => v.writeShell(s, d));
-
-		await waitFor(t, "AOS$");
-		expect(snapshot("startup prompt", t)).toMatchSnapshot();
-
-		// Run three commands. Each output must remain on screen after Enter.
-		for (const word of ["alpha", "bravo", "charlie"]) {
-			v.writeShell(s, `echo ${word}\r`);
-			await waitFor(t, word);
-		}
-		expect(snapshot("after three commands (scrollback intact)", t)).toMatchSnapshot();
-
-		// Up-arrow recalls the last command ("echo charlie").
-		v.writeShell(s, "\x1b[A");
-		await new Promise((r) => setTimeout(r, 300));
-		expect(snapshot("after up-arrow recall", t)).toMatchSnapshot();
-
-		// Ctrl-W deletes the recalled word ("charlie"), then type a new one and run it.
-		v.writeShell(s, "\x17delta\r");
-		// Wait for the new command's output line, then settle.
-		await waitFor(t, "echo delta");
-		await new Promise((r) => setTimeout(r, 400));
-		expect(snapshot("after ctrl-w edit + enter", t)).toMatchSnapshot();
-	}, 60000);
-
-	// Regression: output from an EXTERNAL command (a child process sharing the
-	// shell's terminal) must reach the host exactly once. It used to arrive
-	// twice — once relayed by the shell's runner from the child's stdout
-	// events, and once via the PTY master drain of the same bytes — doubling
-	// every child's output (`cat` lines printed twice, vim keystroke echo
-	// corrupting the screen).
-	test.skipIf(REGISTRY_CAT === undefined)("external child command output renders exactly once", async () => {
-		const { AgentOs } = await import("../src/index.js");
-		term = new Terminal({ cols: 80, rows: 14, allowProposedApi: true });
-		vm = await AgentOs.create({
-			software: [{ packagePath: fixtureDir }],
+		afterEach(async () => {
+			if (vm && shellId) {
+				try {
+					await vm.closeShell(shellId);
+				} catch {
+					// already exited
+				}
+			}
+			term?.dispose();
+			if (vm) await vm.dispose();
+			vm = term = shellId = undefined;
 		});
-		await vm.writeFile("/tmp/marker.txt", "child-once-marker\n");
 
-		({ shellId } = vm.openShell({
-			command: FIXTURE_COMMAND,
-			args: ["--input-backend", "reedline", "-i"],
-			cols: term.cols,
-			rows: term.rows,
-			env: {
-				TERM: "xterm-256color",
-				PS1: "AOS$ ",
-				COLUMNS: "80",
-				LINES: "14",
+		test("Enter preserves scrollback; history and word-edit work", async () => {
+			const { AgentOs } = await import("../src/index.js");
+			term = new Terminal({ cols: 80, rows: 14, allowProposedApi: true });
+			vm = await AgentOs.create({
+				software: [{ packagePath: fixtureDir }],
+			});
+
+			({ shellId } = await vm.openShell({
+				command: FIXTURE_COMMAND,
+				args: ["--input-backend", "reedline", "-i"],
+				cols: term.cols,
+				rows: term.rows,
+				env: {
+					TERM: "xterm-256color",
+					PS1: "AOS$ ",
+					COLUMNS: "80",
+					LINES: "14",
+				},
+				// A real PTY merges stdout+stderr; brush paints its prompt on stderr.
+				onStderr: (d: Uint8Array) => term?.write(d),
+			}));
+			vm.onShellData(shellId, (d) => term?.write(d));
+			const t = term;
+			const s = shellId;
+			const v = vm;
+			// Forwarding xterm's responses back makes it answer DSR (`ESC[6n`) queries.
+			t.onData((d) => v.writeShell(s, d));
+
+			await waitFor(t, "AOS$");
+			expect(snapshot("startup prompt", t)).toMatchSnapshot();
+
+			// Run three commands. Each output must remain on screen after Enter.
+			for (const word of ["alpha", "bravo", "charlie"]) {
+				v.writeShell(s, `echo ${word}\r`);
+				await waitFor(t, word);
+			}
+			expect(
+				snapshot("after three commands (scrollback intact)", t),
+			).toMatchSnapshot();
+
+			// Up-arrow recalls the last command ("echo charlie").
+			v.writeShell(s, "\x1b[A");
+			await new Promise((r) => setTimeout(r, 300));
+			expect(snapshot("after up-arrow recall", t)).toMatchSnapshot();
+
+			// Ctrl-W deletes the recalled word ("charlie"), then type a new one and run it.
+			v.writeShell(s, "\x17delta\r");
+			// Wait for the new command's output line, then settle.
+			await waitFor(t, "echo delta");
+			await new Promise((r) => setTimeout(r, 400));
+			expect(snapshot("after ctrl-w edit + enter", t)).toMatchSnapshot();
+		}, 60000);
+
+		// Regression: output from an EXTERNAL command (a child process sharing the
+		// shell's terminal) must reach the host exactly once. It used to arrive
+		// twice — once relayed by the shell's runner from the child's stdout
+		// events, and once via the PTY master drain of the same bytes — doubling
+		// every child's output (`cat` lines printed twice, vim keystroke echo
+		// corrupting the screen).
+		test.skipIf(REGISTRY_CAT === undefined)(
+			"external child command output renders exactly once",
+			async () => {
+				const { AgentOs } = await import("../src/index.js");
+				term = new Terminal({ cols: 80, rows: 14, allowProposedApi: true });
+				vm = await AgentOs.create({
+					software: [{ packagePath: fixtureDir }],
+				});
+				await vm.writeFile("/tmp/marker.txt", "child-once-marker\n");
+
+				({ shellId } = await vm.openShell({
+					command: FIXTURE_COMMAND,
+					args: ["--input-backend", "reedline", "-i"],
+					cols: term.cols,
+					rows: term.rows,
+					env: {
+						TERM: "xterm-256color",
+						PS1: "AOS$ ",
+						COLUMNS: "80",
+						LINES: "14",
+					},
+					onStderr: (d: Uint8Array) => term?.write(d),
+				}));
+				vm.onShellData(shellId, (d) => term?.write(d));
+				const t = term;
+				const s = shellId;
+				const v = vm;
+				t.onData((d) => v.writeShell(s, d));
+
+				await waitFor(t, "AOS$");
+				v.writeShell(s, "childcat /tmp/marker.txt\r");
+				await waitFor(t, "child-once-marker");
+				await new Promise((r) => setTimeout(r, 500));
+
+				const rendered = snapshot("child output", t);
+				const occurrences = rendered.split("child-once-marker").length - 1;
+				expect(occurrences).toBe(1);
 			},
-			onStderr: (d: Uint8Array) => term?.write(d),
-		}));
-		vm.onShellData(shellId, (d) => term?.write(d));
-		const t = term;
-		const s = shellId;
-		const v = vm;
-		t.onData((d) => v.writeShell(s, d));
-
-		await waitFor(t, "AOS$");
-		v.writeShell(s, "childcat /tmp/marker.txt\r");
-		await waitFor(t, "child-once-marker");
-		await new Promise((r) => setTimeout(r, 500));
-
-		const rendered = snapshot("child output", t);
-		const occurrences = rendered.split("child-once-marker").length - 1;
-		expect(occurrences).toBe(1);
-	}, 60000);
-});
+			60000,
+		);
+	},
+);

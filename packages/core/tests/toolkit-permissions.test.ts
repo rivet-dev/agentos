@@ -67,11 +67,9 @@ function hostCallbackFrame(callbackKey: string, input: unknown) {
 	};
 }
 
-// A forged *command-shaped* host_callback. `handleHostCallback` dispatches any
-// input that parses as `{type:'command',command,args,cwd}` through the SECOND
-// branch (`handleHostCommandCallback` -> `handleAgentOsToolkitCommand` ->
-// `invokeHostTool`), bypassing the `callback_key`/Zod path entirely. We forge a
-// CLI-style command frame to confirm THAT branch also enforces binding.invoke.
+// A forged legacy command-shaped host callback. Registry and toolkit command
+// parsing is sidecar-owned, so the client must reject this shape instead of
+// reviving the deleted client command dispatcher.
 function commandHostCallbackFrame(command: string, args: string[]) {
 	return {
 		frame_type: "sidecar_request" as const,
@@ -79,8 +77,8 @@ function commandHostCallbackFrame(command: string, args: string[]) {
 		payload: {
 			type: "host_callback" as const,
 			invocation_id: "guest-forged-cmd-1",
-			// callback_key is irrelevant on the command branch; set it to a tool
-			// that DOES exist to prove the command branch is what runs.
+			// Use a real tool key: the legacy command object must be treated only as
+			// that tool's direct input and rejected by its Zod schema.
 			callback_key: "math:add",
 			input: {
 				type: "command",
@@ -126,7 +124,7 @@ const duplicateMathToolKit = toolKit({
 async function runCommand(vm: AgentOs, command: string, args: string[]) {
 	const stdoutChunks: string[] = [];
 	const stderrChunks: string[] = [];
-	const { pid } = vm.spawn(command, args, {
+	const { pid } = await vm.spawn(command, args, {
 		onStdout: (chunk) => {
 			stdoutChunks.push(new TextDecoder().decode(chunk));
 		},
@@ -466,12 +464,9 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 		expect(response.error).toMatch(/number|expected|required|invalid|nan/i);
 	});
 
-	// AOS-SESS-4 (N-014, P2, J.1/J.2): the *command-shaped* host_callback dispatch
-	// branch (handleHostCommandCallback -> invokeHostTool) must ALSO honor
-	// binding.invoke deny — defense-in-depth on the second dispatch path that the
-	// callback_key/Zod branch does not cover. (Hold-as-regression; not a
-	// re-discovery — assert the gate holds on this branch.)
-	test("forged {type:'command'} host_callback is denied by binding.invoke on the command dispatch branch", async () => {
+	// AOS-SESS-4 (N-014, P2, J.1/J.2): a forged legacy command
+	// callback must not revive the deleted client command dispatcher.
+	test("forged legacy command callbacks are rejected by Zod without executing a tool", async () => {
 		const executed: unknown[] = [];
 		const spyKit = toolKit({
 			name: "math",
@@ -504,12 +499,12 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 			commandHostCallbackFrame("agentos-math", ["add", "--a", "2", "--b", "3"]),
 		);
 
-		// The attacker must be denied on the command branch too: execute MUST NOT
-		// have run and the response must surface a policy denial, not a result.
+		// The client only accepts a registered callback key with already-parsed
+		// input. Sidecar binding policy is covered on the real command path above.
 		expect(executed).toHaveLength(0);
 		expect(response.type).toBe("host_callback_result");
 		expect(response.result).toBeUndefined();
 		expect(typeof response.error).toBe("string");
-		expect(response.error).toMatch(/tool\.invoke|EACCES|denied|permission/i);
+		expect(response.error).toMatch(/number|expected|required|invalid/i);
 	});
 });

@@ -8,7 +8,7 @@ const RESULTS_DIR = new URL("../results/", import.meta.url).pathname;
 export async function runFootprint() {
 	const beforePids = findSidecarPids();
 	const beforeSet = new Set(beforePids);
-	const sidecar = createBenchSidecar();
+	const sidecar = await createBenchSidecar();
 	let vm: BenchVm | null = null;
 	try {
 		vm = await createBenchVm({ sidecar });
@@ -23,7 +23,6 @@ export async function runFootprint() {
 					? newPids[0]
 					: null;
 		const after = readRssBytes(measuredPid);
-		const resource = await vm.getResourceSnapshot();
 		const total = measuredPid === null ? 0 : after;
 		const components = sortComponents([
 			{ name: "empty_v8_isolate_baseline", bytes: Math.round(total * 0.5) },
@@ -41,7 +40,7 @@ export async function runFootprint() {
 				suspected_cause: "idle VM floor dominated by V8 isolate baseline and sidecar structs",
 				file_line: "crates/v8-runtime/src/session.rs:294",
 				reproducer: "createBenchVm(); sample /proc/<agentos-native-sidecar>/status VmRSS",
-				evidence: `rss_floor_bytes=${total} measured_pid=${measuredPid} internal_pid=${internalPid} before_pids=${JSON.stringify(beforePids)} after_pids=${JSON.stringify(afterPids)} new_pids=${JSON.stringify(newPids)} resource=${JSON.stringify(resource)}`,
+				evidence: `rss_floor_bytes=${total} measured_pid=${measuredPid} internal_pid=${internalPid} before_pids=${JSON.stringify(beforePids)} after_pids=${JSON.stringify(afterPids)} new_pids=${JSON.stringify(newPids)}`,
 			},
 		];
 		const out = {
@@ -53,7 +52,6 @@ export async function runFootprint() {
 			newPids,
 			components,
 			topReducibleContributors: components.slice(0, 3),
-			resource,
 			findings,
 		};
 		writeJson(`${RESULTS_DIR}/footprint.json`, out);

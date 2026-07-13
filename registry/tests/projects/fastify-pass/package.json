@@ -1,8 +1,0 @@
-{
-	"name": "project-matrix-fastify-pass",
-	"private": true,
-	"type": "commonjs",
-	"dependencies": {
-		"fastify": "5.3.3"
-	}
-}

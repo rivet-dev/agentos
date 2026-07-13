@@ -1,15 +1,4 @@
-import { realpathSync } from "node:fs";
-import { createRequire } from "node:module";
-import path from "node:path";
-import {
-	createKernel,
-	type createNodeDriver,
-	createNodeRuntime,
-	NodeFileSystem,
-	type NodeRuntimeDriver,
-	type NodeRuntimeDriverFactory,
-	type Permissions,
-} from "@rivet-dev/agentos-core/internal/runtime-compat";
+import type { AgentOs } from "@rivet-dev/agentos-core";
 
 export interface TypeScriptDiagnostic {
 	code: number;
@@ -49,10 +38,7 @@ export interface SourceCompilerOptions {
 }
 
 export interface TypeScriptToolsOptions {
-	systemDriver: ReturnType<typeof createNodeDriver>;
-	runtimeDriverFactory: NodeRuntimeDriverFactory;
-	memoryLimit?: number;
-	cpuTimeLimitMs?: number;
+	agentOs: AgentOs;
 	compilerSpecifier?: string;
 }
 
@@ -94,14 +80,8 @@ type CompilerResponse =
 type RuntimeCompilerEnvelope =
 	| { ok: true; result: CompilerResponse }
 	| { ok: false; errorMessage?: string };
-interface RuntimeNodeModulesMount {
-	guestPath: string;
-	hostPath: string;
-}
 
 const DEFAULT_COMPILER_SPECIFIER = "typescript";
-const moduleRequire = createRequire(import.meta.url);
-const GUEST_NODE_PATH_DELIMITER = ":";
 let nextRuntimeRequestId = 0;
 
 export function createTypeScriptTools(
@@ -143,214 +123,86 @@ async function runCompilerRequest<TResult extends CompilerResponse>(
 	options: TypeScriptToolsOptions,
 	request: CompilerRequest,
 ): Promise<TResult> {
-	const filesystem = options.systemDriver.filesystem;
-	if (!filesystem) {
-		return createFailureResult<TResult>(
-			request.kind,
-			"TypeScript tools require a filesystem-backed system driver",
-		);
-	}
-
 	try {
-		return (await runCompilerInRuntime(options, request)) as TResult;
+		return (await runCompilerInAgentOs(options.agentOs, request)) as TResult;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		return createFailureResult<TResult>(request.kind, message);
+		return createFailureResult<TResult>(
+			request.kind,
+			`${request.kind} transport: ${message}`,
+		);
 	}
 }
 
-async function runCompilerInRuntime(
-	options: TypeScriptToolsOptions,
+async function runCompilerInAgentOs(
+	agentOs: AgentOs,
 	request: CompilerRequest,
 ): Promise<CompilerResponse> {
-	const filesystem = options.systemDriver.filesystem;
-	if (!filesystem) {
-		throw new Error(
-			"TypeScript tools require a filesystem-backed system driver",
-		);
-	}
-
-	const nodeModulesMount = resolveNodeModulesMount(options);
-	if (!nodeModulesMount) {
-		throw new Error(
-			"Unable to locate host node_modules for TypeScript runtime",
-		);
-	}
-
-	const runtimeDriver = options.runtimeDriverFactory.createRuntimeDriver({
-		system: options.systemDriver,
-		runtime: options.systemDriver.runtime,
-		memoryLimit: options.memoryLimit,
-		cpuTimeLimitMs: options.cpuTimeLimitMs,
-	});
 	try {
-		return await runCompilerWithRuntimeDriver(runtimeDriver, request);
+		await agentOs.mkdir("/tmp", { recursive: true });
 	} catch (error) {
-		if (!isUnavailableRuntimeDriverError(error)) {
-			throw error;
-		}
-	} finally {
-		try {
-			runtimeDriver.dispose();
-		} catch {}
+		throw new Error(`failed to prepare TypeScript runner directory: ${String(error)}`, {
+			cause: error,
+		});
 	}
-
-	return runCompilerWithKernelRuntime(options, request, nodeModulesMount);
-}
-
-async function runCompilerWithRuntimeDriver(
-	runtimeDriver: NodeRuntimeDriver,
-	request: CompilerRequest,
-): Promise<CompilerResponse> {
-	const result = await runtimeDriver.run<RuntimeCompilerEnvelope>(
-		buildCompilerRuntimeEval(request),
-		"/tmp/agentos-typescript-runner.cjs",
-	);
-	if (result.value) {
-		return parseRuntimeEnvelope(result.value);
-	}
-	if (result.errorMessage) {
-		throw new Error(result.errorMessage);
-	}
-	throw new Error(`TypeScript runtime exited ${result.code}`);
-}
-
-function isUnavailableRuntimeDriverError(error: unknown): boolean {
-	return (
-		error instanceof Error &&
-		error.message.includes(
-			"NodeExecutionDriver is not available after the native runtime migration",
-		)
-	);
-}
-
-async function runCompilerWithKernelRuntime(
-	options: TypeScriptToolsOptions,
-	request: CompilerRequest,
-	nodeModulesMount: RuntimeNodeModulesMount,
-): Promise<CompilerResponse> {
-	const filesystem = options.systemDriver.filesystem;
-	if (!filesystem) {
-		throw new Error(
-			"TypeScript tools require a filesystem-backed system driver",
-		);
-	}
-
-	await filesystem.mkdir("/tmp", { recursive: true });
 	const requestId = `${Date.now()}-${nextRuntimeRequestId++}`;
 	const requestPath = `/tmp/agentos-typescript-request-${requestId}.json`;
 	const runnerPath = `/tmp/agentos-typescript-runner-${requestId}.cjs`;
-	await filesystem.writeFile(requestPath, JSON.stringify(request));
-	await filesystem.writeFile(
-		runnerPath,
-		buildCompilerRuntimeScript(requestPath),
-	);
-
-	const kernel = createKernel({
-		filesystem,
-		permissions: normalizeKernelPermissions(options.systemDriver.permissions),
-		env: buildRuntimeEnv(options, nodeModulesMount.guestPath),
-		cwd: request.options.cwd ?? "/root",
-		mounts: [
-			{
-				path: nodeModulesMount.guestPath,
-				fs: new NodeFileSystem({ root: nodeModulesMount.hostPath }),
-				readOnly: true,
-			},
-		],
-	});
-
 	try {
-		await kernel.mount(createNodeRuntime());
-		let stdout = "";
-		let stderr = "";
-		const child = kernel.spawn("node", [runnerPath], {
-			cpuTimeLimitMs: options.cpuTimeLimitMs,
-			onStdout: (chunk) => {
-				stdout += Buffer.from(chunk).toString("utf8");
-			},
-			onStderr: (chunk) => {
-				stderr += Buffer.from(chunk).toString("utf8");
-			},
-		});
-		const exitCode = await child.wait();
-		if (stdout.trim()) {
-			return parseRuntimeResponse(stdout);
+		try {
+			await agentOs.writeFile(requestPath, JSON.stringify(request));
+			await agentOs.writeFile(
+				runnerPath,
+				buildCompilerRuntimeScript(requestPath),
+			);
+		} catch (error) {
+			throw new Error(`failed to write TypeScript runner files: ${String(error)}`, {
+				cause: error,
+			});
 		}
-		if (exitCode !== 0) {
-			throw new Error(stderr.trim() || `TypeScript runtime exited ${exitCode}`);
+		let result;
+		try {
+			result = await agentOs.execArgv("node", [runnerPath], {
+				...(request.options.cwd === undefined
+					? {}
+					: { cwd: request.options.cwd }),
+			});
+		} catch (error) {
+			throw new Error(`TypeScript runner execution failed: ${String(error)}`, {
+				cause: error,
+			});
+		}
+		if (result.stdout.trim()) {
+			let response;
+			try {
+				response = parseRuntimeResponse(result.stdout);
+			} catch (error) {
+				throw new Error(
+					`failed to decode TypeScript runner response: ${String(error)}`,
+					{ cause: error },
+				);
+			}
+			return response;
+		}
+		if (result.exitCode !== 0) {
+			throw new Error(
+				`TypeScript runtime exited ${result.exitCode}${
+					result.stderr.trim() ? `: ${result.stderr.trim()}` : ""
+				}`,
+			);
 		}
 		throw new Error("TypeScript runtime produced no response");
 	} finally {
-		await kernel.dispose();
-		await removeVirtualFileIfExists(filesystem, requestPath);
-		await removeVirtualFileIfExists(filesystem, runnerPath);
-	}
-}
-
-function normalizeKernelPermissions(
-	permissions: TypeScriptToolsOptions["systemDriver"]["permissions"],
-): Permissions {
-	const normalized =
-		!permissions || typeof permissions !== "string"
-			? { ...(permissions ?? {}) }
-			: { fs: permissions };
-	if (!normalized.childProcess) {
-		normalized.childProcess = {
-			default: "deny",
-			rules: [{ mode: "allow", operations: ["*"], patterns: ["node"] }],
-		};
-	}
-	return normalized;
-}
-
-function findNearestNodeModules(startDir: string): string | null {
-	let currentDir = startDir;
-	while (true) {
-		const candidate = path.join(currentDir, "node_modules");
 		try {
-			const packageJsonPath = moduleRequire.resolve("typescript/package.json", {
-				paths: [currentDir],
-			});
-			const candidateRoot = realpathSync(candidate);
-			const packageRoot = realpathSync(path.dirname(packageJsonPath));
-			if (
-				packageRoot === candidateRoot ||
-				packageRoot.startsWith(`${candidateRoot}${path.sep}`)
-			) {
-				return candidate;
-			}
-		} catch {
-			// Keep walking toward the filesystem root.
-		}
-		const parentDir = path.dirname(currentDir);
-		if (parentDir === currentDir) {
-			return null;
-		}
-		currentDir = parentDir;
-	}
-}
-
-function resolveNodeModulesMount(
-	options: TypeScriptToolsOptions,
-): RuntimeNodeModulesMount | null {
-	for (const mount of options.systemDriver.mounts) {
-		const config = mount.plugin.config;
-		if (
-			mount.plugin.id === "host_dir" &&
-			config &&
-			typeof config.hostPath === "string" &&
-			mount.path.endsWith("/node_modules")
-		) {
-			return {
-				guestPath: mount.path,
-				hostPath: config.hostPath,
-			};
+			await removeGuestFileIfExists(agentOs, requestPath);
+			await removeGuestFileIfExists(agentOs, runnerPath);
+		} catch (error) {
+			throw new Error(
+				`failed to remove TypeScript runner files: ${String(error)}`,
+				{ cause: error },
+			);
 		}
 	}
-
-	const hostPath = findNearestNodeModules(process.cwd());
-	return hostPath ? { guestPath: "/node_modules", hostPath } : null;
 }
 
 function createFailureResult<TResult extends CompilerResponse>(
@@ -396,23 +248,6 @@ function normalizeCompilerFailureMessage(errorMessage?: string): string {
 	return message;
 }
 
-function buildRuntimeEnv(
-	options: TypeScriptToolsOptions,
-	nodeModulesGuestPath: string,
-): Record<string, string> {
-	const env = { ...(options.systemDriver.runtime.process.env ?? {}) };
-	env.NODE_PATH = [env.NODE_PATH, nodeModulesGuestPath]
-		.filter(Boolean)
-		.join(GUEST_NODE_PATH_DELIMITER);
-	if (options.memoryLimit !== undefined) {
-		const limit = Math.max(1, Math.floor(options.memoryLimit));
-		env.NODE_OPTIONS = [env.NODE_OPTIONS, `--max-old-space-size=${limit}`]
-			.filter(Boolean)
-			.join(" ");
-	}
-	return env;
-}
-
 function buildCompilerRuntimeScript(requestPath: string): string {
 	return `
 const fs = require("node:fs");
@@ -440,41 +275,9 @@ try {
 } catch (error) {
 	process.stdout.write(JSON.stringify({
 		ok: false,
-		errorMessage: error instanceof Error ? error.message : String(error),
+		errorMessage: error instanceof Error ? (error.stack ?? error.message) : String(error),
 	}));
 	process.exitCode = 1;
-}
-`;
-}
-
-function buildCompilerRuntimeEval(request: CompilerRequest): string {
-	return `
-const path = require("node:path");
-
-function loadTypeScriptCompiler(compilerSpecifier) {
-	const specifier =
-		compilerSpecifier === ${JSON.stringify(DEFAULT_COMPILER_SPECIFIER)}
-			? compilerSpecifier
-			: compilerSpecifier.startsWith("/")
-				? compilerSpecifier
-				: compilerSpecifier.startsWith("./") || compilerSpecifier.startsWith("../")
-					? path.resolve(process.cwd(), compilerSpecifier)
-					: compilerSpecifier;
-	const imported = require(specifier);
-	return imported.default ?? imported;
-}
-
-const request = ${JSON.stringify(request)};
-try {
-	const ts = loadTypeScriptCompiler(request.compilerSpecifier);
-	const __name = (target) => target;
-	const result = (${compilerRuntimeMain.toString()})(request, ts);
-	return { ok: true, result };
-} catch (error) {
-	return {
-		ok: false,
-		errorMessage: error instanceof Error ? error.message : String(error),
-	};
 }
 `;
 }
@@ -494,13 +297,13 @@ function parseRuntimeEnvelope(
 	throw new Error(payload.errorMessage ?? "TypeScript runtime failed");
 }
 
-async function removeVirtualFileIfExists(
-	filesystem: NonNullable<TypeScriptToolsOptions["systemDriver"]["filesystem"]>,
+async function removeGuestFileIfExists(
+	agentOs: AgentOs,
 	targetPath: string,
 ): Promise<void> {
-	try {
-		await filesystem.removeFile(targetPath);
-	} catch {}
+	if (await agentOs.exists(targetPath)) {
+		await agentOs.delete(targetPath);
+	}
 }
 
 function compilerRuntimeMain(

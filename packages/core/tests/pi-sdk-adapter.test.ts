@@ -33,7 +33,7 @@ console.log("agent:" + fs.existsSync("/root/node_modules/@mariozechner/pi-coding
 		let stdout = "";
 		let stderr = "";
 
-		const { pid } = vm.spawn("node", ["/tmp/pi-sdk-projection.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/pi-sdk-projection.mjs"], {
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);
 			},

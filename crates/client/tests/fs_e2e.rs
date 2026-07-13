@@ -1,14 +1,13 @@
 //! Filesystem e2e against a real `agentos-sidecar`. Filesystem ops go straight through the kernel
 //! VFS (no V8/WASM), so this is a clean, client-focused surface.
 //!
-//! One VM, many assertions (quality over quantity): text + binary round-trips, batch (never-rejects),
-//! recursive mkdir, readdir(_recursive), stat, exists, move (file + dir), delete (recursive), and the
-//! path-guard error contract.
+//! One VM, many assertions (quality over quantity): text + binary round-trips, recursive mkdir,
+//! readdir(_recursive), stat, exists, move (file + dir), delete (recursive), and
+//! cwd-relative path resolution.
 
 mod common;
 
-use agentos_client::fs::{BatchWriteEntry, DeleteOptions, DirEntryType, FileContent, MkdirOptions};
-use agentos_client::ClientError;
+use agentos_client::fs::{DeleteOptions, DirEntryType, FileContent, MkdirOptions};
 
 #[tokio::test]
 async fn base_layer_exposes_default_files() {
@@ -78,27 +77,20 @@ async fn filesystem_surface_round_trips() {
     assert!(os.exists("/tmp/d1/d2").await.expect("exists dir"));
     assert!(os.stat("/tmp/d1/d2").await.expect("stat dir").is_directory);
 
-    // Batch write: auto-creates parents, never rejects, reports per-entry success/error.
-    let results = os
-        .write_files(vec![
-            BatchWriteEntry {
-                path: "/tmp/d1/d2/x.txt".to_string(),
-                content: FileContent::Text("x".to_string()),
-            },
-            BatchWriteEntry {
-                // Relative path fails the guard but must not reject the whole batch.
-                path: "relative-bad".to_string(),
-                content: FileContent::Text("y".to_string()),
-            },
-        ])
-        .await;
-    assert!(results[0].success, "valid entry should succeed");
-    assert!(
-        !results[1].success && results[1].error.is_some(),
-        "guarded entry should fail per-entry, not reject the batch"
+    os.write_file("/tmp/d1/d2/x.txt", "x")
+        .await
+        .expect("write nested file");
+    os.write_file("relative-bad", "y")
+        .await
+        .expect("write relative file");
+    assert_eq!(
+        os.read_file("nested/../relative-bad")
+            .await
+            .expect("read normalized relative path"),
+        b"y"
     );
 
-    // readdir sees the batch-written file.
+    // readdir sees the nested file.
     let entries = os.readdir("/tmp/d1/d2").await.expect("readdir");
     assert!(entries.iter().any(|e| e == "x.txt"));
 
@@ -125,20 +117,6 @@ async fn filesystem_surface_round_trips() {
         .await
         .expect("delete -r");
     assert!(!os.exists("/tmp/d1").await.expect("dir removed"));
-
-    // Path-guard contract: a relative path errors with PathNotAbsolute (matches TS "Path must be
-    // absolute" data), and the call errors rather than touching the VFS.
-    let guard_err = os
-        .read_file("relative")
-        .await
-        .expect_err("relative path must error");
-    assert!(
-        matches!(
-            guard_err.downcast_ref::<ClientError>(),
-            Some(ClientError::PathNotAbsolute(_))
-        ),
-        "expected PathNotAbsolute, got {guard_err:?}"
-    );
 
     os.shutdown().await.expect("shutdown");
 }

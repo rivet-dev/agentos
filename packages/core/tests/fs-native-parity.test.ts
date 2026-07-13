@@ -15,10 +15,7 @@ import type { AgentOs } from "../src/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../..");
-const SECURE_EXEC_C_ROOT = resolve(
-	REPO_ROOT,
-	"registry/native/c",
-);
+const SECURE_EXEC_C_ROOT = resolve(REPO_ROOT, "registry/native/c");
 const WASM_PROBE_BINARY = resolve(SECURE_EXEC_C_ROOT, "build/fs_probe");
 const NATIVE_PROBE_BINARY = resolve(
 	SECURE_EXEC_C_ROOT,
@@ -33,13 +30,12 @@ const PATCHED_ERRNO = resolve(
 	"sysroot/include/wasm32-wasi/errno.h",
 );
 const SIDECAR_BINARY = resolve(REPO_ROOT, "target/debug/agentos-sidecar");
-const HAS_PATCHED_SYSROOT = existsSync(PATCHED_LIBC) && existsSync(PATCHED_ERRNO);
+const HAS_PATCHED_SYSROOT =
+	existsSync(PATCHED_LIBC) && existsSync(PATCHED_ERRNO);
 
 function hasCommand(command: string): boolean {
 	try {
-		return (
-			spawnSync(command, ["--version"], { encoding: "utf8" }).status === 0
-		);
+		return spawnSync(command, ["--version"], { encoding: "utf8" }).status === 0;
 	} catch {
 		return false;
 	}
@@ -168,7 +164,7 @@ describe.skipIf(!CAN_RUN)("filesystem native parity", () => {
 		}
 		if (vm && shellId) {
 			try {
-				vm.closeShell(shellId);
+				await vm.closeShell(shellId);
 			} catch {
 				// The probe may already have exited.
 			}
@@ -193,7 +189,7 @@ describe.skipIf(!CAN_RUN)("filesystem native parity", () => {
 		});
 
 		let rawOutput = "";
-		({ shellId } = vm.openShell({
+		({ shellId } = await vm.openShell({
 			command: "fs_probe",
 			args: ["/tmp/fs-probe-vm"],
 			cols: 120,

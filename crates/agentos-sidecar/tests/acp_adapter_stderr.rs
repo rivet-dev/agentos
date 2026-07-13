@@ -68,14 +68,14 @@ fn adapter_stderr_and_exit_surface_to_caller() {
         &vm_id,
         AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
             agent_type: String::from("pi"),
-            runtime: AcpRuntimeKind::JavaScript,
-            cwd: cwd.to_string_lossy().into_owned(),
-            args: Vec::new(),
-            env: HashMap::new(),
-            protocol_version: i32::from(ACP_PROTOCOL_VERSION),
-            client_capabilities: String::from(r#"{"fs":{}}"#),
-            mcp_servers: String::from(r#"{"servers":[]}"#),
-            skip_os_instructions: true,
+            runtime: Some(AcpRuntimeKind::JavaScript),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            args: Some(Vec::new()),
+            env: Some(HashMap::new()),
+            protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
+            client_capabilities: Some(String::from(r#"{"fs":{}}"#)),
+            mcp_servers: Some(String::from(r#"{"servers":[]}"#)),
+            skip_os_instructions: Some(true),
             additional_instructions: None,
         }),
     );
@@ -264,7 +264,6 @@ fn open_session(sidecar: &mut NativeSidecar<RecordingBridge>, connection_id: &st
                 placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
                     pool: None,
                 }),
-                metadata: HashMap::new(),
             }),
         })
         .expect("open session");
@@ -341,20 +340,14 @@ fn configure_mock_agent_package(
                 vm_id: vm_id.to_owned(),
             }),
             payload: RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts: Vec::new(),
-                software: Vec::new(),
+                mounts: None,
                 permissions: None,
-                module_access_cwd: None,
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
-                command_permissions: HashMap::new(),
-                loopback_exempt_ports: Vec::new(),
-                packages: vec![PackageDescriptor {
+                command_permissions: None,
+                loopback_exempt_ports: None,
+                packages: Some(vec![PackageDescriptor {
                     path: package_dir.to_string_lossy().into_owned(),
-                }],
-                packages_mount_at: String::from("/opt/agentos"),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                }]),
+                packages_mount_at: Some(String::from("/opt/agentos")),
             }),
         })
         .expect("configure crashing ACP package");

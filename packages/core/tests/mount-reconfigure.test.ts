@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createInMemoryFileSystem } from "../src/runtime-compat.js";
+import { createInMemoryFileSystem } from "../src/memory-filesystem.js";
 import { NativeSidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 
 // Regression coverage for post-boot mountFs delivery to the native sidecar:
-//   1. Rust `configure_vm` rebuilds the whole VM configuration from each
-//      payload, so a runtime mount reconfigure that omits the boot `packages` /
-//      `packagesMountAt` / `toolShimCommands` strips the `/opt/agentos`
-//      projections and tool shims from the VM as a side effect.
+//   1. Package projections are sidecar-owned, so the client sends only the
+//      changed mount set and does not cache/replay boot or linked packages.
 //   2. mountFs used to be fire-and-forget with a swallowed rejection, so a
 //      failed reconfigure left the mount silently host-only and callers had no
 //      way to know when (or whether) the guest could see it.
@@ -16,17 +14,9 @@ import { NativeSidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 const session = { connectionId: "conn-1", sessionId: "sess-1" };
 const vm = { vmId: "vm-test" };
 
-const bootPackages = [
-	{
-		name: "common",
-		version: "1.0.0",
-		path: "/tmp/common.aospkg",
-	},
-];
-const bootToolShims = ["agentos", "agentos-demo"];
-
 function createStubClient(options?: { failConfigureVm?: boolean }) {
 	const configureCalls: Array<Record<string, unknown>> = [];
+	const readCalls: string[] = [];
 	const client = {
 		async configureVm(
 			_session: unknown,
@@ -39,13 +29,16 @@ function createStubClient(options?: { failConfigureVm?: boolean }) {
 			}
 			return {
 				appliedMounts: [],
-				appliedSoftware: [],
 				projectedCommands: [],
 				agents: [],
 			};
 		},
 		async disposeVm() {},
 		async dispose() {},
+		async readFile(_session: unknown, _vm: unknown, path: string) {
+			readCalls.push(path);
+			return new TextEncoder().encode("from sidecar");
+		},
 		waitForEvent(
 			_filter: unknown,
 			_unused: unknown,
@@ -58,7 +51,7 @@ function createStubClient(options?: { failConfigureVm?: boolean }) {
 			});
 		},
 	};
-	return { client, configureCalls };
+	return { client, configureCalls, readCalls };
 }
 
 function createProxy(client: unknown) {
@@ -70,9 +63,6 @@ function createProxy(client: unknown) {
 		cwd: "/work",
 		localMounts: [],
 		sidecarMounts: [],
-		packages: bootPackages,
-		packagesMountAt: "/opt/agentos",
-		toolShimCommands: bootToolShims,
 		commandGuestPaths: new Map<string, string>(),
 		ownsClient: true,
 	};
@@ -82,7 +72,7 @@ function createProxy(client: unknown) {
 }
 
 describe("post-boot mount reconfiguration", () => {
-	it("resends the boot packages and tool shims on runtime mountFs", async () => {
+	it("sends only mounts on runtime mountFs", async () => {
 		const { client, configureCalls } = createStubClient();
 		const proxy = createProxy(client);
 
@@ -90,9 +80,11 @@ describe("post-boot mount reconfiguration", () => {
 
 		expect(configureCalls).toHaveLength(1);
 		const payload = configureCalls[0];
-		expect(payload.packages).toEqual(bootPackages);
-		expect(payload.packagesMountAt).toBe("/opt/agentos");
-		expect(payload.toolShimCommands).toEqual(bootToolShims);
+		expect(payload).not.toHaveProperty("packages");
+		expect(payload).not.toHaveProperty("packagesMountAt");
+		expect(payload).not.toHaveProperty("permissions");
+		expect(payload).not.toHaveProperty("commandPermissions");
+		expect(payload).not.toHaveProperty("loopbackExemptPorts");
 		expect(payload.mounts).toEqual([
 			expect.objectContaining({ guestPath: "/mnt/dynamic" }),
 		]);
@@ -100,33 +92,6 @@ describe("post-boot mount reconfiguration", () => {
 		await proxy.unmountFs("/mnt/dynamic");
 		expect(configureCalls).toHaveLength(2);
 		expect(configureCalls[1].mounts).toEqual([]);
-		expect(configureCalls[1].packages).toEqual(bootPackages);
-		expect(configureCalls[1].toolShimCommands).toEqual(bootToolShims);
-
-		await proxy.dispose();
-	});
-
-	it("resends runtime-linked packages on later mount reconfigures", async () => {
-		const { client, configureCalls } = createStubClient();
-		const proxy = createProxy(client);
-
-		// linkSoftware() records the linked package on the proxy; a later
-		// mountFs must resend it alongside the boot packages or configure_vm
-		// (replace-on-write) unprojects it from /opt/agentos.
-		proxy.registerLinkedPackage({ path: "/tmp/linked.aospkg" });
-		await proxy.mountFs("/mnt/dynamic", createInMemoryFileSystem());
-		expect(configureCalls[0].packages).toEqual([
-			...bootPackages,
-			{ path: "/tmp/linked.aospkg" },
-		]);
-
-		// Duplicate registration is a no-op.
-		proxy.registerLinkedPackage({ path: "/tmp/linked.aospkg" });
-		await proxy.unmountFs("/mnt/dynamic");
-		expect(configureCalls[1].packages).toEqual([
-			...bootPackages,
-			{ path: "/tmp/linked.aospkg" },
-		]);
 
 		await proxy.dispose();
 	});
@@ -138,6 +103,27 @@ describe("post-boot mount reconfiguration", () => {
 		await expect(
 			proxy.mountFs("/mnt/dynamic", createInMemoryFileSystem()),
 		).rejects.toThrow("configure_vm rejected");
+
+		await proxy.dispose();
+	});
+
+	it("routes public filesystem calls through the sidecar and keeps host mounts callback-only", async () => {
+		const { client, readCalls } = createStubClient();
+		const proxy = createProxy(client);
+		const hostFs = createInMemoryFileSystem();
+		await hostFs.writeFile("/note.txt", "from host callback");
+		await proxy.mountFs("/mnt/dynamic", hostFs);
+
+		expect(
+			new TextDecoder().decode(await proxy.readFile("/mnt/dynamic/note.txt")),
+		).toBe("from sidecar");
+		expect(readCalls).toEqual(["/mnt/dynamic/note.txt"]);
+		const callbackFilesystem = proxy.hostFilesystemForMount("/mnt/dynamic");
+		expect(callbackFilesystem).toBe(hostFs);
+		if (!callbackFilesystem) throw new Error("missing callback filesystem");
+		expect(
+			new TextDecoder().decode(await callbackFilesystem.readFile("/note.txt")),
+		).toBe("from host callback");
 
 		await proxy.dispose();
 	});

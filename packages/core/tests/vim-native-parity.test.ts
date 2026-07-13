@@ -91,7 +91,7 @@ describe.skipIf(!canRun)("vim wasm vs native — 1:1 PTY parity", () => {
 		// path), so this exercises PTY-slave inheritance too.
 		vm = await AgentOs.create({ software: [common, vimPkg] });
 		await vm.mkdir("/work", { recursive: true });
-		const { shellId } = vm.openShell({
+		const { shellId } = await vm.openShell({
 			command: "sh",
 			args: ["--input-backend", "minimal", "-i"],
 			cols: COLS,

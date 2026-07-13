@@ -5,16 +5,16 @@
 // guest that performs filesystem I/O, and reports its stdout/exit. This is the
 // end-to-end proof of the live converged executor path (slice 2n) in Chromium.
 
+import { createConvergedExecutionHostBridge } from "../../../../src/converged-execution-host-bridge.js";
 import {
 	allowAll,
 	createBrowserDriver,
 	createBrowserRuntimeDriverFactory,
 } from "../../../../src/index.js";
-import { rootFilesystemConfigFromVfs } from "../../../../src/root-filesystem-from-vfs.js";
-import { createConvergedExecutionHostBridge } from "../../../../src/converged-execution-host-bridge.js";
 
 const WASM_MODULE_URL = "/sidecar-wasm-web/agentos_native_sidecar_browser.js";
-const WASM_BINARY_URL = "/sidecar-wasm-web/agentos_native_sidecar_browser_bg.wasm";
+const WASM_BINARY_URL =
+	"/sidecar-wasm-web/agentos_native_sidecar_browser_bg.wasm";
 
 declare global {
 	interface Window {
@@ -116,10 +116,6 @@ async function execConvergedGuest(
 	(system as { runtime?: unknown }).runtime = { process: {}, os: {} };
 
 	const config = {
-		rootFilesystem: await rootFilesystemConfigFromVfs(
-			(system as { filesystem: Parameters<typeof rootFilesystemConfigFromVfs>[0] })
-				.filesystem,
-		),
 		permissions: {
 			fs: "allow",
 			network: "allow",

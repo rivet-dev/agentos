@@ -19,15 +19,22 @@ describe("AgentOs facade forwarding", () => {
 			result: { ok: true },
 		});
 
-		expect(sendSessionRequest).toHaveBeenCalledWith("session-1", "custom/method", {
-			value: 42,
-		});
+		expect(sendSessionRequest).toHaveBeenCalledWith(
+			"session-1",
+			"custom/method",
+			{
+				value: 42,
+			},
+		);
 	});
 
-	test("resizeShell forwards dimensions to the tracked shell handle", () => {
+	test("resizeShell forwards dimensions to the tracked shell handle", async () => {
 		const resize = vi.fn();
 		const vm = Object.create(AgentOs.prototype) as AgentOs & {
-			_shells: Map<string, { handle: { resize(cols: number, rows: number): void } }>;
+			_shells: Map<
+				string,
+				{ handle: { resize(cols: number, rows: number): void } }
+			>;
 		};
 		vm._shells = new Map([
 			[
@@ -40,18 +47,18 @@ describe("AgentOs facade forwarding", () => {
 			],
 		]);
 
-		vm.resizeShell("shell-1", 120, 40);
+		await vm.resizeShell("shell-1", 120, 40);
 
 		expect(resize).toHaveBeenCalledWith(120, 40);
 	});
 
-	test("resizeShell rejects unknown shell ids", () => {
+	test("resizeShell rejects unknown shell ids", async () => {
 		const vm = Object.create(AgentOs.prototype) as AgentOs & {
 			_shells: Map<string, unknown>;
 		};
 		vm._shells = new Map();
 
-		expect(() => vm.resizeShell("missing", 80, 24)).toThrow(
+		await expect(vm.resizeShell("missing", 80, 24)).rejects.toThrow(
 			"Shell not found: missing",
 		);
 	});

@@ -4,9 +4,9 @@
  */
 
 import { Terminal } from "@xterm/headless";
-import type { Kernel } from "../runtime-compat.js";
+import type { Kernel } from "../runtime.js";
 
-type ShellHandle = ReturnType<Kernel["openShell"]>;
+type ShellHandle = Awaited<ReturnType<Kernel["openShell"]>>;
 
 const SETTLE_MS = 50;
 const POLL_MS = 20;
@@ -18,7 +18,15 @@ export class TerminalHarness {
 	private typing = false;
 	private disposed = false;
 
-	constructor(
+	private constructor(term: Terminal, shell: ShellHandle) {
+		this.term = term;
+		this.shell = shell;
+		this.shell.onData = (data: Uint8Array) => {
+			this.term.write(data);
+		};
+	}
+
+	static async create(
 		kernel: Kernel,
 		options?: {
 			cols?: number;
@@ -26,23 +34,21 @@ export class TerminalHarness {
 			env?: Record<string, string>;
 			cwd?: string;
 		},
-	) {
+	): Promise<TerminalHarness> {
 		const cols = options?.cols ?? 80;
 		const rows = options?.rows ?? 24;
 
-		this.term = new Terminal({ cols, rows, allowProposedApi: true });
-		this.shell = kernel.openShell({
+		const term = new Terminal({ cols, rows, allowProposedApi: true });
+		const shell = await kernel.openShell({
 			cols,
 			rows,
 			env: options?.env,
 			cwd: options?.cwd,
 			onStderr: (data: Uint8Array) => {
-				this.term.write(data);
+				term.write(data);
 			},
 		});
-		this.shell.onData = (data: Uint8Array) => {
-			this.term.write(data);
-		};
+		return new TerminalHarness(term, shell);
 	}
 
 	async type(input: string): Promise<void> {

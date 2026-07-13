@@ -1,43 +1,31 @@
 import { join } from "node:path";
 import { anthropic } from "@ai-sdk/anthropic";
 import { createTypeScriptTools } from "@rivet-dev/agentos-typescript";
-import { nodeModulesMount } from "@rivet-dev/agentos-core";
+import { AgentOs, nodeModulesMount } from "@rivet-dev/agentos-core";
 import { generateText, stepCountIs, tool } from "ai";
-import {
-	allowAll,
-	createInMemoryFileSystem,
-	createKernel,
-	createNodeDriver,
-	createNodeRuntime,
-	createNodeRuntimeDriverFactory,
-} from "@rivet-dev/agentos-core/internal/runtime-compat";
 import { z } from "zod";
 
-const filesystem = createInMemoryFileSystem();
-const systemDriver = createNodeDriver({
-	filesystem,
+const vm = await AgentOs.create({
+	defaultSoftware: false,
 	mounts: [nodeModulesMount(join(process.cwd(), "node_modules"))],
-	permissions: allowAll,
+	limits: { jsRuntime: { v8HeapLimitMb: 256, cpuTimeLimitMs: 5_000 } },
 });
-const runtimeDriverFactory = createNodeRuntimeDriverFactory();
 const ts = createTypeScriptTools({
-	systemDriver,
-	runtimeDriverFactory,
-	memoryLimit: 256,
-	cpuTimeLimitMs: 5000,
+	agentOs: vm,
 });
 
-const { text } = await generateText({
-	model: anthropic("claude-sonnet-4-6"),
-	prompt:
-		"Write TypeScript that calculates the first 20 fibonacci numbers. Assign the result to module.exports.",
-	stopWhen: stepCountIs(5),
-	tools: {
-		execute_typescript: tool({
-			description:
-				"Type-check TypeScript in a sandbox, compile it, then run the emitted JavaScript in a sandbox. Return diagnostics when validation fails.",
-			inputSchema: z.object({ code: z.string() }),
-			execute: async ({ code }) => {
+try {
+	const { text } = await generateText({
+		model: anthropic("claude-sonnet-4-6"),
+		prompt:
+			"Write TypeScript that calculates the first 20 fibonacci numbers. Assign the result to module.exports.",
+		stopWhen: stepCountIs(5),
+		tools: {
+			execute_typescript: tool({
+				description:
+					"Type-check TypeScript in a VM, compile it, then run the emitted JavaScript in the same VM. Return diagnostics when validation fails.",
+				inputSchema: z.object({ code: z.string() }),
+				execute: async ({ code }) => {
 				const typecheck = await ts.typecheckSource({
 					sourceText: code,
 					filePath: "/root/generated.ts",
@@ -73,46 +61,23 @@ const { text } = await generateText({
 				}
 
 				try {
-					await filesystem.mkdir("/root", { recursive: true });
-					await filesystem.writeFile("/root/generated.js", compiled.outputText);
-					const kernel = createKernel({
-						filesystem,
-						permissions: allowAll,
-						syncFilesystemOnDispose: false,
-					});
-					let stdout = "";
-					let stderr = "";
-					try {
-						await kernel.mount(createNodeRuntime());
-						const child = kernel.spawn(
-							"node",
-							[
-								"-e",
-								"const exportsValue = require('/root/generated.js'); console.log(JSON.stringify(exportsValue));",
-							],
-							{
-								onStdout: (chunk) => {
-									stdout += Buffer.from(chunk).toString("utf8");
-								},
-								onStderr: (chunk) => {
-									stderr += Buffer.from(chunk).toString("utf8");
-								},
-							},
+					await vm.mkdir("/root", { recursive: true });
+					await vm.writeFile("/root/generated.js", compiled.outputText);
+					const executed = await vm.execArgv("node", [
+						"-e",
+						"const exportsValue = require('/root/generated.js'); console.log(JSON.stringify(exportsValue));",
+					]);
+					if (executed.exitCode !== 0) {
+						throw new Error(
+							executed.stderr.trim() ||
+								`VM JavaScript exited ${executed.exitCode}`,
 						);
-						const exitCode = await child.wait();
-						if (exitCode !== 0) {
-							throw new Error(
-								stderr.trim() || `sandboxed JavaScript exited ${exitCode}`,
-							);
-						}
-					} finally {
-						await kernel.dispose();
 					}
 
 					return {
 						ok: true,
 						stage: "run",
-						exports: JSON.parse(stdout),
+						exports: JSON.parse(executed.stdout),
 					};
 				} catch (error) {
 					return {
@@ -122,9 +87,12 @@ const { text } = await generateText({
 							error instanceof Error ? error.message : String(error),
 					};
 				}
-			},
-		}),
-	},
-});
+				},
+			}),
+		},
+	});
 
-console.log(text);
+	console.log(text);
+} finally {
+	await vm.dispose();
+}

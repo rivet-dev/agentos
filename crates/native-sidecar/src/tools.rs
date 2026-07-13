@@ -10,10 +10,9 @@ use agentos_native_sidecar_core::permissions::{
     allow_all_policy, deny_all_policy, evaluate_permissions_policy,
 };
 use agentos_native_sidecar_core::tools::{
-    ensure_command_aliases_available as core_ensure_command_aliases_available,
     ensure_toolkit_name_available as core_ensure_toolkit_name_available,
-    ensure_toolkit_registry_capacity as core_ensure_toolkit_registry_capacity,
-    registered_tool_command_names,
+    ensure_toolkit_registry_capacity as core_ensure_toolkit_registry_capacity, is_registry_command,
+    registered_tool_command_names, toolkit_name_for_command,
     validate_toolkit_registration as core_validate_toolkit_registration, ToolRegistrationError,
     DEFAULT_TOOL_TIMEOUT_MS,
 };
@@ -33,6 +32,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug)]
 pub(crate) enum ToolCommandResolution {
+    Output(Value),
     Invoke {
         request: HostCallbackRequest,
         timeout: Duration,
@@ -77,7 +77,6 @@ where
     let registration_result = (|| -> Result<_, SidecarError> {
         let vm = sidecar.vms.get_mut(&vm_id).expect("owned VM should exist");
         ensure_toolkit_name_available(&vm.toolkits, &registered_name)?;
-        ensure_command_aliases_available(&vm.toolkits, &payload)?;
         ensure_toolkit_registry_capacity(&vm.toolkits, &payload)?;
         vm.toolkits.insert(registered_name.clone(), payload);
         refresh_tool_registry(vm)?;
@@ -171,26 +170,13 @@ pub(crate) fn normalized_tool_command_name(command: &str) -> Option<String> {
 fn identify_tool_command(vm: &VmState, command: &str) -> Option<ToolCommand> {
     let command_name = tool_command_name_from_specifier(command).unwrap_or(command);
 
-    if vm.toolkits.values().any(|toolkit| {
-        toolkit
-            .registry_command_aliases
-            .iter()
-            .any(|alias| alias == command_name)
-    }) {
+    if !vm.toolkits.is_empty() && is_registry_command(command_name) {
         return Some(ToolCommand::Registry(command_name.to_owned()));
     }
 
-    vm.toolkits
-        .iter()
-        .find(|(_toolkit_name, toolkit)| {
-            toolkit
-                .command_aliases
-                .iter()
-                .any(|alias| alias == command_name)
-        })
-        .map(|(toolkit_name, _toolkit)| ToolCommand::Toolkit {
-            toolkit_name: toolkit_name.to_owned(),
-        })
+    toolkit_name_for_command(&vm.toolkits, command_name).map(|toolkit_name| ToolCommand::Toolkit {
+        toolkit_name: toolkit_name.to_owned(),
+    })
 }
 
 fn tool_command_name_from_specifier(command: &str) -> Option<&str> {
@@ -214,17 +200,52 @@ fn tool_command_name_from_specifier(command: &str) -> Option<&str> {
 
 fn resolve_registry_command(
     vm: &mut VmState,
-    command_name: &str,
+    _command_name: &str,
     args: &[String],
     guest_cwd: &str,
 ) -> Result<ToolCommandResolution, SidecarError> {
-    let timeout_ms =
-        command_callback_timeout_ms(vm, &ToolCommand::Registry(command_name.to_owned()));
-    Ok(build_command_callback_resolution(
-        command_name,
-        build_registry_command_input(command_name, args, guest_cwd),
-        timeout_ms,
-    ))
+    let Some(subcommand) = args.first() else {
+        return Ok(ToolCommandResolution::Output(registry_usage_payload()));
+    };
+    if is_help_flag(subcommand) {
+        return Ok(ToolCommandResolution::Output(registry_usage_payload()));
+    }
+    if subcommand == "list-tools" {
+        return Ok(match args.get(1) {
+            Some(toolkit_name) => match describe_toolkit_payload(&vm.toolkits, toolkit_name) {
+                Ok(payload) => ToolCommandResolution::Output(payload),
+                Err(message) => ToolCommandResolution::Failure(message),
+            },
+            None => ToolCommandResolution::Output(list_toolkits_payload(&vm.toolkits)),
+        });
+    }
+
+    let Some(toolkit) = vm.toolkits.get(subcommand) else {
+        return Ok(ToolCommandResolution::Failure(format!(
+            "No toolkit \"{subcommand}\". Available: {}",
+            toolkit_names(&vm.toolkits)
+        )));
+    };
+    let Some(tool_name) = args.get(1) else {
+        return Ok(ToolCommandResolution::Output(
+            describe_toolkit_payload(&vm.toolkits, subcommand)
+                .expect("known toolkit should be describable"),
+        ));
+    };
+    if is_help_flag(tool_name) {
+        return Ok(ToolCommandResolution::Output(
+            describe_toolkit_payload(&vm.toolkits, subcommand)
+                .expect("known toolkit should be describable"),
+        ));
+    }
+    if args.get(2).is_some_and(|value| is_help_flag(value)) {
+        return Ok(match describe_tool_payload(toolkit, tool_name) {
+            Ok(payload) => ToolCommandResolution::Output(payload),
+            Err(message) => ToolCommandResolution::Failure(message),
+        });
+    }
+
+    resolve_toolkit_command(vm, subcommand, &args[1..], guest_cwd)
 }
 
 fn resolve_toolkit_command(
@@ -303,15 +324,6 @@ fn build_command_callback_resolution(
         },
         timeout: Duration::from_millis(timeout_ms),
     }
-}
-
-fn build_registry_command_input(command_name: &str, args: &[String], guest_cwd: &str) -> Value {
-    json!({
-        "type": "command",
-        "command": command_name,
-        "args": args,
-        "cwd": guest_cwd,
-    })
 }
 
 fn parse_toolkit_command_input(
@@ -550,31 +562,283 @@ fn validate_tool_input_value_type(value: &Value, schema: &Value, path: &str) -> 
     }
 }
 
-fn command_callback_timeout_ms(vm: &VmState, kind: &ToolCommand) -> u64 {
-    let callbacks = match kind {
-        ToolCommand::Registry(command_name) => vm
-            .toolkits
-            .values()
-            .filter(|toolkit| {
-                toolkit
-                    .registry_command_aliases
-                    .iter()
-                    .any(|alias| alias == command_name)
-            })
-            .flat_map(|toolkit| toolkit.callbacks.values())
-            .collect::<Vec<_>>(),
-        ToolCommand::Toolkit { toolkit_name, .. } => vm
-            .toolkits
-            .get(toolkit_name)
-            .map(|toolkit| toolkit.callbacks.values().collect::<Vec<_>>())
-            .unwrap_or_default(),
-    };
+fn is_help_flag(value: &str) -> bool {
+    value == "--help" || value == "-h"
+}
 
-    callbacks
-        .into_iter()
-        .filter_map(|callback| callback.timeout_ms)
-        .max()
-        .unwrap_or(DEFAULT_TOOL_TIMEOUT_MS)
+fn registry_usage_payload() -> Value {
+    json!({
+        "usage": "agentos <command>: list-tools [toolkit], <toolkit> --help, or <toolkit> <tool> ..."
+    })
+}
+
+fn toolkit_names(toolkits: &BTreeMap<String, RegisterHostCallbacksRequest>) -> String {
+    toolkits.keys().cloned().collect::<Vec<_>>().join(", ")
+}
+
+fn tool_names(toolkit: &RegisterHostCallbacksRequest) -> String {
+    let mut names = toolkit.callbacks.keys().cloned().collect::<Vec<_>>();
+    names.sort();
+    names.join(", ")
+}
+
+fn list_toolkits_payload(toolkits: &BTreeMap<String, RegisterHostCallbacksRequest>) -> Value {
+    json!({
+        "toolkits": toolkits
+            .iter()
+            .map(|(name, toolkit)| {
+                let mut tools = toolkit.callbacks.keys().cloned().collect::<Vec<_>>();
+                tools.sort();
+                json!({
+                    "name": name,
+                    "description": toolkit.description,
+                    "tools": tools,
+                })
+            })
+            .collect::<Vec<_>>()
+    })
+}
+
+fn describe_toolkit_payload(
+    toolkits: &BTreeMap<String, RegisterHostCallbacksRequest>,
+    toolkit_name: &str,
+) -> Result<Value, String> {
+    let Some(toolkit) = toolkits.get(toolkit_name) else {
+        return Err(format!(
+            "No toolkit \"{toolkit_name}\". Available: {}",
+            toolkit_names(toolkits)
+        ));
+    };
+    let tools = toolkit
+        .callbacks
+        .iter()
+        .map(|(name, tool)| {
+            let schema = serde_json::from_str::<Value>(&tool.input_schema).map_err(|error| {
+                format!(
+                    "registered tool {toolkit_name}:{name} has an invalid input schema: {error}"
+                )
+            })?;
+            Ok((
+                name.clone(),
+                json!({
+                    "description": tool.description,
+                    "flags": describe_tool_flags_payload(&schema),
+                }),
+            ))
+        })
+        .collect::<Result<Map<_, _>, String>>()?;
+    Ok(json!({
+        "name": toolkit_name,
+        "description": toolkit.description,
+        "tools": tools,
+    }))
+}
+
+fn describe_tool_payload(
+    toolkit: &RegisterHostCallbacksRequest,
+    tool_name: &str,
+) -> Result<Value, String> {
+    let Some(tool) = toolkit.callbacks.get(tool_name) else {
+        return Err(format!(
+            "No tool \"{tool_name}\" in toolkit \"{}\". Available: {}",
+            toolkit.name,
+            tool_names(toolkit)
+        ));
+    };
+    let schema = serde_json::from_str::<Value>(&tool.input_schema).map_err(|error| {
+        format!(
+            "registered tool {}:{tool_name} has an invalid input schema: {error}",
+            toolkit.name
+        )
+    })?;
+    let examples = tool
+        .examples
+        .iter()
+        .map(|example| {
+            let input = serde_json::from_str::<Value>(&example.input).map_err(|error| {
+                format!(
+                    "registered tool {}:{tool_name} has an invalid example input: {error}",
+                    toolkit.name
+                )
+            })?;
+            Ok(json!({
+                "description": example.description,
+                "input": input,
+            }))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(json!({
+        "toolkit": toolkit.name,
+        "tool": tool_name,
+        "description": tool.description,
+        "flags": describe_tool_flags_payload(&schema),
+        "examples": examples,
+    }))
+}
+
+fn describe_tool_flags_payload(schema: &Value) -> Vec<Value> {
+    let properties = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let required = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+    properties
+        .iter()
+        .map(|(field_name, field_schema)| {
+            json!({
+                "name": format!("--{}", camel_to_kebab(field_name)),
+                "type": describe_tool_flag_type(field_schema),
+                "required": required.contains(field_name.as_str()),
+            })
+        })
+        .collect()
+}
+
+fn describe_tool_flag_type(schema: &Value) -> String {
+    match json_schema_type(schema) {
+        Some("array") => format!(
+            "{}[]",
+            schema
+                .get("items")
+                .and_then(json_schema_type)
+                .unwrap_or("string")
+        ),
+        Some("string") => schema
+            .get("enum")
+            .and_then(Value::as_array)
+            .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+            .filter(|values| !values.is_empty())
+            .map(|values| values.join("|"))
+            .unwrap_or_else(|| String::from("string")),
+        Some(other) => other.to_owned(),
+        None => String::from("string"),
+    }
+}
+
+pub(crate) fn build_host_tool_reference(
+    toolkits: &BTreeMap<String, RegisterHostCallbacksRequest>,
+) -> Result<String, SidecarError> {
+    if toolkits.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut lines = vec![
+        String::from("## Available Host Tools"),
+        String::new(),
+        String::from("Run `agentos list-tools` to see all available tools."),
+        String::new(),
+    ];
+
+    for (toolkit_name, toolkit) in toolkits {
+        lines.push(format!("### {toolkit_name}"));
+        lines.push(String::new());
+        lines.push(toolkit.description.clone());
+        lines.push(String::new());
+
+        for (tool_name, tool) in &toolkit.callbacks {
+            let schema = serde_json::from_str::<Value>(&tool.input_schema).map_err(|error| {
+                SidecarError::InvalidState(format!(
+                    "registered tool {toolkit_name}:{tool_name} has an invalid input schema: {error}"
+                ))
+            })?;
+            let signature = describe_tool_flags_payload(&schema)
+                .iter()
+                .filter_map(|flag| {
+                    let name = flag.get("name")?.as_str()?;
+                    let value_type = flag.get("type")?.as_str()?;
+                    let required = flag.get("required")?.as_bool()?;
+                    Some(if required {
+                        format!("{name} <{value_type}>")
+                    } else {
+                        format!("[{name} <{value_type}>]")
+                    })
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            let suffix = (!signature.is_empty())
+                .then(|| format!(" {signature}"))
+                .unwrap_or_default();
+            lines.push(format!(
+                "- `agentos-{toolkit_name} {tool_name}{suffix}` — {}",
+                tool.description
+            ));
+        }
+        lines.push(String::new());
+
+        let tools_with_examples = toolkit
+            .callbacks
+            .iter()
+            .filter(|(_, tool)| !tool.examples.is_empty())
+            .collect::<Vec<_>>();
+        if !tools_with_examples.is_empty() {
+            lines.push(String::from("**Examples:**"));
+            lines.push(String::new());
+            for (tool_name, tool) in tools_with_examples {
+                for example in &tool.examples {
+                    let input = serde_json::from_str::<Value>(&example.input).map_err(|error| {
+                        SidecarError::InvalidState(format!(
+                            "registered tool {toolkit_name}:{tool_name} has an invalid example input: {error}"
+                        ))
+                    })?;
+                    let arguments = tool_input_to_flags(&input);
+                    let suffix = (!arguments.is_empty())
+                        .then(|| format!(" {arguments}"))
+                        .unwrap_or_default();
+                    lines.push(format!(
+                        "- {}: `agentos-{toolkit_name} {tool_name}{suffix}`",
+                        example.description
+                    ));
+                }
+            }
+            lines.push(String::new());
+        }
+
+        lines.push(format!(
+            "Run `agentos-{toolkit_name} <tool> --help` for details."
+        ));
+        lines.push(String::new());
+    }
+
+    Ok(lines.join("\n"))
+}
+
+fn tool_input_to_flags(input: &Value) -> String {
+    let Some(input) = input.as_object() else {
+        return String::new();
+    };
+    input
+        .iter()
+        .flat_map(|(key, value)| {
+            let flag = format!("--{}", camel_to_kebab(key));
+            match value {
+                Value::Bool(true) => vec![flag],
+                Value::Bool(false) => vec![format!("--no-{}", camel_to_kebab(key))],
+                Value::Array(items) => items
+                    .iter()
+                    .map(|item| format!("{flag} {}", tool_cli_string(item)))
+                    .collect(),
+                _ => vec![format!("{flag} {}", tool_cli_string(value))],
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn tool_cli_string(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        other => other.to_string(),
+    }
 }
 
 fn ensure_toolkit_name_available(
@@ -582,13 +846,6 @@ fn ensure_toolkit_name_available(
     toolkit_name: &str,
 ) -> Result<(), SidecarError> {
     core_ensure_toolkit_name_available(toolkits, toolkit_name).map_err(tool_registration_error)
-}
-
-fn ensure_command_aliases_available(
-    toolkits: &BTreeMap<String, RegisterHostCallbacksRequest>,
-    payload: &RegisterHostCallbacksRequest,
-) -> Result<(), SidecarError> {
-    core_ensure_command_aliases_available(toolkits, payload).map_err(tool_registration_error)
 }
 
 fn ensure_toolkit_registry_capacity(
@@ -670,10 +927,8 @@ mod tests {
         input_schema: Value,
     ) -> RegisterHostCallbacksRequest {
         RegisterHostCallbacksRequest {
-            name: toolkit_name.clone(),
+            name: toolkit_name,
             description: toolkit_description,
-            command_aliases: vec![format!("agentos-{toolkit_name}")],
-            registry_command_aliases: vec![String::from("agentos")],
             callbacks: std::collections::HashMap::from([(
                 tool_name,
                 RegisteredHostCallbackDefinition {
@@ -699,8 +954,6 @@ mod tests {
         let too_many_tools = RegisterHostCallbacksRequest {
             name: String::from("browser"),
             description: String::from("Browser automation"),
-            command_aliases: vec![String::from("agentos-browser")],
-            registry_command_aliases: vec![String::from("agentos")],
             callbacks: (0..=MAX_TOOLS_PER_TOOLKIT)
                 .map(|index| {
                     (
@@ -750,44 +1003,26 @@ mod tests {
     }
 
     #[test]
-    fn validates_host_callback_command_aliases() {
-        let mut payload = toolkit_with_descriptions(
+    fn derives_host_callback_command_names() {
+        let payload = toolkit_with_descriptions(
             String::from("Browser automation"),
             String::from("Take a screenshot"),
         );
-        payload.command_aliases = vec![String::from("agentos-browser"), String::from("bad/path")];
-        assert!(validate_toolkit_registration(&payload)
-            .expect_err("slashes should be rejected")
-            .to_string()
-            .contains("invalid host callback command alias"));
-
-        payload.command_aliases = vec![String::from("agentos-browser")];
-        payload.registry_command_aliases = vec![String::from("agentos-browser")];
-        assert!(validate_toolkit_registration(&payload)
-            .expect_err("ambiguous aliases should be rejected")
-            .to_string()
-            .contains("must not also be a registry command alias"));
-
-        payload.registry_command_aliases = vec![String::from("agentos")];
-        validate_toolkit_registration(&payload).expect("distinct aliases should pass");
-
-        let existing = BTreeMap::from([(String::from("browser"), payload.clone())]);
-        let mut next = toolkit_with_schema(
+        let next = toolkit_with_schema(
             String::from("files"),
             String::from("File utilities"),
             String::from("read"),
             String::from("Read a file"),
             screenshot_schema(),
         );
-        next.command_aliases = vec![String::from("agentos-browser")];
-        assert!(ensure_command_aliases_available(&existing, &next)
-            .expect_err("direct command aliases should be unique")
-            .to_string()
-            .contains("already registered"));
-
-        next.command_aliases = vec![String::from("agentos-files")];
-        next.registry_command_aliases = vec![String::from("agentos")];
-        ensure_command_aliases_available(&existing, &next).expect("registry aliases can be shared");
+        let registered = BTreeMap::from([
+            (String::from("browser"), payload),
+            (String::from("files"), next),
+        ]);
+        assert_eq!(
+            registered_tool_command_names(&registered),
+            vec!["agentos", "agentos-browser", "agentos-files"]
+        );
     }
 
     #[test]
@@ -825,6 +1060,61 @@ mod tests {
             .expect_err("missing required flag");
 
         assert_eq!(error, "Missing required flag: --url");
+    }
+
+    #[test]
+    fn registry_metadata_payloads_are_sidecar_owned() {
+        let mut toolkit = toolkit_with_descriptions(
+            String::from("Browser automation"),
+            String::from("Take a screenshot"),
+        );
+        toolkit
+            .callbacks
+            .get_mut("screenshot")
+            .expect("screenshot tool")
+            .examples = vec![crate::protocol::RegisteredHostCallbackExample {
+            description: String::from("Capture the home page"),
+            input: json!({ "url": "https://example.com" }).to_string(),
+        }];
+        let toolkits = BTreeMap::from([(String::from("browser"), toolkit.clone())]);
+
+        assert_eq!(
+            list_toolkits_payload(&toolkits),
+            json!({
+                "toolkits": [{
+                    "name": "browser",
+                    "description": "Browser automation",
+                    "tools": ["screenshot"],
+                }]
+            })
+        );
+
+        let described =
+            describe_toolkit_payload(&toolkits, "browser").expect("describe registered toolkit");
+        assert!(described["tools"]["screenshot"]["flags"]
+            .as_array()
+            .expect("tool flags")
+            .iter()
+            .any(|flag| flag["name"] == json!("--url") && flag["required"] == json!(true)));
+        let tool = describe_tool_payload(&toolkit, "screenshot").expect("describe registered tool");
+        assert_eq!(
+            tool["examples"][0]["input"]["url"],
+            json!("https://example.com")
+        );
+        let reference = build_host_tool_reference(&toolkits).expect("build tool reference");
+        assert!(reference.contains("## Available Host Tools"));
+        assert!(reference.contains("`agentos-browser screenshot"));
+        assert!(reference.contains("--url <string>"));
+        assert!(reference.contains("[--full-page <boolean>]"));
+        assert!(reference.contains(
+            "Capture the home page: `agentos-browser screenshot --url https://example.com`"
+        ));
+        assert_eq!(
+            registry_usage_payload()["usage"],
+            json!(
+            "agentos <command>: list-tools [toolkit], <toolkit> --help, or <toolkit> <tool> ..."
+        )
+        );
     }
 
     #[test]

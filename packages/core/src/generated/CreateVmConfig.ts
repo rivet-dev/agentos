@@ -8,9 +8,24 @@ import type { VmLimitsConfig } from "./VmLimitsConfig.js";
 import type { VmListenPolicyConfig } from "./VmListenPolicyConfig.js";
 
 /**
- * Canonical Rust-side VM config. Unknown fields must stay rejected here and in
- * the TS preflight schema at
- * `packages/core/src/node-runtime-options-schema.ts`; update both when a
- * public `NodeRuntime.create(...)` option changes the generated VM config.
+ * Canonical Rust-side VM config. Unknown fields must stay rejected here and by
+ * TypeScript thin-client option validation. Update both when an explicit wire
+ * option changes the generated VM config.
  */
-export type CreateVmConfig = { cwd?: string, env: Record<string, string>, rootFilesystem: RootFilesystemConfig, permissions?: PermissionsPolicy, limits?: VmLimitsConfig, dns?: VmDnsConfig, nativeRoot?: NativeRootFilesystemConfig, listen?: VmListenPolicyConfig, loopbackExemptPorts: Array<number>, jsRuntime?: JsRuntimeConfig, bootstrapCommands?: Array<string>, };
+export type CreateVmConfig = {
+	cwd?: string;
+	env?: Record<string, string>;
+	rootFilesystem?: RootFilesystemConfig;
+	permissions?: PermissionsPolicy;
+	limits?: VmLimitsConfig;
+	dns?: VmDnsConfig;
+	nativeRoot?: NativeRootFilesystemConfig;
+	listen?: VmListenPolicyConfig;
+	loopbackExemptPorts?: Array<number>;
+	jsRuntime?: JsRuntimeConfig;
+	/**
+	 * VM-scoped instructions applied to every ACP session. Session-specific
+	 * instructions are combined with these by the ACP sidecar adapter.
+	 */
+	agentAdditionalInstructions?: string;
+};

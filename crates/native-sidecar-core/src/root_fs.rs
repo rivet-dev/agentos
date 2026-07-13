@@ -57,15 +57,15 @@ fn root_filesystem_descriptor_from_config_with_import_limits(
     import_limits: &RootFilesystemImportLimits,
 ) -> Result<KernelRootFilesystemDescriptor, SidecarCoreError> {
     Ok(KernelRootFilesystemDescriptor {
-        mode: root_filesystem_mode_from_config(config.mode),
-        disable_default_base_layer: config.disable_default_base_layer,
+        mode: root_filesystem_mode_from_config(config.effective_mode()),
+        disable_default_base_layer: config.effective_disable_default_base_layer(),
         lowers: config
-            .lowers
+            .effective_lowers()
             .iter()
             .map(|lower| root_filesystem_lower_from_config(lower, import_limits))
             .collect::<Result<Vec<_>, _>>()?,
         bootstrap_entries: config
-            .bootstrap_entries
+            .effective_bootstrap_entries()
             .iter()
             .map(root_filesystem_entry_from_config)
             .collect::<Result<Vec<_>, _>>()?,
@@ -76,18 +76,18 @@ pub fn root_filesystem_protocol_descriptor_from_config(
     config: &vm_config::RootFilesystemConfig,
 ) -> ProtocolRootFilesystemDescriptor {
     ProtocolRootFilesystemDescriptor {
-        mode: match config.mode {
+        mode: match config.effective_mode() {
             vm_config::RootFilesystemMode::Ephemeral => ProtocolRootFilesystemMode::Ephemeral,
             vm_config::RootFilesystemMode::ReadOnly => ProtocolRootFilesystemMode::ReadOnly,
         },
-        disable_default_base_layer: config.disable_default_base_layer,
+        disable_default_base_layer: config.effective_disable_default_base_layer(),
         lowers: config
-            .lowers
+            .effective_lowers()
             .iter()
             .map(root_filesystem_protocol_lower_from_config)
             .collect(),
         bootstrap_entries: config
-            .bootstrap_entries
+            .effective_bootstrap_entries()
             .iter()
             .map(root_filesystem_protocol_entry_from_config)
             .collect(),
@@ -109,7 +109,7 @@ pub fn build_root_filesystem_with_loaded_snapshot(
     let import_limits = RootFilesystemImportLimits::from_resource_limits(limits);
     let descriptor = if let Some(restored) = supported_loaded_snapshot(loaded_snapshot) {
         KernelRootFilesystemDescriptor {
-            mode: root_filesystem_mode_from_config(config.mode),
+            mode: root_filesystem_mode_from_config(config.effective_mode()),
             disable_default_base_layer: true,
             lowers: vec![
                 decode_snapshot_with_import_limits(&restored.bytes, &import_limits).map_err(
@@ -119,7 +119,7 @@ pub fn build_root_filesystem_with_loaded_snapshot(
                 )?,
             ],
             bootstrap_entries: config
-                .bootstrap_entries
+                .effective_bootstrap_entries()
                 .iter()
                 .map(root_filesystem_entry_from_config)
                 .collect::<Result<Vec<_>, _>>()?,
@@ -159,8 +159,10 @@ pub fn root_filesystem_mode_from_config(
     }
 }
 
-pub fn protocol_root_filesystem_mode(mode: ProtocolRootFilesystemMode) -> KernelRootFilesystemMode {
-    match mode {
+pub fn protocol_root_filesystem_mode(
+    mode: Option<ProtocolRootFilesystemMode>,
+) -> KernelRootFilesystemMode {
+    match mode.unwrap_or(ProtocolRootFilesystemMode::Ephemeral) {
         ProtocolRootFilesystemMode::Ephemeral => KernelRootFilesystemMode::Ephemeral,
         ProtocolRootFilesystemMode::ReadOnly => KernelRootFilesystemMode::ReadOnly,
     }
@@ -453,11 +455,27 @@ mod tests {
     use agentos_kernel::vfs::VirtualFileSystem;
 
     #[test]
+    fn sidecar_resolves_omitted_root_filesystem_defaults() {
+        let config = vm_config::RootFilesystemConfig::default();
+        let kernel = root_filesystem_descriptor_from_config(&config).expect("kernel descriptor");
+        assert_eq!(kernel.mode, KernelRootFilesystemMode::Ephemeral);
+        assert!(!kernel.disable_default_base_layer);
+        assert!(kernel.lowers.is_empty());
+        assert!(kernel.bootstrap_entries.is_empty());
+
+        let protocol = root_filesystem_protocol_descriptor_from_config(&config);
+        assert_eq!(protocol.mode, ProtocolRootFilesystemMode::Ephemeral);
+        assert!(!protocol.disable_default_base_layer);
+        assert!(protocol.lowers.is_empty());
+        assert!(protocol.bootstrap_entries.is_empty());
+    }
+
+    #[test]
     fn builds_root_filesystem_from_snapshot_lower_and_bootstrap_upper() {
         let mut root = build_root_filesystem(
             &vm_config::RootFilesystemConfig {
-                disable_default_base_layer: true,
-                lowers: vec![vm_config::RootFilesystemLowerDescriptor::Snapshot {
+                disable_default_base_layer: Some(true),
+                lowers: Some(vec![vm_config::RootFilesystemLowerDescriptor::Snapshot {
                     entries: vec![vm_config::RootFilesystemEntry {
                         path: String::from("/workspace/value.txt"),
                         kind: vm_config::RootFilesystemEntryKind::File,
@@ -469,8 +487,8 @@ mod tests {
                         target: None,
                         executable: false,
                     }],
-                }],
-                bootstrap_entries: vec![vm_config::RootFilesystemEntry {
+                }]),
+                bootstrap_entries: Some(vec![vm_config::RootFilesystemEntry {
                     path: String::from("/workspace/value.txt"),
                     kind: vm_config::RootFilesystemEntryKind::File,
                     mode: None,
@@ -480,7 +498,7 @@ mod tests {
                     encoding: Some(vm_config::RootFilesystemEntryEncoding::Utf8),
                     target: None,
                     executable: false,
-                }],
+                }]),
                 ..vm_config::RootFilesystemConfig::default()
             },
             &ResourceLimits::default(),
@@ -498,8 +516,8 @@ mod tests {
     fn decodes_base64_root_filesystem_entries() {
         let mut root = build_root_filesystem(
             &vm_config::RootFilesystemConfig {
-                disable_default_base_layer: true,
-                bootstrap_entries: vec![vm_config::RootFilesystemEntry {
+                disable_default_base_layer: Some(true),
+                bootstrap_entries: Some(vec![vm_config::RootFilesystemEntry {
                     path: String::from("/bin/tool"),
                     kind: vm_config::RootFilesystemEntryKind::File,
                     mode: None,
@@ -509,7 +527,7 @@ mod tests {
                     encoding: Some(vm_config::RootFilesystemEntryEncoding::Base64),
                     target: None,
                     executable: true,
-                }],
+                }]),
                 ..vm_config::RootFilesystemConfig::default()
             },
             &ResourceLimits::default(),
@@ -569,9 +587,9 @@ mod tests {
     fn builds_protocol_descriptor_from_config_without_normalizing_optional_fields() {
         let descriptor =
             root_filesystem_protocol_descriptor_from_config(&vm_config::RootFilesystemConfig {
-                mode: vm_config::RootFilesystemMode::ReadOnly,
-                disable_default_base_layer: true,
-                lowers: vec![
+                mode: Some(vm_config::RootFilesystemMode::ReadOnly),
+                disable_default_base_layer: Some(true),
+                lowers: Some(vec![
                     vm_config::RootFilesystemLowerDescriptor::BundledBaseFilesystem,
                     vm_config::RootFilesystemLowerDescriptor::Snapshot {
                         entries: vec![vm_config::RootFilesystemEntry {
@@ -586,8 +604,8 @@ mod tests {
                             executable: false,
                         }],
                     },
-                ],
-                bootstrap_entries: vec![vm_config::RootFilesystemEntry {
+                ]),
+                bootstrap_entries: Some(vec![vm_config::RootFilesystemEntry {
                     path: String::from("/bin/tool"),
                     kind: vm_config::RootFilesystemEntryKind::File,
                     mode: Some(0o700),
@@ -597,7 +615,7 @@ mod tests {
                     encoding: Some(vm_config::RootFilesystemEntryEncoding::Base64),
                     target: None,
                     executable: true,
-                }],
+                }]),
             });
 
         assert_eq!(descriptor.mode, ProtocolRootFilesystemMode::ReadOnly);
@@ -641,12 +659,16 @@ mod tests {
             KernelRootFilesystemMode::ReadOnly
         );
         assert_eq!(
-            protocol_root_filesystem_mode(ProtocolRootFilesystemMode::Ephemeral),
+            protocol_root_filesystem_mode(Some(ProtocolRootFilesystemMode::Ephemeral)),
             KernelRootFilesystemMode::Ephemeral
         );
         assert_eq!(
-            protocol_root_filesystem_mode(ProtocolRootFilesystemMode::ReadOnly),
+            protocol_root_filesystem_mode(Some(ProtocolRootFilesystemMode::ReadOnly)),
             KernelRootFilesystemMode::ReadOnly
+        );
+        assert_eq!(
+            protocol_root_filesystem_mode(None),
+            KernelRootFilesystemMode::Ephemeral
         );
     }
 
@@ -665,8 +687,8 @@ mod tests {
         };
         let mut root = build_root_filesystem_with_loaded_snapshot(
             &vm_config::RootFilesystemConfig {
-                disable_default_base_layer: true,
-                lowers: vec![vm_config::RootFilesystemLowerDescriptor::Snapshot {
+                disable_default_base_layer: Some(true),
+                lowers: Some(vec![vm_config::RootFilesystemLowerDescriptor::Snapshot {
                     entries: vec![vm_config::RootFilesystemEntry {
                         path: String::from("/workspace/ignored-lower.txt"),
                         kind: vm_config::RootFilesystemEntryKind::File,
@@ -678,8 +700,8 @@ mod tests {
                         target: None,
                         executable: false,
                     }],
-                }],
-                bootstrap_entries: vec![vm_config::RootFilesystemEntry {
+                }]),
+                bootstrap_entries: Some(vec![vm_config::RootFilesystemEntry {
                     path: String::from("/workspace/bootstrap.txt"),
                     kind: vm_config::RootFilesystemEntryKind::File,
                     mode: None,
@@ -689,7 +711,7 @@ mod tests {
                     encoding: Some(vm_config::RootFilesystemEntryEncoding::Utf8),
                     target: None,
                     executable: false,
-                }],
+                }]),
                 ..vm_config::RootFilesystemConfig::default()
             },
             Some(&loaded_snapshot),

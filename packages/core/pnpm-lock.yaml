@@ -17,9 +17,6 @@ importers:
       better-sqlite3:
         specifier: ^12.8.0
         version: 12.8.0
-      croner:
-        specifier: ^10.0.1
-        version: 10.0.1
       esbuild:
         specifier: ^0.27.4
         version: 0.27.7
@@ -1600,10 +1597,6 @@ packages:
 
   create-require@1.1.1:
     resolution: {integrity: sha512-dcKFX3jn0MpIaXjisoRvexIJVEKzaq7z2rZKxf+MSr9TkdmHmsU4m2lcLojrj/FHl8mk5VxMmYA+ftRkP/3oKQ==}
-
-  croner@10.0.1:
-    resolution: {integrity: sha512-ixNtAJndqh173VQ4KodSdJEI6nuioBWI0V1ITNKhZZsO0pEMoDxz539T4FTTbSZ/xIOSuDnzxLVRqBVSvPNE2g==}
-    engines: {node: '>=18.0'}
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -4741,8 +4734,6 @@ snapshots:
       sha.js: 2.4.12
 
   create-require@1.1.1: {}
-
-  croner@10.0.1: {}
 
   cross-spawn@7.0.6:
     dependencies:

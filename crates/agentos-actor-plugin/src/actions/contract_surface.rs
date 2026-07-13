@@ -78,17 +78,6 @@ pub const ACTION_CONTRACTS: &[ActionContract] = &[
             "deleteFile: (c: Ctx, path: string, options?: { recursive?: boolean }) => Promise<void>;",
     },
     ActionContract {
-        name: "writeFiles",
-        reply_shape: ReplyShape::Array,
-        ts_signature:
-            "writeFiles: ( c: Ctx, entries: { path: string; content: string | Uint8Array }[], ) => Promise<WriteFileResult[]>;",
-    },
-    ActionContract {
-        name: "readFiles",
-        reply_shape: ReplyShape::Array,
-        ts_signature: "readFiles: (c: Ctx, paths: string[]) => Promise<ReadFileResult[]>;",
-    },
-    ActionContract {
         name: "readdirRecursive",
         reply_shape: ReplyShape::Array,
         ts_signature: "readdirRecursive: (c: Ctx, path: string) => Promise<DirEntry[]>;",
@@ -473,22 +462,6 @@ const DTO_INTERFACES: &[TsInterface] = &[
     TsInterface {
         name: "OpenShellResult",
         fields: &[field("shellId", "string")],
-    },
-    TsInterface {
-        name: "WriteFileResult",
-        fields: &[
-            field("path", "string"),
-            field("success", "boolean"),
-            optional_field("error", "string"),
-        ],
-    },
-    TsInterface {
-        name: "ReadFileResult",
-        fields: &[
-            field("path", "string"),
-            optional_field("content", "Uint8Array"),
-            optional_field("error", "string"),
-        ],
     },
     TsInterface {
         name: "MountInfo",

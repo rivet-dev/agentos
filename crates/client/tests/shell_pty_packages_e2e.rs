@@ -70,6 +70,7 @@ async fn pty_shell_round_trip_via_boot_packages() {
             rows: Some(24),
             ..Default::default()
         })
+        .await
         .expect("open_shell");
 
     let mut data = os
@@ -99,6 +100,7 @@ async fn pty_shell_round_trip_via_boot_packages() {
         &shell.shell_id,
         StdinInput::Text(String::from("marker-input\n")),
     )
+    .await
     .expect("write_shell");
 
     // The cooked PTY must deliver the line to the guest's read() and surface

@@ -130,7 +130,8 @@ fn guest_failure_in_one_vm_does_not_break_peer_vm_execution() {
             EventPayload::ProcessExitedEvent(exited) => {
                 result.exit_code = Some(exited.exit_code);
             }
-            EventPayload::VmLifecycleEvent(_)
+            EventPayload::CronDispatchEvent(_)
+            | EventPayload::VmLifecycleEvent(_)
             | EventPayload::StructuredEvent(_)
             | EventPayload::ExtEnvelope(_) => {}
         }
@@ -217,6 +218,7 @@ fn collect_crash_process_output(
                 }
                 EventPayload::ProcessOutputEvent(_)
                 | EventPayload::ProcessExitedEvent(_)
+                | EventPayload::CronDispatchEvent(_)
                 | EventPayload::VmLifecycleEvent(_)
                 | EventPayload::StructuredEvent(_)
                 | EventPayload::ExtEnvelope(_) => {}

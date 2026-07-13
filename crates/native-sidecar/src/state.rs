@@ -4,9 +4,9 @@
 //! types, and other shared data structures extracted from service.rs.
 
 use crate::protocol::{
-    GuestRuntimeKind, MountDescriptor, ProjectedModuleDescriptor, RegisterHostCallbacksRequest,
-    SidecarRequestFrame, SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload,
-    SignalHandlerRegistration, SoftwareDescriptor, WasmPermissionTier,
+    GuestRuntimeKind, MountDescriptor, RegisterHostCallbacksRequest, SidecarRequestFrame,
+    SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload, SignalHandlerRegistration,
+    WasmPermissionTier,
 };
 use crate::wire::DEFAULT_MAX_FRAME_BYTES;
 use agentos_bridge::{BridgeTypes, FilesystemSnapshot};
@@ -110,6 +110,7 @@ impl Default for NativeSidecarConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SidecarError {
     InvalidState(String),
+    SessionNotFound(String),
     ProtocolVersionMismatch(String),
     BridgeVersionMismatch(String),
     Conflict(String),
@@ -126,6 +127,9 @@ pub enum SidecarError {
 impl fmt::Display for SidecarError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::SessionNotFound(session_id) => {
+                write!(f, "Session not found: {session_id}")
+            }
             Self::InvalidState(message)
             | Self::ProtocolVersionMismatch(message)
             | Self::BridgeVersionMismatch(message)
@@ -276,19 +280,15 @@ pub(crate) struct ConnectionState {
 pub(crate) struct SessionState {
     pub(crate) connection_id: String,
     pub(crate) placement: crate::protocol::SidecarPlacement,
-    pub(crate) metadata: BTreeMap<String, String>,
     pub(crate) vm_ids: BTreeSet<String>,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct VmConfiguration {
+    pub(crate) operator_mounts: Vec<MountDescriptor>,
     pub(crate) mounts: Vec<MountDescriptor>,
-    pub(crate) software: Vec<SoftwareDescriptor>,
     pub(crate) permissions: PermissionsPolicy,
-    pub(crate) module_access_cwd: Option<String>,
-    pub(crate) instructions: Vec<String>,
-    pub(crate) projected_modules: Vec<ProjectedModuleDescriptor>,
     pub(crate) command_permissions: BTreeMap<String, WasmPermissionTier>,
     pub(crate) provided_commands: BTreeMap<String, Vec<String>>,
     /// Guest JavaScript host-environment config (platform / module resolution /
@@ -304,12 +304,9 @@ pub(crate) struct VmConfiguration {
 impl Default for VmConfiguration {
     fn default() -> Self {
         Self {
+            operator_mounts: Vec::new(),
             mounts: Vec::new(),
-            software: Vec::new(),
             permissions: agentos_native_sidecar_core::permissions::deny_all_policy(),
-            module_access_cwd: None,
-            instructions: Vec::new(),
-            projected_modules: Vec::new(),
             command_permissions: BTreeMap::new(),
             provided_commands: BTreeMap::new(),
             js_runtime: None,
@@ -333,6 +330,7 @@ pub(crate) struct VmState {
     pub(crate) requested_runtime: GuestRuntimeKind,
     pub(crate) root_filesystem_mode: RootFilesystemMode,
     pub(crate) guest_cwd: String,
+    pub(crate) agent_additional_instructions: Option<String>,
     pub(crate) cwd: PathBuf,
     pub(crate) host_cwd: PathBuf,
     pub(crate) kernel: SidecarKernel,
@@ -369,7 +367,6 @@ pub(crate) struct ProjectedAgentLaunch {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ExitedProcessSnapshot {
-    pub(crate) captured_at: Instant,
     pub(crate) process: crate::protocol::ProcessSnapshotEntry,
 }
 
@@ -470,6 +467,8 @@ pub(crate) struct ActiveProcess {
     pub(crate) next_mapped_host_fd: u32,
     pub(crate) pending_execution_events: VecDeque<ActiveExecutionEvent>,
     pub(crate) pending_self_signal_exit: Option<i32>,
+    /// Sidecar-owned absolute deadline for an explicit execute timeout.
+    pub(crate) timeout_at: Option<Instant>,
     pub(crate) child_processes: BTreeMap<String, ActiveProcess>,
     pub(crate) next_child_process_id: usize,
     pub(crate) http_servers: BTreeMap<u64, ActiveHttpServer>,

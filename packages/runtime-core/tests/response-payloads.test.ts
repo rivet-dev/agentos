@@ -235,6 +235,102 @@ describe("response payload conversion", () => {
 		});
 	});
 
+	it("maps authoritative cron state and dispatch records", () => {
+		expect(
+			fromGeneratedResponsePayload({
+				tag: "CronJobsResponse",
+				val: {
+					alarm: { generation: 3n, nextAlarmMs: 500n },
+					jobs: [
+						{
+							id: "job",
+							schedule: "* * * * *",
+							action: '{"type":"exec","command":"true"}',
+							overlap: protocol.CronOverlap.Skip,
+							lastRunMs: 100n,
+							nextRunMs: 500n,
+							runCount: 2n,
+							running: true,
+						},
+					],
+				},
+			}),
+		).toEqual({
+			type: "cron_jobs",
+			alarm: { generation: 3, next_alarm_ms: 500 },
+			jobs: [
+				{
+					id: "job",
+					schedule: "* * * * *",
+					action: { type: "exec", command: "true" },
+					overlap: "skip",
+					last_run_ms: 100,
+					next_run_ms: 500,
+					run_count: 2,
+					running: true,
+				},
+			],
+		});
+
+		expect(
+			fromGeneratedResponsePayload({
+				tag: "CronWakeResponse",
+				val: {
+					alarm: { generation: 4n, nextAlarmMs: null },
+					runs: [
+						{
+							runId: "run",
+							jobId: "job",
+							action: '{"type":"exec","command":"true"}',
+						},
+					],
+					events: [
+						{
+							kind: protocol.CronEventKind.Fire,
+							jobId: "job",
+							timeMs: 500n,
+							durationMs: null,
+							error: null,
+						},
+					],
+				},
+			}),
+		).toEqual({
+			type: "cron_wake",
+			alarm: { generation: 4 },
+			runs: [
+				{
+					run_id: "run",
+					job_id: "job",
+					action: { type: "exec", command: "true" },
+				},
+			],
+			events: [{ kind: "fire", job_id: "job", time_ms: 500 }],
+		});
+
+		expect(
+			fromGeneratedResponsePayload({
+				tag: "CronStateExportedResponse",
+				val: { state: '{"version":1}' },
+			}),
+		).toEqual({ type: "cron_state_exported", state: '{"version":1}' });
+		expect(
+			fromGeneratedResponsePayload({
+				tag: "CronStateImportedResponse",
+				val: {
+					alarm: { generation: 5n, nextAlarmMs: 900n },
+					runs: [],
+					events: [],
+				},
+			}),
+		).toEqual({
+			type: "cron_state_imported",
+			alarm: { generation: 5, next_alarm_ms: 900 },
+			runs: [],
+			events: [],
+		});
+	});
+
 	it("maps generated toolkit registration to host callback registration", () => {
 		expect(
 			fromGeneratedResponsePayload({
@@ -245,6 +341,36 @@ describe("response payload conversion", () => {
 			type: "host_callbacks_registered",
 			registration: "tools",
 			command_count: 2,
+		});
+	});
+
+	it("maps an atomic VM initialization response", () => {
+		expect(
+			fromGeneratedResponsePayload({
+				tag: "VmInitializedResponse",
+				val: {
+					vmId: "vm-1",
+					guestCwd: "/workspace",
+					guestEnv: new Map([["HOME", "/root"]]),
+					appliedMounts: 1,
+					projectedCommands: [
+						{ name: "node", guestPath: "/opt/agentos/bin/node" },
+					],
+					agents: [],
+					hostCallbacks: [{ registration: "tools", commandCount: 2 }],
+				},
+			}),
+		).toEqual({
+			type: "vm_initialized",
+			vm_id: "vm-1",
+			guest_cwd: "/workspace",
+			guest_env: { HOME: "/root" },
+			applied_mounts: 1,
+			projected_commands: [
+				{ name: "node", guest_path: "/opt/agentos/bin/node" },
+			],
+			agents: [],
+			host_callbacks: [{ registration: "tools", command_count: 2 }],
 		});
 	});
 

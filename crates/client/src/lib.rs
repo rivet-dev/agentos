@@ -16,7 +16,6 @@
 //! checklist) for the architecture, type-mapping, error taxonomy, and streaming model.
 
 pub mod agent_os;
-pub(crate) mod command_line;
 pub mod config;
 pub mod cron;
 pub mod error;
@@ -33,26 +32,10 @@ pub mod transport;
 // Centralized constants (ADR-001 §6 / spec.md §7)
 // ---------------------------------------------------------------------------
 
-/// ACP protocol version negotiated on session creation.
-pub const ACP_PROTOCOL_VERSION: u64 = 1;
-
-/// Per-request permission timeout (milliseconds).
-pub const PERMISSION_TIMEOUT_MS: u64 = 120_000;
-
-/// Bounded closed-session-id set capacity (for `close_session` idempotence).
-pub const CLOSED_SESSION_ID_RETENTION_LIMIT: usize = 2048;
-
 /// Bounded exited-shell exit-code retention (for `wait_shell` after exit).
-pub const CLOSED_SHELL_EXIT_CODE_RETENTION_LIMIT: usize = 2048;
 
 /// Two-phase shell-drain timeout during dispose (milliseconds).
 pub const SHELL_DISPOSE_TIMEOUT_MS: u64 = 5_000;
-
-/// VM lifecycle ready timeout during `create` (milliseconds).
-pub const VM_READY_TIMEOUT_MS: u64 = 10_000;
-
-/// Maximum scheduled cron jobs per VM.
-pub const CRON_JOB_LIMIT: usize = 1024;
 
 // ---------------------------------------------------------------------------
 // Public re-exports
@@ -68,12 +51,10 @@ pub use stream::{ByteStream, Subscription};
 pub use config::{
     node_modules_mount, AcpLimits, AgentOsConfig, AgentOsConfigBuilder, AgentOsLimits,
     AgentOsSidecarConfig, FsPermissionRule, FsPermissions, HostTool, HttpLimits, JsRuntimeLimits,
-    MountConfig, MountPlugin, OverlayMountConfig, PackageRef, PatternPermissionRule,
-    PatternPermissions, PermissionMode, Permissions, PluginLimits, PythonLimits, ResourceLimits,
-    RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode, RootLowerInput, RulePermissions,
-    ScheduleCallback, ScheduleDriver, ScheduleEntry, ScheduleHandle, SidecarJsBridgeCall,
-    SidecarJsBridgeCallback, SoftwareInput, SoftwareKind, TimerScheduleDriver, ToolCallback,
-    ToolKit, ToolLimits, WasmLimits,
+    MountConfig, MountPlugin, PackageRef, PatternPermissionRule, PatternPermissions,
+    PermissionMode, Permissions, PluginLimits, PythonLimits, ResourceLimits, RootFilesystemConfig,
+    RootFilesystemKind, RootFilesystemMode, RootLowerInput, RulePermissions, SidecarJsBridgeCall,
+    SidecarJsBridgeCallback, ToolCallback, ToolKit, ToolLimits, WasmLimits,
 };
 
 pub use process::{
@@ -82,13 +63,12 @@ pub use process::{
 };
 
 pub use fs::{
-    BatchReadResult, BatchWriteEntry, BatchWriteResult, DeleteOptions, DirEntry, DirEntryType,
-    FileContent, FilesystemEntry, FilesystemEntryEncoding, FilesystemSnapshotEntries,
-    FilesystemSnapshotExport, MkdirOptions, MountFsOptions, ReaddirRecursiveOptions,
-    RootSnapshotExport, SnapshotExportKind, VirtualDirEntry, VirtualFileSystem, VirtualStat,
+    DeleteOptions, DirEntry, DirEntryType, FileContent, FilesystemEntry, FilesystemEntryEncoding,
+    FilesystemSnapshotEntries, FilesystemSnapshotExport, MkdirOptions, ReaddirRecursiveOptions,
+    RootSnapshotExport, SnapshotExportKind, VirtualDirEntry, VirtualStat,
 };
 
-pub use shell::{ConnectTerminalOptions, OpenShellOptions, ShellHandle};
+pub use shell::{OpenShellOptions, ShellHandle};
 
 pub use session::{
     AgentCapabilities, AgentExitEvent, AgentExitStream, AgentExitSubscription, AgentInfo,
@@ -103,7 +83,8 @@ pub use json_rpc::{
 };
 
 pub use cron::{
-    CronAction, CronEvent, CronJobHandle, CronJobInfo, CronJobOptions, CronManager, CronOverlap,
+    CronAction, CronAlarmHandler, CronAlarmUpdate, CronEvent, CronJobHandle, CronJobInfo,
+    CronJobOptions, CronManager, CronOverlap,
 };
 
 // `shell` is declared here because its methods live in a sibling module to keep `lib.rs` re-exports

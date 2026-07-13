@@ -11,8 +11,6 @@ export * from "./filesystem.js";
 export * from "./framing.js";
 export * from "./json.js";
 export * from "./native-client.js";
-export * from "./node-runtime.js";
-export * from "./node-runtime-options-schema.js";
 export * from "./numbers.js";
 export * from "./permissions.js";
 export * from "./process.js";

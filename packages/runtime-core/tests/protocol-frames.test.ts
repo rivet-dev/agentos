@@ -212,7 +212,11 @@ describe("protocol frame conversion", () => {
 					},
 					payload: {
 						tag: "VmCreatedResponse",
-						val: { vmId: "vm" },
+						val: {
+							vmId: "vm",
+							guestCwd: "/workspace",
+							guestEnv: new Map([["HOME", "/root"]]),
+						},
 					},
 				},
 			}),
@@ -221,7 +225,12 @@ describe("protocol frame conversion", () => {
 			schema: SIDECAR_PROTOCOL_SCHEMA,
 			request_id: 9,
 			ownership,
-			payload: { type: "vm_created", vm_id: "vm" },
+			payload: {
+				type: "vm_created",
+				vm_id: "vm",
+				guest_cwd: "/workspace",
+				guest_env: { HOME: "/root" },
+			},
 		});
 	});
 
@@ -294,7 +303,12 @@ describe("protocol frame conversion", () => {
 				schema: SIDECAR_PROTOCOL_SCHEMA,
 				request_id: 10,
 				ownership,
-				payload: { type: "vm_created", vm_id: "vm" },
+				payload: {
+					type: "vm_created",
+					vm_id: "vm",
+					guest_cwd: "/workspace",
+					guest_env: {},
+				},
 			}),
 		).toMatchObject({
 			kind: "response",

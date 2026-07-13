@@ -67,7 +67,7 @@ describe("agentos package projection (VM)", () => {
 	): Promise<{ code: number; out: string; err: string }> {
 		let out = "";
 		let err = "";
-		const { pid } = vm.spawn(command, [], {
+		const { pid } = await vm.spawn(command, [], {
 			onStdout: (data) => {
 				out += new TextDecoder().decode(data);
 			},

@@ -18,23 +18,16 @@ use agentos_sidecar_client::wire;
 use crate::agent_os::AgentOs;
 use crate::error::ClientError;
 
-/// Maximum fully buffered fetch component size. `VmFetch` is a single request/response frame, so
-/// keeping this at the default frame size prevents fetch-specific buffers from growing just because
-/// a sidecar was configured with a larger transport frame limit for another API.
-const VM_FETCH_BUFFER_LIMIT_BYTES: usize = agentos_sidecar_client::wire::DEFAULT_MAX_FRAME_BYTES;
-
 /// The shape of the JSON string returned in [`VmFetchResponse::response_json`], mirroring the TS
 /// `{ status, statusText?, headers?: [k,v][], body?: base64 }` payload.
 #[derive(Debug, Deserialize)]
 struct VmFetchResponsePayload {
     status: u16,
-    #[serde(rename = "statusText", default)]
-    status_text: Option<String>,
-    #[serde(default)]
-    headers: Option<Vec<(String, String)>>,
+    #[serde(rename = "statusText")]
+    status_text: String,
+    headers: Vec<(String, String)>,
     /// Base64-encoded response body.
-    #[serde(default)]
-    body: Option<String>,
+    body: String,
 }
 
 impl AgentOs {
@@ -148,25 +141,18 @@ impl AgentOs {
         let payload: VmFetchResponsePayload =
             serde_json::from_str(&response_json).context("parsing vm_fetch response json")?;
 
-        // Base64-decode the response body (TS `Buffer.from(body ?? "", "base64")`). An absent body is
-        // an empty body.
-        let decoded_body = match payload.body {
-            Some(encoded) => {
-                ensure_fetch_base64_body_within_limit(&encoded, buffer_limit)?;
-                Bytes::from(
-                    BASE64
-                        .decode(encoded.as_bytes())
-                        .context("decoding base64 fetch response body")?,
-                )
-            }
-            None => Bytes::new(),
-        };
+        ensure_fetch_base64_body_within_limit(&payload.body, buffer_limit)?;
+        let decoded_body = Bytes::from(
+            BASE64
+                .decode(payload.body.as_bytes())
+                .context("decoding base64 fetch response body")?,
+        );
 
         let status = http::StatusCode::from_u16(payload.status)
             .context("fetch: invalid response status code")?;
 
         let mut builder = http::Response::builder().status(status);
-        for (key, value) in payload.headers.unwrap_or_default() {
+        for (key, value) in payload.headers {
             builder = builder.header(key, value);
         }
 
@@ -176,11 +162,9 @@ impl AgentOs {
 
         // `statusText` has no slot in `http::Response`; carry it on the extensions so a caller can
         // recover it, matching the TS `Response.statusText`.
-        if let Some(status_text) = payload.status_text {
-            http_response
-                .extensions_mut()
-                .insert(FetchStatusText(status_text));
-        }
+        http_response
+            .extensions_mut()
+            .insert(FetchStatusText(payload.status_text));
 
         Ok(http_response)
     }
@@ -195,9 +179,7 @@ impl AgentOs {
     }
 
     fn fetch_buffer_limit(&self) -> usize {
-        self.transport()
-            .max_frame_bytes()
-            .min(VM_FETCH_BUFFER_LIMIT_BYTES)
+        self.transport().max_frame_bytes()
     }
 }
 
@@ -252,7 +234,6 @@ mod tests {
     use super::{
         base64_decoded_upper_bound, ensure_fetch_base64_body_within_limit,
         ensure_fetch_component_within_limit, ensure_fetch_request_payload_within_limit,
-        VM_FETCH_BUFFER_LIMIT_BYTES,
     };
 
     #[test]
@@ -310,14 +291,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn fetch_buffer_limit_is_fixed_to_default_frame_size() {
-        assert_eq!(
-            VM_FETCH_BUFFER_LIMIT_BYTES,
-            agentos_sidecar_client::wire::DEFAULT_MAX_FRAME_BYTES
-        );
-    }
-
     // ── Security: AOSCLIENT-P3-fetch (N-010 guest-server VmFetch response) ───────────────────────
     //
     // Threat: a guest server controls the `VmFetch` RESPONSE JSON that the client parses. A hostile
@@ -345,7 +318,7 @@ mod tests {
     /// `http::StatusCode::from_u16`, mirroring the `fetch` status construction, without panic.
     #[test]
     fn vm_fetch_response_zero_status_is_rejected_by_status_code_without_panic() {
-        let json = r#"{"status":0}"#;
+        let json = r#"{"status":0,"statusText":"","headers":[],"body":""}"#;
         let payload: VmFetchResponsePayload =
             serde_json::from_str(json).expect("status 0 is a valid u16 and should deserialize");
         let status = http::StatusCode::from_u16(payload.status);
@@ -355,13 +328,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn vm_fetch_response_requires_sidecar_normalized_fields() {
+        let parsed: Result<VmFetchResponsePayload, _> = serde_json::from_str(r#"{"status":200}"#);
+        assert!(
+            parsed.is_err(),
+            "missing normalized fetch fields must not receive client defaults"
+        );
+    }
+
     /// A malformed base64 body ("!!!") must produce a decode `Err`, never a panic.
     #[test]
     fn vm_fetch_response_malformed_base64_body_errors_without_panic() {
         // First the size guard passes for a tiny body, so we reach the decode step the way
         // `fetch` does.
-        ensure_fetch_base64_body_within_limit("!!!", VM_FETCH_BUFFER_LIMIT_BYTES)
-            .expect("tiny body is within the limit");
+        ensure_fetch_base64_body_within_limit("!!!", 1024).expect("tiny body is within the limit");
         let decoded = BASE64.decode("!!!".as_bytes());
         assert!(
             decoded.is_err(),
@@ -374,8 +355,9 @@ mod tests {
     #[test]
     fn vm_fetch_response_over_limit_base64_body_is_rejected_before_decode() {
         // An encoded length strictly greater than the limit trips the guard on the encoded size.
-        let oversized = "A".repeat(VM_FETCH_BUFFER_LIMIT_BYTES + 4);
-        let result = ensure_fetch_base64_body_within_limit(&oversized, VM_FETCH_BUFFER_LIMIT_BYTES);
+        let limit = 1024;
+        let oversized = "A".repeat(limit + 4);
+        let result = ensure_fetch_base64_body_within_limit(&oversized, limit);
         let error = result.expect_err(
             "AOSCLIENT-P3-fetch: an over-limit base64 body must be rejected before decode",
         );

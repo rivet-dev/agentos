@@ -58,7 +58,7 @@ describe("agentos linkSoftware (VM)", () => {
 		expect(await vm.exists("/opt/agentos/bin/linked-cmd")).toBe(true);
 
 		let out = "";
-		const { pid } = vm.spawn("linked-cmd", [], {
+		const { pid } = await vm.spawn("linked-cmd", [], {
 			onStdout: (d) => {
 				out += new TextDecoder().decode(d);
 			},

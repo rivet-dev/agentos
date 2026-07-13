@@ -166,8 +166,8 @@ describe("mount integration", () => {
 		]);
 		expect(result.exitCode, result.stderr).toBe(0);
 		expect(result.stdout.trim()).toBe("from host api");
-		expect(mounted.calls).toContain("readFile:/host.txt");
-		expect(mounted.calls).toContain("writeFile:/guest.txt");
+		// The sidecar owns whether guest fs calls use read/write or positional
+		// pread/pwrite callbacks; assert only the mounted filesystem semantics.
 		expect(
 			new TextDecoder().decode(await vm.readFile("/mnt/custom/guest.txt")),
 		).toBe("from guest process");
@@ -189,8 +189,6 @@ describe("mount integration", () => {
 		]);
 		expect(result.exitCode, result.stderr).toBe(0);
 		expect(result.stdout.trim()).toBe("from host api");
-		expect(mounted.calls).toContain("readFile:/host.txt");
-		expect(mounted.calls).toContain("writeFile:/guest.txt");
 		expect(
 			new TextDecoder().decode(await vm.readFile("/mnt/custom/guest.txt")),
 		).toBe("from guest process");

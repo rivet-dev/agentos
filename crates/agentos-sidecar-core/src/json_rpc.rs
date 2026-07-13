@@ -12,6 +12,11 @@ use serde_json::Value;
 use crate::host::{AcpHost, AgentOutput};
 use crate::AcpCoreError;
 
+pub struct JsonRpcExchange {
+    pub response: Value,
+    pub notifications: Vec<Value>,
+}
+
 /// Drain any complete (newline-terminated) lines from `buffer`, returning them
 /// with the trailing newline removed and leaving any partial trailing line.
 fn drain_lines(buffer: &mut String) -> Vec<String> {
@@ -37,6 +42,20 @@ pub fn send_json_rpc<H: AcpHost>(
     timeout_ms: u64,
     stdout: &mut String,
 ) -> Result<Value, AcpCoreError> {
+    Ok(
+        send_json_rpc_exchange(host, process_id, request, response_id, timeout_ms, stdout)?
+            .response,
+    )
+}
+
+pub fn send_json_rpc_exchange<H: AcpHost>(
+    host: &mut H,
+    process_id: &str,
+    request: &Value,
+    response_id: i64,
+    timeout_ms: u64,
+    stdout: &mut String,
+) -> Result<JsonRpcExchange, AcpCoreError> {
     let mut line = serde_json::to_vec(request).map_err(|error| {
         AcpCoreError::InvalidState(format!("failed to serialize ACP request: {error}"))
     })?;
@@ -44,6 +63,7 @@ pub fn send_json_rpc<H: AcpHost>(
     host.write_stdin(process_id, &line)?;
 
     let deadline = host.now_ms().saturating_add(timeout_ms);
+    let mut notifications = Vec::new();
     loop {
         if host.now_ms() >= deadline {
             return Err(AcpCoreError::Execution(format!(
@@ -58,9 +78,14 @@ pub fn send_json_rpc<H: AcpHost>(
                         continue;
                     };
                     if message.get("id").and_then(Value::as_i64) == Some(response_id) {
-                        return Ok(message);
+                        return Ok(JsonRpcExchange {
+                            response: message,
+                            notifications,
+                        });
                     }
-                    // Notifications / inbound requests are ignored in this cut.
+                    if message.get("method").and_then(Value::as_str).is_some() {
+                        notifications.push(message);
+                    }
                 }
             }
             Some(AgentOutput::Stderr(_)) => {}

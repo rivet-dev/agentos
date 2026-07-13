@@ -1095,8 +1095,8 @@ fn browser_sidecar_builds_mount_table_root_from_root_filesystem_config() {
         .create_vm_with_root_filesystem(
             permissive_config("vm-browser"),
             RootFilesystemConfig {
-                disable_default_base_layer: true,
-                lowers: vec![
+                disable_default_base_layer: Some(true),
+                lowers: Some(vec![
                     RootFilesystemLowerDescriptor::Snapshot {
                         entries: vec![
                             RootFilesystemEntry {
@@ -1149,8 +1149,8 @@ fn browser_sidecar_builds_mount_table_root_from_root_filesystem_config() {
                             },
                         ],
                     },
-                ],
-                bootstrap_entries: vec![
+                ]),
+                bootstrap_entries: Some(vec![
                     RootFilesystemEntry {
                         path: String::from("/workspace/shared.txt"),
                         kind: RootFilesystemEntryKind::File,
@@ -1173,7 +1173,7 @@ fn browser_sidecar_builds_mount_table_root_from_root_filesystem_config() {
                         target: None,
                         executable: false,
                     },
-                ],
+                ]),
                 ..RootFilesystemConfig::default()
             },
         )
@@ -1214,9 +1214,9 @@ fn browser_sidecar_locks_read_only_root_after_bootstrap() {
         .create_vm_with_root_filesystem(
             permissive_config("vm-browser"),
             RootFilesystemConfig {
-                mode: RootFilesystemMode::ReadOnly,
-                disable_default_base_layer: true,
-                bootstrap_entries: vec![RootFilesystemEntry {
+                mode: Some(RootFilesystemMode::ReadOnly),
+                disable_default_base_layer: Some(true),
+                bootstrap_entries: Some(vec![RootFilesystemEntry {
                     path: String::from("/workspace/bootstrap.txt"),
                     kind: RootFilesystemEntryKind::File,
                     mode: None,
@@ -1226,7 +1226,7 @@ fn browser_sidecar_locks_read_only_root_after_bootstrap() {
                     encoding: Some(RootFilesystemEntryEncoding::Utf8),
                     target: None,
                     executable: false,
-                }],
+                }]),
                 ..RootFilesystemConfig::default()
             },
         )

@@ -12,6 +12,10 @@ import {
 	fromGeneratedStreamChannel,
 	fromGeneratedVmLifecycleState,
 } from "./protocol-maps.js";
+import {
+	fromGeneratedCronDispatch,
+	type LiveCronDispatch,
+} from "./response-payloads.js";
 
 export const ANY_BUFFERED_EVENT_KEY = "*";
 
@@ -32,6 +36,10 @@ export type LiveSidecarEventPayload =
 			type: "process_exited";
 			process_id: string;
 			exit_code: number;
+	  }
+	| {
+			type: "cron_dispatch";
+			dispatch: LiveCronDispatch;
 	  }
 	| {
 			type: "structured";
@@ -375,6 +383,11 @@ export function fromGeneratedEventPayload(
 				process_id: payload.val.processId,
 				exit_code: payload.val.exitCode,
 			};
+		case "CronDispatchEvent":
+			return {
+				type: "cron_dispatch",
+				dispatch: fromGeneratedCronDispatch(payload.val),
+			};
 		case "StructuredEvent":
 			return {
 				type: "structured",
@@ -467,6 +480,8 @@ export function sidecarEventBufferKeys<TEvent extends LiveSidecarEventFrame>(
 					processId: event.payload.process_id,
 				}),
 			);
+			break;
+		case "cron_dispatch":
 			break;
 		case "structured":
 			keys.add(

@@ -4,8 +4,7 @@ import { join } from "node:path";
 import coreutils from "@agentos-software/coreutils";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
-import { getBaseEnvironment } from "../src/base-filesystem.js";
-import type { VirtualFileSystem } from "../src/runtime-compat.js";
+import type { VirtualFileSystem } from "../src/runtime.js";
 import { getAgentOsKernel } from "../src/test/runtime.js";
 
 describe("AgentOs base filesystem", () => {
@@ -23,12 +22,6 @@ describe("AgentOs base filesystem", () => {
 
 	afterEach(async () => {
 		await vm.dispose();
-	});
-
-	test("default environment matches the base environment", () => {
-		const kernel = getAgentOsKernel(vm);
-		expect(kernel.env).toEqual(getBaseEnvironment());
-		expect((kernel as unknown as { cwd: string }).cwd).toBe("/workspace");
 	});
 
 	test("overlay writes and deletes do not mutate the shared base layer", async () => {
@@ -107,18 +100,18 @@ describe("AgentOs base filesystem", () => {
 	});
 
 	test("read-only roots preseed WASM command stubs before runtime mount", async () => {
-			await vm.dispose();
-			vm = await AgentOs.create({
-				software: [coreutils],
-				rootFilesystem: {
-					mode: "read-only",
-					disableDefaultBaseLayer: true,
-				},
-			});
+		await vm.dispose();
+		vm = await AgentOs.create({
+			software: [coreutils],
+			rootFilesystem: {
+				mode: "read-only",
+				disableDefaultBaseLayer: true,
+			},
+		});
 
-			expect(await vm.exists("/bin/sh")).toBe(true);
-			expect(await vm.exists("/bin/ls")).toBe(true);
-			expect(await vm.exists("/bin/env")).toBe(true);
+		expect(await vm.exists("/bin/sh")).toBe(true);
+		expect(await vm.exists("/bin/ls")).toBe(true);
+		expect(await vm.exists("/bin/env")).toBe(true);
 	});
 
 	test("read-only roots preserve software-declared alias commands on the sidecar path", async () => {

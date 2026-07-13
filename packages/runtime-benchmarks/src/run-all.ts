@@ -134,7 +134,6 @@ async function main(): Promise<void> {
 	const refuted = refutedFromLatency(nonPermissionsLatency);
 	const permissionPolicyTax = permissionPolicyTaxFromLatency(layerLatency);
 	const permissionFindings = permissionPolicyFindings(permissionPolicyTax);
-	const resourceSnapshotStubbed = false;
 	const fuzz = FAMILY_FILTER
 		? { programs: [], findings: [], refuted: [] }
 		: await runFuzz({ iterations: ITERATIONS, warmup: WARMUP });
@@ -150,7 +149,6 @@ async function main(): Promise<void> {
 		wallTimeMs: matrix.wallTimeMs,
 		iterations: ITERATIONS,
 		warmup: WARMUP,
-		resourceSnapshotStubbed,
 		latency,
 		permissionPolicyTax,
 		fuzz,

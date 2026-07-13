@@ -32,7 +32,7 @@ async fn create_forwards_native_mounts() {
 async fn create_vm_with_host_mount(host_root: &Path) -> AgentOs {
     common::ensure_sidecar_env();
     AgentOs::create(AgentOsConfig {
-        mounts: vec![MountConfig::Native {
+        mounts: vec![MountConfig {
             path: "/mnt/host".to_string(),
             plugin: MountPlugin {
                 id: "host_dir".to_string(),
@@ -41,7 +41,7 @@ async fn create_vm_with_host_mount(host_root: &Path) -> AgentOs {
                     "readOnly": true,
                 })),
             },
-            read_only: true,
+            read_only: Some(true),
         }],
         ..Default::default()
     })

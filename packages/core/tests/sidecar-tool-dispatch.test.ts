@@ -22,7 +22,7 @@ const mathToolKit = toolKit({
 async function runCommand(vm: AgentOs, command: string, args: string[]) {
 	const stdoutChunks: string[] = [];
 	const stderrChunks: string[] = [];
-	const { pid } = vm.spawn(command, args, {
+	const { pid } = await vm.spawn(command, args, {
 		onStdout: (chunk) => {
 			stdoutChunks.push(new TextDecoder().decode(chunk));
 		},

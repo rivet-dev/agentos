@@ -140,6 +140,7 @@ fn collect_process_output_bounded(
                 }
                 EventPayload::ProcessOutputEvent(_)
                 | EventPayload::ProcessExitedEvent(_)
+                | EventPayload::CronDispatchEvent(_)
                 | EventPayload::VmLifecycleEvent(_)
                 | EventPayload::StructuredEvent(_)
                 | EventPayload::ExtEnvelope(_) => {}
@@ -362,14 +363,18 @@ fn vm_resource_limits_cap_active_processes_without_poisoning_followup_execs() {
             5,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
-                process_id: String::from("proc-fast"),
+                process_id: Some(String::from("proc-fast")),
                 command: None,
                 runtime: Some(GuestRuntimeKind::JavaScript),
                 entrypoint: Some(fast_entry.to_string_lossy().into_owned()),
                 args: Vec::new(),
-                env: HashMap::new(),
+                env: None,
                 cwd: None,
                 wasm_permission_tier: None,
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
             }),
         ))
         .expect("dispatch second execute");
@@ -435,14 +440,18 @@ fn execute_rejects_cwd_outside_vm_sandbox_root() {
             4,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
-                process_id: String::from("proc-1"),
+                process_id: Some(String::from("proc-1")),
                 command: None,
                 runtime: Some(GuestRuntimeKind::JavaScript),
                 entrypoint: Some(entry.to_string_lossy().into_owned()),
                 args: Vec::new(),
-                env: HashMap::new(),
+                env: None,
                 cwd: Some(String::from("/")),
                 wasm_permission_tier: None,
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
             }),
         ))
         .expect("dispatch execute request");
@@ -487,18 +496,12 @@ fn execute_rejects_host_only_absolute_command_path() {
             4,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts: Vec::new(),
-                software: Vec::new(),
+                mounts: None,
                 permissions: Some(wire_permissions_allow_all()),
-                module_access_cwd: None,
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
-                command_permissions: HashMap::new(),
-                loopback_exempt_ports: Vec::new(),
-                packages: Vec::new(),
-                packages_mount_at: String::new(),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                command_permissions: None,
+                loopback_exempt_ports: None,
+                packages: None,
+                packages_mount_at: None,
             }),
         ))
         .expect("configure host-only command permissions");
@@ -508,14 +511,18 @@ fn execute_rejects_host_only_absolute_command_path() {
             5,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
-                process_id: String::from("proc-host-only"),
+                process_id: Some(String::from("proc-host-only")),
                 command: Some(host_only_command.to_string_lossy().into_owned()),
                 runtime: None,
                 entrypoint: None,
                 args: Vec::new(),
-                env: HashMap::new(),
+                env: None,
                 cwd: None,
                 wasm_permission_tier: None,
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
             }),
         ))
         .expect("dispatch host-only command execute");
@@ -577,14 +584,18 @@ fn execute_ignores_host_node_binary_override_for_javascript_runtime() {
             4,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
-                process_id: String::from("proc-1"),
+                process_id: Some(String::from("proc-1")),
                 command: None,
                 runtime: Some(GuestRuntimeKind::JavaScript),
                 entrypoint: Some(entry.to_string_lossy().into_owned()),
                 args: Vec::new(),
-                env: HashMap::new(),
+                env: None,
                 cwd: Some(nested_cwd.to_string_lossy().into_owned()),
                 wasm_permission_tier: None,
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
             }),
         ))
         .expect("dispatch execute request");

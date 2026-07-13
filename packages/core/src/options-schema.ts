@@ -281,11 +281,6 @@ export const agentOsOptionFieldSchemas = {
 	rootFilesystem: rootFilesystemConfigSchema.optional(),
 	mounts: z.array(mountConfigSchema).optional(),
 	additionalInstructions: z.string().optional(),
-	scheduleDriver: z
-		.custom((value) => typeof value === "object" && value !== null, {
-			message: "Expected schedule driver object",
-		})
-		.optional(),
 	toolKits: z.array(toolKitSchema).optional(),
 	permissions: permissionsSchema.optional(),
 	sidecar: sidecarConfigSchema.optional(),

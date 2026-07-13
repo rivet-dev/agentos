@@ -270,7 +270,6 @@ describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
 		expect(calls).toHaveLength(1);
 		expect(JSON.parse(calls[0].configJson)).toEqual({
 			packages: [],
-			packagesMountAt: "/opt/agentos",
 		});
 		expect(calls[0].configJson).not.toContain("onSessionEvent");
 	});
@@ -367,7 +366,6 @@ describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
 
 		expect(JSON.parse(calls[0].configJson)).toMatchObject({
 			packages: [],
-			packagesMountAt: "/opt/agentos",
 			additionalInstructions: "flat public config",
 			loopbackExemptPorts: [3000],
 		});

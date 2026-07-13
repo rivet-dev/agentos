@@ -4,19 +4,19 @@
 //! `config_json` as an opaque passthrough string).
 //!
 //! `config_json` is a JSON-encoded subset of [`AgentOsConfig`]. Fields that
-//! cannot be represented in JSON (`schedule_driver`, `MountConfig::driver`, the
-//! `sidecar_js_bridge_callback`) are intentionally absent; passing them must
+//! cannot be represented in JSON (`sidecar_js_bridge_callback`) are
+//! intentionally absent; passing them must
 //! fail loud, enforced by `deny_unknown_fields`.
 
 use agentos_client::{
     AgentOsConfig, AgentOsLimits, AgentOsSidecarConfig, MountConfig, MountPlugin, PackageRef,
-    Permissions, RootFilesystemConfig, SoftwareInput,
+    Permissions, RootFilesystemConfig,
 };
 use anyhow::{Context, Result};
 
 /// Serializable mirror of [`AgentOsConfig`]. `deny_unknown_fields` enforces
 /// fail-loud behavior when callers pass fields outside this allow-list
-/// (including non-serializable fields like `schedule_driver`).
+/// (including non-serializable callback fields).
 ///
 /// Keep this struct in sync with
 /// `packages/agentos/src/config.ts::nativeAgentOsOptionsSchema` and
@@ -25,13 +25,11 @@ use anyhow::{Context, Result};
 #[derive(serde::Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(crate) struct AgentOsConfigJson {
-    #[serde(default)]
-    software: Vec<SoftwareInput>,
     /// Package dirs to project into `/opt/agentos` (secure-exec package
     /// projection). Each `dir` holds an `agentos-package.json` manifest + payload.
     #[serde(default)]
     packages: Vec<PackageJson>,
-    /// Guest mount point for the projection (JS sends `OPT_AGENTOS_ROOT`).
+    /// Explicit guest mount override. Omission uses the sidecar default.
     #[serde(default)]
     packages_mount_at: Option<String>,
     /// Agent adapter configs emitted by the JS layer. The client resolves agent
@@ -64,7 +62,7 @@ struct NativeMountJson {
     path: String,
     plugin: MountPlugin,
     #[serde(default)]
-    read_only: bool,
+    read_only: Option<bool>,
 }
 
 #[derive(serde::Deserialize, Clone)]
@@ -149,7 +147,6 @@ impl AgentOsConfigJson {
             );
         }
         AgentOsConfig {
-            software: self.software.clone(),
             packages: self
                 .packages
                 .iter()
@@ -165,7 +162,7 @@ impl AgentOsConfigJson {
             mounts: self
                 .mounts
                 .iter()
-                .map(|mount| MountConfig::Native {
+                .map(|mount| MountConfig {
                     path: mount.path.clone(),
                     plugin: mount.plugin.clone(),
                     read_only: mount.read_only,
@@ -187,7 +184,7 @@ impl AgentOsConfigJson {
                 path: mount.path.clone(),
                 kind: mount.plugin.id.clone(),
                 config: mount.plugin.config.clone(),
-                read_only: mount.read_only,
+                read_only: mount.read_only.unwrap_or(false),
             })
             .collect()
     }

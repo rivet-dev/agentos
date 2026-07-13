@@ -54,7 +54,7 @@ pub struct SpawnActionOptions {
 /// `spawn(command, args, options?)` — port of [`AgentOs::spawn`]. Returns the
 /// [`SpawnHandle`] `{ pid }`; stdout/stderr chunks stream to connected clients
 /// as `processOutput` events and the exit code broadcasts as `processExit`.
-pub fn spawn(
+pub async fn spawn(
     host: &crate::host_ctx::HostCtx,
     vm: &AgentOs,
     vars: &mut super::Vars,
@@ -69,15 +69,17 @@ pub fn spawn(
     if options.cwd.is_some() {
         base.cwd = options.cwd;
     }
-    let handle = vm.spawn(
-        command,
-        args,
-        SpawnOptions {
-            base,
-            stream_stdin: options.stream_stdin,
-            ..SpawnOptions::default()
-        },
-    )?;
+    let handle = vm
+        .spawn(
+            command,
+            args,
+            SpawnOptions {
+                base,
+                stream_stdin: options.stream_stdin,
+                ..SpawnOptions::default()
+            },
+        )
+        .await?;
     super::shell::spawn_process_output_pumps(host, vm, vars, handle.pid);
     Ok(handle)
 }
@@ -88,21 +90,21 @@ pub async fn wait_process(vm: &AgentOs, pid: u32) -> Result<i32> {
     vm.wait_process(pid).await.map_err(anyhow::Error::from)
 }
 
-/// `killProcess(pid)` — port of [`AgentOs::kill_process`] (sync).
-pub fn kill_process(vm: &AgentOs, pid: u32) -> Result<()> {
-    vm.kill_process(pid).map_err(anyhow::Error::from)
+/// `killProcess(pid)` — forwards SIGKILL and awaits the sidecar result.
+pub async fn kill_process(vm: &AgentOs, pid: u32) -> Result<()> {
+    vm.kill_process(pid).await.map_err(anyhow::Error::from)
 }
 
-/// `stopProcess(pid)` — port of [`AgentOs::stop_process`] (sync).
-pub fn stop_process(vm: &AgentOs, pid: u32) -> Result<()> {
-    vm.stop_process(pid).map_err(anyhow::Error::from)
+/// `stopProcess(pid)` — forwards SIGTERM and awaits the sidecar result.
+pub async fn stop_process(vm: &AgentOs, pid: u32) -> Result<()> {
+    vm.stop_process(pid).await.map_err(anyhow::Error::from)
 }
 
 /// `listProcesses()` — port of [`AgentOs::list_processes`]. Returns the
 /// SDK-spawned processes (not kernel processes); already camelCase via
 /// `#[serde(rename = "exitCode")]` on `SpawnedProcessInfo`.
-pub fn list_processes(vm: &AgentOs) -> Vec<SpawnedProcessInfo> {
-    vm.list_processes()
+pub async fn list_processes(vm: &AgentOs) -> Result<Vec<SpawnedProcessInfo>> {
+    vm.list_processes().await.map_err(anyhow::Error::from)
 }
 
 /// `allProcesses()` — port of [`AgentOs::all_processes`]. Returns the
@@ -117,15 +119,15 @@ pub async fn process_tree(vm: &AgentOs) -> Result<Vec<ProcessTreeNode>> {
     vm.process_tree().await
 }
 
-/// `getProcess(pid)` — port of [`AgentOs::get_process`] (sync).
-pub fn get_process(vm: &AgentOs, pid: u32) -> Result<SpawnedProcessInfo> {
-    vm.get_process(pid).map_err(anyhow::Error::from)
+/// `getProcess(pid)` — reads the sidecar's authoritative process snapshot.
+pub async fn get_process(vm: &AgentOs, pid: u32) -> Result<SpawnedProcessInfo> {
+    vm.get_process(pid).await.map_err(anyhow::Error::from)
 }
 
 /// `writeProcessStdin(pid, data)` — port of
 /// [`AgentOs::write_process_stdin`]. Accepts string or bytes content
 /// via the same coercion rules as `writeFile`.
-pub fn write_process_stdin(
+pub async fn write_process_stdin(
     vm: &AgentOs,
     pid: u32,
     data: super::filesystem::WriteFileContent,
@@ -133,12 +135,15 @@ pub fn write_process_stdin(
     use agentos_client::StdinInput;
     let stdin = StdinInput::Bytes(data.into_bytes());
     vm.write_process_stdin(pid, stdin)
+        .await
         .map_err(anyhow::Error::from)
 }
 
 /// `closeProcessStdin(pid)` — port of [`AgentOs::close_process_stdin`].
-pub fn close_process_stdin(vm: &AgentOs, pid: u32) -> Result<()> {
-    vm.close_process_stdin(pid).map_err(anyhow::Error::from)
+pub async fn close_process_stdin(vm: &AgentOs, pid: u32) -> Result<()> {
+    vm.close_process_stdin(pid)
+        .await
+        .map_err(anyhow::Error::from)
 }
 
 // ---------------------------------------------------------------------------

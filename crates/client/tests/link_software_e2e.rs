@@ -95,6 +95,7 @@ async fn link_software_makes_command_resolve_live() {
                 ..Default::default()
             },
         )
+        .await
         .expect("spawn linked-cmd");
     let code = os.wait_process(handle.pid).await.expect("wait linked-cmd");
     let stdout = String::from_utf8_lossy(&captured.lock().unwrap()).into_owned();

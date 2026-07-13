@@ -8,8 +8,12 @@
 
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { createBenchSidecar, createBenchVm, type BenchVm } from "../lib/vm.js";
-import type { SidecarProcess } from "@rivet-dev/agentos-runtime-core";
+import {
+	createBenchSidecar,
+	createBenchVm,
+	type BenchSidecar,
+	type BenchVm,
+} from "../lib/vm.js";
 import { getHardware, printTable, round, stats } from "../lib/perf-utils.js";
 
 interface CommandCase {
@@ -125,7 +129,7 @@ function collectWasmWarmupDiagnostics(
 	}
 }
 
-async function createVm(sidecar: SidecarProcess): Promise<BenchVm> {
+async function createVm(sidecar: BenchSidecar): Promise<BenchVm> {
 	return createBenchVm({
 		sidecar,
 	});

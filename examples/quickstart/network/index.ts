@@ -43,7 +43,7 @@ const portPromise = new Promise<number>((resolve) => {
 	resolvePort = resolve;
 });
 
-const proc = vm.spawn("node", ["/tmp/server.js"], {
+const proc = await vm.spawn("node", ["/tmp/server.js"], {
 	onStdout: (data: Uint8Array) => {
 		const text = new TextDecoder().decode(data);
 		const match = text.match(/LISTENING:(\d+)/);

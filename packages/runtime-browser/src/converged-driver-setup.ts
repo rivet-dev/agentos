@@ -9,11 +9,11 @@
 // bare `@rivet-dev/agentos-runtime-core/*` imports these modules need — those resolve only
 // when the converged runtime is esbuild-bundled.
 
-import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
 import type { ProtocolFramePayloadCodec } from "@rivet-dev/agentos-runtime-core/protocol-frames";
+import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
 import { isConvergedDgramBridgeOperation } from "./converged-dgram-bridge.js";
-import type { ConvergedSyncResponse } from "./converged-fs-bridge.js";
 import { ConvergedExecutorSession } from "./converged-executor-session.js";
+import type { ConvergedSyncResponse } from "./converged-fs-bridge.js";
 import { ConvergedModuleServicer } from "./converged-module-servicer.js";
 import { isConvergedNetBridgeOperation } from "./converged-net-bridge.js";
 import { isConvergedPtyBridgeOperation } from "./converged-pty-bridge.js";
@@ -61,10 +61,6 @@ export interface ConvergedServicer {
 		args: readonly unknown[],
 		legacy: LegacySyncBridgeServicer,
 	): Promise<ConvergedSyncResponse>;
-	/** Snapshot the VM root filesystem (for host persistence, e.g. OPFS). */
-	snapshotRootFilesystem(): ReturnType<
-		ConvergedExecutorSession["snapshotRootFilesystem"]
-	>;
 }
 
 export function createConvergedServicer(
@@ -117,9 +113,6 @@ export function createConvergedServicer(
 				}
 				throw error;
 			}
-		},
-		snapshotRootFilesystem() {
-			return session.snapshotRootFilesystem();
 		},
 	};
 }

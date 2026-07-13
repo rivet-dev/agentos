@@ -342,7 +342,6 @@ mod shadow_root {
         StreamChannel,
     };
     use serde_json::json;
-    use std::collections::HashMap;
     use std::fs;
     use std::time::Duration;
 
@@ -384,14 +383,16 @@ mod shadow_root {
             .expect("registry WASM commands are required before mounting command root");
         let mut mounts = vec![MountDescriptor {
             guest_path: String::from("/__secure_exec/commands/0"),
-            read_only: true,
+            read_only: Some(true),
             plugin: MountPluginDescriptor {
                 id: String::from("host_dir"),
-                config: serde_json::to_string(&json!({
-                    "hostPath": command_root,
-                    "readOnly": true,
-                }))
-                .expect("serialize command mount config"),
+                config: Some(
+                    serde_json::to_string(&json!({
+                        "hostPath": command_root,
+                        "readOnly": true,
+                    }))
+                    .expect("serialize command mount config"),
+                ),
             },
         }];
         mounts.extend(extra_mounts);
@@ -400,18 +401,12 @@ mod shadow_root {
                 4,
                 wire_vm(connection_id, session_id, &vm_id),
                 RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                    mounts,
-                    software: Vec::new(),
+                    mounts: Some(mounts),
                     permissions: None,
-                    module_access_cwd: None,
-                    instructions: Vec::new(),
-                    projected_modules: Vec::new(),
-                    command_permissions: HashMap::new(),
-                    loopback_exempt_ports: Vec::new(),
-                    packages: Vec::new(),
-                    packages_mount_at: String::new(),
-                    bootstrap_commands: Vec::new(),
-                    tool_shim_commands: Vec::new(),
+                    command_permissions: None,
+                    loopback_exempt_ports: None,
+                    packages: None,
+                    packages_mount_at: None,
                 }),
             ))
             .expect("configure command mount");
@@ -463,6 +458,50 @@ mod shadow_root {
         }
     }
 
+    fn guest_filesystem_error(
+        sidecar: &mut agentos_native_sidecar::NativeSidecar<RecordingBridge>,
+        connection_id: &str,
+        session_id: &str,
+        vm_id: &str,
+        request_id: i64,
+        payload: GuestFilesystemCallRequest,
+    ) -> String {
+        let response = sidecar
+            .dispatch_wire_blocking(wire_request(
+                request_id,
+                wire_vm(connection_id, session_id, vm_id),
+                RequestPayload::GuestFilesystemCallRequest(payload),
+            ))
+            .expect("dispatch rejected guest filesystem call");
+        match response.response.payload {
+            ResponsePayload::RejectedResponse(rejected) => rejected.message,
+            other => panic!("expected rejected guest filesystem response, got {other:?}"),
+        }
+    }
+
+    fn guest_filesystem_request(
+        operation: GuestFilesystemOperation,
+        path: impl Into<String>,
+    ) -> GuestFilesystemCallRequest {
+        GuestFilesystemCallRequest {
+            operation,
+            path: path.into(),
+            destination_path: None,
+            target: None,
+            content: None,
+            encoding: None,
+            recursive: None,
+            max_depth: None,
+            mode: None,
+            uid: None,
+            gid: None,
+            atime_ms: None,
+            mtime_ms: None,
+            len: None,
+            offset: None,
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn execute_command(
         sidecar: &mut agentos_native_sidecar::NativeSidecar<RecordingBridge>,
@@ -479,14 +518,18 @@ mod shadow_root {
                 request_id,
                 wire_vm(connection_id, session_id, vm_id),
                 RequestPayload::ExecuteRequest(ExecuteRequest {
-                    process_id: String::from(process_id),
+                    process_id: Some(String::from(process_id)),
                     command: Some(String::from(command)),
                     runtime: None,
                     entrypoint: None,
                     args,
-                    env: HashMap::new(),
+                    env: None,
                     cwd: Some(String::from("/workspace")),
                     wasm_permission_tier: None,
+                    pty: None,
+                    shell_command: None,
+                    keep_stdin_open: None,
+                    timeout_ms: None,
                 }),
             ))
             .expect("dispatch execute");
@@ -515,14 +558,18 @@ mod shadow_root {
                 request_id,
                 wire_vm(connection_id, session_id, vm_id),
                 RequestPayload::ExecuteRequest(ExecuteRequest {
-                    process_id: String::from(process_id),
+                    process_id: Some(String::from(process_id)),
                     command: None,
                     runtime: Some(GuestRuntimeKind::JavaScript),
                     entrypoint: Some(String::from(entrypoint)),
                     args: Vec::new(),
-                    env: HashMap::new(),
+                    env: None,
                     cwd: Some(String::from("/workspace")),
                     wasm_permission_tier: None,
+                    pty: None,
+                    shell_command: None,
+                    keep_stdin_open: None,
+                    timeout_ms: None,
                 }),
             ))
             .expect("dispatch execute");
@@ -625,6 +672,117 @@ mod shadow_root {
     }
 
     #[test]
+    fn guest_filesystem_mounts_enforce_exdev_and_hide_detached_contents() {
+        let host_dir = temp_dir("agentos-native-sidecar-mount-guest-fs");
+        fs::write(host_dir.join("source.txt"), "mounted-source\n").expect("seed mounted source");
+
+        let mut sidecar = create_test_sidecar();
+        let (connection_id, session_id) = authenticate_and_open_session(&mut sidecar);
+        let cwd = temp_dir("agentos-native-sidecar-mount-guest-fs-vm");
+        let (vm_id, _) = create_vm_wire(
+            &mut sidecar,
+            3,
+            &connection_id,
+            &session_id,
+            GuestRuntimeKind::JavaScript,
+            &cwd,
+        );
+        sidecar
+            .dispatch_wire_blocking(wire_request(
+                4,
+                wire_vm(&connection_id, &session_id, &vm_id),
+                RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
+                    mounts: Some(vec![MountDescriptor {
+                        guest_path: String::from("/mapped"),
+                        read_only: Some(false),
+                        plugin: MountPluginDescriptor {
+                            id: String::from("host_dir"),
+                            config: Some(
+                                serde_json::to_string(&json!({
+                                    "hostPath": host_dir.to_string_lossy().into_owned(),
+                                    "readOnly": false,
+                                }))
+                                .expect("serialize host mount"),
+                            ),
+                        },
+                    }]),
+                    permissions: None,
+                    command_permissions: None,
+                    loopback_exempt_ports: None,
+                    packages: None,
+                    packages_mount_at: None,
+                }),
+            ))
+            .expect("configure host mount");
+
+        let mut move_request =
+            guest_filesystem_request(GuestFilesystemOperation::Move, "/mapped/source.txt");
+        move_request.destination_path = Some(String::from("/workspace/moved.txt"));
+        let move_error = guest_filesystem_error(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            5,
+            move_request,
+        );
+        assert!(
+            move_error.to_string().contains("EXDEV"),
+            "unexpected move error: {move_error}"
+        );
+        assert!(host_dir.join("source.txt").exists());
+
+        let mut write_request =
+            guest_filesystem_request(GuestFilesystemOperation::WriteFile, "/mapped/leak.txt");
+        write_request.content = Some(String::from("mounted-only\n"));
+        write_request.encoding = Some(RootFilesystemEntryEncoding::Utf8);
+        guest_filesystem_call(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            6,
+            write_request,
+        );
+
+        sidecar
+            .dispatch_wire_blocking(wire_request(
+                7,
+                wire_vm(&connection_id, &session_id, &vm_id),
+                RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
+                    mounts: Some(Vec::new()),
+                    permissions: None,
+                    command_permissions: None,
+                    loopback_exempt_ports: None,
+                    packages: None,
+                    packages_mount_at: None,
+                }),
+            ))
+            .expect("unmount host filesystem");
+
+        let read_error = guest_filesystem_error(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            8,
+            guest_filesystem_request(GuestFilesystemOperation::ReadFile, "/mapped/leak.txt"),
+        );
+        assert!(
+            read_error.to_string().contains("ENOENT"),
+            "unexpected detached read error: {read_error}"
+        );
+        assert_eq!(
+            fs::read_to_string(host_dir.join("leak.txt")).expect("read detached host file"),
+            "mounted-only\n"
+        );
+
+        dispose_vm_and_close_session(&mut sidecar, &connection_id, &session_id, &vm_id);
+        fs::remove_dir_all(host_dir).expect("remove host mount temp dir");
+        fs::remove_dir_all(cwd).expect("remove VM temp dir");
+    }
+
+    #[test]
     fn filesystem_cross_mount_rename_reports_exdev_to_js_and_falls_back_in_shell() {
         if registry_command_root().is_none() {
             return;
@@ -641,17 +799,36 @@ mod shadow_root {
             &session_id,
             vec![MountDescriptor {
                 guest_path: String::from("/mapped"),
-                read_only: false,
+                read_only: Some(false),
                 plugin: MountPluginDescriptor {
                     id: String::from("host_dir"),
-                    config: serde_json::to_string(&json!({
-                        "hostPath": host_dir.to_string_lossy().into_owned(),
-                        "readOnly": false,
-                    }))
-                    .expect("serialize mapped mount config"),
+                    config: Some(
+                        serde_json::to_string(&json!({
+                            "hostPath": host_dir.to_string_lossy().into_owned(),
+                            "readOnly": false,
+                        }))
+                        .expect("serialize mapped mount config"),
+                    ),
                 },
             }],
         );
+
+        let mut cross_mount_move_request =
+            guest_filesystem_request(GuestFilesystemOperation::Move, "/mapped/source.txt");
+        cross_mount_move_request.destination_path = Some(String::from("/workspace/moved.txt"));
+        let cross_mount_move_error = guest_filesystem_error(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            40,
+            cross_mount_move_request,
+        );
+        assert!(
+            cross_mount_move_error.to_string().contains("EXDEV"),
+            "unexpected cross-mount move error: {cross_mount_move_error}"
+        );
+        assert!(host_dir.join("source.txt").exists());
 
         guest_filesystem_call(
             &mut sidecar,
@@ -671,7 +848,7 @@ mod shadow_root {
                     target: None,
                     content: None,
                     encoding: None,
-                    recursive: false,
+                    recursive: None,
                     max_depth: None,
                     mode: None,
                     uid: None,
@@ -700,7 +877,7 @@ mod shadow_root {
                     target: None,
                     content: None,
                     encoding: None,
-                    recursive: false,
+                    recursive: None,
                     max_depth: None,
                     mode: None,
                     uid: None,
@@ -759,7 +936,7 @@ mod shadow_root {
                     target: None,
                     content: None,
                     encoding: None,
-                    recursive: false,
+                    recursive: None,
                     max_depth: None,
                     mode: None,
                     uid: None,
@@ -810,7 +987,7 @@ mod shadow_root {
             GuestFilesystemCallRequest {
                 operation: GuestFilesystemOperation::Mkdir,
                 path: String::from("/kernel"),
-                recursive: false,
+                recursive: None,
                 max_depth: None,
                 ..GuestFilesystemCallRequest {
                     operation: GuestFilesystemOperation::Mkdir,
@@ -819,7 +996,7 @@ mod shadow_root {
                     target: None,
                     content: None,
                     encoding: None,
-                    recursive: false,
+                    recursive: None,
                     max_depth: None,
                     mode: None,
                     uid: None,
@@ -860,7 +1037,7 @@ try {
                     target: None,
                     content: None,
                     encoding: None,
-                    recursive: false,
+                    recursive: None,
                     max_depth: None,
                     mode: None,
                     uid: None,
@@ -929,6 +1106,73 @@ try {
         assert!(
             !host_dir.join("source.txt").exists(),
             "mv should unlink the mapped source after copying"
+        );
+
+        guest_filesystem_call(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            16,
+            GuestFilesystemCallRequest {
+                operation: GuestFilesystemOperation::WriteFile,
+                path: String::from("/mapped/leak.txt"),
+                content: Some(String::from("mounted-only\n")),
+                encoding: Some(RootFilesystemEntryEncoding::Utf8),
+                ..GuestFilesystemCallRequest {
+                    operation: GuestFilesystemOperation::WriteFile,
+                    path: String::new(),
+                    destination_path: None,
+                    target: None,
+                    content: None,
+                    encoding: None,
+                    recursive: None,
+                    max_depth: None,
+                    mode: None,
+                    uid: None,
+                    gid: None,
+                    atime_ms: None,
+                    mtime_ms: None,
+                    len: None,
+                    offset: None,
+                }
+            },
+        );
+        assert_eq!(
+            fs::read_to_string(host_dir.join("leak.txt")).expect("read mounted host file"),
+            "mounted-only\n"
+        );
+
+        sidecar
+            .dispatch_wire_blocking(wire_request(
+                17,
+                wire_vm(&connection_id, &session_id, &vm_id),
+                RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
+                    mounts: Some(Vec::new()),
+                    permissions: None,
+                    command_permissions: None,
+                    loopback_exempt_ports: None,
+                    packages: None,
+                    packages_mount_at: None,
+                }),
+            ))
+            .expect("unmount configured filesystems");
+
+        let unmounted_read_error = guest_filesystem_error(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            18,
+            guest_filesystem_request(GuestFilesystemOperation::ReadFile, "/mapped/leak.txt"),
+        );
+        assert!(
+            unmounted_read_error.to_string().contains("ENOENT"),
+            "unexpected unmounted read error: {unmounted_read_error}"
+        );
+        assert!(
+            host_dir.join("leak.txt").exists(),
+            "unmount must not delete the detached host filesystem"
         );
 
         dispose_vm_and_close_session(&mut sidecar, &connection_id, &session_id, &vm_id);

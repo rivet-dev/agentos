@@ -7,18 +7,17 @@
 // against the converged path (item 2). It is esbuild-bundled (the converged
 // modules import @rivet-dev/agentos-runtime-core, which can't load unbundled from /dist).
 
+import { createConvergedExecutionHostBridge } from "../../../../src/converged-execution-host-bridge.js";
+import { convergedPermissionsPolicy } from "../../../../src/converged-permissions.js";
 import {
 	allowAll,
 	createBrowserDriver,
 	createBrowserRuntimeDriverFactory,
 } from "../../../../src/index.js";
-import { createConvergedExecutionHostBridge } from "../../../../src/converged-execution-host-bridge.js";
-import { convergedPermissionsPolicy } from "../../../../src/converged-permissions.js";
-import { rootFilesystemConfigFromVfs } from "../../../../src/root-filesystem-from-vfs.js";
-import { decodeBase64 } from "../../../../src/converged-base64.js";
 
 const WASM_MODULE_URL = "/sidecar-wasm-web/agentos_native_sidecar_browser.js";
-const WASM_BINARY_URL = "/sidecar-wasm-web/agentos_native_sidecar_browser_bg.wasm";
+const WASM_BINARY_URL =
+	"/sidecar-wasm-web/agentos_native_sidecar_browser_bg.wasm";
 
 type StdioEvent = { channel?: string; message?: unknown; data?: unknown };
 
@@ -32,27 +31,11 @@ interface ConvergedDriver {
 	pending?: Map<unknown, unknown>;
 	signalStates?: Map<string, Map<number, unknown>>;
 	worker?: { onmessage?: unknown; onerror?: unknown };
-	snapshotConvergedRootFilesystem?(): Promise<
-		Array<{
-			path: string;
-			kind: string;
-			content?: string;
-			encoding?: string;
-			target?: string;
-		}> | null
-	>;
-}
-
-interface PersistFs {
-	writeFile(path: string, content: string | Uint8Array): Promise<void>;
-	mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
-	symlink(target: string, linkPath: string): Promise<void>;
 }
 
 interface ConvergedRuntimeRecord {
 	driver: ConvergedDriver;
 	decisions: { deniedFsReads: number };
-	persistTo?: PersistFs;
 }
 
 function debugRuntime(driver: ConvergedDriver) {
@@ -62,10 +45,12 @@ function debugRuntime(driver: ConvergedDriver) {
 	const signalHandlers = Array.from(driver.signalStates?.entries?.() ?? []).map(
 		([executionId, handlers]) => ({
 			executionId,
-			handlers: Array.from(handlers.entries()).map(([signal, registration]) => ({
-				signal,
-				...(registration as object),
-			})),
+			handlers: Array.from(handlers.entries()).map(
+				([signal, registration]) => ({
+					signal,
+					...(registration as object),
+				}),
+			),
 		}),
 	);
 	return {
@@ -158,7 +143,8 @@ function createEchoCommandExecutor() {
 					return exitCode;
 				},
 				writeStdin(data: string | Uint8Array) {
-					stdin += typeof data === "string" ? data : new TextDecoder().decode(data);
+					stdin +=
+						typeof data === "string" ? data : new TextDecoder().decode(data);
 				},
 				closeStdin() {
 					if (command === "cat" && stdin) {
@@ -203,10 +189,6 @@ async function createRuntime(options: Record<string, unknown> = {}) {
 	};
 
 	const config = {
-		rootFilesystem: await rootFilesystemConfigFromVfs(
-			(system as { filesystem: Parameters<typeof rootFilesystemConfigFromVfs>[0] })
-				.filesystem,
-		),
 		permissions: convergedPermissionsPolicy(permissionDenials(options)),
 	} as never;
 
@@ -230,12 +212,6 @@ async function createRuntime(options: Record<string, unknown> = {}) {
 	runtimes.set(runtimeId, {
 		driver,
 		decisions,
-		// Persist the converged VM fs back to the host filesystem (e.g. OPFS) on
-		// dispose so data survives across runtimes, matching the legacy model.
-		persistTo:
-			options.filesystem === "opfs"
-				? ((system as { filesystem: PersistFs }).filesystem)
-				: undefined,
 	});
 	return {
 		crossOriginIsolated: window.crossOriginIsolated,
@@ -252,7 +228,11 @@ function getRuntime(runtimeId: string): ConvergedRuntimeRecord {
 	return runtime;
 }
 
-async function exec(runtimeId: string, code: string, options: Record<string, unknown> = {}) {
+async function exec(
+	runtimeId: string,
+	code: string,
+	options: Record<string, unknown> = {},
+) {
 	const runtime = getRuntime(runtimeId);
 	const stdio: StdioEvent[] = [];
 	const result = await runtime.driver.exec(code, {
@@ -272,42 +252,8 @@ async function disposeRuntime(runtimeId: string) {
 	if (!runtime) {
 		return;
 	}
-	if (runtime.persistTo && runtime.driver.snapshotConvergedRootFilesystem) {
-		const entries = await runtime.driver.snapshotConvergedRootFilesystem();
-		if (entries) {
-			await persistEntries(entries, runtime.persistTo);
-		}
-	}
 	await runtime.driver.dispose();
 	runtimes.delete(runtimeId);
-}
-
-async function persistEntries(
-	entries: Array<{
-		path: string;
-		kind: string;
-		content?: string;
-		encoding?: string;
-		target?: string;
-	}>,
-	fs: PersistFs,
-) {
-	for (const entry of entries) {
-		if (entry.path === "/" || entry.path.startsWith("/dev") || entry.path.startsWith("/proc")) {
-			continue;
-		}
-		if (entry.kind === "directory") {
-			await fs.mkdir(entry.path, { recursive: true }).catch(() => undefined);
-		} else if (entry.kind === "symlink" && entry.target) {
-			await fs.symlink(entry.target, entry.path).catch(() => undefined);
-		} else if (entry.kind === "file") {
-			const content =
-				entry.encoding === "base64"
-					? decodeBase64(entry.content ?? "")
-					: (entry.content ?? "");
-			await fs.writeFile(entry.path, content).catch(() => undefined);
-		}
-	}
 }
 
 async function disposeAllRuntimes() {
@@ -339,10 +285,20 @@ async function runPending(
 	await new Promise((resolve) => setTimeout(resolve, delayMs));
 	const acted = act(driver);
 	await pending;
-	return { outcome, resultCode, errorMessage, acted, debug: debugRuntime(driver) };
+	return {
+		outcome,
+		resultCode,
+		errorMessage,
+		acted,
+		debug: debugRuntime(driver),
+	};
 }
 
-async function terminatePendingExec(runtimeId: string, code: string, delayMs = 25) {
+async function terminatePendingExec(
+	runtimeId: string,
+	code: string,
+	delayMs = 25,
+) {
 	return runPending(runtimeId, code, delayMs, (driver) => driver.dispose());
 }
 
@@ -359,7 +315,6 @@ async function signalPendingExec(
 }
 
 async function debugPendingExec(runtimeId: string, code: string, delayMs = 25) {
-	const { driver } = getRuntime(runtimeId);
 	const pendingResult = await runPending(runtimeId, code, delayMs, (d) => {
 		const snapshot = debugRuntime(d);
 		d.dispose();

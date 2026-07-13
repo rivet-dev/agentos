@@ -1,11 +1,12 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import {
 	createServer,
 	type IncomingMessage,
 	type ServerResponse,
 } from "node:http";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import opencode from "@agentos-software/opencode";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { describe, expect, test } from "vitest";
 import type { AgentCapabilities, AgentInfo } from "../src/agent-os.js";
@@ -16,12 +17,12 @@ import {
 	startLlmock,
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
+import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import {
 	createVmOpenCodeHome,
 	createVmWorkspace,
 	readVmText,
 } from "./helpers/opencode-helper.js";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 const REGISTRY_COMMAND_DIR_CANDIDATES = [
@@ -243,14 +244,14 @@ async function createOpenCodeVm(mockUrl: string): Promise<AgentOs> {
 	return AgentOs.create({
 		loopbackExemptPorts: [Number(new URL(mockUrl).port)],
 		mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-		// opencode is pre-packed + projected by default.
-		software: [...shellSoftware],
+		software: [opencode, ...shellSoftware],
 	});
 }
 
 async function createOpenCodeOnlyVm(mockUrl: string): Promise<AgentOs> {
 	return AgentOs.create({
 		loopbackExemptPorts: [Number(new URL(mockUrl).port)],
+		software: [opencode],
 	});
 }
 
@@ -273,36 +274,36 @@ describe("OpenCode session API integration", () => {
 				})
 			).sessionId;
 
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as AgentInfo;
+			const agentInfo = (await vm.getSessionAgentInfo(sessionId)) as AgentInfo;
 			expect(agentInfo.name).toBe("OpenCode");
 			expect(agentInfo.version).toBeTruthy();
 
-			const capabilities = vm.getSessionCapabilities(
+			const capabilities = (await vm.getSessionCapabilities(
 				sessionId,
-			) as AgentCapabilities;
+			)) as AgentCapabilities;
 			expect(capabilities.promptCapabilities).toMatchObject({
 				embeddedContext: true,
 				image: true,
 			});
 
-			const modes = vm.getSessionModes(sessionId);
+			const modes = await vm.getSessionModes(sessionId);
 			expect(modes?.currentModeId).toBe("build");
 			expect(modes?.availableModes.map((mode) => mode.id)).toEqual(
 				expect.arrayContaining(["build", "plan"]),
 			);
 
-			const configOptions = vm.getSessionConfigOptions(sessionId);
+			const configOptions = await vm.getSessionConfigOptions(sessionId);
 			expect(configOptions.some((option) => option.category === "model")).toBe(
 				true,
 			);
 
-			expect(vm.listSessions()).toContainEqual({
+			expect(await vm.listSessions()).toContainEqual({
 				sessionId,
 				agentType: "opencode",
 			});
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -338,25 +339,25 @@ describe("OpenCode session API integration", () => {
 				})
 			).sessionId;
 
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as AgentInfo;
+			const agentInfo = (await vm.getSessionAgentInfo(sessionId)) as AgentInfo;
 			expect(agentInfo.name).toBe("OpenCode");
 			expect(agentInfo.version).toBeTruthy();
 
-			const capabilities = vm.getSessionCapabilities(
+			const capabilities = (await vm.getSessionCapabilities(
 				sessionId,
-			) as AgentCapabilities;
+			)) as AgentCapabilities;
 			expect(capabilities.promptCapabilities).toMatchObject({
 				embeddedContext: true,
 				image: true,
 			});
 
-			const modes = vm.getSessionModes(sessionId);
+			const modes = await vm.getSessionModes(sessionId);
 			expect(modes?.currentModeId).toBe("build");
 			expect(modes?.availableModes.map((mode) => mode.id)).toEqual(
 				expect.arrayContaining(["build", "plan"]),
 			);
 
-			const configOptions = vm.getSessionConfigOptions(sessionId);
+			const configOptions = await vm.getSessionConfigOptions(sessionId);
 			expect(configOptions.some((option) => option.category === "model")).toBe(
 				true,
 			);
@@ -387,7 +388,7 @@ describe("OpenCode session API integration", () => {
 			expect(events.length).toBeGreaterThan(0);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -454,7 +455,7 @@ describe("OpenCode session API integration", () => {
 					expect(response.error).toBeUndefined();
 				} finally {
 					if (sessionId) {
-						vm.closeSession(sessionId);
+						await vm.closeSession(sessionId);
 					}
 					await vm.dispose();
 				}
@@ -488,14 +489,14 @@ describe("OpenCode session API integration", () => {
 				})
 			).sessionId;
 
-			expect(vm.listSessions()).toContainEqual({
+			expect(await vm.listSessions()).toContainEqual({
 				sessionId,
 				agentType: "opencode",
 			});
 
-			const modelOption = vm
-				.getSessionConfigOptions(sessionId)
-				.find((option) => option.category === "model");
+			const modelOption = (await vm.getSessionConfigOptions(sessionId)).find(
+				(option) => option.category === "model",
+			);
 			expect(modelOption).toMatchObject({
 				id: "model",
 				category: "model",
@@ -514,7 +515,7 @@ describe("OpenCode session API integration", () => {
 
 			const setModeResponse = await vm.setSessionMode(sessionId, "plan");
 			expect(setModeResponse.error).toBeUndefined();
-			expect(vm.getSessionModes(sessionId)?.currentModeId).toBe("plan");
+			expect((await vm.getSessionModes(sessionId))?.currentModeId).toBe("plan");
 
 			const { response: promptResponse } = await vm.prompt(
 				sessionId,
@@ -543,13 +544,13 @@ describe("OpenCode session API integration", () => {
 			const destroyedSessionId = sessionId;
 			await vm.destroySession(destroyedSessionId);
 			sessionId = undefined;
-			expect(vm.listSessions()).not.toContainEqual({
+			expect(await vm.listSessions()).not.toContainEqual({
 				sessionId: destroyedSessionId,
 				agentType: "opencode",
 			});
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -626,7 +627,7 @@ describe("OpenCode session API integration", () => {
 			).toBeUndefined();
 		} finally {
 			if (liveSessionId) {
-				vm?.closeSession(liveSessionId);
+				await vm?.closeSession(liveSessionId);
 			}
 			if (vm) {
 				await vm.dispose();
@@ -676,7 +677,7 @@ describe("OpenCode session API integration", () => {
 
 			const firstResponse = await vm.prompt(sessionId, firstPrompt);
 			expect(firstResponse.response.error).toBeUndefined();
-			vm.closeSession(sessionId);
+			await vm.closeSession(sessionId);
 
 			const resumed = await vm.resumeSession(sessionId, "opencode", {
 				cwd: workspaceDir,
@@ -708,7 +709,7 @@ describe("OpenCode session API integration", () => {
 			).toBe(false);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -758,7 +759,7 @@ describe("OpenCode session API integration", () => {
 			).toMatchObject({
 				cancelled: true,
 				requested: true,
-				via: "prompt-fallback",
+				via: "prompt-interrupt",
 			});
 
 			const promptResponse = await promptPromise;
@@ -769,7 +770,7 @@ describe("OpenCode session API integration", () => {
 			).toBe("cancelled");
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -869,7 +870,7 @@ describe("OpenCode session API integration", () => {
 				);
 			} finally {
 				if (sessionId) {
-					vm.closeSession(sessionId);
+					await vm.closeSession(sessionId);
 				}
 				await vm.dispose();
 				await stopLlmock(mock);
@@ -964,7 +965,7 @@ describe("OpenCode session API integration", () => {
 			).toBe(true);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -1002,7 +1003,7 @@ describe("OpenCode session API integration", () => {
 
 			const setPlanResponse = await vm.setSessionMode(sessionId, "plan");
 			expect(setPlanResponse.error).toBeUndefined();
-			expect(vm.getSessionModes(sessionId)?.currentModeId).toBe("plan");
+			expect((await vm.getSessionModes(sessionId))?.currentModeId).toBe("plan");
 
 			const planPrompt = "Plan once and do not run tools.";
 			const { response: planPromptResponse } = await vm.prompt(
@@ -1015,7 +1016,9 @@ describe("OpenCode session API integration", () => {
 				modeId: "build",
 			});
 			expect(rawBuildResponse.error).toBeUndefined();
-			expect(vm.getSessionModes(sessionId)?.currentModeId).toBe("build");
+			expect((await vm.getSessionModes(sessionId))?.currentModeId).toBe(
+				"build",
+			);
 
 			const buildPrompt = "Answer normally after returning to build mode.";
 			const { response: buildPromptResponse } = await vm.prompt(
@@ -1054,7 +1057,7 @@ describe("OpenCode session API integration", () => {
 			).toBe(false);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);

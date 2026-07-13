@@ -165,4 +165,35 @@ describe("AgentOs session event ordering", () => {
 			},
 		]);
 	});
+
+	it("does not supplement ACP stderr identity from client session state", () => {
+		const { agent } = createTrackedAgent();
+		const metadata: Array<{
+			sessionId: string;
+			agentType: string;
+			pid: number | null;
+		}> = [];
+		agent._agentStderrHandler = (event) => {
+			metadata.push({
+				sessionId: event.sessionId,
+				agentType: event.agentType,
+				pid: event.pid,
+			});
+		};
+
+		agent._handleAcpExtEvent({
+			namespace: ACP_EXTENSION_NAMESPACE,
+			payload: encodeAcpEvent({
+				tag: "AcpAgentStderrEvent",
+				val: {
+					sessionId: "",
+					agentType: "",
+					processId: "proc-1",
+					chunk: new ArrayBuffer(0),
+				},
+			}),
+		});
+
+		expect(metadata).toEqual([{ sessionId: "", agentType: "", pid: null }]);
+	});
 });

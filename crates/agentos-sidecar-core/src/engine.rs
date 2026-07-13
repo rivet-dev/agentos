@@ -14,14 +14,20 @@ use std::collections::BTreeMap;
 
 use agentos_protocol::generated::v1::{
     AcpCloseSessionRequest, AcpCreateSessionRequest, AcpDeliverAgentOutputRequest,
-    AcpGetSessionStateRequest, AcpPendingResponse, AcpRequest, AcpResponse,
-    AcpResumeSessionRequest, AcpRuntimeKind, AcpSessionClosedResponse, AcpSessionRequest,
-    AcpSessionResumedResponse, AcpSessionRpcResponse,
+    AcpGetSessionStateRequest, AcpListSessionsResponse, AcpPendingResponse, AcpRequest,
+    AcpResponse, AcpResumeSessionRequest, AcpRuntimeKind, AcpSessionClosedResponse,
+    AcpSessionEntry, AcpSessionRequest, AcpSessionResumedResponse, AcpSessionRpcResponse,
+    AcpSetSessionConfigRequest,
+};
+use agentos_protocol::{
+    read_only_config_message, select_config_by_category, AcpPromptTextAccumulator,
+    ResolvedAcpCreateSessionRequest, ResolvedAcpResumeSessionRequest,
+    DEFAULT_ACP_CLIENT_CAPABILITIES, DEFAULT_ACP_PROTOCOL_VERSION,
 };
 use serde_json::{json, Map, Value};
 
 use crate::host::{AcpHost, SpawnAgentRequest};
-use crate::json_rpc::send_json_rpc;
+use crate::json_rpc::{send_json_rpc, send_json_rpc_exchange};
 use crate::session::AcpSessionRecord;
 use crate::AcpCoreError;
 
@@ -31,13 +37,14 @@ const SESSION_CLOSE_TIMEOUT_MS: u64 = 5_000;
 const INITIALIZE_TIMEOUT_MS: u64 = 10_000;
 const SESSION_NEW_TIMEOUT_MS: u64 = 30_000;
 
-/// Matches the native `ACP_RESUME_PROTOCOL_VERSION`.
-const ACP_RESUME_PROTOCOL_VERSION: i32 = 1;
-/// Matches the native `DEFAULT_RESUME_CLIENT_CAPABILITIES`.
-const DEFAULT_RESUME_CLIENT_CAPABILITIES: &str = "{}";
 /// Transcript-continuation preamble armed by the resume fallback tier; matches the
 /// native `CONTINUATION_PREAMBLE`.
 const CONTINUATION_PREAMBLE: &str = "You are continuing an earlier session. The full prior transcript is at `{path}`. Read it with your file tools if you need context before answering.";
+
+enum PreparedSessionConfig {
+    Immediate(AcpResponse),
+    Forward(AcpSessionRequest),
+}
 
 /// Agent launch parameters resolved from a projected `/opt/agentos` package
 /// manifest. The npm-agnostic client sends only the agent name; the sidecar owns
@@ -120,6 +127,7 @@ struct PendingPrompt {
     session_id: String,
     rpc_id: i64,
     stdout_buffer: String,
+    prompt_text: Option<AcpPromptTextAccumulator>,
 }
 
 /// State of one in-flight resumable `create_session` handshake.
@@ -201,6 +209,21 @@ impl AcpCore {
         ))
     }
 
+    /// List the caller's live sessions without exposing other connections.
+    pub fn list_sessions(&self, caller_connection_id: &str) -> AcpResponse {
+        AcpResponse::AcpListSessionsResponse(AcpListSessionsResponse {
+            sessions: self
+                .sessions
+                .values()
+                .filter(|session| session.owner_connection_id == caller_connection_id)
+                .map(|session| AcpSessionEntry {
+                    session_id: session.session_id.clone(),
+                    agent_type: session.agent_type.clone(),
+                })
+                .collect(),
+        })
+    }
+
     /// `session/close`: owner-only teardown. Removes the record, then SIGTERM →
     /// (timeout) → SIGKILL the agent process through the host seam. Mirrors the
     /// native `close_session` flow.
@@ -220,10 +243,11 @@ impl AcpCore {
             None
         };
         let Some(session) = session else {
-            return Err(AcpCoreError::InvalidState(format!(
-                "unknown ACP session {}",
-                request.session_id
-            )));
+            return Ok(AcpResponse::AcpSessionClosedResponse(
+                AcpSessionClosedResponse {
+                    session_id: request.session_id.clone(),
+                },
+            ));
         };
 
         let _ = host.close_stdin(&session.process_id);
@@ -266,6 +290,7 @@ impl AcpCore {
         caller_connection_id: &str,
         request: &AcpCreateSessionRequest,
     ) -> Result<AcpResponse, AcpCoreError> {
+        let request = ResolvedAcpCreateSessionRequest::from(request.clone());
         let resolved = resolve_agent(host, &request.agent_type)?;
         let process_id = self.allocate_process_id("acp-agent");
         let mut env: BTreeMap<String, String> = request.env.clone().into_iter().collect();
@@ -288,7 +313,7 @@ impl AcpCore {
             cwd: Some(request.cwd.clone()),
         })?;
 
-        let bootstrap = match self.bootstrap_session(host, request, &process_id) {
+        let bootstrap = match self.bootstrap_session(host, &request, &process_id) {
             Ok(bootstrap) => bootstrap,
             Err(error) => {
                 let _ = host.kill_agent(&process_id, "SIGKILL");
@@ -313,6 +338,14 @@ impl AcpCore {
             pending_preamble: None,
         };
 
+        if self.sessions.contains_key(&session.session_id) {
+            let _ = host.kill_agent(&process_id, "SIGKILL");
+            return Err(AcpCoreError::InvalidState(format!(
+                "session id collision: {}",
+                session.session_id
+            )));
+        }
+
         host.bind_session(&session.session_id, &process_id)?;
         let response = AcpResponse::AcpSessionCreatedResponse(session.created_response());
         self.sessions.insert(session.session_id.clone(), session);
@@ -331,6 +364,7 @@ impl AcpCore {
         caller_connection_id: &str,
         request: &AcpCreateSessionRequest,
     ) -> Result<String, AcpCoreError> {
+        let request = ResolvedAcpCreateSessionRequest::from(request.clone());
         let resolved = resolve_agent(host, &request.agent_type)?;
         let process_id = self.allocate_process_id("acp-agent");
         let mut env: BTreeMap<String, String> = request.env.clone().into_iter().collect();
@@ -473,6 +507,12 @@ impl AcpCore {
             .expect("pending entry exists");
         let init_result = pending.init_result.clone().unwrap_or_default();
         let session_id = session_id_from_session_result(&session_result, process_id);
+        if self.sessions.contains_key(&session_id) {
+            let _ = host.kill_agent(process_id, "SIGKILL");
+            return Err(AcpCoreError::InvalidState(format!(
+                "session id collision: {session_id}"
+            )));
+        }
         host.bind_session(&session_id, process_id)?;
         let record = AcpSessionRecord {
             session_id: session_id.clone(),
@@ -549,13 +589,16 @@ impl AcpCore {
                 session_id: request.session_id.clone(),
                 rpc_id,
                 stdout_buffer: String::new(),
+                prompt_text: (request.method == "session/prompt")
+                    .then(AcpPromptTextAccumulator::default),
             },
         );
         Ok(process_id)
     }
 
     fn feed_prompt(&mut self, process_id: &str, chunk: &[u8]) -> Result<ResumeStep, AcpCoreError> {
-        let mut completed: Option<(String, String)> = None; // (session_id, response_text)
+        let mut completed: Option<(String, String, Option<String>)> = None;
+        let mut capture_error = None;
         {
             let pending = self
                 .pending_prompts
@@ -573,7 +616,22 @@ impl AcpCore {
                 let Ok(message) = serde_json::from_str::<Value>(trimmed) else {
                     continue;
                 };
-                // Ignore notifications / other ids; only the matching response completes.
+                if message.get("method").and_then(Value::as_str).is_some() {
+                    if let Some(capture) = pending.prompt_text.as_mut() {
+                        match capture.push_notification(&message) {
+                            Ok(true) => tracing::warn!(
+                                session_id = pending.session_id,
+                                "ACP prompt text capture is near its configured limit"
+                            ),
+                            Ok(false) => {}
+                            Err(error) => {
+                                capture_error = Some(AcpCoreError::InvalidState(error));
+                                break;
+                            }
+                        }
+                    }
+                    continue;
+                }
                 if message.get("id").and_then(Value::as_i64) != Some(pending.rpc_id) {
                     continue;
                 }
@@ -582,11 +640,22 @@ impl AcpCore {
                         "failed to serialize ACP session response: {error}"
                     ))
                 })?;
-                completed = Some((pending.session_id.clone(), text));
+                completed = Some((
+                    pending.session_id.clone(),
+                    text,
+                    pending
+                        .prompt_text
+                        .take()
+                        .map(AcpPromptTextAccumulator::into_text),
+                ));
                 break;
             }
         }
-        let Some((session_id, response)) = completed else {
+        if let Some(error) = capture_error {
+            self.pending_prompts.remove(process_id);
+            return Err(error);
+        }
+        let Some((session_id, response, text)) = completed else {
             return Ok(ResumeStep::Pending);
         };
         self.pending_prompts.remove(process_id);
@@ -594,6 +663,7 @@ impl AcpCore {
             AcpSessionRpcResponse {
                 session_id,
                 response,
+                text,
             },
         )))
     }
@@ -609,7 +679,7 @@ impl AcpCore {
     fn bootstrap_session<H: AcpHost>(
         &self,
         host: &mut H,
-        request: &AcpCreateSessionRequest,
+        request: &ResolvedAcpCreateSessionRequest,
         process_id: &str,
     ) -> Result<SessionBootstrap, AcpCoreError> {
         let mut stdout = String::new();
@@ -725,7 +795,7 @@ impl AcpCore {
             "params": Value::Object(outbound_params),
         });
         let timeout = request_timeout_ms(&request.method);
-        let response = match send_json_rpc(
+        let exchange = match send_json_rpc_exchange(
             host,
             &process_id,
             &outbound,
@@ -733,7 +803,7 @@ impl AcpCore {
             timeout,
             &mut stdout_buffer,
         ) {
-            Ok(response) => response,
+            Ok(exchange) => exchange,
             Err(error) => {
                 // Persist any drained stdout and re-arm the consumed preamble so a
                 // transient failure does not silently drop transcript context.
@@ -751,12 +821,77 @@ impl AcpCore {
             session.stdout_buffer = stdout_buffer;
         }
 
-        let response_text = serde_json::to_string(&response).map_err(|error| {
+        let text = if request.method == "session/prompt" {
+            let mut capture = AcpPromptTextAccumulator::default();
+            for notification in &exchange.notifications {
+                if capture
+                    .push_notification(notification)
+                    .map_err(AcpCoreError::InvalidState)?
+                {
+                    tracing::warn!(
+                        session_id = request.session_id,
+                        "ACP prompt text capture is near its configured limit"
+                    );
+                }
+            }
+            Some(capture.into_text())
+        } else {
+            None
+        };
+
+        let response_text = serde_json::to_string(&exchange.response).map_err(|error| {
             AcpCoreError::InvalidState(format!("failed to serialize ACP session response: {error}"))
         })?;
         Ok(AcpResponse::AcpSessionRpcResponse(AcpSessionRpcResponse {
             session_id: request.session_id.clone(),
             response: response_text,
+            text,
+        }))
+    }
+
+    fn prepare_session_config(
+        &self,
+        caller_connection_id: &str,
+        request: &AcpSetSessionConfigRequest,
+    ) -> Result<PreparedSessionConfig, AcpCoreError> {
+        let unknown =
+            || AcpCoreError::InvalidState(format!("unknown ACP session {}", request.session_id));
+        let session = self.sessions.get(&request.session_id).ok_or_else(unknown)?;
+        if session.owner_connection_id != caller_connection_id {
+            return Err(unknown());
+        }
+        let selection = select_config_by_category(&session.config_options, &request.category)
+            .map_err(AcpCoreError::InvalidState)?;
+        if selection.read_only {
+            return Ok(PreparedSessionConfig::Immediate(
+                AcpResponse::AcpSessionRpcResponse(AcpSessionRpcResponse {
+                    session_id: request.session_id.clone(),
+                    response: json!({
+                        "jsonrpc": "2.0",
+                        "id": Value::Null,
+                        "error": {
+                            "code": -32601,
+                            "message": read_only_config_message(
+                                &session.agent_type,
+                                &request.category,
+                            ),
+                        },
+                    })
+                    .to_string(),
+                    text: None,
+                }),
+            ));
+        }
+        Ok(PreparedSessionConfig::Forward(AcpSessionRequest {
+            session_id: request.session_id.clone(),
+            method: String::from("session/set_config_option"),
+            params: Some(
+                json!({
+                    "configId": selection.config_id,
+                    "value": request.value,
+                })
+                .to_string(),
+            ),
         }))
     }
 
@@ -772,6 +907,7 @@ impl AcpCore {
         caller_connection_id: &str,
         request: &AcpResumeSessionRequest,
     ) -> Result<AcpResponse, AcpCoreError> {
+        let request = ResolvedAcpResumeSessionRequest::from(request.clone());
         let resolved = resolve_agent(host, &request.agent_type)?;
 
         let process_id = self.allocate_process_id("acp-agent");
@@ -792,7 +928,7 @@ impl AcpCore {
             cwd: Some(request.cwd.clone()),
         })?;
 
-        let outcome = match self.resume_bootstrap(host, request, &process_id) {
+        let outcome = match self.resume_bootstrap(host, &request, &process_id) {
             Ok(outcome) => outcome,
             Err(error) => {
                 let _ = host.kill_agent(&process_id, "SIGKILL");
@@ -817,6 +953,14 @@ impl AcpCore {
             pending_preamble: outcome.pending_preamble,
         };
 
+        if self.sessions.contains_key(&session.session_id) {
+            let _ = host.kill_agent(&process_id, "SIGKILL");
+            return Err(AcpCoreError::InvalidState(format!(
+                "session id collision: {}",
+                session.session_id
+            )));
+        }
+
         host.bind_session(&session.session_id, &process_id)?;
         let response = AcpResponse::AcpSessionResumedResponse(AcpSessionResumedResponse {
             session_id: session.session_id.clone(),
@@ -829,19 +973,19 @@ impl AcpCore {
     fn resume_bootstrap<H: AcpHost>(
         &self,
         host: &mut H,
-        request: &AcpResumeSessionRequest,
+        request: &ResolvedAcpResumeSessionRequest,
         process_id: &str,
     ) -> Result<ResumeOutcome, AcpCoreError> {
         let mut stdout = String::new();
         let client_capabilities =
-            parse_json_text(DEFAULT_RESUME_CLIENT_CAPABILITIES, "clientCapabilities")?;
+            parse_json_text(DEFAULT_ACP_CLIENT_CAPABILITIES, "clientCapabilities")?;
 
         let initialize = json!({
             "jsonrpc": "2.0",
             "id": 1,
             "method": "initialize",
             "params": {
-                "protocolVersion": ACP_RESUME_PROTOCOL_VERSION,
+                "protocolVersion": DEFAULT_ACP_PROTOCOL_VERSION,
                 "clientCapabilities": client_capabilities,
             },
         });
@@ -854,7 +998,7 @@ impl AcpCore {
             &mut stdout,
         )?;
         let init_result = response_result(init_response, "ACP initialize")?;
-        validate_initialize_result(&init_result, ACP_RESUME_PROTOCOL_VERSION)?;
+        validate_initialize_result(&init_result, DEFAULT_ACP_PROTOCOL_VERSION)?;
         let agent_capabilities = init_result.get("agentCapabilities").cloned();
 
         // Tier 1 — native (capability-gated). Re-probed caps decide eligibility.
@@ -966,11 +1110,20 @@ impl AcpCore {
             AcpRequest::AcpGetSessionStateRequest(request) => {
                 self.get_session_state(caller_connection_id, &request)
             }
+            AcpRequest::AcpListSessionsRequest(_) => Ok(self.list_sessions(caller_connection_id)),
             AcpRequest::AcpCloseSessionRequest(request) => {
                 self.close_session(host, caller_connection_id, &request)
             }
             AcpRequest::AcpSessionRequest(request) => {
                 self.session_request(host, caller_connection_id, &request)
+            }
+            AcpRequest::AcpSetSessionConfigRequest(request) => {
+                match self.prepare_session_config(caller_connection_id, &request)? {
+                    PreparedSessionConfig::Immediate(response) => Ok(response),
+                    PreparedSessionConfig::Forward(request) => {
+                        self.session_request(host, caller_connection_id, &request)
+                    }
+                }
             }
             AcpRequest::AcpResumeSessionRequest(request) => {
                 self.resume_session(host, caller_connection_id, &request)
@@ -1016,6 +1169,18 @@ impl AcpCore {
                 Ok(AcpResponse::AcpPendingResponse(AcpPendingResponse {
                     process_id,
                 }))
+            }
+            AcpRequest::AcpSetSessionConfigRequest(request) => {
+                match self.prepare_session_config(caller_connection_id, &request)? {
+                    PreparedSessionConfig::Immediate(response) => Ok(response),
+                    PreparedSessionConfig::Forward(request) => {
+                        let process_id =
+                            self.begin_session_request(host, caller_connection_id, &request)?;
+                        Ok(AcpResponse::AcpPendingResponse(AcpPendingResponse {
+                            process_id,
+                        }))
+                    }
+                }
             }
             AcpRequest::AcpDeliverAgentOutputRequest(request) => {
                 self.deliver_agent_output(host, &request)
@@ -1333,15 +1498,33 @@ mod tests {
     }
 
     #[test]
-    fn close_session_owner_only_and_kills_process() {
+    fn list_sessions_is_owner_scoped() {
+        let mut core = AcpCore::new();
+        core.insert_session(record("a1", "conn-a"));
+        core.insert_session(record("b1", "conn-b"));
+
+        let AcpResponse::AcpListSessionsResponse(listed) = core.list_sessions("conn-a") else {
+            panic!("unexpected list response");
+        };
+        assert_eq!(listed.sessions.len(), 1);
+        assert_eq!(listed.sessions[0].session_id, "a1");
+        assert_eq!(listed.sessions[0].agent_type, "echo");
+    }
+
+    #[test]
+    fn close_session_is_idempotent_owner_only_and_kills_process() {
         let mut core = AcpCore::new();
         core.insert_session(record("s1", "conn-a"));
         let mut host = MockHost::default();
         let req = AcpCloseSessionRequest {
             session_id: "s1".into(),
         };
-        // Non-owner cannot close.
-        assert!(core.close_session(&mut host, "conn-b", &req).is_err());
+        // Non-owner receives the same idempotent response as an absent id, but
+        // cannot close the owner's session.
+        assert!(matches!(
+            core.close_session(&mut host, "conn-b", &req),
+            Ok(AcpResponse::AcpSessionClosedResponse(_))
+        ));
         assert_eq!(core.session_count(), 1);
         // Owner closes: process is torn down and the record removed.
         let resp = core
@@ -1349,6 +1532,14 @@ mod tests {
             .expect("close");
         assert!(matches!(resp, AcpResponse::AcpSessionClosedResponse(_)));
         assert_eq!(core.session_count(), 0);
+        assert_eq!(host.closed_stdin, vec!["proc-s1".to_string()]);
+        assert_eq!(host.killed, vec![("proc-s1".into(), "SIGTERM".into())]);
+
+        // Repeated close requires no client tombstone and performs no teardown.
+        assert!(matches!(
+            core.close_session(&mut host, "conn-a", &req),
+            Ok(AcpResponse::AcpSessionClosedResponse(_))
+        ));
         assert_eq!(host.closed_stdin, vec!["proc-s1".to_string()]);
         assert_eq!(host.killed, vec![("proc-s1".into(), "SIGTERM".into())]);
     }
@@ -1471,6 +1662,51 @@ mod tests {
     }
 
     #[test]
+    fn config_category_resolution_and_read_only_behavior_are_sidecar_owned() {
+        let mut core = AcpCore::new();
+        let mut session = record("s1", "conn-a");
+        session.agent_type = String::from("opencode");
+        session.config_options = vec![String::from(
+            r#"{"id":"model-picker","category":"model","readOnly":true}"#,
+        )];
+        core.insert_session(session);
+
+        let request = AcpSetSessionConfigRequest {
+            session_id: String::from("s1"),
+            category: String::from("model"),
+            value: String::from("new-model"),
+        };
+        let PreparedSessionConfig::Immediate(AcpResponse::AcpSessionRpcResponse(response)) = core
+            .prepare_session_config("conn-a", &request)
+            .expect("prepare read-only response")
+        else {
+            panic!("read-only category must complete inside the sidecar");
+        };
+        let response: Value = serde_json::from_str(&response.response).expect("response JSON");
+        assert_eq!(response["error"]["code"], -32601);
+        assert!(response["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("before createSession()")));
+
+        let writable = AcpSetSessionConfigRequest {
+            session_id: String::from("s1"),
+            category: String::from("thought_level"),
+            value: String::from("high"),
+        };
+        let PreparedSessionConfig::Forward(request) = core
+            .prepare_session_config("conn-a", &writable)
+            .expect("prepare writable request")
+        else {
+            panic!("writable category must forward to the adapter");
+        };
+        assert_eq!(request.method, "session/set_config_option");
+        let params: Value =
+            serde_json::from_str(request.params.as_deref().expect("params")).expect("params JSON");
+        assert_eq!(params["configId"], "thought_level");
+        assert_eq!(params["value"], "high");
+    }
+
+    #[test]
     fn session_request_round_trips_a_prompt_through_the_agent() {
         use serde_json::Value;
         use std::collections::VecDeque;
@@ -1495,6 +1731,19 @@ mod tests {
                     serde_json::from_slice(chunk.strip_suffix(b"\n").unwrap_or(chunk)).unwrap();
                 let id = request["id"].as_i64().unwrap();
                 self.last_request = Some(request);
+                let notification = json!({
+                    "jsonrpc": "2.0",
+                    "method": "session/update",
+                    "params": {
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "content": { "text": "sidecar text" }
+                        }
+                    }
+                });
+                let mut notification_bytes = serde_json::to_vec(&notification).unwrap();
+                notification_bytes.push(b'\n');
+                self.out.push_back(AgentOutput::Stdout(notification_bytes));
                 let reply = json!({"jsonrpc":"2.0","id":id,"result":{"stopReason":"end_turn"}});
                 let mut bytes = serde_json::to_vec(&reply).unwrap();
                 bytes.push(b'\n');
@@ -1542,6 +1791,7 @@ mod tests {
                 assert_eq!(rpc.session_id, "s1");
                 let body: Value = serde_json::from_str(&rpc.response).unwrap();
                 assert_eq!(body["result"]["stopReason"], json!("end_turn"));
+                assert_eq!(rpc.text.as_deref(), Some("sidecar text"));
             }
             other => panic!("expected rpc response, got {other:?}"),
         }
@@ -1624,8 +1874,8 @@ mod tests {
             session_id: "old-session".into(),
             agent_type: "echo".into(),
             transcript_path: Some("/transcripts/old.jsonl".into()),
-            cwd: "/workspace".into(),
-            env: HashMap::new(),
+            cwd: Some("/workspace".into()),
+            env: Some(HashMap::new()),
         };
 
         let response = core
@@ -1727,15 +1977,15 @@ mod tests {
         let mut host = CreateHost::default();
         let request = AcpCreateSessionRequest {
             agent_type: "echo".into(),
-            runtime: AcpRuntimeKind::JavaScript,
-            protocol_version: 1,
-            cwd: "/workspace".into(),
-            args: Vec::new(),
-            env: HashMap::new(),
-            client_capabilities: "{}".into(),
-            mcp_servers: "[]".into(),
+            runtime: Some(AcpRuntimeKind::JavaScript),
+            protocol_version: Some(1),
+            cwd: Some("/workspace".into()),
+            args: Some(Vec::new()),
+            env: Some(HashMap::new()),
+            client_capabilities: Some("{}".into()),
+            mcp_servers: Some("[]".into()),
             additional_instructions: None,
-            skip_os_instructions: false,
+            skip_os_instructions: Some(false),
         };
 
         let response = core
@@ -1761,6 +2011,15 @@ mod tests {
             )
             .expect("state");
         assert!(matches!(state, AcpResponse::AcpSessionStateResponse(_)));
+
+        let collision = core
+            .create_session(&mut host, "conn-a", &request)
+            .expect_err("duplicate adapter session id must be rejected by the sidecar");
+        assert!(collision
+            .to_string()
+            .contains("session id collision: sess-xyz"));
+        assert_eq!(core.session_count(), 1);
+        assert_eq!(host.bound, vec![("sess-xyz".into(), "acp-agent-0".into())]);
     }
 
     // ---- resumable (browser, non-blocking) create_session ----
@@ -1821,15 +2080,15 @@ mod tests {
     fn echo_create_request() -> AcpCreateSessionRequest {
         AcpCreateSessionRequest {
             agent_type: "echo".into(),
-            runtime: AcpRuntimeKind::JavaScript,
-            protocol_version: 1,
-            cwd: "/workspace".into(),
-            args: Vec::new(),
-            env: HashMap::new(),
-            client_capabilities: "{}".into(),
-            mcp_servers: "[]".into(),
+            runtime: Some(AcpRuntimeKind::JavaScript),
+            protocol_version: Some(1),
+            cwd: Some("/workspace".into()),
+            args: Some(Vec::new()),
+            env: Some(HashMap::new()),
+            client_capabilities: Some("{}".into()),
+            mcp_servers: Some("[]".into()),
             additional_instructions: None,
-            skip_os_instructions: false,
+            skip_os_instructions: Some(false),
         }
     }
 
@@ -2000,7 +2259,18 @@ mod tests {
         assert!(host.stdin[0].contains("\"sessionId\":\"sess-p\""));
         assert!(host.stdin[0].contains("\"id\":3"));
 
-        // feed the prompt response → Done with the agent's reply.
+        assert!(matches!(
+            core.feed_agent_output(
+                &mut host,
+                &process_id,
+                br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"text":"browser text"}}}}
+"#,
+            )
+            .expect("feed prompt notification"),
+            ResumeStep::Pending
+        ));
+
+        // feed the prompt response → Done with the agent's reply and text.
         let step = core
             .feed_agent_output(
                 &mut host,
@@ -2014,6 +2284,7 @@ mod tests {
                 assert_eq!(rpc.session_id, "sess-p");
                 let body: Value = serde_json::from_str(&rpc.response).unwrap();
                 assert_eq!(body["result"]["stopReason"], json!("end_turn"));
+                assert_eq!(rpc.text.as_deref(), Some("browser text"));
             }
             other => panic!("expected rpc Done, got {other:?}"),
         }

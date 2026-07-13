@@ -21,6 +21,8 @@ pub struct SharedProcessSnapshotEntry {
     pub cwd: String,
     pub status: SharedProcessSnapshotStatus,
     pub exit_code: Option<i32>,
+    pub start_time_ms: u64,
+    pub exit_time_ms: Option<u64>,
 }
 
 pub fn process_status_from_kernel(status: ProcessStatus) -> SharedProcessSnapshotStatus {
@@ -34,7 +36,6 @@ pub fn process_status_from_kernel(status: ProcessStatus) -> SharedProcessSnapsho
 pub fn process_snapshot_entry_from_kernel(
     process_id: &str,
     info: &ProcessInfo,
-    cwd: impl Into<String>,
     exit_code: Option<i32>,
 ) -> SharedProcessSnapshotEntry {
     SharedProcessSnapshotEntry {
@@ -45,14 +46,16 @@ pub fn process_snapshot_entry_from_kernel(
         sid: info.sid,
         driver: info.driver.clone(),
         command: info.command.clone(),
-        args: Vec::new(),
-        cwd: cwd.into(),
+        args: info.args.clone(),
+        cwd: info.cwd.clone(),
         status: if exit_code.is_some() {
             SharedProcessSnapshotStatus::Exited
         } else {
             process_status_from_kernel(info.status)
         },
         exit_code: exit_code.or(info.exit_code),
+        start_time_ms: info.start_time_ms,
+        exit_time_ms: info.exit_time_ms,
     }
 }
 
@@ -73,6 +76,8 @@ pub fn protocol_process_snapshot_entry(entry: SharedProcessSnapshotEntry) -> Pro
             SharedProcessSnapshotStatus::Exited => ProcessSnapshotStatus::Exited,
         },
         exit_code: entry.exit_code,
+        start_time_ms: entry.start_time_ms,
+        exit_time_ms: entry.exit_time_ms,
     }
 }
 
@@ -89,8 +94,12 @@ mod tests {
             sid: 42,
             driver: "javascript".to_owned(),
             command: "node".to_owned(),
+            args: vec!["app.js".to_owned()],
+            cwd: "/workspace".to_owned(),
             status,
             exit_code,
+            start_time_ms: 1_000,
+            exit_time_ms: exit_code.map(|_| 2_000),
             identity: ProcessIdentity::default(),
         }
     }
@@ -116,7 +125,6 @@ mod tests {
         let entry = process_snapshot_entry_from_kernel(
             "exec-1",
             &process_info(ProcessStatus::Running, None),
-            "/workspace",
             None,
         );
 
@@ -127,10 +135,12 @@ mod tests {
         assert_eq!(entry.sid, 42);
         assert_eq!(entry.driver, "javascript");
         assert_eq!(entry.command, "node");
-        assert_eq!(entry.args, Vec::<String>::new());
+        assert_eq!(entry.args, vec![String::from("app.js")]);
         assert_eq!(entry.cwd, "/workspace");
         assert_eq!(entry.status, SharedProcessSnapshotStatus::Running);
         assert_eq!(entry.exit_code, None);
+        assert_eq!(entry.start_time_ms, 1_000);
+        assert_eq!(entry.exit_time_ms, None);
     }
 
     #[test]
@@ -138,7 +148,6 @@ mod tests {
         let entry = process_snapshot_entry_from_kernel(
             "exec-1",
             &process_info(ProcessStatus::Running, Some(9)),
-            "/workspace",
             Some(7),
         );
 
@@ -160,6 +169,8 @@ mod tests {
             cwd: String::from("/workspace"),
             status: SharedProcessSnapshotStatus::Stopped,
             exit_code: None,
+            start_time_ms: 1_000,
+            exit_time_ms: None,
         });
 
         assert_eq!(entry.process_id, "proc-1");
@@ -168,5 +179,7 @@ mod tests {
         assert_eq!(entry.cwd, "/workspace");
         assert_eq!(entry.status, ProcessSnapshotStatus::Stopped);
         assert_eq!(entry.exit_code, None);
+        assert_eq!(entry.start_time_ms, 1_000);
+        assert_eq!(entry.exit_time_ms, None);
     }
 }

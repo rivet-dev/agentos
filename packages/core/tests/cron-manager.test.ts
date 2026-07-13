@@ -1,492 +1,253 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CronManager } from "../src/cron/cron-manager.js";
-import {
-	InvalidScheduleError,
-	PastScheduleError,
-} from "../src/cron/parse-schedule.js";
-import type {
-	ScheduleDriver,
-	ScheduleEntry,
-	ScheduleHandle,
-} from "../src/cron/schedule-driver.js";
+import { InvalidScheduleError, PastScheduleError } from "../src/cron/errors.js";
 import type { CronEvent } from "../src/cron/types.js";
 
-// ---------------------------------------------------------------------------
-// Mock ScheduleDriver — stores callbacks and fires them on demand
-// ---------------------------------------------------------------------------
+const session = { connectionId: "connection", sessionId: "session" };
+const sidecarVm = { vmId: "vm" };
 
-class MockScheduleDriver implements ScheduleDriver {
-	entries = new Map<string, ScheduleEntry>();
+class MockAlarmDriver {
+	alarm: { generation: number; nextAlarmMs?: number } | undefined;
+	wake: ((generation: number) => Promise<void>) | undefined;
 	disposed = false;
 
-	schedule(entry: ScheduleEntry): ScheduleHandle {
-		this.entries.set(entry.id, entry);
-		return { id: entry.id };
+	set(
+		alarm: { generation: number; nextAlarmMs?: number },
+		wake: (generation: number) => Promise<void>,
+	): void {
+		this.alarm = alarm;
+		this.wake = wake;
 	}
 
-	cancel(handle: ScheduleHandle): void {
-		this.entries.delete(handle.id);
+	async fire(): Promise<void> {
+		if (!this.alarm || !this.wake) throw new Error("no cron alarm armed");
+		await this.wake(this.alarm.generation);
 	}
 
 	dispose(): void {
-		this.entries.clear();
 		this.disposed = true;
-	}
-
-	/** Manually trigger the callback for a job. */
-	async fire(id: string): Promise<void> {
-		const entry = this.entries.get(id);
-		if (!entry) throw new Error(`No scheduled entry for id=${id}`);
-		await entry.callback();
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Mock AgentOs — stubs for exec and createSession
-// ---------------------------------------------------------------------------
-
-function createMockVm() {
+function createMockTransport() {
 	return {
-		exec: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
-		execArgv: vi
-			.fn()
-			.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
-		createSession: vi.fn().mockResolvedValue({ sessionId: "mock-session-1" }),
-		prompt: vi.fn().mockResolvedValue(undefined),
-		closeSession: vi.fn(),
+		scheduleCron: vi.fn().mockResolvedValue({
+			id: "sidecar-id",
+			alarm: { generation: 1, nextAlarmMs: Date.now() + 1_000 },
+		}),
+		listCronJobs: vi.fn().mockResolvedValue({
+			jobs: [],
+			alarm: { generation: 1, nextAlarmMs: Date.now() + 1_000 },
+		}),
+		cancelCronJob: vi.fn().mockResolvedValue({
+			id: "sidecar-id",
+			cancelled: true,
+			alarm: { generation: 2 },
+		}),
+		wakeCron: vi.fn().mockResolvedValue({
+			alarm: { generation: 2 },
+			runs: [],
+			events: [],
+		}),
+		completeCronRun: vi.fn().mockResolvedValue({
+			alarm: { generation: 2 },
+			runs: [],
+			events: [],
+		}),
 	};
 }
 
-describe("CronManager", () => {
-	let driver: MockScheduleDriver;
-	let vm: ReturnType<typeof createMockVm>;
+describe("CronManager thin host adapter", () => {
+	let transport: ReturnType<typeof createMockTransport>;
+	let alarmDriver: MockAlarmDriver;
 	let manager: CronManager;
 
 	beforeEach(() => {
-		driver = new MockScheduleDriver();
-		vm = createMockVm();
-		manager = new CronManager(vm as any, driver);
+		transport = createMockTransport();
+		alarmDriver = new MockAlarmDriver();
+		manager = new CronManager(
+			transport as never,
+			session,
+			sidecarVm,
+			alarmDriver,
+		);
 	});
 
-	afterEach(() => {
-		manager.dispose();
-	});
+	afterEach(() => manager.dispose());
 
-	// -----------------------------------------------------------------------
-	// Schedule & list
-	// -----------------------------------------------------------------------
-
-	it("schedule and list returns job info", () => {
-		const job = manager.schedule({
-			id: "j1",
+	it("forwards only caller-supplied schedule fields and uses the sidecar ID", async () => {
+		const job = await manager.schedule({
 			schedule: "* * * * *",
-			action: { type: "callback", fn: () => {} },
+			action: { type: "exec", command: "echo", args: ["hello"] },
 		});
 
-		expect(job.id).toBe("j1");
-
-		const list = manager.list();
-		expect(list).toHaveLength(1);
-		expect(list[0].id).toBe("j1");
-		expect(list[0].schedule).toBe("* * * * *");
-		expect(list[0].overlap).toBe("allow");
-		expect(list[0].runCount).toBe(0);
-		expect(list[0].running).toBe(false);
-	});
-
-	it("classifies parseable dates before falling back to cron", () => {
-		vi.useFakeTimers();
-		vi.setSystemTime(new Date("2026-04-10T13:00:00Z"));
-		try {
-			manager.schedule({
-				id: "space-date",
-				schedule: "2026-04-10 14:00:00",
-				action: { type: "callback", fn: () => {} },
-			});
-			manager.schedule({
-				id: "iso-date",
-				schedule: "2026-04-10T14:00:00Z",
-				action: { type: "callback", fn: () => {} },
-			});
-			manager.schedule({
-				id: "cron-5",
-				schedule: "* * * * *",
-				action: { type: "callback", fn: () => {} },
-			});
-			manager.schedule({
-				id: "cron-6",
-				schedule: "* * * * * *",
-				action: { type: "callback", fn: () => {} },
-			});
-
-			const jobs = new Map(manager.list().map((job) => [job.id, job]));
-
-			expect(jobs.get("space-date")?.nextRun?.toISOString()).toBe(
-				"2026-04-10T14:00:00.000Z",
-			);
-			expect(jobs.get("iso-date")?.nextRun?.toISOString()).toBe(
-				"2026-04-10T14:00:00.000Z",
-			);
-			expect(jobs.get("cron-5")?.nextRun?.toISOString()).toBe(
-				"2026-04-10T13:01:00.000Z",
-			);
-			expect(jobs.get("cron-6")?.nextRun?.toISOString()).toBe(
-				"2026-04-10T13:00:01.000Z",
-			);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it("rejects malformed schedules before registering with the driver", () => {
-		expect(() =>
-			manager.schedule({
-				id: "bad-schedule",
-				schedule: "tomorrow",
-				action: { type: "callback", fn: () => {} },
-			}),
-		).toThrowError(InvalidScheduleError);
-
-		expect(manager.list()).toHaveLength(0);
-		expect(driver.entries.size).toBe(0);
-	});
-
-	it("rejects past one-shot schedules before registering with the driver", () => {
-		vi.useFakeTimers();
-		vi.setSystemTime(new Date("2026-04-10T13:00:00Z"));
-		try {
-			expect(() =>
-				manager.schedule({
-					id: "past-date",
-					schedule: "2020-01-01T00:00:00Z",
-					action: { type: "callback", fn: () => {} },
-				}),
-			).toThrowError(PastScheduleError);
-
-			expect(manager.list()).toHaveLength(0);
-			expect(driver.entries.size).toBe(0);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	// -----------------------------------------------------------------------
-	// Cancel
-	// -----------------------------------------------------------------------
-
-	it("cancel removes job from list", () => {
-		const job = manager.schedule({
-			id: "j2",
+		expect(job.id).toBe("sidecar-id");
+		expect(transport.scheduleCron).toHaveBeenCalledWith(session, sidecarVm, {
 			schedule: "* * * * *",
-			action: { type: "callback", fn: () => {} },
+			action: { type: "exec", command: "echo", args: ["hello"] },
 		});
-
-		job.cancel();
-
-		expect(manager.list()).toHaveLength(0);
-		// Also removed from driver
-		expect(driver.entries.has("j2")).toBe(false);
+		expect(alarmDriver.alarm?.generation).toBe(1);
 	});
 
-	// -----------------------------------------------------------------------
-	// Callback action
-	// -----------------------------------------------------------------------
-
-	it("callback action is invoked when driver fires", async () => {
+	it("keeps callback functions host-side and sends only a correlation ID", async () => {
 		const fn = vi.fn();
-		manager.schedule({
-			id: "j3",
+		await manager.schedule({
+			id: "callback-job",
 			schedule: "* * * * *",
 			action: { type: "callback", fn },
-		});
-
-		await driver.fire("j3");
-
-		expect(fn).toHaveBeenCalledTimes(1);
-	});
-
-	// -----------------------------------------------------------------------
-	// Exec action
-	// -----------------------------------------------------------------------
-
-	it("exec action calls vm.exec with correct command and args", async () => {
-		manager.schedule({
-			id: "j4",
-			schedule: "* * * * *",
-			action: { type: "exec", command: "echo", args: ["hello", "world"] },
-		});
-
-		await driver.fire("j4");
-
-		expect(vm.execArgv).toHaveBeenCalledTimes(1);
-		expect(vm.execArgv).toHaveBeenCalledWith("echo", ["hello", "world"]);
-		expect(vm.exec).not.toHaveBeenCalled();
-	});
-
-	it("exec action passes argv verbatim without shell evaluation or splitting", async () => {
-		manager.schedule({
-			id: "j4-argv",
-			schedule: "* * * * *",
-			action: { type: "exec", command: "printenv", args: ["$(id)", "a b"] },
-		});
-
-		await driver.fire("j4-argv");
-
-		expect(vm.execArgv).toHaveBeenCalledTimes(1);
-		expect(vm.execArgv).toHaveBeenCalledWith("printenv", ["$(id)", "a b"]);
-		expect(vm.exec).not.toHaveBeenCalled();
-	});
-
-	// -----------------------------------------------------------------------
-	// Session action
-	// -----------------------------------------------------------------------
-
-	it("session action calls vm.createSession, session.prompt, session.close", async () => {
-		manager.schedule({
-			id: "j5",
-			schedule: "* * * * *",
-			action: {
-				type: "session",
-				agentType: "pi" as any,
-				prompt: "do something",
-			},
-		});
-
-		await driver.fire("j5");
-
-		expect(vm.createSession).toHaveBeenCalledTimes(1);
-		expect(vm.createSession).toHaveBeenCalledWith("pi", undefined);
-		expect(vm.prompt).toHaveBeenCalledWith("mock-session-1", "do something");
-		expect(vm.closeSession).toHaveBeenCalledWith("mock-session-1");
-	});
-
-	// -----------------------------------------------------------------------
-	// Overlap: skip
-	// -----------------------------------------------------------------------
-
-	it("overlap 'skip' drops execution when previous still running", async () => {
-		let resolveFirst!: () => void;
-		const firstCallPromise = new Promise<void>((resolve) => {
-			resolveFirst = resolve;
-		});
-		let callCount = 0;
-
-		manager.schedule({
-			id: "j6",
-			schedule: "* * * * *",
-			action: {
-				type: "callback",
-				fn: () => {
-					callCount++;
-					if (callCount === 1) return firstCallPromise;
-				},
-			},
 			overlap: "skip",
 		});
 
-		// Start first execution (it will hang on the promise)
-		const firstExec = driver.fire("j6");
+		const wireOptions = transport.scheduleCron.mock.calls[0][2];
+		expect(wireOptions).toMatchObject({
+			id: "callback-job",
+			schedule: "* * * * *",
+			overlap: "skip",
+			action: { type: "callback" },
+		});
+		expect(wireOptions.action).not.toHaveProperty("fn");
 
-		// Fire again while first is still running — should be skipped
-		await driver.fire("j6");
-
-		// Resolve first
-		resolveFirst();
-		await firstExec;
-
-		expect(callCount).toBe(1);
+		transport.wakeCron.mockResolvedValueOnce({
+			alarm: { generation: 2 },
+			events: [{ kind: "fire", jobId: "callback-job", timeMs: 100 }],
+			runs: [
+				{
+					runId: "run-1",
+					jobId: "callback-job",
+					action: wireOptions.action,
+				},
+			],
+		});
+		await alarmDriver.fire();
+		await vi.waitFor(() => expect(fn).toHaveBeenCalledOnce());
+		expect(transport.completeCronRun).toHaveBeenCalledWith(
+			session,
+			sidecarVm,
+			"run-1",
+			undefined,
+		);
 	});
 
-	// -----------------------------------------------------------------------
-	// Overlap: queue
-	// -----------------------------------------------------------------------
-
-	it("overlap 'queue' waits for previous then runs", async () => {
-		const executionOrder: number[] = [];
-		let resolveFirst!: () => void;
-		const firstCallPromise = new Promise<void>((resolve) => {
-			resolveFirst = resolve;
-		});
-		let callCount = 0;
-
-		manager.schedule({
-			id: "j7",
+	it("never executes a serializable action returned by a malformed sidecar", async () => {
+		await manager.schedule({
+			id: "exec-job",
 			schedule: "* * * * *",
-			action: {
-				type: "callback",
-				fn: () => {
-					callCount++;
-					executionOrder.push(callCount);
-					if (callCount === 1) return firstCallPromise;
+			action: { type: "exec", command: "printenv", args: ["$(id)", "a b"] },
+		});
+		transport.wakeCron.mockResolvedValueOnce({
+			alarm: { generation: 2 },
+			events: [],
+			runs: [
+				{
+					runId: "run-exec",
+					jobId: "exec-job",
+					action: {
+						type: "exec",
+						command: "printenv",
+						args: ["$(id)", "a b"],
+					},
 				},
-			},
+			],
+		});
+		await alarmDriver.fire();
+		await vi.waitFor(() =>
+			expect(transport.completeCronRun).toHaveBeenCalledWith(
+				session,
+				sidecarVm,
+				"run-exec",
+				"sidecar returned non-host cron action to client: exec",
+			),
+		);
+	});
+
+	it("maps sidecar job state and events to the public API", async () => {
+		const events: CronEvent[] = [];
+		manager.onEvent((event) => events.push(event));
+		transport.listCronJobs.mockResolvedValueOnce({
+			alarm: { generation: 3 },
+			jobs: [
+				{
+					id: "listed",
+					schedule: "*/5 * * * *",
+					action: { type: "exec", command: "true" },
+					overlap: "queue",
+					lastRunMs: 100,
+					nextRunMs: 200,
+					runCount: 2,
+					running: true,
+				},
+			],
+		});
+		const jobs = await manager.list();
+		expect(jobs[0]).toMatchObject({
+			id: "listed",
 			overlap: "queue",
+			runCount: 2,
+			running: true,
 		});
+		expect(jobs[0].lastRun?.getTime()).toBe(100);
+		expect(jobs[0].nextRun?.getTime()).toBe(200);
 
-		// Start first execution (hangs)
-		const firstExec = driver.fire("j7");
-
-		// Fire again while first is running — should be queued
-		await driver.fire("j7");
-
-		// Only 1 execution so far
-		expect(executionOrder).toEqual([1]);
-
-		// Resolve first — queued execution should start
-		resolveFirst();
-		await firstExec;
-
-		// Allow queued microtask to resolve
-		await new Promise((r) => setTimeout(r, 0));
-
-		expect(executionOrder).toEqual([1, 2]);
+		transport.wakeCron.mockResolvedValueOnce({
+			alarm: { generation: 4 },
+			runs: [],
+			events: [{ kind: "error", jobId: "listed", timeMs: 300, error: "boom" }],
+		});
+		await alarmDriver.fire();
+		expect(events[0]).toMatchObject({ type: "cron:error", jobId: "listed" });
 	});
 
-	// -----------------------------------------------------------------------
-	// Overlap: allow (default)
-	// -----------------------------------------------------------------------
-
-	it("overlap 'allow' runs concurrently (default)", async () => {
-		let resolveFirst!: () => void;
-		const firstCallPromise = new Promise<void>((resolve) => {
-			resolveFirst = resolve;
+	it("rejects malformed cron events instead of inventing results", async () => {
+		await manager.list();
+		transport.wakeCron.mockResolvedValueOnce({
+			alarm: { generation: 4 },
+			runs: [],
+			events: [{ kind: "complete", jobId: "listed", timeMs: 300 }],
 		});
-		let resolveSecond!: () => void;
-		const secondCallPromise = new Promise<void>((resolve) => {
-			resolveSecond = resolve;
+		await expect(alarmDriver.fire()).rejects.toThrow("missing durationMs");
+
+		transport.wakeCron.mockResolvedValueOnce({
+			alarm: { generation: 5 },
+			runs: [],
+			events: [{ kind: "error", jobId: "listed", timeMs: 301 }],
 		});
-		let callCount = 0;
-
-		manager.schedule({
-			id: "j8",
-			schedule: "* * * * *",
-			action: {
-				type: "callback",
-				fn: () => {
-					callCount++;
-					if (callCount === 1) return firstCallPromise;
-					if (callCount === 2) return secondCallPromise;
-				},
-			},
-		});
-
-		// Start first execution
-		const firstExec = driver.fire("j8");
-		// Start second concurrently
-		const secondExec = driver.fire("j8");
-
-		// Both started
-		expect(callCount).toBe(2);
-
-		resolveFirst();
-		resolveSecond();
-		await firstExec;
-		await secondExec;
+		await expect(alarmDriver.fire()).rejects.toThrow("missing error");
 	});
 
-	// -----------------------------------------------------------------------
-	// Events: cron:fire
-	// -----------------------------------------------------------------------
+	it("maps sidecar schedule rejection markers to public error classes", async () => {
+		transport.scheduleCron.mockRejectedValueOnce(
+			new Error("[invalid_schedule] malformed"),
+		);
+		await expect(
+			manager.schedule({
+				schedule: "tomorrow",
+				action: { type: "exec", command: "true" },
+			}),
+		).rejects.toBeInstanceOf(InvalidScheduleError);
 
-	it("cron:fire event emitted before execution", async () => {
-		const events: CronEvent[] = [];
-		manager.onEvent((e) => events.push(e));
-
-		manager.schedule({
-			id: "j9",
-			schedule: "* * * * *",
-			action: { type: "callback", fn: () => {} },
-		});
-
-		await driver.fire("j9");
-
-		const fireEvent = events.find((e) => e.type === "cron:fire");
-		expect(fireEvent).toBeDefined();
-		expect(fireEvent!.jobId).toBe("j9");
+		transport.scheduleCron.mockRejectedValueOnce(
+			new Error("[past_schedule] past"),
+		);
+		await expect(
+			manager.schedule({
+				schedule: "2020-01-01T00:00:00Z",
+				action: { type: "exec", command: "true" },
+			}),
+		).rejects.toBeInstanceOf(PastScheduleError);
 	});
 
-	// -----------------------------------------------------------------------
-	// Events: cron:complete
-	// -----------------------------------------------------------------------
-
-	it("cron:complete event emitted with durationMs after success", async () => {
-		const events: CronEvent[] = [];
-		manager.onEvent((e) => events.push(e));
-
-		manager.schedule({
-			id: "j10",
+	it("forwards cancellation and disposes only its host alarm", async () => {
+		const job = await manager.schedule({
 			schedule: "* * * * *",
-			action: { type: "callback", fn: () => {} },
+			action: { type: "exec", command: "true" },
 		});
-
-		await driver.fire("j10");
-
-		const complete = events.find((e) => e.type === "cron:complete");
-		expect(complete).toBeDefined();
-		expect(complete!.jobId).toBe("j10");
-		expect(
-			complete!.type === "cron:complete" && complete!.durationMs,
-		).toBeGreaterThanOrEqual(0);
-	});
-
-	// -----------------------------------------------------------------------
-	// Events: cron:error
-	// -----------------------------------------------------------------------
-
-	it("cron:error event emitted when action throws (manager continues running)", async () => {
-		const events: CronEvent[] = [];
-		manager.onEvent((e) => events.push(e));
-
-		const error = new Error("boom");
-		manager.schedule({
-			id: "j11",
-			schedule: "* * * * *",
-			action: {
-				type: "callback",
-				fn: () => {
-					throw error;
-				},
-			},
-		});
-
-		// Should not throw
-		await driver.fire("j11");
-
-		const errorEvent = events.find((e) => e.type === "cron:error");
-		expect(errorEvent).toBeDefined();
-		expect(errorEvent!.jobId).toBe("j11");
-		expect(errorEvent!.type === "cron:error" && errorEvent!.error).toBe(error);
-
-		// Manager still functional — can schedule new jobs
-		const fn2 = vi.fn();
-		manager.schedule({
-			id: "j11b",
-			schedule: "* * * * *",
-			action: { type: "callback", fn: fn2 },
-		});
-		await driver.fire("j11b");
-		expect(fn2).toHaveBeenCalledTimes(1);
-	});
-
-	// -----------------------------------------------------------------------
-	// Dispose
-	// -----------------------------------------------------------------------
-
-	it("dispose cancels all jobs", () => {
-		manager.schedule({
-			id: "j12a",
-			schedule: "* * * * *",
-			action: { type: "callback", fn: () => {} },
-		});
-		manager.schedule({
-			id: "j12b",
-			schedule: "* * * * *",
-			action: { type: "callback", fn: () => {} },
-		});
-
+		await job.cancel();
+		expect(transport.cancelCronJob).toHaveBeenCalledWith(
+			session,
+			sidecarVm,
+			"sidecar-id",
+		);
 		manager.dispose();
-
-		expect(manager.list()).toHaveLength(0);
-		expect(driver.disposed).toBe(true);
+		expect(alarmDriver.disposed).toBe(true);
 	});
 });

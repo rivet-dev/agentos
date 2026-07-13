@@ -1,28 +1,27 @@
 import type { Readable, Writable } from "node:stream";
 import {
+	type LiveSidecarEventSelector,
+	normalizeSidecarEventMatcher,
 	SidecarEventBuffer,
 	SidecarEventBufferOverflow,
-	normalizeSidecarEventMatcher,
 	sidecarEventWaitAbortError,
-	type LiveSidecarEventSelector,
 } from "./event-buffer.js";
 import { FrameRpcTransport } from "./frame-rpc.js";
 import type { FrameTransport } from "./frame-stream.js";
+import type { LiveOwnershipScope } from "./ownership.js";
 import {
-	HostProtocolFrameFactory,
 	classifySidecarWrittenProtocolFrame,
 	decodeProtocolFramePayload,
 	encodeProtocolFramePayload,
-	resolveSidecarRequestFramePayload,
+	HostProtocolFrameFactory,
 	type LiveEventFrame,
 	type LiveProtocolFrame,
-	type LiveRequestFrame,
 	type LiveResponseFrame,
 	type LiveSidecarRequestFrame,
 	type LiveSidecarRequestHandler,
 	type ProtocolFramePayloadCodec,
+	resolveSidecarRequestFramePayload,
 } from "./protocol-frames.js";
-import type { LiveOwnershipScope } from "./ownership.js";
 import type { LiveRequestPayload } from "./request-payloads.js";
 import { SidecarSilenceTimeout } from "./sidecar-errors.js";
 
@@ -200,9 +199,7 @@ export class SidecarProtocolClient {
 	}
 
 	async waitForEvent(
-		matcher:
-			| LiveSidecarEventSelector
-			| ((event: LiveEventFrame) => boolean),
+		matcher: LiveSidecarEventSelector | ((event: LiveEventFrame) => boolean),
 		timeoutMs?: number,
 		options?: {
 			signal?: AbortSignal;

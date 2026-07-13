@@ -89,21 +89,23 @@ pub(crate) fn encode_shell_exit_event(shell_id: &str, exit_code: i32) -> Result<
 /// `openShell(options)` — port of [`AgentOs::open_shell`]. Subscribes the
 /// data/stderr streams and the exit code, forwarding them as `shellData` /
 /// `shellStderr` / `shellExit` broadcasts.
-pub fn open_shell(
+pub async fn open_shell(
     host: &HostCtx,
     vm: &AgentOs,
     vars: &mut Vars,
     options: OpenShellActionOptions,
 ) -> Result<OpenShellDto> {
-    let handle = vm.open_shell(OpenShellOptions {
-        command: options.command,
-        args: options.args,
-        env: options.env,
-        cwd: options.cwd,
-        cols: options.cols,
-        rows: options.rows,
-        on_stderr: None,
-    })?;
+    let handle = vm
+        .open_shell(OpenShellOptions {
+            command: options.command,
+            args: options.args,
+            env: options.env,
+            cwd: options.cwd,
+            cols: options.cols,
+            rows: options.rows,
+            on_stderr: None,
+        })
+        .await?;
     let shell_id = handle.shell_id;
 
     let mut data_stream = vm.on_shell_data(&shell_id)?;
@@ -237,28 +239,27 @@ pub fn spawn_process_output_pumps(host: &HostCtx, vm: &AgentOs, vars: &mut Vars,
     }));
 }
 
-/// `writeShell(shellId, data)` — port of [`AgentOs::write_shell`], but awaited
-/// so a failed wire write rejects the action instead of vanishing into the
-/// fire-and-forget warn.
+/// `writeShell(shellId, data)` — forwards input and awaits the sidecar response.
 pub async fn write_shell(
     vm: &AgentOs,
     shell_id: &str,
     data: super::filesystem::WriteFileContent,
 ) -> Result<()> {
-    vm.write_shell_awaited(shell_id, StdinInput::Bytes(data.into_bytes()))
+    vm.write_shell(shell_id, StdinInput::Bytes(data.into_bytes()))
         .await
         .map_err(anyhow::Error::from)
 }
 
 /// `resizeShell(shellId, cols, rows)` — port of [`AgentOs::resize_shell`].
-pub fn resize_shell(vm: &AgentOs, shell_id: &str, cols: u16, rows: u16) -> Result<()> {
+pub async fn resize_shell(vm: &AgentOs, shell_id: &str, cols: u16, rows: u16) -> Result<()> {
     vm.resize_shell(shell_id, cols, rows)
+        .await
         .map_err(anyhow::Error::from)
 }
 
 /// `closeShell(shellId)` — port of [`AgentOs::close_shell`].
-pub fn close_shell(vm: &AgentOs, shell_id: &str) -> Result<()> {
-    vm.close_shell(shell_id).map_err(anyhow::Error::from)
+pub async fn close_shell(vm: &AgentOs, shell_id: &str) -> Result<()> {
+    vm.close_shell(shell_id).await.map_err(anyhow::Error::from)
 }
 
 /// `waitShell(shellId)` — port of [`AgentOs::wait_shell`]. Returns the exit code.

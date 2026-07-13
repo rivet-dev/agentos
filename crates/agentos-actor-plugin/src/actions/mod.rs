@@ -29,7 +29,7 @@ use serde::Serialize;
 use tokio::task::JoinHandle;
 
 use crate::host_ctx::HostCtx;
-use filesystem::{WriteFileContent, WriteFilesEntryArg};
+use filesystem::WriteFileContent;
 
 /// Ephemeral per-VM-lifetime actor state (session-resume, spec §3/§5/§8),
 /// ported from `rivetkit-agent-os::actor::Vars`. Reconstructed on each wake from
@@ -234,10 +234,6 @@ pub mod contract {
                     .map(|_| ())
                     .or_else(|_| super::decode_as::<(String,)>(args).map(|_| ()))
             }
-            "writeFiles" => {
-                super::decode_as::<(Vec<filesystem::WriteFilesEntryArg>,)>(args).map(|_| ())
-            }
-            "readFiles" => super::decode_as::<(Vec<String>,)>(args).map(|_| ()),
             "readdirRecursive" => super::decode_as::<(String,)>(args).map(|_| ()),
             "exec" => super::decode_as::<(String, Option<process::ExecActionOptions>)>(args)
                 .map(|_| ())
@@ -315,8 +311,6 @@ pub mod contract {
                 json!(["/workspace/file.txt"]),
                 json!(["/workspace/file.txt", { "recursive": true }]),
             ],
-            "writeFiles" => vec![json!([[{ "path": "/workspace/a.txt", "content": "a" }]])],
-            "readFiles" => vec![json!([["/workspace/a.txt", "/workspace/b.txt"]])],
             "exec" => vec![
                 json!(["echo hello"]),
                 json!(["echo hello", { "cwd": "/workspace", "env": { "A": "B" } }]),
@@ -394,11 +388,6 @@ pub mod contract {
                 "recursive option must be boolean",
                 json!(["/workspace/file.txt", { "recursive": "yes" }]),
             )],
-            "writeFiles" => vec![(
-                "entry path must be a string",
-                json!([[{ "path": 42, "content": "a" }]]),
-            )],
-            "readFiles" => vec![("paths must be strings", json!([[42]]))],
             "exec" => vec![(
                 "env option values must be strings",
                 json!(["echo hello", { "env": { "A": 42 } }]),
@@ -492,16 +481,6 @@ pub mod contract {
                 is_symbolic_link: false,
             }])),
             "exists" => encode(&true),
-            "writeFiles" => encode(&vec![filesystem::BatchWriteResultDto {
-                path: "/workspace/a.txt".to_owned(),
-                success: true,
-                error: None,
-            }]),
-            "readFiles" => encode(&vec![filesystem::BatchReadResultDto {
-                path: "/workspace/a.txt".to_owned(),
-                content: Some(serde_bytes::ByteBuf::from(vec![1, 2, 3])),
-                error: None,
-            }]),
             "readdirRecursive" => encode(&vec![DirEntry {
                 path: "/workspace/a.txt".to_owned(),
                 entry_type: DirEntryType::File,
@@ -684,6 +663,19 @@ pub(crate) async fn dispatch(
     args: &[u8],
     token: u64,
 ) {
+    if name == cron::INTERNAL_CRON_WAKE_ACTION {
+        match decode_as::<(u64,)>(args) {
+            Ok((generation,)) => match vm.wake_cron_generation(generation).await {
+                Ok(()) => match crate::vm::persist_cron_state(host, vm).await {
+                    Ok(()) => reply_ok(host, token, &()),
+                    Err(error) => reply_err(host, token, anyhow::anyhow!(error)),
+                },
+                Err(error) => reply_err(host, token, anyhow::anyhow!(error)),
+            },
+            Err(error) => reply_err(host, token, error),
+        }
+        return;
+    }
     match name {
         "readFile" => match decode_as::<(String,)>(args) {
             Ok((path,)) => match filesystem::read_file(vm, &path).await {
@@ -760,20 +752,6 @@ pub(crate) async fn dispatch(
                 Err(error) => reply_err(host, token, error),
             }
         }
-        "writeFiles" => match decode_as::<(Vec<WriteFilesEntryArg>,)>(args) {
-            Ok((entries,)) => {
-                let results = filesystem::write_files(vm, entries).await;
-                reply_ok(host, token, &results);
-            }
-            Err(error) => reply_err(host, token, error),
-        },
-        "readFiles" => match decode_as::<(Vec<String>,)>(args) {
-            Ok((paths,)) => {
-                let results = filesystem::read_files(vm, paths).await;
-                reply_ok(host, token, &results);
-            }
-            Err(error) => reply_err(host, token, error),
-        },
         "readdirRecursive" => match decode_as::<(String,)>(args) {
             Ok((path,)) => match filesystem::readdir_recursive(vm, &path).await {
                 Ok(entries) => reply_ok(host, token, &entries),
@@ -813,7 +791,9 @@ pub(crate) async fn dispatch(
                     &command,
                     spawn_args,
                     options.unwrap_or_default(),
-                ) {
+                )
+                .await
+                {
                     Ok(handle) => reply_ok(host, token, &handle),
                     Err(error) => reply_err(host, token, error),
                 },
@@ -838,23 +818,23 @@ pub(crate) async fn dispatch(
             Err(error) => reply_err(host, token, error),
         },
         "killProcess" => match decode_as::<(u32,)>(args) {
-            Ok((pid,)) => match process::kill_process(vm, pid) {
+            Ok((pid,)) => match process::kill_process(vm, pid).await {
                 Ok(()) => reply_ok(host, token, &()),
                 Err(error) => reply_err(host, token, error),
             },
             Err(error) => reply_err(host, token, error),
         },
         "stopProcess" => match decode_as::<(u32,)>(args) {
-            Ok((pid,)) => match process::stop_process(vm, pid) {
+            Ok((pid,)) => match process::stop_process(vm, pid).await {
                 Ok(()) => reply_ok(host, token, &()),
                 Err(error) => reply_err(host, token, error),
             },
             Err(error) => reply_err(host, token, error),
         },
-        "listProcesses" => {
-            let processes = process::list_processes(vm);
-            reply_ok(host, token, &processes);
-        }
+        "listProcesses" => match process::list_processes(vm).await {
+            Ok(processes) => reply_ok(host, token, &processes),
+            Err(error) => reply_err(host, token, error),
+        },
         "allProcesses" => match process::all_processes(vm).await {
             Ok(processes) => reply_ok(host, token, &processes),
             Err(error) => reply_err(host, token, error),
@@ -864,21 +844,21 @@ pub(crate) async fn dispatch(
             Err(error) => reply_err(host, token, error),
         },
         "getProcess" => match decode_as::<(u32,)>(args) {
-            Ok((pid,)) => match process::get_process(vm, pid) {
+            Ok((pid,)) => match process::get_process(vm, pid).await {
                 Ok(info) => reply_ok(host, token, &info),
                 Err(error) => reply_err(host, token, error),
             },
             Err(error) => reply_err(host, token, error),
         },
         "writeProcessStdin" => match decode_as::<(u32, WriteFileContent)>(args) {
-            Ok((pid, data)) => match process::write_process_stdin(vm, pid, data) {
+            Ok((pid, data)) => match process::write_process_stdin(vm, pid, data).await {
                 Ok(()) => reply_ok(host, token, &()),
                 Err(error) => reply_err(host, token, error),
             },
             Err(error) => reply_err(host, token, error),
         },
         "closeProcessStdin" => match decode_as::<(u32,)>(args) {
-            Ok((pid,)) => match process::close_process_stdin(vm, pid) {
+            Ok((pid,)) => match process::close_process_stdin(vm, pid).await {
                 Ok(()) => reply_ok(host, token, &()),
                 Err(error) => reply_err(host, token, error),
             },
@@ -901,18 +881,21 @@ pub(crate) async fn dispatch(
             }
         }
         "scheduleCron" => match decode_as::<(cron::CronJobOptionsDto,)>(args) {
-            Ok((options,)) => match cron::schedule_cron(host, vm, vars, options) {
+            Ok((options,)) => match cron::schedule_cron(host, vm, vars, options).await {
                 Ok(handle) => reply_ok(host, token, &handle),
                 Err(error) => reply_err(host, token, error),
             },
             Err(error) => reply_err(host, token, error),
         },
-        "listCronJobs" => reply_ok(host, token, &cron::list_cron_jobs(vm)),
+        "listCronJobs" => match cron::list_cron_jobs(vm).await {
+            Ok(jobs) => reply_ok(host, token, &jobs),
+            Err(error) => reply_err(host, token, error),
+        },
         "cancelCronJob" => match decode_as::<(String,)>(args) {
-            Ok((id,)) => {
-                cron::cancel_cron_job(vm, &id);
-                reply_ok(host, token, &());
-            }
+            Ok((id,)) => match cron::cancel_cron_job(host, vm, &id).await {
+                Ok(()) => reply_ok(host, token, &()),
+                Err(error) => reply_err(host, token, error),
+            },
             Err(error) => reply_err(host, token, error),
         },
         "createSession" => {
@@ -998,7 +981,7 @@ pub(crate) async fn dispatch(
                 .or_else(|_| decode_as::<()>(args).map(|()| (None,)));
             match decoded {
                 Ok((options,)) => {
-                    match shell::open_shell(host, vm, vars, options.unwrap_or_default()) {
+                    match shell::open_shell(host, vm, vars, options.unwrap_or_default()).await {
                         Ok(dto) => reply_ok(host, token, &dto),
                         Err(error) => reply_err(host, token, error),
                     }
@@ -1014,14 +997,16 @@ pub(crate) async fn dispatch(
             Err(error) => reply_err(host, token, error),
         },
         "resizeShell" => match decode_as::<(String, u16, u16)>(args) {
-            Ok((shell_id, cols, rows)) => match shell::resize_shell(vm, &shell_id, cols, rows) {
-                Ok(()) => reply_ok(host, token, &()),
-                Err(error) => reply_err(host, token, error),
-            },
+            Ok((shell_id, cols, rows)) => {
+                match shell::resize_shell(vm, &shell_id, cols, rows).await {
+                    Ok(()) => reply_ok(host, token, &()),
+                    Err(error) => reply_err(host, token, error),
+                }
+            }
             Err(error) => reply_err(host, token, error),
         },
         "closeShell" => match decode_as::<(String,)>(args) {
-            Ok((shell_id,)) => match shell::close_shell(vm, &shell_id) {
+            Ok((shell_id,)) => match shell::close_shell(vm, &shell_id).await {
                 Ok(()) => reply_ok(host, token, &()),
                 Err(error) => reply_err(host, token, error),
             },

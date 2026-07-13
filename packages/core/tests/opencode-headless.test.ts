@@ -42,7 +42,7 @@ console.log("legacyWrapper:" + fs.existsSync("/root/node_modules/opencode-ai/pac
 		let stdout = "";
 		let stderr = "";
 
-		const { pid } = vm.spawn("node", ["/tmp/check-opencode-package.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/check-opencode-package.mjs"], {
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);
 			},
@@ -74,7 +74,7 @@ console.log("hasAcpCommand:" + source.includes("AcpCommand"));
 		let stdout = "";
 		let stderr = "";
 
-		const { pid } = vm.spawn("node", ["/tmp/import-opencode-acp.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/import-opencode-acp.mjs"], {
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);
 			},

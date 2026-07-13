@@ -24,9 +24,7 @@ describe("permissions", () => {
 		expect(
 			toGeneratedFilesystemPermissionScope({
 				default: "ask",
-				rules: [
-					{ mode: "allow", operations: ["read"], paths: ["/tmp"] },
-				],
+				rules: [{ mode: "allow", operations: ["read"], paths: ["/tmp"] }],
 			}),
 		).toEqual({
 			tag: "FsPermissionRuleSet",
@@ -55,7 +53,7 @@ describe("permissions", () => {
 				rules: [
 					{
 						mode: protocol.PermissionMode.Deny,
-						operations: [],
+						operations: null,
 						patterns: ["*.local"],
 					},
 				],
@@ -78,7 +76,7 @@ describe("permissions", () => {
 					{
 						mode: protocol.PermissionMode.Allow,
 						operations: ["spawn"],
-						patterns: [],
+						patterns: null,
 					},
 				],
 			},

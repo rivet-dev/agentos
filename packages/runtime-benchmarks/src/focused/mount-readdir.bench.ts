@@ -8,8 +8,13 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createBenchSidecar, createBenchVm, type BenchVm } from "../lib/vm.js";
-import type { HostDirectoryMount, SidecarProcess } from "@rivet-dev/agentos-runtime-core";
+import {
+	createBenchSidecar,
+	createBenchVm,
+	type BenchSidecar,
+	type BenchVm,
+	type HostDirectoryMount,
+} from "../lib/vm.js";
 import { getHardware, printTable, round, stats } from "../lib/perf-utils.js";
 
 interface MountReaddirCaseResult {
@@ -74,7 +79,7 @@ function hostDirMount(path: string, hostPath: string): HostDirectoryMount {
 }
 
 async function createVm(
-	sidecar: SidecarProcess,
+	sidecar: BenchSidecar,
 	mounts: HostDirectoryMount[],
 ): Promise<BenchVm> {
 	return createBenchVm({
@@ -110,7 +115,7 @@ async function timeReaddir(
 }
 
 async function runUnrelatedMountCase(
-	sidecar: SidecarProcess,
+	sidecar: BenchSidecar,
 	root: string,
 	mountCount: number,
 	entryCount: number,
@@ -154,7 +159,7 @@ async function runUnrelatedMountCase(
 }
 
 async function runChildMountCase(
-	sidecar: SidecarProcess,
+	sidecar: BenchSidecar,
 	root: string,
 	mountCount: number,
 	iterations: number,

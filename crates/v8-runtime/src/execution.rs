@@ -1943,7 +1943,7 @@ fn resolve_module_via_ipc(
                     // ancestor chain), since that is the common real cause here.
                     //
                     // Call out the host-mounted node_modules case too: a host_dir
-                    // mount (what NodeRuntime `nodeModules` projects) confines reads
+                    // host-directory mount confines reads
                     // to the mount root, so a package symlinked OUT of the mounted
                     // tree (pnpm/yarn workspace or `file:` deps that link to the
                     // workspace root or an external store) cannot be followed and

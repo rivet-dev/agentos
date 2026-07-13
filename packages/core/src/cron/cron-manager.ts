@@ -1,10 +1,14 @@
-import { randomUUID } from "node:crypto";
-import type { AgentOs } from "../agent-os.js";
-import {
-	resolveSchedule,
-	validateScheduleForRegistration,
-} from "./parse-schedule.js";
-import type { ScheduleDriver, ScheduleHandle } from "./schedule-driver.js";
+import type {
+	AuthenticatedSession,
+	CreatedVm,
+	SidecarCronAlarm,
+	SidecarCronDispatch,
+	SidecarCronEventRecord,
+	SidecarCronJobEntry,
+	SidecarCronRun,
+	SidecarProcess,
+} from "../sidecar/native-process-client.js";
+import { InvalidScheduleError, PastScheduleError } from "./errors.js";
 import type {
 	CronAction,
 	CronEvent,
@@ -14,186 +18,395 @@ import type {
 	CronJobOptions,
 } from "./types.js";
 
-interface CronJobState {
-	id: string;
-	schedule: string;
-	action: CronAction;
-	overlap: "allow" | "skip" | "queue";
-	handle: ScheduleHandle;
-	lastRun?: Date;
-	nextRun?: Date;
-	runCount: number;
-	running: boolean;
-	queued: boolean;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+type WireCronAction =
+	| Exclude<CronAction, { type: "callback" }>
+	| { type: "callback"; callbackId: string };
+
+interface CallbackRoute {
+	fn: () => void | Promise<void>;
+	scheduled: boolean;
+	activeRuns: number;
 }
 
-/**
- * Compute the next fire time for a schedule string. Returns undefined if
- * the schedule is a one-shot ISO timestamp in the past or if croner
- * cannot determine a next run.
- */
-function computeNextTime(schedule: string): Date | undefined {
-	return resolveSchedule(schedule).nextRun;
+interface CronAlarmDriver {
+	set(
+		alarm: SidecarCronAlarm,
+		wake: (generation: number) => Promise<void>,
+	): void;
+	dispose(): void;
 }
 
-/**
- * Internal class that bridges ScheduleDriver and AgentOs. Owns the job
- * registry, executes actions, and emits lifecycle events.
- */
-export class CronManager {
-	private jobs = new Map<string, CronJobState>();
-	private driver: ScheduleDriver;
-	private vm: AgentOs;
-	private listeners: CronEventHandler[] = [];
+class TimerCronAlarmDriver implements CronAlarmDriver {
+	private timer: ReturnType<typeof setTimeout> | null = null;
 
-	constructor(vm: AgentOs, driver: ScheduleDriver) {
-		this.vm = vm;
-		this.driver = driver;
-	}
+	set(
+		alarm: SidecarCronAlarm,
+		wake: (generation: number) => Promise<void>,
+	): void {
+		this.clear();
+		if (alarm.nextAlarmMs === undefined) return;
 
-	schedule(options: CronJobOptions): CronJob {
-		const id = options.id ?? randomUUID();
-		const overlap = options.overlap ?? "allow";
-		const resolved = validateScheduleForRegistration(options.schedule);
-
-		const handle = this.driver.schedule({
-			id,
-			schedule: options.schedule,
-			callback: () => this.executeJob(id),
-		});
-
-		const state: CronJobState = {
-			id,
-			schedule: options.schedule,
-			action: options.action,
-			overlap,
-			handle,
-			lastRun: undefined,
-			nextRun: resolved.nextRun,
-			runCount: 0,
-			running: false,
-			queued: false,
-		};
-
-		this.jobs.set(id, state);
-		return { id, cancel: () => this.cancel(id) };
-	}
-
-	cancel(id: string): void {
-		const state = this.jobs.get(id);
-		if (!state) return;
-		this.driver.cancel(state.handle);
-		this.jobs.delete(id);
-	}
-
-	list(): CronJobInfo[] {
-		const result: CronJobInfo[] = [];
-		for (const state of this.jobs.values()) {
-			result.push({
-				id: state.id,
-				schedule: state.schedule,
-				action: state.action,
-				overlap: state.overlap,
-				lastRun: state.lastRun,
-				nextRun: state.nextRun,
-				runCount: state.runCount,
-				running: state.running,
+		const delay = Math.min(
+			MAX_TIMER_DELAY_MS,
+			Math.max(0, alarm.nextAlarmMs - Date.now()),
+		);
+		this.timer = setTimeout(() => {
+			this.timer = null;
+			if (delay === MAX_TIMER_DELAY_MS) {
+				this.set(alarm, wake);
+				return;
+			}
+			void wake(alarm.generation).catch((error) => {
+				console.error("[agent-os] cron wake failed", error);
 			});
-		}
-		return result;
-	}
-
-	onEvent(handler: CronEventHandler): void {
-		this.listeners.push(handler);
+		}, delay);
+		this.timer.unref?.();
 	}
 
 	dispose(): void {
-		for (const state of this.jobs.values()) {
-			this.driver.cancel(state.handle);
-		}
-		this.jobs.clear();
-		this.driver.dispose();
+		this.clear();
 	}
 
-	private emit(event: CronEvent): void {
-		for (const handler of this.listeners) {
-			try {
-				handler(event);
-			} catch {
-				// Event handler errors must not crash the manager.
-			}
+	private clear(): void {
+		if (this.timer !== null) {
+			clearTimeout(this.timer);
+			this.timer = null;
 		}
 	}
+}
 
-	private async executeJob(id: string): Promise<void> {
-		const state = this.jobs.get(id);
-		if (!state) return;
+interface CronTransport {
+	scheduleCron: SidecarProcess["scheduleCron"];
+	listCronJobs: SidecarProcess["listCronJobs"];
+	cancelCronJob: SidecarProcess["cancelCronJob"];
+	wakeCron: SidecarProcess["wakeCron"];
+	completeCronRun: SidecarProcess["completeCronRun"];
+}
 
-		// Overlap policy.
-		if (state.running && state.overlap === "skip") {
-			return;
-		}
-		if (state.running && state.overlap === "queue") {
-			state.queued = true;
-			return;
-		}
+/**
+ * Thin cron host adapter. The sidecar owns grammar, defaults, job/run state,
+ * overlap policy, counts, missed-fire coalescing, and alarm generations. This
+ * class only arms the host clock and routes actions containing host resources.
+ */
+export class CronManager {
+	private readonly listeners = new Set<CronEventHandler>();
+	private readonly callbacks = new Map<string, CallbackRoute>();
+	private readonly callbackByJob = new Map<string, string>();
+	private callbackSequence = 0;
+	private alarmGeneration = 0;
+	private disposed = false;
 
-		state.running = true;
-		state.lastRun = new Date();
-		state.runCount++;
+	constructor(
+		private readonly transport: CronTransport,
+		private readonly session: AuthenticatedSession,
+		private readonly sidecarVm: CreatedVm,
+		private readonly alarmDriver: CronAlarmDriver = new TimerCronAlarmDriver(),
+	) {}
 
-		this.emit({ type: "cron:fire", jobId: state.id, time: new Date() });
+	async schedule(options: CronJobOptions): Promise<CronJob> {
+		this.ensureActive();
+		let callbackId: string | undefined;
+		const action = (() => {
+			if (options.action.type !== "callback") return options.action;
+			callbackId = this.allocateCallbackId();
+			this.callbacks.set(callbackId, {
+				fn: options.action.fn,
+				scheduled: false,
+				activeRuns: 0,
+			});
+			return { type: "callback", callbackId } satisfies WireCronAction;
+		})();
 
-		const startTime = Date.now();
 		try {
-			await this.runAction(state.action);
-			this.emit({
-				type: "cron:complete",
-				jobId: state.id,
-				time: new Date(),
-				durationMs: Date.now() - startTime,
-			});
+			const response = await this.transport.scheduleCron(
+				this.session,
+				this.sidecarVm,
+				{
+					...(options.id === undefined ? {} : { id: options.id }),
+					schedule: options.schedule,
+					action,
+					...(options.overlap === undefined
+						? {}
+						: { overlap: options.overlap }),
+				},
+			);
+
+			this.replaceJobCallback(response.id, callbackId);
+			this.applyAlarm(response.alarm);
+			return {
+				id: response.id,
+				cancel: () => this.cancel(response.id),
+			};
 		} catch (error) {
-			this.emit({
-				type: "cron:error",
-				jobId: state.id,
-				time: new Date(),
-				error: error as Error,
+			if (callbackId !== undefined) this.releaseCallback(callbackId);
+			throw normalizeScheduleError(options.schedule, error);
+		}
+	}
+
+	async cancel(id: string): Promise<void> {
+		this.ensureActive();
+		const response = await this.transport.cancelCronJob(
+			this.session,
+			this.sidecarVm,
+			id,
+		);
+		if (response.cancelled) this.replaceJobCallback(id, undefined);
+		this.applyAlarm(response.alarm);
+	}
+
+	async list(): Promise<CronJobInfo[]> {
+		this.ensureActive();
+		const response = await this.transport.listCronJobs(
+			this.session,
+			this.sidecarVm,
+		);
+		this.applyAlarm(response.alarm);
+		return response.jobs.map((job) => this.toJobInfo(job));
+	}
+
+	onEvent(handler: CronEventHandler): void {
+		this.ensureActive();
+		this.listeners.add(handler);
+	}
+
+	dispose(): void {
+		if (this.disposed) return;
+		this.disposed = true;
+		this.alarmDriver.dispose();
+		this.listeners.clear();
+		this.callbacks.clear();
+		this.callbackByJob.clear();
+	}
+
+	private async wake(generation: number): Promise<void> {
+		if (this.disposed) return;
+		const dispatch = await this.transport.wakeCron(
+			this.session,
+			this.sidecarVm,
+			generation,
+		);
+		this.consumeDispatch(dispatch);
+	}
+
+	consumeDispatch(dispatch: SidecarCronDispatch): void {
+		if (this.disposed) return;
+		this.applyAlarm(dispatch.alarm);
+		for (const event of dispatch.events) this.emit(event);
+		for (const run of dispatch.runs) {
+			void this.executeRun(run).catch((error) => {
+				console.error("[agent-os] cron completion failed", error);
 			});
-		} finally {
-			state.running = false;
-			state.nextRun = computeNextTime(state.schedule);
-
-			// Process queued execution.
-			if (state.queued) {
-				state.queued = false;
-				void this.executeJob(id);
-			}
 		}
 	}
 
-	private async runAction(action: CronAction): Promise<void> {
-		switch (action.type) {
-			case "session": {
-				const { sessionId } = await this.vm.createSession(
-					action.agentType,
-					action.options,
+	private async executeRun(run: SidecarCronRun): Promise<void> {
+		let errorMessage: string | undefined;
+		let callbackId: string | undefined;
+		try {
+			const action = decodeWireAction(run.action);
+			if (action.type !== "callback") {
+				throw new Error(
+					`sidecar returned non-host cron action to client: ${action.type}`,
 				);
-				try {
-					await this.vm.prompt(sessionId, action.prompt);
-				} finally {
-					this.vm.closeSession(sessionId);
+			}
+			callbackId = action.callbackId;
+			const route = this.callbacks.get(callbackId);
+			if (!route) {
+				throw new Error(`cron callback route not found: ${callbackId}`);
+			}
+			route.activeRuns++;
+			await route.fn();
+		} catch (error) {
+			errorMessage = error instanceof Error ? error.message : String(error);
+		} finally {
+			if (callbackId !== undefined) {
+				const route = this.callbacks.get(callbackId);
+				if (route) {
+					route.activeRuns = Math.max(0, route.activeRuns - 1);
+					this.releaseCallback(callbackId);
 				}
-				break;
 			}
-			case "exec": {
-				await this.vm.execArgv(action.command, action.args ?? []);
-				break;
+		}
+
+		// VM disposal removes the sidecar scheduler and its active runs. Do not
+		// issue a completion request against a transport that is being torn down.
+		if (this.disposed) return;
+		const dispatch = await this.transport.completeCronRun(
+			this.session,
+			this.sidecarVm,
+			run.runId,
+			errorMessage,
+		);
+		this.consumeDispatch(dispatch);
+	}
+
+	private toJobInfo(job: SidecarCronJobEntry): CronJobInfo {
+		const wireAction = decodeWireAction(job.action);
+		const action: CronAction =
+			wireAction.type === "callback"
+				? {
+						type: "callback",
+						fn:
+							this.callbacks.get(wireAction.callbackId)?.fn ?? missingCallback,
+					}
+				: (wireAction as CronAction);
+		return {
+			id: job.id,
+			schedule: job.schedule,
+			action,
+			overlap: job.overlap,
+			...(job.lastRunMs === undefined
+				? {}
+				: { lastRun: new Date(job.lastRunMs) }),
+			...(job.nextRunMs === undefined
+				? {}
+				: { nextRun: new Date(job.nextRunMs) }),
+			runCount: job.runCount,
+			running: job.running,
+		};
+	}
+
+	private emit(event: SidecarCronEventRecord): void {
+		let publicEvent: CronEvent;
+		if (event.kind === "fire") {
+			publicEvent = {
+				type: "cron:fire",
+				jobId: event.jobId,
+				time: new Date(event.timeMs),
+			};
+		} else if (event.kind === "complete") {
+			if (event.durationMs === undefined) {
+				throw new Error("sidecar complete cron event is missing durationMs");
 			}
-			case "callback": {
-				await action.fn();
-				break;
+			publicEvent = {
+				type: "cron:complete",
+				jobId: event.jobId,
+				time: new Date(event.timeMs),
+				durationMs: event.durationMs,
+			};
+		} else {
+			if (event.error === undefined) {
+				throw new Error("sidecar error cron event is missing error");
+			}
+			publicEvent = {
+				type: "cron:error",
+				jobId: event.jobId,
+				time: new Date(event.timeMs),
+				error: new Error(event.error),
+			};
+		}
+		for (const listener of this.listeners) {
+			try {
+				listener(publicEvent);
+			} catch (error) {
+				console.warn("[agent-os] cron event listener failed", error);
 			}
 		}
 	}
+
+	private applyAlarm(alarm: SidecarCronAlarm): void {
+		if (alarm.generation < this.alarmGeneration) return;
+		this.alarmGeneration = alarm.generation;
+		this.alarmDriver.set(alarm, (generation) => this.wake(generation));
+	}
+
+	private replaceJobCallback(
+		jobId: string,
+		callbackId: string | undefined,
+	): void {
+		const previous = this.callbackByJob.get(jobId);
+		if (previous !== undefined && previous !== callbackId) {
+			this.callbackByJob.delete(jobId);
+			const route = this.callbacks.get(previous);
+			if (route) route.scheduled = false;
+			this.releaseCallback(previous);
+		}
+		if (callbackId !== undefined) {
+			const route = this.callbacks.get(callbackId);
+			if (!route)
+				throw new Error(`cron callback route not found: ${callbackId}`);
+			route.scheduled = true;
+			this.callbackByJob.set(jobId, callbackId);
+		}
+	}
+
+	private releaseCallback(callbackId: string): void {
+		const route = this.callbacks.get(callbackId);
+		if (route && !route.scheduled && route.activeRuns === 0) {
+			this.callbacks.delete(callbackId);
+		}
+	}
+
+	private allocateCallbackId(): string {
+		this.callbackSequence++;
+		if (!Number.isSafeInteger(this.callbackSequence)) {
+			throw new Error("cron callback id counter exhausted; recreate the VM");
+		}
+		return `host-cron-callback-${this.callbackSequence}`;
+	}
+
+	private ensureActive(): void {
+		if (this.disposed) throw new Error("cron manager is disposed");
+	}
+}
+
+function decodeWireAction(value: unknown): WireCronAction {
+	if (!value || typeof value !== "object") {
+		throw new TypeError("sidecar returned an invalid cron action");
+	}
+	const action = value as Record<string, unknown>;
+	if (action.type === "callback" && typeof action.callbackId === "string") {
+		return { type: "callback", callbackId: action.callbackId };
+	}
+	if (
+		action.type === "exec" &&
+		typeof action.command === "string" &&
+		(action.args === undefined ||
+			(Array.isArray(action.args) &&
+				action.args.every((arg) => typeof arg === "string")))
+	) {
+		return {
+			type: "exec",
+			command: action.command,
+			...(action.args === undefined ? {} : { args: action.args as string[] }),
+		};
+	}
+	if (
+		action.type === "session" &&
+		typeof action.agentType === "string" &&
+		typeof action.prompt === "string"
+	) {
+		return {
+			type: "session",
+			agentType: action.agentType as Exclude<
+				CronAction,
+				{ type: "callback" | "exec" }
+			>["agentType"],
+			prompt: action.prompt,
+			...(action.options === undefined
+				? {}
+				: {
+						options: action.options as Exclude<
+							CronAction,
+							{ type: "callback" | "exec" }
+						>["options"],
+					}),
+		};
+	}
+	throw new TypeError("sidecar returned an invalid cron action");
+}
+
+function normalizeScheduleError(schedule: string, error: unknown): unknown {
+	const message = error instanceof Error ? error.message : String(error);
+	if (message.includes("[invalid_schedule]"))
+		return new InvalidScheduleError(schedule);
+	if (message.includes("[past_schedule]"))
+		return new PastScheduleError(schedule);
+	return error;
+}
+
+async function missingCallback(): Promise<never> {
+	throw new Error("cron callback route is unavailable");
 }

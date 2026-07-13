@@ -19,6 +19,7 @@ agentos-kernel = { workspace = true }
 agentos-sidecar-protocol = { workspace = true }
 agentos-native-sidecar-core = { workspace = true }
 agentos-execution = { workspace = true }
+agentos-protocol = { workspace = true }
 agentos-vm-config = { workspace = true }
 agentos-vfs = { workspace = true }
 async-trait = "0.1"
@@ -57,6 +58,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 rustix = { version = "1", features = ["fs"] }
 scrypt = "0.11"
 serde = { version = "1.0", features = ["derive"] }
+serde_bare = "0.5"
 serde_json = "1.0"
 sha1 = "0.10"
 sha2 = "0.10"
@@ -69,7 +71,6 @@ url = "2"
 vfs = { workspace = true }
 
 [dev-dependencies]
-serde_bare = "0.5"
 tar = "0.4"
 wat = "1.0"
 v8 = "130"

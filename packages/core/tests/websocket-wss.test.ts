@@ -169,7 +169,7 @@ describe("guest websocket over wss", () => {
 			let stdout = "";
 			let stderr = "";
 
-			const { pid } = vm.spawn("node", ["/tmp/websocket-wss-test.mjs"], {
+			const { pid } = await vm.spawn("node", ["/tmp/websocket-wss-test.mjs"], {
 				env: {
 					WS_URL: `wss://localhost:${port}`,
 				},

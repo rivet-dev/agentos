@@ -49,6 +49,7 @@ async fn spawn_capture(os: &AgentOs, cmd: &str, args: Vec<String>) -> (i32, Stri
                 ..Default::default()
             },
         )
+        .await
         .unwrap_or_else(|e| panic!("spawn {cmd}: {e:?}"));
     let code = os
         .wait_process(handle.pid)

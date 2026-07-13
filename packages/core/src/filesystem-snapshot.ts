@@ -1,8 +1,6 @@
 import * as posixPath from "node:path/posix";
-import {
-	createInMemoryFileSystem,
-	type VirtualFileSystem,
-} from "./runtime-compat.js";
+import { createInMemoryFileSystem } from "./memory-filesystem.js";
+import type { VirtualFileSystem } from "./runtime.js";
 
 export interface FilesystemEntry {
 	path: string;

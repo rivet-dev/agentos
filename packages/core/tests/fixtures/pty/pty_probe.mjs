@@ -6,8 +6,8 @@
 //
 // Launched by the host as a BUILT-IN VM command:
 //   vm.openShell({ command: "node", args: ["/pty_probe.mjs", caseId], cols, rows })
-// openShell auto-injects AGENTOS_EXEC_TTY=1 + COLUMNS/LINES; the sidecar opens a
-// PTY and dup2()s the slave onto fd 0/1/2.
+// openShell sends an explicit PTY descriptor; the sidecar opens a PTY, applies
+// its initial window size, and dup2()s the slave onto fd 0/1/2.
 //
 // GUEST-NODE TTY STATUS (the runtime now routes guest-node stdin through the
 // kernel PTY and populates the TTY config from the kernel, so most cells match

@@ -111,25 +111,25 @@ async fn launch_pi_session_with_tools_and_read_argv(
     options: CreateSessionOptions,
     tool_kits: Vec<ToolKit>,
 ) -> Vec<String> {
-    let module_access_dir =
+    let fixture_root =
         std::env::temp_dir().join(format!("agentos-client-os-instructions-{}", Uuid::new_v4()));
-    let package_dir = write_mock_pi_adapter(&module_access_dir);
+    let package_dir = write_mock_pi_adapter(&fixture_root);
 
-    let argv = run_session(&module_access_dir, &package_dir, options, tool_kits).await;
+    let argv = run_session(&fixture_root, &package_dir, options, tool_kits).await;
 
-    std::fs::remove_dir_all(&module_access_dir).ok();
+    std::fs::remove_dir_all(&fixture_root).ok();
     argv
 }
 
 async fn run_session(
-    module_access_dir: &Path,
+    fixture_root: &Path,
     package_dir: &Path,
     options: CreateSessionOptions,
     tool_kits: Vec<ToolKit>,
 ) -> Vec<String> {
     let os = AgentOs::create(AgentOsConfig {
         mounts: vec![node_modules_mount(
-            module_access_dir
+            fixture_root
                 .join("node_modules")
                 .to_string_lossy()
                 .into_owned(),
@@ -154,6 +154,8 @@ async fn run_session(
 
     let agent_info = os
         .get_session_agent_info(&session.session_id)
+        .await
+        .expect("read mock adapter session state")
         .expect("mock adapter should report agent info");
     let argv: Vec<String> = serde_json::from_value(
         agent_info

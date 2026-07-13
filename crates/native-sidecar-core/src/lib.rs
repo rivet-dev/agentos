@@ -3,7 +3,11 @@
 //! Backend-agnostic sidecar logic shared by native and browser shells.
 
 pub mod bridge_bytes;
+pub mod command_line;
+pub mod cron;
+pub mod defaults;
 pub mod diagnostics;
+pub mod execution_defaults;
 pub mod frames;
 pub mod guest_fs;
 pub mod guest_net;
@@ -23,10 +27,19 @@ pub use bridge_bytes::{
     bridge_buffer_value, decode_base64, decode_bridge_buffer_value, decode_encoded_bytes_value,
     encoded_bytes_value,
 };
+pub use command_line::{resolve_command_line, ResolvedCommandLine};
+pub use cron::{
+    decode_cron_action, CronAction, CronScheduler, CronSchedulerError, MAX_ACTIVE_CRON_RUNS,
+    MAX_CRON_ACTION_BYTES, MAX_CRON_JOBS, MAX_CRON_STATE_BYTES,
+};
+pub use defaults::{
+    default_guest_environment, guest_environment_with_overrides, DEFAULT_GUEST_PATH_ENV,
+};
 pub use diagnostics::{
     process_snapshot_entry_from_kernel, process_status_from_kernel,
     protocol_process_snapshot_entry, SharedProcessSnapshotEntry, SharedProcessSnapshotStatus,
 };
+pub use execution_defaults::apply_execute_defaults;
 pub use frames::{
     authenticated_response, bound_udp_snapshot_response, event, layer_created_response,
     layer_sealed_response, listener_snapshot_response, overlay_created_response,
@@ -43,7 +56,7 @@ pub use frames::{
 pub use guest_fs::{
     decode_guest_filesystem_content, empty_guest_filesystem_response,
     encode_guest_filesystem_content, guest_filesystem_stat, handle_guest_filesystem_call,
-    targeted_guest_filesystem_response,
+    resolve_guest_filesystem_request, targeted_guest_filesystem_response,
 };
 pub use guest_net::handle_guest_kernel_call;
 pub use identity::{shared_guest_runtime_identity, SharedGuestRuntimeIdentity};
@@ -61,7 +74,7 @@ pub use permissions::{
     allow_all_policy, deny_all_policy, environment_permission_capability,
     evaluate_permissions_policy, filesystem_permission_capability, fs_permission_capability,
     network_permission_capability, permission_mode_to_kernel_decision, permissions_from_policy,
-    validate_permissions_policy,
+    permissions_with_allow_all_defaults, validate_permissions_policy,
 };
 pub use root_fs::{
     apply_root_filesystem_entry, build_root_filesystem, build_root_filesystem_with_loaded_snapshot,
@@ -84,12 +97,13 @@ pub use signals::{
     parse_posix_signal, parse_process_signal_state_request, signal_number_from_name,
 };
 pub use tools::{
-    ensure_command_aliases_available, ensure_toolkit_name_available,
-    ensure_toolkit_registry_capacity, registered_tool_command_names, validate_toolkit_registration,
-    ToolRegistrationError, DEFAULT_TOOL_TIMEOUT_MS, MAX_REGISTERED_TOOLKITS,
-    MAX_REGISTERED_TOOLS_PER_VM, MAX_TOOLKIT_NAME_LENGTH, MAX_TOOLS_PER_TOOLKIT,
-    MAX_TOOL_DESCRIPTION_LENGTH, MAX_TOOL_EXAMPLES_PER_TOOL, MAX_TOOL_EXAMPLE_INPUT_BYTES,
-    MAX_TOOL_NAME_LENGTH, MAX_TOOL_SCHEMA_BYTES, MAX_TOOL_SCHEMA_DEPTH, MAX_TOOL_TIMEOUT_MS,
+    ensure_toolkit_name_available, ensure_toolkit_registry_capacity, is_registry_command,
+    registered_tool_command_names, toolkit_command_name, toolkit_name_for_command,
+    validate_toolkit_registration, ToolRegistrationError, DEFAULT_TOOL_TIMEOUT_MS,
+    MAX_REGISTERED_TOOLKITS, MAX_REGISTERED_TOOLS_PER_VM, MAX_TOOLKIT_NAME_LENGTH,
+    MAX_TOOLS_PER_TOOLKIT, MAX_TOOL_DESCRIPTION_LENGTH, MAX_TOOL_EXAMPLES_PER_TOOL,
+    MAX_TOOL_EXAMPLE_INPUT_BYTES, MAX_TOOL_NAME_LENGTH, MAX_TOOL_SCHEMA_BYTES,
+    MAX_TOOL_SCHEMA_DEPTH, MAX_TOOL_TIMEOUT_MS,
 };
 pub use vm_fetch::{
     ensure_vm_fetch_raw_response_buffer_within_limit, ensure_vm_fetch_response_within_limit,

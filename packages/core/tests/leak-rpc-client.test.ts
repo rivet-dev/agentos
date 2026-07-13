@@ -7,8 +7,6 @@ import {
 // Regression coverage for the NativeSidecarKernelProxy tracking-collection leaks:
 //   H6 - trackedProcesses / trackedProcessesById and the onStdout/onStderr
 //        listener Sets were populated at spawn but never released on exit.
-//   M8 - signalStates kept a per-pid entry forever (its sibling signalRefreshes
-//        was already deleted on process_exited).
 //   H7 - localMounts was never cleared on dispose().
 // The proxy is exercised against a stub SidecarProcess so the test stays fast and
 // deterministic without booting a real VM.
@@ -24,16 +22,16 @@ interface PumpEvent {
 function createStubClient() {
 	const queue: PumpEvent[] = [];
 	let notify: (() => void) | null = null;
+	let rejectPump: ((error: Error) => void) | null = null;
+	let processId: string | null = null;
 
 	const client = {
 		async execute() {
-			return { pid: 4242 };
+			processId = "sidecar-process-1";
+			return { processId, pid: 4242 };
 		},
 		async getProcessSnapshot() {
 			return [];
-		},
-		async getSignalState() {
-			return { handlers: new Map() };
 		},
 		async killProcess() {},
 		async writeStdin() {},
@@ -46,6 +44,7 @@ function createStubClient() {
 			options: { signal: AbortSignal },
 		) {
 			return new Promise<PumpEvent>((resolve, reject) => {
+				rejectPump = reject;
 				const tryDeliver = () => {
 					const event = queue.shift();
 					if (event) {
@@ -73,8 +72,9 @@ function createStubClient() {
 		queue.push(event);
 		notify?.();
 	};
+	const failPump = (error: Error) => rejectPump?.(error);
 
-	return { client, pushEvent };
+	return { client, pushEvent, failPump, processId: () => processId };
 }
 
 function createProxy(client: unknown, localMounts: LocalCompatMount[] = []) {
@@ -105,19 +105,14 @@ async function waitFor(predicate: () => boolean, timeoutMs = 500) {
 }
 
 describe("NativeSidecarKernelProxy tracking-collection cleanup", () => {
-	it("releases tracked process + signal state + listeners when a process exits", async () => {
-		const { client, pushEvent } = createStubClient();
+	it("releases tracked process routes and listeners when a process exits", async () => {
+		const { client, pushEvent, processId } = createStubClient();
 		const proxy = createProxy(client);
 
-		const proc = proxy.spawn("node", ["script.js"], {
+		const proc = await proxy.spawn("node", ["script.js"], {
 			onStdout: () => {},
 			onStderr: () => {},
 		});
-
-		// Populate signalStates the same way the kernel does (getSignalState ->
-		// refreshSignalState), so we can prove it is released on exit.
-		proxy.getSignalState(proc.pid);
-		await proxy.__awaitSignalRefreshesForTest();
 
 		const entry = proxy.__trackedEntryForTest(proc.pid);
 		expect(entry).toBeDefined();
@@ -127,15 +122,13 @@ describe("NativeSidecarKernelProxy tracking-collection cleanup", () => {
 		const before = proxy.__trackingSizesForTest();
 		expect(before.trackedProcesses).toBe(1);
 		expect(before.trackedProcessesById).toBe(1);
-		expect(before.signalStates).toBe(1);
 
-		// Drive the real event-pump exit path (the sibling signalRefreshes delete
-		// already lives here; signalStates must be released alongside it).
+		// Drive the real event-pump exit path.
 		pushEvent({
 			ownership: { scope: "vm", vm_id: vm.vmId },
 			payload: {
 				type: "process_exited",
-				process_id: `proc-${proc.pid}`,
+				process_id: processId(),
 				exit_code: 0,
 			},
 		});
@@ -145,11 +138,25 @@ describe("NativeSidecarKernelProxy tracking-collection cleanup", () => {
 		const after = proxy.__trackingSizesForTest();
 		expect(after.trackedProcesses).toBe(0);
 		expect(after.trackedProcessesById).toBe(0);
-		expect(after.signalStates).toBe(0);
 		// The listener Sets on the (now untracked) entry must be emptied too.
 		expect(entry?.onStdout.size).toBe(0);
 		expect(entry?.onStderr.size).toBe(0);
 
+		await proxy.dispose();
+	});
+
+	it("rejects wait when the authoritative event stream fails", async () => {
+		const { client, failPump } = createStubClient();
+		const proxy = createProxy(client);
+		const proc = await proxy.spawn("node", ["server.js"]);
+		const waiting = proc.wait();
+
+		failPump(new Error("sidecar transport closed"));
+
+		await expect(waiting).rejects.toThrow("sidecar transport closed");
+		expect(proc.exitCode).toBeNull();
+		await waitFor(() => proxy.__trackingSizesForTest().trackedProcesses === 0);
+		expect(proxy.__trackingSizesForTest().trackedProcesses).toBe(0);
 		await proxy.dispose();
 	});
 
@@ -162,16 +169,12 @@ describe("NativeSidecarKernelProxy tracking-collection cleanup", () => {
 		};
 		const proxy = createProxy(client, [localMount]);
 
-		const proc = proxy.spawn("node", ["server.js"], {
+		const proc = await proxy.spawn("node", ["server.js"], {
 			onStdout: () => {},
 		});
-		proxy.getSignalState(proc.pid);
-		await proxy.__awaitSignalRefreshesForTest();
-
 		const before = proxy.__trackingSizesForTest();
 		expect(before.trackedProcesses).toBe(1);
 		expect(before.localMounts).toBe(1);
-		expect(before.signalStates).toBe(1);
 
 		// Dispose with a still-live process: every collection must end up empty.
 		await proxy.dispose();
@@ -179,8 +182,34 @@ describe("NativeSidecarKernelProxy tracking-collection cleanup", () => {
 		const after = proxy.__trackingSizesForTest();
 		expect(after.trackedProcesses).toBe(0);
 		expect(after.trackedProcessesById).toBe(0);
-		expect(after.signalStates).toBe(0);
-		expect(after.signalRefreshes).toBe(0);
 		expect(after.localMounts).toBe(0);
+	});
+
+	it("surfaces sidecar teardown failures after clearing local state", async () => {
+		const { client } = createStubClient();
+		let disposedClient = false;
+		client.disposeVm = async () => {
+			throw new Error("dispose VM failed");
+		};
+		client.dispose = async () => {
+			disposedClient = true;
+		};
+		const proxy = createProxy(client, [
+			{
+				path: "/mnt/data",
+				fs: {} as LocalCompatMount["fs"],
+				readOnly: false,
+			},
+		]);
+
+		await expect(proxy.dispose()).rejects.toThrow(
+			"failed to dispose sidecar VM",
+		);
+		expect(disposedClient).toBe(true);
+		expect(proxy.__trackingSizesForTest()).toEqual({
+			trackedProcesses: 0,
+			trackedProcessesById: 0,
+			localMounts: 0,
+		});
 	});
 });

@@ -24,7 +24,7 @@ export interface CronJobOptions {
 
 export interface CronJob {
 	id: string;
-	cancel(): void;
+	cancel(): Promise<void>;
 }
 
 export interface CronJobInfo {

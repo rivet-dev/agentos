@@ -909,7 +909,7 @@ describe("Browserbase websocket smoke test", () => {
 			let stdout = "";
 			let stderr = "";
 
-			const { pid } = vm.spawn("node", ["/tmp/browserbase-ws-test.mjs"], {
+			const { pid } = await vm.spawn("node", ["/tmp/browserbase-ws-test.mjs"], {
 				env: {
 					BROWSERBASE_API_KEY: BROWSER_BASE_API_KEY,
 					BROWSERBASE_PROJECT_ID: BROWSER_BASE_PROJECT_ID,
@@ -954,7 +954,7 @@ describe("Browserbase websocket smoke test", () => {
 			let stdout = "";
 			let stderr = "";
 
-			const { pid } = vm.spawn("node", ["/tmp/browserbase-cli-pages-test.mjs"], {
+			const { pid } = await vm.spawn("node", ["/tmp/browserbase-cli-pages-test.mjs"], {
 				env: {
 					BROWSERBASE_API_KEY: BROWSER_BASE_API_KEY,
 					BROWSERBASE_PROJECT_ID: BROWSER_BASE_PROJECT_ID,
@@ -992,7 +992,7 @@ describe("Browserbase websocket smoke test", () => {
 			let stdout = "";
 			let stderr = "";
 
-			const { pid } = vm.spawn("node", ["/tmp/browserbase-target-test.mjs"], {
+			const { pid } = await vm.spawn("node", ["/tmp/browserbase-target-test.mjs"], {
 				env: {
 					BROWSERBASE_API_KEY: BROWSER_BASE_API_KEY,
 					BROWSERBASE_PROJECT_ID: BROWSER_BASE_PROJECT_ID,
@@ -1027,7 +1027,7 @@ describe("Browserbase websocket smoke test", () => {
 			let stdout = "";
 			let stderr = "";
 
-			const { pid } = vm.spawn(
+			const { pid } = await vm.spawn(
 				"node",
 				["/tmp/browserbase-direct-stagehand-test.mjs"],
 				{
@@ -1063,7 +1063,7 @@ describe("Browserbase websocket smoke test", () => {
 			let stdout = "";
 			let stderr = "";
 
-			const { pid } = vm.spawn("node", ["/tmp/browserbase-sdk-test.mjs"], {
+			const { pid } = await vm.spawn("node", ["/tmp/browserbase-sdk-test.mjs"], {
 				env: {
 					BROWSERBASE_API_KEY: BROWSER_BASE_API_KEY,
 					BROWSERBASE_PROJECT_ID: BROWSER_BASE_PROJECT_ID,
@@ -1120,7 +1120,7 @@ describe("Browserbase websocket smoke test", () => {
 			let stdout = "";
 			let stderr = "";
 
-			const { pid } = vm.spawn("node", ["/tmp/browserbase-https-test.mjs"], {
+			const { pid } = await vm.spawn("node", ["/tmp/browserbase-https-test.mjs"], {
 				env: {
 					BROWSERBASE_API_KEY: BROWSER_BASE_API_KEY,
 					BROWSERBASE_PROJECT_ID: BROWSER_BASE_PROJECT_ID,
@@ -1170,7 +1170,7 @@ describe("Browserbase websocket smoke test", () => {
 			let stdout = "";
 			let stderr = "";
 
-			const { pid } = vm.spawn("node", ["/tmp/browserbase-bootstrap-test.mjs"], {
+			const { pid } = await vm.spawn("node", ["/tmp/browserbase-bootstrap-test.mjs"], {
 				env: {
 					BROWSERBASE_API_KEY: BROWSER_BASE_API_KEY,
 					BROWSERBASE_PROJECT_ID: BROWSER_BASE_PROJECT_ID,

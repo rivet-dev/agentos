@@ -4,7 +4,9 @@ import {
 	type LiveRootFilesystemEntryEncoding,
 } from "./filesystem.js";
 import { fromGeneratedExtEnvelope, type LiveExtEnvelope } from "./ext.js";
-import type * as protocol from "./generated-protocol.js";
+import * as protocol from "./generated-protocol.js";
+import { parseJsonUtf8 } from "./json.js";
+import type { LiveCronOverlap } from "./request-payloads.js";
 import { bigIntToSafeNumber } from "./numbers.js";
 import {
 	fromGeneratedFilesystemOperation,
@@ -82,6 +84,42 @@ export interface LiveAgentosProjectedAgent {
 	adapter_entrypoint: string;
 }
 
+export interface LiveCronAlarm {
+	generation: number;
+	next_alarm_ms?: number;
+}
+
+export interface LiveCronJobEntry {
+	id: string;
+	schedule: string;
+	action: unknown;
+	overlap: LiveCronOverlap;
+	last_run_ms?: number;
+	next_run_ms?: number;
+	run_count: number;
+	running: boolean;
+}
+
+export interface LiveCronRun {
+	run_id: string;
+	job_id: string;
+	action: unknown;
+}
+
+export interface LiveCronEventRecord {
+	kind: "fire" | "complete" | "error";
+	job_id: string;
+	time_ms: number;
+	duration_ms?: number;
+	error?: string;
+}
+
+export interface LiveCronDispatch {
+	alarm: LiveCronAlarm;
+	runs: LiveCronRun[];
+	events: LiveCronEventRecord[];
+}
+
 export type LiveResponsePayload =
 	| {
 			type: "authenticated";
@@ -97,11 +135,25 @@ export type LiveResponsePayload =
 	| {
 			type: "vm_created";
 			vm_id: string;
+			guest_cwd: string;
+			guest_env: Record<string, string>;
+	  }
+	| {
+			type: "vm_initialized";
+			vm_id: string;
+			guest_cwd: string;
+			guest_env: Record<string, string>;
+			applied_mounts: number;
+			projected_commands: LiveProjectedCommand[];
+			agents: LiveAgentosProjectedAgent[];
+			host_callbacks: Array<{
+				registration: string;
+				command_count: number;
+			}>;
 	  }
 	| {
 			type: "vm_configured";
 			applied_mounts: number;
-			applied_software: number;
 			projected_commands: LiveProjectedCommand[];
 			agents: LiveAgentosProjectedAgent[];
 	  }
@@ -113,6 +165,33 @@ export type LiveResponsePayload =
 	| {
 			type: "provided_commands_response";
 			packages: LivePackageCommands[];
+	  }
+	| { type: "cron_scheduled"; id: string; alarm: LiveCronAlarm }
+	| { type: "cron_jobs"; jobs: LiveCronJobEntry[]; alarm: LiveCronAlarm }
+	| {
+			type: "cron_cancelled";
+			id: string;
+			cancelled: boolean;
+			alarm: LiveCronAlarm;
+	  }
+	| {
+			type: "cron_wake";
+			alarm: LiveCronAlarm;
+			runs: LiveCronRun[];
+			events: LiveCronEventRecord[];
+	  }
+	| {
+			type: "cron_run_completed";
+			alarm: LiveCronAlarm;
+			runs: LiveCronRun[];
+			events: LiveCronEventRecord[];
+	  }
+	| { type: "cron_state_exported"; state: string }
+	| {
+			type: "cron_state_imported";
+			alarm: LiveCronAlarm;
+			runs: LiveCronRun[];
+			events: LiveCronEventRecord[];
 	  }
 	| {
 			type: "host_callbacks_registered";
@@ -264,7 +343,29 @@ export function fromGeneratedResponsePayload(
 				owner_connection_id: payload.val.ownerConnectionId,
 			};
 		case "VmCreatedResponse":
-			return { type: "vm_created", vm_id: payload.val.vmId };
+			return {
+				type: "vm_created",
+				vm_id: payload.val.vmId,
+				guest_cwd: payload.val.guestCwd,
+				guest_env: Object.fromEntries(payload.val.guestEnv),
+			};
+		case "VmInitializedResponse":
+			return {
+				type: "vm_initialized",
+				vm_id: payload.val.vmId,
+				guest_cwd: payload.val.guestCwd,
+				guest_env: Object.fromEntries(payload.val.guestEnv),
+				applied_mounts: payload.val.appliedMounts,
+				projected_commands: payload.val.projectedCommands.map((command) => ({
+					name: command.name,
+					guest_path: command.guestPath,
+				})),
+				agents: payload.val.agents.map(fromGeneratedAgentosProjectedAgent),
+				host_callbacks: payload.val.hostCallbacks.map((registration) => ({
+					registration: registration.registration,
+					command_count: registration.commandCount,
+				})),
+			};
 		case "VmDisposedResponse":
 			return { type: "vm_disposed", vm_id: payload.val.vmId };
 		case "RootFilesystemBootstrappedResponse":
@@ -276,24 +377,19 @@ export function fromGeneratedResponsePayload(
 			return {
 				type: "vm_configured",
 				applied_mounts: payload.val.appliedMounts,
-				applied_software: payload.val.appliedSoftware,
-				projected_commands: payload.val.projectedCommands.map(
-					(command) => ({
-						name: command.name,
-						guest_path: command.guestPath,
-					}),
-				),
+				projected_commands: payload.val.projectedCommands.map((command) => ({
+					name: command.name,
+					guest_path: command.guestPath,
+				})),
 				agents: payload.val.agents.map(fromGeneratedAgentosProjectedAgent),
 			};
 		case "PackageLinkedResponse":
 			return {
 				type: "package_linked",
-				projected_commands: payload.val.projectedCommands.map(
-					(command) => ({
-						name: command.name,
-						guest_path: command.guestPath,
-					}),
-				),
+				projected_commands: payload.val.projectedCommands.map((command) => ({
+					name: command.name,
+					guest_path: command.guestPath,
+				})),
 				agents: payload.val.agents.map(fromGeneratedAgentosProjectedAgent),
 			};
 		case "ProvidedCommandsResponse":
@@ -303,6 +399,51 @@ export function fromGeneratedResponsePayload(
 					package_name: pkg.packageName,
 					commands: [...pkg.commands],
 				})),
+			};
+		case "CronScheduledResponse":
+			return {
+				type: "cron_scheduled",
+				id: payload.val.id,
+				alarm: fromGeneratedCronAlarm(payload.val.alarm),
+			};
+		case "CronJobsResponse":
+			return {
+				type: "cron_jobs",
+				jobs: payload.val.jobs.map(fromGeneratedCronJobEntry),
+				alarm: fromGeneratedCronAlarm(payload.val.alarm),
+			};
+		case "CronCancelledResponse":
+			return {
+				type: "cron_cancelled",
+				id: payload.val.id,
+				cancelled: payload.val.cancelled,
+				alarm: fromGeneratedCronAlarm(payload.val.alarm),
+			};
+		case "CronWakeResponse":
+			return {
+				type: "cron_wake",
+				alarm: fromGeneratedCronAlarm(payload.val.alarm),
+				runs: payload.val.runs.map(fromGeneratedCronRun),
+				events: payload.val.events.map(fromGeneratedCronEvent),
+			};
+		case "CronRunCompletedResponse":
+			return {
+				type: "cron_run_completed",
+				alarm: fromGeneratedCronAlarm(payload.val.alarm),
+				runs: payload.val.runs.map(fromGeneratedCronRun),
+				events: payload.val.events.map(fromGeneratedCronEvent),
+			};
+		case "CronStateExportedResponse":
+			return {
+				type: "cron_state_exported",
+				state: payload.val.state,
+			};
+		case "CronStateImportedResponse":
+			return {
+				type: "cron_state_imported",
+				alarm: fromGeneratedCronAlarm(payload.val.alarm),
+				runs: payload.val.runs.map(fromGeneratedCronRun),
+				events: payload.val.events.map(fromGeneratedCronEvent),
 			};
 		case "HostCallbacksRegisteredResponse":
 			return {
@@ -453,7 +594,10 @@ export function fromGeneratedResponsePayload(
 				queue_snapshots: payload.val.queueSnapshots.map((queue) => ({
 					name: queue.name,
 					category: queue.category,
-					depth: bigIntToSafeNumber(queue.depth, "resource_snapshot.queue.depth"),
+					depth: bigIntToSafeNumber(
+						queue.depth,
+						"resource_snapshot.queue.depth",
+					),
 					high_water: bigIntToSafeNumber(
 						queue.highWater,
 						"resource_snapshot.queue.high_water",
@@ -555,6 +699,109 @@ export function fromGeneratedResponsePayload(
 				envelope: fromGeneratedExtEnvelope(payload.val),
 			};
 	}
+}
+
+function fromGeneratedCronAlarm(value: protocol.CronAlarm): LiveCronAlarm {
+	return {
+		generation: bigIntToSafeNumber(value.generation, "cron_alarm.generation"),
+		...(value.nextAlarmMs === null
+			? {}
+			: {
+					next_alarm_ms: bigIntToSafeNumber(
+						value.nextAlarmMs,
+						"cron_alarm.next_alarm_ms",
+					),
+				}),
+	};
+}
+
+function fromGeneratedCronOverlap(
+	value: protocol.CronOverlap,
+): LiveCronOverlap {
+	switch (value) {
+		case protocol.CronOverlap.Allow:
+			return "allow";
+		case protocol.CronOverlap.Skip:
+			return "skip";
+		case protocol.CronOverlap.Queue:
+			return "queue";
+	}
+}
+
+function fromGeneratedCronJobEntry(
+	value: protocol.CronJobEntry,
+): LiveCronJobEntry {
+	return {
+		id: value.id,
+		schedule: value.schedule,
+		action: parseJsonUtf8(value.action, "cron_job.action"),
+		overlap: fromGeneratedCronOverlap(value.overlap),
+		...(value.lastRunMs === null
+			? {}
+			: {
+					last_run_ms: bigIntToSafeNumber(
+						value.lastRunMs,
+						"cron_job.last_run_ms",
+					),
+				}),
+		...(value.nextRunMs === null
+			? {}
+			: {
+					next_run_ms: bigIntToSafeNumber(
+						value.nextRunMs,
+						"cron_job.next_run_ms",
+					),
+				}),
+		run_count: bigIntToSafeNumber(value.runCount, "cron_job.run_count"),
+		running: value.running,
+	};
+}
+
+function fromGeneratedCronRun(value: protocol.CronRun): LiveCronRun {
+	return {
+		run_id: value.runId,
+		job_id: value.jobId,
+		action: parseJsonUtf8(value.action, "cron_run.action"),
+	};
+}
+
+function fromGeneratedCronEvent(
+	value: protocol.CronEventRecord,
+): LiveCronEventRecord {
+	const kind = (() => {
+		switch (value.kind) {
+			case protocol.CronEventKind.Fire:
+				return "fire" as const;
+			case protocol.CronEventKind.Complete:
+				return "complete" as const;
+			case protocol.CronEventKind.Error:
+				return "error" as const;
+		}
+	})();
+	return {
+		kind,
+		job_id: value.jobId,
+		time_ms: bigIntToSafeNumber(value.timeMs, "cron_event.time_ms"),
+		...(value.durationMs === null
+			? {}
+			: {
+					duration_ms: bigIntToSafeNumber(
+						value.durationMs,
+						"cron_event.duration_ms",
+					),
+				}),
+		...(value.error === null ? {} : { error: value.error }),
+	};
+}
+
+export function fromGeneratedCronDispatch(
+	value: protocol.CronDispatchEvent,
+): LiveCronDispatch {
+	return {
+		alarm: fromGeneratedCronAlarm(value.alarm),
+		runs: value.runs.map(fromGeneratedCronRun),
+		events: value.events.map(fromGeneratedCronEvent),
+	};
 }
 
 function fromGeneratedAgentosProjectedAgent(

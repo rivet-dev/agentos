@@ -231,6 +231,7 @@ fn collect_kill_cleanup_process_output(
                 }
                 EventPayload::ProcessOutputEvent(_)
                 | EventPayload::ProcessExitedEvent(_)
+                | EventPayload::CronDispatchEvent(_)
                 | EventPayload::VmLifecycleEvent(_)
                 | EventPayload::StructuredEvent(_)
                 | EventPayload::ExtEnvelope(_) => {}
@@ -475,7 +476,6 @@ fn close_session_removes_the_session_and_disposes_owned_vms() {
                 placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
                     pool: None,
                 }),
-                metadata: HashMap::new(),
             }),
         ))
         .expect("open replacement session");
@@ -528,7 +528,6 @@ fn remove_connection_disposes_owned_sessions_and_vms() {
                 placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
                     pool: None,
                 }),
-                metadata: HashMap::new(),
             }),
         ))
         .expect("attempt open session after connection removal");

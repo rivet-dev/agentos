@@ -73,14 +73,16 @@ fn configure_mounts(
             0,
             MountDescriptor {
                 guest_path: String::from("/__secure_exec/commands/0"),
-                read_only: true,
+                read_only: Some(true),
                 plugin: MountPluginDescriptor {
                     id: String::from("host_dir"),
-                    config: serde_json::to_string(&json!({
-                        "hostPath": command_root,
-                        "readOnly": true,
-                    }))
-                    .expect("serialize registry command mount config"),
+                    config: Some(
+                        serde_json::to_string(&json!({
+                            "hostPath": command_root,
+                            "readOnly": true,
+                        }))
+                        .expect("serialize registry command mount config"),
+                    ),
                 },
             },
         );
@@ -91,18 +93,12 @@ fn configure_mounts(
             10,
             wire_vm(connection_id, session_id, vm_id),
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts,
-                software: Vec::new(),
+                mounts: Some(mounts),
                 permissions: None,
-                module_access_cwd: None,
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
-                command_permissions: HashMap::new(),
-                loopback_exempt_ports: Vec::new(),
-                packages: Vec::new(),
-                packages_mount_at: String::new(),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                command_permissions: None,
+                loopback_exempt_ports: None,
+                packages: None,
+                packages_mount_at: None,
             }),
         ))
         .expect("configure registry command mount");
@@ -322,14 +318,16 @@ console.log(JSON.stringify({
         HashMap::from([(String::from("env.WORKTREE"), String::from("/workspace"))]),
         vec![MountDescriptor {
             guest_path: String::from("/workspace"),
-            read_only: false,
+            read_only: Some(false),
             plugin: MountPluginDescriptor {
                 id: String::from("host_dir"),
-                config: serde_json::to_string(&json!({
-                    "hostPath": cwd,
-                    "readOnly": false,
-                }))
-                .expect("serialize relative shell mount config"),
+                config: Some(
+                    serde_json::to_string(&json!({
+                        "hostPath": cwd,
+                        "readOnly": false,
+                    }))
+                    .expect("serialize relative shell mount config"),
+                ),
             },
         }],
     );
@@ -446,14 +444,16 @@ console.log(JSON.stringify({
         HashMap::from([(String::from("env.WORKTREE"), String::from("/workspace"))]),
         vec![MountDescriptor {
             guest_path: String::from("/workspace"),
-            read_only: false,
+            read_only: Some(false),
             plugin: MountPluginDescriptor {
                 id: String::from("host_dir"),
-                config: serde_json::to_string(&json!({
-                    "hostPath": cwd,
-                    "readOnly": false,
-                }))
-                .expect("serialize absolute shell mount config"),
+                config: Some(
+                    serde_json::to_string(&json!({
+                        "hostPath": cwd,
+                        "readOnly": false,
+                    }))
+                    .expect("serialize absolute shell mount config"),
+                ),
             },
         }],
     );

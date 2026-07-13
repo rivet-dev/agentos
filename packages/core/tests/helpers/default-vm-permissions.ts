@@ -1,27 +1,17 @@
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { afterAll } from "vitest";
-import { AgentOs, __disposeAllSharedSidecarsForTesting } from "../../src/agent-os.js";
-import { ALLOW_ALL_VM_PERMISSIONS } from "./permissions.js";
+import { __disposeAllSharedSidecarsForTesting } from "../../src/agent-os.js";
 
-const globalState = globalThis as typeof globalThis & {
-	__agentOsOriginalCreate?: typeof AgentOs.create;
-	__agentOsDefaultPermissionsPatched?: boolean;
-};
-
-if (!globalState.__agentOsDefaultPermissionsPatched) {
-	const originalCreate = AgentOs.create.bind(AgentOs);
-	globalState.__agentOsOriginalCreate = originalCreate;
-	globalState.__agentOsDefaultPermissionsPatched = true;
-
-	AgentOs.create = (async (...args: Parameters<typeof AgentOs.create>) => {
-		const [options] = args;
-		if (options?.permissions !== undefined) {
-			return originalCreate(options);
-		}
-		return originalCreate({
-			...(options ?? {}),
-			permissions: ALLOW_ALL_VM_PERMISSIONS,
-		});
-	}) as typeof AgentOs.create;
+// Runtime resolution never probes repository build output. The repository test
+// harness opts into its explicit sidecar artifact without changing VM config.
+if (!process.env.AGENTOS_SIDECAR_BIN) {
+	const testSidecar = fileURLToPath(
+		new URL("../../../../target/debug/agentos-sidecar", import.meta.url),
+	);
+	if (existsSync(testSidecar)) {
+		process.env.AGENTOS_SIDECAR_BIN = testSidecar;
+	}
 }
 
 // Vitest forks a worker per file. Each worker holds the process-global

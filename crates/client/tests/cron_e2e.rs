@@ -1,5 +1,5 @@
-//! Cron e2e against a real `agentos-sidecar`. Cron is client-side logic (CronManager +
-//! TimerScheduleDriver); a `Callback` action runs in-process, so this needs no V8/WASM.
+//! Cron e2e against a real `agentos-sidecar`. The sidecar owns schedule and run
+//! state; the client only arms its returned alarm and routes the callback.
 //!
 //! Covers: a near-future one-shot callback actually fires and emits Fire/Complete events, and the
 //! schedule/list/cancel registry surface for a recurring job.
@@ -41,6 +41,7 @@ async fn cron_callback_fires_and_registry_round_trips() {
             },
             overlap: None,
         })
+        .await
         .expect("schedule one-shot");
     assert_eq!(handle.id, "oneshot-test");
 
@@ -68,6 +69,9 @@ async fn cron_callback_fires_and_registry_round_trips() {
         saw_complete,
         "expected a cron:complete event for the one-shot"
     );
+    os.cancel_cron_job(&handle.id)
+        .await
+        .expect("remove completed one-shot");
 
     // Registry surface: schedule a recurring job (won't fire during the test), see it listed, cancel
     // it, and confirm it's gone.
@@ -80,16 +84,60 @@ async fn cron_callback_fires_and_registry_round_trips() {
             },
             overlap: None,
         })
+        .await
         .expect("schedule recurring");
     assert!(
-        os.list_cron_jobs().iter().any(|j| j.id == "daily-test"),
+        os.list_cron_jobs()
+            .await
+            .expect("list cron jobs")
+            .iter()
+            .any(|j| j.id == "daily-test"),
         "recurring job should be listed"
     );
-    os.cancel_cron_job(&recurring.id);
+    os.cancel_cron_job(&recurring.id)
+        .await
+        .expect("cancel recurring job");
     assert!(
-        !os.list_cron_jobs().iter().any(|j| j.id == "daily-test"),
+        !os.list_cron_jobs()
+            .await
+            .expect("list cron jobs after cancel")
+            .iter()
+            .any(|j| j.id == "daily-test"),
         "cancelled job should be gone"
     );
+
+    // A durable host stores sidecar state opaquely. Cancelling the live copy
+    // makes the same scheduler empty so this test can prove import restores it.
+    let durable = os
+        .schedule_cron(CronJobOptions {
+            id: Some("durable-state-test".to_string()),
+            schedule: "0 0 * * *".to_string(),
+            action: CronAction::Exec {
+                command: "true".to_string(),
+                args: Vec::new(),
+            },
+            overlap: None,
+        })
+        .await
+        .expect("schedule durable job");
+    let state = os.export_cron_state().await.expect("export cron state");
+    os.cancel_cron_job(&durable.id)
+        .await
+        .expect("clear live cron state");
+    os.import_cron_state(state)
+        .await
+        .expect("restore cron state");
+    assert!(
+        os.list_cron_jobs()
+            .await
+            .expect("list restored cron jobs")
+            .iter()
+            .any(|job| job.id == durable.id),
+        "opaque sidecar state should restore the durable job"
+    );
+    os.cancel_cron_job(&durable.id)
+        .await
+        .expect("cancel restored job");
 
     os.shutdown().await.expect("shutdown");
 }

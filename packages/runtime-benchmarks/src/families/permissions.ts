@@ -1,4 +1,4 @@
-import type { NodeRuntimeCreateOptions } from "@rivet-dev/agentos-runtime-core";
+import type { AgentOsOptions } from "@rivet-dev/agentos-core";
 import { fsFamily } from "./fs.js";
 import { netFamily } from "./net.js";
 import type { BenchmarkOp } from "../lib/layers.js";
@@ -16,7 +16,7 @@ const PERMISSION_OPS = [
 //   last so TCP connect/listen checks walk the list before allowing.
 // - childProcess/process/env: allow, keeping the benchmark focused on the
 //   guest syscall permission matcher for fs and network operations.
-export const restrictivePermissionsPolicy: NodeRuntimeCreateOptions["permissions"] = {
+export const restrictivePermissionsPolicy: AgentOsOptions["permissions"] = {
 	fs: {
 		default: "deny",
 		rules: [

@@ -14,11 +14,6 @@
 			"import": "./dist/index.js",
 			"default": "./dist/index.js"
 		},
-		"./internal/runtime-compat": {
-			"types": "./dist/runtime-compat.d.ts",
-			"import": "./dist/runtime-compat.js",
-			"default": "./dist/runtime-compat.js"
-		},
 		"./test/file-system": {
 			"types": "./dist/test/file-system.d.ts",
 			"import": "./dist/test/file-system.js",
@@ -53,20 +48,14 @@
 		"test": "vitest run --reporter=verbose"
 	},
 	"dependencies": {
-		"@agentos-software/claude-code": "workspace:*",
-		"@agentos-software/codex-cli": "workspace:*",
 		"@agentos-software/common": "workspace:*",
 		"@agentos-software/manifest": "workspace:*",
-		"@agentos-software/opencode": "workspace:*",
-		"@agentos-software/pi": "workspace:*",
-		"@agentos-software/pi-cli": "workspace:*",
 		"@aws-sdk/client-s3": "^3.1019.0",
 		"@rivet-dev/agentos-sidecar": "workspace:*",
 		"@rivetkit/bare-ts": "^0.6.2",
 		"@rivet-dev/agentos-runtime-core": "workspace:*",
 		"@xterm/headless": "^6.0.0",
 		"better-sqlite3": "^12.8.0",
-		"croner": "^10.0.1",
 		"googleapis": "^144.0.0",
 		"isolated-vm": "^6.0.0",
 		"long-timeout": "^0.1.1",
@@ -77,6 +66,7 @@
 	"devDependencies": {
 		"@agentos-software/claude-code": "workspace:*",
 		"@agentos-software/codex": "workspace:*",
+		"@agentos-software/codex-cli": "workspace:*",
 		"@agentos-software/coreutils": "workspace:*",
 		"@agentos-software/curl": "workspace:*",
 		"@agentos-software/diffutils": "workspace:*",

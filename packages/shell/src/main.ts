@@ -50,7 +50,6 @@ import yq from "@agentos-software/yq";
 import zip from "@agentos-software/zip";
 import type { MountConfig, SoftwareInput } from "@rivet-dev/agentos-core";
 import { AgentOs } from "@rivet-dev/agentos-core";
-import { allowAll } from "@rivet-dev/agentos-core/internal/runtime-compat";
 import { Command, Option } from "commander";
 import { createActorShellVm, type ShellVmHandle } from "./actor-vm.js";
 
@@ -694,7 +693,6 @@ const vm: ShellVmHandle = cli.actor
 	? await createActorShellVm({ software, mounts, defaultSoftware: false })
 	: await AgentOs.create({
 			mounts,
-			permissions: allowAll,
 			software,
 			defaultSoftware: false,
 		});

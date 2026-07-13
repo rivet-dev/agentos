@@ -500,6 +500,28 @@ fn to_generated_request_payload(
         RequestPayload::ProvidedCommands(_) => {
             generated_protocol::RequestPayload::ProvidedCommandsRequest
         }
+        RequestPayload::ScheduleCron(inner) => {
+            generated_protocol::RequestPayload::ScheduleCronRequest(inner.clone())
+        }
+        RequestPayload::ListCronJobs(_) => generated_protocol::RequestPayload::ListCronJobsRequest,
+        RequestPayload::CancelCronJob(inner) => {
+            generated_protocol::RequestPayload::CancelCronJobRequest(inner.clone())
+        }
+        RequestPayload::WakeCron(inner) => {
+            generated_protocol::RequestPayload::WakeCronRequest(inner.clone())
+        }
+        RequestPayload::CompleteCronRun(inner) => {
+            generated_protocol::RequestPayload::CompleteCronRunRequest(inner.clone())
+        }
+        RequestPayload::ExportCronState(_) => {
+            generated_protocol::RequestPayload::ExportCronStateRequest
+        }
+        RequestPayload::ImportCronState(inner) => {
+            generated_protocol::RequestPayload::ImportCronStateRequest(inner.clone())
+        }
+        RequestPayload::InitializeVm(inner) => {
+            generated_protocol::RequestPayload::InitializeVmRequest(inner.clone())
+        }
     })
 }
 
@@ -607,6 +629,30 @@ fn from_generated_request_payload(
         }
         generated_protocol::RequestPayload::ProvidedCommandsRequest => {
             RequestPayload::ProvidedCommands(ProvidedCommandsRequest {})
+        }
+        generated_protocol::RequestPayload::ScheduleCronRequest(inner) => {
+            RequestPayload::ScheduleCron(inner)
+        }
+        generated_protocol::RequestPayload::ListCronJobsRequest => {
+            RequestPayload::ListCronJobs(ListCronJobsRequest {})
+        }
+        generated_protocol::RequestPayload::CancelCronJobRequest(inner) => {
+            RequestPayload::CancelCronJob(inner)
+        }
+        generated_protocol::RequestPayload::WakeCronRequest(inner) => {
+            RequestPayload::WakeCron(inner)
+        }
+        generated_protocol::RequestPayload::CompleteCronRunRequest(inner) => {
+            RequestPayload::CompleteCronRun(inner)
+        }
+        generated_protocol::RequestPayload::ExportCronStateRequest => {
+            RequestPayload::ExportCronState(ExportCronStateRequest {})
+        }
+        generated_protocol::RequestPayload::ImportCronStateRequest(inner) => {
+            RequestPayload::ImportCronState(inner)
+        }
+        generated_protocol::RequestPayload::InitializeVmRequest(inner) => {
+            RequestPayload::InitializeVm(inner)
         }
     })
 }
@@ -762,6 +808,30 @@ fn to_generated_response_payload(
         ResponsePayload::ProvidedCommands(inner) => {
             generated_protocol::ResponsePayload::ProvidedCommandsResponse(inner.clone())
         }
+        ResponsePayload::CronScheduled(inner) => {
+            generated_protocol::ResponsePayload::CronScheduledResponse(inner.clone())
+        }
+        ResponsePayload::CronJobs(inner) => {
+            generated_protocol::ResponsePayload::CronJobsResponse(inner.clone())
+        }
+        ResponsePayload::CronCancelled(inner) => {
+            generated_protocol::ResponsePayload::CronCancelledResponse(inner.clone())
+        }
+        ResponsePayload::CronWake(inner) => {
+            generated_protocol::ResponsePayload::CronWakeResponse(inner.clone())
+        }
+        ResponsePayload::CronRunCompleted(inner) => {
+            generated_protocol::ResponsePayload::CronRunCompletedResponse(inner.clone())
+        }
+        ResponsePayload::CronStateExported(inner) => {
+            generated_protocol::ResponsePayload::CronStateExportedResponse(inner.clone())
+        }
+        ResponsePayload::CronStateImported(inner) => {
+            generated_protocol::ResponsePayload::CronStateImportedResponse(inner.clone())
+        }
+        ResponsePayload::VmInitialized(inner) => {
+            generated_protocol::ResponsePayload::VmInitializedResponse(inner.clone())
+        }
     })
 }
 
@@ -903,6 +973,30 @@ fn from_generated_response_payload(
         generated_protocol::ResponsePayload::ProvidedCommandsResponse(inner) => {
             ResponsePayload::ProvidedCommands(inner)
         }
+        generated_protocol::ResponsePayload::CronScheduledResponse(inner) => {
+            ResponsePayload::CronScheduled(inner)
+        }
+        generated_protocol::ResponsePayload::CronJobsResponse(inner) => {
+            ResponsePayload::CronJobs(inner)
+        }
+        generated_protocol::ResponsePayload::CronCancelledResponse(inner) => {
+            ResponsePayload::CronCancelled(inner)
+        }
+        generated_protocol::ResponsePayload::CronWakeResponse(inner) => {
+            ResponsePayload::CronWake(inner)
+        }
+        generated_protocol::ResponsePayload::CronRunCompletedResponse(inner) => {
+            ResponsePayload::CronRunCompleted(inner)
+        }
+        generated_protocol::ResponsePayload::CronStateExportedResponse(inner) => {
+            ResponsePayload::CronStateExported(inner)
+        }
+        generated_protocol::ResponsePayload::CronStateImportedResponse(inner) => {
+            ResponsePayload::CronStateImported(inner)
+        }
+        generated_protocol::ResponsePayload::VmInitializedResponse(inner) => {
+            ResponsePayload::VmInitialized(inner)
+        }
     })
 }
 
@@ -922,6 +1016,9 @@ fn to_generated_event_payload(payload: &EventPayload) -> generated_protocol::Eve
         ),
         EventPayload::ProcessExited(inner) => {
             generated_protocol::EventPayload::ProcessExitedEvent(inner.clone())
+        }
+        EventPayload::CronDispatch(inner) => {
+            generated_protocol::EventPayload::CronDispatchEvent(inner.clone())
         }
         EventPayload::Structured(inner) => {
             generated_protocol::EventPayload::StructuredEvent(inner.clone())
@@ -948,6 +1045,9 @@ fn from_generated_event_payload(payload: generated_protocol::EventPayload) -> Ev
         }
         generated_protocol::EventPayload::ProcessExitedEvent(inner) => {
             EventPayload::ProcessExited(inner)
+        }
+        generated_protocol::EventPayload::CronDispatchEvent(inner) => {
+            EventPayload::CronDispatch(inner)
         }
         generated_protocol::EventPayload::StructuredEvent(inner) => EventPayload::Structured(inner),
         generated_protocol::EventPayload::ExtEnvelope(inner) => {
@@ -1270,6 +1370,14 @@ pub enum RequestPayload {
     GetResourceSnapshot(GetResourceSnapshotRequest),
     LinkPackage(LinkPackageRequest),
     ProvidedCommands(ProvidedCommandsRequest),
+    ScheduleCron(ScheduleCronRequest),
+    ListCronJobs(ListCronJobsRequest),
+    CancelCronJob(CancelCronJobRequest),
+    WakeCron(WakeCronRequest),
+    CompleteCronRun(CompleteCronRunRequest),
+    ExportCronState(ExportCronStateRequest),
+    ImportCronState(ImportCronStateRequest),
+    InitializeVm(InitializeVmRequest),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1309,6 +1417,14 @@ pub enum ResponsePayload {
     ResourceSnapshot(ResourceSnapshotResponse),
     PackageLinked(PackageLinkedResponse),
     ProvidedCommands(ProvidedCommandsResponse),
+    CronScheduled(CronScheduledResponse),
+    CronJobs(CronJobsResponse),
+    CronCancelled(CronCancelledResponse),
+    CronWake(CronWakeResponse),
+    CronRunCompleted(CronRunCompletedResponse),
+    CronStateExported(CronStateExportedResponse),
+    CronStateImported(CronStateImportedResponse),
+    VmInitialized(VmInitializedResponse),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1330,6 +1446,7 @@ pub enum EventPayload {
     VmLifecycle(VmLifecycleEvent),
     ProcessOutput(ProcessOutputEvent),
     ProcessExited(ProcessExitedEvent),
+    CronDispatch(CronDispatchEvent),
     Structured(StructuredEvent),
     Ext(ExtEnvelope),
 }
@@ -1417,14 +1534,41 @@ pub type AgentosProjectedAgent = crate::wire::AgentosProjectedAgent;
 pub type PackageCommands = crate::wire::PackageCommands;
 pub type ProjectedCommand = crate::wire::ProjectedCommand;
 pub type LinkPackageRequest = crate::wire::LinkPackageRequest;
+pub type CronOverlap = crate::wire::CronOverlap;
+pub type ScheduleCronRequest = crate::wire::ScheduleCronRequest;
+pub type CancelCronJobRequest = crate::wire::CancelCronJobRequest;
+pub type WakeCronRequest = crate::wire::WakeCronRequest;
+pub type CompleteCronRunRequest = crate::wire::CompleteCronRunRequest;
+pub type ImportCronStateRequest = crate::wire::ImportCronStateRequest;
+pub type InitializeVmRequest = crate::wire::InitializeVmRequest;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ProvidedCommandsRequest {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ListCronJobsRequest {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ExportCronStateRequest {}
 
 pub type GuestKernelResultResponse = crate::wire::GuestKernelResultResponse;
 pub type PtyResizedResponse = crate::wire::PtyResizedResponse;
 pub type PackageLinkedResponse = crate::wire::PackageLinkedResponse;
 pub type ProvidedCommandsResponse = crate::wire::ProvidedCommandsResponse;
+pub type CronAlarm = crate::wire::CronAlarm;
+pub type CronJobEntry = crate::wire::CronJobEntry;
+pub type CronRun = crate::wire::CronRun;
+pub type CronEventKind = crate::wire::CronEventKind;
+pub type CronEventRecord = crate::wire::CronEventRecord;
+pub type CronDispatchEvent = crate::wire::CronDispatchEvent;
+pub type CronScheduledResponse = crate::wire::CronScheduledResponse;
+pub type CronJobsResponse = crate::wire::CronJobsResponse;
+pub type CronCancelledResponse = crate::wire::CronCancelledResponse;
+pub type CronWakeResponse = crate::wire::CronWakeResponse;
+pub type CronRunCompletedResponse = crate::wire::CronRunCompletedResponse;
+pub type CronStateExportedResponse = crate::wire::CronStateExportedResponse;
+pub type CronStateImportedResponse = crate::wire::CronStateImportedResponse;
+pub type VmInitializedResponse = crate::wire::VmInitializedResponse;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct SnapshotRootFilesystemRequest {}
@@ -1432,10 +1576,6 @@ pub struct SnapshotRootFilesystemRequest {}
 pub type MountDescriptor = crate::wire::MountDescriptor;
 
 pub type MountPluginDescriptor = crate::wire::MountPluginDescriptor;
-
-pub type SoftwareDescriptor = crate::wire::SoftwareDescriptor;
-
-pub type ProjectedModuleDescriptor = crate::wire::ProjectedModuleDescriptor;
 
 pub type WasmPermissionTier = crate::wire::WasmPermissionTier;
 
@@ -1619,6 +1759,14 @@ impl_bare_newtype_union_enum!(
         GetResourceSnapshot(GetResourceSnapshotRequest) = 30,
         LinkPackage(LinkPackageRequest) = 31,
         ProvidedCommands(ProvidedCommandsRequest) = 32,
+        ScheduleCron(ScheduleCronRequest) = 33,
+        ListCronJobs(ListCronJobsRequest) = 34,
+        CancelCronJob(CancelCronJobRequest) = 35,
+        WakeCron(WakeCronRequest) = 36,
+        CompleteCronRun(CompleteCronRunRequest) = 37,
+        ExportCronState(ExportCronStateRequest) = 38,
+        ImportCronState(ImportCronStateRequest) = 39,
+        InitializeVm(InitializeVmRequest) = 40,
     }
 );
 
@@ -1662,6 +1810,14 @@ impl_bare_newtype_union_enum!(
         ResourceSnapshot(ResourceSnapshotResponse) = 32,
         PackageLinked(PackageLinkedResponse) = 33,
         ProvidedCommands(ProvidedCommandsResponse) = 34,
+        CronScheduled(CronScheduledResponse) = 35,
+        CronJobs(CronJobsResponse) = 36,
+        CronCancelled(CronCancelledResponse) = 37,
+        CronWake(CronWakeResponse) = 38,
+        CronRunCompleted(CronRunCompletedResponse) = 39,
+        CronStateExported(CronStateExportedResponse) = 40,
+        CronStateImported(CronStateImportedResponse) = 41,
+        VmInitialized(VmInitializedResponse) = 42,
     }
 );
 
@@ -1696,8 +1852,9 @@ impl_bare_newtype_union_enum!(
         VmLifecycle(VmLifecycleEvent) = 0,
         ProcessOutput(ProcessOutputEvent) = 1,
         ProcessExited(ProcessExitedEvent) = 2,
-        Structured(StructuredEvent) = 3,
-        Ext(ExtEnvelope) = 4,
+        CronDispatch(CronDispatchEvent) = 3,
+        Structured(StructuredEvent) = 4,
+        Ext(ExtEnvelope) = 5,
     }
 );
 
@@ -2243,6 +2400,14 @@ enum ExpectedResponseKind {
     PtyResized,
     PackageLinked,
     ProvidedCommands,
+    CronScheduled,
+    CronJobs,
+    CronCancelled,
+    CronWake,
+    CronRunCompleted,
+    CronStateExported,
+    CronStateImported,
+    VmInitialized,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2289,6 +2454,14 @@ impl ExpectedResponseKind {
             Self::PtyResized => "pty_resized",
             Self::PackageLinked => "package_linked",
             Self::ProvidedCommands => "provided_commands_response",
+            Self::CronScheduled => "cron_scheduled",
+            Self::CronJobs => "cron_jobs",
+            Self::CronCancelled => "cron_cancelled",
+            Self::CronWake => "cron_wake",
+            Self::CronRunCompleted => "cron_run_completed",
+            Self::CronStateExported => "cron_state_exported",
+            Self::CronStateImported => "cron_state_imported",
+            Self::VmInitialized => "vm_initialized",
         }
     }
 
@@ -2318,9 +2491,10 @@ impl RequestPayload {
     fn ownership_requirement(&self) -> OwnershipRequirement {
         match self {
             Self::Authenticate(_) | Self::OpenSession(_) => OwnershipRequirement::Connection,
-            Self::CreateVm(_) | Self::PersistenceLoad(_) | Self::PersistenceFlush(_) => {
-                OwnershipRequirement::Session
-            }
+            Self::CreateVm(_)
+            | Self::InitializeVm(_)
+            | Self::PersistenceLoad(_)
+            | Self::PersistenceFlush(_) => OwnershipRequirement::Session,
             Self::DisposeVm(_)
             | Self::BootstrapRootFilesystem(_)
             | Self::ConfigureVm(_)
@@ -2347,6 +2521,13 @@ impl RequestPayload {
             | Self::ResizePty(_)
             | Self::LinkPackage(_)
             | Self::ProvidedCommands(_)
+            | Self::ScheduleCron(_)
+            | Self::ListCronJobs(_)
+            | Self::CancelCronJob(_)
+            | Self::WakeCron(_)
+            | Self::CompleteCronRun(_)
+            | Self::ExportCronState(_)
+            | Self::ImportCronState(_)
             | Self::HostFilesystemCall(_) => OwnershipRequirement::Vm,
             Self::Ext(_) => OwnershipRequirement::Any,
         }
@@ -2387,6 +2568,14 @@ impl RequestPayload {
             Self::ResizePty(_) => ExpectedResponseKind::PtyResized,
             Self::LinkPackage(_) => ExpectedResponseKind::PackageLinked,
             Self::ProvidedCommands(_) => ExpectedResponseKind::ProvidedCommands,
+            Self::ScheduleCron(_) => ExpectedResponseKind::CronScheduled,
+            Self::ListCronJobs(_) => ExpectedResponseKind::CronJobs,
+            Self::CancelCronJob(_) => ExpectedResponseKind::CronCancelled,
+            Self::WakeCron(_) => ExpectedResponseKind::CronWake,
+            Self::CompleteCronRun(_) => ExpectedResponseKind::CronRunCompleted,
+            Self::ExportCronState(_) => ExpectedResponseKind::CronStateExported,
+            Self::ImportCronState(_) => ExpectedResponseKind::CronStateImported,
+            Self::InitializeVm(_) => ExpectedResponseKind::VmInitialized,
         }
     }
 }
@@ -2409,9 +2598,10 @@ impl ResponsePayload {
     fn ownership_requirement(&self) -> OwnershipRequirement {
         match self {
             Self::Authenticated(_) | Self::SessionOpened(_) => OwnershipRequirement::Connection,
-            Self::VmCreated(_) | Self::PersistenceState(_) | Self::PersistenceFlushed(_) => {
-                OwnershipRequirement::Session
-            }
+            Self::VmCreated(_)
+            | Self::VmInitialized(_)
+            | Self::PersistenceState(_)
+            | Self::PersistenceFlushed(_) => OwnershipRequirement::Session,
             Self::Rejected(_) => OwnershipRequirement::Any,
             Self::VmDisposed(_)
             | Self::RootFilesystemBootstrapped(_)
@@ -2440,7 +2630,14 @@ impl ResponsePayload {
             | Self::GuestKernelResult(_)
             | Self::PtyResized(_)
             | Self::PackageLinked(_)
-            | Self::ProvidedCommands(_) => OwnershipRequirement::Vm,
+            | Self::ProvidedCommands(_)
+            | Self::CronScheduled(_)
+            | Self::CronJobs(_)
+            | Self::CronCancelled(_)
+            | Self::CronWake(_)
+            | Self::CronRunCompleted(_)
+            | Self::CronStateExported(_)
+            | Self::CronStateImported(_) => OwnershipRequirement::Vm,
             Self::ExtResult(_) => OwnershipRequirement::Any,
         }
     }
@@ -2482,6 +2679,14 @@ impl ResponsePayload {
             Self::PtyResized(_) => "pty_resized",
             Self::PackageLinked(_) => "package_linked",
             Self::ProvidedCommands(_) => "provided_commands_response",
+            Self::CronScheduled(_) => "cron_scheduled",
+            Self::CronJobs(_) => "cron_jobs",
+            Self::CronCancelled(_) => "cron_cancelled",
+            Self::CronWake(_) => "cron_wake",
+            Self::CronRunCompleted(_) => "cron_run_completed",
+            Self::CronStateExported(_) => "cron_state_exported",
+            Self::CronStateImported(_) => "cron_state_imported",
+            Self::VmInitialized(_) => "vm_initialized",
         }
     }
 }
@@ -2504,9 +2709,10 @@ impl EventPayload {
     fn ownership_requirement(&self) -> OwnershipRequirement {
         match self {
             Self::Structured(_) => OwnershipRequirement::SessionOrVm,
-            Self::VmLifecycle(_) | Self::ProcessOutput(_) | Self::ProcessExited(_) => {
-                OwnershipRequirement::Vm
-            }
+            Self::VmLifecycle(_)
+            | Self::ProcessOutput(_)
+            | Self::ProcessExited(_)
+            | Self::CronDispatch(_) => OwnershipRequirement::Vm,
             Self::Ext(_) => OwnershipRequirement::Any,
         }
     }

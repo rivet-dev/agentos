@@ -1,4 +1,4 @@
-import * as protocol from "./generated-protocol.js";
+import type * as protocol from "./generated-protocol.js";
 
 export type LiveOwnershipScope =
 	| { scope: "connection"; connection_id: string }

@@ -118,5 +118,5 @@ if (text.includes("EXTENSION_OK:")) {
 	throw new Error("FAIL — Response did not include the expected prefix.");
 }
 
-vm.closeSession(sessionId);
+await vm.closeSession(sessionId);
 await vm.dispose();

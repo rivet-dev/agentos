@@ -6,13 +6,13 @@ import type {
 export interface HostDirBackendOptions {
 	/** Absolute path to the host directory to project into the VM. */
 	hostPath: string;
-	/** If true (default), write operations are blocked for the mount. */
+	/** If true, write operations are blocked for the mount. */
 	readOnly?: boolean;
 }
 
 export interface HostDirMountPluginConfig extends MountConfigJsonObject {
 	hostPath: string;
-	readOnly: boolean;
+	readOnly?: boolean;
 }
 
 /**
@@ -28,7 +28,7 @@ export function createHostDirBackend(
 		id: "host_dir",
 		config: {
 			hostPath: options.hostPath,
-			readOnly: options.readOnly ?? true,
+			...(options.readOnly === undefined ? {} : { readOnly: options.readOnly }),
 		},
 	};
 }
@@ -37,7 +37,7 @@ export function createHostDirBackend(
 export interface NodeModulesMountConfig {
 	path: string;
 	plugin: NativeMountPluginDescriptor<HostDirMountPluginConfig>;
-	readOnly: boolean;
+	readOnly?: boolean;
 }
 
 /**
@@ -49,16 +49,16 @@ export interface NodeModulesMountConfig {
  * resolvable in the guest (e.g. the agent SDK + its transitive deps).
  *
  * @param hostNodeModulesDir Absolute host path to a `node_modules` directory.
- * @param opts.readOnly Defaults to `true`; the mount is read-only.
+ * @param opts.readOnly Marks the mount read-only when explicitly true.
  */
 export function nodeModulesMount(
 	hostNodeModulesDir: string,
 	opts?: { readOnly?: boolean },
 ): NodeModulesMountConfig {
-	const readOnly = opts?.readOnly ?? true;
+	const readOnly = opts?.readOnly;
 	return {
 		path: "/root/node_modules",
 		plugin: createHostDirBackend({ hostPath: hostNodeModulesDir, readOnly }),
-		readOnly,
+		...(readOnly === undefined ? {} : { readOnly }),
 	};
 }

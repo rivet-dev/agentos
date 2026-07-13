@@ -134,7 +134,7 @@ fn wasm_command_mounts() -> Vec<MountConfig> {
         return Vec::new();
     };
 
-    vec![MountConfig::Native {
+    vec![MountConfig {
         path: "/__secure_exec/commands/0".to_string(),
         plugin: MountPlugin {
             id: "host_dir".to_string(),
@@ -143,7 +143,7 @@ fn wasm_command_mounts() -> Vec<MountConfig> {
                 "readOnly": true,
             })),
         },
-        read_only: true,
+        read_only: Some(true),
     }]
 }
 

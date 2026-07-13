@@ -11,21 +11,20 @@
 // `SidecarProcess` so the wasm sidecar accepts it. Unit-tested with a fake
 // synchronous `pushFrame`.
 
-import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
-import type { LiveRootFilesystemEntry as RootFilesystemEntry } from "@rivet-dev/agentos-runtime-core/filesystem";
 import type { LiveOwnershipScope } from "@rivet-dev/agentos-runtime-core/ownership";
-import { SIDECAR_PROTOCOL_SCHEMA } from "@rivet-dev/agentos-runtime-core/protocol-schema";
 import type { ProtocolFramePayloadCodec } from "@rivet-dev/agentos-runtime-core/protocol-frames";
+import { SIDECAR_PROTOCOL_SCHEMA } from "@rivet-dev/agentos-runtime-core/protocol-schema";
 import type { LiveRequestPayload } from "@rivet-dev/agentos-runtime-core/request-payloads";
+import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
 import {
-	ConvergedSyncBridgeHandler,
 	type ConvergedPushFrame,
+	ConvergedSyncBridgeHandler,
 	PushFrameSidecarTransport,
 } from "./converged-sync-bridge-handler.js";
 
 // Mirror `SidecarProcess`'s client identity so the sidecar handshake succeeds.
-const CLIENT_NAME = "secure-exec-core-client";
-const AUTH_TOKEN = "secure-exec-core-client-token";
+const CLIENT_NAME = "agentos-client";
+const AUTH_TOKEN = "agentos-client";
 const BRIDGE_CONTRACT_VERSION = 1;
 
 type GuestRuntimeKind = Extract<
@@ -41,7 +40,6 @@ export interface ConvergedExecutorSessionOptions {
 export interface ConvergedVmBootstrap {
 	runtime: GuestRuntimeKind;
 	config: CreateVmConfig;
-	sessionMetadata?: Record<string, string>;
 }
 
 /** A bootstrapped VM inside the wasm sidecar. */
@@ -82,7 +80,9 @@ export class ConvergedExecutorSession {
 			},
 		);
 		if (authenticated.type !== "authenticated") {
-			throw new Error(`unexpected authenticate response: ${authenticated.type}`);
+			throw new Error(
+				`unexpected authenticate response: ${authenticated.type}`,
+			);
 		}
 		const connectionId = authenticated.connection_id;
 
@@ -91,7 +91,6 @@ export class ConvergedExecutorSession {
 			{
 				type: "open_session",
 				placement: { kind: "shared", pool: null },
-				metadata: options.sessionMetadata ?? {},
 			},
 		);
 		if (opened.type !== "session_opened") {
@@ -145,22 +144,6 @@ export class ConvergedExecutorSession {
 			throw new Error(`unexpected execute response: ${response.type}`);
 		}
 		return { processId: response.process_id };
-	}
-
-	/**
-	 * Snapshot the VM's root filesystem (the writable changes) so callers can
-	 * persist them to host storage (e.g. OPFS) across runtimes.
-	 */
-	snapshotRootFilesystem(): RootFilesystemEntry[] {
-		const response = this.transportForVm().sendRequest({
-			type: "snapshot_root_filesystem",
-		});
-		if (response.type !== "root_filesystem_snapshot") {
-			throw new Error(
-				`unexpected snapshot_root_filesystem response: ${response.type}`,
-			);
-		}
-		return response.entries;
 	}
 
 	/** A request transport bound to the bootstrapped VM ownership. */

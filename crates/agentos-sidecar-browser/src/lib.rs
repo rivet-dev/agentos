@@ -62,7 +62,7 @@ impl BrowserExtension for BrowserAcpExtension {
         context: &mut BrowserExtensionContext<'_>,
         payload: &[u8],
     ) -> Result<Vec<u8>, BrowserSidecarError> {
-        let request = codec::decode_request(payload).map_err(to_browser_error)?;
+        let mut request = codec::decode_request(payload).map_err(to_browser_error)?;
         let connection_id = context.connection_id().unwrap_or_default().to_string();
         let vm_id = context
             .vm_id()
@@ -72,6 +72,15 @@ impl BrowserExtension for BrowserAcpExtension {
                 ))
             })?
             .to_string();
+        if let agentos_protocol::generated::v1::AcpRequest::AcpCreateSessionRequest(create) =
+            &mut request
+        {
+            let base = context.agent_additional_instructions(&vm_id)?;
+            create.additional_instructions = agentos_protocol::combine_additional_instructions(
+                base.as_deref(),
+                create.additional_instructions.as_deref(),
+            );
+        }
 
         let mut executions = self.executions.lock().map_err(|_| {
             BrowserSidecarError::InvalidState(String::from("ACP executions lock poisoned"))
@@ -159,6 +168,13 @@ mod tests {
     struct NullBrowserExtensionHost;
 
     impl agentos_native_sidecar_browser::BrowserExtensionHost for NullBrowserExtensionHost {
+        fn agent_additional_instructions(
+            &mut self,
+            _vm_id: &str,
+        ) -> Result<Option<String>, agentos_native_sidecar_browser::BrowserSidecarError> {
+            Ok(None)
+        }
+
         fn write_file(
             &mut self,
             _vm_id: &str,

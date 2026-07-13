@@ -1,3 +1,4 @@
+import pi from "@agentos-software/pi";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 import {
@@ -6,10 +7,8 @@ import {
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
 
-// Pi ships PRE-PACKED as an `/opt/agentos` package and is projected by default
-// (run `pnpm pack:agents` first), so this test needs no `software: [pi]` mount
-// and no host node_modules access — `createSession("pi")` resolves the packaged
-// adapter via `/opt/agentos/bin/pi-sdk-acp`.
+// The explicitly projected package lets `createSession("pi")` resolve the
+// packaged adapter through the sidecar's `/opt/agentos/bin/pi-sdk-acp` index.
 const HOME_DIR = "/home/agentos";
 const WORKSPACE_DIR = `${HOME_DIR}/workspace`;
 const PI_AGENT_DIR = `${HOME_DIR}/.pi/agent`;
@@ -32,6 +31,7 @@ function requestIncludesExtensionMarker(req: unknown): boolean {
 async function createPiVm(mockUrl: string): Promise<AgentOs> {
 	return AgentOs.create({
 		loopbackExemptPorts: [Number(new URL(mockUrl).port)],
+		software: [pi],
 	});
 }
 
@@ -116,12 +116,12 @@ describe("Pi extensions quickstart truth test", () => {
 			expect(response.error).toBeUndefined();
 			expect(text).toContain(EXPECTED_REPLY);
 			expect(mock.getRequests().length).toBeGreaterThanOrEqual(1);
-			expect(
-				mock.getRequests().some(requestIncludesExtensionMarker),
-			).toBe(true);
+			expect(mock.getRequests().some(requestIncludesExtensionMarker)).toBe(
+				true,
+			);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);

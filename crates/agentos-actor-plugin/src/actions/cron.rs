@@ -10,6 +10,8 @@ use serde_json::{json, Value as JsonValue};
 
 use super::Vars;
 
+pub(crate) const INTERNAL_CRON_WAKE_ACTION: &str = "__agentos_cron_wake";
+
 /// `{ type: "exec", command, args }` | `{ type: "session", agentType, prompt }`.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -108,11 +110,12 @@ pub(crate) fn encode_cron_event(event: &CronEvent) -> Result<Vec<u8>> {
     super::encode_event_arg(&cron_event_payload(event))
 }
 
-fn ensure_cron_event_pump(host: &HostCtx, vm: &AgentOs, vars: &mut Vars) {
+pub(crate) fn ensure_cron_event_pump(host: &HostCtx, vm: &AgentOs, vars: &mut Vars) {
     if vars.cron_task.is_some() {
         return;
     }
     let host = host.clone();
+    let cron_vm = vm.clone();
     let mut rx = vm.cron_events();
     vars.cron_task = Some(tokio::spawn(async move {
         loop {
@@ -120,6 +123,11 @@ fn ensure_cron_event_pump(host: &HostCtx, vm: &AgentOs, vars: &mut Vars) {
                 Ok(event) => match encode_cron_event(&event) {
                     Ok(bytes) => {
                         let _ = host.broadcast(b"cronEvent".to_vec(), bytes);
+                        if let Err(error) = crate::vm::persist_cron_state(&host, &cron_vm).await {
+                            host.log_warn(&format!(
+                                "failed to persist cron state after lifecycle event: {error}"
+                            ));
+                        }
                     }
                     Err(error) => {
                         tracing::warn!(?error, "failed to encode cron event broadcast");
@@ -132,7 +140,7 @@ fn ensure_cron_event_pump(host: &HostCtx, vm: &AgentOs, vars: &mut Vars) {
     }));
 }
 
-pub fn schedule_cron(
+pub async fn schedule_cron(
     host: &HostCtx,
     vm: &AgentOs,
     vars: &mut Vars,
@@ -145,12 +153,18 @@ pub fn schedule_cron(
         action: to_action(dto.action),
         overlap: dto.overlap,
     };
-    let handle = vm.schedule_cron(options).map_err(|e| anyhow!(e))?;
+    let handle = vm.schedule_cron(options).await.map_err(|e| anyhow!(e))?;
+    crate::vm::persist_cron_state(host, vm)
+        .await
+        .map_err(|error| anyhow!(error))?;
     Ok(ScheduledCronDto { id: handle.id })
 }
 
-pub fn list_cron_jobs(vm: &AgentOs) -> Vec<CronJobInfoDto> {
-    vm.list_cron_jobs()
+pub async fn list_cron_jobs(vm: &AgentOs) -> Result<Vec<CronJobInfoDto>> {
+    Ok(vm
+        .list_cron_jobs()
+        .await
+        .map_err(|error| anyhow!(error))?
         .into_iter()
         .map(|info| CronJobInfoDto {
             id: info.id,
@@ -159,9 +173,14 @@ pub fn list_cron_jobs(vm: &AgentOs) -> Vec<CronJobInfoDto> {
             last_run: info.last_run.map(|t| t.timestamp_millis() as f64),
             next_run: info.next_run.map(|t| t.timestamp_millis() as f64),
         })
-        .collect()
+        .collect())
 }
 
-pub fn cancel_cron_job(vm: &AgentOs, id: &str) {
-    vm.cancel_cron_job(id);
+pub async fn cancel_cron_job(host: &HostCtx, vm: &AgentOs, id: &str) -> Result<()> {
+    vm.cancel_cron_job(id)
+        .await
+        .map_err(|error| anyhow!(error))?;
+    crate::vm::persist_cron_state(host, vm)
+        .await
+        .map_err(|error| anyhow!(error))
 }

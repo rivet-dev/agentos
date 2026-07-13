@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentExitEvent } from "../src/agent-os.js";
 import { AgentOs } from "../src/agent-os.js";
 import { encodeAcpEvent } from "../src/sidecar/agentos-protocol.js";
@@ -30,6 +30,7 @@ function createTrackedAgent(): TrackedAgent {
 
 function encodeAgentExitedEvent(overrides?: {
 	sessionId?: string;
+	agentType?: string;
 	exitCode?: number | null;
 	restart?: string;
 }): Uint8Array {
@@ -37,7 +38,7 @@ function encodeAgentExitedEvent(overrides?: {
 		tag: "AcpAgentExitedEvent",
 		val: {
 			sessionId: overrides?.sessionId ?? SESSION_ID,
-			agentType: "codex",
+			agentType: overrides?.agentType ?? "codex",
 			processId: "acp-agent-1",
 			exitCode: overrides?.exitCode === undefined ? 7 : overrides.exitCode,
 			restart: overrides?.restart ?? "restarted",
@@ -48,6 +49,10 @@ function encodeAgentExitedEvent(overrides?: {
 }
 
 describe("AgentOs onAgentExit dispatch", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
 	it("decodes AcpAgentExitedEvent and invokes the handler with session context", () => {
 		const agent = createTrackedAgent();
 		const seen: AgentExitEvent[] = [];
@@ -99,8 +104,24 @@ describe("AgentOs onAgentExit dispatch", () => {
 		});
 	});
 
-	it("swallows handler errors so event delivery keeps moving", () => {
+	it("does not supplement ACP exit identity from client session state", () => {
 		const agent = createTrackedAgent();
+		const seen: AgentExitEvent[] = [];
+		agent._agentExitHandler = (event) => {
+			seen.push(event);
+		};
+
+		agent._handleAcpExtEvent({
+			namespace: ACP_EXTENSION_NAMESPACE,
+			payload: encodeAgentExitedEvent({ agentType: "" }),
+		});
+
+		expect(seen[0]?.agentType).toBe("");
+	});
+
+	it("reports handler errors without breaking event delivery", () => {
+		const agent = createTrackedAgent();
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 		agent._agentExitHandler = () => {
 			throw new Error("subscriber exploded");
 		};
@@ -111,5 +132,25 @@ describe("AgentOs onAgentExit dispatch", () => {
 				payload: encodeAgentExitedEvent(),
 			}),
 		).not.toThrow();
+		expect(warn).toHaveBeenCalledWith(
+			`ACP exit handler failed for ${SESSION_ID}`,
+			expect.objectContaining({ message: "subscriber exploded" }),
+		);
+	});
+
+	it("reports malformed extension events instead of silently dropping them", () => {
+		const agent = createTrackedAgent();
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+		expect(() =>
+			agent._handleAcpExtEvent({
+				namespace: ACP_EXTENSION_NAMESPACE,
+				payload: new Uint8Array([255]),
+			}),
+		).not.toThrow();
+		expect(warn).toHaveBeenCalledWith(
+			"invalid ACP extension event from sidecar",
+			expect.any(Error),
+		);
 	});
 });

@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { KernelSpawnOptions } from "../src/runtime-compat.js";
 import type {
 	AuthenticatedSession,
 	CreatedVm,
@@ -25,17 +24,32 @@ describe("WASM command permission tiers", () => {
 
 	function createMockClient() {
 		let stopped = false;
+		let processId: string | null = null;
+		let exitDelivered = false;
 		const execute = vi.fn(async () => {
-			throw new Error("stop after capture");
+			processId = "sidecar-process-1";
+			return { processId, pid: 42 };
 		});
 		const client = {
 			waitForEvent: vi.fn(async () => {
 				while (!stopped) {
+					if (processId !== null && !exitDelivered) {
+						exitDelivered = true;
+						return {
+							ownership: { scope: "vm", vm_id: "vm-1" },
+							payload: {
+								type: "process_exited",
+								process_id: processId,
+								exit_code: 0,
+							},
+						};
+					}
 					await new Promise((resolve) => setTimeout(resolve, 1));
 				}
 				throw new Error("mock stopped");
 			}),
 			execute,
+			closeStdin: vi.fn(async () => {}),
 			disposeVm: vi.fn(async () => {
 				stopped = true;
 			}),
@@ -62,16 +76,19 @@ describe("WASM command permission tiers", () => {
 			cwd: "/workspace",
 			localMounts: [],
 			sidecarMounts: [],
-			commandGuestPaths: new Map([["grep", "/__secure_exec/commands/000/grep"]]),
+			commandGuestPaths: new Map([
+				["grep", "/__secure_exec/commands/000/grep"],
+			]),
 		});
 
-		const proc = proxy.spawn("grep", ["needle", "haystack.txt"], {
+		const proc = await proxy.spawn("grep", ["needle", "haystack.txt"], {
 			cwd: "/workspace",
 		});
 		const exitCode = await proc.wait();
 
-		expect(exitCode).toBe(1);
+		expect(exitCode).toBe(0);
 		expect(execute).toHaveBeenCalledTimes(1);
+		expect(execute.mock.calls[0]?.[2]).not.toHaveProperty("processId");
 		expect(execute.mock.calls[0]?.[2]).toMatchObject({
 			command: "grep",
 			args: ["needle", "haystack.txt"],
@@ -79,9 +96,9 @@ describe("WASM command permission tiers", () => {
 		});
 	});
 
-	test("shell-mode spawn without a guest sh fails loudly", async () => {
+	test("exec forwards the raw command line to the sidecar", async () => {
 		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-wasm-tiers-"));
-		const { client } = createMockClient();
+		const { client, execute } = createMockClient();
 
 		proxy = new NativeSidecarKernelProxy({
 			client,
@@ -94,15 +111,18 @@ describe("WASM command permission tiers", () => {
 			cwd: "/workspace",
 			localMounts: [],
 			sidecarMounts: [],
-			commandGuestPaths: new Map([["echo", "/__secure_exec/commands/000/echo"]]),
+			commandGuestPaths: new Map([
+				["echo", "/__secure_exec/commands/000/echo"],
+			]),
 		});
 
-		// Shell grammar belongs to the guest shell. Without a guest sh command the
-		// bridge must fail loudly instead of parsing or silently direct-spawning.
-		expect(() =>
-			proxy?.spawn("echo changed >> /tmp/write-only.txt", [], {
-				shell: true,
-			} as KernelSpawnOptions & { shell: boolean }),
-		).toThrow(/requires guest shell command 'sh'/);
+		await expect(
+			proxy.exec("echo changed >> /tmp/write-only.txt"),
+		).resolves.toMatchObject({ exitCode: 0 });
+		expect(execute.mock.calls[0]?.[2]).toMatchObject({
+			shellCommand: "echo changed >> /tmp/write-only.txt",
+			args: [],
+		});
+		expect(execute.mock.calls[0]?.[2]).not.toHaveProperty("command");
 	});
 });

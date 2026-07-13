@@ -153,20 +153,19 @@ async fn session_surface_create_prompt_events_close() {
     // --- Runtime-independent session surface (no agents/V8 needed) --------------------------------
     // Real assertions against the real sidecar: the registry starts empty, agents are resolved
     // dynamically from the configured `/opt/agentos` package manifests (there is NO hardcoded
-    // agent registry), and every session operation on an unknown id reports SessionNotFound.
-    assert!(os.list_sessions().is_empty(), "a fresh VM has no sessions");
+    // agent registry). Session close is sidecar-owned and idempotent for unknown ids.
+    assert!(
+        os.list_sessions().await.expect("list sessions").is_empty(),
+        "a fresh VM has no sessions"
+    );
     let agents = os.list_agents().await.expect("list_agents");
     assert!(
         agents.iter().any(|agent| agent.id == MOCK_AGENT_TYPE),
         "the projected mock package must appear in list_agents: {agents:?}"
     );
-    assert!(
-        matches!(
-            os.close_session("nope"),
-            Err(ClientError::SessionNotFound(_))
-        ),
-        "close_session(unknown) must return SessionNotFound"
-    );
+    os.close_session("nope")
+        .await
+        .expect("close_session(unknown) is idempotent");
     assert!(
         os.prompt("nope", "x")
             .await
@@ -202,6 +201,8 @@ async fn session_surface_create_prompt_events_close() {
     // --- list_sessions: the new session is registered --------------------------------------------
     assert!(
         os.list_sessions()
+            .await
+            .expect("list sessions")
             .iter()
             .any(|s| s.session_id == session_id),
         "created session must appear in list_sessions"
@@ -251,9 +252,8 @@ async fn session_surface_create_prompt_events_close() {
     );
 
     // --- close_session: removes the session; later prompts report SessionNotFound -----------------
-    os.close_session(&session_id).expect("close_session");
-    // close_session is fire-and-forget; the in-memory registry removal is synchronous in the close
-    // path, but the detached internal close runs on a task. Poll briefly for the deregistration.
+    os.close_session(&session_id).await.expect("close_session");
+    // The awaited sidecar close removes the authoritative session before returning.
     let gone = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             if matches!(

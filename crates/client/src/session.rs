@@ -9,9 +9,8 @@
 //! data only. JSON-RPC errors are NOT Rust `Err`; methods that issue requests return a
 //! [`JsonRpcResponse`] whose `error` field may be set.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::pin::Pin;
-use std::sync::atomic::Ordering;
 
 use anyhow::Result;
 use futures::Stream;
@@ -20,33 +19,26 @@ use serde_json::{json, Value};
 
 use agentos_protocol::generated::v1::{
     AcpCloseSessionRequest, AcpCreateSessionRequest, AcpGetSessionStateRequest,
-    AcpListAgentsRequest, AcpRequest, AcpResponse, AcpResumeSessionRequest, AcpRuntimeKind,
+    AcpListAgentsRequest, AcpListSessionsRequest, AcpRequest, AcpResponse, AcpResumeSessionRequest,
     AcpSessionCreatedResponse, AcpSessionRequest, AcpSessionStateResponse,
+    AcpSetSessionConfigRequest,
 };
 use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use agentos_sidecar_client::wire;
 
 use crate::agent_os::{AgentOs, SessionEntry};
-use crate::config::ToolKit;
 use crate::error::ClientError;
-use crate::json_rpc::{JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcResponse};
+use crate::json_rpc::{JsonRpcId, JsonRpcNotification, JsonRpcResponse};
 use crate::stream::Subscription;
-use crate::{CLOSED_SESSION_ID_RETENTION_LIMIT, PERMISSION_TIMEOUT_MS};
 
 /// ACP method name for legacy permission requests/responses.
 const LEGACY_PERMISSION_METHOD: &str = "request/permission";
-
-/// ACP method name for permission requests issued by the agent to the host (TS
-/// `ACP_PERMISSION_METHOD`). Used by the host-request ACP dispatcher in `agent_os.rs`.
-pub(crate) const ACP_PERMISSION_METHOD: &str = "session/request_permission";
-
-/// Maximum in-flight session RPC requests per session.
-const SESSION_PENDING_REQUEST_LIMIT: usize = 1024;
 
 pub(crate) struct PermissionRouteRequest {
     pub(crate) session_id: String,
     pub(crate) permission_id: String,
     pub(crate) params: Value,
+    pub(crate) timeout_ms: u64,
 }
 
 pub(crate) struct PermissionRouteResult {
@@ -55,10 +47,11 @@ pub(crate) struct PermissionRouteResult {
 
 struct SessionCreatedResponse {
     session_id: String,
-    modes: Option<Value>,
-    config_options: Vec<Value>,
-    agent_capabilities: Option<Value>,
-    agent_info: Option<Value>,
+}
+
+struct SessionRpcResult {
+    response: JsonRpcResponse,
+    text: Option<String>,
 }
 
 pub(crate) struct SessionStateResponse {
@@ -67,12 +60,6 @@ pub(crate) struct SessionStateResponse {
     agent_capabilities: Option<Value>,
     agent_info: Option<Value>,
 }
-
-/// Maximum bytes accumulated into `PromptResult.text`.
-const PROMPT_TEXT_CAPTURE_LIMIT_BYTES: usize = 16 * 1024 * 1024;
-
-/// Maximum agent-message chunks tracked per prompt call.
-const PROMPT_DELIVERED_CHUNK_LIMIT: usize = 262_144;
 
 pub type SessionEventStream = Pin<Box<dyn Stream<Item = JsonRpcNotification> + Send>>;
 pub type SessionEventSubscription = (SessionEventStream, Subscription);
@@ -415,7 +402,8 @@ impl PermissionResponder {
 /// Requests are delivered by the sidecar permission-request path
 /// ([`AgentOs::deliver_sidecar_permission_request`]). The subscriber resolves the request via
 /// [`PermissionResponder::respond`] or [`AgentOs::respond_permission`]; the
-/// [`crate::PERMISSION_TIMEOUT_MS`] timeout and the no-subscriber path auto-reject.
+/// sidecar-supplied timeout; an absent host reply is returned to the ACP sidecar,
+/// which owns the default permission outcome.
 #[derive(Clone)]
 pub struct PermissionRequest {
     pub permission_id: String,
@@ -454,12 +442,11 @@ fn permission_reply_wire(reply: PermissionReply) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// Local-state helpers (operate on a `SessionEntry`; mirror the TS private helpers)
+// Host-event helpers
 // ---------------------------------------------------------------------------
 
-/// Whether a cached [`AgentCapabilities`] is empty in the TS sense (`Object.keys(caps).length === 0`):
-/// every modeled field is `None` and there are no extra keys. `toAgentCapabilities` stores `{}` for
-/// any non-object/empty state, and `getSessionCapabilities` returns `null` for that empty object.
+/// Whether an [`AgentCapabilities`] response is empty in the TS sense
+/// (`Object.keys(caps).length === 0`).
 fn agent_capabilities_is_empty(caps: &AgentCapabilities) -> bool {
     caps.permissions.is_none()
         && caps.plan_mode.is_none()
@@ -485,223 +472,8 @@ fn should_dispatch_to_session_event_handlers(notification: &JsonRpcNotification)
 }
 
 pub(crate) fn record_live_session_event(entry: &SessionEntry, notification: JsonRpcNotification) {
-    apply_session_update(entry, &notification);
     if should_dispatch_to_session_event_handlers(&notification) {
         let _ = entry.event_tx.send(notification);
-    }
-}
-
-fn apply_session_update(entry: &SessionEntry, notification: &JsonRpcNotification) {
-    if notification.method != "session/update" {
-        return;
-    }
-    let Some(params) = notification.params.as_ref().and_then(Value::as_object) else {
-        return;
-    };
-    let update = params
-        .get("update")
-        .and_then(Value::as_object)
-        .unwrap_or(params);
-    match update.get("sessionUpdate").and_then(Value::as_str) {
-        Some("current_mode_update") => {
-            let Some(mode_id) = update.get("currentModeId").and_then(Value::as_str) else {
-                return;
-            };
-            let mut modes = entry.modes.lock();
-            if let Some(modes) = modes.as_mut() {
-                modes.current_mode_id = mode_id.to_string();
-            }
-        }
-        Some("config_option_update") | Some("config_options_update") => {
-            let Some(options) = update.get("configOptions").and_then(Value::as_array) else {
-                return;
-            };
-            let parsed = options
-                .iter()
-                .filter_map(|value| serde_json::from_value(value.clone()).ok())
-                .collect();
-            *entry.config_options.lock() = parsed;
-            apply_synthetic_config_overrides(entry);
-        }
-        Some("agent_message_chunk") | None | Some(_) => {}
-    }
-}
-
-fn accumulate_agent_message_chunk(
-    notification: &JsonRpcNotification,
-    delivered_chunks: &mut usize,
-    agent_text: &mut String,
-) -> std::result::Result<(), ClientError> {
-    let params = notification.params.clone().unwrap_or(Value::Null);
-    let update = params.get("update").cloned().unwrap_or(Value::Null);
-    if update.get("sessionUpdate").and_then(Value::as_str) != Some("agent_message_chunk") {
-        return Ok(());
-    }
-    if let Some(chunk) = update
-        .get("content")
-        .and_then(|content| content.get("text"))
-        .and_then(Value::as_str)
-    {
-        if *delivered_chunks >= PROMPT_DELIVERED_CHUNK_LIMIT {
-            return Err(prompt_chunk_limit_error());
-        }
-        let next_len = agent_text
-            .len()
-            .checked_add(chunk.len())
-            .ok_or_else(|| prompt_text_limit_error(usize::MAX))?;
-        if next_len > PROMPT_TEXT_CAPTURE_LIMIT_BYTES {
-            return Err(prompt_text_limit_error(next_len));
-        }
-        agent_text.push_str(chunk);
-        *delivered_chunks += 1;
-    }
-    Ok(())
-}
-
-fn pending_session_request_count(entry: &SessionEntry) -> usize {
-    let mut count = 0;
-    entry.pending_prompt_resolvers.scan(|_, _| {
-        count += 1;
-    });
-    count
-}
-
-fn prompt_text_limit_error(size: usize) -> ClientError {
-    ClientError::Sidecar(format!(
-        "prompt text capture is {size} bytes, limit is {PROMPT_TEXT_CAPTURE_LIMIT_BYTES}"
-    ))
-}
-
-fn prompt_chunk_limit_error() -> ClientError {
-    ClientError::Sidecar(format!(
-        "prompt chunk tracking limit exceeded: at most {PROMPT_DELIVERED_CHUNK_LIMIT} chunks can be captured per prompt"
-    ))
-}
-
-struct PendingSessionRequestGuard<'a> {
-    os: &'a AgentOs,
-    session_id: &'a str,
-    resolver_id: i64,
-    active: bool,
-}
-
-impl<'a> PendingSessionRequestGuard<'a> {
-    fn new(os: &'a AgentOs, session_id: &'a str, resolver_id: i64) -> Self {
-        Self {
-            os,
-            session_id,
-            resolver_id,
-            active: true,
-        }
-    }
-
-    fn cleanup(&mut self) {
-        if self.active {
-            self.os
-                .cleanup_pending_resolver(self.session_id, self.resolver_id);
-            self.active = false;
-        }
-    }
-}
-
-impl Drop for PendingSessionRequestGuard<'_> {
-    fn drop(&mut self) {
-        self.cleanup();
-    }
-}
-
-/// Re-apply synthetic config overrides onto the cached config options. Mirrors
-/// `_applySyntheticConfigOverrides`.
-fn apply_synthetic_config_overrides(entry: &SessionEntry) {
-    let overrides = entry.config_overrides.lock().clone();
-    if overrides.is_empty() {
-        return;
-    }
-    let mut options = entry.config_options.lock();
-    for option in options.iter_mut() {
-        // Skip internal pending-request method markers (see `send_session_request`); they share the
-        // override map but are never real config option ids/categories.
-        let override_value = overrides
-            .get(&option.id)
-            .filter(|_| !option.id.starts_with(PENDING_METHOD_PREFIX))
-            .cloned()
-            .or_else(|| {
-                option
-                    .category
-                    .as_ref()
-                    .and_then(|category| overrides.get(category).cloned())
-            });
-        if let Some(value) = override_value {
-            option.current_value = Some(value);
-        }
-    }
-}
-
-/// Prefix for the internal per-resolver method markers stored in `config_overrides` (so cancel can
-/// distinguish `session/prompt` resolvers without an extra `SessionEntry` field).
-const PENDING_METHOD_PREFIX: &str = "__pending_method::";
-
-/// Apply the local cache mutations of `_syncSessionState`: modes, config options, capabilities,
-/// and agent info from a sidecar [`SessionStateResponse`].
-fn sync_session_state(entry: &SessionEntry, state: &SessionStateResponse) {
-    *entry.modes.lock() = state
-        .modes
-        .as_ref()
-        .filter(|value| value.is_object())
-        .and_then(|value| serde_json::from_value(value.clone()).ok());
-
-    *entry.config_options.lock() = state
-        .config_options
-        .iter()
-        .filter_map(|value| serde_json::from_value(value.clone()).ok())
-        .collect();
-
-    apply_synthetic_config_overrides(entry);
-
-    *entry.capabilities.lock() = state
-        .agent_capabilities
-        .as_ref()
-        .filter(|value| value.is_object())
-        .and_then(|value| serde_json::from_value(value.clone()).ok());
-
-    *entry.agent_info.lock() = state
-        .agent_info
-        .as_ref()
-        .filter(|value| value.is_object())
-        .and_then(|value| serde_json::from_value(value.clone()).ok());
-}
-
-/// Synthesize the unsupported-config JSON-RPC error response (`-32601`). Mirrors
-/// `_unsupportedConfigResponse`.
-fn unsupported_config_response(agent_type: &str, category: &str) -> JsonRpcResponse {
-    let message = if agent_type == "opencode" && category == "model" {
-        "OpenCode reports available models, but model switching must be configured before createSession() because ACP session/set_config_option is not implemented.".to_string()
-    } else {
-        format!("The {category} config option is read-only for {agent_type} sessions.")
-    };
-    JsonRpcResponse {
-        jsonrpc: "2.0".to_string(),
-        id: Some(JsonRpcId::Null),
-        result: None,
-        error: Some(JsonRpcError {
-            code: -32601,
-            message,
-            data: None,
-        }),
-    }
-}
-
-/// Build the closed-session abort response (`-32000`). Mirrors `_abortPendingSessionRequests`.
-fn session_closed_response(session_id: &str) -> JsonRpcResponse {
-    JsonRpcResponse {
-        jsonrpc: "2.0".to_string(),
-        id: Some(JsonRpcId::Null),
-        result: None,
-        error: Some(JsonRpcError {
-            code: -32000,
-            message: format!("Session closed: {session_id}"),
-            data: None,
-        }),
     }
 }
 
@@ -710,10 +482,6 @@ fn session_created_from_acp(
 ) -> std::result::Result<SessionCreatedResponse, ClientError> {
     Ok(SessionCreatedResponse {
         session_id: response.session_id,
-        modes: parse_optional_json(response.modes, "modes")?,
-        config_options: parse_json_vec(response.config_options, "configOptions")?,
-        agent_capabilities: parse_optional_json(response.agent_capabilities, "agentCapabilities")?,
-        agent_info: parse_optional_json(response.agent_info, "agentInfo")?,
     })
 }
 
@@ -759,146 +527,6 @@ fn unexpected_acp_response(operation: &str, response: AcpResponse) -> ClientErro
     ClientError::Sidecar(format!("unexpected response to {operation}: {response:?}"))
 }
 
-fn combine_instructions(additional: Option<&str>, tool_reference: &str) -> Option<String> {
-    let mut parts = Vec::new();
-    if let Some(additional) = additional.map(str::trim).filter(|value| !value.is_empty()) {
-        parts.push(additional.to_string());
-    }
-    let tool_reference = tool_reference.trim();
-    if !tool_reference.is_empty() {
-        parts.push(tool_reference.to_string());
-    }
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join("\n\n"))
-    }
-}
-
-fn build_host_tool_reference(tool_kits: &[ToolKit]) -> String {
-    if tool_kits.is_empty() {
-        return String::new();
-    }
-
-    let mut lines = vec![
-        String::from("## Available Host Tools"),
-        String::new(),
-        String::from("Run `agentos list-tools` to see all available tools."),
-        String::new(),
-    ];
-
-    for kit in tool_kits {
-        lines.push(format!("### {}", kit.name));
-        lines.push(String::new());
-        lines.push(kit.description.clone());
-        lines.push(String::new());
-        for tool in &kit.tools {
-            let signature = build_tool_flag_signature(&tool.input_schema);
-            let suffix = if signature.is_empty() {
-                String::new()
-            } else {
-                format!(" {signature}")
-            };
-            lines.push(format!(
-                "- `agentos-{} {}{}` — {}",
-                kit.name, tool.name, suffix, tool.description
-            ));
-        }
-        lines.push(String::new());
-        lines.push(format!(
-            "Run `agentos-{} <tool> --help` for details.",
-            kit.name
-        ));
-        lines.push(String::new());
-    }
-
-    lines.join("\n")
-}
-
-fn build_tool_flag_signature(schema: &Value) -> String {
-    describe_tool_flags(schema)
-        .into_iter()
-        .map(|flag| {
-            if flag.required {
-                format!("{} <{}>", flag.name, flag.value_type)
-            } else {
-                format!("[{} <{}>]", flag.name, flag.value_type)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-struct ToolFlagDescription {
-    name: String,
-    value_type: String,
-    required: bool,
-}
-
-fn describe_tool_flags(schema: &Value) -> Vec<ToolFlagDescription> {
-    let properties = schema
-        .get("properties")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    let required = schema
-        .get("required")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect::<BTreeSet<_>>()
-        })
-        .unwrap_or_default();
-
-    properties
-        .into_iter()
-        .map(|(field_name, field_schema)| ToolFlagDescription {
-            name: format!("--{}", camel_to_kebab(&field_name)),
-            value_type: describe_tool_flag_type(&field_schema),
-            required: required.contains(&field_name),
-        })
-        .collect()
-}
-
-fn describe_tool_flag_type(schema: &Value) -> String {
-    match json_schema_type(schema) {
-        Some("array") => {
-            let item_type = schema
-                .get("items")
-                .and_then(json_schema_type)
-                .unwrap_or("string");
-            format!("{item_type}[]")
-        }
-        Some("string") => schema
-            .get("enum")
-            .and_then(Value::as_array)
-            .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>())
-            .filter(|values| !values.is_empty())
-            .map(|values| values.join("|"))
-            .unwrap_or_else(|| String::from("string")),
-        Some(other) => other.to_string(),
-        None => String::from("string"),
-    }
-}
-
-fn json_schema_type(schema: &Value) -> Option<&str> {
-    schema.get("type").and_then(Value::as_str)
-}
-
-fn camel_to_kebab(value: &str) -> String {
-    let mut output = String::new();
-    for (index, ch) in value.chars().enumerate() {
-        if ch.is_ascii_uppercase() && index > 0 {
-            output.push('-');
-        }
-        output.push(ch.to_ascii_lowercase());
-    }
-    output
-}
-
 // ---------------------------------------------------------------------------
 // Methods
 // ---------------------------------------------------------------------------
@@ -925,13 +553,11 @@ impl AgentOs {
             .ok_or_else(|| ClientError::SessionNotFound(session_id.to_string()))
     }
 
-    /// Re-hydrate cached session state from the sidecar `AcpGetSessionStateRequest` snapshot.
-    /// Mirrors `_hydrateSessionState`.
-    async fn hydrate_session_state(
+    /// Read the authoritative session state from the sidecar.
+    async fn get_session_state(
         &self,
         session_id: &str,
-    ) -> std::result::Result<(), ClientError> {
-        self.require_session(session_id, |_| ())?;
+    ) -> std::result::Result<SessionStateResponse, ClientError> {
         let response = self
             .send_acp_request(AcpRequest::AcpGetSessionStateRequest(
                 AcpGetSessionStateRequest {
@@ -945,191 +571,107 @@ impl AgentOs {
                 response,
             ));
         };
-        let state = session_state_from_acp(state)?;
-
-        self.require_session(session_id, |entry| sync_session_state(entry, &state))?;
-        Ok(())
+        session_state_from_acp(state)
     }
 
-    /// Core request helper: every session request routes through this. Tracks pending resolvers per
-    /// session (cancel prompt-fallback + abort-on-close), calls the sidecar, re-hydrates state, and
-    /// applies local cache updates for `set_mode` / `set_config_option`.
+    /// Forward one session request and return the adapter's JSON-RPC response.
     pub(crate) async fn send_session_request(
         &self,
         session_id: &str,
         method: &str,
         params: Option<Value>,
     ) -> std::result::Result<JsonRpcResponse, ClientError> {
-        let request_params = params;
-
-        // Register a pending-resolver slot so cancel/close can resolve this request locally. The
-        // resolver carries the intended [`JsonRpcResponse`] (close -> `-32000 Session closed`,
-        // cancel -> `{stopReason: cancelled}`); whichever completes first wins. Mirrors the TS
-        // resolver `{ method, resolve: (response) => void }`.
-        let resolver_id = self.inner().request_counter.fetch_add(1, Ordering::SeqCst);
-        let (resolve_tx, resolve_rx) = tokio::sync::oneshot::channel::<JsonRpcResponse>();
-        self.require_session(session_id, |entry| {
-            let _guard = entry.pending_session_request_lock.lock();
-            if pending_session_request_count(entry) >= SESSION_PENDING_REQUEST_LIMIT {
-                return Err(ClientError::Sidecar(format!(
-                    "session pending request limit exceeded: at most {SESSION_PENDING_REQUEST_LIMIT} requests can be in flight per session"
-                )));
-            }
-            let _ = entry
-                .pending_prompt_resolvers
-                .insert(resolver_id, resolve_tx);
-            // Track the method so prompt-fallback can target only `session/prompt` resolvers.
-            entry
-                .config_overrides
-                .lock()
-                .entry(format!("{PENDING_METHOD_PREFIX}{resolver_id}"))
-                .or_insert_with(|| method.to_string());
-            Ok(())
-        })??;
-        let mut pending_request_guard =
-            PendingSessionRequestGuard::new(self, session_id, resolver_id);
-
-        let rpc = self.send_acp_request(AcpRequest::AcpSessionRequest(AcpSessionRequest {
-            session_id: session_id.to_string(),
-            method: method.to_string(),
-            params: request_params
-                .clone()
-                .map(|params| serde_json::to_string(&params))
-                .transpose()
-                .map_err(|error| {
-                    ClientError::Sidecar(format!("failed to encode session params: {error}"))
-                })?,
-        }));
-        tokio::pin!(rpc);
-
-        let response = tokio::select! {
-            biased;
-            resolved = resolve_rx => {
-                // A cancel/close resolved this request locally before the sidecar replied. The
-                // resolver carries the intended response (cancel vs close), set at the abort/cancel
-                // site, so it is returned verbatim rather than re-derived from the method.
-                pending_request_guard.cleanup();
-                match resolved {
-                    Ok(response) => return Ok(response),
-                    Err(_) => return Ok(session_closed_response(session_id)),
-                }
-            }
-            result = &mut rpc => {
-                pending_request_guard.cleanup();
-                result?
-            }
-        };
-
-        let response = match response {
-            AcpResponse::AcpSessionRpcResponse(rpc) => {
-                serde_json::from_str::<JsonRpcResponse>(&rpc.response).map_err(|err| {
-                    ClientError::Sidecar(format!("malformed session rpc response: {err}"))
-                })?
-            }
-            other => return Err(unexpected_acp_response("AcpSessionRequest", other)),
-        };
-
-        // Re-hydrate state regardless of outcome (best-effort; ignore errors).
-        let _ = self.hydrate_session_state(session_id).await;
-
-        if response.error.is_none() {
-            self.apply_post_send_cache_updates(session_id, method, request_params.as_ref())?;
-        }
-
-        Ok(response)
+        Ok(self
+            .send_session_request_with_text(session_id, method, params)
+            .await?
+            .response)
     }
 
-    /// Drop a pending-resolver slot and its tracked method marker.
-    fn cleanup_pending_resolver(&self, session_id: &str, resolver_id: i64) {
-        let _ = self.require_session(session_id, |entry| {
-            let _ = entry.pending_prompt_resolvers.remove(&resolver_id);
-            entry
-                .config_overrides
-                .lock()
-                .remove(&format!("{PENDING_METHOD_PREFIX}{resolver_id}"));
-        });
-    }
-
-    /// Apply local cache updates for successful `session/set_mode` / `session/set_config_option`.
-    fn apply_post_send_cache_updates(
+    async fn send_session_request_with_text(
         &self,
         session_id: &str,
         method: &str,
-        params: Option<&Value>,
-    ) -> std::result::Result<(), ClientError> {
-        self.require_session(session_id, |entry| {
-            if method == "session/set_mode" {
-                if let Some(mode_id) = params.and_then(|p| p.get("modeId")).and_then(Value::as_str)
-                {
-                    let mut modes = entry.modes.lock();
-                    if let Some(modes) = modes.as_mut() {
-                        modes.current_mode_id = mode_id.to_string();
-                    }
+        params: Option<Value>,
+    ) -> std::result::Result<SessionRpcResult, ClientError> {
+        let response = self
+            .send_acp_request(AcpRequest::AcpSessionRequest(AcpSessionRequest {
+                session_id: session_id.to_string(),
+                method: method.to_string(),
+                params: params
+                    .map(|params| serde_json::to_string(&params))
+                    .transpose()
+                    .map_err(|error| {
+                        ClientError::Sidecar(format!("failed to encode session params: {error}"))
+                    })?,
+            }))
+            .await
+            .map_err(|error| match error {
+                ClientError::Kernel { ref code, .. } if code == "session_not_found" => {
+                    ClientError::SessionNotFound(session_id.to_string())
                 }
+                error => error,
+            })?;
+
+        match response {
+            AcpResponse::AcpSessionRpcResponse(rpc) => {
+                let response =
+                    serde_json::from_str::<JsonRpcResponse>(&rpc.response).map_err(|err| {
+                        ClientError::Sidecar(format!("malformed session rpc response: {err}"))
+                    })?;
+                Ok(SessionRpcResult {
+                    response,
+                    text: rpc.text,
+                })
             }
-            if method == "session/set_config_option" {
-                let config_id = params
-                    .and_then(|p| p.get("configId"))
-                    .and_then(Value::as_str);
-                let value = params.and_then(|p| p.get("value")).and_then(Value::as_str);
-                if let (Some(config_id), Some(value)) = (config_id, value) {
-                    let mut options = entry.config_options.lock();
-                    for option in options.iter_mut() {
-                        if option.id == config_id {
-                            option.current_value = Some(value.to_string());
-                        }
-                    }
-                }
-            }
-        })
+            other => Err(unexpected_acp_response("AcpSessionRequest", other)),
+        }
     }
 
-    /// Set a config option by its category (model/thought_level). Mirrors
-    /// `_setSessionConfigByCategory`: readonly -> error response.
+    /// Forward a category-based config selection to the ACP sidecar adapter.
     async fn set_session_config_by_category(
         &self,
         session_id: &str,
         category: &str,
         value: &str,
     ) -> std::result::Result<JsonRpcResponse, ClientError> {
-        let (read_only, config_id, agent_type) = self.require_session(session_id, |entry| {
-            let options = entry.config_options.lock();
-            let option = options
-                .iter()
-                .find(|option| option.category.as_deref() == Some(category));
-            (
-                option.and_then(|option| option.read_only).unwrap_or(false),
-                option.map(|option| option.id.clone()),
-                entry.agent_type.clone(),
-            )
-        })?;
-
-        if read_only {
-            return Ok(unsupported_config_response(&agent_type, category));
-        }
-
-        let config_id = config_id.unwrap_or_else(|| category.to_string());
         let response = self
-            .send_session_request(
-                session_id,
-                "session/set_config_option",
-                Some(json!({ "configId": config_id, "value": value })),
-            )
+            .send_acp_request(AcpRequest::AcpSetSessionConfigRequest(
+                AcpSetSessionConfigRequest {
+                    session_id: session_id.to_string(),
+                    category: category.to_string(),
+                    value: value.to_string(),
+                },
+            ))
             .await?;
-
-        Ok(response)
+        let AcpResponse::AcpSessionRpcResponse(response) = response else {
+            return Err(unexpected_acp_response(
+                "AcpSetSessionConfigRequest",
+                response,
+            ));
+        };
+        serde_json::from_str(&response.response).map_err(|error| {
+            ClientError::Sidecar(format!("malformed session config response: {error}"))
+        })
     }
 
-    /// List in-memory sessions.
-    pub fn list_sessions(&self) -> Vec<SessionInfo> {
-        let mut sessions = Vec::new();
-        self.inner().sessions.scan(|session_id, entry| {
-            sessions.push(SessionInfo {
-                session_id: session_id.clone(),
-                agent_type: entry.agent_type.clone(),
-            });
-        });
-        sessions
+    /// List the sidecar's authoritative live sessions for this connection.
+    pub async fn list_sessions(&self) -> Result<Vec<SessionInfo>> {
+        let response = self
+            .send_acp_request(AcpRequest::AcpListSessionsRequest(AcpListSessionsRequest {
+                reserved: false,
+            }))
+            .await?;
+        let AcpResponse::AcpListSessionsResponse(listed) = response else {
+            return Err(unexpected_acp_response("AcpListSessionsRequest", response).into());
+        };
+        Ok(listed
+            .sessions
+            .into_iter()
+            .map(|session| SessionInfo {
+                session_id: session.session_id,
+                agent_type: session.agent_type,
+            })
+            .collect())
     }
 
     /// List available agents. A thin forwarder: sends `AcpListAgentsRequest` and
@@ -1155,11 +697,10 @@ impl AgentOs {
             .collect())
     }
 
-    /// Create an ACP session. Resolves the agent config, merges env (user wins), creates the session
-    /// via the sidecar (`runtime: java_script`, protocol v1, default client caps), and hydrates
-    /// state. Agent OS owns dynamic tool-reference instructions and forwards them as additional
-    /// instructions; the sidecar owns final base-prompt assembly and agent-specific injection. On
-    /// hydration failure the session is removed and the error rethrown. Returns the session id only.
+    /// Create an ACP session. Forwards explicit options to the sidecar, which owns runtime,
+    /// working-directory, protocol, capability, MCP, environment, and flag defaults. The sidecar
+    /// owns base-prompt and registered-tool reference assembly plus agent-specific injection.
+    /// Returns the session id only.
     pub async fn create_session(
         &self,
         agent_type: &str,
@@ -1168,46 +709,32 @@ impl AgentOs {
         // The client is npm-agnostic: it sends only the agent name. The sidecar
         // resolves the name -> package -> entrypoint/env/launchArgs from the
         // projected `/opt/agentos/<name>/current/agentos-package.json` and spawns.
-        let env: BTreeMap<String, String> = options.env.clone();
-
-        let cwd = options
-            .cwd
-            .clone()
-            .unwrap_or_else(|| "/workspace".to_string());
-        let mcp_servers: Vec<Value> = options
-            .mcp_servers
-            .iter()
-            .filter_map(|server| serde_json::to_value(server).ok())
-            .collect();
-        let client_capabilities = json!({
-            "fs": { "readTextFile": true, "writeTextFile": true },
-            "terminal": true,
-        });
-        let tool_reference = build_host_tool_reference(&self.config().tool_kits);
-        let additional_instructions =
-            combine_instructions(options.additional_instructions.as_deref(), &tool_reference);
-
+        let env = (!options.env.is_empty()).then(|| options.env.clone().into_iter().collect());
+        let mcp_servers = if options.mcp_servers.is_empty() {
+            None
+        } else {
+            let values: Vec<Value> = options
+                .mcp_servers
+                .iter()
+                .filter_map(|server| serde_json::to_value(server).ok())
+                .collect();
+            Some(serde_json::to_string(&values).map_err(|error| {
+                ClientError::Sidecar(format!("failed to encode MCP servers: {error}"))
+            })?)
+        };
         let response = self
             .send_acp_request(AcpRequest::AcpCreateSessionRequest(
                 AcpCreateSessionRequest {
                     agent_type: agent_type.to_string(),
-                    runtime: AcpRuntimeKind::JavaScript,
-                    args: Vec::new(),
-                    env: env.into_iter().collect(),
-                    cwd,
-                    mcp_servers: serde_json::to_string(&mcp_servers).map_err(|error| {
-                        ClientError::Sidecar(format!("failed to encode MCP servers: {error}"))
-                    })?,
-                    protocol_version: crate::ACP_PROTOCOL_VERSION as i32,
-                    client_capabilities: serde_json::to_string(&client_capabilities).map_err(
-                        |error| {
-                            ClientError::Sidecar(format!(
-                                "failed to encode client capabilities: {error}"
-                            ))
-                        },
-                    )?,
-                    additional_instructions,
-                    skip_os_instructions: options.skip_os_instructions,
+                    runtime: None,
+                    args: None,
+                    env,
+                    cwd: options.cwd.clone(),
+                    mcp_servers,
+                    protocol_version: None,
+                    client_capabilities: None,
+                    additional_instructions: options.additional_instructions.clone(),
+                    skip_os_instructions: options.skip_os_instructions.then_some(true),
                 },
             ))
             .await?;
@@ -1215,64 +742,25 @@ impl AgentOs {
             return Err(unexpected_acp_response("AcpCreateSessionRequest", response).into());
         };
         let created = session_created_from_acp(created)?;
-
-        // Seed local state from the create response, then register + hydrate from the authoritative
-        // sidecar state.
-        let state = SessionStateResponse {
-            modes: created.modes,
-            config_options: created.config_options,
-            agent_capabilities: created.agent_capabilities,
-            agent_info: created.agent_info,
-        };
-        self.register_session(&created.session_id, agent_type, &state)
-            .await?;
+        self.register_session(&created.session_id);
 
         Ok(SessionId {
             session_id: created.session_id,
         })
     }
 
-    /// Register a freshly created session entry and hydrate it. Used by the create path once
-    /// agent-config resolution exists; exposed so the create flow stays a 1:1 port of the local
-    /// registration + hydrate + on-failure-remove behavior.
-    pub(crate) async fn register_session(
-        &self,
-        session_id: &str,
-        agent_type: &str,
-        state: &SessionStateResponse,
-    ) -> std::result::Result<(), ClientError> {
-        {
-            let mut closed = self.inner().closed_session_ids.lock();
-            closed.retain(|id| id != session_id);
-        }
-
+    /// Register only the host-side callback/event routes for a live sidecar session.
+    pub(crate) fn register_session(&self, session_id: &str) {
         let (event_tx, _) = tokio::sync::broadcast::channel(1024);
         let (permission_tx, _) = tokio::sync::broadcast::channel(64);
         let (agent_exit_tx, _) = tokio::sync::broadcast::channel(16);
         let entry = SessionEntry {
-            agent_type: agent_type.to_string(),
-            modes: parking_lot::Mutex::new(None),
-            config_options: parking_lot::Mutex::new(Vec::new()),
-            capabilities: parking_lot::Mutex::new(None),
-            agent_info: parking_lot::Mutex::new(None),
-            config_overrides: parking_lot::Mutex::new(BTreeMap::new()),
             event_tx,
             permission_tx,
             agent_exit_tx,
             pending_permission_replies: scc::HashMap::new(),
-            pending_session_request_lock: parking_lot::Mutex::new(()),
-            pending_prompt_resolvers: scc::HashMap::new(),
         };
-        sync_session_state(&entry, state);
         let _ = self.inner().sessions.insert(session_id.to_string(), entry);
-
-        match self.hydrate_session_state(session_id).await {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                let _ = self.inner().sessions.remove(session_id);
-                Err(error)
-            }
-        }
     }
 
     /// Resume a session that exists in durable storage but is not live in this VM
@@ -1283,8 +771,8 @@ impl AgentOs {
     /// else `session/new` + transcript-continuation preamble). The returned
     /// `session_id` is the live id in this VM (equal to `session_id` for native
     /// loads, freshly assigned for the fallback); the caller remaps
-    /// `external -> live`. The new live session is registered + hydrated locally so
-    /// subsequent prompts route to it.
+    /// `external -> live`. The new live session is registered locally only for host callback/event
+    /// routing; authoritative state remains in the sidecar.
     ///
     /// Resume depends on a durable root; on a non-durable (default in-memory) root
     /// there is no surviving store and the fallback tier always runs.
@@ -1297,12 +785,7 @@ impl AgentOs {
         // The client is npm-agnostic: it sends only the agent name. The sidecar
         // resolves the name -> package -> entrypoint/env/launchArgs from the
         // projected manifest, exactly as `create_session` does.
-        let env: BTreeMap<String, String> = options.env.clone();
-
-        let cwd = options
-            .cwd
-            .clone()
-            .unwrap_or_else(|| "/workspace".to_string());
+        let env = (!options.env.is_empty()).then(|| options.env.clone().into_iter().collect());
 
         let response = self
             .send_acp_request(AcpRequest::AcpResumeSessionRequest(
@@ -1310,8 +793,8 @@ impl AgentOs {
                     session_id: session_id.to_string(),
                     agent_type: agent_type.to_string(),
                     transcript_path: options.transcript_path.clone(),
-                    cwd,
-                    env: env.into_iter().collect(),
+                    cwd: options.cwd.clone(),
+                    env,
                 },
             ))
             .await?;
@@ -1319,15 +802,7 @@ impl AgentOs {
             return Err(unexpected_acp_response("AcpResumeSessionRequest", response).into());
         };
 
-        // Register + hydrate the live session so subsequent prompts route to it.
-        let empty_state = SessionStateResponse {
-            modes: None,
-            config_options: Vec::new(),
-            agent_capabilities: None,
-            agent_info: None,
-        };
-        self.register_session(&resumed.session_id, agent_type, &empty_state)
-            .await?;
+        self.register_session(&resumed.session_id);
 
         Ok(ResumeSessionResult {
             session_id: resumed.session_id,
@@ -1335,176 +810,39 @@ impl AgentOs {
         })
     }
 
-    /// Destroy a session. Best-effort `cancel_session` then internal close.
+    /// Destroy a session through the sidecar-owned graceful close path.
     pub async fn destroy_session(&self, session_id: &str) -> Result<()> {
-        self.require_session(session_id, |_| ())?;
-        let _ = self.cancel_session(session_id).await;
-        self.close_session_internal(session_id).await?;
+        self.close_session(session_id).await?;
         Ok(())
     }
 
-    /// Prompt a session. Subscribes to live `session/update` events, accumulates
-    /// `agent_message_chunk` text, sends `session/prompt`, and unsubscribes by dropping the
-    /// receiver. The `response` may itself be an error.
+    /// Prompt a session. The sidecar returns the bounded text accumulated while
+    /// it streams live `session/update` events to host subscribers.
     pub async fn prompt(&self, session_id: &str, text: &str) -> Result<PromptResult> {
-        let mut rx = self.require_session(session_id, |entry| entry.event_tx.subscribe())?;
-
-        let mut agent_text = String::new();
-        let mut delivered_chunks = 0;
-        let mut prompt_text_error: Option<ClientError> = None;
-
-        let request = self.send_session_request(
-            session_id,
-            "session/prompt",
-            Some(json!({ "prompt": [{ "type": "text", "text": text }] })),
-        );
-        tokio::pin!(request);
-
-        // Drive the request to completion while concurrently draining broadcast chunks, so the
-        // bounded broadcast buffer never lags during a long prompt.
-        let response = loop {
-            tokio::select! {
-                biased;
-                result = &mut request => break result,
-                event = rx.recv() => {
-                    match event {
-                        Ok(event) => accumulate_agent_message_chunk(
-                            &event,
-                            &mut delivered_chunks,
-                            &mut agent_text,
-                        )
-                        .unwrap_or_else(|error| {
-                            prompt_text_error.get_or_insert(error);
-                        }),
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                            // Channel closed; finish the request without further chunks.
-                            break (&mut request).await;
-                        }
-                    }
-                }
-            }
-        };
-
-        // Drain already-buffered live events before unsubscribing.
-        loop {
-            match rx.try_recv() {
-                Ok(event) => {
-                    accumulate_agent_message_chunk(&event, &mut delivered_chunks, &mut agent_text)
-                        .unwrap_or_else(|error| {
-                            prompt_text_error.get_or_insert(error);
-                        })
-                }
-                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
-                | Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
-            }
-        }
-        drop(rx);
-
-        let response = response?;
-        if let Some(error) = prompt_text_error {
-            return Err(error.into());
-        }
-
+        let result = self
+            .send_session_request_with_text(
+                session_id,
+                "session/prompt",
+                Some(json!({ "prompt": [{ "type": "text", "text": text }] })),
+            )
+            .await?;
+        let agent_text = result.text.ok_or_else(|| {
+            ClientError::Sidecar(String::from(
+                "sidecar prompt response is missing accumulated text",
+            ))
+        })?;
         Ok(PromptResult {
-            response,
+            response: result.response,
             text: agent_text,
         })
     }
 
-    /// Cancel a session. If prompt requests are pending, resolves locally + background
-    /// `session/cancel` and returns a synthetic `{ via: "prompt-fallback" }`; else real
-    /// `session/cancel`.
+    /// Cancel through the sidecar, whose transport interrupts a blocking prompt
+    /// and returns the authoritative prompt and cancel responses.
     pub async fn cancel_session(&self, session_id: &str) -> Result<JsonRpcResponse> {
-        self.require_session(session_id, |_| ())?;
-        let cancelled_pending_prompt = self.cancel_pending_prompt_requests(session_id)?;
-        if cancelled_pending_prompt {
-            // Forward the real cancel in the background (best effort); return the synthetic
-            // prompt-fallback response immediately.
-            let this = self.clone();
-            let session_id_owned = session_id.to_string();
-            tokio::spawn(async move {
-                let _ = this
-                    .send_session_request(&session_id_owned, "session/cancel", None)
-                    .await;
-            });
-            return Ok(JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                id: Some(JsonRpcId::Null),
-                result: Some(json!({
-                    "cancelled": true,
-                    "requested": true,
-                    "via": "prompt-fallback",
-                })),
-                error: None,
-            });
-        }
         Ok(self
             .send_session_request(session_id, "session/cancel", None)
             .await?)
-    }
-
-    /// Resolve any pending `session/prompt` resolvers with a synthetic `stopReason: cancelled`
-    /// result. Returns whether a prompt was cancelled. Mirrors `_cancelPendingPromptRequests`.
-    fn cancel_pending_prompt_requests(
-        &self,
-        session_id: &str,
-    ) -> std::result::Result<bool, ClientError> {
-        self.require_session(session_id, |entry| {
-            let mut prompt_resolver_ids = Vec::new();
-            {
-                let overrides = entry.config_overrides.lock();
-                for (key, method) in overrides.iter() {
-                    if let Some(id) = key.strip_prefix(PENDING_METHOD_PREFIX) {
-                        if method == "session/prompt" {
-                            if let Ok(id) = id.parse::<i64>() {
-                                prompt_resolver_ids.push(id);
-                            }
-                        }
-                    }
-                }
-            }
-            let mut cancelled = false;
-            for id in prompt_resolver_ids {
-                if let Some((_, resolver)) = entry.pending_prompt_resolvers.remove(&id) {
-                    // Mirrors `_cancelPendingPromptRequests`: resolve prompt resolvers with the
-                    // synthetic `{ result: { stopReason: "cancelled" } }` response.
-                    let _ = resolver.send(JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        id: Some(JsonRpcId::Null),
-                        result: Some(json!({ "stopReason": "cancelled" })),
-                        error: None,
-                    });
-                    cancelled = true;
-                }
-                entry
-                    .config_overrides
-                    .lock()
-                    .remove(&format!("{PENDING_METHOD_PREFIX}{id}"));
-            }
-            cancelled
-        })
-    }
-
-    /// Abort all pending session requests with a `-32000 Session closed` response. Mirrors
-    /// `_abortPendingSessionRequests`.
-    fn abort_pending_session_requests(&self, session_id: &str) {
-        let _ = self.require_session(session_id, |entry| {
-            let mut ids = Vec::new();
-            entry.pending_prompt_resolvers.scan(|id, _| ids.push(*id));
-            for id in ids {
-                if let Some((_, resolver)) = entry.pending_prompt_resolvers.remove(&id) {
-                    // Mirrors `_abortPendingSessionRequests`: resolve EVERY pending resolver
-                    // (prompt or otherwise) with the `-32000` `Session closed: <id>` error.
-                    let _ = resolver.send(session_closed_response(session_id));
-                }
-                entry
-                    .config_overrides
-                    .lock()
-                    .remove(&format!("{PENDING_METHOD_PREFIX}{id}"));
-            }
-        });
     }
 
     /// Reject all pending permission replies. The TS path clears their 120s timers and rejects them;
@@ -1522,72 +860,11 @@ impl AgentOs {
         });
     }
 
-    /// Close a session. SYNC fire-and-forget. Errors only if unknown across sessions / closed-ids /
-    /// in-flight closes. Aborts pending, rejects pending permissions, records the closed id (bounded
-    /// 2048). Mirrors `closeSession`, whose known-check spans `_sessions`, `_closedSessionIds`, and
-    /// `_sessionClosePromises`.
-    pub fn close_session(&self, session_id: &str) -> std::result::Result<(), ClientError> {
-        let known = self.inner().sessions.contains(session_id)
-            || self.inner().closing_session_ids.contains(session_id)
-            || self
-                .inner()
-                .closed_session_ids
-                .lock()
-                .iter()
-                .any(|id| id == session_id);
-        if !known {
-            return Err(ClientError::SessionNotFound(session_id.to_string()));
-        }
-
-        // Synchronously mark the close in-flight (mirrors setting `_sessionClosePromises`) so a
-        // second `close_session` / close-after-destroy issued during the detached close still sees
-        // the id as known.
-        let _ = self
-            .inner()
-            .closing_session_ids
-            .insert(session_id.to_string());
-
-        let this = self.clone();
-        let session_id_owned = session_id.to_string();
-        tokio::spawn(async move {
-            let _ = this.close_session_internal(&session_id_owned).await;
-            let _ = this.inner().closing_session_ids.remove(&session_id_owned);
-        });
-        Ok(())
-    }
-
-    /// Internal close: abort pending requests, reject pending permissions, deregister the session,
-    /// record the closed id (bounded), and best-effort `AcpCloseSessionRequest`. Mirrors
-    /// `_closeSessionInternal`.
-    pub(crate) async fn close_session_internal(
-        &self,
-        session_id: &str,
-    ) -> std::result::Result<(), ClientError> {
-        if self
-            .inner()
-            .closed_session_ids
-            .lock()
-            .iter()
-            .any(|id| id == session_id)
-        {
-            return Ok(());
-        }
-
-        self.abort_pending_session_requests(session_id);
+    /// Close a session through the sidecar. The sidecar makes repeated or unknown
+    /// closes idempotent, so the client keeps no closed-id or in-flight-close state.
+    pub async fn close_session(&self, session_id: &str) -> std::result::Result<(), ClientError> {
         self.reject_pending_permission_replies(session_id);
-
-        // Require existence before removal, matching `_requireSession` in `_closeSessionInternal`.
-        if !self.inner().sessions.contains(session_id) {
-            return Err(ClientError::SessionNotFound(session_id.to_string()));
-        }
         let _ = self.inner().sessions.remove(session_id);
-        {
-            let mut closed = self.inner().closed_session_ids.lock();
-            closed.push_back(session_id.to_string());
-            while closed.len() > CLOSED_SESSION_ID_RETENTION_LIMIT {
-                closed.pop_front();
-            }
-        }
 
         // Session processes live entirely inside the VM, so the only safe teardown is the ACP close
         // request, which targets the guest process by its in-VM session/process handle.
@@ -1668,12 +945,16 @@ impl AgentOs {
         permission_id: &str,
         reply: PermissionReply,
     ) -> Result<JsonRpcResponse> {
-        let pending = self.require_session(session_id, |entry| {
-            entry
-                .pending_permission_replies
-                .remove(permission_id)
-                .map(|(_, responder)| responder)
-        })?;
+        let pending = self
+            .inner()
+            .sessions
+            .read(session_id, |_, entry| {
+                entry
+                    .pending_permission_replies
+                    .remove(permission_id)
+                    .map(|(_, responder)| responder)
+            })
+            .flatten();
 
         if let Some(responder) = pending {
             let _ = responder.send(reply);
@@ -1698,7 +979,7 @@ impl AgentOs {
             .await?)
     }
 
-    /// Set the session mode (`session/set_mode`). Updates cached `current_mode_id` on success.
+    /// Set the session mode (`session/set_mode`).
     pub async fn set_session_mode(
         &self,
         session_id: &str,
@@ -1713,11 +994,13 @@ impl AgentOs {
             .await?)
     }
 
-    /// Get cached session mode state.
-    pub fn get_session_modes(&self, session_id: &str) -> Option<SessionModeState> {
-        self.require_session(session_id, |entry| entry.modes.lock().clone())
-            .ok()
-            .flatten()
+    /// Read session mode state from the sidecar.
+    pub async fn get_session_modes(&self, session_id: &str) -> Result<Option<SessionModeState>> {
+        let state = self.get_session_state(session_id).await?;
+        Ok(state
+            .modes
+            .filter(Value::is_object)
+            .and_then(|value| serde_json::from_value(value).ok()))
     }
 
     /// Set the session model. Uses `set_config_option` with category `model`; readonly -> error
@@ -1743,30 +1026,46 @@ impl AgentOs {
             .await?)
     }
 
-    /// Get cached config options (shallow copy).
-    pub fn get_session_config_options(&self, session_id: &str) -> Vec<SessionConfigOption> {
-        self.require_session(session_id, |entry| entry.config_options.lock().clone())
-            .unwrap_or_default()
+    /// Read session config options from the sidecar.
+    pub async fn get_session_config_options(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<SessionConfigOption>> {
+        Ok(self
+            .get_session_state(session_id)
+            .await?
+            .config_options
+            .into_iter()
+            .filter_map(|value| serde_json::from_value(value).ok())
+            .collect())
     }
 
-    /// Get cached capabilities. Mirrors `getSessionCapabilities`: returns `null` (`None`) when the
-    /// stored capabilities object has no keys (`Object.keys(caps).length === 0`).
-    pub fn get_session_capabilities(&self, session_id: &str) -> Option<AgentCapabilities> {
-        self.require_session(session_id, |entry| entry.capabilities.lock().clone())
-            .ok()
-            .flatten()
-            .filter(|caps| !agent_capabilities_is_empty(caps))
+    /// Read capabilities from the sidecar. Returns `None` for an empty object.
+    pub async fn get_session_capabilities(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<AgentCapabilities>> {
+        let capabilities = self
+            .get_session_state(session_id)
+            .await?
+            .agent_capabilities
+            .filter(Value::is_object)
+            .and_then(|value| serde_json::from_value(value).ok())
+            .filter(|caps| !agent_capabilities_is_empty(caps));
+        Ok(capabilities)
     }
 
-    /// Get cached agent info.
-    pub fn get_session_agent_info(&self, session_id: &str) -> Option<AgentInfo> {
-        self.require_session(session_id, |entry| entry.agent_info.lock().clone())
-            .ok()
-            .flatten()
+    /// Read agent info from the sidecar.
+    pub async fn get_session_agent_info(&self, session_id: &str) -> Result<Option<AgentInfo>> {
+        Ok(self
+            .get_session_state(session_id)
+            .await?
+            .agent_info
+            .filter(Value::is_object)
+            .and_then(|value| serde_json::from_value(value).ok()))
     }
 
-    /// Raw passthrough to `send_session_request` (which already re-hydrates + applies set_mode /
-    /// set_config_option cache updates). Mirrors `rawSessionSend`.
+    /// Raw passthrough to `send_session_request`.
     pub async fn raw_session_send(
         &self,
         session_id: &str,
@@ -1810,9 +1109,9 @@ impl AgentOs {
     /// Subscribe to permission requests raised by the session's guest agent. Requests originate
     /// from the sidecar `permission_request` callback (the sidecar normalizes both the legacy
     /// `request/permission` and ACP `session/request_permission` method names before invoking the
-    /// host). With no subscribers a request auto-rejects; subscribers reply via the carried
-    /// [`PermissionResponder`] or [`AgentOs::respond_permission`], bounded by the
-    /// [`crate::PERMISSION_TIMEOUT_MS`] timeout.
+    /// host). With no subscribers the client returns no explicit answer; subscribers reply via
+    /// the carried [`PermissionResponder`] or [`AgentOs::respond_permission`], bounded by the
+    /// sidecar-supplied timeout. The ACP sidecar owns the missing-answer default.
     pub fn on_permission_request(
         &self,
         session_id: &str,
@@ -1860,9 +1159,9 @@ impl AgentOs {
     /// `on_permission_request` subscribers and waiting for the reply. Mirrors TS
     /// `_handlePermissionSidecarRequest`:
     /// - unknown session -> `error: "Session not found: <id>"`
-    /// - no subscribers -> `reply: "reject"`
+    /// - no subscribers -> no reply, so the ACP sidecar applies its default
     /// - otherwise registers the `pending_permission_replies` slot, delivers the request, and waits
-    ///   up to [`crate::PERMISSION_TIMEOUT_MS`] for `respond_permission` / the responder; timeout
+    ///   up to the sidecar-supplied timeout for `respond_permission` / the responder; timeout
     ///   removes the slot and returns `error: "Timed out waiting for permission reply: <id>"`.
     pub(crate) async fn deliver_sidecar_permission_request(
         &self,
@@ -1872,6 +1171,7 @@ impl AgentOs {
             session_id,
             permission_id,
             params,
+            timeout_ms,
         } = request;
 
         let (slot_tx, slot_rx) = tokio::sync::oneshot::channel::<PermissionReply>();
@@ -1887,8 +1187,8 @@ impl AgentOs {
             responder,
         };
 
-        // Register the reply slot and broadcast under the same session lookup. No subscribers ->
-        // auto-reject (mirrors `permissionHandlers.size === 0`).
+        // Register the reply slot and broadcast under the same session lookup. No subscribers
+        // means no explicit host answer; the ACP sidecar owns the default.
         let registered = self.require_session(&session_id, |entry| {
             if entry.permission_tx.receiver_count() == 0 {
                 return false;
@@ -1902,9 +1202,7 @@ impl AgentOs {
         match registered {
             Ok(true) => {}
             Ok(false) => {
-                return PermissionRouteResult {
-                    reply: Some(permission_reply_wire(PermissionReply::Reject).to_string()),
-                };
+                return PermissionRouteResult { reply: None };
             }
             Err(_) => {
                 return PermissionRouteResult { reply: None };
@@ -1923,17 +1221,15 @@ impl AgentOs {
             }
         });
 
-        let timeout = tokio::time::sleep(std::time::Duration::from_millis(PERMISSION_TIMEOUT_MS));
+        let timeout = tokio::time::sleep(std::time::Duration::from_millis(timeout_ms));
         tokio::pin!(timeout);
         tokio::select! {
             reply = slot_rx => match reply {
                 Ok(reply) => PermissionRouteResult {
                     reply: Some(permission_reply_wire(reply).to_string()),
                 },
-                // The slot sender dropped without a reply (session closed / replies rejected).
-                Err(_) => PermissionRouteResult {
-                    reply: Some(permission_reply_wire(PermissionReply::Reject).to_string()),
-                },
+                // The slot sender dropped without an explicit host answer.
+                Err(_) => PermissionRouteResult { reply: None },
             },
             _ = &mut timeout => {
                 let _ = self.require_session(&session_id, |entry| {
@@ -1944,103 +1240,5 @@ impl AgentOs {
                 }
             }
         }
-    }
-}
-
-// Private accumulator coverage stays inline because integration tests cannot construct the missed
-// broadcast plus hydrated-ring ordering without exposing client internals.
-#[cfg(test)]
-mod prompt_accumulation_tests {
-    use super::*;
-
-    fn notification(update: Value) -> JsonRpcNotification {
-        JsonRpcNotification {
-            jsonrpc: "2.0".to_string(),
-            method: "session/update".to_string(),
-            params: Some(json!({ "update": update })),
-        }
-    }
-
-    #[test]
-    fn non_chunk_events_do_not_affect_prompt_text() {
-        let chunk = notification(json!({
-            "sessionUpdate": "agent_message_chunk",
-            "content": { "text": "hello" },
-        }));
-        let non_chunk = notification(json!({
-            "sessionUpdate": "current_mode_update",
-            "currentModeId": "default",
-        }));
-
-        let mut delivered_chunks = 0;
-        let mut text = String::new();
-        accumulate_agent_message_chunk(&non_chunk, &mut delivered_chunks, &mut text)
-            .expect("non-chunk");
-        accumulate_agent_message_chunk(&chunk, &mut delivered_chunks, &mut text).expect("chunk");
-
-        assert_eq!(text, "hello");
-    }
-
-    #[test]
-    fn prompt_text_capture_limit_rejects_overflowing_chunk() {
-        let chunk = notification(json!({
-            "sessionUpdate": "agent_message_chunk",
-            "content": { "text": "abcd" },
-        }));
-        let mut delivered_chunks = 0;
-        let mut text = "x".repeat(PROMPT_TEXT_CAPTURE_LIMIT_BYTES - 3);
-        let error = accumulate_agent_message_chunk(&chunk, &mut delivered_chunks, &mut text)
-            .expect_err("chunk should exceed prompt text cap");
-        assert!(
-            error.to_string().contains("prompt text capture is"),
-            "unexpected error: {error}"
-        );
-        assert_eq!(text.len(), PROMPT_TEXT_CAPTURE_LIMIT_BYTES - 3);
-    }
-
-    #[test]
-    fn prompt_chunk_limit_rejects_more_tracked_chunks() {
-        let chunk = notification(json!({
-            "sessionUpdate": "agent_message_chunk",
-            "content": { "text": "x" },
-        }));
-        let mut delivered_chunks = PROMPT_DELIVERED_CHUNK_LIMIT;
-        let mut text = String::new();
-        let error = accumulate_agent_message_chunk(&chunk, &mut delivered_chunks, &mut text)
-            .expect_err("chunk should exceed chunk tracking cap");
-        assert!(
-            error
-                .to_string()
-                .contains("prompt chunk tracking limit exceeded"),
-            "unexpected error: {error}"
-        );
-        assert!(text.is_empty());
-    }
-
-    #[test]
-    fn pending_session_request_count_tracks_registered_resolvers() {
-        let (event_tx, _) = tokio::sync::broadcast::channel(1);
-        let (permission_tx, _) = tokio::sync::broadcast::channel(1);
-        let (agent_exit_tx, _) = tokio::sync::broadcast::channel(1);
-        let entry = SessionEntry {
-            agent_type: "pi".to_string(),
-            modes: parking_lot::Mutex::new(None),
-            config_options: parking_lot::Mutex::new(Vec::new()),
-            capabilities: parking_lot::Mutex::new(None),
-            agent_info: parking_lot::Mutex::new(None),
-            config_overrides: parking_lot::Mutex::new(BTreeMap::new()),
-            event_tx,
-            permission_tx,
-            agent_exit_tx,
-            pending_permission_replies: scc::HashMap::new(),
-            pending_session_request_lock: parking_lot::Mutex::new(()),
-            pending_prompt_resolvers: scc::HashMap::new(),
-        };
-        let (first_tx, _first_rx) = tokio::sync::oneshot::channel();
-        let (second_tx, _second_rx) = tokio::sync::oneshot::channel();
-        let _ = entry.pending_prompt_resolvers.insert(1, first_tx);
-        let _ = entry.pending_prompt_resolvers.insert(2, second_tx);
-
-        assert_eq!(pending_session_request_count(&entry), 2);
     }
 }

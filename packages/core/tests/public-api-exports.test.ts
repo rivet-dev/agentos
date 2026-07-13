@@ -4,10 +4,8 @@ import {
 	AgentOsSidecar,
 	CronManager,
 	KernelError,
-	MAX_TOOL_DESCRIPTION_LENGTH,
 	InvalidScheduleError,
 	PastScheduleError,
-	TimerScheduleDriver,
 	agentOsLimitsSchema,
 	agentOsOptionsSchema,
 	createHostDirBackend,
@@ -28,7 +26,6 @@ import {
 	rootFilesystemConfigSchema,
 	toolKit,
 	toolKitSchema,
-	validateToolkits,
 	type AcpTimeoutErrorData,
 	type AgentOsLimits,
 	type ExecOptions,
@@ -54,16 +51,13 @@ describe("root public API exports", () => {
 		expect(AgentOs).toBeTypeOf("function");
 		expect(AgentOsSidecar).toBeTypeOf("function");
 		expect(CronManager).toBeTypeOf("function");
-		expect(TimerScheduleDriver).toBeTypeOf("function");
 		expect(createHostDirBackend).toBeTypeOf("function");
 		expect(hostTool).toBeTypeOf("function");
 		expect(toolKit).toBeTypeOf("function");
-		expect(validateToolkits).toBeTypeOf("function");
-		expect(MAX_TOOL_DESCRIPTION_LENGTH).toBeGreaterThan(0);
 		expect(agentOsLimitsSchema.safeParse({}).success).toBe(true);
-		expect(agentOsOptionsSchema.safeParse({ defaultSoftware: false }).success).toBe(
-			true,
-		);
+		expect(
+			agentOsOptionsSchema.safeParse({ defaultSoftware: false }).success,
+		).toBe(true);
 		expect(hostToolSchema).toBeTypeOf("object");
 		expect(toolKitSchema).toBeTypeOf("object");
 		expect(mountConfigSchema).toBeTypeOf("object");
@@ -108,10 +102,10 @@ describe("root public API exports", () => {
 	test("re-exports nodeModulesMount helper from the root entrypoint", () => {
 		const mount = nodeModulesMount("/host/project/node_modules");
 		expect(mount.path).toBe("/root/node_modules");
-		expect(mount.readOnly).toBe(true);
+		expect(mount.readOnly).toBeUndefined();
 		expect(mount.plugin.id).toBe("host_dir");
 		expect(mount.plugin.config.hostPath).toBe("/host/project/node_modules");
-		expect(mount.plugin.config.readOnly).toBe(true);
+		expect(mount.plugin.config.readOnly).toBeUndefined();
 
 		const writable = nodeModulesMount("/host/project/node_modules", {
 			readOnly: false,

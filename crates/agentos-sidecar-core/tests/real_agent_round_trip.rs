@@ -44,6 +44,11 @@ impl AcpHost for NodeChildAcpHost {
         let entrypoint = request
             .entrypoint
             .ok_or_else(|| AcpCoreError::InvalidState("missing agent entrypoint".into()))?;
+        let entrypoint = if entrypoint == "/opt/agentos/bin/echo-agent" {
+            echo_agent_path()
+        } else {
+            PathBuf::from(entrypoint)
+        };
         let mut command = Command::new("node");
         command
             .arg(&entrypoint)
@@ -149,7 +154,7 @@ impl AcpHost for NodeChildAcpHost {
         let manifest = serde_json::json!({
             "name": "echo",
             "agent": {
-                "acpEntrypoint": echo_agent_path().to_string_lossy(),
+                "acpEntrypoint": "echo-agent",
             },
         });
         serde_json::to_vec(&manifest)
@@ -189,15 +194,15 @@ fn acp_core_runs_a_real_session_round_trip_against_the_echo_agent() {
     let mut host = NodeChildAcpHost::default();
     let request = AcpCreateSessionRequest {
         agent_type: "echo".into(),
-        runtime: AcpRuntimeKind::JavaScript,
-        protocol_version: 1,
-        cwd: ".".into(),
-        args: Vec::new(),
-        env: BTreeMap::new().into_iter().collect(),
-        client_capabilities: "{}".into(),
-        mcp_servers: "[]".into(),
+        runtime: Some(AcpRuntimeKind::JavaScript),
+        protocol_version: Some(1),
+        cwd: Some(".".into()),
+        args: Some(Vec::new()),
+        env: Some(BTreeMap::new().into_iter().collect()),
+        client_capabilities: Some("{}".into()),
+        mcp_servers: Some("[]".into()),
         additional_instructions: None,
-        skip_os_instructions: false,
+        skip_os_instructions: Some(false),
     };
 
     // Real round-trip: spawn node, run initialize + session/new over real pipes.

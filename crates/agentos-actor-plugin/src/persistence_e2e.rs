@@ -24,6 +24,7 @@ use crate::persistence;
 /// Mock host state: the actor's SQLite database.
 struct MockHost {
     conn: Mutex<Connection>,
+    scheduled: Mutex<Vec<abi::ScheduleActionRequest>>,
     refs: AtomicIsize,
 }
 
@@ -127,6 +128,18 @@ extern "C" fn async_unavailable(
             b"not available in persistence test".to_vec(),
         )),
     );
+}
+extern "C" fn schedule_at(
+    ctx: *const c_void,
+    request: abi::OwnedBuf,
+    done: abi::CompletionFn,
+    ud: *mut c_void,
+) {
+    let bytes = unsafe { request.into_vec() };
+    let request: abi::ScheduleActionRequest =
+        ciborium::from_reader(Cursor::new(bytes)).expect("decode schedule_at request");
+    host_of(ctx).scheduled.lock().unwrap().push(request);
+    done(ud, abi::AbiResult::ok(abi::OwnedBuf::empty()));
 }
 extern "C" fn hibernatable_ws_ack(
     _c: *const c_void,
@@ -296,7 +309,7 @@ fn mock_host_ctx(host: &MockHost) -> HostCtx {
         kv_list_prefix: async_unavailable,
         kv_list_range: async_unavailable,
         schedule_after: async_unavailable,
-        schedule_at: async_unavailable,
+        schedule_at,
         set_alarm: async_unavailable,
         scheduled_events: async_unavailable,
         conn_list: async_unavailable,
@@ -317,6 +330,7 @@ fn mock_host_ctx(host: &MockHost) -> HostCtx {
 async fn persistence_round_trips_fs_ops_against_real_sqlite() {
     let host_state = MockHost {
         conn: Mutex::new(Connection::open_in_memory().expect("open sqlite")),
+        scheduled: Mutex::new(Vec::new()),
         refs: AtomicIsize::new(1),
     };
 
@@ -452,6 +466,130 @@ async fn persistence_round_trips_fs_ops_against_real_sqlite() {
             Some(JsonValue::Bool(false)),
             "file should be gone after removeFile"
         );
+    }
+
+    assert_eq!(host_state.refs.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn persistence_stores_cron_state_as_an_opaque_value() {
+    let host_state = MockHost {
+        conn: Mutex::new(Connection::open_in_memory().expect("open sqlite")),
+        scheduled: Mutex::new(Vec::new()),
+        refs: AtomicIsize::new(1),
+    };
+
+    {
+        let host = mock_host_ctx(&host_state);
+        persistence::migrate(&host).await.expect("migrate");
+        let state = r#"{"version":1,"sidecarOwned":true}"#;
+        persistence::save_cron_state(&host, state)
+            .await
+            .expect("save cron state");
+        assert_eq!(
+            persistence::load_cron_state(&host)
+                .await
+                .expect("load cron state")
+                .as_deref(),
+            Some(state)
+        );
+
+        persistence::delete_cron_state(&host)
+            .await
+            .expect("delete cron state");
+        assert_eq!(
+            persistence::load_cron_state(&host)
+                .await
+                .expect("load deleted cron state"),
+            None
+        );
+
+        let args = vec![1, 2, 3];
+        host.schedule_at(
+            1_700_000_000_123,
+            crate::actions::cron::INTERNAL_CRON_WAKE_ACTION.to_string(),
+            args.clone(),
+        )
+        .await
+        .expect("schedule durable cron wake");
+        let scheduled = host_state.scheduled.lock().unwrap();
+        assert_eq!(scheduled.len(), 1);
+        assert_eq!(scheduled[0].timestamp_ms, Some(1_700_000_000_123));
+        assert_eq!(scheduled[0].delay_ms, None);
+        assert_eq!(
+            scheduled[0].action_name,
+            crate::actions::cron::INTERNAL_CRON_WAKE_ACTION
+        );
+        assert_eq!(scheduled[0].args, args);
+    }
+
+    assert_eq!(host_state.refs.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn actor_cold_boot_restores_sidecar_owned_cron_state() {
+    let Ok(sidecar_path) = std::env::var("AGENTOS_SIDECAR_BIN") else {
+        eprintln!("skipping actor cold-wake cron test: AGENTOS_SIDECAR_BIN is not set");
+        return;
+    };
+    if !std::path::Path::new(&sidecar_path).is_file() {
+        eprintln!("skipping actor cold-wake cron test: sidecar binary is missing");
+        return;
+    }
+    let host_state = MockHost {
+        conn: Mutex::new(Connection::open_in_memory().expect("open sqlite")),
+        scheduled: Mutex::new(Vec::new()),
+        refs: AtomicIsize::new(1),
+    };
+
+    {
+        let host = mock_host_ctx(&host_state);
+        persistence::migrate(&host).await.expect("migrate");
+        let config = crate::config::AgentOsConfigJson::default();
+        let pool = format!("actor-cron-restore-test-{}", uuid::Uuid::new_v4());
+        let mut vm = None;
+        crate::vm::ensure_vm(&host, &sidecar_path, &config, &pool, &mut vm)
+            .await
+            .expect("boot first VM");
+        let first = vm.as_ref().expect("first VM");
+        first
+            .schedule_cron(agentos_client::CronJobOptions {
+                id: Some("survives-sleep".to_string()),
+                schedule: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+                action: agentos_client::CronAction::Exec {
+                    command: "true".to_string(),
+                    args: Vec::new(),
+                },
+                overlap: None,
+            })
+            .await
+            .expect("schedule durable job");
+        crate::vm::persist_cron_state(&host, first)
+            .await
+            .expect("persist before sleep");
+        crate::vm::shutdown_vm(&host, &mut vm, "sleep").await;
+
+        crate::vm::ensure_vm(&host, &sidecar_path, &config, &pool, &mut vm)
+            .await
+            .expect("cold boot restored VM");
+        let restored = vm.as_ref().expect("restored VM");
+        assert!(
+            restored
+                .list_cron_jobs()
+                .await
+                .expect("list restored cron jobs")
+                .iter()
+                .any(|job| job.id == "survives-sleep"),
+            "cold actor boot must restore the sidecar-owned cron registry"
+        );
+        restored
+            .cancel_cron_job("survives-sleep")
+            .await
+            .expect("cancel restored job");
+        crate::vm::shutdown_vm(&host, &mut vm, "destroy").await;
+        crate::vm::delete_cron_state(&host)
+            .await
+            .expect("delete persisted state");
     }
 
     assert_eq!(host_state.refs.load(Ordering::SeqCst), 1);

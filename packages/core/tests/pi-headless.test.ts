@@ -105,11 +105,13 @@ describe("full createSession('pi') inside the VM", () => {
 
 			expect(sessionId).toBeTruthy();
 			expect(
-				vm.listSessions().some((entry) => entry.sessionId === sessionId),
+				(await vm.listSessions()).some(
+					(entry) => entry.sessionId === sessionId,
+				),
 			).toBe(true);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -146,21 +148,21 @@ describe("full createSession('pi') inside the VM", () => {
 				})
 			).sessionId;
 
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as AgentInfo;
+			const agentInfo = (await vm.getSessionAgentInfo(sessionId)) as AgentInfo;
 			expect(agentInfo.name).toBe("pi-sdk-acp");
 			expect(agentInfo.title).toBe("Pi SDK ACP adapter");
 			expect(agentInfo.version).toBeTruthy();
 
-			const capabilities = vm.getSessionCapabilities(
+			const capabilities = (await vm.getSessionCapabilities(
 				sessionId,
-			) as AgentCapabilities;
+			)) as AgentCapabilities;
 			expect(capabilities.promptCapabilities).toMatchObject({
 				image: true,
 				audio: false,
 				embeddedContext: false,
 			});
 
-			const modes = vm.getSessionModes(sessionId);
+			const modes = await vm.getSessionModes(sessionId);
 			expect(modes?.currentModeId).toBeTruthy();
 			expect(modes?.availableModes.length).toBeGreaterThan(0);
 
@@ -199,7 +201,7 @@ describe("full createSession('pi') inside the VM", () => {
 			).toBe(true);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -259,7 +261,7 @@ describe("full createSession('pi') inside the VM", () => {
 			expect(mock.getRequests().length).toBeGreaterThanOrEqual(2);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);

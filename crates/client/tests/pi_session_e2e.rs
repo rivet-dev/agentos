@@ -212,6 +212,8 @@ async fn pi_session_create_prompt_close() {
     );
     assert!(
         os.list_sessions()
+            .await
+            .expect("list sessions")
             .iter()
             .any(|s| s.session_id == session.session_id),
         "created session must appear in list_sessions"
@@ -232,6 +234,8 @@ async fn pi_session_create_prompt_close() {
         result.text
     );
 
-    os.close_session(&session.session_id).ok();
+    os.close_session(&session.session_id)
+        .await
+        .expect("close session");
     os.shutdown().await.expect("shutdown");
 }

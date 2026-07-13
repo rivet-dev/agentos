@@ -10,35 +10,41 @@ use agentos_bridge::{
 use agentos_kernel::kernel::KernelVmConfig;
 use agentos_native_sidecar_core::{
     authenticated_response, bound_udp_snapshot_response, connection_id_of,
-    execution_signal_from_number, layer_created_response, layer_sealed_response,
-    listener_snapshot_response, overlay_created_response, permissions_from_policy,
-    process_exited_event, process_killed_response, process_output_event, process_snapshot_response,
+    execution_signal_from_number, guest_environment_with_overrides, layer_created_response,
+    layer_sealed_response, listener_snapshot_response, overlay_created_response,
+    permissions_from_policy, permissions_with_allow_all_defaults, process_exited_event,
+    process_killed_response, process_output_event, process_snapshot_response,
     process_started_response, protocol_process_snapshot_entry, protocol_root_filesystem_mode,
-    reject, respond, root_filesystem_bootstrapped_response, root_filesystem_snapshot_response,
-    root_snapshot_entry, route_request_payload, session_opened_response, session_scope_of,
-    signal_state_response, snapshot_exported_response, snapshot_imported_response,
-    stdin_closed_response, stdin_written_response, unsupported_guest_kernel_call_event,
-    unsupported_host_callback_direction_dispatch, validate_authenticate_versions,
-    vm_configured_response, vm_created_response, vm_disposed_response, vm_id_of,
-    vm_lifecycle_event, zombie_timer_count_response, DispatchResult, RequestRoute,
+    reject, resolve_command_line, respond, root_filesystem_bootstrapped_response,
+    root_filesystem_snapshot_response, root_snapshot_entry, route_request_payload,
+    session_opened_response, session_scope_of, signal_state_response, snapshot_exported_response,
+    snapshot_imported_response, stdin_closed_response, stdin_written_response,
+    unsupported_guest_kernel_call_event, unsupported_host_callback_direction_dispatch,
+    validate_authenticate_versions, vm_configured_response, vm_created_response,
+    vm_disposed_response, vm_id_of, vm_lifecycle_event, zombie_timer_count_response, CronAction,
+    CronScheduler, DispatchResult, RequestRoute,
 };
 use agentos_sidecar_protocol::protocol::{
-    AuthenticateRequest, BootstrapRootFilesystemRequest, CloseStdinRequest, ConfigureVmRequest,
-    CreateLayerRequest, CreateOverlayRequest, CreateVmRequest, DisposeVmRequest, EventFrame,
-    ExecuteRequest, ExportSnapshotRequest, ExtEnvelope, FindBoundUdpRequest, FindListenerRequest,
-    GetProcessSnapshotRequest, GetSignalStateRequest, GetZombieTimerCountRequest, GuestRuntimeKind,
-    HostCallbacksRegisteredResponse, ImportSnapshotRequest, KillProcessRequest, OpenSessionRequest,
-    OwnershipScope, RegisterHostCallbacksRequest, RequestFrame, ResponsePayload, SealLayerRequest,
-    SnapshotRootFilesystemRequest, SocketStateEntry, StreamChannel, VmFetchRequest,
-    VmFetchResponse, VmLifecycleState, WriteStdinRequest,
+    AuthenticateRequest, BootstrapRootFilesystemRequest, CancelCronJobRequest, CloseStdinRequest,
+    CompleteCronRunRequest, ConfigureVmRequest, CreateLayerRequest, CreateOverlayRequest,
+    CreateVmRequest, CronAlarm, CronDispatchEvent, CronEventKind, CronEventRecord, CronRun,
+    DisposeVmRequest, EventFrame, EventPayload, ExecuteRequest, ExportSnapshotRequest, ExtEnvelope,
+    FindBoundUdpRequest, FindListenerRequest, GetProcessSnapshotRequest, GetSignalStateRequest,
+    GetZombieTimerCountRequest, GuestRuntimeKind, HostCallbacksRegisteredResponse,
+    ImportCronStateRequest, ImportSnapshotRequest, KillProcessRequest, OpenSessionRequest,
+    OwnershipScope, RegisterHostCallbacksRequest, RequestFrame, ResponsePayload,
+    ScheduleCronRequest, SealLayerRequest, SnapshotRootFilesystemRequest, SocketStateEntry,
+    StreamChannel, StructuredEvent, VmFetchRequest, VmFetchResponse, VmLifecycleState,
+    WakeCronRequest, WriteStdinRequest,
 };
 use agentos_sidecar_protocol::wire::{
     request_frame_to_compat, CompatDispatchResult, ProtocolCodecError, ProtocolFrame,
     WireFrameCodec,
 };
 use agentos_vm_config::CreateVmConfig;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fmt;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const BROWSER_SIDECAR_ID: &str = "agentos-native-sidecar-browser";
 pub const BROWSER_MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
@@ -58,7 +64,10 @@ pub struct BrowserWireDispatcher<B: BrowserSidecarBridge> {
     next_connection: usize,
     next_session: usize,
     next_vm: usize,
+    next_process: u64,
     active_vms: BTreeSet<String>,
+    cron_schedulers: BTreeMap<String, CronScheduler>,
+    cron_process_runs: BTreeMap<ProcessExecutionKey, String>,
     executions: BTreeMap<String, ExecutionRecord>,
     process_executions: BTreeMap<ProcessExecutionKey, String>,
     pending_events: VecDeque<EventFrame>,
@@ -76,7 +85,10 @@ where
             next_connection: 0,
             next_session: 0,
             next_vm: 0,
+            next_process: 0,
             active_vms: BTreeSet::new(),
+            cron_schedulers: BTreeMap::new(),
+            cron_process_runs: BTreeMap::new(),
             executions: BTreeMap::new(),
             process_executions: BTreeMap::new(),
             pending_events: VecDeque::new(),
@@ -132,6 +144,7 @@ where
             RequestRoute::Authenticate(payload) => self.authenticate(&request, payload),
             RequestRoute::OpenSession(payload) => self.open_session(&request, payload),
             RequestRoute::CreateVm(payload) => self.create_vm(&request, payload),
+            RequestRoute::InitializeVm(payload) => self.initialize_vm(&request, payload),
             RequestRoute::DisposeVm(payload) => self.dispose_vm(&request, payload),
             RequestRoute::BootstrapRootFilesystem(payload) => {
                 self.bootstrap_root_filesystem(&request, payload)
@@ -209,6 +222,13 @@ where
                     "provided_commands is not available in the converged browser runtime",
                 )
             }
+            RequestRoute::ScheduleCron(payload) => self.schedule_cron(&request, payload),
+            RequestRoute::ListCronJobs(_) => self.list_cron_jobs(&request),
+            RequestRoute::CancelCronJob(payload) => self.cancel_cron_job(&request, payload),
+            RequestRoute::WakeCron(payload) => self.wake_cron(&request, payload),
+            RequestRoute::CompleteCronRun(payload) => self.complete_cron_run(&request, payload),
+            RequestRoute::ExportCronState(_) => self.export_cron_state(&request),
+            RequestRoute::ImportCronState(payload) => self.import_cron_state(&request, payload),
             RequestRoute::UnsupportedHostCallbackDirection => {
                 unsupported_host_callback_direction_dispatch(&request)
             }
@@ -240,6 +260,326 @@ where
         }
     }
 
+    fn schedule_cron(
+        &mut self,
+        request: &RequestFrame,
+        payload: ScheduleCronRequest,
+    ) -> DispatchResult {
+        let Some(vm_id) = self.cron_vm_id(request) else {
+            return rejected(
+                request,
+                "invalid_ownership",
+                "schedule_cron requires an active VM",
+            );
+        };
+        let response = match self
+            .cron_schedulers
+            .entry(vm_id)
+            .or_default()
+            .schedule(payload, unix_time_ms())
+        {
+            Ok(response) => response,
+            Err(error) => return rejected(request, "cron_schedule_failed", &error.to_string()),
+        };
+        DispatchResult {
+            response: respond(request, ResponsePayload::CronScheduled(response)),
+            events: Vec::new(),
+        }
+    }
+
+    fn list_cron_jobs(&mut self, request: &RequestFrame) -> DispatchResult {
+        let Some(vm_id) = self.cron_vm_id(request) else {
+            return rejected(
+                request,
+                "invalid_ownership",
+                "list_cron_jobs requires an active VM",
+            );
+        };
+        let response = self.cron_schedulers.entry(vm_id).or_default().list();
+        DispatchResult {
+            response: respond(request, ResponsePayload::CronJobs(response)),
+            events: Vec::new(),
+        }
+    }
+
+    fn cancel_cron_job(
+        &mut self,
+        request: &RequestFrame,
+        payload: CancelCronJobRequest,
+    ) -> DispatchResult {
+        let Some(vm_id) = self.cron_vm_id(request) else {
+            return rejected(
+                request,
+                "invalid_ownership",
+                "cancel_cron_job requires an active VM",
+            );
+        };
+        let response = match self
+            .cron_schedulers
+            .entry(vm_id)
+            .or_default()
+            .cancel(payload)
+        {
+            Ok(response) => response,
+            Err(error) => return rejected(request, "cron_cancel_failed", &error.to_string()),
+        };
+        DispatchResult {
+            response: respond(request, ResponsePayload::CronCancelled(response)),
+            events: Vec::new(),
+        }
+    }
+
+    fn wake_cron(&mut self, request: &RequestFrame, payload: WakeCronRequest) -> DispatchResult {
+        let Some(vm_id) = self.cron_vm_id(request) else {
+            return rejected(
+                request,
+                "invalid_ownership",
+                "wake_cron requires an active VM",
+            );
+        };
+        let mut response = match self
+            .cron_schedulers
+            .entry(vm_id.clone())
+            .or_default()
+            .wake(payload, unix_time_ms())
+        {
+            Ok(response) => response,
+            Err(error) => return rejected(request, "cron_wake_failed", &error.to_string()),
+        };
+        response.runs = self.start_cron_runs(
+            request,
+            &vm_id,
+            response.runs,
+            &mut response.alarm,
+            &mut response.events,
+        );
+        DispatchResult {
+            response: respond(request, ResponsePayload::CronWake(response)),
+            events: Vec::new(),
+        }
+    }
+
+    fn start_cron_runs(
+        &mut self,
+        request: &RequestFrame,
+        vm_id: &str,
+        runs: Vec<CronRun>,
+        alarm: &mut CronAlarm,
+        events: &mut Vec<CronEventRecord>,
+    ) -> Vec<CronRun> {
+        let mut pending = VecDeque::from(runs);
+        let mut host_runs = Vec::new();
+        while let Some(run) = pending.pop_front() {
+            let action = match agentos_native_sidecar_core::decode_cron_action(&run.action) {
+                Ok(action) => action,
+                Err(error) => {
+                    self.complete_failed_cron_run(
+                        vm_id,
+                        run.run_id,
+                        run.job_id,
+                        error.to_string(),
+                        alarm,
+                        events,
+                        &mut pending,
+                    );
+                    continue;
+                }
+            };
+            match action {
+                CronAction::Callback { .. } => host_runs.push(run),
+                CronAction::Session { .. } => self.complete_failed_cron_run(
+                    vm_id,
+                    run.run_id,
+                    run.job_id,
+                    String::from(
+                        "cron session actions require an ACP adapter with background execution support; this browser ACP adapter does not provide it",
+                    ),
+                    alarm,
+                    events,
+                    &mut pending,
+                ),
+                CronAction::Exec { command, args } => {
+                    let process_id = format!("cron-run-{}", run.run_id);
+                    let payload = ExecuteRequest {
+                        process_id: Some(process_id.clone()),
+                        command: Some(command),
+                        shell_command: None,
+                        runtime: None,
+                        entrypoint: None,
+                        args,
+                        env: None,
+                        cwd: None,
+                        wasm_permission_tier: None,
+                        pty: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                    };
+                    let internal = RequestFrame::new(
+                        0,
+                        request.ownership.clone(),
+                        agentos_sidecar_protocol::protocol::RequestPayload::Execute(
+                            payload.clone(),
+                        ),
+                    );
+                    let launch = self.execute(&internal, payload);
+                    let launch_error = match launch.response.payload {
+                        ResponsePayload::ProcessStarted(_) => None,
+                        ResponsePayload::Rejected(rejected) => {
+                            Some(format!("{}: {}", rejected.code, rejected.message))
+                        }
+                        other => Some(format!(
+                            "cron exec returned unexpected response: {other:?}"
+                        )),
+                    };
+                    if let Some(error) = launch_error {
+                        self.complete_failed_cron_run(
+                            vm_id,
+                            run.run_id,
+                            run.job_id,
+                            error,
+                            alarm,
+                            events,
+                            &mut pending,
+                        );
+                    } else {
+                        self.cron_process_runs.insert(
+                            (vm_id.to_string(), process_id),
+                            run.run_id,
+                        );
+                    }
+                }
+            }
+        }
+        host_runs
+    }
+
+    fn complete_failed_cron_run(
+        &mut self,
+        vm_id: &str,
+        run_id: String,
+        job_id: String,
+        error: String,
+        alarm: &mut CronAlarm,
+        events: &mut Vec<CronEventRecord>,
+        pending: &mut VecDeque<CronRun>,
+    ) {
+        let completion = self
+            .cron_schedulers
+            .entry(vm_id.to_string())
+            .or_default()
+            .complete(
+                CompleteCronRunRequest {
+                    run_id: run_id.clone(),
+                    error: Some(error.clone()),
+                },
+                unix_time_ms(),
+            );
+        let completion = match completion {
+            Ok(completion) => completion,
+            Err(completion_error) => {
+                events.push(CronEventRecord {
+                    kind: CronEventKind::Error,
+                    job_id,
+                    time_ms: unix_time_ms(),
+                    duration_ms: None,
+                    error: Some(format!(
+                        "sidecar could not complete cron run {run_id}: {completion_error}; original error: {error}"
+                    )),
+                });
+                return;
+            }
+        };
+        *alarm = completion.alarm;
+        events.extend(completion.events);
+        pending.extend(completion.runs);
+    }
+
+    fn complete_cron_run(
+        &mut self,
+        request: &RequestFrame,
+        payload: CompleteCronRunRequest,
+    ) -> DispatchResult {
+        let Some(vm_id) = self.cron_vm_id(request) else {
+            return rejected(
+                request,
+                "invalid_ownership",
+                "complete_cron_run requires an active VM",
+            );
+        };
+        let response = match self
+            .cron_schedulers
+            .entry(vm_id)
+            .or_default()
+            .complete(payload, unix_time_ms())
+        {
+            Ok(response) => response,
+            Err(error) => return rejected(request, "cron_complete_failed", &error.to_string()),
+        };
+        DispatchResult {
+            response: respond(request, ResponsePayload::CronRunCompleted(response)),
+            events: Vec::new(),
+        }
+    }
+
+    fn export_cron_state(&mut self, request: &RequestFrame) -> DispatchResult {
+        let Some(vm_id) = self.cron_vm_id(request) else {
+            return rejected(
+                request,
+                "invalid_ownership",
+                "export_cron_state requires an active VM",
+            );
+        };
+        let state = match self
+            .cron_schedulers
+            .entry(vm_id)
+            .or_default()
+            .export_state()
+        {
+            Ok(state) => state,
+            Err(error) => return rejected(request, "cron_export_failed", &error.to_string()),
+        };
+        DispatchResult {
+            response: respond(
+                request,
+                ResponsePayload::CronStateExported(
+                    agentos_sidecar_protocol::protocol::CronStateExportedResponse { state },
+                ),
+            ),
+            events: Vec::new(),
+        }
+    }
+
+    fn import_cron_state(
+        &mut self,
+        request: &RequestFrame,
+        payload: ImportCronStateRequest,
+    ) -> DispatchResult {
+        let Some(vm_id) = self.cron_vm_id(request) else {
+            return rejected(
+                request,
+                "invalid_ownership",
+                "import_cron_state requires an active VM",
+            );
+        };
+        let response = match self
+            .cron_schedulers
+            .entry(vm_id)
+            .or_default()
+            .import_state(&payload.state)
+        {
+            Ok(response) => response,
+            Err(error) => return rejected(request, "cron_import_failed", &error.to_string()),
+        };
+        DispatchResult {
+            response: respond(request, ResponsePayload::CronStateImported(response)),
+            events: Vec::new(),
+        }
+    }
+
+    fn cron_vm_id(&self, request: &RequestFrame) -> Option<String> {
+        vm_id_of(&request.ownership).filter(|vm_id| self.active_vms.contains(vm_id))
+    }
+
     fn configure_vm(
         &mut self,
         request: &RequestFrame,
@@ -252,21 +592,35 @@ where
                 "configure_vm requires VM ownership",
             );
         };
-        if !payload.mounts.is_empty()
-            || !payload.software.is_empty()
-            || payload.module_access_cwd.is_some()
+        if payload
+            .mounts
+            .as_ref()
+            .is_some_and(|mounts| !mounts.is_empty())
         {
             return rejected(
                 request,
                 "unsupported_request",
-                "browser ConfigureVm does not support host mounts, software installs, or moduleAccessCwd",
+                "browser ConfigureVm does not support host mounts",
+            );
+        }
+        if payload
+            .packages
+            .as_ref()
+            .is_some_and(|packages| !packages.is_empty())
+            || payload.packages_mount_at.is_some()
+        {
+            return rejected(
+                request,
+                "unsupported_request",
+                "browser ConfigureVm does not support package projection",
             );
         }
 
         let permissions = match payload.permissions {
             Some(policy) => {
-                let policy =
-                    agentos_sidecar_protocol::wire::permissions_policy_config_from_wire(policy);
+                let policy = permissions_with_allow_all_defaults(Some(
+                    agentos_sidecar_protocol::wire::permissions_policy_config_from_wire(policy),
+                ));
                 if let Err(error) =
                     agentos_native_sidecar_core::validate_permissions_policy(&policy)
                 {
@@ -279,15 +633,15 @@ where
         if let Err(error) = self.sidecar.configure_vm(
             &vm_id,
             permissions,
-            payload.instructions,
-            payload.projected_modules,
-            payload.command_permissions.into_iter().collect(),
+            payload
+                .command_permissions
+                .map(|permissions| permissions.into_iter().collect()),
             payload.loopback_exempt_ports,
         ) {
             return rejected(request, "configure_vm_failed", &error.to_string());
         }
         DispatchResult {
-            response: vm_configured_response(request, 0, 0, Vec::new(), Vec::new()),
+            response: vm_configured_response(request, 0, Vec::new(), Vec::new()),
             events: Vec::new(),
         }
     }
@@ -751,12 +1105,15 @@ where
         self.next_vm += 1;
         let vm_id = format!("vm-{}", self.next_vm);
         let mut kernel_config = KernelVmConfig::new(vm_id.clone());
-        kernel_config.env = create_config.env.clone();
+        kernel_config.env =
+            guest_environment_with_overrides(&create_config.env.clone().unwrap_or_default());
         if let Some(cwd) = create_config.cwd.clone() {
             kernel_config.cwd = cwd;
         }
         kernel_config.loopback_exempt_ports = create_config
             .loopback_exempt_ports
+            .as_deref()
+            .unwrap_or_default()
             .iter()
             .copied()
             .collect();
@@ -770,26 +1127,33 @@ where
             }
         };
         kernel_config.resources = limits.resources;
-        let permissions = create_config
-            .permissions
-            .clone()
-            .unwrap_or_else(agentos_native_sidecar_core::deny_all_policy);
+        let permissions = permissions_with_allow_all_defaults(create_config.permissions.clone());
         if let Err(error) = agentos_native_sidecar_core::validate_permissions_policy(&permissions) {
             return rejected(request, "invalid_config", &error.to_string());
         }
         kernel_config.permissions = permissions_from_policy(permissions);
 
+        let guest_cwd = kernel_config.cwd.clone();
+        let guest_env = kernel_config.env.clone().into_iter().collect();
+
+        if let Err(error) = self.sidecar.create_vm_with_root_filesystem(
+            kernel_config,
+            create_config.root_filesystem.unwrap_or_default(),
+        ) {
+            return rejected(request, "create_vm_failed", &error.to_string());
+        }
         if let Err(error) = self
             .sidecar
-            .create_vm_with_root_filesystem(kernel_config, create_config.root_filesystem)
+            .set_agent_additional_instructions(&vm_id, create_config.agent_additional_instructions)
         {
+            let _ = self.sidecar.dispose_vm(&vm_id);
             return rejected(request, "create_vm_failed", &error.to_string());
         }
         self.active_vms.insert(vm_id.clone());
 
         let ownership = OwnershipScope::vm(&connection_id, &session_id, &vm_id);
         DispatchResult {
-            response: vm_created_response(request, vm_id.clone()),
+            response: vm_created_response(request, vm_id.clone(), guest_cwd, guest_env),
             events: vec![
                 vm_lifecycle_event(
                     &connection_id,
@@ -809,6 +1173,117 @@ where
         }
     }
 
+    fn initialize_vm(
+        &mut self,
+        request: &RequestFrame,
+        payload: agentos_sidecar_protocol::protocol::InitializeVmRequest,
+    ) -> DispatchResult {
+        let Some((connection_id, session_id)) = session_scope_of(&request.ownership) else {
+            return rejected(
+                request,
+                "invalid_ownership",
+                "initialize_vm requires session ownership",
+            );
+        };
+        let created_dispatch = self.create_vm(
+            request,
+            CreateVmRequest {
+                runtime: payload.runtime,
+                config: payload.config,
+            },
+        );
+        let ResponsePayload::VmCreated(created) = created_dispatch.response.payload.clone() else {
+            return created_dispatch;
+        };
+        let vm_id = created.vm_id.clone();
+        let ownership = OwnershipScope::vm(&connection_id, &session_id, &vm_id);
+        let configure_payload = ConfigureVmRequest {
+            mounts: payload.mounts,
+            permissions: None,
+            command_permissions: None,
+            loopback_exempt_ports: None,
+            packages: payload.packages,
+            packages_mount_at: payload.packages_mount_at,
+        };
+        let configure_request = RequestFrame {
+            schema: request.schema.clone(),
+            request_id: request.request_id,
+            ownership: ownership.clone(),
+            payload: agentos_sidecar_protocol::protocol::RequestPayload::ConfigureVm(
+                configure_payload.clone(),
+            ),
+        };
+        let configured_dispatch = self.configure_vm(&configure_request, configure_payload);
+        let ResponsePayload::VmConfigured(configured) =
+            configured_dispatch.response.payload.clone()
+        else {
+            let message = match configured_dispatch.response.payload {
+                ResponsePayload::Rejected(rejected) => rejected.message,
+                _ => String::from("initialize_vm configure step returned an unexpected response"),
+            };
+            self.cleanup_failed_initialization(&vm_id);
+            return rejected(request, "initialize_vm_failed", &message);
+        };
+
+        let registrations = payload.host_callbacks.unwrap_or_default();
+        let mut host_callbacks = Vec::with_capacity(registrations.len());
+        for registration in registrations {
+            let registration_request = RequestFrame {
+                schema: request.schema.clone(),
+                request_id: request.request_id,
+                ownership: ownership.clone(),
+                payload: agentos_sidecar_protocol::protocol::RequestPayload::RegisterHostCallbacks(
+                    registration.clone(),
+                ),
+            };
+            let registered_dispatch =
+                self.register_host_callbacks(&registration_request, registration);
+            match registered_dispatch.response.payload {
+                ResponsePayload::HostCallbacksRegistered(registered) => {
+                    host_callbacks.push(registered)
+                }
+                ResponsePayload::Rejected(rejected_response) => {
+                    self.cleanup_failed_initialization(&vm_id);
+                    return rejected(request, "initialize_vm_failed", &rejected_response.message);
+                }
+                _ => {
+                    self.cleanup_failed_initialization(&vm_id);
+                    return rejected(
+                        request,
+                        "initialize_vm_failed",
+                        "initialize_vm host-callback step returned an unexpected response",
+                    );
+                }
+            }
+        }
+
+        DispatchResult {
+            response: respond(
+                request,
+                ResponsePayload::VmInitialized(
+                    agentos_sidecar_protocol::protocol::VmInitializedResponse {
+                        vm_id,
+                        guest_cwd: created.guest_cwd,
+                        guest_env: created.guest_env,
+                        applied_mounts: configured.applied_mounts,
+                        projected_commands: configured.projected_commands,
+                        agents: configured.agents,
+                        host_callbacks,
+                    },
+                ),
+            ),
+            events: created_dispatch.events,
+        }
+    }
+
+    fn cleanup_failed_initialization(&mut self, vm_id: &str) {
+        if let Err(error) = self.sidecar.dispose_vm(vm_id) {
+            eprintln!("failed to clean up partially initialized browser VM {vm_id}: {error}");
+        }
+        self.active_vms.remove(vm_id);
+        self.cron_schedulers.remove(vm_id);
+    }
+
     fn dispose_vm(&mut self, request: &RequestFrame, _payload: DisposeVmRequest) -> DispatchResult {
         let Some(vm_id) = vm_id_of(&request.ownership) else {
             return rejected(
@@ -821,6 +1296,9 @@ where
             return rejected(request, "dispose_vm_failed", &error.to_string());
         }
         self.active_vms.remove(&vm_id);
+        self.cron_schedulers.remove(&vm_id);
+        self.cron_process_runs
+            .retain(|(process_vm_id, _), _| process_vm_id != &vm_id);
         self.executions.retain(|_, record| record.vm_id != vm_id);
         self.process_executions
             .retain(|(process_vm_id, _), _| process_vm_id != &vm_id);
@@ -854,7 +1332,8 @@ where
         }
     }
 
-    fn execute(&mut self, request: &RequestFrame, payload: ExecuteRequest) -> DispatchResult {
+    fn execute(&mut self, request: &RequestFrame, mut payload: ExecuteRequest) -> DispatchResult {
+        agentos_native_sidecar_core::apply_execute_defaults(&mut payload);
         let Some(vm_id) = vm_id_of(&request.ownership) else {
             return rejected(
                 request,
@@ -862,7 +1341,69 @@ where
                 "execute requires VM ownership",
             );
         };
-        let process_key = (vm_id.clone(), payload.process_id.clone());
+        if let Some(shell_command) = payload.shell_command.take() {
+            if payload.command.is_some()
+                || payload.runtime.is_some()
+                || payload.entrypoint.is_some()
+            {
+                return rejected(
+                    request,
+                    "invalid_request",
+                    "execute shellCommand cannot be combined with command, runtime, or entrypoint",
+                );
+            }
+            let Some(resolved) = resolve_command_line(&shell_command) else {
+                return rejected(
+                    request,
+                    "invalid_request",
+                    "execute shellCommand must not be empty",
+                );
+            };
+            payload.command = Some(resolved.command);
+            payload.args = resolved.args;
+        }
+        if payload.pty.is_some() {
+            return rejected(
+                request,
+                "unsupported",
+                "PTY execution is not supported by the browser sidecar",
+            );
+        }
+        if payload.timeout_ms.is_some() {
+            return rejected(
+                request,
+                "unsupported",
+                "execution timeouts are not supported by the browser sidecar",
+            );
+        }
+        let process_id = match payload.process_id.take() {
+            Some(process_id) if process_id.is_empty() => {
+                return rejected(
+                    request,
+                    "invalid_request",
+                    "execute process_id must not be empty",
+                );
+            }
+            Some(process_id) => process_id,
+            None => loop {
+                let Some(next_process) = self.next_process.checked_add(1) else {
+                    return rejected(
+                        request,
+                        "process_id_exhausted",
+                        "sidecar process id space exhausted",
+                    );
+                };
+                self.next_process = next_process;
+                let candidate = format!("sidecar-process-{next_process}");
+                if !self
+                    .process_executions
+                    .contains_key(&(vm_id.clone(), candidate.clone()))
+                {
+                    break candidate;
+                }
+            },
+        };
+        let process_key = (vm_id.clone(), process_id.clone());
         if self.process_executions.contains_key(&process_key) {
             return rejected(
                 request,
@@ -903,13 +1444,25 @@ where
             argv.push(command);
         }
         argv.extend(payload.args.clone());
+        let guest_cwd = match payload.cwd.clone() {
+            Some(cwd) => cwd,
+            None => match self.sidecar.guest_cwd(&vm_id) {
+                Ok(cwd) => cwd,
+                Err(error) => return rejected(request, "execute_failed", &error.to_string()),
+            },
+        };
         let started = match self.sidecar.start_execution_with_options(
             StartExecutionRequest {
                 vm_id: vm_id.clone(),
                 context_id: context.context_id,
                 argv,
-                env: payload.env.clone().into_iter().collect(),
-                cwd: payload.cwd.clone().unwrap_or_else(|| String::from("/")),
+                env: payload
+                    .env
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect(),
+                cwd: guest_cwd,
             },
             BrowserExecutionOptions {
                 command_name: payload.command.clone(),
@@ -924,14 +1477,14 @@ where
             started.execution_id.clone(),
             ExecutionRecord {
                 vm_id: vm_id.clone(),
-                process_id: payload.process_id.clone(),
+                process_id: process_id.clone(),
                 ownership: request.ownership.clone(),
             },
         );
         self.process_executions
             .insert(process_key, started.execution_id.clone());
         DispatchResult {
-            response: process_started_response(request, payload.process_id, None),
+            response: process_started_response(request, process_id, None),
             events: Vec::new(),
         }
     }
@@ -1078,6 +1631,12 @@ where
         match event {
             ExecutionEvent::Stdout(chunk) => {
                 let record = self.executions.get(&chunk.execution_id)?;
+                if self
+                    .cron_process_runs
+                    .contains_key(&(record.vm_id.clone(), record.process_id.clone()))
+                {
+                    return None;
+                }
                 Some(process_output_event(
                     record.ownership.clone(),
                     &record.process_id,
@@ -1087,6 +1646,12 @@ where
             }
             ExecutionEvent::Stderr(chunk) => {
                 let record = self.executions.get(&chunk.execution_id)?;
+                if self
+                    .cron_process_runs
+                    .contains_key(&(record.vm_id.clone(), record.process_id.clone()))
+                {
+                    return None;
+                }
                 Some(process_output_event(
                     record.ownership.clone(),
                     &record.process_id,
@@ -1098,10 +1663,63 @@ where
                 let record = self.executions.remove(&exited.execution_id)?;
                 self.process_executions
                     .remove(&(record.vm_id.clone(), record.process_id.clone()));
-                Some(process_exited_event(
+                let process_key = (record.vm_id.clone(), record.process_id.clone());
+                let Some(run_id) = self.cron_process_runs.remove(&process_key) else {
+                    return Some(process_exited_event(
+                        record.ownership,
+                        &record.process_id,
+                        exited.exit_code,
+                    ));
+                };
+                let completion = self
+                    .cron_schedulers
+                    .entry(record.vm_id.clone())
+                    .or_default()
+                    .complete(
+                        CompleteCronRunRequest {
+                            run_id: run_id.clone(),
+                            error: (exited.exit_code != 0).then(|| {
+                                format!("cron exec exited with status {}", exited.exit_code)
+                            }),
+                        },
+                        unix_time_ms(),
+                    );
+                let mut completion = match completion {
+                    Ok(completion) => completion,
+                    Err(error) => {
+                        return Some(EventFrame::new(
+                            record.ownership,
+                            EventPayload::Structured(StructuredEvent {
+                                name: String::from("cron_dispatch_error"),
+                                detail: HashMap::from([
+                                    (String::from("run_id"), run_id),
+                                    (String::from("error"), error.to_string()),
+                                ]),
+                            }),
+                        ));
+                    }
+                };
+                let internal = RequestFrame::new(
+                    0,
+                    record.ownership.clone(),
+                    agentos_sidecar_protocol::protocol::RequestPayload::WakeCron(WakeCronRequest {
+                        generation: completion.alarm.generation,
+                    }),
+                );
+                completion.runs = self.start_cron_runs(
+                    &internal,
+                    &record.vm_id,
+                    completion.runs,
+                    &mut completion.alarm,
+                    &mut completion.events,
+                );
+                Some(EventFrame::new(
                     record.ownership,
-                    &record.process_id,
-                    exited.exit_code,
+                    EventPayload::CronDispatch(CronDispatchEvent {
+                        alarm: completion.alarm,
+                        runs: completion.runs,
+                        events: completion.events,
+                    }),
                 ))
             }
             ExecutionEvent::GuestRequest(call) => {
@@ -1130,4 +1748,12 @@ fn rejected(request: &RequestFrame, code: &str, message: &str) -> DispatchResult
         response: reject(request, code, message),
         events: Vec::new(),
     }
+}
+
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
 }

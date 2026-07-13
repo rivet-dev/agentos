@@ -157,7 +157,7 @@ async function runSpawnedProcess(
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
 	const stdoutChunks: string[] = [];
 	const stderrChunks: string[] = [];
-	const { pid } = vm.spawn(command, args, {
+	const { pid } = await vm.spawn(command, args, {
 		onStdout: (chunk) => {
 			stdoutChunks.push(textDecoder.decode(chunk));
 		},

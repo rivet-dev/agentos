@@ -8,8 +8,8 @@ use agentos_native_sidecar::extension::ExtensionSnapshot;
 use agentos_native_sidecar::limits::DEFAULT_ACP_MAX_READ_LINE_BYTES;
 use agentos_native_sidecar::wire::{
     CloseStdinRequest, EventPayload, ExecuteRequest, GuestFilesystemCallRequest,
-    GuestFilesystemOperation, GuestRuntimeKind, KillProcessRequest, OwnershipScope, StreamChannel,
-    WriteStdinRequest,
+    GuestFilesystemOperation, GuestRuntimeKind, KillProcessRequest, OwnershipScope,
+    ResizePtyRequest, RootFilesystemEntryEncoding, StreamChannel, WriteStdinRequest,
 };
 use agentos_native_sidecar::{
     Extension, ExtensionContext, ExtensionFuture, ExtensionInterruptRequest,
@@ -19,17 +19,25 @@ use agentos_protocol::generated::v1::{
     AcpAgentEntry, AcpAgentExitedEvent, AcpAgentStderrEvent, AcpCallback, AcpCallbackResponse,
     AcpCloseSessionRequest, AcpCreateSessionRequest, AcpErrorResponse, AcpEvent,
     AcpGetSessionStateRequest, AcpHostRequestCallback, AcpListAgentsResponse,
-    AcpPermissionCallback, AcpRequest, AcpResponse, AcpResumeSessionRequest, AcpRuntimeKind,
-    AcpSessionClosedResponse, AcpSessionCreatedResponse, AcpSessionEvent, AcpSessionRequest,
-    AcpSessionResumedResponse, AcpSessionStateResponse,
+    AcpListSessionsResponse, AcpPermissionCallback, AcpRequest, AcpResponse,
+    AcpResumeSessionRequest, AcpRuntimeKind, AcpSessionClosedResponse, AcpSessionCreatedResponse,
+    AcpSessionEntry, AcpSessionEvent, AcpSessionRequest, AcpSessionResumedResponse,
+    AcpSessionStateResponse, AcpSetSessionConfigRequest,
 };
-use agentos_protocol::ACP_EXTENSION_NAMESPACE;
+use agentos_protocol::{
+    read_only_config_message, select_config_by_category, AcpPromptTextAccumulator,
+    ResolvedAcpCreateSessionRequest as ResolvedCreateSessionRequest,
+    ResolvedAcpResumeSessionRequest as ResolvedResumeSessionRequest, ACP_EXTENSION_NAMESPACE,
+    DEFAULT_ACP_CLIENT_CAPABILITIES, DEFAULT_ACP_MCP_SERVERS, DEFAULT_ACP_PROTOCOL_VERSION,
+};
+use base64::Engine;
 use serde_json::{json, Map, Value};
 use tokio::sync::Mutex;
 
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
 const SESSION_NEW_TIMEOUT: Duration = Duration::from_secs(30);
 const SESSION_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
+const PERMISSION_CALLBACK_TIMEOUT: Duration = Duration::from_secs(120);
 // While an ACP request is in flight the stdio loop is inside the extension
 // dispatch, so this wait loop becomes the cooperative VM I/O pump. Keep it at
 // the same cadence as secure-exec's outer event pump so adapter fetches and
@@ -42,13 +50,6 @@ const ACP_CANCEL_METHOD: &str = "session/cancel";
 /// is substituted with the guest-readable transcript path. Tunable; see spec §6.
 const CONTINUATION_PREAMBLE: &str = "You are continuing an earlier session. The full prior transcript is at `{path}`. Read it with your file tools if you need context before answering.";
 const ACP_TRACE_PATH_ENV: &str = "AGENT_OS_ACP_TRACE_PATH";
-/// ACP protocol version used for the resume handshake. Lockstep single version.
-const ACP_RESUME_PROTOCOL_VERSION: i32 = 1;
-/// Client capabilities advertised during the resume `initialize`. Mirrors the
-/// client's `defaultAcpClientCapabilities()` so resumed sessions behave like
-/// freshly created ones.
-const DEFAULT_RESUME_CLIENT_CAPABILITIES: &str =
-    "{\"fs\":{\"readTextFile\":true,\"writeTextFile\":true},\"terminal\":true}";
 const OPENCODE_SYSTEM_PROMPT_PATH: &str = "/tmp/agentos-system-prompt.md";
 const OPENCODE_DEFAULT_CONTEXT_PATHS: [&str; 11] = [
     ".github/copilot-instructions.md",
@@ -99,11 +100,31 @@ const ADAPTER_RESTART_OUTCOME_RESTARTED: &str = "restarted";
 const ADAPTER_RESTART_OUTCOME_UNSUPPORTED: &str = "unsupported";
 const ADAPTER_RESTART_OUTCOME_FAILED: &str = "failed";
 const ADAPTER_RESTART_OUTCOME_EXHAUSTED: &str = "exhausted";
+const DEFAULT_ACP_TERMINAL_OUTPUT_BYTE_LIMIT: usize = 1024 * 1024;
+const MAX_ACP_TERMINAL_OUTPUT_BYTE_LIMIT: usize = 1024 * 1024;
+const ACP_TERMINAL_OUTPUT_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 #[derive(Debug, Default)]
 pub struct AcpExtension {
     next_process_id: AtomicUsize,
+    next_terminal_id: AtomicUsize,
     sessions: Mutex<BTreeMap<String, AcpSessionRecord>>,
+    /// Session ids produced by completed handshakes but not yet bound. Each
+    /// reservation owns a live adapter process, so the kernel process limit
+    /// bounds this map.
+    session_reservations: Mutex<BTreeMap<String, String>>,
+    terminals: Mutex<BTreeMap<String, NativeAcpTerminal>>,
+}
+
+#[derive(Debug)]
+struct NativeAcpTerminal {
+    ownership: OwnershipScope,
+    session_id: String,
+    process_id: String,
+    output: Vec<u8>,
+    truncated: bool,
+    output_byte_limit: usize,
+    exit_code: Option<i32>,
 }
 
 #[derive(Debug, Clone)]
@@ -138,10 +159,10 @@ struct AcpSessionRecord {
 /// Adapter launch + handshake parameters retained on the session record so the
 /// sidecar can auto-restart a crashed adapter (see
 /// `AcpExtension::handle_adapter_exit`). `args`/`env` are the FINAL values that
-/// went into the original `ExecuteRequest` — post prompt-injection, including
-/// `AGENTOS_KEEP_STDIN_OPEN` — so a restart relaunches exactly what
-/// create/resume launched. `count` is the restarts already consumed for this
-/// session, bounded by `MAX_ADAPTER_RESTARTS`.
+/// went into the original `ExecuteRequest`, post prompt-injection, so a restart
+/// relaunches exactly what create/resume launched. Live stdin is an explicit
+/// execute field rather than retained environment state. `count` is the
+/// restarts already consumed for this session, bounded by `MAX_ADAPTER_RESTARTS`.
 #[derive(Debug, Clone)]
 struct AdapterRestartState {
     runtime: AcpRuntimeKind,
@@ -199,10 +220,16 @@ impl AcpExtension {
                 AcpRequest::AcpGetSessionStateRequest(request) => {
                     AcpHandlerOutput::response(self.get_session_state(ctx, request).await)
                 }
+                AcpRequest::AcpListSessionsRequest(_) => {
+                    AcpHandlerOutput::response(self.list_sessions(ctx).await)
+                }
                 AcpRequest::AcpCloseSessionRequest(request) => {
                     AcpHandlerOutput::response(self.close_session(ctx, request).await)
                 }
                 AcpRequest::AcpSessionRequest(request) => self.session_request(ctx, request).await,
+                AcpRequest::AcpSetSessionConfigRequest(request) => {
+                    self.set_session_config(ctx, request).await
+                }
                 AcpRequest::AcpResumeSessionRequest(request) => {
                     self.resume_session(ctx, request).await
                 }
@@ -253,8 +280,10 @@ impl AcpExtension {
         match request {
             AcpRequest::AcpCreateSessionRequest(_) => "create_session",
             AcpRequest::AcpGetSessionStateRequest(_) => "get_session_state",
+            AcpRequest::AcpListSessionsRequest(_) => "list_sessions",
             AcpRequest::AcpCloseSessionRequest(_) => "close_session",
             AcpRequest::AcpSessionRequest(_) => "session_request",
+            AcpRequest::AcpSetSessionConfigRequest(_) => "set_session_config",
             AcpRequest::AcpResumeSessionRequest(_) => "resume_session",
             AcpRequest::AcpListAgentsRequest(_) => "list_agents",
             AcpRequest::AcpDeliverAgentOutputRequest(_) => "deliver_agent_output",
@@ -264,8 +293,17 @@ impl AcpExtension {
     async fn create_session(
         &self,
         mut ctx: ExtensionContext<'_>,
-        request: AcpCreateSessionRequest,
+        mut request: AcpCreateSessionRequest,
     ) -> AcpHandlerOutput {
+        let base_instructions = match ctx.agent_additional_instructions().await {
+            Ok(instructions) => instructions,
+            Err(error) => return AcpHandlerOutput::response(Err(error)),
+        };
+        request.additional_instructions = agentos_protocol::combine_additional_instructions(
+            base_instructions.as_deref(),
+            request.additional_instructions.as_deref(),
+        );
+        let request = ResolvedCreateSessionRequest::from(request);
         let __t0 = Instant::now();
         // Resolve the agent name -> package entrypoint/env/launchArgs from the
         // projected `/opt/agentos/<name>/current/agentos-package.json`. The client
@@ -279,7 +317,6 @@ impl AcpExtension {
         let mut args = resolved.launch_args.clone();
         args.extend(request.args.iter().cloned());
         let mut env = hash_to_btree(request.env.clone());
-        env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
         // Manifest env applies as DEFAULTS; caller/base env wins on conflicts.
         for (key, value) in &resolved.env {
             env.entry(key.clone()).or_insert_with(|| value.clone());
@@ -307,14 +344,18 @@ impl AcpExtension {
 
         let started = match ctx
             .spawn_process_wire(ExecuteRequest {
-                process_id: process_id.clone(),
+                process_id: Some(process_id.clone()),
                 command: None,
+                shell_command: None,
                 runtime: Some(convert_runtime(request.runtime.clone())),
                 entrypoint: Some(resolved.entrypoint.clone()),
                 args,
-                env: env.into_iter().collect(),
+                env: Some(env.into_iter().collect()),
                 cwd: Some(request.cwd.clone()),
                 wasm_permission_tier: None,
+                pty: None,
+                keep_stdin_open: Some(true),
+                timeout_ms: None,
             })
             .await
         {
@@ -353,6 +394,17 @@ impl AcpExtension {
             restart: restart_state,
         };
 
+        let collision = !self
+            .reserve_session_id(&session.session_id, &process_id)
+            .await;
+        if collision {
+            kill_process_best_effort(&mut ctx, &process_id).await;
+            return AcpHandlerOutput::response(Err(SidecarError::InvalidState(format!(
+                "session id collision: {}",
+                session.session_id
+            ))));
+        }
+
         let mut events = Vec::new();
         for notification in bootstrap.notifications {
             let event = match encode_event(AcpEvent::AcpSessionEvent(AcpSessionEvent {
@@ -361,6 +413,8 @@ impl AcpExtension {
             })) {
                 Ok(event) => event,
                 Err(error) => {
+                    self.remove_session_reservation(&session.session_id, &process_id)
+                        .await;
                     kill_process_best_effort(&mut ctx, &process_id).await;
                     return AcpHandlerOutput::response(Err(error));
                 }
@@ -368,6 +422,8 @@ impl AcpExtension {
             match ctx.ext_event_wire(event) {
                 Ok(event) => events.push(event),
                 Err(error) => {
+                    self.remove_session_reservation(&session.session_id, &process_id)
+                        .await;
                     kill_process_best_effort(&mut ctx, &process_id).await;
                     return AcpHandlerOutput::response(Err(error));
                 }
@@ -378,13 +434,12 @@ impl AcpExtension {
             .bind_process_to_session(&session.session_id, &process_id)
             .await
         {
+            self.remove_session_reservation(&session.session_id, &process_id)
+                .await;
             kill_process_best_effort(&mut ctx, &process_id).await;
             return AcpHandlerOutput::response(Err(error));
         }
-        self.sessions
-            .lock()
-            .await
-            .insert(session.session_id.clone(), session.clone());
+        self.commit_session_reservation(session.clone()).await;
 
         AcpHandlerOutput {
             response: Ok(AcpResponse::AcpSessionCreatedResponse(
@@ -392,6 +447,33 @@ impl AcpExtension {
             )),
             events,
         }
+    }
+
+    async fn reserve_session_id(&self, session_id: &str, process_id: &str) -> bool {
+        let sessions = self.sessions.lock().await;
+        let mut reservations = self.session_reservations.lock().await;
+        if sessions.contains_key(session_id) || reservations.contains_key(session_id) {
+            return false;
+        }
+        reservations.insert(session_id.to_string(), process_id.to_string());
+        true
+    }
+
+    async fn remove_session_reservation(&self, session_id: &str, process_id: &str) {
+        let mut reservations = self.session_reservations.lock().await;
+        if reservations
+            .get(session_id)
+            .is_some_and(|reserved_process_id| reserved_process_id == process_id)
+        {
+            reservations.remove(session_id);
+        }
+    }
+
+    async fn commit_session_reservation(&self, session: AcpSessionRecord) {
+        let mut sessions = self.sessions.lock().await;
+        let mut reservations = self.session_reservations.lock().await;
+        reservations.remove(&session.session_id);
+        sessions.insert(session.session_id.clone(), session);
     }
 
     /// Enumerate the agents available in this VM from the ALREADY-PROJECTED
@@ -425,7 +507,7 @@ impl AcpExtension {
     async fn create_session_inner(
         &self,
         ctx: &mut ExtensionContext<'_>,
-        request: &AcpCreateSessionRequest,
+        request: &ResolvedCreateSessionRequest,
         process_id: &str,
     ) -> Result<CreateSessionBootstrap, SidecarError> {
         let __ti = Instant::now();
@@ -445,6 +527,7 @@ impl AcpExtension {
             },
         });
         let initialize_response = send_json_rpc_request(
+            self,
             ctx,
             process_id,
             &request.agent_type,
@@ -470,6 +553,7 @@ impl AcpExtension {
             },
         });
         let session_response = send_json_rpc_request(
+            self,
             ctx,
             process_id,
             &request.agent_type,
@@ -514,13 +598,15 @@ impl AcpExtension {
     async fn apply_prompt_injection(
         &self,
         ctx: &mut ExtensionContext<'_>,
-        request: &AcpCreateSessionRequest,
+        request: &ResolvedCreateSessionRequest,
         args: &mut Vec<String>,
         env: &mut BTreeMap<String, String>,
     ) -> Result<(), SidecarError> {
+        let tool_reference = ctx.registered_host_tool_reference().await?;
         let prompt = assemble_system_prompt(
             request.skip_os_instructions,
             request.additional_instructions.as_deref(),
+            &tool_reference,
         );
         if prompt.is_empty() {
             return Ok(());
@@ -543,7 +629,7 @@ impl AcpExtension {
                     target: None,
                     content: Some(prompt),
                     encoding: None,
-                    recursive: false,
+                    recursive: None,
                     max_depth: None,
                     mode: None,
                     uid: None,
@@ -577,8 +663,7 @@ impl AcpExtension {
     ) -> Result<AcpResponse, SidecarError> {
         let caller_connection_id = ownership_connection_id(ctx.ownership());
         let sessions = self.sessions.lock().await;
-        let unknown =
-            || SidecarError::InvalidState(format!("unknown ACP session {}", request.session_id));
+        let unknown = || SidecarError::SessionNotFound(request.session_id.clone());
         let session = sessions.get(&request.session_id).ok_or_else(unknown)?;
         // Enforce per-connection ownership: a session may only be read by the
         // connection that created it. Fail closed with the same error a missing
@@ -592,17 +677,31 @@ impl AcpExtension {
         ))
     }
 
+    async fn list_sessions(&self, ctx: ExtensionContext<'_>) -> Result<AcpResponse, SidecarError> {
+        let caller_connection_id = ownership_connection_id(ctx.ownership());
+        let sessions = self.sessions.lock().await;
+        Ok(AcpResponse::AcpListSessionsResponse(
+            AcpListSessionsResponse {
+                sessions: sessions
+                    .values()
+                    .filter(|session| session.owner_connection_id == caller_connection_id)
+                    .map(|session| AcpSessionEntry {
+                        session_id: session.session_id.clone(),
+                        agent_type: session.agent_type.clone(),
+                    })
+                    .collect(),
+            },
+        ))
+    }
+
     async fn close_session(
         &self,
         mut ctx: ExtensionContext<'_>,
         request: AcpCloseSessionRequest,
     ) -> Result<AcpResponse, SidecarError> {
-        // Enforce per-connection ownership before tearing anything down: only the
-        // connection that created the session may close it. A non-owner (or a
-        // missing session) fails closed with the same error, so a cross-connection
-        // close neither succeeds nor reveals that another connection's session
-        // exists — preventing a cross-tenant DoS. Mirrors the ownership check in
-        // `get_session_state`.
+        // Enforce per-connection ownership before tearing anything down. Closing
+        // an absent or non-owned id is an idempotent no-op, so callers need no
+        // tombstone cache and another tenant's session existence is not leaked.
         let caller_connection_id = ownership_connection_id(ctx.ownership());
         let session = {
             let mut sessions = self.sessions.lock().await;
@@ -616,10 +715,11 @@ impl AcpExtension {
             }
         };
         let Some(session) = session else {
-            return Err(SidecarError::InvalidState(format!(
-                "unknown ACP session {}",
-                request.session_id
-            )));
+            return Ok(AcpResponse::AcpSessionClosedResponse(
+                AcpSessionClosedResponse {
+                    session_id: request.session_id,
+                },
+            ));
         };
         let _ = ctx
             .close_stdin_wire(CloseStdinRequest {
@@ -659,6 +759,8 @@ impl AcpExtension {
                     .await;
             }
         }
+        self.cleanup_session_terminals(&mut ctx, &request.session_id)
+            .await;
         let _ = ctx
             .dispose_session_resources_wire(&request.session_id)
             .await;
@@ -674,6 +776,37 @@ impl AcpExtension {
                 session_id: request.session_id,
             },
         ))
+    }
+
+    async fn cleanup_session_terminals(&self, ctx: &mut ExtensionContext<'_>, session_id: &str) {
+        let ownership = ctx.ownership().clone();
+        let process_ids = {
+            let mut terminals = self.terminals.lock().await;
+            let terminal_ids = terminals
+                .iter()
+                .filter(|(_, terminal)| {
+                    terminal.ownership == ownership && terminal.session_id == session_id
+                })
+                .map(|(terminal_id, _)| terminal_id.clone())
+                .collect::<Vec<_>>();
+            terminal_ids
+                .into_iter()
+                .filter_map(|terminal_id| {
+                    terminals
+                        .remove(&terminal_id)
+                        .map(|terminal| terminal.process_id)
+                })
+                .collect::<Vec<_>>()
+        };
+        for process_id in process_ids {
+            let _ = ctx
+                .kill_process_wire(KillProcessRequest {
+                    process_id: process_id.clone(),
+                    signal: String::from("SIGTERM"),
+                })
+                .await;
+            let _ = ctx.stop_buffering_process_output(process_id).await;
+        }
     }
 
     async fn session_request(
@@ -702,10 +835,9 @@ impl AcpExtension {
         let (process_id, agent_type, rpc_id, mut stdout_buffer, pending_preamble) = {
             let mut sessions = self.sessions.lock().await;
             let Some(session) = sessions.get_mut(&request.session_id) else {
-                return AcpHandlerOutput::response(Err(SidecarError::InvalidState(format!(
-                    "unknown ACP session {}",
-                    request.session_id
-                ))));
+                return AcpHandlerOutput::response(Err(SidecarError::SessionNotFound(
+                    request.session_id.clone(),
+                )));
             };
             // Enforce per-connection ownership: a non-owner must not be able to
             // drive (prompt/cancel/set_mode/etc.) another connection's adapter.
@@ -714,10 +846,9 @@ impl AcpExtension {
             // request id consumed, no stdout drained) and does not leak the
             // session's existence. Mirrors `get_session_state`.
             if session.owner_connection_id != caller_connection_id {
-                return AcpHandlerOutput::response(Err(SidecarError::InvalidState(format!(
-                    "unknown ACP session {}",
-                    request.session_id
-                ))));
+                return AcpHandlerOutput::response(Err(SidecarError::SessionNotFound(
+                    request.session_id.clone(),
+                )));
             }
             let rpc_id = session.next_request_id;
             session.next_request_id += 1;
@@ -749,6 +880,7 @@ impl AcpExtension {
             "params": Value::Object(outbound_params),
         });
         let mut exchange = match send_json_rpc_request(
+            self,
             &mut ctx,
             &process_id,
             &agent_type,
@@ -876,10 +1008,72 @@ impl AcpExtension {
                             )));
                         }
                     },
+                    text: exchange.prompt_text,
                 },
             )),
             events: exchange.events,
         }
+    }
+
+    async fn set_session_config(
+        &self,
+        ctx: ExtensionContext<'_>,
+        request: AcpSetSessionConfigRequest,
+    ) -> AcpHandlerOutput {
+        let caller_connection_id = ownership_connection_id(ctx.ownership());
+        let (agent_type, config_options) = {
+            let sessions = self.sessions.lock().await;
+            let Some(session) = sessions.get(&request.session_id) else {
+                return AcpHandlerOutput::response(Err(SidecarError::SessionNotFound(
+                    request.session_id.clone(),
+                )));
+            };
+            if session.owner_connection_id != caller_connection_id {
+                return AcpHandlerOutput::response(Err(SidecarError::SessionNotFound(
+                    request.session_id.clone(),
+                )));
+            }
+            (session.agent_type.clone(), session.config_options.clone())
+        };
+        let selection = match select_config_by_category(&config_options, &request.category) {
+            Ok(selection) => selection,
+            Err(error) => {
+                return AcpHandlerOutput::response(Err(SidecarError::InvalidState(error)))
+            }
+        };
+        if selection.read_only {
+            let response = json!({
+                "jsonrpc": "2.0",
+                "id": Value::Null,
+                "error": {
+                    "code": -32601,
+                    "message": read_only_config_message(&agent_type, &request.category),
+                },
+            });
+            return AcpHandlerOutput::response(Ok(AcpResponse::AcpSessionRpcResponse(
+                agentos_protocol::generated::v1::AcpSessionRpcResponse {
+                    session_id: request.session_id,
+                    response: response.to_string(),
+                    text: None,
+                },
+            )));
+        }
+
+        self.session_request(
+            ctx,
+            AcpSessionRequest {
+                session_id: request.session_id,
+                method: String::from("session/set_config_option"),
+                params: Some(
+                    json!({
+                        "configId": selection.config_id,
+                        "value": request.value,
+                    })
+                    .to_string(),
+                ),
+            },
+        )
+        .await
     }
 
     // -----------------------------------------------------------------------
@@ -923,6 +1117,7 @@ impl AcpExtension {
         mut ctx: ExtensionContext<'_>,
         request: AcpResumeSessionRequest,
     ) -> AcpHandlerOutput {
+        let request = ResolvedResumeSessionRequest::from(request);
         // Resolve the agent name -> package entrypoint/env/launchArgs from the
         // projected manifest, exactly as create_session does. The client is
         // npm-agnostic and sends only the agent name.
@@ -936,15 +1131,15 @@ impl AcpExtension {
         // (the durable transcript, not re-injected instructions, carries context);
         // skip the base OS instructions for the same reason — they were already
         // delivered to the original session.
-        let create_like = AcpCreateSessionRequest {
+        let create_like = ResolvedCreateSessionRequest {
             agent_type: request.agent_type.clone(),
             runtime: AcpRuntimeKind::JavaScript,
             cwd: request.cwd.clone(),
             args: Vec::new(),
             env: request.env.clone(),
-            protocol_version: ACP_RESUME_PROTOCOL_VERSION,
-            client_capabilities: DEFAULT_RESUME_CLIENT_CAPABILITIES.to_string(),
-            mcp_servers: "[]".to_string(),
+            protocol_version: DEFAULT_ACP_PROTOCOL_VERSION,
+            client_capabilities: DEFAULT_ACP_CLIENT_CAPABILITIES.to_string(),
+            mcp_servers: DEFAULT_ACP_MCP_SERVERS.to_string(),
             skip_os_instructions: true,
             additional_instructions: None,
         };
@@ -954,7 +1149,6 @@ impl AcpExtension {
         let mut args = resolved.launch_args.clone();
         args.extend(create_like.args.iter().cloned());
         let mut env = hash_to_btree(create_like.env.clone());
-        env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
         // Manifest env applies as DEFAULTS; caller/base env wins on conflicts.
         for (key, value) in &resolved.env {
             env.entry(key.clone()).or_insert_with(|| value.clone());
@@ -981,14 +1175,18 @@ impl AcpExtension {
 
         let started = match ctx
             .spawn_process_wire(ExecuteRequest {
-                process_id: process_id.clone(),
+                process_id: Some(process_id.clone()),
                 command: None,
+                shell_command: None,
                 runtime: Some(convert_runtime(create_like.runtime.clone())),
                 entrypoint: Some(resolved.entrypoint.clone()),
                 args,
-                env: env.into_iter().collect(),
+                env: Some(env.into_iter().collect()),
                 cwd: Some(create_like.cwd.clone()),
                 wasm_permission_tier: None,
+                pty: None,
+                keep_stdin_open: Some(true),
+                timeout_ms: None,
             })
             .await
         {
@@ -1026,6 +1224,17 @@ impl AcpExtension {
             restart: restart_state,
         };
 
+        let collision = !self
+            .reserve_session_id(&session.session_id, &process_id)
+            .await;
+        if collision {
+            kill_process_best_effort(&mut ctx, &process_id).await;
+            return AcpHandlerOutput::response(Err(SidecarError::InvalidState(format!(
+                "session id collision: {}",
+                session.session_id
+            ))));
+        }
+
         let mut events = Vec::new();
         for notification in outcome.bootstrap.notifications {
             let event = match encode_event(AcpEvent::AcpSessionEvent(AcpSessionEvent {
@@ -1034,6 +1243,8 @@ impl AcpExtension {
             })) {
                 Ok(event) => event,
                 Err(error) => {
+                    self.remove_session_reservation(&session.session_id, &process_id)
+                        .await;
                     kill_process_best_effort(&mut ctx, &process_id).await;
                     return AcpHandlerOutput::response(Err(error));
                 }
@@ -1041,6 +1252,8 @@ impl AcpExtension {
             match ctx.ext_event_wire(event) {
                 Ok(event) => events.push(event),
                 Err(error) => {
+                    self.remove_session_reservation(&session.session_id, &process_id)
+                        .await;
                     kill_process_best_effort(&mut ctx, &process_id).await;
                     return AcpHandlerOutput::response(Err(error));
                 }
@@ -1051,13 +1264,12 @@ impl AcpExtension {
             .bind_process_to_session(&session.session_id, &process_id)
             .await
         {
+            self.remove_session_reservation(&session.session_id, &process_id)
+                .await;
             kill_process_best_effort(&mut ctx, &process_id).await;
             return AcpHandlerOutput::response(Err(error));
         }
-        self.sessions
-            .lock()
-            .await
-            .insert(session.session_id.clone(), session.clone());
+        self.commit_session_reservation(session.clone()).await;
 
         AcpHandlerOutput {
             response: Ok(AcpResponse::AcpSessionResumedResponse(
@@ -1076,8 +1288,8 @@ impl AcpExtension {
     async fn resume_session_inner(
         &self,
         ctx: &mut ExtensionContext<'_>,
-        request: &AcpResumeSessionRequest,
-        create_like: &AcpCreateSessionRequest,
+        request: &ResolvedResumeSessionRequest,
+        create_like: &ResolvedCreateSessionRequest,
         process_id: &str,
     ) -> Result<ResumeOutcome, SidecarError> {
         let mut stdout = String::new();
@@ -1095,6 +1307,7 @@ impl AcpExtension {
             },
         });
         let initialize_response = send_json_rpc_request(
+            self,
             ctx,
             process_id,
             &create_like.agent_type,
@@ -1119,11 +1332,12 @@ impl AcpExtension {
                 "method": native_resume_method,
                 "params": {
                     "sessionId": request.session_id,
-                    "cwd": request.cwd,
+                    "cwd": create_like.cwd,
                     "mcpServers": [],
                 },
             });
             let mut load_response = send_json_rpc_request(
+                self,
                 ctx,
                 process_id,
                 &create_like.agent_type,
@@ -1179,11 +1393,12 @@ impl AcpExtension {
             "id": 2,
             "method": "session/new",
             "params": {
-                "cwd": request.cwd,
+                "cwd": create_like.cwd,
                 "mcpServers": [],
             },
         });
         let session_response = send_json_rpc_request(
+            self,
             ctx,
             process_id,
             &create_like.agent_type,
@@ -1376,26 +1591,38 @@ impl AcpExtension {
         let process_id = self.allocate_process_id("acp-agent");
         let started = ctx
             .spawn_process_wire(ExecuteRequest {
-                process_id: process_id.clone(),
+                process_id: Some(process_id.clone()),
                 command: None,
+                shell_command: None,
                 runtime: Some(convert_runtime(restart.runtime.clone())),
                 entrypoint: Some(restart.entrypoint.clone()),
                 args: restart.args.clone(),
-                env: restart.env.clone().into_iter().collect(),
+                env: Some(restart.env.clone().into_iter().collect()),
                 cwd: Some(restart.cwd.clone()),
                 wasm_permission_tier: None,
+                pty: None,
+                keep_stdin_open: Some(true),
+                timeout_ms: None,
             })
             .await
             .map_err(AdapterRestartError::Failed)?;
 
-        let bootstrap =
-            match restart_handshake(ctx, session_id, agent_type, restart, &process_id).await {
-                Ok(bootstrap) => bootstrap,
-                Err(error) => {
-                    kill_process_best_effort(ctx, &process_id).await;
-                    return Err(error);
-                }
-            };
+        let bootstrap = match restart_handshake(
+            self,
+            ctx,
+            session_id,
+            agent_type,
+            restart,
+            &process_id,
+        )
+        .await
+        {
+            Ok(bootstrap) => bootstrap,
+            Err(error) => {
+                kill_process_best_effort(ctx, &process_id).await;
+                return Err(error);
+            }
+        };
 
         if let Err(error) = ctx.bind_process_to_session(session_id, &process_id).await {
             kill_process_best_effort(ctx, &process_id).await;
@@ -1538,9 +1765,11 @@ impl Extension for AcpExtension {
                     }
                     AcpRequest::AcpCreateSessionRequest(_)
                     | AcpRequest::AcpGetSessionStateRequest(_)
+                    | AcpRequest::AcpListSessionsRequest(_)
                     | AcpRequest::AcpCloseSessionRequest(_)
                     | AcpRequest::AcpResumeSessionRequest(_)
                     | AcpRequest::AcpSessionRequest(_)
+                    | AcpRequest::AcpSetSessionConfigRequest(_)
                     | AcpRequest::AcpListAgentsRequest(_)
                     | AcpRequest::AcpDeliverAgentOutputRequest(_) => None,
                 }
@@ -1749,6 +1978,7 @@ fn deliver_event(
 
 #[allow(clippy::too_many_arguments)]
 async fn send_json_rpc_request(
+    extension: &AcpExtension,
     ctx: &mut ExtensionContext<'_>,
     process_id: &str,
     agent_type: &str,
@@ -1776,6 +2006,7 @@ async fn send_json_rpc_request(
         .and_then(Value::as_str)
         .unwrap_or("unknown")
         .to_string();
+    let mut prompt_text = (method == "session/prompt").then(AcpPromptTextAccumulator::default);
     let mut recent_activity = Vec::new();
     let mut adapter_stderr = String::new();
     record_recent_activity(
@@ -1805,6 +2036,7 @@ async fn send_json_rpc_request(
                     ),
                     events,
                     notifications,
+                    prompt_text: prompt_text.map(AcpPromptTextAccumulator::into_text),
                 });
             }
             return Err(SidecarError::InvalidState(format!(
@@ -1847,7 +2079,10 @@ async fn send_json_rpc_request(
                             );
                         }
                         if let Some(session_id) = event_session_id {
-                            handle_inbound_request(ctx, process_id, session_id, &message).await?;
+                            handle_inbound_request(
+                                extension, ctx, process_id, session_id, &message,
+                            )
+                            .await?;
                         }
                         continue;
                     }
@@ -1856,6 +2091,7 @@ async fn send_json_rpc_request(
                             response: message,
                             events,
                             notifications,
+                            prompt_text: prompt_text.map(AcpPromptTextAccumulator::into_text),
                         });
                     }
                     if message.get("method").and_then(Value::as_str).is_some() {
@@ -1866,6 +2102,17 @@ async fn send_json_rpc_request(
                                 &mut recent_activity,
                                 format!("received notification {notification_method}"),
                             );
+                        }
+                        if let Some(capture) = prompt_text.as_mut() {
+                            if capture
+                                .push_notification(&message)
+                                .map_err(SidecarError::InvalidState)?
+                            {
+                                tracing::warn!(
+                                    session_id = ?event_session_id,
+                                    "ACP prompt text capture is near its configured limit"
+                                );
+                            }
                         }
                         if let Some(session_id) = event_session_id {
                             let frame = ctx.ext_event_wire(encode_event(
@@ -1946,6 +2193,7 @@ async fn send_json_rpc_request(
             }
             EventPayload::ProcessOutputEvent(_)
             | EventPayload::ProcessExitedEvent(_)
+            | EventPayload::CronDispatchEvent(_)
             | EventPayload::VmLifecycleEvent(_)
             | EventPayload::StructuredEvent(_)
             | EventPayload::ExtEnvelope(_) => {}
@@ -2005,6 +2253,7 @@ fn encode_interrupted_session_response(session_id: &str) -> Option<Vec<u8>> {
                 "stopReason": "cancelled",
             },
         }),
+        Some(String::new()),
     )
 }
 
@@ -2020,14 +2269,20 @@ fn encode_interrupted_cancel_response(session_id: &str) -> Option<Vec<u8>> {
                 "via": "prompt-interrupt",
             },
         }),
+        None,
     )
 }
 
-fn encode_session_rpc_response(session_id: &str, response: Value) -> Option<Vec<u8>> {
+fn encode_session_rpc_response(
+    session_id: &str,
+    response: Value,
+    text: Option<String>,
+) -> Option<Vec<u8>> {
     let response = AcpResponse::AcpSessionRpcResponse(
         agentos_protocol::generated::v1::AcpSessionRpcResponse {
             session_id: session_id.to_string(),
             response: serde_json::to_string(&response).ok()?,
+            text,
         },
     );
     encode_response(response).ok()
@@ -2225,6 +2480,7 @@ async fn wait_for_process_exit(
 }
 
 async fn handle_inbound_request(
+    extension: &AcpExtension,
     ctx: &mut ExtensionContext<'_>,
     process_id: &str,
     session_id: &str,
@@ -2252,22 +2508,35 @@ async fn handle_inbound_request(
                         "failed to serialize ACP permission params: {error}"
                     ))
                 })?,
+                timeout_ms: u64::try_from(PERMISSION_CALLBACK_TIMEOUT.as_millis())
+                    .expect("permission callback timeout must fit u64 milliseconds"),
             });
             let response =
-                ctx.invoke_callback(encode_callback(callback)?, Duration::from_secs(120))?;
+                ctx.invoke_callback(encode_callback(callback)?, PERMISSION_CALLBACK_TIMEOUT)?;
             let response: AcpCallbackResponse =
                 serde_bare::from_slice(&response).map_err(|error| {
                     SidecarError::InvalidState(format!("invalid ACP callback response: {error}"))
                 })?;
-            let reply = match response {
-                AcpCallbackResponse::AcpPermissionCallbackResponse(response) => response.reply,
-                AcpCallbackResponse::AcpHostRequestCallbackResponse(_) => String::from("reject"),
-            };
+            let reply = permission_callback_reply(response);
             json!({
                 "jsonrpc": "2.0",
                 "id": id,
                 "result": permission_result(&reply, &params),
             })
+        }
+        "fs/read" | "fs/read_text_file" | "fs/write" | "fs/write_text_file" | "fs/readDir"
+        | "fs/read_dir" => handle_native_filesystem_request(ctx, message, &id, method).await,
+        "terminal/create"
+        | "terminal/write"
+        | "terminal/output"
+        | "terminal/read"
+        | "terminal/wait_for_exit"
+        | "terminal/waitForExit"
+        | "terminal/kill"
+        | "terminal/release"
+        | "terminal/close"
+        | "terminal/resize" => {
+            handle_native_terminal_request(extension, ctx, session_id, message, &id, method).await
         }
         _ => forward_inbound_host_request(ctx, session_id, message, &id, method)?,
     };
@@ -2281,6 +2550,743 @@ async fn handle_inbound_request(
     })
     .await?;
     Ok(())
+}
+
+async fn handle_native_filesystem_request(
+    ctx: &mut ExtensionContext<'_>,
+    message: &Value,
+    id: &Value,
+    method: &str,
+) -> Value {
+    let empty_params = Map::new();
+    let params = match message.get("params") {
+        None | Some(Value::Null) => &empty_params,
+        Some(Value::Object(params)) => params,
+        Some(_) => {
+            return json_rpc_error(
+                id.clone(),
+                -32602,
+                format!("{method} requires object params"),
+                None,
+            );
+        }
+    };
+    let Some(path) = params.get("path").and_then(Value::as_str) else {
+        return json_rpc_error(
+            id.clone(),
+            -32602,
+            format!("{method} requires a string path"),
+            None,
+        );
+    };
+    let encoding = match optional_string_param(params, "encoding", method) {
+        Ok(encoding) => encoding,
+        Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+    };
+
+    let result = match method {
+        "fs/read" | "fs/read_text_file" => {
+            let line = match optional_f64_param(params, "line", method) {
+                Ok(value) => value,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            let limit = match optional_f64_param(params, "limit", method) {
+                Ok(value) => value,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            match ctx
+                .guest_filesystem_call_wire(GuestFilesystemCallRequest {
+                    operation: GuestFilesystemOperation::ReadFile,
+                    path: path.to_owned(),
+                    destination_path: None,
+                    target: None,
+                    content: None,
+                    encoding: None,
+                    recursive: None,
+                    max_depth: None,
+                    mode: None,
+                    uid: None,
+                    gid: None,
+                    atime_ms: None,
+                    mtime_ms: None,
+                    len: None,
+                    offset: None,
+                })
+                .await
+            {
+                Ok(response) => {
+                    let bytes = match response.encoding {
+                        Some(RootFilesystemEntryEncoding::Base64) => {
+                            match base64::engine::general_purpose::STANDARD
+                                .decode(response.content.unwrap_or_default())
+                            {
+                                Ok(bytes) => bytes,
+                                Err(error) => {
+                                    return json_rpc_error(
+                                        id.clone(),
+                                        -32603,
+                                        format!("invalid base64 filesystem response: {error}"),
+                                        None,
+                                    );
+                                }
+                            }
+                        }
+                        _ => response.content.unwrap_or_default().into_bytes(),
+                    };
+                    let content = if encoding.as_deref() == Some("base64") {
+                        base64::engine::general_purpose::STANDARD.encode(bytes)
+                    } else {
+                        let text = String::from_utf8_lossy(&bytes).into_owned();
+                        slice_text_lines(text, line, limit)
+                    };
+                    json!({ "content": content })
+                }
+                Err(error) => return filesystem_error_response(id, error),
+            }
+        }
+        "fs/write" | "fs/write_text_file" => {
+            let Some(content) = params.get("content").and_then(Value::as_str) else {
+                return json_rpc_error(
+                    id.clone(),
+                    -32602,
+                    format!("{method} requires a string content"),
+                    None,
+                );
+            };
+            let wire_encoding = if encoding.as_deref() == Some("base64") {
+                RootFilesystemEntryEncoding::Base64
+            } else {
+                RootFilesystemEntryEncoding::Utf8
+            };
+            match ctx
+                .guest_filesystem_call_wire(GuestFilesystemCallRequest {
+                    operation: GuestFilesystemOperation::WriteFile,
+                    path: path.to_owned(),
+                    destination_path: None,
+                    target: None,
+                    content: Some(content.to_owned()),
+                    encoding: Some(wire_encoding),
+                    recursive: None,
+                    max_depth: None,
+                    mode: None,
+                    uid: None,
+                    gid: None,
+                    atime_ms: None,
+                    mtime_ms: None,
+                    len: None,
+                    offset: None,
+                })
+                .await
+            {
+                Ok(_) => Value::Null,
+                Err(error) => return filesystem_error_response(id, error),
+            }
+        }
+        "fs/readDir" | "fs/read_dir" => match ctx
+            .guest_filesystem_call_wire(GuestFilesystemCallRequest {
+                operation: GuestFilesystemOperation::ReadDir,
+                path: path.to_owned(),
+                destination_path: None,
+                target: None,
+                content: None,
+                encoding: None,
+                recursive: None,
+                max_depth: None,
+                mode: None,
+                uid: None,
+                gid: None,
+                atime_ms: None,
+                mtime_ms: None,
+                len: None,
+                offset: None,
+            })
+            .await
+        {
+            Ok(response) => json!({
+                "entries": response.entries.unwrap_or_default().into_iter()
+                    .filter(|entry| entry.name != "." && entry.name != "..")
+                    .map(|entry| json!({
+                        "name": entry.name,
+                        "path": entry.path,
+                        "type": if entry.is_symbolic_link {
+                            "symlink"
+                        } else if entry.is_directory {
+                            "directory"
+                        } else {
+                            "file"
+                        },
+                    }))
+                    .collect::<Vec<_>>(),
+            }),
+            Err(error) => return filesystem_error_response(id, error),
+        },
+        _ => unreachable!("filesystem method matched by caller"),
+    };
+
+    json!({ "jsonrpc": "2.0", "id": id, "result": result })
+}
+
+async fn handle_native_terminal_request(
+    extension: &AcpExtension,
+    ctx: &mut ExtensionContext<'_>,
+    session_id: &str,
+    message: &Value,
+    id: &Value,
+    method: &str,
+) -> Value {
+    let empty_params = Map::new();
+    let params = match message.get("params") {
+        None | Some(Value::Null) => &empty_params,
+        Some(Value::Object(params)) => params,
+        Some(_) => {
+            return json_rpc_error(
+                id.clone(),
+                -32602,
+                format!("{method} requires object params"),
+                None,
+            );
+        }
+    };
+
+    let result = match method {
+        "terminal/create" => {
+            let Some(command) = params.get("command").and_then(Value::as_str) else {
+                return json_rpc_error(
+                    id.clone(),
+                    -32602,
+                    String::from("terminal/create requires a string command"),
+                    None,
+                );
+            };
+            let args = match optional_string_array_param(params, "args", method) {
+                Ok(value) => value.unwrap_or_default(),
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            let env = match optional_string_map_param(params, "env", method) {
+                Ok(value) => value.unwrap_or_default(),
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            let cwd = match optional_string_param(params, "cwd", method) {
+                Ok(value) => value,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            let cols = match optional_positive_u16_param(params, "cols", method) {
+                Ok(value) => value,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            let rows = match optional_positive_u16_param(params, "rows", method) {
+                Ok(value) => value,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            let output_byte_limit = match optional_nonnegative_usize_param(
+                params,
+                "outputByteLimit",
+                method,
+            ) {
+                Ok(Some(value)) if value <= MAX_ACP_TERMINAL_OUTPUT_BYTE_LIMIT => value,
+                Ok(Some(value)) => {
+                    return json_rpc_error(
+                        id.clone(),
+                        -32602,
+                        format!(
+                            "terminal/create outputByteLimit {value} exceeds the sidecar limit {MAX_ACP_TERMINAL_OUTPUT_BYTE_LIMIT}; lower outputByteLimit"
+                        ),
+                        None,
+                    );
+                }
+                Ok(None) => DEFAULT_ACP_TERMINAL_OUTPUT_BYTE_LIMIT,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+
+            let process_id = extension.allocate_process_id("acp-terminal");
+            if let Err(error) = ctx
+                .spawn_process_wire(ExecuteRequest {
+                    process_id: Some(process_id.clone()),
+                    command: Some(command.to_owned()),
+                    shell_command: None,
+                    runtime: None,
+                    entrypoint: None,
+                    args,
+                    env: Some(env.into_iter().collect()),
+                    cwd,
+                    wasm_permission_tier: None,
+                    pty: Some(agentos_native_sidecar::wire::PtyOptions { cols, rows }),
+                    keep_stdin_open: Some(true),
+                    timeout_ms: None,
+                })
+                .await
+            {
+                return json_rpc_error(id.clone(), -32603, error.to_string(), None);
+            }
+            if let Err(error) = ctx.start_buffering_process_output(&process_id).await {
+                kill_process_best_effort(ctx, &process_id).await;
+                return json_rpc_error(id.clone(), -32603, error.to_string(), None);
+            }
+            if let Err(error) = ctx.bind_process_to_session(session_id, &process_id).await {
+                let _ = ctx.stop_buffering_process_output(&process_id).await;
+                kill_process_best_effort(ctx, &process_id).await;
+                return json_rpc_error(id.clone(), -32603, error.to_string(), None);
+            }
+
+            let terminal_number = extension.next_terminal_id.fetch_add(1, Ordering::SeqCst) + 1;
+            let terminal_id = format!("acp-terminal-{terminal_number}");
+            extension.terminals.lock().await.insert(
+                terminal_id.clone(),
+                NativeAcpTerminal {
+                    ownership: ctx.ownership().clone(),
+                    session_id: session_id.to_owned(),
+                    process_id,
+                    output: Vec::new(),
+                    truncated: false,
+                    output_byte_limit,
+                    exit_code: None,
+                },
+            );
+            json!({ "terminalId": terminal_id })
+        }
+        "terminal/write" => {
+            let terminal_id = match required_terminal_id(params, method) {
+                Ok(value) => value,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            let process_id = match terminal_process_id(
+                extension,
+                ctx.ownership(),
+                session_id,
+                terminal_id,
+            )
+            .await
+            {
+                Ok(value) => value,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            let Some(data) = params.get("data").and_then(Value::as_str) else {
+                return json_rpc_error(
+                    id.clone(),
+                    -32602,
+                    String::from("terminal/write requires string data"),
+                    None,
+                );
+            };
+            let encoding = match optional_string_param(params, "encoding", method) {
+                Ok(value) => value,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            let chunk = if encoding.as_deref() == Some("base64") {
+                match base64::engine::general_purpose::STANDARD.decode(data) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        return json_rpc_error(
+                            id.clone(),
+                            -32602,
+                            format!("terminal/write received invalid base64 data: {error}"),
+                            None,
+                        );
+                    }
+                }
+            } else {
+                data.as_bytes().to_vec()
+            };
+            match ctx
+                .write_stdin_wire(WriteStdinRequest { process_id, chunk })
+                .await
+            {
+                Ok(_) => Value::Null,
+                Err(error) => return json_rpc_error(id.clone(), -32603, error.to_string(), None),
+            }
+        }
+        "terminal/output" | "terminal/read" => {
+            let terminal_id = match required_terminal_id(params, method) {
+                Ok(value) => value,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            if let Err(error) =
+                refresh_native_terminal(extension, ctx, session_id, terminal_id, Duration::ZERO)
+                    .await
+            {
+                return json_rpc_error(id.clone(), error.0, error.1, None);
+            }
+            let terminals = extension.terminals.lock().await;
+            let terminal = terminals
+                .get(terminal_id)
+                .expect("refreshed terminal remains registered");
+            let mut output = json!({
+                "output": String::from_utf8_lossy(&terminal.output),
+                "truncated": terminal.truncated,
+            });
+            if let Some(exit_code) = terminal.exit_code {
+                output["exitStatus"] = json!({ "exitCode": exit_code, "signal": Value::Null });
+            }
+            output
+        }
+        "terminal/wait_for_exit" | "terminal/waitForExit" => {
+            let terminal_id = match required_terminal_id(params, method) {
+                Ok(value) => value.to_owned(),
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            loop {
+                if let Err(error) = refresh_native_terminal(
+                    extension,
+                    ctx,
+                    session_id,
+                    &terminal_id,
+                    ACP_TERMINAL_OUTPUT_POLL_INTERVAL,
+                )
+                .await
+                {
+                    return json_rpc_error(id.clone(), error.0, error.1, None);
+                }
+                let exit_code = extension
+                    .terminals
+                    .lock()
+                    .await
+                    .get(&terminal_id)
+                    .and_then(|terminal| terminal.exit_code);
+                if let Some(exit_code) = exit_code {
+                    break json!({ "exitCode": exit_code, "signal": Value::Null });
+                }
+            }
+        }
+        "terminal/kill" => {
+            let terminal_id = match required_terminal_id(params, method) {
+                Ok(value) => value,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            let process_id = match terminal_process_id(
+                extension,
+                ctx.ownership(),
+                session_id,
+                terminal_id,
+            )
+            .await
+            {
+                Ok(value) => value,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            let signal = match optional_f64_param(params, "signal", method) {
+                Ok(Some(value)) => value.trunc() as i32,
+                Ok(None) => 15,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            if !(0..=31).contains(&signal) {
+                return json_rpc_error(
+                    id.clone(),
+                    -32602,
+                    format!("terminal/kill does not support signal {signal}"),
+                    None,
+                );
+            }
+            match ctx
+                .kill_process_wire(KillProcessRequest {
+                    process_id,
+                    signal: signal.to_string(),
+                })
+                .await
+            {
+                Ok(_) => Value::Null,
+                Err(error) => return json_rpc_error(id.clone(), -32603, error.to_string(), None),
+            }
+        }
+        "terminal/resize" => {
+            let terminal_id = match required_terminal_id(params, method) {
+                Ok(value) => value,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            let process_id = match terminal_process_id(
+                extension,
+                ctx.ownership(),
+                session_id,
+                terminal_id,
+            )
+            .await
+            {
+                Ok(value) => value,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            let cols = match required_positive_u16_param(params, "cols", method) {
+                Ok(value) => value,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            let rows = match required_positive_u16_param(params, "rows", method) {
+                Ok(value) => value,
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            match ctx
+                .resize_pty_wire(ResizePtyRequest {
+                    process_id,
+                    cols,
+                    rows,
+                })
+                .await
+            {
+                Ok(_) => Value::Null,
+                Err(error) => return json_rpc_error(id.clone(), -32603, error.to_string(), None),
+            }
+        }
+        "terminal/release" | "terminal/close" => {
+            let terminal_id = match required_terminal_id(params, method) {
+                Ok(value) => value.to_owned(),
+                Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+            };
+            let process_id =
+                match terminal_process_id(extension, ctx.ownership(), session_id, &terminal_id)
+                    .await
+                {
+                    Ok(value) => value,
+                    Err(message) => return json_rpc_error(id.clone(), -32602, message, None),
+                };
+            let running = extension
+                .terminals
+                .lock()
+                .await
+                .get(&terminal_id)
+                .is_some_and(|terminal| terminal.exit_code.is_none());
+            if running {
+                let _ = ctx
+                    .kill_process_wire(KillProcessRequest {
+                        process_id: process_id.clone(),
+                        signal: String::from("SIGTERM"),
+                    })
+                    .await;
+            }
+            let _ = ctx.stop_buffering_process_output(&process_id).await;
+            extension.terminals.lock().await.remove(&terminal_id);
+            Value::Null
+        }
+        _ => unreachable!("terminal method matched by caller"),
+    };
+
+    json!({ "jsonrpc": "2.0", "id": id, "result": result })
+}
+
+async fn terminal_process_id(
+    extension: &AcpExtension,
+    ownership: &OwnershipScope,
+    session_id: &str,
+    terminal_id: &str,
+) -> Result<String, String> {
+    extension
+        .terminals
+        .lock()
+        .await
+        .get(terminal_id)
+        .filter(|terminal| terminal.ownership == *ownership && terminal.session_id == session_id)
+        .map(|terminal| terminal.process_id.clone())
+        .ok_or_else(|| format!("ACP terminal not found: {terminal_id}"))
+}
+
+async fn refresh_native_terminal(
+    extension: &AcpExtension,
+    ctx: &mut ExtensionContext<'_>,
+    session_id: &str,
+    terminal_id: &str,
+    timeout: Duration,
+) -> Result<(), (i64, String)> {
+    let process_id = terminal_process_id(extension, ctx.ownership(), session_id, terminal_id)
+        .await
+        .map_err(|message| (-32602, message))?;
+    let drained = ctx
+        .drain_buffered_process_output(&process_id, timeout)
+        .await
+        .map_err(|error| (-32603, error.to_string()))?;
+    let mut terminals = extension.terminals.lock().await;
+    let terminal = terminals
+        .get_mut(terminal_id)
+        .ok_or_else(|| (-32602, format!("ACP terminal not found: {terminal_id}")))?;
+    append_native_terminal_output(terminal, &drained.stdout);
+    append_native_terminal_output(terminal, &drained.stderr);
+    terminal.truncated |= drained.stdout_truncated || drained.stderr_truncated;
+    if drained.exit_code.is_some() {
+        terminal.exit_code = drained.exit_code;
+    }
+    Ok(())
+}
+
+fn append_native_terminal_output(terminal: &mut NativeAcpTerminal, chunk: &[u8]) {
+    if chunk.is_empty() {
+        return;
+    }
+    terminal.output.extend_from_slice(chunk);
+    if terminal.output.len() > terminal.output_byte_limit {
+        let remove_len = terminal.output.len() - terminal.output_byte_limit;
+        terminal.output.drain(..remove_len);
+        terminal.truncated = true;
+    }
+}
+
+fn required_terminal_id<'a>(
+    params: &'a Map<String, Value>,
+    method: &str,
+) -> Result<&'a str, String> {
+    params
+        .get("terminalId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{method} requires a string terminalId"))
+}
+
+fn optional_string_array_param(
+    params: &Map<String, Value>,
+    name: &str,
+    method: &str,
+) -> Result<Option<Vec<String>>, String> {
+    match params.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| format!("{method} requires {name} entries to be strings"))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some),
+        Some(_) => Err(format!("{method} requires {name} to be an array")),
+    }
+}
+
+fn optional_string_map_param(
+    params: &Map<String, Value>,
+    name: &str,
+    method: &str,
+) -> Result<Option<BTreeMap<String, String>>, String> {
+    match params.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Object(values)) => values
+            .iter()
+            .map(|(key, value)| {
+                value
+                    .as_str()
+                    .map(|value| (key.clone(), value.to_owned()))
+                    .ok_or_else(|| format!("{method} requires {name} values to be strings"))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()
+            .map(Some),
+        Some(_) => Err(format!("{method} requires {name} to be an object")),
+    }
+}
+
+fn optional_nonnegative_usize_param(
+    params: &Map<String, Value>,
+    name: &str,
+    method: &str,
+) -> Result<Option<usize>, String> {
+    let value = optional_f64_param(params, name, method)?;
+    value
+        .map(|value| {
+            if value < 0.0 || value > usize::MAX as f64 {
+                Err(format!(
+                    "{method} requires {name} to be a non-negative integer"
+                ))
+            } else {
+                Ok(value.trunc() as usize)
+            }
+        })
+        .transpose()
+}
+
+fn optional_positive_u16_param(
+    params: &Map<String, Value>,
+    name: &str,
+    method: &str,
+) -> Result<Option<u16>, String> {
+    let value = optional_f64_param(params, name, method)?;
+    value
+        .map(|value| {
+            if value < 1.0 || value > f64::from(u16::MAX) {
+                Err(format!(
+                    "{method} requires {name} to be between 1 and {}",
+                    u16::MAX
+                ))
+            } else {
+                Ok(value.trunc() as u16)
+            }
+        })
+        .transpose()
+}
+
+fn required_positive_u16_param(
+    params: &Map<String, Value>,
+    name: &str,
+    method: &str,
+) -> Result<u16, String> {
+    optional_positive_u16_param(params, name, method)?
+        .ok_or_else(|| format!("{method} requires numeric {name}"))
+}
+
+fn optional_string_param(
+    params: &Map<String, Value>,
+    name: &str,
+    method: &str,
+) -> Result<Option<String>, String> {
+    match params.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(format!(
+            "{method} requires {name} to be a string when provided"
+        )),
+    }
+}
+
+fn optional_f64_param(
+    params: &Map<String, Value>,
+    name: &str,
+    method: &str,
+) -> Result<Option<f64>, String> {
+    match params.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(value)) => value
+            .as_f64()
+            .filter(|value| value.is_finite())
+            .map(Some)
+            .ok_or_else(|| format!("{method} requires {name} to be a number when provided")),
+        Some(_) => Err(format!(
+            "{method} requires {name} to be a number when provided"
+        )),
+    }
+}
+
+fn slice_text_lines(text: String, line: Option<f64>, limit: Option<f64>) -> String {
+    if line.is_none() && limit.is_none() {
+        return text;
+    }
+    let start = line.unwrap_or(1.0).trunc().max(1.0) as usize - 1;
+    let limit = limit
+        .map(|value| value.trunc().max(0.0) as usize)
+        .unwrap_or(usize::MAX);
+    text.split('\n')
+        .skip(start)
+        .take(limit)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn filesystem_error_response(id: &Value, error: SidecarError) -> Value {
+    let message = error.to_string();
+    let code = message
+        .split(|ch: char| ch == ':' || ch.is_whitespace())
+        .find(|part| {
+            part.len() >= 2
+                && part.starts_with('E')
+                && part[1..]
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+        })
+        .map(ToOwned::to_owned);
+    json_rpc_error(
+        id.clone(),
+        -32603,
+        message,
+        code.map(|code| json!({ "code": code })),
+    )
+}
+
+fn json_rpc_error(id: Value, code: i64, message: String, data: Option<Value>) -> Value {
+    let mut error = json!({ "code": code, "message": message });
+    if let Some(data) = data {
+        error["data"] = data;
+    }
+    json!({ "jsonrpc": "2.0", "id": id, "error": error })
 }
 
 fn forward_inbound_host_request(
@@ -2342,6 +3348,15 @@ fn permission_result(reply: &str, params: &Value) -> Value {
     json!({ "outcome": { "outcome": "selected", "optionId": option_id } })
 }
 
+fn permission_callback_reply(response: AcpCallbackResponse) -> String {
+    match response {
+        AcpCallbackResponse::AcpPermissionCallbackResponse(response) => {
+            response.reply.unwrap_or_else(|| String::from("reject"))
+        }
+        AcpCallbackResponse::AcpHostRequestCallbackResponse(_) => String::from("reject"),
+    }
+}
+
 fn resolve_permission_option_id(params: &Value, reply: &str) -> Option<String> {
     let targets = match reply {
         "always" | "allow_always" => (&["always", "allow_always"][..], "allow_always"),
@@ -2373,6 +3388,7 @@ struct JsonRpcExchange {
     response: Value,
     events: Vec<agentos_native_sidecar::wire::EventFrame>,
     notifications: Vec<String>,
+    prompt_text: Option<String>,
 }
 
 fn response_result(response: Value, label: &str) -> Result<Map<String, Value>, SidecarError> {
@@ -2418,7 +3434,11 @@ fn validate_initialize_result(
     Ok(())
 }
 
-fn assemble_system_prompt(skip_base: bool, additional: Option<&str>) -> String {
+fn assemble_system_prompt(
+    skip_base: bool,
+    additional: Option<&str>,
+    tool_reference: &str,
+) -> String {
     let mut parts = Vec::new();
     if !skip_base {
         parts.push(AGENTOS_SYSTEM_PROMPT.trim_end());
@@ -2427,6 +3447,9 @@ fn assemble_system_prompt(skip_base: bool, additional: Option<&str>) -> String {
         if !additional.is_empty() {
             parts.push(additional);
         }
+    }
+    if !tool_reference.is_empty() {
+        parts.push(tool_reference);
     }
     if parts.is_empty() {
         return String::new();
@@ -2609,6 +3632,7 @@ fn adapter_exit_code_from_error(error: &SidecarError) -> Option<i32> {
 /// load notifications are dropped: the client already observed this session's
 /// history live, so re-forwarding the transcript replay would duplicate it.
 async fn restart_handshake(
+    extension: &AcpExtension,
     ctx: &mut ExtensionContext<'_>,
     session_id: &str,
     agent_type: &str,
@@ -2629,6 +3653,7 @@ async fn restart_handshake(
         },
     });
     let initialize_response = send_json_rpc_request(
+        extension,
         ctx,
         process_id,
         agent_type,
@@ -2660,6 +3685,7 @@ async fn restart_handshake(
         },
     });
     let load_response = send_json_rpc_request(
+        extension,
         ctx,
         process_id,
         agent_type,
@@ -3048,6 +4074,7 @@ fn error_response(error: SidecarError) -> AcpResponse {
 fn error_code(error: &SidecarError) -> String {
     let code = match error {
         SidecarError::InvalidState(_) => "invalid_state",
+        SidecarError::SessionNotFound(_) => "session_not_found",
         SidecarError::ProtocolVersionMismatch(_) => "protocol_version_mismatch",
         SidecarError::BridgeVersionMismatch(_) => "bridge_version_mismatch",
         SidecarError::Conflict(_) => "conflict",
@@ -3071,6 +4098,28 @@ mod tests {
     #[test]
     fn acp_extension_uses_agent_os_namespace() {
         assert_eq!(AcpExtension::new().namespace(), ACP_EXTENSION_NAMESPACE);
+    }
+
+    #[test]
+    fn missing_client_permission_reply_uses_sidecar_default() {
+        assert_eq!(
+            permission_callback_reply(AcpCallbackResponse::AcpPermissionCallbackResponse(
+                agentos_protocol::generated::v1::AcpPermissionCallbackResponse {
+                    permission_id: String::from("permission-1"),
+                    reply: None,
+                },
+            )),
+            "reject"
+        );
+        assert_eq!(
+            permission_callback_reply(AcpCallbackResponse::AcpPermissionCallbackResponse(
+                agentos_protocol::generated::v1::AcpPermissionCallbackResponse {
+                    permission_id: String::from("permission-2"),
+                    reply: Some(String::from("once")),
+                },
+            )),
+            "once"
+        );
     }
 
     #[test]

@@ -4,9 +4,9 @@
 //! that command is unavailable; set `AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1` only for local skip-only
 //! runs.
 //!
-//! When the shell IS available the suite asserts the real TS contract: open returns a synthetic
-//! `shell-N` id (NOT a pid), `on_shell_data` carries stdout, `write_shell` reaches the shell,
-//! `resize_shell` validates existence, and `close_shell` plus the ShellNotFound error contract hold.
+//! When the shell IS available the suite asserts the real TS contract: open returns the
+//! sidecar-owned process id (not a pid), `on_shell_data` carries stdout, `write_shell` reaches the
+//! shell, `resize_shell` validates existence, and `close_shell` plus the ShellNotFound contract hold.
 
 mod common;
 
@@ -25,21 +25,22 @@ async fn shell_surface_open_write_data_resize_close() {
     // regardless of whether a PTY-backed WASM shell is available.
     assert!(
         matches!(
-            os.write_shell("shell-missing", StdinInput::Text("x".to_string())),
+            os.write_shell("shell-missing", StdinInput::Text("x".to_string()))
+                .await,
             Err(ClientError::ShellNotFound(_))
         ),
         "write_shell(unknown) must return ShellNotFound"
     );
     assert!(
         matches!(
-            os.resize_shell("shell-missing", 80, 24),
+            os.resize_shell("shell-missing", 80, 24).await,
             Err(ClientError::ShellNotFound(_))
         ),
         "resize_shell(unknown) must return ShellNotFound"
     );
     assert!(
         matches!(
-            os.close_shell("shell-missing"),
+            os.close_shell("shell-missing").await,
             Err(ClientError::ShellNotFound(_))
         ),
         "close_shell(unknown) must return ShellNotFound"
@@ -57,17 +58,18 @@ async fn shell_surface_open_write_data_resize_close() {
         return;
     }
 
-    // --- open_shell: synthetic id, NOT a pid ------------------------------------------------------
+    // --- open_shell: sidecar process id, NOT a pid ------------------------------------------------
     let shell = os
         .open_shell(OpenShellOptions {
             cols: Some(80),
             rows: Some(24),
             ..Default::default()
         })
+        .await
         .expect("open_shell");
     assert!(
-        shell.shell_id.starts_with("shell-"),
-        "open_shell must return a synthetic shell-N id (not a pid), got {}",
+        shell.shell_id.starts_with("sidecar-process-"),
+        "open_shell must return the sidecar process id (not a pid), got {}",
         shell.shell_id
     );
 
@@ -88,6 +90,7 @@ async fn shell_surface_open_write_data_resize_close() {
         &shell.shell_id,
         StdinInput::Text("echo shell-marker\n".to_string()),
     )
+    .await
     .expect("write_shell");
 
     let saw_marker = tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -109,12 +112,21 @@ async fn shell_surface_open_write_data_resize_close() {
 
     // --- resize_shell: validates existence (no native winsize op, so it is a best-effort no-op) ----
     os.resize_shell(&shell.shell_id, 120, 40)
+        .await
         .expect("resize_shell on a live shell must succeed");
 
     // --- close_shell: removes the entry; subsequent shell calls report ShellNotFound --------------
-    os.close_shell(&shell.shell_id).expect("close_shell");
+    os.close_shell(&shell.shell_id).await.expect("close_shell");
+    let exit_code = os.wait_shell(&shell.shell_id).await.expect("wait_shell");
+    assert_eq!(
+        os.wait_shell(&shell.shell_id)
+            .await
+            .expect("late wait_shell from sidecar snapshot"),
+        exit_code
+    );
     let err = os
         .write_shell(&shell.shell_id, StdinInput::Text("x".to_string()))
+        .await
         .expect_err("write to a closed shell must error");
     assert!(
         matches!(err, ClientError::ShellNotFound(id) if id == shell.shell_id),

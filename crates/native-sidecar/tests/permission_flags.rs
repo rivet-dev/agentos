@@ -78,7 +78,7 @@ fn mkdir_request(path: &str, recursive: bool) -> GuestFilesystemCallRequest {
         target: None,
         content: None,
         encoding: None,
-        recursive,
+        recursive: recursive.then_some(true),
         max_depth: None,
         mode: None,
         uid: None,
@@ -115,8 +115,8 @@ fn permission_flags_reject_empty_operations_and_accept_explicit_wildcards() {
                             default: Some(PermissionMode::Deny),
                             rules: vec![FsPermissionRule {
                                 mode: PermissionMode::Allow,
-                                operations: Vec::new(),
-                                paths: vec![String::from("/**")],
+                                operations: Some(Vec::new()),
+                                paths: Some(vec![String::from("/**")]),
                             }],
                         },
                     )),
@@ -154,8 +154,8 @@ fn permission_flags_reject_empty_operations_and_accept_explicit_wildcards() {
                             default: Some(PermissionMode::Deny),
                             rules: vec![FsPermissionRule {
                                 mode: PermissionMode::Allow,
-                                operations: vec![String::from("*")],
-                                paths: vec![String::from("/**")],
+                                operations: Some(vec![String::from("*")]),
+                                paths: Some(vec![String::from("/**")]),
                             }],
                         },
                     )),
@@ -195,16 +195,15 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
             4,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts: Vec::new(),
-                software: Vec::new(),
+                mounts: None,
                 permissions: Some(PermissionsPolicy {
                     fs: Some(FsPermissionScope::FsPermissionRuleSet(
                         FsPermissionRuleSet {
                             default: Some(PermissionMode::Deny),
                             rules: vec![FsPermissionRule {
                                 mode: PermissionMode::Allow,
-                                operations: vec![String::from("read")],
-                                paths: Vec::new(),
+                                operations: Some(vec![String::from("read")]),
+                                paths: Some(Vec::new()),
                             }],
                         },
                     )),
@@ -214,15 +213,10 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
                     env: None,
                     binding: None,
                 }),
-                module_access_cwd: None,
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
                 command_permissions: Default::default(),
-                loopback_exempt_ports: Vec::new(),
-                packages: Vec::new(),
-                packages_mount_at: String::new(),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                loopback_exempt_ports: None,
+                packages: None,
+                packages_mount_at: None,
             }),
         ))
         .expect("dispatch configure vm with empty fs paths");
@@ -237,8 +231,7 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
             5,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts: Vec::new(),
-                software: Vec::new(),
+                mounts: None,
                 permissions: Some(PermissionsPolicy {
                     fs: None,
                     network: Some(PatternPermissionScope::PatternPermissionRuleSet(
@@ -246,8 +239,8 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
                             default: Some(PermissionMode::Deny),
                             rules: vec![PatternPermissionRule {
                                 mode: PermissionMode::Allow,
-                                operations: vec![String::from("*")],
-                                patterns: Vec::new(),
+                                operations: Some(vec![String::from("*")]),
+                                patterns: Some(Vec::new()),
                             }],
                         },
                     )),
@@ -256,15 +249,10 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
                     env: None,
                     binding: None,
                 }),
-                module_access_cwd: None,
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
                 command_permissions: Default::default(),
-                loopback_exempt_ports: Vec::new(),
-                packages: Vec::new(),
-                packages_mount_at: String::new(),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                loopback_exempt_ports: None,
+                packages: None,
+                packages_mount_at: None,
             }),
         ))
         .expect("dispatch configure vm with empty network patterns");
@@ -279,8 +267,7 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
             6,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts: Vec::new(),
-                software: Vec::new(),
+                mounts: None,
                 permissions: Some(PermissionsPolicy {
                     fs: None,
                     network: Some(PatternPermissionScope::PatternPermissionRuleSet(
@@ -288,8 +275,8 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
                             default: Some(PermissionMode::Deny),
                             rules: vec![PatternPermissionRule {
                                 mode: PermissionMode::Allow,
-                                operations: Vec::new(),
-                                patterns: vec![String::from("**")],
+                                operations: Some(Vec::new()),
+                                patterns: Some(vec![String::from("**")]),
                             }],
                         },
                     )),
@@ -298,15 +285,10 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
                     env: None,
                     binding: None,
                 }),
-                module_access_cwd: None,
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
                 command_permissions: Default::default(),
-                loopback_exempt_ports: Vec::new(),
-                packages: Vec::new(),
-                packages_mount_at: String::new(),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                loopback_exempt_ports: None,
+                packages: None,
+                packages_mount_at: None,
             }),
         ))
         .expect("dispatch configure vm with empty network operations");
@@ -333,17 +315,17 @@ fn permission_flags_single_star_paths_do_not_cross_path_separators() {
                     rules: vec![
                         FsPermissionRule {
                             mode: PermissionMode::Allow,
-                            operations: vec![String::from("read")],
-                            paths: vec![String::from("/tmp")],
+                            operations: Some(vec![String::from("read")]),
+                            paths: Some(vec![String::from("/tmp")]),
                         },
                         FsPermissionRule {
                             mode: PermissionMode::Allow,
-                            operations: vec![
+                            operations: Some(vec![
                                 String::from("create_dir"),
                                 String::from("read"),
                                 String::from("stat"),
-                            ],
-                            paths: vec![String::from("/tmp/*")],
+                            ]),
+                            paths: Some(vec![String::from("/tmp/*")]),
                         },
                     ],
                 },
@@ -403,17 +385,17 @@ fn permission_flags_double_star_paths_allow_nested_descendants() {
                     rules: vec![
                         FsPermissionRule {
                             mode: PermissionMode::Allow,
-                            operations: vec![String::from("read")],
-                            paths: vec![String::from("/tmp")],
+                            operations: Some(vec![String::from("read")]),
+                            paths: Some(vec![String::from("/tmp")]),
                         },
                         FsPermissionRule {
                             mode: PermissionMode::Allow,
-                            operations: vec![
+                            operations: Some(vec![
                                 String::from("create_dir"),
                                 String::from("read"),
                                 String::from("stat"),
-                            ],
-                            paths: vec![String::from("/tmp/**")],
+                            ]),
+                            paths: Some(vec![String::from("/tmp/**")]),
                         },
                     ],
                 },

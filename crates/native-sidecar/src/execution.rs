@@ -123,11 +123,11 @@ use agentos_native_sidecar_core::{
     listener_snapshot_response, local_endpoint_value, parse_kernel_http_fetch_response,
     parse_process_signal_state_request, process_killed_response,
     process_snapshot_entry_from_kernel, process_snapshot_response, process_started_response,
-    remote_endpoint_value, shared_guest_runtime_identity, signal_state_response,
-    socket_addr_family, socket_address_value, stdin_closed_response, stdin_written_response,
-    tcp_socket_info_value, unix_socket_info_value, zombie_timer_count_response,
-    SharedProcessSnapshotEntry, SharedProcessSnapshotStatus, SidecarCoreError,
-    VM_FETCH_BUFFER_LIMIT_BYTES,
+    remote_endpoint_value, resolve_command_line, shared_guest_runtime_identity,
+    signal_state_response, socket_addr_family, socket_address_value, stdin_closed_response,
+    stdin_written_response, tcp_socket_info_value, unix_socket_info_value,
+    zombie_timer_count_response, SharedProcessSnapshotEntry, SharedProcessSnapshotStatus,
+    SidecarCoreError, VM_FETCH_BUFFER_LIMIT_BYTES,
 };
 use rusqlite::types::ValueRef as SqliteValueRef;
 use rusqlite::{
@@ -335,8 +335,6 @@ const DEFAULT_ALLOWED_NODE_BUILTINS: &[&str] = &[
     "util",
     "zlib",
 ];
-const EXECUTION_REQUEST_TTY_ENV: &str = "AGENTOS_EXEC_TTY";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum JavascriptCryptoDigestAlgorithm {
     Md5,
@@ -483,6 +481,7 @@ impl ActiveProcess {
             next_mapped_host_fd: MAPPED_HOST_FD_START,
             pending_execution_events: VecDeque::new(),
             pending_self_signal_exit: None,
+            timeout_at: None,
             child_processes: BTreeMap::new(),
             next_child_process_id: 0,
             http_servers: BTreeMap::new(),
@@ -529,6 +528,11 @@ impl ActiveProcess {
 
     pub(crate) fn with_host_cwd(mut self, host_cwd: PathBuf) -> Self {
         self.host_cwd = host_cwd;
+        self
+    }
+
+    pub(crate) fn with_timeout_at(mut self, timeout_at: Option<Instant>) -> Self {
+        self.timeout_at = timeout_at;
         self
     }
 
@@ -3603,6 +3607,27 @@ fn spawn_tool_process_events(request: ToolProcessEventRequest) {
         events_overflowed,
     } = request;
     std::thread::spawn(move || match tool_resolution {
+        ToolCommandResolution::Output(value) => {
+            let stdout = serde_json::to_vec(&json!({
+                "ok": true,
+                "result": value,
+            }))
+            .unwrap_or_else(|error| {
+                format_tool_failure_output(&format!("failed to serialize tool result: {error}"))
+            });
+            if !send_tool_process_event(
+                &pending_events,
+                &events_overflowed,
+                ActiveExecutionEvent::Stdout(stdout),
+            ) {
+                return;
+            }
+            let _ = send_tool_process_event(
+                &pending_events,
+                &events_overflowed,
+                ActiveExecutionEvent::Exited(0),
+            );
+        }
         ToolCommandResolution::Failure(message) => {
             if !send_tool_process_event(
                 &pending_events,
@@ -3716,20 +3741,54 @@ where
     pub(crate) async fn execute(
         &mut self,
         request: &RequestFrame,
-        payload: ExecuteRequest,
+        mut payload: ExecuteRequest,
     ) -> Result<DispatchResult, SidecarError> {
         let execute_total_start = Instant::now();
+        agentos_native_sidecar_core::apply_execute_defaults(&mut payload);
+        let timeout_at = payload
+            .timeout_ms
+            .map(|timeout_ms| {
+                Instant::now()
+                    .checked_add(Duration::from_millis(timeout_ms))
+                    .ok_or_else(|| {
+                        SidecarError::InvalidState(String::from(
+                            "execute timeout is too large for the host clock",
+                        ))
+                    })
+            })
+            .transpose()?;
         let (connection_id, session_id, vm_id) = self.vm_scope_for(&request.ownership)?;
         self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
+
+        let process_id = match payload.process_id.take() {
+            Some(process_id) if process_id.is_empty() => {
+                return Err(SidecarError::InvalidState(String::from(
+                    "execute process_id must not be empty",
+                )));
+            }
+            Some(process_id) => process_id,
+            None => loop {
+                self.next_process_id = self.next_process_id.checked_add(1).ok_or_else(|| {
+                    SidecarError::InvalidState(String::from("sidecar process id space exhausted"))
+                })?;
+                let candidate = format!("sidecar-process-{}", self.next_process_id);
+                let vm = self
+                    .vms
+                    .get(&vm_id)
+                    .ok_or_else(|| missing_vm_error(&vm_id))?;
+                if !vm_has_process_id(vm, &candidate) {
+                    break candidate;
+                }
+            },
+        };
 
         let vm = self
             .vms
             .get_mut(&vm_id)
             .ok_or_else(|| missing_vm_error(&vm_id))?;
-        if vm.active_processes.contains_key(&payload.process_id) {
+        if vm_has_process_id(vm, &process_id) {
             return Err(SidecarError::InvalidState(format!(
-                "VM {vm_id} already has an active process with id {}",
-                payload.process_id
+                "VM {vm_id} already has a current or retained process with id {process_id}"
             )));
         }
 
@@ -3764,13 +3823,14 @@ where
                 let pending_events = tool_execution.pending_events.clone();
                 let events_overflowed = tool_execution.events_overflowed.clone();
                 vm.active_processes.insert(
-                    payload.process_id.clone(),
+                    process_id.clone(),
                     ActiveProcess::new(
                         kernel_pid,
                         kernel_handle,
                         GuestRuntimeKind::JavaScript,
                         ActiveExecution::Tool(tool_execution),
                     )
+                    .with_timeout_at(timeout_at)
                     .with_guest_cwd(guest_cwd.clone())
                     .with_host_cwd(resolve_vm_guest_path_to_host(vm, &guest_cwd)),
                 );
@@ -3787,20 +3847,13 @@ where
                 });
 
                 return Ok(DispatchResult {
-                    response: process_started_response(
-                        request,
-                        payload.process_id,
-                        Some(kernel_pid),
-                    ),
+                    response: process_started_response(request, process_id, Some(kernel_pid)),
                     events: Vec::new(),
                 });
             }
         }
 
-        let requested_tty = payload
-            .env
-            .get(EXECUTION_REQUEST_TTY_ENV)
-            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+        let requested_pty = payload.pty.clone();
         let phase_start = Instant::now();
         let mut resolved = resolve_execute_request(vm, &payload)?;
         stage_agentos_package_command(vm, &mut resolved)?;
@@ -3808,13 +3861,14 @@ where
         record_execute_phase("resolve_execute_request", phase_start.elapsed());
         let phase_start = Instant::now();
         let mut env = resolved.env.clone();
-        env.remove(EXECUTION_REQUEST_TTY_ENV);
         let sandbox_root = normalize_host_path(&vm.cwd);
         env.insert(
             String::from(EXECUTION_SANDBOX_ROOT_ENV),
             sandbox_root.to_string_lossy().into_owned(),
         );
-        if resolved.runtime == GuestRuntimeKind::JavaScript {
+        if resolved.runtime == GuestRuntimeKind::JavaScript
+            || payload.keep_stdin_open.unwrap_or(false)
+        {
             env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
             // A TTY guest-node process reads stdin through the kernel PTY: host
             // input is written to the PTY master (write_kernel_process_stdin),
@@ -3833,16 +3887,13 @@ where
         } else {
             resolved.entrypoint.clone()
         };
-        let argv = std::iter::once(launch_entrypoint.clone())
-            .chain(resolved.execution_args.iter().cloned())
-            .collect::<Vec<_>>();
         record_execute_phase("env_argv_setup", phase_start.elapsed());
         let phase_start = Instant::now();
         let kernel_handle = vm
             .kernel
             .spawn_process(
                 &resolved.command,
-                argv,
+                resolved.process_args.clone(),
                 SpawnOptions {
                     requester_driver: Some(String::from(EXECUTION_DRIVER_NAME)),
                     cwd: Some(resolved.guest_cwd.clone()),
@@ -3852,7 +3903,7 @@ where
             .map_err(kernel_error)?;
         let kernel_pid = kernel_handle.pid();
         record_execute_phase("kernel_spawn_process", phase_start.elapsed());
-        let tty_master_fd = if requested_tty {
+        let tty_master_fd = if let Some(pty) = requested_pty {
             let (master_fd, slave_fd, _) = vm
                 .kernel
                 .open_pty(EXECUTION_DRIVER_NAME, kernel_pid)
@@ -3869,9 +3920,19 @@ where
             vm.kernel
                 .pty_set_foreground_pgid(EXECUTION_DRIVER_NAME, kernel_pid, master_fd, kernel_pid)
                 .map_err(kernel_error)?;
-            if let Some((cols, rows)) = requested_pty_window_size(&env) {
+            if pty.cols.is_some() || pty.rows.is_some() {
+                let current = vm
+                    .kernel
+                    .pty_window_size(EXECUTION_DRIVER_NAME, kernel_pid, master_fd)
+                    .map_err(kernel_error)?;
                 vm.kernel
-                    .pty_resize(EXECUTION_DRIVER_NAME, kernel_pid, master_fd, cols, rows)
+                    .pty_resize(
+                        EXECUTION_DRIVER_NAME,
+                        kernel_pid,
+                        master_fd,
+                        pty.cols.unwrap_or(current.cols),
+                        pty.rows.unwrap_or(current.rows),
+                    )
                     .map_err(kernel_error)?;
             }
             Some(master_fd)
@@ -4043,8 +4104,9 @@ where
             install_kernel_stdin_pipe(&mut vm.kernel, kernel_pid)?
         };
         vm.active_processes.insert(
-            payload.process_id.clone(),
+            process_id.clone(),
             ActiveProcess::new(kernel_pid, kernel_handle, resolved.runtime, execution)
+                .with_timeout_at(timeout_at)
                 .with_kernel_stdin_writer_fd(kernel_stdin_writer_fd)
                 .with_tty_master_fd(tty_master_fd)
                 .with_guest_cwd(resolved.guest_cwd.clone())
@@ -4052,14 +4114,14 @@ where
                 .with_host_cwd(resolved.host_cwd.clone()),
         );
         self.bridge.emit_lifecycle(&vm_id, LifecycleState::Busy)?;
-        mark_execute_response_ready(&vm_id, &payload.process_id);
+        mark_execute_response_ready(&vm_id, &process_id);
         record_execute_phase("process_register_and_lifecycle", phase_start.elapsed());
         record_execute_phase("execute_total", execute_total_start.elapsed());
 
         Ok(DispatchResult {
             response: process_started_response(
                 request,
-                payload.process_id,
+                process_id,
                 Some(if child_pid == 0 {
                     kernel_pid
                 } else {
@@ -4568,6 +4630,13 @@ where
             .vms
             .get_mut(vm_id)
             .ok_or_else(|| SidecarError::InvalidState(format!("unknown sidecar VM {vm_id}")))?;
+        if vm
+            .exited_process_snapshots
+            .iter()
+            .any(|snapshot| snapshot.process.process_id == process_id)
+        {
+            return Ok(());
+        }
         let process = vm.active_processes.get_mut(process_id).ok_or_else(|| {
             SidecarError::InvalidState(format!("VM {vm_id} has no active process {process_id}"))
         })?;
@@ -4763,6 +4832,22 @@ where
                         .is_some_and(|vm| vm.detached_child_processes.contains(&process_id))
                     {
                         continue;
+                    }
+                    let timed_out = self
+                        .vms
+                        .get(&vm_id)
+                        .and_then(|vm| vm.active_processes.get(&process_id))
+                        .and_then(|process| process.timeout_at)
+                        .is_some_and(|timeout_at| Instant::now() >= timeout_at);
+                    if timed_out {
+                        if let Some(process) = self
+                            .vms
+                            .get_mut(&vm_id)
+                            .and_then(|vm| vm.active_processes.get_mut(&process_id))
+                        {
+                            process.timeout_at = None;
+                        }
+                        self.kill_process_internal(&vm_id, &process_id, "SIGKILL")?;
                     }
                     enum ProcessPollResult {
                         Event(Box<Option<ActiveExecutionEvent>>),
@@ -5454,32 +5539,24 @@ where
         }
 
         let phase_start = Instant::now();
-        prune_exited_process_snapshots(vm);
-        record_execute_phase(
-            "process_exit_cleanup_prune_snapshots",
-            phase_start.elapsed(),
-        );
-        let phase_start = Instant::now();
-        let process_table = vm.kernel.list_processes();
-        record_execute_phase("process_exit_cleanup_list_processes", phase_start.elapsed());
-        let phase_start = Instant::now();
         let Some(mut process) = vm.active_processes.remove(process_id) else {
             return Ok(None);
         };
         record_execute_phase("process_exit_cleanup_remove_active", phase_start.elapsed());
         let phase_start = Instant::now();
+        process.kernel_handle.finish(exit_code);
+        record_execute_phase("process_exit_cleanup_kernel_finish", phase_start.elapsed());
+        let phase_start = Instant::now();
+        let process_table = vm.kernel.list_processes();
+        record_execute_phase("process_exit_cleanup_list_processes", phase_start.elapsed());
+        let phase_start = Instant::now();
         if let Some(info) = process_table.get(&process.kernel_pid) {
             vm.exited_process_snapshots
                 .push_back(ExitedProcessSnapshot {
-                    captured_at: Instant::now(),
-                    process: build_process_snapshot_entry(
-                        process_id,
-                        &process,
-                        info,
-                        Some(exit_code),
-                    ),
+                    process: build_process_snapshot_entry(process_id, info, Some(exit_code)),
                 });
         }
+        prune_exited_process_snapshots(vm);
         record_execute_phase("process_exit_cleanup_build_snapshot", phase_start.elapsed());
         let phase_start = Instant::now();
         let detached_children = Self::adopt_detached_child_processes(process_id, &mut process);
@@ -5506,9 +5583,6 @@ where
             "process_exit_cleanup_terminate_child_tree",
             phase_start.elapsed(),
         );
-        let phase_start = Instant::now();
-        process.kernel_handle.finish(exit_code);
-        record_execute_phase("process_exit_cleanup_kernel_finish", phase_start.elapsed());
         let phase_start = Instant::now();
         let _ = vm.kernel.wait_and_reap(process.kernel_pid);
         record_execute_phase("process_exit_cleanup_wait_and_reap", phase_start.elapsed());
@@ -6267,12 +6341,12 @@ where
         env.remove("AGENTOS_NODE_EVAL");
 
         let (command, process_args) = if request.options.shell {
-            let tokens = tokenize_shell_free_command(&request.command);
-            let requires_shell = command_requires_shell(&request.command)
-                || tokens.first().is_some_and(|command| {
-                    is_posix_shell_builtin(command) || shell_first_token_requires_shell(command)
-                });
-            if requires_shell {
+            let resolved = resolve_command_line(&request.command).ok_or_else(|| {
+                SidecarError::InvalidState(String::from(
+                    "child_process shell command must not be empty",
+                ))
+            })?;
+            if resolved.command == "sh" {
                 if !vm.command_guest_paths.contains_key("sh") {
                     return Err(SidecarError::InvalidState(format!(
                         "shell-mode child_process command requires /bin/sh, which is not \
@@ -6281,18 +6355,8 @@ where
                         request.command
                     )));
                 }
-                (
-                    String::from("sh"),
-                    vec![String::from("-c"), request.command.clone()],
-                )
-            } else {
-                let Some((command, args)) = tokens.split_first() else {
-                    return Err(SidecarError::InvalidState(String::from(
-                        "child_process shell command must not be empty",
-                    )));
-                };
-                (command.clone(), args.to_vec())
             }
+            (resolved.command, resolved.args)
         } else {
             (request.command.clone(), request.args.clone())
         };
@@ -9163,9 +9227,29 @@ fn resolve_execute_request(
 ) -> Result<ResolvedChildProcessExecution, SidecarError> {
     let payload_env: BTreeMap<String, String> = payload
         .env
-        .iter()
+        .as_ref()
+        .into_iter()
+        .flatten()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
+    if let Some(shell_command) = payload.shell_command.as_deref() {
+        if payload.command.is_some() || payload.runtime.is_some() || payload.entrypoint.is_some() {
+            return Err(SidecarError::InvalidState(String::from(
+                "execute shellCommand cannot be combined with command, runtime, or entrypoint",
+            )));
+        }
+        let resolved = resolve_command_line(shell_command).ok_or_else(|| {
+            SidecarError::InvalidState(String::from("execute shellCommand must not be empty"))
+        })?;
+        return resolve_command_execution(
+            vm,
+            &resolved.command,
+            &resolved.args,
+            &payload_env,
+            payload.cwd.as_deref(),
+            payload.wasm_permission_tier,
+        );
+    }
     if let Some(command) = payload.command.as_deref() {
         return resolve_command_execution(
             vm,
@@ -10789,7 +10873,7 @@ fn prepare_guest_runtime_env(
         vm.guest_env
             .get("PATH")
             .cloned()
-            .unwrap_or_else(|| crate::vm::DEFAULT_GUEST_PATH_ENV.to_owned())
+            .unwrap_or_else(|| agentos_native_sidecar_core::DEFAULT_GUEST_PATH_ENV.to_owned())
     });
     env.entry(String::from("TMPDIR"))
         .or_insert_with(|| String::from("/tmp"));
@@ -10912,7 +10996,7 @@ fn js_runtime_platform(vm: &VmState) -> vm_config::JsRuntimePlatform {
     vm.configuration
         .js_runtime
         .as_ref()
-        .map(|cfg| cfg.platform)
+        .and_then(|cfg| cfg.platform)
         .unwrap_or(vm_config::JsRuntimePlatform::Node)
 }
 
@@ -10934,7 +11018,7 @@ fn js_runtime_module_resolution_env(vm: &VmState) -> Option<&'static str> {
         .configuration
         .js_runtime
         .as_ref()
-        .map(|cfg| cfg.module_resolution)
+        .and_then(|cfg| cfg.module_resolution)
         .unwrap_or(vm_config::JsModuleResolution::Node);
     match resolution {
         vm_config::JsModuleResolution::Node => None,
@@ -11018,10 +11102,10 @@ fn runtime_guest_writable_host_paths(vm: &VmState) -> Vec<PathBuf> {
     vm.configuration
         .mounts
         .iter()
-        .filter(|mount| !mount.read_only)
+        .filter(|mount| !mount.effective_read_only())
         .filter_map(|mount| {
-            ((mount.plugin.id == "host_dir") || (mount.plugin.id == "module_access"))
-                .then(|| mount_config_host_path(&mount.plugin.config))
+            (mount.plugin.id == "host_dir")
+                .then(|| mount_config_host_path(mount.plugin.effective_config()))
                 .flatten()
                 .map(PathBuf::from)
         })
@@ -11034,13 +11118,13 @@ fn runtime_guest_path_mappings(vm: &VmState) -> Vec<RuntimeGuestPathMapping> {
         .mounts
         .iter()
         .filter_map(|mount| {
-            ((mount.plugin.id == "host_dir") || (mount.plugin.id == "module_access"))
+            (mount.plugin.id == "host_dir")
                 .then(|| {
-                    mount_config_host_path(&mount.plugin.config).map(|host_path| {
+                    mount_config_host_path(mount.plugin.effective_config()).map(|host_path| {
                         RuntimeGuestPathMapping {
                             guest_path: normalize_path(&mount.guest_path),
                             host_path,
-                            read_only: mount.read_only,
+                            read_only: mount.effective_read_only(),
                         }
                     })
                 })
@@ -11094,7 +11178,7 @@ fn runtime_guest_path_mappings(vm: &VmState) -> Vec<RuntimeGuestPathMapping> {
 }
 
 /// Build a `Send`-able, read-only VFS module reader over the VM's read-only
-/// `host_dir`/`module_access` mounts (and the derived `/root/node_modules` root
+/// `host_dir` mounts (and the derived `/root/node_modules` root
 /// for nested mounts). When present, the V8 bridge thread resolves modules
 /// inline against this reader — concurrently with the service loop — so a large
 /// cold-start module graph never serializes behind / starves an in-flight ACP
@@ -11111,10 +11195,10 @@ fn build_module_reader(
         .configuration
         .mounts
         .iter()
-        .filter(|mount| mount.read_only)
-        .filter(|mount| (mount.plugin.id == "host_dir") || (mount.plugin.id == "module_access"))
+        .filter(|mount| mount.effective_read_only())
+        .filter(|mount| mount.plugin.id == "host_dir")
         .filter_map(|mount| {
-            mount_config_host_path(&mount.plugin.config)
+            mount_config_host_path(mount.plugin.effective_config())
                 .map(|host_path| (normalize_path(&mount.guest_path), PathBuf::from(host_path)))
         })
         .collect();
@@ -11129,7 +11213,7 @@ fn build_module_reader(
         .iter()
         .filter(|mount| mount.plugin.id == "agentos_packages")
         .filter_map(|mount| {
-            let config = serde_json::from_str::<Value>(&mount.plugin.config).ok()?;
+            let config = serde_json::from_str::<Value>(mount.plugin.effective_config()).ok()?;
             if config.get("kind").and_then(Value::as_str) != Some("tar") {
                 return None;
             }
@@ -11151,7 +11235,7 @@ fn build_module_reader(
         .iter()
         .filter(|mount| mount.plugin.id == "agentos_packages")
         .filter_map(|mount| {
-            let config = serde_json::from_str::<Value>(&mount.plugin.config).ok()?;
+            let config = serde_json::from_str::<Value>(mount.plugin.effective_config()).ok()?;
             if config.get("kind").and_then(Value::as_str) != Some("singleSymlink") {
                 return None;
             }
@@ -12565,6 +12649,14 @@ fn snapshot_vm_processes(vm: &VmState) -> Vec<ProcessSnapshotEntry> {
     snapshot_vm_processes_inner(vm, &process_table)
 }
 
+fn vm_has_process_id(vm: &VmState, process_id: &str) -> bool {
+    vm.active_processes.contains_key(process_id)
+        || vm
+            .exited_process_snapshots
+            .iter()
+            .any(|snapshot| snapshot.process.process_id == process_id)
+}
+
 fn snapshot_vm_processes_inner(
     vm: &VmState,
     process_table: &BTreeMap<u32, agentos_kernel::process_table::ProcessInfo>,
@@ -12583,27 +12675,18 @@ fn snapshot_vm_processes_inner(
 }
 
 fn prune_exited_process_snapshots(vm: &mut VmState) {
-    let cutoff = Instant::now() - EXITED_PROCESS_SNAPSHOT_RETENTION;
-    while vm
-        .exited_process_snapshots
-        .front()
-        .is_some_and(|snapshot| snapshot.captured_at < cutoff)
-    {
+    while vm.exited_process_snapshots.len() > EXITED_PROCESS_SNAPSHOT_LIMIT {
         vm.exited_process_snapshots.pop_front();
     }
 }
 
 fn build_process_snapshot_entry(
     process_id: &str,
-    process: &ActiveProcess,
     info: &agentos_kernel::process_table::ProcessInfo,
     exit_code: Option<i32>,
 ) -> ProcessSnapshotEntry {
     wire_process_snapshot_entry_from_shared(process_snapshot_entry_from_kernel(
-        process_id,
-        info,
-        process.guest_cwd.clone(),
-        exit_code,
+        process_id, info, exit_code,
     ))
 }
 
@@ -12626,6 +12709,8 @@ fn wire_process_snapshot_entry_from_shared(
             SharedProcessSnapshotStatus::Exited => ProcessSnapshotStatus::Exited,
         },
         exit_code: entry.exit_code,
+        start_time_ms: entry.start_time_ms,
+        exit_time_ms: entry.exit_time_ms,
     }
 }
 
@@ -12636,9 +12721,7 @@ fn collect_process_snapshot_entries(
     entries: &mut Vec<ProcessSnapshotEntry>,
 ) {
     if let Some(info) = process_table.get(&process.kernel_pid) {
-        entries.push(build_process_snapshot_entry(
-            process_id, process, info, None,
-        ));
+        entries.push(build_process_snapshot_entry(process_id, info, None));
     }
 
     for (child_id, child) in &process.child_processes {
@@ -13294,93 +13377,6 @@ fn resolve_wasm_permission_tier(
         .unwrap_or(WasmPermissionTier::Full)
 }
 
-fn tokenize_shell_free_command(command: &str) -> Vec<String> {
-    command
-        .split_whitespace()
-        .filter(|segment| !segment.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
-
-fn is_posix_shell_builtin(command: &str) -> bool {
-    matches!(
-        command,
-        "." | ":"
-            | "break"
-            | "cd"
-            | "continue"
-            | "eval"
-            | "exec"
-            | "exit"
-            | "export"
-            | "readonly"
-            | "return"
-            | "set"
-            | "shift"
-            | "times"
-            | "trap"
-            | "umask"
-            | "unset"
-    )
-}
-
-/// Single-token checks for shell-mode commands whose first word forces a real
-/// shell even when the command string has no shell metacharacters. This is not
-/// a parser: env-assignment prefixes (`FOO=bar cmd`) and shell reserved words
-/// have no meaning outside `sh`, so whitespace-tokenizing them would silently
-/// run the wrong program.
-fn shell_first_token_requires_shell(token: &str) -> bool {
-    token.contains('=') || is_shell_reserved_word(token)
-}
-
-fn is_shell_reserved_word(token: &str) -> bool {
-    matches!(
-        token,
-        "if" | "then"
-            | "elif"
-            | "else"
-            | "fi"
-            | "for"
-            | "in"
-            | "do"
-            | "done"
-            | "while"
-            | "until"
-            | "case"
-            | "esac"
-            | "{"
-            | "}"
-            | "!"
-    )
-}
-
-fn command_requires_shell(command: &str) -> bool {
-    command.chars().any(|ch| {
-        matches!(
-            ch,
-            '|' | '&'
-                | ';'
-                | '<'
-                | '>'
-                | '('
-                | ')'
-                | '$'
-                | '`'
-                | '*'
-                | '?'
-                | '['
-                | ']'
-                | '{'
-                | '}'
-                | '~'
-                | '\''
-                | '"'
-                | '\\'
-                | '\n'
-        )
-    })
-}
-
 fn host_mount_path_for_guest_path(vm: &VmState, guest_path: &str) -> Option<PathBuf> {
     let normalized = normalize_path(guest_path);
 
@@ -13389,9 +13385,9 @@ fn host_mount_path_for_guest_path(vm: &VmState, guest_path: &str) -> Option<Path
         .mounts
         .iter()
         .filter_map(|mount| {
-            ((mount.plugin.id == "host_dir") || (mount.plugin.id == "module_access"))
+            (mount.plugin.id == "host_dir")
                 .then(|| {
-                    mount_config_host_backing_path(&mount.plugin.config)
+                    mount_config_host_backing_path(mount.plugin.effective_config())
                         .map(|host_path| (mount.guest_path.as_str(), host_path))
                 })
                 .flatten()
@@ -13615,9 +13611,9 @@ fn host_mount_path_for_guest_path_from_mounts(
     let mut host_mounts = mounts
         .iter()
         .filter_map(|mount| {
-            ((mount.plugin.id == "host_dir") || (mount.plugin.id == "module_access"))
+            (mount.plugin.id == "host_dir")
                 .then(|| {
-                    mount_config_host_backing_path(&mount.plugin.config)
+                    mount_config_host_backing_path(mount.plugin.effective_config())
                         .map(|host_path| (mount.guest_path.as_str(), host_path))
                 })
                 .flatten()
@@ -13652,22 +13648,24 @@ mod host_mount_path_for_guest_path_from_mounts_tests {
     use std::path::PathBuf;
 
     #[test]
-    fn resolves_module_access_mount_paths() {
+    fn resolves_host_dir_mount_paths() {
         let mounts = vec![MountDescriptor {
             guest_path: String::from("/root/node_modules"),
-            read_only: true,
+            read_only: Some(true),
             plugin: MountPluginDescriptor {
-                id: String::from("module_access"),
-                config: json!({
-                    "hostPath": "/tmp/workspace/node_modules",
-                })
-                .to_string(),
+                id: String::from("host_dir"),
+                config: Some(
+                    json!({
+                        "hostPath": "/tmp/workspace/node_modules",
+                    })
+                    .to_string(),
+                ),
             },
         }];
 
         let resolved =
             host_mount_path_for_guest_path_from_mounts(&mounts, "/root/node_modules/pkg/index.js")
-                .expect("module_access mount should resolve");
+                .expect("host_dir mount should resolve");
 
         assert_eq!(
             resolved,
@@ -13679,14 +13677,16 @@ mod host_mount_path_for_guest_path_from_mounts_tests {
     fn does_not_resolve_agentos_packages_as_host_paths() {
         let mounts = vec![MountDescriptor {
             guest_path: String::from("/opt/agentos/bin/pi"),
-            read_only: true,
+            read_only: Some(true),
             plugin: MountPluginDescriptor {
                 id: String::from("agentos_packages"),
-                config: json!({
-                    "kind": "singleSymlink",
-                    "target": "../pkgs/pi/current/bin/pi",
-                })
-                .to_string(),
+                config: Some(
+                    json!({
+                        "kind": "singleSymlink",
+                        "target": "../pkgs/pi/current/bin/pi",
+                    })
+                    .to_string(),
+                ),
             },
         }];
 
@@ -19340,18 +19340,6 @@ fn install_kernel_stdin_pipe(kernel: &mut SidecarKernel, pid: u32) -> Result<u32
     Ok(write_fd)
 }
 
-fn requested_pty_window_size(env: &BTreeMap<String, String>) -> Option<(u16, u16)> {
-    let cols = env
-        .get("COLUMNS")
-        .and_then(|value| value.parse::<u16>().ok())
-        .filter(|value| *value > 0)?;
-    let rows = env
-        .get("LINES")
-        .and_then(|value| value.parse::<u16>().ok())
-        .filter(|value| *value > 0)?;
-    Some((cols, rows))
-}
-
 fn javascript_child_process_stdin_mode(request: &JavascriptChildProcessSpawnRequest) -> &str {
     request
         .options
@@ -22933,7 +22921,7 @@ where
 }
 
 const JAVASCRIPT_NET_POLL_MAX_WAIT: Duration = Duration::from_millis(50);
-const EXITED_PROCESS_SNAPSHOT_RETENTION: Duration = Duration::from_secs(2);
+const EXITED_PROCESS_SNAPSHOT_LIMIT: usize = 1024;
 
 fn resolve_http2_file_response_guest_path(process: &ActiveProcess, path: &str) -> String {
     if Path::new(path).is_absolute() {
@@ -24226,6 +24214,7 @@ pub(crate) fn signal_runtime_process(child_pid: u32, signal: i32) -> Result<(), 
 pub(crate) fn error_code(error: &SidecarError) -> &'static str {
     match error {
         SidecarError::InvalidState(_) => "invalid_state",
+        SidecarError::SessionNotFound(_) => "session_not_found",
         SidecarError::ProtocolVersionMismatch(_) => "protocol_version_mismatch",
         SidecarError::BridgeVersionMismatch(_) => "bridge_version_mismatch",
         SidecarError::Conflict(_) => "conflict",

@@ -36,6 +36,37 @@ class MemorySidecarTransport implements SidecarProcessTransport {
 		payload: LiveRequestPayload;
 	}): Promise<LiveResponseFrame> {
 		this.requests.push(input);
+		if (input.payload.type === "initialize_vm") {
+			return {
+				frame_type: "response",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: this.requests.length,
+				ownership: input.ownership,
+				payload: {
+					type: "vm_initialized",
+					vm_id: "vm-initialized",
+					guest_cwd: "/workspace",
+					guest_env: { HOME: "/home/agentos" },
+					applied_mounts: 0,
+					projected_commands: [],
+					agents: [],
+					host_callbacks: [],
+				},
+			};
+		}
+		if (input.payload.type === "guest_filesystem_call") {
+			return {
+				frame_type: "response",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: this.requests.length,
+				ownership: input.ownership,
+				payload: {
+					type: "guest_filesystem_result",
+					operation: input.payload.operation,
+					path: input.payload.path,
+				},
+			};
+		}
 		if (input.payload.type !== "create_layer") {
 			throw new Error(`unexpected request ${input.payload.type}`);
 		}
@@ -62,6 +93,36 @@ class MemorySidecarTransport implements SidecarProcessTransport {
 }
 
 describe("sidecar process transport injection", () => {
+	test("forwards one initialization request and preserves omissions", async () => {
+		const transport = new MemorySidecarTransport();
+		const process = SidecarProcess.fromClient(transport);
+
+		const initialized = await process.initializeVm(
+			{ connectionId: "conn", sessionId: "session" },
+			{ runtime: "java_script", config: {} },
+		);
+
+		expect(initialized).toMatchObject({
+			vmId: "vm-initialized",
+			guestCwd: "/workspace",
+			guestEnv: { HOME: "/home/agentos" },
+		});
+		expect(transport.requests).toEqual([
+			{
+				ownership: {
+					scope: "session",
+					connection_id: "conn",
+					session_id: "session",
+				},
+				payload: {
+					type: "initialize_vm",
+					runtime: "java_script",
+					config: {},
+				},
+			},
+		]);
+	});
+
 	test("runs high-level process operations over an injected transport", async () => {
 		const transport = new MemorySidecarTransport();
 		const process = SidecarProcess.fromClient(transport);
@@ -85,5 +146,23 @@ describe("sidecar process transport injection", () => {
 			},
 		]);
 		expect(transport.disposed).toBe(true);
+	});
+
+	test("rejects missing filesystem response payloads instead of inventing results", async () => {
+		const process = SidecarProcess.fromClient(new MemorySidecarTransport());
+		const session = { connectionId: "conn", sessionId: "session" };
+		const vm = { vmId: "vm" };
+
+		await expect(process.exists(session, vm, "/missing")).rejects.toThrow(
+			"sidecar returned no exists result for /missing",
+		);
+		await expect(process.readdir(session, vm, "/empty")).rejects.toThrow(
+			"sidecar returned no directory entries for /empty",
+		);
+		await expect(
+			process.readdirRecursive(session, vm, "/empty"),
+		).rejects.toThrow(
+			"sidecar returned no recursive directory entries for /empty",
+		);
 	});
 });

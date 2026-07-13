@@ -5,14 +5,11 @@ export {
 	CronManager,
 	InvalidScheduleError,
 	PastScheduleError,
-	TimerScheduleDriver,
 } from "./cron/index.js";
 export { createHostDirBackend, nodeModulesMount } from "./host-dir-mount.js";
 export {
 	hostTool,
-	MAX_TOOL_DESCRIPTION_LENGTH,
 	toolKit,
-	validateToolkits,
 } from "./host-tools.js";
 export {
 	agentOsLimitsSchema,
@@ -37,13 +34,12 @@ export {
 	isPackageDescriptor,
 	OPT_AGENTOS_BIN,
 	OPT_AGENTOS_ROOT,
-	tryReadAgentosPackageManifest,
 } from "./agentos-package.js";
 export {
 	isAcpTimeoutErrorData,
 	isUnknownSessionErrorData,
 } from "./json-rpc.js";
-export { createInMemoryFileSystem, KernelError } from "./runtime-compat.js";
+export { createInMemoryFileSystem, KernelError } from "./memory-filesystem.js";
 export type {
 	ExecOptions,
 	ExecResult,

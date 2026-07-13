@@ -2,9 +2,9 @@
 mod bridge_support;
 
 use agentos_bridge::{
-    CreateJavascriptContextRequest, ExecutionEvent, ExecutionSignal, ExecutionSignalState,
-    GuestKernelCall, OutputChunk, SignalDispositionAction, SignalHandlerRegistration,
-    StartExecutionRequest,
+    CreateJavascriptContextRequest, ExecutionEvent, ExecutionExited, ExecutionSignal,
+    ExecutionSignalState, GuestKernelCall, OutputChunk, SignalDispositionAction,
+    SignalHandlerRegistration, StartExecutionRequest,
 };
 use agentos_kernel::kernel::KernelVmConfig;
 use agentos_kernel::permissions::Permissions;
@@ -15,16 +15,17 @@ use agentos_native_sidecar_browser::{
 };
 use agentos_sidecar_protocol::wire::{
     protocol_schema, AuthenticateRequest, BootstrapRootFilesystemRequest, ConfigureVmRequest,
-    ConnectionOwnership, CreateOverlayRequest, CreateVmRequest, ExecuteRequest,
+    ConnectionOwnership, CreateOverlayRequest, CreateVmRequest, EventPayload, ExecuteRequest,
     ExportSnapshotRequest, ExtEnvelope, FilesystemOperation, FindBoundUdpRequest,
     FindListenerRequest, GetSignalStateRequest, GuestFilesystemCallRequest,
     GuestFilesystemOperation, GuestRuntimeKind, HostFilesystemCallRequest, ImportSnapshotRequest,
-    KillProcessRequest, OpenSessionRequest, OwnershipScope, PermissionsPolicy,
+    InitializeVmRequest, KillProcessRequest, OpenSessionRequest, OwnershipScope, PermissionsPolicy,
     PersistenceFlushRequest, PersistenceLoadRequest, ProtocolFrame, RegisterHostCallbacksRequest,
     RegisteredHostCallbackDefinition, RequestFrame, RequestPayload, ResponsePayload,
     RootFilesystemEntry, RootFilesystemEntryEncoding, RootFilesystemEntryKind, RootFilesystemMode,
-    SealLayerRequest, SidecarPlacement, SidecarPlacementShared, VmFetchRequest, VmOwnership,
-    WasmPermissionTier, WireFrameCodec, PROTOCOL_VERSION,
+    ScheduleCronRequest, SealLayerRequest, SidecarPlacement, SidecarPlacementShared,
+    VmFetchRequest, VmOwnership, WakeCronRequest, WasmPermissionTier, WireFrameCodec,
+    PROTOCOL_VERSION,
 };
 use bridge_support::RecordingBridge;
 use std::collections::{BTreeMap, HashMap};
@@ -77,6 +78,43 @@ fn create_wire_vm(
     codec: &WireFrameCodec,
     dispatcher: &mut BrowserWireDispatcher<RecordingBridge>,
 ) -> (String, OwnershipScope) {
+    let session_ownership = open_wire_session(codec, dispatcher);
+    let OwnershipScope::SessionOwnership(session) = session_ownership else {
+        unreachable!("open_wire_session always returns session ownership");
+    };
+    let config = agentos_vm_config::CreateVmConfig {
+        cwd: None,
+        permissions: Some(agentos_native_sidecar_core::allow_all_policy()),
+        ..Default::default()
+    };
+    let created = dispatch(
+        codec,
+        dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 3,
+            ownership: OwnershipScope::SessionOwnership(session.clone()),
+            payload: RequestPayload::CreateVmRequest(CreateVmRequest::json_config(
+                GuestRuntimeKind::JavaScript,
+                config,
+            )),
+        },
+    );
+    let ResponsePayload::VmCreatedResponse(created) = created.payload else {
+        panic!("unexpected create VM response: {:?}", created.payload);
+    };
+    let ownership = OwnershipScope::VmOwnership(VmOwnership {
+        connection_id: session.connection_id,
+        session_id: session.session_id,
+        vm_id: created.vm_id.clone(),
+    });
+    (created.vm_id, ownership)
+}
+
+fn open_wire_session(
+    codec: &WireFrameCodec,
+    dispatcher: &mut BrowserWireDispatcher<RecordingBridge>,
+) -> OwnershipScope {
     let auth = dispatch(
         codec,
         dispatcher,
@@ -111,45 +149,16 @@ fn create_wire_vm(
                 placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
                     pool: None,
                 }),
-                metadata: Default::default(),
             }),
         },
     );
     let ResponsePayload::SessionOpenedResponse(opened) = session.payload else {
         panic!("unexpected session response: {:?}", session.payload);
     };
-    let config = agentos_vm_config::CreateVmConfig {
-        cwd: Some(String::from("/workspace")),
-        permissions: Some(agentos_native_sidecar_core::allow_all_policy()),
-        ..Default::default()
-    };
-    let created = dispatch(
-        codec,
-        dispatcher,
-        RequestFrame {
-            schema: protocol_schema(),
-            request_id: 3,
-            ownership: OwnershipScope::SessionOwnership(
-                agentos_sidecar_protocol::wire::SessionOwnership {
-                    connection_id: authenticated.connection_id.clone(),
-                    session_id: opened.session_id.clone(),
-                },
-            ),
-            payload: RequestPayload::CreateVmRequest(CreateVmRequest::json_config(
-                GuestRuntimeKind::JavaScript,
-                config,
-            )),
-        },
-    );
-    let ResponsePayload::VmCreatedResponse(created) = created.payload else {
-        panic!("unexpected create VM response: {:?}", created.payload);
-    };
-    let ownership = OwnershipScope::VmOwnership(VmOwnership {
+    OwnershipScope::SessionOwnership(agentos_sidecar_protocol::wire::SessionOwnership {
         connection_id: authenticated.connection_id,
         session_id: opened.session_id,
-        vm_id: created.vm_id.clone(),
-    });
-    (created.vm_id, ownership)
+    })
 }
 
 fn execute_wire_process(
@@ -167,7 +176,7 @@ fn execute_wire_process(
             request_id,
             ownership,
             payload: RequestPayload::ExecuteRequest(ExecuteRequest {
-                process_id: process_id.to_string(),
+                process_id: Some(process_id.to_string()),
                 command: Some(String::from("node")),
                 runtime: Some(GuestRuntimeKind::JavaScript),
                 entrypoint: Some(String::from("/workspace/main.js")),
@@ -175,10 +184,220 @@ fn execute_wire_process(
                 env: Default::default(),
                 cwd: Some(String::from("/workspace")),
                 wasm_permission_tier: None,
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
             }),
         },
     )
     .payload
+}
+
+#[test]
+fn cron_registry_and_defaults_are_sidecar_owned() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let (_vm_id, ownership) = create_wire_vm(&codec, &mut dispatcher);
+
+    let scheduled = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 40,
+            ownership: ownership.clone(),
+            payload: RequestPayload::ScheduleCronRequest(ScheduleCronRequest {
+                id: None,
+                schedule: "* * * * *".to_string(),
+                action: "{\"type\":\"exec\",\"command\":\"true\"}".to_string(),
+                overlap: None,
+            }),
+        },
+    );
+    let ResponsePayload::CronScheduledResponse(scheduled) = scheduled.payload else {
+        panic!("unexpected cron schedule response: {:?}", scheduled.payload);
+    };
+    assert!(!scheduled.id.is_empty());
+    assert!(scheduled.alarm.next_alarm_ms.is_some());
+
+    let listed = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 41,
+            ownership: ownership.clone(),
+            payload: RequestPayload::ListCronJobsRequest,
+        },
+    );
+    let ResponsePayload::CronJobsResponse(listed) = listed.payload else {
+        panic!("unexpected cron list response: {:?}", listed.payload);
+    };
+    assert_eq!(listed.jobs.len(), 1);
+    assert_eq!(listed.jobs[0].id, scheduled.id);
+    assert_eq!(
+        listed.jobs[0].overlap,
+        agentos_sidecar_protocol::wire::CronOverlap::Allow
+    );
+
+    let exported = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 42,
+            ownership: ownership.clone(),
+            payload: RequestPayload::ExportCronStateRequest,
+        },
+    );
+    let ResponsePayload::CronStateExportedResponse(exported) = exported.payload else {
+        panic!("unexpected cron export response: {:?}", exported.payload);
+    };
+    assert!(exported.state.contains(&scheduled.id));
+
+    let cancelled = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 43,
+            ownership: ownership.clone(),
+            payload: RequestPayload::CancelCronJobRequest(
+                agentos_sidecar_protocol::wire::CancelCronJobRequest {
+                    id: scheduled.id.clone(),
+                },
+            ),
+        },
+    );
+    let ResponsePayload::CronCancelledResponse(cancelled) = cancelled.payload else {
+        panic!("unexpected cron cancel response: {:?}", cancelled.payload);
+    };
+    assert!(cancelled.cancelled);
+    assert_eq!(cancelled.alarm.next_alarm_ms, None);
+
+    let imported = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 44,
+            ownership: ownership.clone(),
+            payload: RequestPayload::ImportCronStateRequest(
+                agentos_sidecar_protocol::wire::ImportCronStateRequest {
+                    state: exported.state,
+                },
+            ),
+        },
+    );
+    let ResponsePayload::CronStateImportedResponse(imported) = imported.payload else {
+        panic!("unexpected cron import response: {:?}", imported.payload);
+    };
+    assert!(imported.alarm.next_alarm_ms.is_some());
+
+    let restored = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 45,
+            ownership,
+            payload: RequestPayload::ListCronJobsRequest,
+        },
+    );
+    let ResponsePayload::CronJobsResponse(restored) = restored.payload else {
+        panic!(
+            "unexpected restored cron list response: {:?}",
+            restored.payload
+        );
+    };
+    assert_eq!(restored.jobs.len(), 1);
+    assert_eq!(restored.jobs[0].id, scheduled.id);
+}
+
+#[test]
+fn browser_sidecar_executes_cron_commands_and_emits_completion_dispatch() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let (vm_id, ownership) = create_wire_vm(&codec, &mut dispatcher);
+
+    let scheduled = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 50,
+            ownership: ownership.clone(),
+            payload: RequestPayload::ScheduleCronRequest(ScheduleCronRequest {
+                id: Some(String::from("sidecar-exec")),
+                schedule: "* * * * * *".to_string(),
+                action: r#"{"type":"exec","command":"true"}"#.to_string(),
+                overlap: None,
+            }),
+        },
+    );
+    let ResponsePayload::CronScheduledResponse(scheduled) = scheduled.payload else {
+        panic!("unexpected cron schedule response: {:?}", scheduled.payload);
+    };
+    let deadline = scheduled.alarm.next_alarm_ms.expect("next alarm");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("unix time")
+        .as_millis() as u64;
+    std::thread::sleep(std::time::Duration::from_millis(
+        deadline.saturating_sub(now).saturating_add(5),
+    ));
+
+    let wake = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 51,
+            ownership: ownership.clone(),
+            payload: RequestPayload::WakeCronRequest(WakeCronRequest {
+                generation: scheduled.alarm.generation,
+            }),
+        },
+    );
+    let ResponsePayload::CronWakeResponse(wake) = wake.payload else {
+        panic!("unexpected cron wake response: {:?}", wake.payload);
+    };
+    assert!(
+        wake.runs.is_empty(),
+        "exec actions must not reach the client"
+    );
+
+    dispatcher
+        .sidecar_mut()
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Exited(ExecutionExited {
+            vm_id,
+            execution_id: String::from("exec-1"),
+            exit_code: 0,
+        }));
+    let dispatch = (0..16)
+        .find_map(|_| {
+            let encoded = dispatcher
+                .poll_event_bytes()
+                .expect("poll cron completion")?;
+            let ProtocolFrame::EventFrame(event) =
+                codec.decode_message(&encoded).expect("decode event")
+            else {
+                panic!("expected event frame");
+            };
+            match event.payload {
+                EventPayload::CronDispatchEvent(dispatch) => Some(dispatch),
+                _ => None,
+            }
+        })
+        .expect("cron completion dispatch");
+    assert!(dispatch.runs.is_empty());
+    assert_eq!(dispatch.events.len(), 1);
+    assert_eq!(
+        dispatch.events[0].kind,
+        agentos_sidecar_protocol::wire::CronEventKind::Complete
+    );
 }
 
 #[test]
@@ -221,7 +440,6 @@ fn browser_wire_dispatcher_handles_lifecycle_and_execution_frames() {
                 placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
                     pool: None,
                 }),
-                metadata: Default::default(),
             }),
         },
     );
@@ -234,9 +452,10 @@ fn browser_wire_dispatcher_handles_lifecycle_and_execution_frames() {
         permissions: Some(agentos_native_sidecar_core::allow_all_policy()),
         ..Default::default()
     };
-    config
-        .env
-        .insert(String::from("BASE_ENV"), String::from("base"));
+    config.env = Some(std::collections::BTreeMap::from([(
+        String::from("BASE_ENV"),
+        String::from("base"),
+    )]));
     let create = dispatch(
         &codec,
         &mut dispatcher,
@@ -258,6 +477,11 @@ fn browser_wire_dispatcher_handles_lifecycle_and_execution_frames() {
     let ResponsePayload::VmCreatedResponse(created) = create.payload else {
         panic!("unexpected create response: {:?}", create.payload);
     };
+    assert_eq!(created.guest_cwd, "/workspace");
+    assert_eq!(
+        created.guest_env.get("HOME").map(String::as_str),
+        Some("/home/agentos")
+    );
     assert_eq!(dispatcher.vm_count(), 1);
 
     let ownership = OwnershipScope::VmOwnership(VmOwnership {
@@ -309,7 +533,7 @@ fn browser_wire_dispatcher_handles_lifecycle_and_execution_frames() {
                 target: None,
                 content: None,
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 mode: None,
                 uid: None,
                 gid: None,
@@ -354,7 +578,7 @@ fn browser_wire_dispatcher_handles_lifecycle_and_execution_frames() {
             request_id: 7,
             ownership: ownership.clone(),
             payload: RequestPayload::ExecuteRequest(ExecuteRequest {
-                process_id: String::from("proc-1"),
+                process_id: Some(String::from("proc-1")),
                 command: Some(String::from("node")),
                 runtime: Some(GuestRuntimeKind::JavaScript),
                 entrypoint: Some(String::from("/workspace/main.js")),
@@ -362,6 +586,10 @@ fn browser_wire_dispatcher_handles_lifecycle_and_execution_frames() {
                 env: Default::default(),
                 cwd: Some(String::from("/workspace")),
                 wasm_permission_tier: None,
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
             }),
         },
     );
@@ -666,6 +894,41 @@ fn browser_wire_dispatcher_handles_lifecycle_and_execution_frames() {
 }
 
 #[test]
+fn browser_wire_dispatcher_allocates_an_omitted_process_id() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let (_, ownership) = create_wire_vm(&codec, &mut dispatcher);
+
+    let response = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 10,
+            ownership,
+            payload: RequestPayload::ExecuteRequest(ExecuteRequest {
+                process_id: None,
+                command: Some(String::from("node")),
+                runtime: Some(GuestRuntimeKind::JavaScript),
+                entrypoint: Some(String::from("/workspace/main.js")),
+                args: vec![String::from("main.js")],
+                env: None,
+                cwd: None,
+                wasm_permission_tier: None,
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
+            }),
+        },
+    );
+    let ResponsePayload::ProcessStartedResponse(started) = response.payload else {
+        panic!("unexpected execute response: {:?}", response.payload);
+    };
+    assert!(started.process_id.starts_with("sidecar-process-"));
+}
+
+#[test]
 fn browser_wire_dispatcher_rejects_duplicate_active_process_ids() {
     let codec = WireFrameCodec::default();
     let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
@@ -844,18 +1107,12 @@ fn browser_wire_dispatcher_configures_vm_permissions() {
             request_id: 2,
             ownership: ownership.clone(),
             payload: RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts: Vec::new(),
-                software: Vec::new(),
+                mounts: None,
                 permissions: Some(PermissionsPolicy::deny_all()),
-                module_access_cwd: None,
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
                 command_permissions: Default::default(),
-                loopback_exempt_ports: Vec::new(),
-                packages: Vec::new(),
-                packages_mount_at: String::new(),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                loopback_exempt_ports: None,
+                packages: None,
+                packages_mount_at: None,
             }),
         },
     );
@@ -863,7 +1120,6 @@ fn browser_wire_dispatcher_configures_vm_permissions() {
         panic!("unexpected configure response: {:?}", configured.payload);
     };
     assert_eq!(configured.applied_mounts, 0);
-    assert_eq!(configured.applied_software, 0);
 
     let read_after_deny = dispatch(
         &codec,
@@ -879,7 +1135,7 @@ fn browser_wire_dispatcher_configures_vm_permissions() {
                 target: None,
                 content: None,
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 mode: None,
                 uid: None,
                 gid: None,
@@ -901,7 +1157,7 @@ fn browser_wire_dispatcher_configures_vm_permissions() {
 }
 
 #[test]
-fn browser_wire_create_vm_without_permissions_defaults_to_deny_all() {
+fn browser_wire_create_vm_without_permissions_defaults_to_allow_all() {
     let codec = WireFrameCodec::default();
     let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
 
@@ -938,7 +1194,6 @@ fn browser_wire_create_vm_without_permissions_defaults_to_deny_all() {
                 placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
                     pool: None,
                 }),
-                metadata: Default::default(),
             }),
         },
     );
@@ -949,9 +1204,9 @@ fn browser_wire_create_vm_without_permissions_defaults_to_deny_all() {
     let config = agentos_vm_config::CreateVmConfig {
         cwd: Some(String::from("/workspace")),
         permissions: None,
-        root_filesystem: agentos_vm_config::RootFilesystemConfig {
-            bootstrap_entries: vec![agentos_vm_config::RootFilesystemEntry {
-                path: String::from("/workspace/default-deny.txt"),
+        root_filesystem: Some(agentos_vm_config::RootFilesystemConfig {
+            bootstrap_entries: Some(vec![agentos_vm_config::RootFilesystemEntry {
+                path: String::from("/workspace/default-allow.txt"),
                 kind: agentos_vm_config::RootFilesystemEntryKind::File,
                 mode: None,
                 uid: None,
@@ -960,9 +1215,9 @@ fn browser_wire_create_vm_without_permissions_defaults_to_deny_all() {
                 encoding: Some(agentos_vm_config::RootFilesystemEntryEncoding::Utf8),
                 target: None,
                 executable: false,
-            }],
+            }]),
             ..Default::default()
-        },
+        }),
         ..Default::default()
     };
     let create = dispatch(
@@ -1000,12 +1255,12 @@ fn browser_wire_create_vm_without_permissions_defaults_to_deny_all() {
             }),
             payload: RequestPayload::GuestFilesystemCallRequest(GuestFilesystemCallRequest {
                 operation: GuestFilesystemOperation::ReadFile,
-                path: String::from("/workspace/default-deny.txt"),
+                path: String::from("/workspace/default-allow.txt"),
                 destination_path: None,
                 target: None,
                 content: None,
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 mode: None,
                 uid: None,
                 gid: None,
@@ -1017,10 +1272,49 @@ fn browser_wire_create_vm_without_permissions_defaults_to_deny_all() {
             }),
         },
     );
-    let ResponsePayload::RejectedResponse(rejected) = read.payload else {
-        panic!("unexpected default-deny read response: {:?}", read.payload);
+    let ResponsePayload::GuestFilesystemResultResponse(response) = read.payload else {
+        panic!("unexpected default-allow read response: {:?}", read.payload);
     };
-    assert_eq!(rejected.code, "guest_filesystem_failed");
+    assert_eq!(response.content.as_deref(), Some("secret"));
+}
+
+#[test]
+fn browser_wire_create_vm_keeps_agent_instruction_defaults_in_the_sidecar() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let ownership = open_wire_session(&codec, &mut dispatcher);
+    let OwnershipScope::SessionOwnership(session) = ownership else {
+        unreachable!("open_wire_session always returns session ownership");
+    };
+    let config = agentos_vm_config::CreateVmConfig {
+        agent_additional_instructions: Some(String::from("VM-level guidance")),
+        ..Default::default()
+    };
+
+    let created = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 3,
+            ownership: OwnershipScope::SessionOwnership(session),
+            payload: RequestPayload::CreateVmRequest(CreateVmRequest::json_config(
+                GuestRuntimeKind::JavaScript,
+                config,
+            )),
+        },
+    );
+    let ResponsePayload::VmCreatedResponse(created) = created.payload else {
+        panic!("unexpected create VM response: {:?}", created.payload);
+    };
+
+    assert_eq!(
+        dispatcher
+            .sidecar_mut()
+            .agent_additional_instructions(&created.vm_id)
+            .expect("created VM must retain instruction defaults"),
+        Some(String::from("VM-level guidance"))
+    );
 }
 
 #[test]
@@ -1061,7 +1355,6 @@ fn browser_wire_create_vm_applies_read_only_root_filesystem_config() {
                 placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
                     pool: None,
                 }),
-                metadata: Default::default(),
             }),
         },
     );
@@ -1072,10 +1365,10 @@ fn browser_wire_create_vm_applies_read_only_root_filesystem_config() {
     let config = agentos_vm_config::CreateVmConfig {
         cwd: Some(String::from("/workspace")),
         permissions: Some(agentos_native_sidecar_core::allow_all_policy()),
-        root_filesystem: agentos_vm_config::RootFilesystemConfig {
-            mode: agentos_vm_config::RootFilesystemMode::ReadOnly,
-            disable_default_base_layer: true,
-            bootstrap_entries: vec![agentos_vm_config::RootFilesystemEntry {
+        root_filesystem: Some(agentos_vm_config::RootFilesystemConfig {
+            mode: Some(agentos_vm_config::RootFilesystemMode::ReadOnly),
+            disable_default_base_layer: Some(true),
+            bootstrap_entries: Some(vec![agentos_vm_config::RootFilesystemEntry {
                 path: String::from("/workspace/bootstrap.txt"),
                 kind: agentos_vm_config::RootFilesystemEntryKind::File,
                 mode: None,
@@ -1085,9 +1378,9 @@ fn browser_wire_create_vm_applies_read_only_root_filesystem_config() {
                 encoding: Some(agentos_vm_config::RootFilesystemEntryEncoding::Utf8),
                 target: None,
                 executable: false,
-            }],
+            }]),
             ..Default::default()
-        },
+        }),
         ..Default::default()
     };
     let create = dispatch(
@@ -1131,7 +1424,7 @@ fn browser_wire_create_vm_applies_read_only_root_filesystem_config() {
                 target: None,
                 content: None,
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 mode: None,
                 uid: None,
                 gid: None,
@@ -1162,7 +1455,7 @@ fn browser_wire_create_vm_applies_read_only_root_filesystem_config() {
                 target: None,
                 content: Some(String::from("new")),
                 encoding: Some(RootFilesystemEntryEncoding::Utf8),
-                recursive: false,
+                recursive: None,
                 mode: None,
                 uid: None,
                 gid: None,
@@ -1208,21 +1501,15 @@ fn browser_wire_dispatcher_configures_wasm_command_permissions() {
             request_id: 1,
             ownership: ownership.clone(),
             payload: RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts: Vec::new(),
-                software: Vec::new(),
+                mounts: None,
                 permissions: None,
-                module_access_cwd: None,
-                instructions: vec![String::from("keep wasm read-only")],
-                projected_modules: Vec::new(),
-                command_permissions: HashMap::from([(
+                command_permissions: Some(HashMap::from([(
                     String::from("wasm"),
                     WasmPermissionTier::ReadOnly,
-                )]),
-                loopback_exempt_ports: Vec::new(),
-                packages: Vec::new(),
-                packages_mount_at: String::new(),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                )])),
+                loopback_exempt_ports: None,
+                packages: None,
+                packages_mount_at: None,
             }),
         },
     );
@@ -1231,15 +1518,37 @@ fn browser_wire_dispatcher_configures_wasm_command_permissions() {
         ResponsePayload::VmConfiguredResponse(_)
     ));
 
-    let executed = dispatch(
+    let patch_without_command_permissions = dispatch(
         &codec,
         &mut dispatcher,
         RequestFrame {
             schema: protocol_schema(),
             request_id: 2,
             ownership: ownership.clone(),
+            payload: RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
+                mounts: None,
+                permissions: None,
+                command_permissions: None,
+                loopback_exempt_ports: None,
+                packages: None,
+                packages_mount_at: None,
+            }),
+        },
+    );
+    assert!(matches!(
+        patch_without_command_permissions.payload,
+        ResponsePayload::VmConfiguredResponse(_)
+    ));
+
+    let executed = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 3,
+            ownership: ownership.clone(),
             payload: RequestPayload::ExecuteRequest(ExecuteRequest {
-                process_id: String::from("proc-wasm"),
+                process_id: Some(String::from("proc-wasm")),
                 command: Some(String::from("wasm")),
                 runtime: Some(GuestRuntimeKind::WebAssembly),
                 entrypoint: Some(String::from("/workspace/app.wasm")),
@@ -1247,6 +1556,10 @@ fn browser_wire_dispatcher_configures_wasm_command_permissions() {
                 env: Default::default(),
                 cwd: Some(String::from("/workspace")),
                 wasm_permission_tier: None,
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
             }),
         },
     );
@@ -1270,10 +1583,10 @@ fn browser_wire_dispatcher_configures_wasm_command_permissions() {
         &mut dispatcher,
         RequestFrame {
             schema: protocol_schema(),
-            request_id: 3,
+            request_id: 4,
             ownership,
             payload: RequestPayload::ExecuteRequest(ExecuteRequest {
-                process_id: String::from("proc-wasm-explicit"),
+                process_id: Some(String::from("proc-wasm-explicit")),
                 command: Some(String::from("wasm")),
                 runtime: Some(GuestRuntimeKind::WebAssembly),
                 entrypoint: Some(String::from("/workspace/app.wasm")),
@@ -1281,6 +1594,10 @@ fn browser_wire_dispatcher_configures_wasm_command_permissions() {
                 env: Default::default(),
                 cwd: Some(String::from("/workspace")),
                 wasm_permission_tier: Some(WasmPermissionTier::ReadWrite),
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
             }),
         },
     );
@@ -1323,10 +1640,7 @@ fn browser_wire_dispatcher_registers_host_callbacks() {
             schema: protocol_schema(),
             request_id: 1,
             ownership: ownership.clone(),
-            payload: RequestPayload::RegisterHostCallbacksRequest(test_toolkit_payload(
-                "browser",
-                "agentos-browser",
-            )),
+            payload: RequestPayload::RegisterHostCallbacksRequest(test_toolkit_payload("browser")),
         },
     );
     let ResponsePayload::HostCallbacksRegisteredResponse(registered) = response.payload else {
@@ -1342,10 +1656,7 @@ fn browser_wire_dispatcher_registers_host_callbacks() {
             schema: protocol_schema(),
             request_id: 2,
             ownership,
-            payload: RequestPayload::RegisterHostCallbacksRequest(test_toolkit_payload(
-                "browser",
-                "agentos-browser-2",
-            )),
+            payload: RequestPayload::RegisterHostCallbacksRequest(test_toolkit_payload("browser")),
         },
     );
     let ResponsePayload::RejectedResponse(rejected) = duplicate.payload else {
@@ -1353,6 +1664,78 @@ fn browser_wire_dispatcher_registers_host_callbacks() {
     };
     assert_eq!(rejected.code, "register_host_callbacks_failed");
     assert!(rejected.message.contains("toolkit already registered"));
+}
+
+#[test]
+fn browser_wire_dispatcher_initializes_vm_atomically() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let ownership = open_wire_session(&codec, &mut dispatcher);
+    let create = CreateVmRequest::json_config(
+        GuestRuntimeKind::JavaScript,
+        agentos_vm_config::CreateVmConfig::default(),
+    );
+
+    let response = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 3,
+            ownership,
+            payload: RequestPayload::InitializeVmRequest(InitializeVmRequest {
+                runtime: create.runtime,
+                config: create.config,
+                mounts: None,
+                packages: None,
+                packages_mount_at: None,
+                host_callbacks: Some(vec![test_toolkit_payload("browser")]),
+            }),
+        },
+    );
+    let ResponsePayload::VmInitializedResponse(initialized) = response.payload else {
+        panic!("unexpected initialize response: {:?}", response.payload);
+    };
+    assert_eq!(initialized.applied_mounts, 0);
+    assert_eq!(initialized.host_callbacks.len(), 1);
+    assert_eq!(initialized.host_callbacks[0].registration, "browser");
+    assert_eq!(dispatcher.vm_count(), 1);
+}
+
+#[test]
+fn browser_wire_dispatcher_rolls_back_failed_initialization() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let ownership = open_wire_session(&codec, &mut dispatcher);
+    let create = CreateVmRequest::json_config(
+        GuestRuntimeKind::JavaScript,
+        agentos_vm_config::CreateVmConfig::default(),
+    );
+    let registration = test_toolkit_payload("duplicate");
+
+    let response = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 3,
+            ownership,
+            payload: RequestPayload::InitializeVmRequest(InitializeVmRequest {
+                runtime: create.runtime,
+                config: create.config,
+                mounts: None,
+                packages: None,
+                packages_mount_at: None,
+                host_callbacks: Some(vec![registration.clone(), registration]),
+            }),
+        },
+    );
+    let ResponsePayload::RejectedResponse(rejected) = response.payload else {
+        panic!("unexpected initialize response: {:?}", response.payload);
+    };
+    assert_eq!(rejected.code, "initialize_vm_failed");
+    assert!(rejected.message.contains("already registered"));
+    assert_eq!(dispatcher.vm_count(), 0);
 }
 
 #[test]
@@ -1400,7 +1783,7 @@ fn browser_wire_dispatcher_manages_snapshot_layers() {
             request_id: 3,
             ownership: ownership.clone(),
             payload: RequestPayload::CreateOverlayRequest(CreateOverlayRequest {
-                mode: RootFilesystemMode::Ephemeral,
+                mode: Some(RootFilesystemMode::Ephemeral),
                 upper_layer_id: Some(upper_layer),
                 lower_layer_ids: vec![lower_layer],
             }),
@@ -1675,12 +2058,10 @@ fn browser_wire_dispatcher_vm_fetch_enters_kernel_loopback_when_listener_exists(
     );
 }
 
-fn test_toolkit_payload(name: &str, alias: &str) -> RegisterHostCallbacksRequest {
+fn test_toolkit_payload(name: &str) -> RegisterHostCallbacksRequest {
     RegisterHostCallbacksRequest {
         name: name.to_string(),
         description: format!("{name} automation"),
-        command_aliases: vec![alias.to_string()],
-        registry_command_aliases: vec![String::from("agentos")],
         callbacks: std::collections::HashMap::from([(
             String::from("screenshot"),
             RegisteredHostCallbackDefinition {

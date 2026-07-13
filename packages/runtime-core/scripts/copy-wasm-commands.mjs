@@ -4,14 +4,14 @@
  * Vendor the WASM coreutils/shell command binaries into `@rivet-dev/agentos-runtime-core`'s
  * package directory so they ship inside the published tarball.
  *
- * The kernel needs a guest `sh` (plus coreutils) to spawn any process — without
- * these binaries `NodeRuntime.create()` cannot boot. The binaries are produced
+ * The runtime package vendors guest `sh` and coreutils commands for callers
+ * that explicitly mount them. The binaries are produced
  * by the in-repo Rust command build at
  * `registry/native/target/wasm32-wasip1/release/commands/`. That path only
  * exists in a developer checkout, so we copy the whole command set (symlinks
  * included, the way `bash -> sh` and the stub aliases are laid out) into
- * `packages/core/commands/`, which is listed in `files` and resolved at runtime
- * by `node-runtime.ts` for published installs.
+ * `packages/runtime-core/commands/`, which is listed in `files` for published
+ * installs.
  *
  * This mirrors how the sidecar binary ships via `@rivet-dev/agentos-runtime-sidecar`: the
  * artifact is vendored into a published package and resolved from the installed

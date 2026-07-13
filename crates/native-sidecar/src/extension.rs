@@ -5,8 +5,9 @@ use std::time::Duration;
 use crate::protocol::{
     CloseStdinRequest, EventFrame, EventPayload, ExecuteRequest, ExtEnvelope,
     GuestFilesystemCallRequest, GuestFilesystemResultResponse, KillProcessRequest, OwnershipScope,
-    ProcessKilledResponse, ProcessStartedResponse, SidecarRequestPayload, SidecarResponsePayload,
-    StdinClosedResponse, StdinWrittenResponse, WriteStdinRequest,
+    ProcessKilledResponse, ProcessStartedResponse, PtyResizedResponse, ResizePtyRequest,
+    SidecarRequestPayload, SidecarResponsePayload, StdinClosedResponse, StdinWrittenResponse,
+    WriteStdinRequest,
 };
 use crate::state::{SharedEventSink, SharedSidecarRequestClient, SidecarError};
 
@@ -24,10 +25,20 @@ pub struct ProjectedAgentLaunchEntry {
 }
 
 pub trait ExtensionHost {
+    fn registered_host_tool_reference<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+    ) -> ExtensionFuture<'a, String>;
+
     fn projected_agents<'a>(
         &'a mut self,
         ownership: OwnershipScope,
     ) -> ExtensionFuture<'a, Vec<ProjectedAgentLaunchEntry>>;
+
+    fn agent_additional_instructions<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+    ) -> ExtensionFuture<'a, Option<String>>;
 
     fn spawn_process<'a>(
         &'a mut self,
@@ -52,6 +63,12 @@ pub trait ExtensionHost {
         ownership: OwnershipScope,
         request: KillProcessRequest,
     ) -> ExtensionFuture<'a, ProcessKilledResponse>;
+
+    fn resize_pty<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+        request: ResizePtyRequest,
+    ) -> ExtensionFuture<'a, PtyResizedResponse>;
 
     fn poll_event<'a>(
         &'a mut self,
@@ -101,6 +118,19 @@ pub trait ExtensionHost {
         process_id: String,
         timeout: Duration,
     ) -> ExtensionFuture<'a, ExtensionBufferedProcessOutput>;
+
+    fn drain_buffered_process_output<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+        process_id: String,
+        timeout: Duration,
+    ) -> ExtensionFuture<'a, ExtensionBufferedProcessOutput>;
+
+    fn stop_buffering_process_output<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+        process_id: String,
+    ) -> ExtensionFuture<'a, ()>;
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -109,6 +139,7 @@ pub struct ExtensionBufferedProcessOutput {
     pub stderr: Vec<u8>,
     pub stdout_truncated: bool,
     pub stderr_truncated: bool,
+    pub exit_code: Option<i32>,
 }
 
 impl ExtensionBufferedProcessOutput {
@@ -308,6 +339,12 @@ impl<'a> ExtensionContext<'a> {
         self.snapshot.invoke_callback(payload, timeout)
     }
 
+    pub async fn registered_host_tool_reference(&mut self) -> Result<String, SidecarError> {
+        self.host
+            .registered_host_tool_reference(self.snapshot.ownership.clone())
+            .await
+    }
+
     pub async fn spawn_process(
         &mut self,
         request: ExecuteRequest,
@@ -440,6 +477,33 @@ impl<'a> ExtensionContext<'a> {
         Ok(response)
     }
 
+    pub async fn resize_pty_wire(
+        &mut self,
+        request: crate::wire::ResizePtyRequest,
+    ) -> Result<crate::wire::PtyResizedResponse, SidecarError> {
+        let payload = crate::wire::request_payload_to_compat(
+            self.snapshot.ownership(),
+            crate::wire::RequestPayload::ResizePtyRequest(request),
+        )
+        .map_err(wire_protocol_error)?;
+        let crate::protocol::RequestPayload::ResizePty(request) = payload else {
+            return Err(unexpected_wire_request_payload("resize PTY"));
+        };
+        let response = self
+            .host
+            .resize_pty(self.snapshot.ownership.clone(), request)
+            .await?;
+        let payload = crate::wire::response_payload_from_compat(
+            self.snapshot.ownership(),
+            crate::protocol::ResponsePayload::PtyResized(response),
+        )
+        .map_err(wire_protocol_error)?;
+        let crate::wire::ResponsePayload::PtyResizedResponse(response) = payload else {
+            return Err(unexpected_wire_response_payload("PTY resized"));
+        };
+        Ok(response)
+    }
+
     pub async fn poll_event(
         &mut self,
         timeout: Duration,
@@ -477,6 +541,11 @@ impl<'a> ExtensionContext<'a> {
     ) -> Result<Vec<ProjectedAgentLaunchEntry>, SidecarError> {
         let ownership = self.snapshot.ownership().clone();
         self.host.projected_agents(ownership).await
+    }
+
+    pub async fn agent_additional_instructions(&mut self) -> Result<Option<String>, SidecarError> {
+        let ownership = self.snapshot.ownership().clone();
+        self.host.agent_additional_instructions(ownership).await
     }
 
     pub async fn guest_filesystem_call_wire(
@@ -579,6 +648,29 @@ impl<'a> ExtensionContext<'a> {
                 process_id.into(),
                 timeout,
             )
+            .await
+    }
+
+    pub async fn drain_buffered_process_output(
+        &mut self,
+        process_id: impl Into<String>,
+        timeout: Duration,
+    ) -> Result<ExtensionBufferedProcessOutput, SidecarError> {
+        self.host
+            .drain_buffered_process_output(
+                self.snapshot.ownership.clone(),
+                process_id.into(),
+                timeout,
+            )
+            .await
+    }
+
+    pub async fn stop_buffering_process_output(
+        &mut self,
+        process_id: impl Into<String>,
+    ) -> Result<(), SidecarError> {
+        self.host
+            .stop_buffering_process_output(self.snapshot.ownership.clone(), process_id.into())
             .await
     }
 }

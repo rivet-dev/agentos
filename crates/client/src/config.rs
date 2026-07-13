@@ -1,18 +1,15 @@
 //! Configuration types: `AgentOsConfig` (= TS `AgentOsOptions`), the permissions tree, root
-//! filesystem config, mount config, and the schedule-driver abstraction.
+//! filesystem config and mount config.
 //!
 //! Ported from `packages/core/src/agent-os.ts` (`AgentOsOptions`), `runtime.ts` (`Permissions`),
-//! `layers.ts` / `overlay-filesystem.ts` (root/overlay), and `cron/` (schedule driver).
+//! `layers.ts` / `overlay-filesystem.ts` (root/overlay).
 //!
-//! Non-serializable parameters (`MountConfig::Plain.driver`, `CronAction::Callback`) are in-process
-//! only and become `Arc<dyn ...>` trait objects; they cannot cross the wire and are gated exactly as
-//! the actor layer gates them.
+//! Non-serializable callbacks become `Arc<dyn ...>` trait objects; they cannot cross the wire and
+//! are gated exactly as the actor layer gates them.
 
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-
-use crate::fs::VirtualFileSystem;
 
 /// Resolved client options (= TS `AgentOsOptions`). All fields optional with documented defaults.
 ///
@@ -20,8 +17,6 @@ use crate::fs::VirtualFileSystem;
 /// and `packages/core/src/options-schema.ts::agentOsOptionsSchema`.
 #[derive(Default)]
 pub struct AgentOsConfig {
-    /// Software packages to install (flattened). Default `[]`.
-    pub software: Vec<SoftwareInput>,
     /// Package directories to project into the VM's `/opt/agentos` tree (the
     /// secure-exec package projection). Each entry is a host dir containing an
     /// `agentos-package.json` manifest + the package payload. Default `[]`.
@@ -33,14 +28,14 @@ pub struct AgentOsConfig {
     pub loopback_exempt_ports: Vec<u16>,
     /// Allowed Node.js builtins. Default: the hardened native-bridge set.
     pub allowed_node_builtins: Option<Vec<String>>,
+    /// Optional high-resolution monotonic guest clock override.
+    pub high_resolution_time: Option<bool>,
     /// Root filesystem configuration. Default: overlay + bundled base snapshot.
     pub root_filesystem: RootFilesystemConfig,
     /// Additional mounts.
     pub mounts: Vec<MountConfig>,
     /// Extra OS instructions appended to agent sessions.
     pub additional_instructions: Option<String>,
-    /// Schedule driver used by the cron manager. Default: [`TimerScheduleDriver`].
-    pub schedule_driver: Option<Arc<dyn ScheduleDriver>>,
     /// Tool kits to register.
     pub tool_kits: Vec<ToolKit>,
     /// Rust-only sidecar callback handler for `js_bridge`-style plugin requests.
@@ -89,6 +84,11 @@ impl AgentOsConfigBuilder {
         self
     }
 
+    pub fn high_resolution_time(mut self, enabled: bool) -> Self {
+        self.config.high_resolution_time = Some(enabled);
+        self
+    }
+
     pub fn root_filesystem(mut self, root: RootFilesystemConfig) -> Self {
         self.config.root_filesystem = root;
         self
@@ -101,11 +101,6 @@ impl AgentOsConfigBuilder {
 
     pub fn additional_instructions(mut self, instructions: impl Into<String>) -> Self {
         self.config.additional_instructions = Some(instructions.into());
-        self
-    }
-
-    pub fn schedule_driver(mut self, driver: Arc<dyn ScheduleDriver>) -> Self {
-        self.config.schedule_driver = Some(driver);
         self
     }
 
@@ -142,32 +137,6 @@ impl AgentOsConfigBuilder {
     pub fn build(self) -> AgentOsConfig {
         self.config
     }
-}
-
-/// The kind of a software package, which decides how it is mounted into the VM. Mirrors the TS
-/// descriptor `type` discriminator (`packages/core/src/packages.ts`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SoftwareKind {
-    /// A directory of wasm command binaries. Mounted at `/__secure_exec/commands/{index}/` so the
-    /// sidecar's command discovery can resolve guest commands (`echo`, `sh`, `grep`, ...).
-    #[default]
-    WasmCommands,
-    /// An agent SDK/adapter package. Not mounted as a command directory.
-    Agent,
-    /// A host-tool package. Not mounted as a command directory.
-    Tool,
-}
-
-/// A flattened software package input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SoftwareInput {
-    pub package: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    /// How the package is mounted into the VM. Defaults to [`SoftwareKind::WasmCommands`].
-    #[serde(default)]
-    pub kind: SoftwareKind,
 }
 
 /// A reference to a packed `.aospkg` package for the `/opt/agentos`
@@ -733,25 +702,12 @@ pub enum RootLowerInput {
 // Mounts
 // ---------------------------------------------------------------------------
 
-/// A filesystem mount. `Plain.driver` is an in-process trait object and cannot cross the wire.
-pub enum MountConfig {
-    /// Plain mount over an in-process [`VirtualFileSystem`] driver.
-    Plain {
-        path: String,
-        driver: Arc<dyn VirtualFileSystem>,
-        read_only: bool,
-    },
-    /// Native plugin mount (`{ id; config? }`).
-    Native {
-        path: String,
-        plugin: MountPlugin,
-        read_only: bool,
-    },
-    /// Overlay mount (`{ type: "overlay"; store; mode?; lowers }`).
-    Overlay {
-        path: String,
-        filesystem: OverlayMountConfig,
-    },
+/// A sidecar-native filesystem plugin mount.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MountConfig {
+    pub path: String,
+    pub plugin: MountPlugin,
+    pub read_only: Option<bool>,
 }
 
 /// A native mount plugin descriptor.
@@ -768,30 +724,18 @@ pub struct MountPlugin {
 /// This is the explicit, mount-based replacement for the removed `moduleAccessCwd`
 /// option: the guest module resolver reads the mounted tree through the kernel VFS,
 /// so the caller supplies exactly the `node_modules` directory whose packages should
-/// be resolvable in the guest. The mount is read-only.
+/// be resolvable in the guest.
 pub fn node_modules_mount(host_node_modules_dir: impl Into<String>) -> MountConfig {
-    MountConfig::Native {
+    MountConfig {
         path: "/root/node_modules".to_string(),
         plugin: MountPlugin {
             id: "host_dir".to_string(),
             config: Some(serde_json::json!({
                 "hostPath": host_node_modules_dir.into(),
-                "readOnly": true,
             })),
         },
-        read_only: true,
+        read_only: None,
     }
-}
-
-/// Overlay mount filesystem config.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OverlayMountConfig {
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub store: serde_json::Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mode: Option<RootFilesystemMode>,
-    pub lowers: Vec<RootLowerInput>,
 }
 
 // ---------------------------------------------------------------------------
@@ -806,146 +750,4 @@ pub enum AgentOsSidecarConfig {
     Explicit {
         handle: Arc<crate::sidecar::AgentOsSidecar>,
     },
-}
-
-// ---------------------------------------------------------------------------
-// Schedule driver
-// ---------------------------------------------------------------------------
-
-/// The callback fired by a [`ScheduleDriver`] when a schedule entry triggers.
-///
-/// Mirrors the TS `ScheduleEntry.callback: () => void | Promise<void>`. The cron manager passes a
-/// closure that runs one job execution; the driver awaits it (and, for the default driver, reschedules
-/// the next cron fire afterwards).
-pub type ScheduleCallback = Arc<dyn Fn() -> futures::future::BoxFuture<'static, ()> + Send + Sync>;
-
-/// A schedule entry handed to a [`ScheduleDriver`]. Mirrors TS `ScheduleEntry`
-/// (`cron/schedule-driver.ts`).
-#[derive(Clone)]
-pub struct ScheduleEntry {
-    /// Unique ID for this job.
-    pub id: String,
-    /// 5/6/7-field cron expression OR an ISO-8601 one-shot timestamp.
-    pub schedule: String,
-    /// Called when the schedule fires.
-    pub callback: ScheduleCallback,
-}
-
-/// Driver-owned scheduling abstraction. Mirrors the TS `ScheduleDriver` interface
-/// (`cron/schedule-driver.ts`) exactly: the driver parses the schedule, arms the timer, reschedules
-/// cron entries after each fire, and tears everything down on [`ScheduleDriver::dispose`]. This is the
-/// documented extension point: a custom driver (deterministic virtual-time test driver, fire-immediately
-/// driver, etc.) fully controls timing.
-pub trait ScheduleDriver: Send + Sync {
-    /// Schedule a callback to fire on a cron expression or at a specific time. Returns a cancellation
-    /// handle.
-    fn schedule(&self, entry: ScheduleEntry) -> ScheduleHandle;
-
-    /// Cancel a previously scheduled entry.
-    fn cancel(&self, handle: &ScheduleHandle);
-
-    /// Tear down all scheduled work.
-    fn dispose(&self);
-}
-
-/// Handle to a scheduled entry. Mirrors TS `ScheduleHandle { id }`. Identifies the entry to cancel via
-/// [`ScheduleDriver::cancel`].
-#[derive(Clone)]
-pub struct ScheduleHandle {
-    pub id: String,
-}
-
-/// Default schedule driver backed by `tokio` timers and the system clock.
-///
-/// Mirrors the TS `TimerScheduleDriver`: for cron expressions it computes the next fire time and arms
-/// a single timer, rescheduling after each fire; for one-shot timestamps it fires once and removes the
-/// entry. Driver-held timer tasks are tracked so [`ScheduleDriver::cancel`] / [`ScheduleDriver::dispose`]
-/// can abort them.
-#[derive(Default)]
-pub struct TimerScheduleDriver {
-    timers: Arc<scc::HashMap<String, tokio_util::sync::CancellationToken>>,
-}
-
-impl TimerScheduleDriver {
-    pub fn new() -> Self {
-        Self {
-            timers: Arc::new(scc::HashMap::new()),
-        }
-    }
-
-    /// Arm the next fire for `entry`. For a one-shot or an exhausted cron the entry is dropped. For a
-    /// recurring cron the timer reschedules itself after firing the callback. `cancel` is the per-entry
-    /// cancellation token shared with the registry slot.
-    fn schedule_next(
-        timers: Arc<scc::HashMap<String, tokio_util::sync::CancellationToken>>,
-        entry: ScheduleEntry,
-        cancel: tokio_util::sync::CancellationToken,
-    ) {
-        let now = chrono::Utc::now();
-        let parsed = match crate::cron::parse_schedule(&entry.schedule) {
-            Ok(parsed) => parsed,
-            Err(_) => {
-                let _ = timers.remove(&entry.id);
-                return;
-            }
-        };
-        let is_cron = parsed.is_cron();
-        let next = match crate::cron::resolve_next_run(&parsed, now) {
-            Some(next) => next,
-            None => {
-                // No upcoming run (one-shot in the past, or exhausted cron).
-                let _ = timers.remove(&entry.id);
-                return;
-            }
-        };
-
-        let delay = (next - now).to_std().unwrap_or(std::time::Duration::ZERO);
-
-        tokio::spawn(async move {
-            tokio::select! {
-                _ = cancel.cancelled() => {
-                    return;
-                }
-                _ = tokio::time::sleep(delay) => {}
-            }
-            if cancel.is_cancelled() {
-                return;
-            }
-            // The driver is fire-and-forget; errors are the caller's responsibility.
-            (entry.callback)().await;
-
-            if is_cron && timers.contains(&entry.id) {
-                Self::schedule_next(Arc::clone(&timers), entry, cancel);
-            } else {
-                let _ = timers.remove(&entry.id);
-            }
-        });
-    }
-}
-
-impl ScheduleDriver for TimerScheduleDriver {
-    fn schedule(&self, entry: ScheduleEntry) -> ScheduleHandle {
-        let id = entry.id.clone();
-        let cancel = tokio_util::sync::CancellationToken::new();
-        // Replace any existing timer for this id, cancelling it first.
-        if let Some((_, old)) = self.timers.remove(&id) {
-            old.cancel();
-        }
-        let _ = self.timers.insert(id.clone(), cancel.clone());
-
-        Self::schedule_next(Arc::clone(&self.timers), entry, cancel);
-
-        ScheduleHandle { id }
-    }
-
-    fn cancel(&self, handle: &ScheduleHandle) {
-        if let Some((_, cancel)) = self.timers.remove(&handle.id) {
-            cancel.cancel();
-        }
-    }
-
-    fn dispose(&self) {
-        self.timers.scan(|_, cancel| cancel.cancel());
-        self.timers.clear();
-    }
 }

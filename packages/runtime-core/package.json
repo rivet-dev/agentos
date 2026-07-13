@@ -41,11 +41,6 @@
 			"import": "./dist/callbacks.js",
 			"default": "./dist/callbacks.js"
 		},
-		"./cargo": {
-			"types": "./dist/cargo.d.ts",
-			"import": "./dist/cargo.js",
-			"default": "./dist/cargo.js"
-		},
 		"./descriptors": {
 			"types": "./dist/descriptors.d.ts",
 			"import": "./dist/descriptors.js",
@@ -80,11 +75,6 @@
 			"types": "./dist/sidecar-process.d.ts",
 			"import": "./dist/sidecar-process.js",
 			"default": "./dist/sidecar-process.js"
-		},
-		"./test-runtime": {
-			"types": "./dist/test-runtime.d.ts",
-			"import": "./dist/test-runtime.js",
-			"default": "./dist/test-runtime.js"
 		},
 		"./native-client": {
 			"types": "./dist/native-client.d.ts",
@@ -165,11 +155,6 @@
 			"types": "./dist/json.d.ts",
 			"import": "./dist/json.js",
 			"default": "./dist/json.js"
-		},
-		"./kernel-proxy": {
-			"types": "./dist/kernel-proxy.d.ts",
-			"import": "./dist/kernel-proxy.js",
-			"default": "./dist/kernel-proxy.js"
 		},
 		"./numbers": {
 			"types": "./dist/numbers.d.ts",

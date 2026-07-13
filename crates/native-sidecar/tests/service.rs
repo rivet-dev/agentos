@@ -626,14 +626,18 @@ ykAheWCsAteSEWVc0w==\n\
                 })
                 .expect("queue trailing process event");
 
-            let frame = sidecar
-                .handle_process_event_envelope(ProcessEventEnvelope {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("create tokio runtime");
+            let frame = runtime
+                .block_on(sidecar.handle_process_event_envelope(ProcessEventEnvelope {
                     connection_id,
                     session_id,
                     vm_id: vm_id.clone(),
                     process_id: String::from("proc-exit"),
                     event: ActiveExecutionEvent::Exited(0),
-                })
+                }))
                 .expect("handle exit with full queue")
                 .expect("trailing output should emit immediately");
 
@@ -1288,7 +1292,6 @@ ykAheWCsAteSEWVc0w==\n\
                         placement: SidecarPlacement::SidecarPlacementShared(
                             SidecarPlacementShared { pool: None },
                         ),
-                        metadata: std::collections::HashMap::new(),
                     }),
                 ))
                 .expect("open session");
@@ -1393,29 +1396,24 @@ ykAheWCsAteSEWVc0w==\n\
                     request_id,
                     OwnershipScope::vm(connection_id, session_id, vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/__secure_exec/commands/0"),
-                            read_only: true,
+                            read_only: Some(true),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "hostPath": command_root,
                                     "readOnly": true,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure registry command mount");
@@ -1440,14 +1438,18 @@ ykAheWCsAteSEWVc0w==\n\
                     request_id,
                     OwnershipScope::vm(connection_id, session_id, vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: process_id.to_owned(),
+                        process_id: Some(process_id.to_owned()),
                         command: Some(command.to_owned()),
                         runtime: None,
                         entrypoint: None,
                         args: args.iter().map(|arg| (*arg).to_owned()).collect(),
-                        env: env.into_iter().collect(),
+                        env: Some(env.into_iter().collect()),
                         cwd: None,
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
                     }),
                 ))
                 .expect("dispatch guest command");
@@ -1633,8 +1635,6 @@ ykAheWCsAteSEWVc0w==\n\
             RegisterHostCallbacksRequest {
                 name: String::from(name),
                 description: String::from(description),
-                command_aliases: vec![format!("agentos-{name}")],
-                registry_command_aliases: vec![String::from("agentos")],
                 callbacks: std::collections::HashMap::from([(
                     String::from(tool_name),
                     RegisteredHostCallbackDefinition {
@@ -1663,16 +1663,16 @@ ykAheWCsAteSEWVc0w==\n\
                         default: Some(existing),
                         rules: vec![FsPermissionRule {
                             mode,
-                            operations: vec![operation.to_owned()],
-                            paths: vec![String::from("/**")],
+                            operations: Some(vec![operation.to_owned()]),
+                            paths: Some(vec![String::from("/**")]),
                         }],
                     })
                 }
                 FsPermissionScope::FsPermissionRuleSet(mut rules) => {
                     rules.rules.push(FsPermissionRule {
                         mode,
-                        operations: vec![operation.to_owned()],
-                        paths: vec![String::from("/**")],
+                        operations: Some(vec![operation.to_owned()]),
+                        paths: Some(vec![String::from("/**")]),
                     });
                     FsPermissionScope::FsPermissionRuleSet(rules)
                 }
@@ -1699,16 +1699,16 @@ ykAheWCsAteSEWVc0w==\n\
                         default: Some(default),
                         rules: vec![PatternPermissionRule {
                             mode,
-                            operations: vec![operation.to_owned()],
-                            patterns: vec![String::from("**")],
+                            operations: Some(vec![operation.to_owned()]),
+                            patterns: Some(vec![String::from("**")]),
                         }],
                     })
                 }
                 PatternPermissionScope::PatternPermissionRuleSet(mut rules) => {
                     rules.rules.push(PatternPermissionRule {
                         mode,
-                        operations: vec![operation.to_owned()],
-                        patterns: vec![String::from("**")],
+                        operations: Some(vec![operation.to_owned()]),
+                        patterns: Some(vec![String::from("**")]),
                     });
                     PatternPermissionScope::PatternPermissionRuleSet(rules)
                 }
@@ -1724,8 +1724,8 @@ ykAheWCsAteSEWVc0w==\n\
                         rules: vec![
                             PatternPermissionRule {
                                 mode: PermissionMode::Allow,
-                                operations: vec![String::from("listen")],
-                                patterns: vec![String::from("**")],
+                                operations: Some(vec![String::from("listen")]),
+                                patterns: Some(vec![String::from("**")]),
                             },
                             PatternPermissionRule {
                                 mode: if network {
@@ -1733,8 +1733,8 @@ ykAheWCsAteSEWVc0w==\n\
                                 } else {
                                     PermissionMode::Deny
                                 },
-                                operations: vec![String::from("inspect")],
-                                patterns: vec![String::from("**")],
+                                operations: Some(vec![String::from("inspect")]),
+                                patterns: Some(vec![String::from("**")]),
                             },
                         ],
                     },
@@ -1751,8 +1751,8 @@ ykAheWCsAteSEWVc0w==\n\
                             } else {
                                 PermissionMode::Deny
                             },
-                            operations: vec![String::from("inspect")],
-                            patterns: vec![String::from("**")],
+                            operations: Some(vec![String::from("inspect")]),
+                            patterns: Some(vec![String::from("**")]),
                         }],
                     },
                 )),
@@ -6076,7 +6076,7 @@ ykAheWCsAteSEWVc0w==\n\
                             target: None,
                             content: Some(String::from("stale")),
                             encoding: Some(RootFilesystemEntryEncoding::Utf8),
-                            recursive: false,
+                            recursive: None,
                             max_depth: None,
                             mode: None,
                             uid: None,
@@ -6208,7 +6208,7 @@ ykAheWCsAteSEWVc0w==\n\
                             target: None,
                             content: Some(String::from("hello from live vm")),
                             encoding: Some(RootFilesystemEntryEncoding::Utf8),
-                            recursive: false,
+                            recursive: None,
                             max_depth: None,
                             mode: None,
                             uid: None,
@@ -6239,7 +6239,7 @@ ykAheWCsAteSEWVc0w==\n\
                             target: None,
                             content: None,
                             encoding: None,
-                            recursive: false,
+                            recursive: None,
                             max_depth: None,
                             mode: None,
                             uid: None,
@@ -6410,6 +6410,8 @@ ykAheWCsAteSEWVc0w==\n\
                     OwnershipScope::connection("conn-1"),
                     ResponsePayload::VmCreated(VmCreatedResponse {
                         vm_id: String::from("vm-1"),
+                        guest_cwd: String::from("/workspace"),
+                        guest_env: std::collections::HashMap::new(),
                     }),
                 ),
                 events: Vec::new(),
@@ -6485,25 +6487,19 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("memory"),
-                                config: json!({}).to_string(),
+                                config: json!({}).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure mounts");
@@ -6562,25 +6558,19 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/readonly"),
-                            read_only: true,
+                            read_only: Some(true),
                             plugin: MountPluginDescriptor {
                                 id: String::from("memory"),
-                                config: json!({}).to_string(),
+                                config: json!({}).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure readonly mount");
@@ -6635,29 +6625,24 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "hostPath": host_dir,
                                     "readOnly": false,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure host_dir mount");
@@ -6710,29 +6695,24 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "hostPath": host_dir,
                                     "readOnly": false,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure host_dir mount");
@@ -6751,65 +6731,6 @@ ykAheWCsAteSEWVc0w==\n\
         #[test]
         fn configure_vm_host_dir_mount_receives_configured_read_limit() {
             configure_vm_passes_resource_read_limits_to_host_dir_mounts();
-        }
-
-        fn configure_vm_passes_resource_read_limits_to_module_access_mounts() {
-            let module_access_cwd = temp_dir("agentos-native-sidecar-module-access-read-limit");
-            let package_root = module_access_cwd.join("node_modules/fixture-pkg");
-            fs::create_dir_all(&package_root).expect("create package root");
-            fs::write(
-                package_root.join("package.json"),
-                r#"{"name":"fixture-pkg"}"#,
-            )
-            .expect("seed package json");
-
-            let mut sidecar = create_test_sidecar();
-            let (connection_id, session_id) =
-                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
-            let vm_id = create_vm_with_metadata(
-                &mut sidecar,
-                &connection_id,
-                &session_id,
-                PermissionsPolicy::allow_all(),
-                BTreeMap::from([(String::from("resource.max_pread_bytes"), String::from("4"))]),
-            )
-            .expect("create vm");
-
-            sidecar
-                .dispatch_blocking(request(
-                    4,
-                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: Vec::new(),
-                        software: Vec::new(),
-                        permissions: None,
-                        module_access_cwd: Some(module_access_cwd.to_string_lossy().into_owned()),
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
-                    }),
-                ))
-                .expect("configure module_access mount");
-
-            let vm = sidecar.vms.get_mut(&vm_id).expect("configured vm");
-            let error = vm
-                .kernel
-                .filesystem_mut()
-                .read_file("/root/node_modules/fixture-pkg/package.json")
-                .expect_err("module_access read should honor VM read limit");
-            assert_eq!(error.code(), "EINVAL");
-
-            fs::remove_dir_all(module_access_cwd).expect("remove temp dir");
-        }
-
-        #[test]
-        fn configure_vm_module_access_mount_receives_configured_read_limit() {
-            configure_vm_passes_resource_read_limits_to_module_access_mounts();
         }
 
         // Regression guard for the read-side shadow-walk fix.
@@ -6842,7 +6763,7 @@ ykAheWCsAteSEWVc0w==\n\
                     target: None,
                     content,
                     encoding: Some(RootFilesystemEntryEncoding::Utf8),
-                    recursive: true,
+                    recursive: Some(true),
                     max_depth: None,
                     mode: None,
                     uid: None,
@@ -6986,66 +6907,6 @@ ykAheWCsAteSEWVc0w==\n\
             read_side_ops_skip_unchanged_shadow_files_repro();
         }
 
-        fn configure_vm_rejects_module_access_root_symlink_to_non_node_modules() {
-            let module_access_cwd = temp_dir("agentos-native-sidecar-module-access-symlink-cwd");
-            let outside_root = temp_dir("agentos-native-sidecar-module-access-outside");
-            std::os::unix::fs::symlink(&outside_root, module_access_cwd.join("node_modules"))
-                .expect("create node_modules symlink");
-
-            let mut sidecar = create_test_sidecar();
-            let (connection_id, session_id) =
-                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
-            let vm_id = create_vm(
-                &mut sidecar,
-                &connection_id,
-                &session_id,
-                PermissionsPolicy::allow_all(),
-            )
-            .expect("create vm");
-
-            let response = sidecar
-                .dispatch_blocking(request(
-                    4,
-                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: Vec::new(),
-                        software: Vec::new(),
-                        permissions: None,
-                        module_access_cwd: Some(module_access_cwd.to_string_lossy().into_owned()),
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
-                    }),
-                ))
-                .expect("configure module_access mount");
-
-            match response.response.payload {
-                ResponsePayload::Rejected(rejected) => {
-                    assert_eq!(rejected.code, "plugin_error");
-                    assert!(
-                        rejected.message.contains(
-                            "module_access roots must resolve to a node_modules directory"
-                        ),
-                        "unexpected rejection: {rejected:?}"
-                    );
-                }
-                other => panic!("expected rejected response, got {other:?}"),
-            }
-
-            fs::remove_dir_all(module_access_cwd).expect("remove cwd temp dir");
-            fs::remove_dir_all(outside_root).expect("remove outside temp dir");
-        }
-
-        #[test]
-        fn configure_vm_rejects_module_access_symlinked_root_escape() {
-            configure_vm_rejects_module_access_root_symlink_to_non_node_modules();
-        }
-
         fn configure_vm_js_bridge_mount_dispatches_filesystem_calls_via_sidecar_requests() {
             let mut sidecar = create_test_sidecar();
             let (filesystem, calls) = install_memory_js_bridge_handler(&mut sidecar);
@@ -7070,25 +6931,19 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("js_bridge"),
-                                config: json!({ "mountId": "mount-1" }).to_string(),
+                                config: json!({ "mountId": "mount-1" }).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure js_bridge mount");
@@ -7207,25 +7062,19 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("js_bridge"),
-                                config: json!({ "mountId": "mount-sized" }).to_string(),
+                                config: json!({ "mountId": "mount-sized" }).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure js_bridge mount");
@@ -7297,25 +7146,21 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("js_bridge"),
-                                config: json!({ "mountId": "mount-pread-sized" }).to_string(),
+                                config: json!({ "mountId": "mount-pread-sized" })
+                                    .to_string()
+                                    .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure js_bridge mount");
@@ -7416,25 +7261,19 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("js_bridge"),
-                                config: json!({ "mountId": "mount-errors" }).to_string(),
+                                config: json!({ "mountId": "mount-errors" }).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure js_bridge mount");
@@ -7501,25 +7340,19 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("js_bridge"),
-                                config: json!({ "mountId": "mount-root" }).to_string(),
+                                config: json!({ "mountId": "mount-root" }).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure js_bridge mount");
@@ -7597,28 +7430,23 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/sandbox"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("sandbox_agent"),
                                 config: json!({
                                     "baseUrl": server.base_url(),
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure sandbox_agent mount");
@@ -7694,9 +7522,9 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/data"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("chunked_s3"),
                                 config: json!({
@@ -7712,20 +7540,15 @@ ykAheWCsAteSEWVc0w==\n\
                                     "chunkSize": 8,
                                     "inlineThreshold": 4,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure s3 mount");
@@ -7796,9 +7619,9 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/objects"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("object_s3"),
                                 config: json!({
@@ -7811,20 +7634,15 @@ ykAheWCsAteSEWVc0w==\n\
                                         "secretAccessKey": "minioadmin",
                                     },
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure object_s3 mount");
@@ -7883,9 +7701,9 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/local"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("chunked_local"),
                                 config: json!({
@@ -7894,20 +7712,15 @@ ykAheWCsAteSEWVc0w==\n\
                                     "chunkSize": 4,
                                     "inlineThreshold": 1,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure chunked_local mount");
@@ -8283,7 +8096,7 @@ ykAheWCsAteSEWVc0w==\n\
                 .expect_err("read should be denied");
             assert_eq!(read_error.code(), "EACCES");
         }
-        fn create_vm_without_permissions_defaults_to_static_deny_all() {
+        fn create_vm_without_permissions_defaults_to_static_allow_all() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -8300,27 +8113,53 @@ ykAheWCsAteSEWVc0w==\n\
                 ))
                 .expect("create vm");
             let vm_id = created_vm_id(response).expect("vm created");
-            let permission_check_count_before_write = sidecar
-                .with_bridge_mut(|bridge| bridge.permission_checks.len())
-                .expect("read bootstrap permission checks");
+            let vm = sidecar.vms.get_mut(&vm_id).expect("configured vm");
+            vm.kernel
+                .filesystem_mut()
+                .write_file("/allowed.txt", b"allowed".to_vec())
+                .expect("omitted AgentOS permissions should allow guest writes");
+            assert_eq!(
+                vm.kernel
+                    .filesystem_mut()
+                    .read_file("/allowed.txt")
+                    .expect("omitted AgentOS permissions should allow guest reads"),
+                b"allowed".to_vec()
+            );
+        }
 
-            let write_error = sidecar
-                .vms
-                .get_mut(&vm_id)
-                .expect("configured vm")
+        fn create_vm_bootstrap_needs_no_guest_filesystem_rights() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::deny_all(),
+            )
+            .expect("trusted sidecar bootstrap should succeed under guest deny-all");
+
+            let vm = sidecar.vms.get_mut(&vm_id).expect("configured vm");
+            assert!(
+                vm.kernel
+                    .filesystem_mut()
+                    .exists("/workspace")
+                    .expect("stat /workspace"),
+                "the sidecar should create the standard working directory internally"
+            );
+            assert!(
+                vm.kernel
+                    .filesystem_mut()
+                    .exists("/tmp")
+                    .expect("stat /tmp"),
+                "the sidecar should create standard Linux directories internally"
+            );
+            let error = vm
                 .kernel
                 .filesystem_mut()
-                .write_file("/blocked.txt", b"nope".to_vec())
-                .expect_err("write should be denied");
-            assert_eq!(write_error.code(), "EACCES");
-
-            let permission_check_count_after_write = sidecar
-                .with_bridge_mut(|bridge| bridge.permission_checks.len())
-                .expect("read bridge permission checks");
-            assert_eq!(
-                permission_check_count_after_write, permission_check_count_before_write,
-                "guest writes under default-deny should not fall through to bridge callbacks"
-            );
+                .write_file("/workspace/blocked.txt", b"blocked".to_vec())
+                .expect_err("guest deny-all policy must be restored after bootstrap");
+            assert_eq!(error.code(), "EACCES");
         }
         fn configure_vm_rollback_restore_failure_falls_back_to_static_deny_all() {
             let mut sidecar = create_test_sidecar();
@@ -8349,28 +8188,23 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "readOnly": false,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("dispatch configure_vm failure");
@@ -8528,8 +8362,8 @@ ykAheWCsAteSEWVc0w==\n\
                                     default: Some(PermissionMode::Deny),
                                     rules: vec![FsPermissionRule {
                                         mode: PermissionMode::Allow,
-                                        operations: Vec::new(),
-                                        paths: vec![String::from("*")],
+                                        operations: Some(Vec::new()),
+                                        paths: Some(vec![String::from("*")]),
                                     }],
                                 },
                             )),
@@ -8573,16 +8407,15 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: Vec::new(),
-                        software: Vec::new(),
+                        mounts: None,
                         permissions: Some(PermissionsPolicy {
                             fs: Some(FsPermissionScope::FsPermissionRuleSet(
                                 FsPermissionRuleSet {
                                     default: Some(PermissionMode::Deny),
                                     rules: vec![FsPermissionRule {
                                         mode: PermissionMode::Allow,
-                                        operations: vec![String::from("read")],
-                                        paths: Vec::new(),
+                                        operations: Some(vec![String::from("read")]),
+                                        paths: Some(Vec::new()),
                                     }],
                                 },
                             )),
@@ -8592,15 +8425,10 @@ ykAheWCsAteSEWVc0w==\n\
                             env: None,
                             binding: None,
                         }),
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("dispatch fs configure vm");
@@ -8623,8 +8451,7 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: Vec::new(),
-                        software: Vec::new(),
+                        mounts: None,
                         permissions: Some(PermissionsPolicy {
                             fs: None,
                             network: Some(PatternPermissionScope::PatternPermissionRuleSet(
@@ -8632,8 +8459,8 @@ ykAheWCsAteSEWVc0w==\n\
                                     default: Some(PermissionMode::Deny),
                                     rules: vec![PatternPermissionRule {
                                         mode: PermissionMode::Allow,
-                                        operations: vec![String::from("dns")],
-                                        patterns: Vec::new(),
+                                        operations: Some(vec![String::from("dns")]),
+                                        patterns: Some(Vec::new()),
                                     }],
                                 },
                             )),
@@ -8642,15 +8469,10 @@ ykAheWCsAteSEWVc0w==\n\
                             env: None,
                             binding: None,
                         }),
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("dispatch network configure vm");
@@ -8695,25 +8517,19 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("memory"),
-                                config: json!({}).to_string(),
+                                config: json!({}).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("dispatch configure vm");
@@ -8749,7 +8565,7 @@ ykAheWCsAteSEWVc0w==\n\
                         target: None,
                         content: None,
                         encoding: None,
-                        recursive: true,
+                        recursive: Some(true),
                         max_depth: None,
                         mode: None,
                         uid: None,
@@ -8769,7 +8585,7 @@ ykAheWCsAteSEWVc0w==\n\
                         target: None,
                         content: Some(String::from("stdio-sidecar-fs")),
                         encoding: None,
-                        recursive: false,
+                        recursive: None,
                         max_depth: None,
                         mode: None,
                         uid: None,
@@ -8789,7 +8605,7 @@ ykAheWCsAteSEWVc0w==\n\
                         target: None,
                         content: None,
                         encoding: None,
-                        recursive: false,
+                        recursive: None,
                         max_depth: None,
                         mode: None,
                         uid: None,
@@ -8809,7 +8625,7 @@ ykAheWCsAteSEWVc0w==\n\
                         target: None,
                         content: None,
                         encoding: None,
-                        recursive: false,
+                        recursive: None,
                         max_depth: None,
                         mode: None,
                         uid: None,
@@ -8829,7 +8645,7 @@ ykAheWCsAteSEWVc0w==\n\
                         target: None,
                         content: None,
                         encoding: None,
-                        recursive: false,
+                        recursive: None,
                         max_depth: None,
                         mode: None,
                         uid: None,
@@ -8905,25 +8721,19 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/etc"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("memory"),
-                                config: json!({}).to_string(),
+                                config: json!({}).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("dispatch configure vm");
@@ -8937,7 +8747,7 @@ ykAheWCsAteSEWVc0w==\n\
                 other => panic!("expected configured response, got {other:?}"),
             }
         }
-        fn guest_mount_request_default_deny_rejects_without_changing_operator_mounts() {
+        fn guest_mount_request_explicit_deny_rejects_without_changing_operator_mounts() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -8949,7 +8759,7 @@ ykAheWCsAteSEWVc0w==\n\
                         GuestRuntimeKind::JavaScript,
                         std::collections::HashMap::new(),
                         Default::default(),
-                        None,
+                        Some(PermissionsPolicy::deny_all()),
                     )),
                 ))
                 .expect("create vm");
@@ -8974,25 +8784,19 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("memory"),
-                                config: json!({}).to_string(),
+                                config: json!({}).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure operator mount");
@@ -9028,7 +8832,7 @@ ykAheWCsAteSEWVc0w==\n\
                     MemoryFileSystem::new(),
                     MountOptions::new("memory"),
                 )
-                .expect_err("guest mount under default-deny should be rejected");
+                .expect_err("guest mount under explicit deny should be rejected");
             assert_eq!(mount_error.code(), "EACCES");
 
             let mounts_after_guest_request = sidecar
@@ -9131,29 +8935,24 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "hostPath": host_dir,
                                     "readOnly": false,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure host_dir mount");
@@ -9199,14 +8998,18 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-python"),
+                        process_id: Some(String::from("proc-python")),
                         command: None,
                         runtime: Some(GuestRuntimeKind::Python),
                         entrypoint: Some(String::from("print('hello from python')")),
                         args: Vec::new(),
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: None,
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
                     }),
                 ))
                 .expect("dispatch python execute");
@@ -9278,29 +9081,24 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/__secure_exec/commands/0"),
-                            read_only: true,
+                            read_only: Some(true),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "hostPath": command_root,
                                     "readOnly": true,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure command mount");
@@ -9310,14 +9108,18 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-command-wasm"),
+                        process_id: Some(String::from("proc-command-wasm")),
                         command: Some(String::from("hello")),
                         runtime: None,
                         entrypoint: None,
                         args: Vec::new(),
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: None,
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
                     }),
                 ))
                 .expect("dispatch wasm command execute");
@@ -9378,29 +9180,24 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/__secure_exec/commands/0"),
-                            read_only: true,
+                            read_only: Some(true),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "hostPath": command_root,
                                     "readOnly": true,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure command mount");
@@ -9410,14 +9207,18 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-command-wasm-timeout"),
+                        process_id: Some(String::from("proc-command-wasm-timeout")),
                         command: Some(String::from("spin")),
                         runtime: None,
                         entrypoint: None,
                         args: Vec::new(),
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: None,
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
                     }),
                 ))
                 .expect("dispatch wasm command execute");
@@ -9472,14 +9273,18 @@ ykAheWCsAteSEWVc0w==\n\
                         request_id,
                         OwnershipScope::vm(&connection_id, &session_id, vm_id),
                         RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                            process_id: String::from(process_id),
+                            process_id: Some(String::from(process_id)),
                             command: None,
                             runtime: Some(GuestRuntimeKind::WebAssembly),
                             entrypoint: Some(entrypoint.to_string_lossy().into_owned()),
                             args: Vec::new(),
-                            env: std::collections::HashMap::new(),
+                            env: None,
                             cwd: None,
                             wasm_permission_tier: None,
+                            pty: None,
+                            shell_command: None,
+                            keep_stdin_open: None,
+                            timeout_ms: None,
                         }),
                     ))
                     .expect("dispatch wasm execute");
@@ -9554,14 +9359,18 @@ ykAheWCsAteSEWVc0w==\n\
                     6,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-wasm-fs-permission"),
+                        process_id: Some(String::from("proc-wasm-fs-permission")),
                         command: None,
                         runtime: Some(GuestRuntimeKind::WebAssembly),
                         entrypoint: Some(cwd.join("guest.wasm").to_string_lossy().into_owned()),
                         args: Vec::new(),
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: Some(String::from("/")),
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
                     }),
                 ))
                 .expect("dispatch wasm execute");
@@ -9609,14 +9418,18 @@ ykAheWCsAteSEWVc0w==\n\
                     6,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-wasm-fs-write-permission"),
+                        process_id: Some(String::from("proc-wasm-fs-write-permission")),
                         command: None,
                         runtime: Some(GuestRuntimeKind::WebAssembly),
                         entrypoint: Some(cwd.join("guest.wasm").to_string_lossy().into_owned()),
                         args: Vec::new(),
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: Some(String::from("/")),
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
                     }),
                 ))
                 .expect("dispatch wasm execute");
@@ -9774,29 +9587,24 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/__secure_exec/commands/0"),
-                            read_only: true,
+                            read_only: Some(true),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "hostPath": command_root,
                                     "readOnly": true,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure command-path mounts");
@@ -10356,8 +10164,6 @@ ykAheWCsAteSEWVc0w==\n\
                         RequestPayload::RegisterHostCallbacks(RegisterHostCallbacksRequest {
                             name: format!("toolkit-{toolkit_index}"),
                             description: String::from("Bounded test toolkit"),
-                            command_aliases: vec![format!("agentos-toolkit-{toolkit_index}")],
-                            registry_command_aliases: vec![format!("agentos-{toolkit_index}")],
                             callbacks: tools,
                         }),
                     ))
@@ -10489,8 +10295,8 @@ ykAheWCsAteSEWVc0w==\n\
                         default: Some(PermissionMode::Deny),
                         rules: vec![PatternPermissionRule {
                             mode: PermissionMode::Allow,
-                            operations: vec![String::from("invoke")],
-                            patterns: vec![String::from("math:add")],
+                            operations: Some(vec![String::from("invoke")]),
+                            patterns: Some(vec![String::from("math:add")]),
                         }],
                     },
                 )),
@@ -10581,8 +10387,8 @@ ykAheWCsAteSEWVc0w==\n\
                         default: Some(PermissionMode::Deny),
                         rules: vec![PatternPermissionRule {
                             mode: PermissionMode::Allow,
-                            operations: vec![String::from("invoke")],
-                            patterns: vec![String::from("math:add")],
+                            operations: Some(vec![String::from("invoke")]),
+                            patterns: Some(vec![String::from("math:add")]),
                         }],
                     },
                 )),
@@ -10690,8 +10496,8 @@ ykAheWCsAteSEWVc0w==\n\
                         default: Some(PermissionMode::Deny),
                         rules: vec![PatternPermissionRule {
                             mode: PermissionMode::Allow,
-                            operations: vec![String::from("invoke")],
-                            patterns: vec![String::from("math:add")],
+                            operations: Some(vec![String::from("invoke")]),
+                            patterns: Some(vec![String::from("math:add")]),
                         }],
                     },
                 )),
@@ -10815,29 +10621,24 @@ process.stdout.write(`${JSON.stringify({
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "hostPath": workspace,
                                     "readOnly": false,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: vec![4312],
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: Some(vec![4312]),
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure workspace mount");
@@ -10847,14 +10648,18 @@ process.stdout.write(`${JSON.stringify({
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-command-js"),
+                        process_id: Some(String::from("proc-command-js")),
                         command: Some(String::from("./entry.js")),
                         runtime: None,
                         entrypoint: None,
                         args: Vec::new(),
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: Some(String::from("/workspace")),
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
                     }),
                 ))
                 .expect("dispatch javascript command execute");
@@ -11030,6 +10835,101 @@ if (child.status !== 0) {
         }
 
         #[test]
+        fn configure_vm_preserves_sidecar_owned_package_mounts_when_clients_omit_packages() {
+            let package = write_agentos_package_launch_fixture();
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+
+            let configure =
+                |mounts: Option<Vec<MountDescriptor>>,
+                 packages: Option<Vec<crate::protocol::PackageDescriptor>>| {
+                    RequestPayload::ConfigureVm(ConfigureVmRequest {
+                        mounts,
+                        permissions: None,
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages,
+                        packages_mount_at: None,
+                    })
+                };
+
+            let initial_mounts = match sidecar
+                .dispatch_blocking(request(
+                    4,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    configure(
+                        Some(vec![MountDescriptor {
+                            guest_path: String::from("/operator"),
+                            read_only: Some(false),
+                            plugin: MountPluginDescriptor {
+                                id: String::from("memory"),
+                                config: json!({}).to_string().into(),
+                            },
+                        }]),
+                        Some(vec![crate::protocol::PackageDescriptor {
+                            path: package.to_string_lossy().into_owned(),
+                        }]),
+                    ),
+                ))
+                .expect("configure package projection")
+                .response
+                .payload
+            {
+                ResponsePayload::VmConfigured(response) => response.applied_mounts,
+                other => panic!("unexpected configure response: {other:?}"),
+            };
+            assert!(
+                initial_mounts >= 4,
+                "expected operator and package leaf mounts"
+            );
+
+            let preserved_mounts = match sidecar
+                .dispatch_blocking(request(
+                    5,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    configure(None, None),
+                ))
+                .expect("reconfigure without replaying packages")
+                .response
+                .payload
+            {
+                ResponsePayload::VmConfigured(response) => response.applied_mounts,
+                other => panic!("unexpected reconfigure response: {other:?}"),
+            };
+            assert_eq!(preserved_mounts, initial_mounts);
+
+            let package_only_mounts = match sidecar
+                .dispatch_blocking(request(
+                    6,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    configure(Some(Vec::new()), None),
+                ))
+                .expect("explicitly clear operator mounts without replaying packages")
+                .response
+                .payload
+            {
+                ResponsePayload::VmConfigured(response) => response.applied_mounts,
+                other => panic!("unexpected clear-mount response: {other:?}"),
+            };
+            assert_eq!(package_only_mounts + 1, initial_mounts);
+            assert!(sidecar
+                .vms
+                .get(&vm_id)
+                .expect("configured vm")
+                .configuration
+                .operator_mounts
+                .is_empty());
+        }
+
+        #[test]
         fn agentos_packages_launch_keeps_adapter_and_child_entrypoints_guest_native() {
             clean_legacy_agentos_projection_temps();
             let package = write_agentos_package_launch_fixture();
@@ -11049,20 +10949,14 @@ if (child.status !== 0) {
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: Vec::new(),
-                        software: Vec::new(),
+                        mounts: None,
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: vec![crate::protocol::PackageDescriptor {
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: Some(vec![crate::protocol::PackageDescriptor {
                             path: package.to_string_lossy().into_owned(),
-                        }],
-                        packages_mount_at: String::from("/opt/agentos"),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        }]),
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure agentos package mount")
@@ -11083,14 +10977,18 @@ if (child.status !== 0) {
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-agentos-package-launch"),
+                        process_id: Some(String::from("proc-agentos-package-launch")),
                         command: Some(String::from("/opt/agentos/bin/x")),
                         runtime: None,
                         entrypoint: None,
                         args: Vec::new(),
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: Some(String::from("/")),
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
                     }),
                 ))
                 .expect("dispatch agentos package execute");
@@ -11150,7 +11048,7 @@ if (child.status !== 0) {
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-command-node-eval"),
+                        process_id: Some(String::from("proc-command-node-eval")),
                         command: Some(String::from("node")),
                         runtime: None,
                         entrypoint: None,
@@ -11158,9 +11056,13 @@ if (child.status !== 0) {
                             String::from("-e"),
                             String::from("process.stdout.write('node-eval-ok\\n')"),
                         ],
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: None,
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
                     }),
                 ))
                 .expect("dispatch node eval execute");
@@ -11195,14 +11097,18 @@ if (child.status !== 0) {
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-command-missing"),
+                        process_id: Some(String::from("proc-command-missing")),
                         command: Some(String::from("definitely-not-a-command")),
                         runtime: None,
                         entrypoint: None,
                         args: Vec::new(),
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: None,
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
                     }),
                 ))
                 .expect("dispatch missing command execute");
@@ -13083,14 +12989,18 @@ console.log(seen.join("\n"));
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-js-import-fresh"),
+                        process_id: Some(String::from("proc-js-import-fresh")),
                         command: Some(String::from("node")),
                         runtime: None,
                         entrypoint: None,
                         args: vec![String::from("/app/main.js")],
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: None,
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
                     }),
                 ))
                 .expect("dispatch import fresh execute");
@@ -16656,7 +16566,6 @@ console.log(JSON.stringify(result || { data: "", error: "missing-result", reques
                     placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
                         pool: None,
                     }),
-                    metadata: std::collections::HashMap::new(),
                 }),
             );
 
@@ -17785,21 +17694,30 @@ console.log(JSON.stringify(summary));
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: Vec::new(),
-                        software: Vec::new(),
+                        mounts: None,
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: vec![port],
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: Some(vec![port]),
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure loopback-exempt host listener port");
+
+            sidecar
+                .dispatch_blocking(request(
+                    5,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::ConfigureVm(ConfigureVmRequest {
+                        mounts: None,
+                        permissions: None,
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
+                    }),
+                ))
+                .expect("mount-only configure preserves loopback override");
 
             let cwd = temp_dir("agentos-native-sidecar-js-http-external-cwd");
             write_fixture(
@@ -21102,8 +21020,6 @@ console.log(JSON.stringify({
             configure_vm_applies_read_only_mount_wrappers();
             configure_vm_instantiates_host_dir_mounts_through_the_plugin_registry();
             configure_vm_passes_resource_read_limits_to_host_dir_mounts();
-            configure_vm_passes_resource_read_limits_to_module_access_mounts();
-            configure_vm_rejects_module_access_root_symlink_to_non_node_modules();
             configure_vm_js_bridge_mount_dispatches_filesystem_calls_via_sidecar_requests();
             configure_vm_js_bridge_mount_rejects_oversized_read_payloads();
             configure_vm_js_bridge_mount_rejects_pread_payloads_above_requested_length();
@@ -21116,7 +21032,8 @@ console.log(JSON.stringify({
             bridge_permissions_map_symlink_operations_to_symlink_access();
             vm_limits_config_reads_filesystem_limits();
             create_vm_applies_filesystem_permission_descriptors_to_kernel_access();
-            create_vm_without_permissions_defaults_to_static_deny_all();
+            create_vm_without_permissions_defaults_to_static_allow_all();
+            create_vm_bootstrap_needs_no_guest_filesystem_rights();
             configure_vm_rollback_restore_failure_falls_back_to_static_deny_all();
             toolkit_registration_rollback_restore_failure_keeps_registry_consistent();
             create_vm_rejects_permission_rules_with_empty_operations();
@@ -21124,7 +21041,7 @@ console.log(JSON.stringify({
             configure_vm_mounts_bypass_guest_fs_write_policy();
             guest_filesystem_link_and_truncate_preserve_hard_link_semantics();
             configure_vm_sensitive_mounts_bypass_guest_fs_mount_sensitive_policy();
-            guest_mount_request_default_deny_rejects_without_changing_operator_mounts();
+            guest_mount_request_explicit_deny_rejects_without_changing_operator_mounts();
             scoped_host_filesystem_unscoped_target_requires_exact_guest_root_prefix();
             scoped_host_filesystem_realpath_preserves_paths_outside_guest_root();
             host_filesystem_realpath_fails_closed_on_circular_symlinks();

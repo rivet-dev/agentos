@@ -1,14 +1,16 @@
 use crate::frames::{reject, DispatchResult};
 use agentos_sidecar_protocol::protocol::{
-    AuthenticateRequest, BootstrapRootFilesystemRequest, CloseStdinRequest, ConfigureVmRequest,
-    CreateLayerRequest, CreateOverlayRequest, CreateVmRequest, DisposeVmRequest, ExecuteRequest,
+    AuthenticateRequest, BootstrapRootFilesystemRequest, CancelCronJobRequest, CloseStdinRequest,
+    CompleteCronRunRequest, ConfigureVmRequest, CreateLayerRequest, CreateOverlayRequest,
+    CreateVmRequest, DisposeVmRequest, ExecuteRequest, ExportCronStateRequest,
     ExportSnapshotRequest, ExtEnvelope, FindBoundUdpRequest, FindListenerRequest,
     GetProcessSnapshotRequest, GetResourceSnapshotRequest, GetSignalStateRequest,
     GetZombieTimerCountRequest, GuestFilesystemCallRequest, GuestKernelCallRequest,
-    ImportSnapshotRequest, KillProcessRequest, LinkPackageRequest, OpenSessionRequest,
-    OwnershipScope, ProvidedCommandsRequest, RegisterHostCallbacksRequest, RequestFrame,
-    RequestPayload, ResizePtyRequest, SealLayerRequest, SnapshotRootFilesystemRequest,
-    VmFetchRequest, WriteStdinRequest,
+    ImportCronStateRequest, ImportSnapshotRequest, InitializeVmRequest, KillProcessRequest,
+    LinkPackageRequest, ListCronJobsRequest, OpenSessionRequest, OwnershipScope,
+    ProvidedCommandsRequest, RegisterHostCallbacksRequest, RequestFrame, RequestPayload,
+    ResizePtyRequest, ScheduleCronRequest, SealLayerRequest, SnapshotRootFilesystemRequest,
+    VmFetchRequest, WakeCronRequest, WriteStdinRequest,
 };
 use agentos_sidecar_protocol::wire as generated_wire;
 
@@ -56,6 +58,14 @@ pub enum RequestRoute {
     GetZombieTimerCount(GetZombieTimerCountRequest),
     LinkPackage(LinkPackageRequest),
     ProvidedCommands(ProvidedCommandsRequest),
+    ScheduleCron(ScheduleCronRequest),
+    ListCronJobs(ListCronJobsRequest),
+    CancelCronJob(CancelCronJobRequest),
+    WakeCron(WakeCronRequest),
+    CompleteCronRun(CompleteCronRunRequest),
+    ExportCronState(ExportCronStateRequest),
+    ImportCronState(ImportCronStateRequest),
+    InitializeVm(InitializeVmRequest),
     Ext(ExtEnvelope),
     UnsupportedHostCallbackDirection,
 }
@@ -103,6 +113,14 @@ pub fn route_request_payload(request: &RequestFrame) -> RequestRoute {
         RequestPayload::GetZombieTimerCount(payload) => RequestRoute::GetZombieTimerCount(payload),
         RequestPayload::LinkPackage(payload) => RequestRoute::LinkPackage(payload),
         RequestPayload::ProvidedCommands(payload) => RequestRoute::ProvidedCommands(payload),
+        RequestPayload::ScheduleCron(payload) => RequestRoute::ScheduleCron(payload),
+        RequestPayload::ListCronJobs(payload) => RequestRoute::ListCronJobs(payload),
+        RequestPayload::CancelCronJob(payload) => RequestRoute::CancelCronJob(payload),
+        RequestPayload::WakeCron(payload) => RequestRoute::WakeCron(payload),
+        RequestPayload::CompleteCronRun(payload) => RequestRoute::CompleteCronRun(payload),
+        RequestPayload::ExportCronState(payload) => RequestRoute::ExportCronState(payload),
+        RequestPayload::ImportCronState(payload) => RequestRoute::ImportCronState(payload),
+        RequestPayload::InitializeVm(payload) => RequestRoute::InitializeVm(payload),
         RequestPayload::HostFilesystemCall(_)
         | RequestPayload::PersistenceLoad(_)
         | RequestPayload::PersistenceFlush(_) => RequestRoute::UnsupportedHostCallbackDirection,
@@ -137,7 +155,10 @@ pub fn generated_wire_blocking_extension_interrupt<'a>(
 
 pub fn request_dispatch_mode(request: &RequestFrame) -> RequestDispatchMode {
     match request.payload {
-        RequestPayload::DisposeVm(_) | RequestPayload::Ext(_) => RequestDispatchMode::Async,
+        RequestPayload::DisposeVm(_)
+        | RequestPayload::InitializeVm(_)
+        | RequestPayload::WakeCron(_)
+        | RequestPayload::Ext(_) => RequestDispatchMode::Async,
         RequestPayload::Authenticate(_)
         | RequestPayload::OpenSession(_)
         | RequestPayload::CreateVm(_)
@@ -166,6 +187,12 @@ pub fn request_dispatch_mode(request: &RequestFrame) -> RequestDispatchMode {
         | RequestPayload::GetZombieTimerCount(_)
         | RequestPayload::LinkPackage(_)
         | RequestPayload::ProvidedCommands(_)
+        | RequestPayload::ScheduleCron(_)
+        | RequestPayload::ListCronJobs(_)
+        | RequestPayload::CancelCronJob(_)
+        | RequestPayload::CompleteCronRun(_)
+        | RequestPayload::ExportCronState(_)
+        | RequestPayload::ImportCronState(_)
         | RequestPayload::HostFilesystemCall(_)
         | RequestPayload::PersistenceLoad(_)
         | RequestPayload::PersistenceFlush(_) => RequestDispatchMode::Immediate,

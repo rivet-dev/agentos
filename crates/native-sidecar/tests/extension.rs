@@ -1,6 +1,5 @@
 mod support;
 
-use std::collections::HashMap;
 use std::fs;
 use std::time::Duration;
 
@@ -64,7 +63,7 @@ impl Extension for EchoExtension {
                 target: None,
                 content: Some(String::from("extension fs primitive")),
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 max_depth: None,
                 mode: None,
                 uid: None,
@@ -83,7 +82,7 @@ impl Extension for EchoExtension {
                     target: None,
                     content: None,
                     encoding: None,
-                    recursive: false,
+                    recursive: None,
                     max_depth: None,
                     mode: None,
                     uid: None,
@@ -98,14 +97,18 @@ impl Extension for EchoExtension {
 
             let started = ctx
                 .spawn_process_wire(ExecuteRequest {
-                    process_id: process_id.to_string(),
+                    process_id: Some(process_id.to_string()),
                     command: None,
                     runtime: Some(GuestRuntimeKind::JavaScript),
                     entrypoint: Some(entrypoint),
                     args: Vec::new(),
-                    env: HashMap::new(),
+                    env: None,
                     cwd: None,
                     wasm_permission_tier: None,
+                    pty: None,
+                    shell_command: None,
+                    keep_stdin_open: None,
+                    timeout_ms: None,
                 })
                 .await?;
             assert_eq!(started.process_id, process_id);
@@ -121,14 +124,18 @@ impl Extension for EchoExtension {
             let lifecycle_process_id = "extension-lifecycle-process";
             let lifecycle_started = ctx
                 .spawn_process_wire(ExecuteRequest {
-                    process_id: lifecycle_process_id.to_string(),
+                    process_id: Some(lifecycle_process_id.to_string()),
                     command: None,
                     runtime: Some(GuestRuntimeKind::JavaScript),
                     entrypoint: Some(lifecycle_entrypoint),
                     args: Vec::new(),
-                    env: HashMap::new(),
+                    env: None,
                     cwd: None,
                     wasm_permission_tier: None,
+                    pty: None,
+                    shell_command: None,
+                    keep_stdin_open: None,
+                    timeout_ms: None,
                 })
                 .await?;
             assert_eq!(lifecycle_started.process_id, lifecycle_process_id);
@@ -166,6 +173,7 @@ impl Extension for EchoExtension {
                     }
                     EventPayload::ProcessOutputEvent(_)
                     | EventPayload::ProcessExitedEvent(_)
+                    | EventPayload::CronDispatchEvent(_)
                     | EventPayload::VmLifecycleEvent(_)
                     | EventPayload::StructuredEvent(_)
                     | EventPayload::ExtEnvelope(_) => {}
@@ -349,7 +357,7 @@ fn extension_session_resources_can_dispose_bound_vm() {
                 target: None,
                 content: None,
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 max_depth: None,
                 mode: None,
                 uid: None,

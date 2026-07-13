@@ -62,6 +62,18 @@ impl Default for crate::generated_protocol::v1::RootFilesystemDescriptor {
     }
 }
 
+impl crate::generated_protocol::v1::MountDescriptor {
+    pub fn effective_read_only(&self) -> bool {
+        self.read_only.unwrap_or(false)
+    }
+}
+
+impl crate::generated_protocol::v1::MountPluginDescriptor {
+    pub fn effective_config(&self) -> &str {
+        self.config.as_deref().unwrap_or("{}")
+    }
+}
+
 impl crate::generated_protocol::v1::PermissionsPolicy {
     pub fn deny_all() -> Self {
         use crate::generated_protocol::v1::{
@@ -126,18 +138,21 @@ impl crate::generated_protocol::v1::CreateVmRequest {
         permissions: Option<crate::generated_protocol::v1::PermissionsPolicy>,
     ) -> Self {
         let metadata: std::collections::BTreeMap<_, _> = metadata.into_iter().collect();
-        let mut config = agentos_vm_config::CreateVmConfig {
+        let env = legacy_env_config(&metadata);
+        let loopback_exempt_ports = legacy_loopback_exempt_ports(&env);
+        let config = agentos_vm_config::CreateVmConfig {
             cwd: metadata.get("cwd").cloned(),
-            env: legacy_env_config(&metadata),
-            root_filesystem: legacy_root_filesystem_config(root_filesystem),
+            env: (!env.is_empty()).then_some(env),
+            root_filesystem: Some(legacy_root_filesystem_config(root_filesystem)),
             permissions: permissions.map(permissions_policy_config_from_wire),
             limits: legacy_limits_config(&metadata),
             dns: legacy_dns_config(&metadata),
             native_root: legacy_native_root_config(&metadata),
             listen: legacy_listen_config(&metadata),
+            loopback_exempt_ports: (!loopback_exempt_ports.is_empty())
+                .then_some(loopback_exempt_ports),
             ..Default::default()
         };
-        config.loopback_exempt_ports = legacy_loopback_exempt_ports(&config.env);
         Self::json_config(runtime, config)
     }
 }
@@ -158,25 +173,29 @@ fn legacy_root_filesystem_config(
     descriptor: crate::generated_protocol::v1::RootFilesystemDescriptor,
 ) -> agentos_vm_config::RootFilesystemConfig {
     agentos_vm_config::RootFilesystemConfig {
-        mode: match descriptor.mode {
+        mode: Some(match descriptor.mode {
             crate::generated_protocol::v1::RootFilesystemMode::Ephemeral => {
                 agentos_vm_config::RootFilesystemMode::Ephemeral
             }
             crate::generated_protocol::v1::RootFilesystemMode::ReadOnly => {
                 agentos_vm_config::RootFilesystemMode::ReadOnly
             }
-        },
-        disable_default_base_layer: descriptor.disable_default_base_layer,
-        lowers: descriptor
-            .lowers
-            .into_iter()
-            .map(legacy_root_lower_config)
-            .collect(),
-        bootstrap_entries: descriptor
-            .bootstrap_entries
-            .into_iter()
-            .map(legacy_root_entry_config)
-            .collect(),
+        }),
+        disable_default_base_layer: Some(descriptor.disable_default_base_layer),
+        lowers: Some(
+            descriptor
+                .lowers
+                .into_iter()
+                .map(legacy_root_lower_config)
+                .collect(),
+        ),
+        bootstrap_entries: Some(
+            descriptor
+                .bootstrap_entries
+                .into_iter()
+                .map(legacy_root_entry_config)
+                .collect(),
+        ),
     }
 }
 
@@ -358,8 +377,7 @@ fn legacy_native_root_config(
     let id = metadata.get("rootFilesystem.nativePlugin.id")?;
     let config = metadata
         .get("rootFilesystem.nativePlugin.config")
-        .map(|value| serde_json::from_str(value).expect("parse native root plugin config"))
-        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+        .map(|value| serde_json::from_str(value).expect("parse native root plugin config"));
     let read_only = metadata
         .get("rootFilesystem.nativePlugin.readOnly")
         .map(|value| value.parse::<bool>().expect("parse native root readOnly"))
@@ -369,7 +387,7 @@ fn legacy_native_root_config(
             id: id.clone(),
             config,
         },
-        read_only,
+        read_only: Some(read_only),
     })
 }
 
@@ -1263,5 +1281,20 @@ mod tests {
                 ))
             ));
         }
+    }
+
+    #[test]
+    fn mount_defaults_are_resolved_by_the_sidecar_wire_model() {
+        let mount = MountDescriptor {
+            guest_path: String::from("/workspace"),
+            read_only: None,
+            plugin: MountPluginDescriptor {
+                id: String::from("js_bridge"),
+                config: None,
+            },
+        };
+
+        assert!(!mount.effective_read_only());
+        assert_eq!(mount.plugin.effective_config(), "{}");
     }
 }

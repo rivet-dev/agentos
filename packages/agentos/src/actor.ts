@@ -13,7 +13,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import common from "@agentos-software/common";
-import { OPT_AGENTOS_ROOT } from "@rivet-dev/agentos-core";
 import { getSidecarPath } from "@rivet-dev/agentos-sidecar";
 import {
 	type ActorDefinition,
@@ -155,7 +154,6 @@ export function buildConfigJson<TConnParams>(
 		// the projected `/opt/agentos/<name>/current/agentos-package.json` (no
 		// client-side adapter-entrypoint resolution — see root CLAUDE.md).
 		packages,
-		packagesMountAt: OPT_AGENTOS_ROOT,
 		additionalInstructions: options.additionalInstructions,
 		loopbackExemptPorts: options.loopbackExemptPorts,
 		allowedNodeBuiltins: options.allowedNodeBuiltins,

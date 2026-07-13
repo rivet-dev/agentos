@@ -132,6 +132,8 @@ describe("state conversion", () => {
 				cwd: "/work",
 				status: protocol.ProcessSnapshotStatus.Exited,
 				exitCode: 0,
+				startTimeMs: 1_000n,
+				exitTimeMs: 2_000n,
 			}),
 		).toEqual({
 			process_id: "proc",
@@ -145,6 +147,8 @@ describe("state conversion", () => {
 			cwd: "/work",
 			status: "exited",
 			exit_code: 0,
+			start_time_ms: 1_000n,
+			exit_time_ms: 2_000n,
 		});
 	});
 });

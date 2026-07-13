@@ -177,7 +177,6 @@ fn assert_rejected_auth_does_not_open_connection(
                 placement: SidecarPlacement::SidecarPlacementShared(
                     agentos_native_sidecar::wire::SidecarPlacementShared { pool: None },
                 ),
-                metadata: HashMap::new(),
             }),
         ))
         .expect("dispatch open session after rejected authenticate");

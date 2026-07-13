@@ -4,13 +4,13 @@ use agentos_native_sidecar::protocol::{
     GuestFilesystemOperation, GuestRuntimeKind, HostCallbackRequest, HostCallbackResultResponse,
     JsBridgeResultResponse, NativeFrameCodec, NativePayloadCodec, OpenSessionRequest,
     OwnershipScope, PatternPermissionScope, PermissionMode, PermissionsPolicy, ProcessOutputEvent,
-    ProcessStartedResponse, ProjectedModuleDescriptor, ProtocolCodecError, ProtocolFrame,
-    RequestFrame, RequestPayload, ResponseFrame, ResponsePayload, ResponseTracker,
-    ResponseTrackerError, RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemEntryKind,
+    ProcessStartedResponse, ProtocolCodecError, ProtocolFrame, RequestFrame, RequestPayload,
+    ResponseFrame, ResponsePayload, ResponseTracker, ResponseTrackerError,
+    RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemEntryKind,
     RootFilesystemLowerDescriptor, SidecarPlacement, SidecarPlacementShared, SidecarRequestFrame,
     SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload, SidecarResponseTracker,
-    SidecarResponseTrackerError, SnapshotRootFilesystemLower, SoftwareDescriptor, StreamChannel,
-    StructuredEvent, VmLifecycleEvent, VmLifecycleState, WriteStdinRequest,
+    SidecarResponseTrackerError, SnapshotRootFilesystemLower, StreamChannel, StructuredEvent,
+    VmLifecycleEvent, VmLifecycleState, WriteStdinRequest,
 };
 use serde_json::json;
 use std::hint::black_box;
@@ -19,6 +19,14 @@ use std::time::Instant;
 const BARE_SCHEMA_V1: &str =
     include_str!("../../sidecar-protocol/protocol/agentos_sidecar_v1.bare");
 const BARE_MIGRATION_PLAN: &str = include_str!("../../sidecar-protocol/protocol/README.md");
+
+fn vm_created(vm_id: &str) -> agentos_native_sidecar::protocol::VmCreatedResponse {
+    agentos_native_sidecar::protocol::VmCreatedResponse {
+        vm_id: vm_id.to_owned(),
+        guest_cwd: String::from("/workspace"),
+        guest_env: std::collections::HashMap::new(),
+    }
+}
 
 #[test]
 fn guest_runtime_kind_round_trips_through_generated_codec() {
@@ -57,10 +65,6 @@ fn codec_round_trips_authenticated_setup_and_session_messages() {
             placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
                 pool: Some("default".to_string()),
             }),
-            metadata: std::collections::HashMap::from([(
-                String::from("owner"),
-                String::from("packages/core"),
-            )]),
         }),
     ));
 
@@ -248,7 +252,7 @@ fn json_codec_round_trips_guest_filesystem_requests_with_optional_fields() {
             target: Some(String::from("/workspace/target.txt")),
             content: Some(String::from("stdio-sidecar-fs")),
             encoding: None,
-            recursive: true,
+            recursive: Some(true),
             max_depth: None,
             mode: Some(0o644),
             uid: Some(1000),
@@ -283,7 +287,7 @@ fn bare_codec_round_trips_guest_filesystem_requests_with_optional_fields() {
             target: Some(String::from("/workspace/target.txt")),
             content: Some(String::from("stdio-sidecar-fs")),
             encoding: None,
-            recursive: true,
+            recursive: Some(true),
             max_depth: None,
             mode: Some(0o644),
             uid: Some(1000),
@@ -471,9 +475,7 @@ fn response_tracker_enforces_request_response_correlation_and_duplicate_hardenin
     let response = ResponseFrame::new(
         77,
         OwnershipScope::session("conn-1", "session-1"),
-        ResponsePayload::VmCreated(agentos_native_sidecar::protocol::VmCreatedResponse {
-            vm_id: "vm-1".to_string(),
-        }),
+        ResponsePayload::VmCreated(vm_created("vm-1")),
     );
     tracker.accept_response(&response).expect("accept response");
 
@@ -485,9 +487,7 @@ fn response_tracker_enforces_request_response_correlation_and_duplicate_hardenin
         tracker.accept_response(&ResponseFrame::new(
             88,
             OwnershipScope::session("conn-1", "session-1"),
-            ResponsePayload::VmCreated(agentos_native_sidecar::protocol::VmCreatedResponse {
-                vm_id: "vm-2".to_string(),
-            }),
+            ResponsePayload::VmCreated(vm_created("vm-2")),
         )),
         Err(ResponseTrackerError::UnmatchedResponse { request_id: 88 }),
     );
@@ -514,9 +514,7 @@ fn response_tracker_rejects_kind_and_ownership_mismatches() {
         tracker.accept_response(&ResponseFrame::new(
             90,
             OwnershipScope::session("conn-1", "session-2"),
-            ResponsePayload::VmCreated(agentos_native_sidecar::protocol::VmCreatedResponse {
-                vm_id: "vm-1".to_string(),
-            }),
+            ResponsePayload::VmCreated(vm_created("vm-1")),
         )),
         Err(ResponseTrackerError::OwnershipMismatch {
             request_id: 90,
@@ -528,9 +526,7 @@ fn response_tracker_rejects_kind_and_ownership_mismatches() {
         .accept_response(&ResponseFrame::new(
             90,
             OwnershipScope::session("conn-1", "session-1"),
-            ResponsePayload::VmCreated(agentos_native_sidecar::protocol::VmCreatedResponse {
-                vm_id: "vm-1".to_string(),
-            }),
+            ResponsePayload::VmCreated(vm_created("vm-1")),
         ))
         .expect("valid response should still be pending after ownership mismatch");
 
@@ -559,9 +555,7 @@ fn response_tracker_rejects_kind_and_ownership_mismatches() {
         .accept_response(&ResponseFrame::new(
             90,
             OwnershipScope::session("conn-1", "session-1"),
-            ResponsePayload::VmCreated(agentos_native_sidecar::protocol::VmCreatedResponse {
-                vm_id: "vm-1".to_string(),
-            }),
+            ResponsePayload::VmCreated(vm_created("vm-1")),
         ))
         .expect("valid response should still be pending after kind mismatch");
 }
@@ -848,22 +842,20 @@ fn schema_supports_configuration_and_structured_events() {
         23,
         OwnershipScope::vm("conn-1", "session-1", "vm-1"),
         RequestPayload::ConfigureVm(agentos_native_sidecar::protocol::ConfigureVmRequest {
-            mounts: vec![agentos_native_sidecar::protocol::MountDescriptor {
+            mounts: Some(vec![agentos_native_sidecar::protocol::MountDescriptor {
                 guest_path: "/workspace".to_string(),
-                read_only: false,
+                read_only: Some(false),
                 plugin: agentos_native_sidecar::protocol::MountPluginDescriptor {
                     id: "host_dir".to_string(),
-                    config: json!({
-                        "hostPath": "/tmp/project",
-                        "readOnly": false,
-                    })
-                    .to_string(),
+                    config: Some(
+                        json!({
+                            "hostPath": "/tmp/project",
+                            "readOnly": false,
+                        })
+                        .to_string(),
+                    ),
                 },
-            }],
-            software: vec![SoftwareDescriptor {
-                package_name: "@rivet-dev/agentos-runtime-core".to_string(),
-                root: "/pkg".to_string(),
-            }],
+            }]),
             permissions: Some(PermissionsPolicy {
                 fs: None,
                 network: Some(PatternPermissionScope::PermissionMode(PermissionMode::Ask)),
@@ -872,18 +864,10 @@ fn schema_supports_configuration_and_structured_events() {
                 env: None,
                 binding: None,
             }),
-            module_access_cwd: None,
-            instructions: vec!["keep timing mitigation enabled".to_string()],
-            projected_modules: vec![ProjectedModuleDescriptor {
-                package_name: "workspace".to_string(),
-                entrypoint: "/workspace/index.ts".to_string(),
-            }],
-            command_permissions: std::collections::HashMap::new(),
-            loopback_exempt_ports: Vec::new(),
-            packages: Vec::new(),
-            packages_mount_at: String::new(),
-            bootstrap_commands: Vec::new(),
-            tool_shim_commands: Vec::new(),
+            command_permissions: None,
+            loopback_exempt_ports: None,
+            packages: None,
+            packages_mount_at: None,
         }),
     ));
 
@@ -914,6 +898,7 @@ fn checked_in_bare_schema_covers_all_top_level_frame_payload_types() {
         "AuthenticateRequest",
         "OpenSessionRequest",
         "CreateVmRequest",
+        "InitializeVmRequest",
         "DisposeVmRequest",
         "BootstrapRootFilesystemRequest",
         "ConfigureVmRequest",
@@ -943,6 +928,7 @@ fn checked_in_bare_schema_covers_all_top_level_frame_payload_types() {
         "AuthenticatedResponse",
         "SessionOpenedResponse",
         "VmCreatedResponse",
+        "VmInitializedResponse",
         "VmDisposedResponse",
         "RootFilesystemBootstrappedResponse",
         "VmConfiguredResponse",

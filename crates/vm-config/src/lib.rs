@@ -3,10 +3,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// Canonical Rust-side VM config. Unknown fields must stay rejected here and in
-/// the TS preflight schema at
-/// `packages/core/src/node-runtime-options-schema.ts`; update both when a
-/// public `NodeRuntime.create(...)` option changes the generated VM config.
+/// Canonical Rust-side VM config. Unknown fields must stay rejected here and by
+/// TypeScript thin-client option validation. Update both when an explicit wire
+/// option changes the generated VM config.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export, export_to = "../../../packages/core/src/generated/")]
@@ -15,11 +14,17 @@ pub struct CreateVmConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub cwd: Option<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(type = "Record<string, string>")]
-    pub env: BTreeMap<String, String>,
-    #[serde(default, rename = "rootFilesystem")]
-    pub root_filesystem: RootFilesystemConfig,
+    #[ts(optional)]
+    pub env: Option<BTreeMap<String, String>>,
+    #[serde(
+        default,
+        rename = "rootFilesystem",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub root_filesystem: Option<RootFilesystemConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub permissions: Option<PermissionsPolicy>,
@@ -42,19 +47,18 @@ pub struct CreateVmConfig {
     #[serde(
         default,
         rename = "loopbackExemptPorts",
-        skip_serializing_if = "Vec::is_empty"
-    )]
-    pub loopback_exempt_ports: Vec<u16>,
-    #[serde(default, rename = "jsRuntime", skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub js_runtime: Option<JsRuntimeConfig>,
-    #[serde(
-        default,
-        rename = "bootstrapCommands",
         skip_serializing_if = "Option::is_none"
     )]
     #[ts(optional)]
-    pub bootstrap_commands: Option<Vec<String>>,
+    pub loopback_exempt_ports: Option<Vec<u16>>,
+    #[serde(default, rename = "jsRuntime", skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub js_runtime: Option<JsRuntimeConfig>,
+    /// VM-scoped instructions applied to every ACP session. Session-specific
+    /// instructions are combined with these by the ACP sidecar adapter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent_additional_instructions: Option<String>,
 }
 
 impl CreateVmConfig {
@@ -62,11 +66,18 @@ impl CreateVmConfig {
         if let Some(cwd) = self.cwd.as_deref() {
             validate_guest_path("cwd", cwd)?;
         }
-        self.root_filesystem.validate()?;
+        if let Some(root_filesystem) = &self.root_filesystem {
+            root_filesystem.validate()?;
+        }
         if let Some(native_root) = &self.native_root {
             native_root.validate()?;
         }
-        if self.native_root.is_some() && !self.root_filesystem.bootstrap_entries.is_empty() {
+        if self.native_root.is_some()
+            && self
+                .root_filesystem
+                .as_ref()
+                .is_some_and(|root| !root.effective_bootstrap_entries().is_empty())
+        {
             return Err(VmConfigError::new(
                 "nativeRoot does not support rootFilesystem.bootstrapEntries",
             ));
@@ -83,9 +94,6 @@ impl CreateVmConfig {
         if let Some(js_runtime) = &self.js_runtime {
             js_runtime.validate()?;
         }
-        if let Some(bootstrap_commands) = &self.bootstrap_commands {
-            validate_command_names("bootstrapCommands", bootstrap_commands)?;
-        }
         Ok(())
     }
 }
@@ -100,12 +108,18 @@ impl CreateVmConfig {
 #[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct JsRuntimeConfig {
     /// Which host environment to emulate for guest JS. Default `node`.
-    #[serde(default)]
-    pub platform: JsRuntimePlatform,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub platform: Option<JsRuntimePlatform>,
     /// How bare import specifiers resolve. Independent of `platform`.
     /// Default `node`.
-    #[serde(default, rename = "moduleResolution")]
-    pub module_resolution: JsModuleResolution,
+    #[serde(
+        default,
+        rename = "moduleResolution",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub module_resolution: Option<JsModuleResolution>,
     /// Node builtin-module allow-list. Only valid when `platform = node`.
     /// `None` => engine default allow-list. `Some([])` => deny all builtins.
     /// `Some([..])` => exactly those.
@@ -130,7 +144,7 @@ pub struct JsRuntimeConfig {
 impl JsRuntimeConfig {
     fn validate(&self) -> Result<(), VmConfigError> {
         if let Some(allowed) = &self.allowed_builtins {
-            if self.platform != JsRuntimePlatform::Node {
+            if self.platform.unwrap_or_default() != JsRuntimePlatform::Node {
                 return Err(VmConfigError::new(
                     "jsRuntime.allowedBuiltins is only valid when jsRuntime.platform is \"node\"",
                 ));
@@ -247,41 +261,65 @@ fn is_known_node_builtin(name: &str) -> bool {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct RootFilesystemConfig {
-    #[serde(default)]
-    pub mode: RootFilesystemMode,
-    #[serde(default, rename = "disableDefaultBaseLayer")]
-    pub disable_default_base_layer: bool,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub lowers: Vec<RootFilesystemLowerDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mode: Option<RootFilesystemMode>,
+    #[serde(
+        default,
+        rename = "disableDefaultBaseLayer",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub disable_default_base_layer: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub lowers: Option<Vec<RootFilesystemLowerDescriptor>>,
     #[serde(
         default,
         rename = "bootstrapEntries",
-        skip_serializing_if = "Vec::is_empty"
+        skip_serializing_if = "Option::is_none"
     )]
-    pub bootstrap_entries: Vec<RootFilesystemEntry>,
+    #[ts(optional)]
+    pub bootstrap_entries: Option<Vec<RootFilesystemEntry>>,
 }
 
 impl Default for RootFilesystemConfig {
     fn default() -> Self {
         Self {
-            mode: RootFilesystemMode::Ephemeral,
-            disable_default_base_layer: false,
-            lowers: Vec::new(),
-            bootstrap_entries: Vec::new(),
+            mode: None,
+            disable_default_base_layer: None,
+            lowers: None,
+            bootstrap_entries: None,
         }
     }
 }
 
 impl RootFilesystemConfig {
+    pub fn effective_mode(&self) -> RootFilesystemMode {
+        self.mode.unwrap_or_default()
+    }
+
+    pub fn effective_disable_default_base_layer(&self) -> bool {
+        self.disable_default_base_layer.unwrap_or(false)
+    }
+
+    pub fn effective_lowers(&self) -> &[RootFilesystemLowerDescriptor] {
+        self.lowers.as_deref().unwrap_or_default()
+    }
+
+    pub fn effective_bootstrap_entries(&self) -> &[RootFilesystemEntry] {
+        self.bootstrap_entries.as_deref().unwrap_or_default()
+    }
+
     fn validate(&self) -> Result<(), VmConfigError> {
-        for lower in &self.lowers {
+        for lower in self.effective_lowers() {
             if let RootFilesystemLowerDescriptor::Snapshot { entries } = lower {
                 for entry in entries {
                     entry.validate()?;
                 }
             }
         }
-        for entry in &self.bootstrap_entries {
+        for entry in self.effective_bootstrap_entries() {
             entry.validate()?;
         }
         Ok(())
@@ -398,11 +436,16 @@ pub enum RootFilesystemEntryEncoding {
 #[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct NativeRootFilesystemConfig {
     pub plugin: MountPluginDescriptor,
-    #[serde(default, rename = "readOnly")]
-    pub read_only: bool,
+    #[serde(default, rename = "readOnly", skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub read_only: Option<bool>,
 }
 
 impl NativeRootFilesystemConfig {
+    pub fn effective_read_only(&self) -> bool {
+        self.read_only.unwrap_or(false)
+    }
+
     fn validate(&self) -> Result<(), VmConfigError> {
         if self.plugin.id.trim().is_empty() {
             return Err(VmConfigError::new("nativeRoot.plugin.id is required"));
@@ -416,9 +459,10 @@ impl NativeRootFilesystemConfig {
 #[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct MountPluginDescriptor {
     pub id: String,
-    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     #[ts(type = "import(\"@rivet-dev/agentos-runtime-core/descriptors\").MountConfigJsonValue")]
-    pub config: serde_json::Value,
+    pub config: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -473,10 +517,12 @@ pub struct PatternPermissionRuleSet {
 #[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct FsPermissionRule {
     pub mode: PermissionMode,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub operations: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub operations: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub paths: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -484,10 +530,12 @@ pub struct FsPermissionRule {
 #[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct PatternPermissionRule {
     pub mode: PermissionMode,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub operations: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub patterns: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub operations: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub patterns: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -778,23 +826,6 @@ fn validate_guest_path(label: &str, path: &str) -> Result<(), VmConfigError> {
     Ok(())
 }
 
-fn validate_command_names(label: &str, commands: &[String]) -> Result<(), VmConfigError> {
-    for command in commands {
-        if command.is_empty()
-            || command == "."
-            || command == ".."
-            || command.contains('/')
-            || command.contains('\0')
-        {
-            return Err(VmConfigError::new(format!(
-                "{label} contains invalid command name {command:?}"
-            )));
-        }
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -838,8 +869,8 @@ mod tests {
         let config: CreateVmConfig =
             serde_json::from_value(serde_json::json!({ "jsRuntime": {} })).expect("decode");
         let js = config.js_runtime.expect("jsRuntime present");
-        assert_eq!(js.platform, JsRuntimePlatform::Node);
-        assert_eq!(js.module_resolution, JsModuleResolution::Node);
+        assert!(js.platform.is_none());
+        assert!(js.module_resolution.is_none());
         assert!(js.allowed_builtins.is_none());
         assert!(js.high_resolution_time.is_none());
     }
@@ -894,6 +925,74 @@ mod tests {
         assert_eq!(
             some.js_runtime.unwrap().allowed_builtins,
             Some(vec!["path".to_owned(), "node:fs".to_owned()])
+        );
+    }
+
+    #[test]
+    fn js_runtime_preserves_omission_and_explicit_default_overrides() {
+        let omitted = js_runtime_config(serde_json::json!({
+            "allowedBuiltins": ["path"]
+        }))
+        .unwrap();
+        let omitted_json = serde_json::to_value(&omitted).expect("serialize omitted defaults");
+        assert_eq!(
+            omitted_json.get("jsRuntime"),
+            Some(&serde_json::json!({ "allowedBuiltins": ["path"] }))
+        );
+
+        let explicit = js_runtime_config(serde_json::json!({
+            "platform": "node",
+            "moduleResolution": "node"
+        }))
+        .unwrap();
+        let explicit_json = serde_json::to_value(&explicit).expect("serialize explicit defaults");
+        assert_eq!(
+            explicit_json.get("jsRuntime"),
+            Some(&serde_json::json!({
+                "platform": "node",
+                "moduleResolution": "node"
+            }))
+        );
+    }
+
+    #[test]
+    fn root_filesystem_preserves_omission_and_explicit_default_overrides() {
+        let omitted: CreateVmConfig = serde_json::from_value(serde_json::json!({
+            "rootFilesystem": {}
+        }))
+        .expect("decode omitted root defaults");
+        let root = omitted
+            .root_filesystem
+            .as_ref()
+            .expect("root filesystem present");
+        assert_eq!(root.effective_mode(), RootFilesystemMode::Ephemeral);
+        assert!(!root.effective_disable_default_base_layer());
+        assert!(root.effective_lowers().is_empty());
+        assert!(root.effective_bootstrap_entries().is_empty());
+        assert_eq!(
+            serde_json::to_value(&omitted).expect("serialize omitted root defaults"),
+            serde_json::json!({ "rootFilesystem": {} })
+        );
+
+        let explicit: CreateVmConfig = serde_json::from_value(serde_json::json!({
+            "rootFilesystem": {
+                "mode": "ephemeral",
+                "disableDefaultBaseLayer": false,
+                "lowers": [],
+                "bootstrapEntries": []
+            }
+        }))
+        .expect("decode explicit root defaults");
+        assert_eq!(
+            serde_json::to_value(&explicit).expect("serialize explicit root defaults"),
+            serde_json::json!({
+                "rootFilesystem": {
+                    "mode": "ephemeral",
+                    "disableDefaultBaseLayer": false,
+                    "lowers": [],
+                    "bootstrapEntries": []
+                }
+            })
         );
     }
 

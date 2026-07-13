@@ -1,4 +1,4 @@
-import * as protocol from "./generated-protocol.js";
+import type * as protocol from "./generated-protocol.js";
 import { fromGeneratedProcessSnapshotStatus } from "./protocol-maps.js";
 
 // The u64 identity/size fields stay bigint: host filesystems (overlayfs,
@@ -43,6 +43,8 @@ export interface LiveProcessSnapshotEntry {
 	cwd: string;
 	status: "running" | "exited" | "stopped";
 	exit_code?: number;
+	start_time_ms: bigint;
+	exit_time_ms?: bigint;
 }
 
 export function fromGeneratedGuestFilesystemStat(
@@ -93,5 +95,7 @@ export function fromGeneratedProcessSnapshotEntry(
 		cwd: entry.cwd,
 		status: fromGeneratedProcessSnapshotStatus(entry.status),
 		...(entry.exitCode !== null ? { exit_code: entry.exitCode } : {}),
+		start_time_ms: entry.startTimeMs,
+		...(entry.exitTimeMs !== null ? { exit_time_ms: entry.exitTimeMs } : {}),
 	};
 }

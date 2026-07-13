@@ -9,7 +9,7 @@ async function waitForExit(
 ): Promise<number> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
-		const proc = vm.getProcess(pid);
+		const proc = await vm.getProcess(pid);
 		if (!proc.running) {
 			return proc.exitCode ?? -1;
 		}
@@ -34,7 +34,7 @@ describe("software projection on the sidecar path", () => {
 
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn(
+		const { pid } = await vm.spawn(
 			"node",
 			[
 				"-e",
@@ -73,7 +73,7 @@ describe("software projection on the sidecar path", () => {
 
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn(
+		const { pid } = await vm.spawn(
 			"node",
 			[
 				"-e",
@@ -104,11 +104,11 @@ describe("software projection on the sidecar path", () => {
 	});
 
 	test("preserves registry meta-package command injection on the sidecar path", async () => {
-			vm = await AgentOs.create({
-				software: [common],
-			});
+		vm = await AgentOs.create({
+			software: [common],
+		});
 
-			expect(await vm.exists("/bin/cat")).toBe(true);
-			expect(await vm.exists("/bin/grep")).toBe(true);
+		expect(await vm.exists("/bin/cat")).toBe(true);
+		expect(await vm.exists("/bin/grep")).toBe(true);
 	});
 });

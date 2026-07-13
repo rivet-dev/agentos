@@ -98,7 +98,7 @@ describe("python CLI (Pyodide runtime)", () => {
 		"python - reads the program from stdin",
 		async () => {
 			const chunks: string[] = [];
-			const { pid } = vm.spawn("python", ["-"], {
+			const { pid } = await vm.spawn("python", ["-"], {
 				onStdout: (data) => chunks.push(Buffer.from(data).toString("utf8")),
 			});
 			vm.writeProcessStdin(pid, "print('from stdin program')\n");

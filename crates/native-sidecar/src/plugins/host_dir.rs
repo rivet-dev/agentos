@@ -1497,7 +1497,7 @@ impl VirtualFileSystem for HostDirFilesystem {
     }
 }
 
-/// One read-only `host_dir`/`module_access` mount, keyed by its guest mount
+/// One read-only `host_dir` mount, keyed by its guest mount
 /// point. The filesystem reads mount-relative virtual paths (e.g. `/foo/index.js`
 /// for a mount at `/root/node_modules`).
 // `dead_code` is allowed because `host_dir.rs` is also `#[path]`-included by
@@ -1512,7 +1512,7 @@ struct HostDirModuleMount {
 }
 
 /// Backing filesystem for one module-reader mount: an anchored host dir
-/// (`host_dir`/`module_access` mounts) or a packed `.aospkg` tar
+/// (`host_dir` mounts) or a packed `.aospkg` tar
 /// (`agentos_packages` package-version leaves). Both are read-only and safe to
 /// use off the service loop — the tar reader serves mmap-backed byte ranges
 /// from the shared identity-keyed archive cache and never touches the kernel.
@@ -1590,7 +1590,7 @@ impl HostDirModuleMount {
 }
 
 /// A `Send`-able, clonable, read-only [`ModuleFsReader`] over one or more mounted
-/// `host_dir`/`module_access` filesystems. It lets module resolution run on the
+/// `host_dir` filesystems. It lets module resolution run on the
 /// V8 bridge thread — concurrently with the sidecar service loop — while still
 /// reading exactly the mounted `node_modules` tree the guest sees (anchored
 /// resolve-beneath with escaping-symlink refusal; see [`confine`]), instead of
@@ -1610,7 +1610,7 @@ pub(crate) struct HostDirModuleReader {
 #[allow(dead_code)]
 impl HostDirModuleReader {
     /// Build a reader from `(guest_path, host_path)` pairs for the VM's read-only
-    /// `host_dir`/`module_access` mounts. Mounts whose host root cannot be opened
+    /// `host_dir` mounts. Mounts whose host root cannot be opened
     /// are skipped. Returns `None` if no usable mount remains, so callers fall
     /// back to the service-loop kernel reader.
     pub(crate) fn from_mounts<I, G, H>(mounts: I) -> Option<Self>

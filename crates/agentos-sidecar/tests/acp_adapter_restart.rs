@@ -181,11 +181,12 @@ fn adapter_crash_restarts_or_evicts_and_emits_exit_event() {
         &vm_id,
         prompt_request("unsupported-session", "anyone home?"),
     );
-    let AcpResponse::AcpErrorResponse(AcpErrorResponse { message, .. }) = response else {
+    let AcpResponse::AcpErrorResponse(AcpErrorResponse { code, message }) = response else {
         panic!("expected the post-eviction prompt to fail, got: {response:?}");
     };
+    assert_eq!(code, "session_not_found");
     assert!(
-        message.contains("unknown ACP session"),
+        message.contains("Session not found"),
         "expected unknown-session error after eviction, got: {message}"
     );
 
@@ -464,14 +465,14 @@ for await (const line of lines) {
 fn create_session_request(adapter: &Path, cwd: &Path) -> AcpRequest {
     AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
         agent_type: agent_type_for_adapter(adapter),
-        runtime: AcpRuntimeKind::JavaScript,
-        cwd: cwd.to_string_lossy().into_owned(),
-        args: Vec::new(),
-        env: HashMap::new(),
-        protocol_version: i32::from(ACP_PROTOCOL_VERSION),
-        client_capabilities: String::from(r#"{"fs":{}}"#),
-        mcp_servers: String::from(r#"{"servers":[]}"#),
-        skip_os_instructions: true,
+        runtime: Some(AcpRuntimeKind::JavaScript),
+        cwd: Some(cwd.to_string_lossy().into_owned()),
+        args: Some(Vec::new()),
+        env: Some(HashMap::new()),
+        protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
+        client_capabilities: Some(String::from(r#"{"fs":{}}"#)),
+        mcp_servers: Some(String::from(r#"{"servers":[]}"#)),
+        skip_os_instructions: Some(true),
         additional_instructions: None,
     })
 }
@@ -607,7 +608,6 @@ fn open_session(sidecar: &mut NativeSidecar<RecordingBridge>, connection_id: &st
                 placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
                     pool: None,
                 }),
-                metadata: HashMap::new(),
             }),
         })
         .expect("open session");
@@ -702,18 +702,12 @@ fn configure_mock_agent_packages(
                 vm_id: vm_id.to_owned(),
             }),
             payload: RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts: Vec::new(),
-                software: Vec::new(),
+                mounts: None,
                 permissions: None,
-                module_access_cwd: None,
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
-                command_permissions: HashMap::new(),
-                loopback_exempt_ports: Vec::new(),
-                packages,
-                packages_mount_at: String::from("/opt/agentos"),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                command_permissions: None,
+                loopback_exempt_ports: None,
+                packages: Some(packages),
+                packages_mount_at: Some(String::from("/opt/agentos")),
             }),
         })
         .expect("configure restart ACP packages");

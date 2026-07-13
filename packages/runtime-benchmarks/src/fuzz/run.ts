@@ -98,9 +98,11 @@ async function runProcessProgramGuest(
 		const start = process.hrtime.bigint();
 		if (program.interleaving === "fanout") {
 			for (let offset = 0; offset < program.count; offset += program.concurrency) {
-				const batch = Array.from(
-					{ length: Math.min(program.concurrency, program.count - offset) },
-					() => vm.spawn("node", args),
+				const batch = await Promise.all(
+					Array.from(
+						{ length: Math.min(program.concurrency, program.count - offset) },
+						() => vm.spawn("node", args),
+					),
 				);
 				await Promise.all(batch.map((proc) => vm.waitProcess(proc.pid)));
 			}

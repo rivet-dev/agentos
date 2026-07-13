@@ -4,11 +4,10 @@ import { AgentOs } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
 // #1542 follow-up — when an agent requests a tool permission but the host has
-// registered NO `onPermissionRequest` handler, the request is denied
-// (default-closed). That is correct, but a host that simply forgot to wire the
-// hook would otherwise see only silent denials (and an agent that loops on
-// denied tools). We assert the deny still happens AND a host-visible warning is
-// emitted once per session through the `onAgentStderr` channel.
+// registered NO `onPermissionRequest` handler, the client returns no explicit
+// answer and the ACP sidecar applies its default. A host that forgot to wire the
+// hook would otherwise see only silent denials, so the client still emits one
+// host-visible warning per session through the `onAgentStderr` channel.
 // ---------------------------------------------------------------------------
 
 interface PendingReply {
@@ -43,16 +42,17 @@ function callPermissionCallback(
 	sessionId: string,
 	permissionId: string,
 	params: Record<string, unknown>,
-): Promise<PermissionReply> {
+): Promise<PermissionReply | undefined> {
 	return (
 		vm as unknown as {
 			_handleAcpPermissionCallback: (
 				sessionId: string,
 				permissionId: string,
 				params: Record<string, unknown>,
-			) => Promise<PermissionReply>;
+				timeoutMs: number,
+			) => Promise<PermissionReply | undefined>;
 		}
-	)._handleAcpPermissionCallback(sessionId, permissionId, params);
+	)._handleAcpPermissionCallback(sessionId, permissionId, params, 120_000);
 }
 
 describe("permission request with no host handler (#1542)", () => {
@@ -63,7 +63,7 @@ describe("permission request with no host handler (#1542)", () => {
 		vm = null;
 	});
 
-	test("denies the tool and warns once per session via onAgentStderr", async () => {
+	test("defers the default to the sidecar and warns once per session", async () => {
 		const stderr: string[] = [];
 		const decoder = new TextDecoder();
 		vm = await AgentOs.create({
@@ -74,7 +74,7 @@ describe("permission request with no host handler (#1542)", () => {
 
 		injectSession(vm, "session-A");
 
-		// First denied tool request: rejected + emits exactly one warning. Use the
+		// First unanswered tool request emits exactly one warning. Use the
 		// real ACP permission param shape — the sidecar forwards the agent's
 		// `{ toolCall: { title } }`, with no top-level `toolName` — so the label is
 		// resolved exactly as it is in production.
@@ -82,7 +82,7 @@ describe("permission request with no host handler (#1542)", () => {
 			callPermissionCallback(vm, "session-A", "1", {
 				toolCall: { title: "Bash" },
 			}),
-		).resolves.toBe("reject");
+		).resolves.toBeUndefined();
 
 		const warnings = () =>
 			stderr.filter((line) =>
@@ -94,12 +94,12 @@ describe("permission request with no host handler (#1542)", () => {
 		expect(warnings()[0]).toContain("vm.onPermissionRequest");
 		expect(warnings()[0]).toContain("session-A");
 
-		// A second denied request in the same session must NOT re-warn.
+		// A second unanswered request in the same session must NOT re-warn.
 		await expect(
 			callPermissionCallback(vm, "session-A", "2", {
 				toolCall: { title: "Edit" },
 			}),
-		).resolves.toBe("reject");
+		).resolves.toBeUndefined();
 		expect(warnings()).toHaveLength(1);
 	});
 

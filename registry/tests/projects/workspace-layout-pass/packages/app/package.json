@@ -1,7 +1,0 @@
-{
-	"name": "@workspace-test/app",
-	"version": "1.0.0",
-	"dependencies": {
-		"@workspace-test/lib": "*"
-	}
-}
