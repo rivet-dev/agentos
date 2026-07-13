@@ -3,6 +3,7 @@
 import { useId, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
 	ArrowRight,
+	ArrowUpRight,
 	FolderOpen,
 	Layers,
 	Bot,
@@ -1128,10 +1129,10 @@ const UseCasesSection = () => {
 		}, 900);
 	};
 	return (
-		<section className='border-t border-ink/10 px-6 py-16 md:py-32'>
-			<div className='mx-auto max-w-7xl'>
+		<section id='use-cases' className='overflow-hidden border-t border-ink/10 py-16 md:py-32'>
+			<div className='mx-auto max-w-7xl px-6'>
 				<Reveal>
-					<div className='mb-10 flex items-end justify-between gap-4 md:mb-12'>
+					<div className='flex items-end justify-between gap-4'>
 						<SectionHeading title='Built for every kind of agent.' />
 						<div className='flex items-center gap-2'>
 							<button
@@ -1153,38 +1154,46 @@ const UseCasesSection = () => {
 						</div>
 					</div>
 				</Reveal>
-				<Reveal>
-					<div
-						ref={railRef}
-						onMouseEnter={() => {
-							pausedRef.current = true;
-						}}
-						onMouseLeave={() => {
-							pausedRef.current = false;
-						}}
-						onTouchStart={() => {
-							pausedRef.current = true;
-						}}
-						onTouchEnd={() => {
-							pausedRef.current = false;
-						}}
-						className='flex gap-4 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [-webkit-mask-image:linear-gradient(to_right,transparent,#000_5%,#000_95%,transparent)] [mask-image:linear-gradient(to_right,transparent,#000_5%,#000_95%,transparent)]'
-					>
-						{[...useCases, ...useCases].map(({ icon: Icon, title, description }, i) => (
-							<a
-								key={`${title}-${i}`}
-								href='/use-cases'
-								aria-hidden={i >= useCases.length || undefined}
-								tabIndex={i >= useCases.length ? -1 : undefined}
-								className={`w-80 shrink-0 p-6 ${CARD_SURFACE}`}
-							>
-								<Icon className='h-5 w-5 text-olive' />
-								<h3 className='mb-1.5 mt-4 text-base font-medium text-ink'>{title}</h3>
-								<p className='text-sm leading-relaxed text-ink-soft'>{description}</p>
-							</a>
-						))}
-					</div>
-				</Reveal>
+			</div>
+			{/* Full-bleed rail: the fades sit on the viewport edges, not mid-page,
+			    so drifting cards dissolve at the screen instead of being cut off
+			    inside the section. */}
+			<Reveal>
+				<div
+					ref={railRef}
+					onMouseEnter={() => {
+						pausedRef.current = true;
+					}}
+					onMouseLeave={() => {
+						pausedRef.current = false;
+					}}
+					onTouchStart={() => {
+						pausedRef.current = true;
+					}}
+					onTouchEnd={() => {
+						pausedRef.current = false;
+					}}
+					className='mt-10 flex gap-4 overflow-x-auto px-6 pb-2 md:mt-12 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [-webkit-mask-image:linear-gradient(to_right,transparent,#000_4%,#000_96%,transparent)] [mask-image:linear-gradient(to_right,transparent,#000_4%,#000_96%,transparent)]'
+				>
+					{[...useCases, ...useCases].map(({ title, description }, i) => (
+						<a
+							key={`${title}-${i}`}
+							href='/use-cases'
+							aria-hidden={i >= useCases.length || undefined}
+							tabIndex={i >= useCases.length ? -1 : undefined}
+							className={`group relative flex min-h-[15rem] w-80 shrink-0 flex-col p-6 ${CARD_SURFACE}`}
+						>
+							<ArrowUpRight
+								aria-hidden='true'
+								className='absolute right-5 top-5 h-4 w-4 text-ink-faint opacity-0 transition-opacity duration-200 group-hover:opacity-100'
+							/>
+							<h3 className='mb-2 text-base font-medium text-ink'>{title}</h3>
+							<p className='text-sm leading-relaxed text-ink-soft'>{description}</p>
+						</a>
+					))}
+				</div>
+			</Reveal>
+			<div className='mx-auto max-w-7xl px-6'>
 				<Reveal>
 					<div className='mt-6 flex justify-end'>
 						<a
