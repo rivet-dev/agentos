@@ -17,14 +17,25 @@ class MemorySidecarTransport implements SidecarProcessTransport {
 	}> = [];
 	disposed = false;
 	failed: Error | null = null;
-	private sidecarRequestHandler: LiveSidecarRequestHandler | null = null;
+	private readonly sidecarRequestHandlers = new Map<
+		string,
+		LiveSidecarRequestHandler
+	>();
 	private readonly eventListeners = new Set<(event: LiveEventFrame) => void>();
 
-	setSidecarRequestHandler(handler: LiveSidecarRequestHandler | null): void {
-		this.sidecarRequestHandler = handler;
+	registerSidecarRequestHandler(
+		ownership: LiveOwnershipScope,
+		handler: LiveSidecarRequestHandler,
+	): () => void {
+		const key = JSON.stringify(ownership);
+		this.sidecarRequestHandlers.set(key, handler);
+		return () => this.sidecarRequestHandlers.delete(key);
 	}
 
-	onEvent(handler: (event: LiveEventFrame) => void): () => void {
+	onEvent(
+		handler: (event: LiveEventFrame) => void,
+		_ownership?: LiveOwnershipScope,
+	): () => void {
 		this.eventListeners.add(handler);
 		return () => {
 			this.eventListeners.delete(handler);

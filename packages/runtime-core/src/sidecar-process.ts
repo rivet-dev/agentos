@@ -407,12 +407,21 @@ export class SidecarProcess {
 		return SidecarProcess.fromClient(protocolClient);
 	}
 
-	setSidecarRequestHandler(handler: SidecarRequestHandler | null): void {
-		this.protocolClient.setSidecarRequestHandler(handler);
+	registerSidecarRequestHandler(
+		ownership: OwnershipScope,
+		handler: SidecarRequestHandler,
+	): () => void {
+		return this.protocolClient.registerSidecarRequestHandler(
+			ownership,
+			handler,
+		);
 	}
 
-	onEvent(handler: (event: EventFrame) => void): () => void {
-		return this.protocolClient.onEvent(handler);
+	onEvent(
+		handler: (event: EventFrame) => void,
+		ownership?: OwnershipScope,
+	): () => void {
+		return this.protocolClient.onEvent(handler, ownership);
 	}
 
 	async authenticateAndOpenSession(): Promise<AuthenticatedSession> {

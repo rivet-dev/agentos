@@ -8,8 +8,14 @@ import type {
 import type { LiveRequestPayload } from "./request-payloads.js";
 
 export interface SidecarProcessTransport {
-	setSidecarRequestHandler(handler: LiveSidecarRequestHandler | null): void;
-	onEvent(handler: (event: LiveEventFrame) => void): () => void;
+	registerSidecarRequestHandler(
+		ownership: LiveOwnershipScope,
+		handler: LiveSidecarRequestHandler,
+	): () => void;
+	onEvent(
+		handler: (event: LiveEventFrame) => void,
+		ownership?: LiveOwnershipScope,
+	): () => void;
 	sendRequest(input: {
 		ownership: LiveOwnershipScope;
 		payload: LiveRequestPayload;

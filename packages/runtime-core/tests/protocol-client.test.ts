@@ -320,7 +320,7 @@ describe("sidecar protocol client", () => {
 	it("writes sidecar request handler responses", async () => {
 		const { stdin, stdout, client } = createClient();
 		const written = readWrittenFrame(stdin);
-		client.setSidecarRequestHandler(async () => ({
+		client.registerSidecarRequestHandler(ownership, async () => ({
 			type: "host_callback_result",
 			invocation_id: "invocation",
 			result: { ok: true },

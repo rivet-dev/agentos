@@ -27,18 +27,20 @@ async function createVmCapturingHandler(
 ): Promise<{ vm: AgentOs; handler: CapturedHandler }> {
 	let captured: CapturedHandler | null = null;
 	const original =
-		NativeSidecarProcessClient.prototype.setSidecarRequestHandler;
+		NativeSidecarProcessClient.prototype.registerSidecarRequestHandler;
 	const spy = vi
-		.spyOn(NativeSidecarProcessClient.prototype, "setSidecarRequestHandler")
+		.spyOn(
+			NativeSidecarProcessClient.prototype,
+			"registerSidecarRequestHandler",
+		)
 		.mockImplementation(function (
 			this: NativeSidecarProcessClient,
+			ownership: any,
 			handler: any,
 		) {
-			if (handler) {
-				captured = handler as CapturedHandler;
-			}
+			captured = handler as CapturedHandler;
 			// Still install on the real client so the VM behaves normally.
-			return original.call(this, handler);
+			return original.call(this, ownership, handler);
 		});
 	try {
 		const vm = await AgentOs.create(options);

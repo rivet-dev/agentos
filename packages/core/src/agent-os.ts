@@ -1306,6 +1306,7 @@ export class AgentOs {
 	private readonly _sidecarSession: AuthenticatedSession;
 	private readonly _sidecarVm: CreatedVm;
 	private readonly _disposeSidecarEventListener: () => void;
+	private _disposeSidecarRequestHandler: (() => void) | null = null;
 	private readonly _agentStderrHandler?: AgentStderrHandler;
 	private readonly _agentExitHandler?: AgentExitHandler;
 	private readonly _limitWarningHandler?: LimitWarningHandler;
@@ -1330,9 +1331,17 @@ export class AgentOs {
 		this._agentStderrHandler = agentStderrHandler;
 		this._agentExitHandler = agentExitHandler;
 		this._limitWarningHandler = limitWarningHandler;
-		this._disposeSidecarEventListener = this._sidecarClient.onEvent((event) => {
-			this._handleSidecarEvent(event);
-		});
+		this._disposeSidecarEventListener = this._sidecarClient.onEvent(
+			(event) => {
+				this._handleSidecarEvent(event);
+			},
+			{
+				scope: "vm",
+				connection_id: sidecarSession.connectionId,
+				session_id: sidecarSession.sessionId,
+				vm_id: sidecarVm.vmId,
+			},
+		);
 		agentOsRuntimeAdmins.set(this, {
 			kernel,
 			rootView: rootFilesystem,
@@ -2697,34 +2706,46 @@ export class AgentOs {
 		const context: HostCallbackContext = {
 			toolMap: buildToolMap(this._toolKits),
 		};
-		this._sidecarClient.setSidecarRequestHandler((request) => {
-			switch (request.payload.type) {
-				case "host_callback":
-					return handleHostCallback(request, context);
-				case "js_bridge_call":
-					return handleJsBridgeCall(request.payload, {
-						resolveTarget: (mountId) => {
-							const hostMountResolver = (
-								this.#kernel as unknown as {
-									hostFilesystemForMount?: (
-										mountId: string,
-									) => VirtualFileSystem | undefined;
-								}
-							).hostFilesystemForMount;
-							if (hostMountResolver) {
-								const filesystem = hostMountResolver.call(
-									this.#kernel,
-									mountId,
-								);
-								return filesystem ? { filesystem, rootPath: "/" } : undefined;
-							}
-							return { filesystem: this.#kernel.vfs, rootPath: mountId };
-						},
-					});
-				case "ext":
-					return this._handleAcpExtSidecarRequest(request.payload.envelope);
-			}
-		});
+		this._disposeSidecarRequestHandler?.();
+		this._disposeSidecarRequestHandler =
+			this._sidecarClient.registerSidecarRequestHandler(
+				{
+					scope: "vm",
+					connection_id: this._sidecarSession.connectionId,
+					session_id: this._sidecarSession.sessionId,
+					vm_id: this._sidecarVm.vmId,
+				},
+				(request) => {
+					switch (request.payload.type) {
+						case "host_callback":
+							return handleHostCallback(request, context);
+						case "js_bridge_call":
+							return handleJsBridgeCall(request.payload, {
+								resolveTarget: (mountId) => {
+									const hostMountResolver = (
+										this.#kernel as unknown as {
+											hostFilesystemForMount?: (
+												mountId: string,
+											) => VirtualFileSystem | undefined;
+										}
+									).hostFilesystemForMount;
+									if (hostMountResolver) {
+										const filesystem = hostMountResolver.call(
+											this.#kernel,
+											mountId,
+										);
+										return filesystem
+											? { filesystem, rootPath: "/" }
+											: undefined;
+									}
+									return { filesystem: this.#kernel.vfs, rootPath: mountId };
+								},
+							});
+						case "ext":
+							return this._handleAcpExtSidecarRequest(request.payload.envelope);
+					}
+				},
+			);
 	}
 
 	private async _handleAcpExtSidecarRequest(envelope: {
@@ -3033,6 +3054,8 @@ export class AgentOs {
 		);
 
 		this._disposeSidecarEventListener();
+		this._disposeSidecarRequestHandler?.();
+		this._disposeSidecarRequestHandler = null;
 
 		const sidecarLease = this._sidecarLease;
 		this._sidecarLease = null;

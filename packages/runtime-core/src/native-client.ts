@@ -124,12 +124,21 @@ export class StdioSidecarProtocolClient implements SidecarProcessTransport {
 		);
 	}
 
-	setSidecarRequestHandler(handler: LiveSidecarRequestHandler | null): void {
-		this.protocolClient.setSidecarRequestHandler(handler);
+	registerSidecarRequestHandler(
+		ownership: LiveOwnershipScope,
+		handler: LiveSidecarRequestHandler,
+	): () => void {
+		return this.protocolClient.registerSidecarRequestHandler(
+			ownership,
+			handler,
+		);
 	}
 
-	onEvent(handler: (event: LiveEventFrame) => void): () => void {
-		return this.protocolClient.onEvent(handler);
+	onEvent(
+		handler: (event: LiveEventFrame) => void,
+		ownership?: LiveOwnershipScope,
+	): () => void {
+		return this.protocolClient.onEvent(handler, ownership);
 	}
 
 	async sendRequest(input: {

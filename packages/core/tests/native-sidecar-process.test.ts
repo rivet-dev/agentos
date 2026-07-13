@@ -438,20 +438,28 @@ describe("native sidecar process client", () => {
 			command: "node",
 			args: [driverPath, capturePath],
 		});
-		client.setSidecarRequestHandler(async (request) => {
-			expect(request.request_id).toBe(-1);
-			expect(request.payload.type).toBe("js_bridge_call");
-			if (request.payload.type !== "js_bridge_call") {
-				throw new Error("expected js_bridge_call payload");
-			}
-			return {
-				type: "js_bridge_result",
-				call_id: request.payload.call_id,
-				result: {
-					content: "from-handler",
-				},
-			};
-		});
+		client.registerSidecarRequestHandler(
+			{
+				scope: "vm",
+				connection_id: "conn-1",
+				session_id: "session-1",
+				vm_id: "vm-1",
+			},
+			async (request) => {
+				expect(request.request_id).toBe(-1);
+				expect(request.payload.type).toBe("js_bridge_call");
+				if (request.payload.type !== "js_bridge_call") {
+					throw new Error("expected js_bridge_call payload");
+				}
+				return {
+					type: "js_bridge_result",
+					call_id: request.payload.call_id,
+					result: {
+						content: "from-handler",
+					},
+				};
+			},
+		);
 
 		try {
 			const captured = await waitFor(
