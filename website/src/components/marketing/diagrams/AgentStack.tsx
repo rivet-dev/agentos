@@ -7,8 +7,7 @@ import { EASE, VIEWPORT } from '../motion';
 // The architecture as containment: your backend is the outer box. Inside it,
 // your code drives sessions into per-agent agentOS VMs. Each VM pairs a
 // guest — an off-the-shelf agent like Pi, or one you build with a framework
-// like Eve or Flue, on Node, Python, and shell, running on V8 isolates and
-// WASM — with its own virtual kernel that services every syscall. The
+// like Eve or Flue, on Node, Python, and shell, running on WASM — with its own virtual kernel that services every syscall. The
 // library hosts the VMs in a sidecar process it manages, so "your backend"
 // is the deployment boundary rather than a literal single process — and
 // there is no hypervisor or container in the path. White cards are elements
@@ -68,7 +67,7 @@ export const AgentStack = () => {
 	return (
 		<div
 			role='img'
-			aria-label='agentOS architecture: inside your backend, your code drives sessions into per-agent agentOS VMs. In each VM an agent, such as Pi or one you build with a framework like Eve or Flue, runs Node, Python, and shell on V8 isolates and WebAssembly, and every syscall is served by that VM&apos;s own virtual kernel: file system, processes, sockets, and deny-by-default permissions. There is no hypervisor or container in the path.'
+			aria-label='agentOS architecture: inside your backend, your code drives sessions into per-agent agentOS VMs. In each VM an agent, such as Pi or one you build with a framework like Eve or Flue, runs Node, Python, and shell on WebAssembly, and every syscall is served by that VM&apos;s own virtual kernel: file system, processes, sockets, and deny-by-default permissions. There is no hypervisor or container in the path.'
 			className='rounded-2xl bg-white/45 p-4 ring-1 ring-ink/[0.09] shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_8px_24px_-14px_rgba(20,20,22,0.20)] md:p-5'
 		>
 			{/* Outer box: your backend */}
@@ -109,7 +108,7 @@ export const AgentStack = () => {
 								<span className='text-[13px] font-medium text-ink'>{vm.agent}</span>
 							</div>
 							<p className='mt-0.5 text-center font-mono text-[10px] text-ink-faint'>node · python · shell</p>
-							<p className='text-center font-mono text-[10px] text-ink-faint'>on v8 isolates &amp; wasm</p>
+							<p className='text-center font-mono text-[10px] text-ink-faint'>on wasm</p>
 						</div>
 
 						<Connector label='every syscall' reduced={reduced} delay={0.6 + i * 0.5} />

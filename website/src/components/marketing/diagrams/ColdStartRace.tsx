@@ -211,7 +211,7 @@ export const ColdStartRace = () => {
 									<BenchInfoTooltip>
 										<strong>What&apos;s measured:</strong> Time from requesting an execution to first code running.
 										<br /><br />
-										<strong>Why the gap:</strong> agentOS runs agents in-process &mdash; V8 isolates and Wasm inside your host. No VM to boot, no network hop, no disk image. Sandboxes must boot an entire environment, allocate memory, and establish a network connection before code can run.
+										<strong>Why the gap:</strong> agentOS runs agents in-process &mdash; WASM inside your host. No VM to boot, no network hop, no disk image. Sandboxes must boot an entire environment, allocate memory, and establish a network connection before code can run.
 										<br /><br />
 										<strong>Sandbox baseline:</strong> {SANDBOX_COLDSTART_PROVIDER}, the fastest mainstream sandbox provider as of {BENCHMARK_DATE}.
 										<br /><br />

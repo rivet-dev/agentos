@@ -125,7 +125,7 @@ const TABS: SessionTab[] = [
 	{
 		key: 'nodejs',
 		title: 'JavaScript & TypeScript',
-		description: 'Node v22 compatible on native V8 isolates. node, npm, and npx on the PATH at full JIT speed.',
+		description: 'Node v22 compatible, running on WASM. node, npm, and npx on the PATH.',
 		docsHref: '/docs/nodejs-runtime',
 		docsLabel: 'Node.js runtime docs',
 		iconSrc: '/images/registry/nodejs.svg',
