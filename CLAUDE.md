@@ -62,6 +62,16 @@ the guest — over inventing a softer fallback that hides the failure.
   they do not scan `node_modules` or parse adapter manifests for discovery.
 - TypeScript and Rust clients must stay behaviorally identical. Any public
   method or wire behavior change in one client must be mirrored in the other.
+- Clients are thin transport adapters, not runtime policy owners. They may
+  validate and serialize explicit caller input, forward requests, route host
+  callbacks/events, and retain host-only state that the sidecar cannot access.
+  VM defaults, base environment, filesystem/bootstrap policy, default software,
+  permission policy, agent/session orchestration, prompt assembly, and other
+  behavior shared across clients belong in the sidecar/runtime.
+- Behavioral parity must come from one sidecar-owned implementation, not copied
+  TypeScript/Rust/actor constants or parallel state machines. Prefer omitted
+  wire fields meaning "use the sidecar default"; clients should send overrides
+  only when the caller explicitly supplied them.
 - Agent adapters must use real upstream SDKs. Do not replace SDK adapters with
   direct API-call stubs.
 

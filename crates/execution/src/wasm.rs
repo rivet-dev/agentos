@@ -110,6 +110,14 @@ const WASM_SIDECAR_ROUTED_FS_SYNC_METHODS: &[&str] = &[
     "fs.writeFileSync",
     "fs.writeSync",
 ];
+const WASM_SIDECAR_ROUTED_KERNEL_SYNC_METHODS: &[&str] = &[
+    "__kernel_isatty",
+    "__kernel_poll",
+    "__kernel_stdin_read",
+    "__kernel_stdio_write",
+    "__kernel_tty_size",
+    "__pty_set_raw_mode",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WasmSignalDispositionAction {
@@ -1525,7 +1533,8 @@ fn wasm_sync_rpc_method_routes_through_sidecar_kernel(
     internal_sync_rpc: &WasmInternalSyncRpc,
 ) -> bool {
     internal_sync_rpc.route_fs_through_sidecar
-        && WASM_SIDECAR_ROUTED_FS_SYNC_METHODS.contains(&request.method.as_str())
+        && (WASM_SIDECAR_ROUTED_FS_SYNC_METHODS.contains(&request.method.as_str())
+            || WASM_SIDECAR_ROUTED_KERNEL_SYNC_METHODS.contains(&request.method.as_str()))
 }
 
 fn translate_wasm_guest_path(
@@ -3842,7 +3851,8 @@ mod tests {
         DEFAULT_WASM_RUNNER_HEAP_LIMIT_MB, NODE_WASI_MODULE_SOURCE,
         WASM_CAPTURED_OUTPUT_LIMIT_BYTES, WASM_MAX_FUEL_ENV, WASM_MAX_MEMORY_BYTES_ENV,
         WASM_MAX_STACK_BYTES_ENV, WASM_PAGE_BYTES, WASM_SANDBOX_ROOT_ENV,
-        WASM_SIDECAR_ROUTED_FS_SYNC_METHODS, WASM_SYNC_READ_LIMIT_BYTES,
+        WASM_SIDECAR_ROUTED_FS_SYNC_METHODS, WASM_SIDECAR_ROUTED_KERNEL_SYNC_METHODS,
+        WASM_SYNC_READ_LIMIT_BYTES,
     };
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
     use std::fs;
@@ -4620,7 +4630,7 @@ mod tests {
     }
 
     #[test]
-    fn wasm_sidecar_managed_fs_methods_route_to_kernel_sync_rpc() {
+    fn wasm_sidecar_managed_methods_route_to_kernel_sync_rpc() {
         let mut standalone = WasmInternalSyncRpc {
             module_guest_paths: Vec::new(),
             module_host_path: PathBuf::from("/tmp/module.wasm"),
@@ -4655,6 +4665,18 @@ mod tests {
             assert!(
                 !wasm_sync_rpc_method_routes_through_sidecar_kernel(&request, &standalone),
                 "{method} should stay host-direct for standalone/prewarm WASI execution"
+            );
+        }
+
+        for method in WASM_SIDECAR_ROUTED_KERNEL_SYNC_METHODS {
+            let request = wasm_sync_rpc_request(method);
+            assert!(
+                wasm_sync_rpc_method_routes_through_sidecar_kernel(&request, &sidecar_managed),
+                "{method} should route through the sidecar kernel for managed WASI executions"
+            );
+            assert!(
+                !wasm_sync_rpc_method_routes_through_sidecar_kernel(&request, &standalone),
+                "{method} should stay local for standalone/prewarm WASI execution"
             );
         }
 
