@@ -231,6 +231,7 @@ async fn session_surface_create_prompt_events_close() {
     // prompt.
     let live_chunk_text = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while let Some(notification) = events.next().await {
+            let notification = notification.expect("session event stream lagged");
             if let Some(text) = agent_message_chunk_text(&notification) {
                 return Some(text.to_string());
             }

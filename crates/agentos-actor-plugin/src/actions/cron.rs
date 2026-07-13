@@ -5,6 +5,7 @@
 use crate::host_ctx::HostCtx;
 use agentos_client::{AgentOs, CronAction, CronEvent, CronJobOptions, CronOverlap};
 use anyhow::{anyhow, Result};
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 
@@ -119,8 +120,8 @@ pub(crate) fn ensure_cron_event_pump(host: &HostCtx, vm: &AgentOs, vars: &mut Va
     let mut rx = vm.cron_events();
     vars.cron_task = Some(tokio::spawn(async move {
         loop {
-            match rx.recv().await {
-                Ok(event) => match encode_cron_event(&event) {
+            match rx.next().await {
+                Some(Ok(event)) => match encode_cron_event(&event) {
                     Ok(bytes) => {
                         let _ = host.broadcast(b"cronEvent".to_vec(), bytes);
                         if let Err(error) = crate::vm::persist_cron_state(&host, &cron_vm).await {
@@ -133,8 +134,12 @@ pub(crate) fn ensure_cron_event_pump(host: &HostCtx, vm: &AgentOs, vars: &mut Va
                         tracing::warn!(?error, "failed to encode cron event broadcast");
                     }
                 },
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                Some(Err(error)) => {
+                    tracing::error!(?error, "cron event pump stopped after route failure");
+                    super::broadcast_stream_error(&host, super::StreamErrorSource::Cron, &error);
+                    break;
+                }
+                None => break,
             }
         }
     }));

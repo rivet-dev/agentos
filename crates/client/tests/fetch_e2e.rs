@@ -166,10 +166,10 @@ server.listen({port}, "0.0.0.0", () => console.log("READY"));
     let response = {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
         loop {
-            while let Some(Some(chunk)) = server_stdout.next().now_or_never() {
+            while let Some(Some(Ok(chunk))) = server_stdout.next().now_or_never() {
                 append_output(&mut captured_stdout, chunk);
             }
-            while let Some(Some(chunk)) = server_stderr.next().now_or_never() {
+            while let Some(Some(Ok(chunk))) = server_stderr.next().now_or_never() {
                 append_output(&mut captured_stderr, chunk);
             }
             if let Some(exit_result) = os.wait_process(server.pid).now_or_never() {

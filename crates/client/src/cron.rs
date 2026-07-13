@@ -12,6 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use agentos_sidecar_client::wire;
 use chrono::{DateTime, Utc};
+use futures::Stream;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
@@ -19,6 +20,7 @@ use tokio::task::JoinHandle;
 use crate::agent_os::AgentOs;
 use crate::error::ClientError;
 use crate::session::{CreateSessionOptions, McpServerConfig};
+use crate::stream::{RoutedStreamEvent, StreamRouteFailure};
 
 /// Overlap policy for a cron job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,7 +223,8 @@ pub struct CronManager {
     callbacks: parking_lot::Mutex<CallbackRegistry>,
     alarm: parking_lot::Mutex<AlarmState>,
     alarm_handler: parking_lot::Mutex<Option<CronAlarmHandler>>,
-    event_tx: broadcast::Sender<CronEvent>,
+    event_tx: broadcast::Sender<RoutedStreamEvent<CronEvent>>,
+    event_route_failure: parking_lot::Mutex<Option<StreamRouteFailure>>,
     disposed: AtomicBool,
 }
 
@@ -233,6 +236,7 @@ impl CronManager {
             alarm: parking_lot::Mutex::new(AlarmState::default()),
             alarm_handler: parking_lot::Mutex::new(None),
             event_tx,
+            event_route_failure: parking_lot::Mutex::new(None),
             disposed: AtomicBool::new(false),
         }
     }
@@ -247,6 +251,52 @@ impl CronManager {
         let mut callbacks = self.callbacks.lock();
         callbacks.routes.clear();
         callbacks.by_job.clear();
+    }
+
+    pub(crate) fn fail_event_route(&self, failure: StreamRouteFailure) {
+        let mut route_failure = self.event_route_failure.lock();
+        if route_failure.is_none() {
+            *route_failure = Some(failure);
+        }
+        drop(route_failure);
+        let generation = {
+            let mut alarm = self.alarm.lock();
+            if let Some(task) = alarm.task.take() {
+                task.abort();
+            }
+            alarm.generation = alarm.generation.saturating_add(1);
+            alarm.next_alarm_ms = None;
+            alarm.generation
+        };
+        if let Some(handler) = self.alarm_handler.lock().clone() {
+            tokio::spawn(async move {
+                if let Err(error) = handler(CronAlarmUpdate {
+                    generation,
+                    next_alarm_ms: None,
+                })
+                .await
+                {
+                    tracing::error!(
+                        error,
+                        generation,
+                        "failed to clear host cron alarm after control-route failure"
+                    );
+                }
+            });
+        }
+        let _ = self.event_tx.send(failure.event());
+    }
+
+    fn ensure_event_route(&self) -> Result<(), ClientError> {
+        match *self.event_route_failure.lock() {
+            Some(StreamRouteFailure::Lagged { skipped }) => {
+                Err(ClientError::EventStreamLagged { skipped })
+            }
+            Some(StreamRouteFailure::Closed { context }) => {
+                Err(ClientError::EventStreamClosed { context })
+            }
+            None => Ok(()),
+        }
     }
 
     fn set_alarm_handler(&self, handler: CronAlarmHandler) {
@@ -353,9 +403,11 @@ impl CronManager {
             if self.disposed.load(Ordering::SeqCst) {
                 return Ok(());
             }
+            self.ensure_event_route()?;
             let handler = self.alarm_handler.lock().clone();
             {
                 let mut state = self.alarm.lock();
+                self.ensure_event_route()?;
                 if alarm.generation < state.generation {
                     return Ok(());
                 }
@@ -392,12 +444,32 @@ impl CronManager {
                 }
             }
 
-            handler.expect("alarm handler checked above")(CronAlarmUpdate {
+            let handler = handler.expect("alarm handler checked above");
+            handler(CronAlarmUpdate {
                 generation: alarm.generation,
                 next_alarm_ms: alarm.next_alarm_ms,
             })
             .await
-            .map_err(|error| ClientError::Sidecar(format!("failed to arm cron alarm: {error}")))
+            .map_err(|error| ClientError::Sidecar(format!("failed to arm cron alarm: {error}")))?;
+
+            // A route failure can race an asynchronous host alarm update. If the stale arm
+            // completed after `fail_event_route` sent its clear, clear once more before returning
+            // the sticky route error so a durable host cannot retain the stale wake.
+            if let Err(error) = self.ensure_event_route() {
+                let generation = self.alarm.lock().generation;
+                handler(CronAlarmUpdate {
+                    generation,
+                    next_alarm_ms: None,
+                })
+                .await
+                .map_err(|clear_error| {
+                    ClientError::Sidecar(format!(
+                        "failed to clear host cron alarm after route failure: {clear_error}"
+                    ))
+                })?;
+                return Err(error);
+            }
+            Ok(())
         })
     }
 
@@ -430,10 +502,13 @@ impl CronManager {
         events: Vec<wire::CronEventRecord>,
     ) -> futures::future::BoxFuture<'a, Result<(), ClientError>> {
         Box::pin(async move {
+            self.ensure_event_route()?;
             self.apply_alarm(client, alarm).await?;
+            self.ensure_event_route()?;
             for event in events {
                 self.emit_event(event)?;
             }
+            self.ensure_event_route()?;
             for run in runs {
                 let manager = Arc::clone(self);
                 let client = client.clone();
@@ -472,7 +547,7 @@ impl CronManager {
             },
         };
         if self.event_tx.receiver_count() > 0 {
-            if let Err(error) = self.event_tx.send(event) {
+            if let Err(error) = self.event_tx.send(RoutedStreamEvent::Data(event)) {
                 tracing::warn!(?error, "failed to deliver cron lifecycle event");
             }
         }
@@ -556,11 +631,24 @@ async fn run_host_action(
 }
 
 impl AgentOs {
+    fn ensure_cron_event_route(&self) -> Result<(), ClientError> {
+        match *self.inner().control_route_failure.lock() {
+            Some(StreamRouteFailure::Lagged { skipped }) => {
+                Err(ClientError::EventStreamLagged { skipped })
+            }
+            Some(StreamRouteFailure::Closed { context }) => {
+                Err(ClientError::EventStreamClosed { context })
+            }
+            None => Ok(()),
+        }
+    }
+
     /// Forward a cron registration to the sidecar.
     pub async fn schedule_cron(
         &self,
         options: CronJobOptions,
     ) -> Result<CronJobHandle, ClientError> {
+        self.ensure_cron_event_route()?;
         let (action, callback_id) = match options.action {
             CronAction::Session {
                 agent_type,
@@ -633,6 +721,7 @@ impl AgentOs {
 
     /// Read the authoritative sidecar cron registry.
     pub async fn list_cron_jobs(&self) -> Result<Vec<CronJobInfo>, ClientError> {
+        self.ensure_cron_event_route()?;
         let response = self
             .transport()
             .request_wire(
@@ -690,6 +779,7 @@ impl AgentOs {
 
     /// Cancel a cron job by ID.
     pub async fn cancel_cron_job(&self, id: &str) -> Result<(), ClientError> {
+        self.ensure_cron_event_route()?;
         let response = self
             .transport()
             .request_wire(
@@ -713,18 +803,52 @@ impl AgentOs {
     }
 
     /// Subscribe to sidecar cron lifecycle events.
-    pub fn cron_events(&self) -> broadcast::Receiver<CronEvent> {
-        self.cron().event_tx.subscribe()
+    pub fn cron_events(
+        &self,
+    ) -> std::pin::Pin<Box<dyn Stream<Item = std::result::Result<CronEvent, ClientError>> + Send>>
+    {
+        let failure = *self.inner().control_route_failure.lock();
+        if let Some(failure) = failure {
+            return Box::pin(futures::stream::once(async move {
+                Err(match failure {
+                    StreamRouteFailure::Lagged { skipped } => {
+                        ClientError::EventStreamLagged { skipped }
+                    }
+                    StreamRouteFailure::Closed { context } => {
+                        ClientError::EventStreamClosed { context }
+                    }
+                })
+            }));
+        }
+        let rx = self.cron().event_tx.subscribe();
+        Box::pin(futures::stream::unfold(Some(rx), move |state| async move {
+            let mut rx = state?;
+            match rx.recv().await {
+                Ok(RoutedStreamEvent::Data(event)) => Some((Ok(event), Some(rx))),
+                Ok(RoutedStreamEvent::Lagged { skipped })
+                | Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    Some((Err(ClientError::EventStreamLagged { skipped }), None))
+                }
+                Ok(RoutedStreamEvent::Closed { context }) => {
+                    Some((Err(ClientError::EventStreamClosed { context }), None))
+                }
+                Err(broadcast::error::RecvError::Closed) => None,
+            }
+        }))
     }
 
     /// Replace the normal process timer with a host-specific absolute-alarm
     /// bridge (for example a durable actor `schedule_at`).
     pub fn set_cron_alarm_handler(&self, handler: CronAlarmHandler) {
         self.cron().set_alarm_handler(handler);
+        if let Some(failure) = *self.inner().control_route_failure.lock() {
+            self.cron().fail_event_route(failure);
+        }
     }
 
     /// Deliver a generation previously returned to a host alarm bridge.
     pub async fn wake_cron_generation(&self, generation: u64) -> Result<(), ClientError> {
+        self.ensure_cron_event_route()?;
         self.cron().wake(self, generation).await
     }
 
@@ -734,6 +858,7 @@ impl AgentOs {
     /// [`AgentOs::import_cron_state`]. It is not a public scheduling model.
     #[doc(hidden)]
     pub async fn export_cron_state(&self) -> Result<String, ClientError> {
+        self.ensure_cron_event_route()?;
         let response = self
             .transport()
             .request_wire(
@@ -751,6 +876,7 @@ impl AgentOs {
     /// Restore an opaque snapshot produced by [`AgentOs::export_cron_state`].
     #[doc(hidden)]
     pub async fn import_cron_state(&self, state: String) -> Result<(), ClientError> {
+        self.ensure_cron_event_route()?;
         let response = self
             .transport()
             .request_wire(
@@ -880,5 +1006,40 @@ mod tests {
             })
             .expect_err("error event must include error");
         assert!(missing_error.to_string().contains("missing error"));
+    }
+
+    #[tokio::test]
+    async fn control_route_failure_clears_host_alarm_and_fails_event_stream() {
+        let manager = CronManager::new();
+        let (update_tx, update_rx) = tokio::sync::oneshot::channel();
+        let update_tx = Arc::new(parking_lot::Mutex::new(Some(update_tx)));
+        manager.set_alarm_handler(Arc::new(move |update| {
+            let update_tx = Arc::clone(&update_tx);
+            Box::pin(async move {
+                if let Some(tx) = update_tx.lock().take() {
+                    let _ = tx.send(update);
+                }
+                Ok(())
+            })
+        }));
+        let mut events = manager.event_tx.subscribe();
+
+        manager.fail_event_route(StreamRouteFailure::Lagged { skipped: 4 });
+
+        let update = update_rx.await.expect("host alarm clear update");
+        assert_eq!(update.next_alarm_ms, None);
+        assert!(matches!(
+            events.recv().await,
+            Ok(RoutedStreamEvent::Lagged { skipped: 4 })
+        ));
+        assert!(matches!(
+            manager.ensure_event_route(),
+            Err(ClientError::EventStreamLagged { skipped: 4 })
+        ));
+
+        // A dispatch that was already in flight when the route failed reaches this same guard at
+        // the beginning of `consume_dispatch`, before it can apply a newer alarm or start work.
+        let alarm = manager.alarm.lock();
+        assert_eq!(alarm.next_alarm_ms, None);
     }
 }

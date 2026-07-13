@@ -244,6 +244,11 @@ pub const ACTION_CONTRACTS: &[ActionContract] = &[
 #[allow(dead_code)]
 pub const EVENT_CONTRACTS: &[EventContract] = &[
     EventContract {
+        name: "streamError",
+        payload_shape: ReplyShape::Object(&["code", "id", "message", "scope", "skipped"]),
+        ts_signature: "streamError: StreamErrorPayload;",
+    },
+    EventContract {
         name: "sessionEvent",
         payload_shape: ReplyShape::Object(&["event", "sessionId"]),
         ts_signature: "sessionEvent: SessionEventPayload;",

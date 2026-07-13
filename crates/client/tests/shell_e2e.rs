@@ -96,6 +96,7 @@ async fn shell_surface_open_write_data_resize_close() {
     let saw_marker = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         let mut acc = Vec::<u8>::new();
         while let Some(chunk) = data.next().await {
+            let chunk = chunk.expect("shell data stream lagged");
             acc.extend_from_slice(&chunk);
             if String::from_utf8_lossy(&acc).contains("shell-marker") {
                 return true;

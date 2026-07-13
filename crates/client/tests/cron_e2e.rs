@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use agentos_client::{CronAction, CronEvent, CronJobOptions};
 use chrono::Utc;
+use futures::StreamExt;
 
 #[tokio::test]
 async fn cron_callback_fires_and_registry_round_trips() {
@@ -55,13 +56,15 @@ async fn cron_callback_fires_and_registry_round_trips() {
     let mut saw_complete = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
     while tokio::time::Instant::now() < deadline && !(saw_fire && saw_complete) {
-        match tokio::time::timeout(Duration::from_millis(500), events.recv()).await {
-            Ok(Ok(CronEvent::Fire { job_id, .. })) if job_id == "oneshot-test" => saw_fire = true,
-            Ok(Ok(CronEvent::Complete { job_id, .. })) if job_id == "oneshot-test" => {
+        match tokio::time::timeout(Duration::from_millis(500), events.next()).await {
+            Ok(Some(Ok(CronEvent::Fire { job_id, .. }))) if job_id == "oneshot-test" => {
+                saw_fire = true
+            }
+            Ok(Some(Ok(CronEvent::Complete { job_id, .. }))) if job_id == "oneshot-test" => {
                 saw_complete = true
             }
-            Ok(Ok(_)) => {}
-            Ok(Err(_)) | Err(_) => break,
+            Ok(Some(Ok(_))) => {}
+            Ok(Some(Err(_))) | Ok(None) | Err(_) => break,
         }
     }
     assert!(saw_fire, "expected a cron:fire event for the one-shot");

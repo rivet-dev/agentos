@@ -37,8 +37,9 @@ use crate::session::{
     PermissionRouteRequest, PermissionRouteResult,
 };
 use crate::sidecar::{AgentOsSidecar, AgentOsSidecarPlacement, AgentOsSidecarVmLease};
+use crate::stream::{RoutedStreamEvent, StreamRouteFailure};
 use crate::transport::{SidecarProcess, WireSidecarCallback};
-use agentos_sidecar_client::TransportError;
+use agentos_sidecar_client::{TransportError, WireEventRecvError};
 
 use once_cell::sync::OnceCell;
 
@@ -50,12 +51,20 @@ use once_cell::sync::OnceCell;
 #[derive(Debug, Clone)]
 pub(crate) enum ProcessExit {
     Exited(i32),
-    Failed(String),
+    EventStreamLagged { skipped: u64 },
+    EventStreamClosed,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum ShellExit {
+    Exited(i32),
+    EventStreamLagged { skipped: u64 },
+    EventStreamClosed,
 }
 
 pub(crate) struct ProcessEntry {
-    pub stdout_tx: broadcast::Sender<Vec<u8>>,
-    pub stderr_tx: broadcast::Sender<Vec<u8>>,
+    pub stdout_tx: broadcast::Sender<RoutedStreamEvent<Vec<u8>>>,
+    pub stderr_tx: broadcast::Sender<RoutedStreamEvent<Vec<u8>>>,
     /// Seeded `None`; the already-exited branch fires immediately once it holds `Some(code)`.
     pub exit_tx: watch::Sender<Option<ProcessExit>>,
     /// The sidecar-side process id used on the wire.
@@ -72,13 +81,13 @@ pub(crate) struct ProcessEntry {
 /// by `stdoutHandlers`. `stderr_tx` is the dedicated stderr channel that backs the `on_stderr` option
 /// and `on_shell_stderr`, matching TS where stderr reaches the host only through `stderrHandlers`.
 pub(crate) struct ShellEntry {
-    pub data_tx: broadcast::Sender<Vec<u8>>,
-    pub stderr_tx: broadcast::Sender<Vec<u8>>,
+    pub data_tx: broadcast::Sender<RoutedStreamEvent<Vec<u8>>>,
+    pub stderr_tx: broadcast::Sender<RoutedStreamEvent<Vec<u8>>>,
     /// The sidecar-side process id used on the wire.
     pub process_id: String,
     /// Exit-code channel backing `wait_shell` (TS `ShellHandle.wait`). Seeded `None`; the background
     /// event loop publishes `Some(exit_code)` when the shell process exits.
-    pub exit_tx: watch::Sender<Option<i32>>,
+    pub exit_tx: watch::Sender<Option<ShellExit>>,
     /// Host handle state after an explicit close. Process lifecycle remains
     /// sidecar-owned; this only prevents further writes through a closed handle.
     pub closing: AtomicBool,
@@ -86,9 +95,9 @@ pub(crate) struct ShellEntry {
 
 /// An ACP session (TS `_sessions` value). Keyed by ACP session id.
 pub(crate) struct SessionEntry {
-    pub event_tx: broadcast::Sender<JsonRpcNotification>,
-    pub permission_tx: broadcast::Sender<PermissionRequest>,
-    pub agent_exit_tx: broadcast::Sender<AgentExitEvent>,
+    pub event_tx: broadcast::Sender<RoutedStreamEvent<JsonRpcNotification>>,
+    pub permission_tx: broadcast::Sender<RoutedStreamEvent<PermissionRequest>>,
+    pub agent_exit_tx: broadcast::Sender<RoutedStreamEvent<AgentExitEvent>>,
     pub pending_permission_replies: SccHashMap<String, oneshot::Sender<PermissionReply>>,
 }
 
@@ -139,6 +148,7 @@ pub(crate) struct AgentOsInner {
 
     // Session registries.
     pub(crate) sessions: SccHashMap<String, SessionEntry>,
+    pub(crate) control_route_failure: parking_lot::Mutex<Option<StreamRouteFailure>>,
 
     // Cron.
     pub(crate) cron: Arc<CronManager>,
@@ -313,6 +323,7 @@ impl AgentOs {
             shells: SccHashMap::new(),
             pending_shell_exits: SccHashMap::new(),
             sessions: SccHashMap::new(),
+            control_route_failure: parking_lot::Mutex::new(None),
             cron,
             sidecar,
             sidecar_lease: parking_lot::Mutex::new(Some(lease)),
@@ -540,7 +551,14 @@ fn abort_tracked_task(slot: &parking_lot::Mutex<Option<JoinHandle<()>>>) {
 }
 
 fn spawn_acp_event_pump(client: &AgentOs) {
-    let mut events = client.transport().subscribe_wire_events();
+    let ownership = wire::OwnershipScope::VmOwnership(wire::VmOwnership {
+        connection_id: client.connection_id().to_owned(),
+        session_id: client.wire_session_id().to_owned(),
+        vm_id: client.vm_id().to_owned(),
+    });
+    let mut events = client
+        .transport()
+        .subscribe_control_events_for(ownership.clone());
     let inner = Arc::downgrade(&client.inner);
     let handle = tokio::spawn(async move {
         loop {
@@ -553,7 +571,7 @@ fn spawn_acp_event_pump(client: &AgentOs) {
                         if inner.disposed.load(Ordering::SeqCst) {
                             break;
                         }
-                        if wire_ownership_vm_id(&event.ownership) != Some(inner.vm_id.as_str()) {
+                        if event.ownership != ownership {
                             continue;
                         }
                         if let Err(error) = deliver_acp_ext_event(&inner, envelope) {
@@ -564,9 +582,7 @@ fn spawn_acp_event_pump(client: &AgentOs) {
                         let Some(inner) = inner.upgrade() else {
                             break;
                         };
-                        if inner.disposed.load(Ordering::SeqCst)
-                            || wire_ownership_vm_id(&event.ownership) != Some(inner.vm_id.as_str())
-                        {
+                        if inner.disposed.load(Ordering::SeqCst) || event.ownership != ownership {
                             continue;
                         }
                         let client = AgentOs::from_inner(inner.clone());
@@ -588,12 +604,47 @@ fn spawn_acp_event_pump(client: &AgentOs) {
                     | wire::EventPayload::ProcessExitedEvent(_)
                     | wire::EventPayload::StructuredEvent(_) => {}
                 },
-                Err(broadcast::error::RecvError::Lagged(_)) => {}
-                Err(broadcast::error::RecvError::Closed) => break,
+                Err(WireEventRecvError::Lagged { skipped }) => {
+                    tracing::error!(
+                        skipped,
+                        "VM control event route lagged; ACP and cron delivery stopped"
+                    );
+                    fail_control_routes(&inner, StreamRouteFailure::Lagged { skipped });
+                    break;
+                }
+                Err(WireEventRecvError::Closed) => {
+                    fail_control_routes(
+                        &inner,
+                        StreamRouteFailure::Closed {
+                            context: "VM control delivery",
+                        },
+                    );
+                    break;
+                }
             }
         }
     });
     *client.inner.acp_event_pump.lock() = Some(handle);
+}
+
+fn fail_control_routes(inner: &Weak<AgentOsInner>, failure: StreamRouteFailure) {
+    let Some(inner) = inner.upgrade() else {
+        return;
+    };
+    let mut route_failure = inner.control_route_failure.lock();
+    if route_failure.is_some() {
+        return;
+    }
+    *route_failure = Some(failure);
+    drop(route_failure);
+
+    inner.sessions.scan(|_, entry| {
+        entry.pending_permission_replies.clear();
+        let _ = entry.event_tx.send(failure.event());
+        let _ = entry.permission_tx.send(failure.event());
+        let _ = entry.agent_exit_tx.send(failure.event());
+    });
+    inner.cron.fail_event_route(failure);
 }
 
 fn deliver_acp_ext_event(
@@ -657,15 +708,17 @@ fn deliver_acp_ext_event(
             let delivered = inner
                 .sessions
                 .read(&event.session_id, |_, entry| {
-                    let _ = entry.agent_exit_tx.send(AgentExitEvent {
-                        session_id: event.session_id.clone(),
-                        agent_type: event.agent_type.clone(),
-                        process_id: event.process_id.clone(),
-                        exit_code: event.exit_code,
-                        restart: event.restart.clone(),
-                        restart_count: event.restart_count,
-                        max_restarts: event.max_restarts,
-                    });
+                    let _ = entry
+                        .agent_exit_tx
+                        .send(RoutedStreamEvent::Data(AgentExitEvent {
+                            session_id: event.session_id.clone(),
+                            agent_type: event.agent_type.clone(),
+                            process_id: event.process_id.clone(),
+                            exit_code: event.exit_code,
+                            restart: event.restart.clone(),
+                            restart_count: event.restart_count,
+                            max_restarts: event.max_restarts,
+                        }));
                 })
                 .is_some();
             if !delivered {
@@ -1853,8 +1906,8 @@ mod tests {
     /// close that never comes while sibling VMs hold the transport open).
     ///
     /// Gap: driving `spawn_acp_event_pump` itself needs a live `AgentOs` (it calls
-    /// `client.transport().subscribe_wire_events()`), which requires a real sidecar transport and so
-    /// is out of reach at unit level. We instead exercise the exact field (`Mutex<Option<JoinHandle>>`)
+    /// `client.transport().subscribe_control_events_for(..)`), which requires a real sidecar
+    /// transport and so is out of reach at unit level. We instead exercise the exact field (`Mutex<Option<JoinHandle>>`)
     /// and the precise store-then-abort sequence the production code uses: `acp_event_pump` is
     /// initialized to `None`, `spawn_acp_event_pump` does `*slot.lock() = Some(handle)`, and
     /// `shutdown` does `abort_tracked_task(&slot)`.

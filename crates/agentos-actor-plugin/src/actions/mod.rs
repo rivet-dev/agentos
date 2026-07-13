@@ -22,6 +22,7 @@ pub(crate) mod shell;
 use std::collections::HashMap;
 
 use agentos_client::AgentOs;
+use agentos_client::ClientError;
 use anyhow::{Context as _, Result};
 use rivet_actor_plugin_abi as abi;
 use serde::de::DeserializeOwned;
@@ -51,6 +52,188 @@ pub struct Vars {
     /// One cron event pump per VM lifetime. It fans `AgentOs::cron_events()` to
     /// actor clients as `cronEvent` broadcasts.
     pub cron_task: Option<JoinHandle<()>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StreamErrorEvent {
+    scope: &'static str,
+    id: Option<String>,
+    code: &'static str,
+    skipped: Option<u64>,
+    message: String,
+}
+
+/// Identifies the actor event pump that observed a failed client stream.
+///
+/// Keeping these variants distinct makes every pump's failure route explicit
+/// at its call site while preserving the intentionally small public payload
+/// (`scope` + optional resource `id`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum StreamErrorSource<'a> {
+    ProcessOutput(u32),
+    ProcessExit(u32),
+    ShellOutput(&'a str),
+    ShellExit(&'a str),
+    SessionEvent(&'a str),
+    PermissionRequest(&'a str),
+    AgentExit(&'a str),
+    Cron,
+}
+
+impl StreamErrorSource<'_> {
+    fn route(self) -> (&'static str, Option<String>) {
+        match self {
+            Self::ProcessOutput(pid) | Self::ProcessExit(pid) => ("process", Some(pid.to_string())),
+            Self::ShellOutput(shell_id) | Self::ShellExit(shell_id) => {
+                ("shell", Some(shell_id.to_owned()))
+            }
+            Self::SessionEvent(session_id)
+            | Self::PermissionRequest(session_id)
+            | Self::AgentExit(session_id) => ("session", Some(session_id.to_owned())),
+            Self::Cron => ("cron", None),
+        }
+    }
+}
+
+#[cfg(test)]
+mod stream_error_tests {
+    use super::{encode_stream_error_broadcast, StreamErrorSource};
+    use agentos_client::ClientError;
+    use serde_json::{json, Value as JsonValue};
+
+    #[test]
+    fn every_actor_pump_failure_encodes_a_stream_error_broadcast() {
+        let cases = [
+            (
+                "process output",
+                StreamErrorSource::ProcessOutput(42),
+                "process",
+                Some("42"),
+            ),
+            (
+                "process exit",
+                StreamErrorSource::ProcessExit(43),
+                "process",
+                Some("43"),
+            ),
+            (
+                "shell output",
+                StreamErrorSource::ShellOutput("shell-output"),
+                "shell",
+                Some("shell-output"),
+            ),
+            (
+                "shell exit",
+                StreamErrorSource::ShellExit("shell-exit"),
+                "shell",
+                Some("shell-exit"),
+            ),
+            (
+                "session event",
+                StreamErrorSource::SessionEvent("session-events"),
+                "session",
+                Some("session-events"),
+            ),
+            (
+                "permission request",
+                StreamErrorSource::PermissionRequest("session-permission"),
+                "session",
+                Some("session-permission"),
+            ),
+            (
+                "agent exit",
+                StreamErrorSource::AgentExit("session-agent-exit"),
+                "session",
+                Some("session-agent-exit"),
+            ),
+            ("cron", StreamErrorSource::Cron, "cron", None),
+        ];
+        let error = ClientError::EventStreamLagged { skipped: 7 };
+
+        for (pump, source, expected_scope, expected_id) in cases {
+            let (name, encoded) = encode_stream_error_broadcast(source, &error)
+                .unwrap_or_else(|error| panic!("encode {pump} failure: {error}"));
+            assert_eq!(name, b"streamError", "{pump} event name");
+            let args: JsonValue = ciborium::from_reader(std::io::Cursor::new(encoded))
+                .unwrap_or_else(|error| panic!("decode {pump} failure: {error}"));
+            assert_eq!(
+                args,
+                json!([{
+                    "scope": expected_scope,
+                    "id": expected_id,
+                    "code": "event_stream_lagged",
+                    "skipped": 7,
+                    "message": "event stream lagged and skipped 7 event(s)",
+                }]),
+                "{pump} payload",
+            );
+        }
+    }
+
+    #[test]
+    fn closed_streams_have_a_distinct_typed_actor_error() {
+        let error = ClientError::EventStreamClosed {
+            context: "process exit",
+        };
+        let (_, encoded) =
+            encode_stream_error_broadcast(StreamErrorSource::ProcessExit(42), &error)
+                .expect("encode closed stream failure");
+        let args: JsonValue = ciborium::from_reader(std::io::Cursor::new(encoded))
+            .expect("decode closed stream failure");
+
+        assert_eq!(args[0]["code"], json!("event_stream_closed"));
+        assert_eq!(args[0]["skipped"], JsonValue::Null);
+        assert_eq!(
+            args[0]["message"],
+            json!("event stream closed before process exit")
+        );
+    }
+}
+
+fn stream_error_event(source: StreamErrorSource<'_>, error: &ClientError) -> StreamErrorEvent {
+    let (scope, id) = source.route();
+    let (code, skipped) = match error {
+        ClientError::EventStreamLagged { skipped } => ("event_stream_lagged", Some(*skipped)),
+        ClientError::EventStreamClosed { .. } => ("event_stream_closed", None),
+        _ => ("stream_failed", None),
+    };
+    StreamErrorEvent {
+        scope,
+        id,
+        code,
+        skipped,
+        message: error.to_string(),
+    }
+}
+
+fn encode_stream_error_broadcast(
+    source: StreamErrorSource<'_>,
+    error: &ClientError,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    let payload = stream_error_event(source, error);
+    Ok((b"streamError".to_vec(), encode_event_arg(&payload)?))
+}
+
+pub(crate) fn broadcast_stream_error(
+    host: &HostCtx,
+    source: StreamErrorSource<'_>,
+    error: &ClientError,
+) {
+    match encode_stream_error_broadcast(source, error) {
+        Ok((name, payload)) => {
+            let _ = host.broadcast(name, payload);
+        }
+        Err(encode_error) => {
+            let (scope, id) = source.route();
+            tracing::warn!(
+                ?encode_error,
+                scope,
+                id,
+                "failed to encode stream error broadcast"
+            );
+        }
+    }
 }
 
 impl Vars {
@@ -565,6 +748,13 @@ pub mod contract {
 
     pub fn encode_sample_event(name: &str) -> Result<Vec<u8>> {
         match name {
+            "streamError" => super::encode_event_arg(&super::StreamErrorEvent {
+                scope: "process",
+                id: Some("42".to_owned()),
+                code: "event_stream_lagged",
+                skipped: Some(3),
+                message: String::from("event stream lagged and skipped 3 event(s)"),
+            }),
             "sessionEvent" => session::encode_session_event(
                 "session-1",
                 &json!({ "jsonrpc": "2.0", "method": "session/update", "params": {} }),

@@ -97,6 +97,11 @@ fn spawn_event_capture(
         Ok(sub) => sub,
         Err(error) => {
             tracing::warn!(?error, live_session_id, "on_session_event subscribe failed");
+            super::broadcast_stream_error(
+                ctx,
+                super::StreamErrorSource::SessionEvent(external_session_id),
+                &error,
+            );
             return;
         }
     };
@@ -110,7 +115,19 @@ fn spawn_event_capture(
         // Keep the RAII guard alive for the lifetime of the pump; dropping the
         // stream (on abort / channel close) is the unsubscribe.
         let _subscription = subscription;
-        while let Some(notification) = stream.next().await {
+        while let Some(result) = stream.next().await {
+            let notification = match result {
+                Ok(notification) => notification,
+                Err(error) => {
+                    tracing::error!(?error, external, "session event stream failed");
+                    super::broadcast_stream_error(
+                        &ctx,
+                        super::StreamErrorSource::SessionEvent(&external),
+                        &error,
+                    );
+                    break;
+                }
+            };
             let event_value = match serde_json::to_value(&notification) {
                 Ok(value) => value,
                 Err(error) => {
@@ -237,6 +254,11 @@ fn spawn_permission_pump(
                 live_session_id,
                 "on_permission_request subscribe failed"
             );
+            super::broadcast_stream_error(
+                ctx,
+                super::StreamErrorSource::PermissionRequest(external_session_id),
+                &error,
+            );
             return;
         }
     };
@@ -249,7 +271,19 @@ fn spawn_permission_pump(
         // Keep the RAII guard alive for the pump's lifetime; dropping the stream
         // (on abort / channel close) is the unsubscribe.
         let _subscription = subscription;
-        while let Some(request) = stream.next().await {
+        while let Some(result) = stream.next().await {
+            let request = match result {
+                Ok(request) => request,
+                Err(error) => {
+                    tracing::error!(?error, external, "permission request stream failed");
+                    super::broadcast_stream_error(
+                        &ctx,
+                        super::StreamErrorSource::PermissionRequest(&external),
+                        &error,
+                    );
+                    break;
+                }
+            };
             let body = encode_permission_request_event(
                 &external,
                 &request.permission_id,
@@ -313,6 +347,11 @@ fn spawn_exit_capture(
         Ok(sub) => sub,
         Err(error) => {
             tracing::warn!(?error, live_session_id, "on_agent_exit subscribe failed");
+            super::broadcast_stream_error(
+                ctx,
+                super::StreamErrorSource::AgentExit(external_session_id),
+                &error,
+            );
             return;
         }
     };
@@ -326,7 +365,19 @@ fn spawn_exit_capture(
         // Keep the RAII guard alive for the lifetime of the pump; dropping the
         // stream (on abort / channel close) is the unsubscribe.
         let _subscription = subscription;
-        while let Some(event) = stream.next().await {
+        while let Some(result) = stream.next().await {
+            let event = match result {
+                Ok(event) => event,
+                Err(error) => {
+                    tracing::error!(?error, external, "agent exit stream failed");
+                    super::broadcast_stream_error(
+                        &ctx,
+                        super::StreamErrorSource::AgentExit(&external),
+                        &error,
+                    );
+                    break;
+                }
+            };
             tracing::warn!(
                 external,
                 agent_type = event.agent_type,

@@ -444,7 +444,13 @@
 		"name": "EVENT_CHANNEL_CAPACITY",
 		"path": "crates/sidecar-client/src/transport.rs",
 		"class": "invariant",
-		"rationale": "Internal backpressure channel capacity."
+		"rationale": "Tiny-event count backstop for the byte-bounded decoded-event logs."
+	},
+	{
+		"name": "DEFAULT_EVENT_CHANNEL_MAX_RETAINED_BYTES",
+		"path": "crates/sidecar-client/src/transport.rs",
+		"class": "invariant",
+		"rationale": "Initial decoded-event bound before authentication; each isolated process/control log then tracks one negotiated maximum-size frame, and eviction is surfaced as a typed lag error."
 	},
 	{
 		"name": "PENDING_REQUEST_LIMIT",
@@ -1261,6 +1267,12 @@
 		"path": "crates/client/src/sidecar.rs",
 		"class": "policy-deferred",
 		"rationale": "Host-process sidecar handle cache cap; not guest or VM runtime policy."
+	},
+	{
+		"name": "SHELL_REGISTRY_LIMIT",
+		"path": "crates/client/src/shell.rs",
+		"class": "policy-deferred",
+		"rationale": "Host-only live and failed shell route retention cap; runtime process state remains sidecar-owned."
 	},
 	{
 		"name": "SHELL_DATA_CHANNEL_CAPACITY",

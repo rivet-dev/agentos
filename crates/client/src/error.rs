@@ -48,6 +48,14 @@ pub enum ClientError {
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
 
+    /// A bounded host event route evicted frames before this consumer observed them.
+    #[error("event stream lagged and skipped {skipped} event(s)")]
+    EventStreamLagged { skipped: u64 },
+
+    /// The sidecar transport closed before a routed stream reached its terminal event.
+    #[error("event stream closed before {context}")]
+    EventStreamClosed { context: &'static str },
+
     /// A framing/codec failure on the sidecar transport.
     #[error("transport error: {0}")]
     Transport(#[from] ProtocolCodecError),

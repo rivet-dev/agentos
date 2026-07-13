@@ -16,15 +16,17 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use agentos_sidecar_client::wire::{self, EventPayload, StreamChannel};
+use agentos_sidecar_client::WireEventRecvError;
 use anyhow::Result;
 
-use crate::agent_os::{AgentOs, ShellEntry};
+use crate::agent_os::{AgentOs, ShellEntry, ShellExit};
 use crate::error::ClientError;
 use crate::process::{install_output_callback, OutputCallback, StdinInput};
-use crate::stream::ByteStream;
+use crate::stream::{ByteStream, RoutedStreamEvent};
 
 /// Channel capacity for a shell's data / stderr broadcasts.
 const SHELL_DATA_CHANNEL_CAPACITY: usize = 1024;
+const SHELL_REGISTRY_LIMIT: usize = 1024;
 
 // ---------------------------------------------------------------------------
 // Supporting types
@@ -103,10 +105,18 @@ impl AgentOs {
     /// matching the TS real-process routing where stderr never reaches the data stream.
     pub async fn open_shell(&self, mut options: OpenShellOptions) -> Result<ShellHandle> {
         let inner = self.inner();
+        let mut shell_count = 0usize;
+        inner.shells.scan(|_, _| shell_count += 1);
+        if shell_count >= SHELL_REGISTRY_LIMIT {
+            return Err(ClientError::Sidecar(format!(
+                "shell registry limit exceeded: at most {SHELL_REGISTRY_LIMIT} live or failed shell routes can be tracked per VM"
+            ))
+            .into());
+        }
         let (data_tx, _) = tokio::sync::broadcast::channel(SHELL_DATA_CHANNEL_CAPACITY);
         let (stderr_tx, _) = tokio::sync::broadcast::channel(SHELL_DATA_CHANNEL_CAPACITY);
         // Exit-code channel backing `wait_shell`.
-        let (exit_tx, _) = tokio::sync::watch::channel(None::<i32>);
+        let (exit_tx, _) = tokio::sync::watch::channel(None::<ShellExit>);
 
         // Seed any caller-provided initial stderr callback into the stderr fan-out, matching the TS
         // initial-handler-set behavior (`stderrHandlers.add(options.onStderr)`).
@@ -133,21 +143,26 @@ impl AgentOs {
             capture_output: None,
         };
 
-        // Subscribe before Execute so the receiver buffers output emitted immediately after the
-        // response and before the event-pump task begins polling.
-        let mut events = self.transport().subscribe_wire_events();
-        let response = self
+        let ownership = self.vm_ownership();
+        let (response, events) = self
             .transport()
-            .request_wire(
-                self.vm_ownership(),
+            .request_wire_with_process_events(
+                ownership.clone(),
                 wire::RequestPayload::ExecuteRequest(execute),
             )
             .await?;
-        let process_id = match response {
+        let (process_id, mut events) = match response {
             wire::ResponsePayload::ProcessStartedResponse(wire::ProcessStartedResponse {
                 process_id,
                 pid: Some(_),
-            }) => process_id,
+            }) => {
+                let events = events.ok_or_else(|| {
+                    ClientError::Sidecar(String::from(
+                        "open_shell: sidecar response did not bind a process event route",
+                    ))
+                })?;
+                (process_id, events)
+            }
             wire::ResponsePayload::ProcessStartedResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "open_shell: sidecar did not return a kernel pid".to_owned(),
@@ -173,7 +188,28 @@ impl AgentOs {
             exit_tx: exit_tx.clone(),
             closing: AtomicBool::new(false),
         };
-        let _ = inner.shells.insert(shell_id.clone(), entry);
+        // Recheck and insert under the process-registry lock after the asynchronous start. The
+        // early check limits unnecessary starts; this atomic check is what enforces the bound when
+        // many `open_shell` calls race. A shell that lost the reservation is killed immediately.
+        let registered = {
+            let _registry_guard = inner.process_registry_lock.lock();
+            let mut shell_count = 0usize;
+            inner.shells.scan(|_, _| shell_count += 1);
+            if shell_count >= SHELL_REGISTRY_LIMIT {
+                false
+            } else {
+                let _ = inner.shells.insert(shell_id.clone(), entry);
+                true
+            }
+        };
+        if !registered {
+            self.abort_wire_process_after_route_failure(&process_id, "shell registry overflow")
+                .await;
+            return Err(ClientError::Sidecar(format!(
+                "shell registry limit exceeded: at most {SHELL_REGISTRY_LIMIT} live or failed shell routes can be tracked per VM"
+            ))
+            .into());
+        }
 
         // Background: fan stdout/stderr and retain the authoritative exit code.
         let agent = self.clone();
@@ -182,12 +218,34 @@ impl AgentOs {
         let exit_key = shell_id.clone();
         let pending_key = shell_id.clone();
         let handle = tokio::spawn(async move {
+            let mut retain_route_failure = false;
             loop {
                 let event = match events.recv().await {
                     Ok(event) => event,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Err(WireEventRecvError::Lagged { skipped }) => {
+                        let _ = data_tx.send(RoutedStreamEvent::Lagged { skipped });
+                        let _ = stderr_tx.send(RoutedStreamEvent::Lagged { skipped });
+                        let _ = exit_tx.send(Some(ShellExit::EventStreamLagged { skipped }));
+                        agent
+                            .abort_wire_process_after_route_failure(&route_process_id, "shell")
+                            .await;
+                        retain_route_failure = true;
+                        break;
+                    }
+                    Err(WireEventRecvError::Closed) => {
+                        let _ = data_tx.send(RoutedStreamEvent::Closed {
+                            context: "shell process exit",
+                        });
+                        let _ = stderr_tx.send(RoutedStreamEvent::Closed {
+                            context: "shell process exit",
+                        });
+                        let _ = exit_tx.send(Some(ShellExit::EventStreamClosed));
+                        break;
+                    }
                 };
+                if event.ownership != ownership {
+                    continue;
+                }
                 match &event.payload {
                     EventPayload::ProcessOutputEvent(output) => {
                         if output.process_id != route_process_id {
@@ -196,16 +254,17 @@ impl AgentOs {
                         // stdout -> data stream; stderr -> separate stderr stream (TS routing).
                         match output.channel {
                             StreamChannel::Stdout => {
-                                let _ = data_tx.send(output.chunk.clone());
+                                let _ = data_tx.send(RoutedStreamEvent::Data(output.chunk.clone()));
                             }
                             StreamChannel::Stderr => {
-                                let _ = stderr_tx.send(output.chunk.clone());
+                                let _ =
+                                    stderr_tx.send(RoutedStreamEvent::Data(output.chunk.clone()));
                             }
                         }
                     }
                     EventPayload::ProcessExitedEvent(exited) => {
                         if exited.process_id == route_process_id {
-                            let _ = exit_tx.send(Some(exited.exit_code));
+                            let _ = exit_tx.send(Some(ShellExit::Exited(exited.exit_code)));
                             break;
                         }
                     }
@@ -219,9 +278,11 @@ impl AgentOs {
             // The `.finally` equivalent: remove from both the tracking set and the shells map (only
             // if it is still our entry, matching the TS identity check).
             agent.inner().pending_shell_exits.remove(&exit_key);
-            agent.inner().shells.remove_if(&exit_shell_id, |existing| {
-                existing.process_id == route_process_id
-            });
+            if !retain_route_failure {
+                agent.inner().shells.remove_if(&exit_shell_id, |existing| {
+                    existing.process_id == route_process_id
+                });
+            }
             // remove_if takes `&mut V`; the comparison only reads, which is fine.
         });
 
@@ -260,10 +321,14 @@ impl AgentOs {
         self.inner()
             .shells
             .read(shell_id, |_, entry| {
-                (!entry.closing.load(Ordering::SeqCst)).then(|| entry.data_tx.subscribe())
+                (!entry.closing.load(Ordering::SeqCst)).then(|| {
+                    byte_stream_for_shell_route(
+                        entry.data_tx.subscribe(),
+                        entry.exit_tx.borrow().clone(),
+                    )
+                })
             })
             .flatten()
-            .map(ByteStream::new)
             .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()))
     }
 
@@ -274,10 +339,14 @@ impl AgentOs {
         self.inner()
             .shells
             .read(shell_id, |_, entry| {
-                (!entry.closing.load(Ordering::SeqCst)).then(|| entry.stderr_tx.subscribe())
+                (!entry.closing.load(Ordering::SeqCst)).then(|| {
+                    byte_stream_for_shell_route(
+                        entry.stderr_tx.subscribe(),
+                        entry.exit_tx.borrow().clone(),
+                    )
+                })
             })
             .flatten()
-            .map(ByteStream::new)
             .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()))
     }
 
@@ -325,13 +394,21 @@ impl AgentOs {
                 .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()));
         };
         loop {
-            if let Some(code) = *exit_rx.borrow_and_update() {
-                return Ok(code);
+            if let Some(exit) = exit_rx.borrow_and_update().clone() {
+                return match exit {
+                    ShellExit::Exited(code) => Ok(code),
+                    ShellExit::EventStreamLagged { skipped } => {
+                        Err(ClientError::EventStreamLagged { skipped })
+                    }
+                    ShellExit::EventStreamClosed => Err(ClientError::EventStreamClosed {
+                        context: "shell process exit",
+                    }),
+                };
             }
             if exit_rx.changed().await.is_err() {
-                return Err(ClientError::Sidecar(format!(
-                    "shell event route closed before {shell_id} reported an exit code"
-                )));
+                return Err(ClientError::EventStreamClosed {
+                    context: "shell process exit",
+                });
             }
         }
     }
@@ -367,9 +444,24 @@ impl AgentOs {
             .await?;
         match response {
             wire::ResponsePayload::ProcessKilledResponse(_) => {
-                self.inner().shells.update(shell_id, |_, entry| {
-                    entry.closing.store(true, Ordering::SeqCst);
-                });
+                let failed_route = self
+                    .inner()
+                    .shells
+                    .read(shell_id, |_, entry| {
+                        matches!(
+                            entry.exit_tx.borrow().as_ref(),
+                            Some(ShellExit::EventStreamLagged { .. })
+                                | Some(ShellExit::EventStreamClosed)
+                        )
+                    })
+                    .unwrap_or(false);
+                if failed_route {
+                    let _ = self.inner().shells.remove(shell_id);
+                } else {
+                    self.inner().shells.update(shell_id, |_, entry| {
+                        entry.closing.store(true, Ordering::SeqCst);
+                    });
+                }
                 Ok(())
             }
             wire::ResponsePayload::RejectedResponse(rejected) => Err(rejected_to_error(rejected)),
@@ -388,5 +480,39 @@ impl AgentOs {
             })
             .flatten()
             .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()))
+    }
+}
+
+fn byte_stream_for_shell_route(
+    rx: tokio::sync::broadcast::Receiver<RoutedStreamEvent<Vec<u8>>>,
+    exit: Option<ShellExit>,
+) -> ByteStream {
+    match exit {
+        Some(ShellExit::EventStreamLagged { skipped }) => {
+            ByteStream::failed(RoutedStreamEvent::Lagged { skipped })
+        }
+        Some(ShellExit::EventStreamClosed) => ByteStream::failed(RoutedStreamEvent::Closed {
+            context: "shell output",
+        }),
+        Some(ShellExit::Exited(_)) | None => ByteStream::new(rx),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{byte_stream_for_shell_route, RoutedStreamEvent, ShellExit};
+    use crate::error::ClientError;
+    use futures::StreamExt;
+
+    #[tokio::test]
+    async fn late_shell_output_subscriber_receives_retained_route_failure() {
+        let (_tx, rx) = tokio::sync::broadcast::channel::<RoutedStreamEvent<Vec<u8>>>(1);
+        let mut stream =
+            byte_stream_for_shell_route(rx, Some(ShellExit::EventStreamLagged { skipped: 8 }));
+        assert!(matches!(
+            stream.next().await,
+            Some(Err(ClientError::EventStreamLagged { skipped: 8 }))
+        ));
+        assert!(stream.next().await.is_none());
     }
 }

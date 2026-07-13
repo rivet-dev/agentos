@@ -11,4 +11,7 @@ pub mod transport;
 pub mod wire;
 
 pub use error::{ProtocolCodecError, TransportError, TransportResult};
-pub use transport::{SharedWireEvent, SidecarTransport, WireSidecarCallback};
+pub use transport::{
+    SharedWireEvent, SidecarTransport, WireEventRecvError, WireEventSubscription,
+    WireSidecarCallback,
+};

@@ -80,6 +80,7 @@ export type {
 	PromptResult,
 	SerializableCronAction,
 	SerializableCronEvent,
+	StreamErrorPayload,
 	SerializableCronJobInfo,
 	SerializableCronJobOptions,
 	SessionEventPayload,

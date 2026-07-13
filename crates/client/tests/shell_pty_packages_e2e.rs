@@ -81,6 +81,7 @@ async fn pty_shell_round_trip_via_boot_packages() {
     let saw_before = tokio::time::timeout(std::time::Duration::from_secs(20), async {
         let mut acc = Vec::<u8>::new();
         while let Some(chunk) = data.next().await {
+            let chunk = chunk.expect("shell data stream lagged");
             acc.extend_from_slice(&chunk);
             if String::from_utf8_lossy(&acc).contains("before-read") {
                 return true;
@@ -108,6 +109,7 @@ async fn pty_shell_round_trip_via_boot_packages() {
     let saw_roundtrip = tokio::time::timeout(std::time::Duration::from_secs(20), async {
         let mut acc = Vec::<u8>::new();
         while let Some(chunk) = data.next().await {
+            let chunk = chunk.expect("shell data stream lagged");
             acc.extend_from_slice(&chunk);
             if String::from_utf8_lossy(&acc).contains("got:marker-input") {
                 return true;

@@ -215,6 +215,7 @@ async fn process_surface_exec_spawn_and_snapshot() {
             let Some(chunk) = stdout.next().await else {
                 break;
             };
+            let chunk = chunk.expect("spawn stdout stream lagged");
             buf.extend_from_slice(&chunk);
         }
         buf
@@ -386,7 +387,8 @@ async fn sidecar_bounds_captured_output_without_limiting_raw_streams() {
     let chunk = tokio::time::timeout(std::time::Duration::from_secs(10), spawned_stdout.next())
         .await
         .expect("raw spawned stdout timed out")
-        .expect("raw spawned stdout stream closed");
+        .expect("raw spawned stdout stream closed")
+        .expect("raw spawned stdout stream lagged");
     assert_eq!(&chunk[..], b"123456789");
     assert_eq!(
         os.wait_process(spawned.pid)

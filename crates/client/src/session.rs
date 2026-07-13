@@ -30,6 +30,7 @@ use crate::agent_os::{AgentOs, SessionEntry};
 use crate::error::ClientError;
 use crate::json_rpc::{JsonRpcId, JsonRpcNotification, JsonRpcResponse};
 use crate::stream::Subscription;
+use crate::stream::{RoutedStreamEvent, StreamRouteFailure};
 
 /// ACP method name for legacy permission requests/responses.
 const LEGACY_PERMISSION_METHOD: &str = "request/permission";
@@ -39,6 +40,81 @@ pub(crate) struct PermissionRouteRequest {
     pub(crate) permission_id: String,
     pub(crate) params: Value,
     pub(crate) timeout_ms: u64,
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::{
+        broadcast_result_stream, failed_result_stream, send_bridged_permission_reply,
+        PermissionReply,
+    };
+    use crate::error::ClientError;
+    use crate::stream::{RoutedStreamEvent, StreamRouteFailure};
+    use futures::StreamExt;
+
+    #[tokio::test]
+    async fn session_fanout_streams_surface_lag_instead_of_skipping() {
+        let (tx, rx) = tokio::sync::broadcast::channel(1);
+        let mut stream = broadcast_result_stream(rx);
+        tx.send(RoutedStreamEvent::Data(1u8)).expect("first event");
+        tx.send(RoutedStreamEvent::Data(2u8)).expect("second event");
+        tx.send(RoutedStreamEvent::Data(3u8)).expect("third event");
+
+        assert!(matches!(
+            stream.next().await,
+            Some(Err(ClientError::EventStreamLagged { skipped: 2 }))
+        ));
+        assert!(stream.next().await.is_none(), "lag terminates the stream");
+    }
+
+    #[tokio::test]
+    async fn session_fanout_streams_surface_upstream_route_failure() {
+        let (tx, rx) = tokio::sync::broadcast::channel(2);
+        let mut stream = broadcast_result_stream::<u8>(rx);
+        tx.send(RoutedStreamEvent::Lagged { skipped: 5 })
+            .expect("route failure");
+
+        assert!(matches!(
+            stream.next().await,
+            Some(Err(ClientError::EventStreamLagged { skipped: 5 }))
+        ));
+        assert!(
+            stream.next().await.is_none(),
+            "route failure terminates stream"
+        );
+    }
+
+    #[tokio::test]
+    async fn late_session_subscriber_receives_retained_control_failure() {
+        let mut stream = failed_result_stream::<u8>(StreamRouteFailure::Lagged { skipped: 9 });
+        assert!(matches!(
+            stream.next().await,
+            Some(Err(ClientError::EventStreamLagged { skipped: 9 }))
+        ));
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn permission_responder_bridge_only_uses_a_live_pending_slot() {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        assert!(send_bridged_permission_reply(
+            Some(tx),
+            PermissionReply::Once,
+            "permission-live"
+        ));
+        assert_eq!(
+            rx.await.expect("pending bridge reply"),
+            PermissionReply::Once
+        );
+
+        // Control-route failure and timeout both clear the slot before a late responder resolves.
+        // The bridge must stop here; it must never fall back to a new legacy protocol request.
+        assert!(!send_bridged_permission_reply(
+            None,
+            PermissionReply::Always,
+            "permission-cleared"
+        ));
+    }
 }
 
 pub(crate) struct PermissionRouteResult {
@@ -61,12 +137,47 @@ pub(crate) struct SessionStateResponse {
     agent_info: Option<Value>,
 }
 
-pub type SessionEventStream = Pin<Box<dyn Stream<Item = JsonRpcNotification> + Send>>;
+pub type SessionEventStream =
+    Pin<Box<dyn Stream<Item = std::result::Result<JsonRpcNotification, ClientError>> + Send>>;
 pub type SessionEventSubscription = (SessionEventStream, Subscription);
-pub type PermissionRequestStream = Pin<Box<dyn Stream<Item = PermissionRequest> + Send>>;
+pub type PermissionRequestStream =
+    Pin<Box<dyn Stream<Item = std::result::Result<PermissionRequest, ClientError>> + Send>>;
 pub type PermissionRequestSubscription = (PermissionRequestStream, Subscription);
-pub type AgentExitStream = Pin<Box<dyn Stream<Item = AgentExitEvent> + Send>>;
+pub type AgentExitStream =
+    Pin<Box<dyn Stream<Item = std::result::Result<AgentExitEvent, ClientError>> + Send>>;
 pub type AgentExitSubscription = (AgentExitStream, Subscription);
+
+fn broadcast_result_stream<T: Clone + Send + 'static>(
+    rx: tokio::sync::broadcast::Receiver<RoutedStreamEvent<T>>,
+) -> Pin<Box<dyn Stream<Item = std::result::Result<T, ClientError>> + Send>> {
+    Box::pin(futures::stream::unfold(Some(rx), move |state| async move {
+        let mut rx = state?;
+        match rx.recv().await {
+            Ok(RoutedStreamEvent::Data(value)) => Some((Ok(value), Some(rx))),
+            Ok(RoutedStreamEvent::Lagged { skipped }) => {
+                Some((Err(ClientError::EventStreamLagged { skipped }), None))
+            }
+            Ok(RoutedStreamEvent::Closed { context }) => {
+                Some((Err(ClientError::EventStreamClosed { context }), None))
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                Some((Err(ClientError::EventStreamLagged { skipped }), None))
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => None,
+        }
+    }))
+}
+
+fn failed_result_stream<T: Send + 'static>(
+    failure: StreamRouteFailure,
+) -> Pin<Box<dyn Stream<Item = std::result::Result<T, ClientError>> + Send>> {
+    Box::pin(futures::stream::once(async move {
+        Err(match failure {
+            StreamRouteFailure::Lagged { skipped } => ClientError::EventStreamLagged { skipped },
+            StreamRouteFailure::Closed { context } => ClientError::EventStreamClosed { context },
+        })
+    }))
+}
 
 /// An unexpected ACP adapter process exit — a crash from the host's
 /// perspective (any spontaneous exit without `close_session`, including exit
@@ -441,6 +552,23 @@ fn permission_reply_wire(reply: PermissionReply) -> &'static str {
     }
 }
 
+fn send_bridged_permission_reply(
+    sender: Option<tokio::sync::oneshot::Sender<PermissionReply>>,
+    reply: PermissionReply,
+    permission_id: &str,
+) -> bool {
+    let Some(sender) = sender else {
+        return false;
+    };
+    if sender.send(reply).is_err() {
+        tracing::warn!(
+            permission_id,
+            "permission callback completed after its sidecar route closed"
+        );
+    }
+    true
+}
+
 // ---------------------------------------------------------------------------
 // Host-event helpers
 // ---------------------------------------------------------------------------
@@ -473,7 +601,7 @@ fn should_dispatch_to_session_event_handlers(notification: &JsonRpcNotification)
 
 pub(crate) fn record_live_session_event(entry: &SessionEntry, notification: JsonRpcNotification) {
     if should_dispatch_to_session_event_handlers(&notification) {
-        let _ = entry.event_tx.send(notification);
+        let _ = entry.event_tx.send(RoutedStreamEvent::Data(notification));
     }
 }
 
@@ -945,19 +1073,14 @@ impl AgentOs {
         permission_id: &str,
         reply: PermissionReply,
     ) -> Result<JsonRpcResponse> {
-        let pending = self
-            .inner()
-            .sessions
-            .read(session_id, |_, entry| {
-                entry
-                    .pending_permission_replies
-                    .remove(permission_id)
-                    .map(|(_, responder)| responder)
-            })
-            .flatten();
+        let pending = self.take_pending_permission_sender(session_id, permission_id);
 
         if let Some(responder) = pending {
-            let _ = responder.send(reply);
+            responder.send(reply.clone()).map_err(|_| {
+                ClientError::Sidecar(format!(
+                    "permission reply route closed before response: {permission_id}"
+                ))
+            })?;
             return Ok(JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),
                 id: Some(JsonRpcId::Null),
@@ -977,6 +1100,22 @@ impl AgentOs {
                 Some(json!({ "permissionId": permission_id, "reply": reply })),
             )
             .await?)
+    }
+
+    fn take_pending_permission_sender(
+        &self,
+        session_id: &str,
+        permission_id: &str,
+    ) -> Option<tokio::sync::oneshot::Sender<PermissionReply>> {
+        self.inner()
+            .sessions
+            .read(session_id, |_, entry| {
+                entry
+                    .pending_permission_replies
+                    .remove(permission_id)
+                    .map(|(_, responder)| responder)
+            })
+            .flatten()
     }
 
     /// Set the session mode (`session/set_mode`).
@@ -1094,16 +1233,11 @@ impl AgentOs {
         session_id: &str,
     ) -> std::result::Result<SessionEventSubscription, ClientError> {
         let rx = self.require_session(session_id, |entry| entry.event_tx.subscribe())?;
-        let stream = futures::stream::unfold(rx, move |mut rx| async move {
-            loop {
-                match rx.recv().await {
-                    Ok(notification) => return Some((notification, rx)),
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
-                }
-            }
-        });
-        Ok((Box::pin(stream), Subscription::noop()))
+        let stream = match *self.inner().control_route_failure.lock() {
+            Some(failure) => failed_result_stream(failure),
+            None => broadcast_result_stream(rx),
+        };
+        Ok((stream, Subscription::noop()))
     }
 
     /// Subscribe to permission requests raised by the session's guest agent. Requests originate
@@ -1121,17 +1255,11 @@ impl AgentOs {
         // Pass broadcast items straight through. Each item carries a cloneable
         // [`PermissionResponder`] that resolves the pending reply slot registered by
         // `deliver_sidecar_permission_request`.
-        let stream = futures::stream::unfold(rx, move |mut rx| async move {
-            loop {
-                match rx.recv().await {
-                    Ok(request) => return Some((request, rx)),
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
-                }
-            }
-        });
-
-        Ok((Box::pin(stream), Subscription::noop()))
+        let stream = match *self.inner().control_route_failure.lock() {
+            Some(failure) => failed_result_stream(failure),
+            None => broadcast_result_stream(rx),
+        };
+        Ok((stream, Subscription::noop()))
     }
 
     /// Subscribe to unexpected adapter process exits (crashes) for a session,
@@ -1143,16 +1271,11 @@ impl AgentOs {
         session_id: &str,
     ) -> std::result::Result<AgentExitSubscription, ClientError> {
         let rx = self.require_session(session_id, |entry| entry.agent_exit_tx.subscribe())?;
-        let stream = futures::stream::unfold(rx, move |mut rx| async move {
-            loop {
-                match rx.recv().await {
-                    Ok(event) => return Some((event, rx)),
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
-                }
-            }
-        });
-        Ok((Box::pin(stream), Subscription::noop()))
+        let stream = match *self.inner().control_route_failure.lock() {
+            Some(failure) => failed_result_stream(failure),
+            None => broadcast_result_stream(rx),
+        };
+        Ok((stream, Subscription::noop()))
     }
 
     /// Answer an ACP permission callback by fanning a [`PermissionRequest`] out to
@@ -1189,16 +1312,22 @@ impl AgentOs {
 
         // Register the reply slot and broadcast under the same session lookup. No subscribers
         // means no explicit host answer; the ACP sidecar owns the default.
-        let registered = self.require_session(&session_id, |entry| {
-            if entry.permission_tx.receiver_count() == 0 {
-                return false;
+        let registered = {
+            let control_route_failure = self.inner().control_route_failure.lock();
+            if control_route_failure.is_some() {
+                return PermissionRouteResult { reply: None };
             }
-            let _ = entry
-                .pending_permission_replies
-                .insert(permission_id.clone(), slot_tx);
-            let _ = entry.permission_tx.send(delivered);
-            true
-        });
+            self.require_session(&session_id, |entry| {
+                if entry.permission_tx.receiver_count() == 0 {
+                    return false;
+                }
+                let _ = entry
+                    .pending_permission_replies
+                    .insert(permission_id.clone(), slot_tx);
+                let _ = entry.permission_tx.send(RoutedStreamEvent::Data(delivered));
+                true
+            })
+        };
         match registered {
             Ok(true) => {}
             Ok(false) => {
@@ -1215,9 +1344,9 @@ impl AgentOs {
         let bridge_permission_id = permission_id.clone();
         tokio::spawn(async move {
             if let Ok(reply) = responder_rx.await {
-                let _ = this
-                    .respond_permission(&bridge_session_id, &bridge_permission_id, reply)
-                    .await;
+                let sender =
+                    this.take_pending_permission_sender(&bridge_session_id, &bridge_permission_id);
+                send_bridged_permission_reply(sender, reply, &bridge_permission_id);
             }
         });
 

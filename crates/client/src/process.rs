@@ -15,17 +15,21 @@ use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 
 use agentos_sidecar_client::wire::{self, EventPayload, ProcessSnapshotStatus, StreamChannel};
-use agentos_sidecar_client::SharedWireEvent;
+use agentos_sidecar_client::{WireEventRecvError, WireEventSubscription};
 
 use crate::agent_os::{AgentOs, ProcessEntry, ProcessExit};
 use crate::error::ClientError;
-use crate::stream::{ByteStream, Subscription};
+use crate::stream::{ByteStream, RoutedStreamEvent, Subscription};
 
 /// Broadcast channel capacity for a spawned process's stdout/stderr fan-out.
 const PROCESS_STREAM_CAPACITY: usize = 1024;
 
 /// Maximum SDK-spawned process entries retained per VM.
 const PROCESS_REGISTRY_LIMIT: usize = 1024;
+
+/// A lost output/exit route leaves the host unable to supervise the guest, so cleanup is always
+/// forceful and does not inherit a caller-selected graceful signal.
+const ROUTE_FAILURE_KILL_SIGNAL: &str = "SIGKILL";
 
 /// Maximum first-observed process timestamp entries retained per VM.
 
@@ -205,16 +209,14 @@ impl AgentOs {
         args: &[String],
         mut options: ExecOptions,
     ) -> Result<ExecResult> {
-        // Subscribe to events BEFORE issuing the request so no output/exit is missed between the
-        // request landing and the subscription being installed.
-        let mut events = self.transport().subscribe_wire_events();
+        let ownership = self.vm_scope();
 
         let resolved_command = command.map(str::to_owned);
         let resolved_shell_command = shell_command.map(str::to_owned);
         let resolved_args = args.to_vec();
         let timeout_ms = timeout_to_wire(options.timeout)?;
         let capture_stdio = options.capture_stdio.unwrap_or(true);
-        let started = self
+        let (started, mut events) = self
             .send_execute(
                 resolved_command,
                 resolved_shell_command,
@@ -269,8 +271,23 @@ impl AgentOs {
         let mut on_stdout = options.on_stdout.take();
         let mut on_stderr = options.on_stderr.take();
 
-        let (exit_code, stdout, stderr) =
-            collect_exec_events(&process_id, &mut events, &mut on_stdout, &mut on_stderr).await?;
+        let collected = collect_exec_events(
+            &ownership,
+            &process_id,
+            &mut events,
+            &mut on_stdout,
+            &mut on_stderr,
+        )
+        .await;
+        let (exit_code, stdout, stderr) = match collected {
+            Ok(result) => result,
+            Err(error @ ClientError::EventStreamLagged { .. }) => {
+                self.abort_wire_process_after_route_failure(&process_id, "exec")
+                    .await;
+                return Err(error.into());
+            }
+            Err(error) => return Err(error.into()),
+        };
 
         Ok(ExecResult {
             exit_code,
@@ -298,8 +315,10 @@ impl AgentOs {
             }
         }
 
-        let (stdout_tx, _) = broadcast::channel::<Vec<u8>>(PROCESS_STREAM_CAPACITY);
-        let (stderr_tx, _) = broadcast::channel::<Vec<u8>>(PROCESS_STREAM_CAPACITY);
+        let (stdout_tx, _) =
+            broadcast::channel::<RoutedStreamEvent<Vec<u8>>>(PROCESS_STREAM_CAPACITY);
+        let (stderr_tx, _) =
+            broadcast::channel::<RoutedStreamEvent<Vec<u8>>>(PROCESS_STREAM_CAPACITY);
         // Seeded `None`; the already-exited branch of `on_process_exit` fires immediately once this
         // watch holds `Some(code)`.
         let (exit_tx, _) = watch::channel::<Option<ProcessExit>>(None);
@@ -316,10 +335,8 @@ impl AgentOs {
             output_tasks.push(install_output_callback(stderr_tx.clone(), cb));
         }
 
-        // Subscribe before issuing Execute so the receiver buffers any output emitted immediately
-        // after the response and before the event-pump task starts.
-        let events = self.transport().subscribe_wire_events();
-        let started = self
+        let ownership = self.vm_scope();
+        let (started, events) = self
             .send_execute(
                 Some(command.to_owned()),
                 None,
@@ -372,7 +389,7 @@ impl AgentOs {
 
         let this = self.clone();
         tokio::spawn(async move {
-            this.run_spawn_events(process_id, events, stdout_tx, stderr_tx, exit_tx)
+            this.run_spawn_events(ownership, process_id, events, stdout_tx, stderr_tx, exit_tx)
                 .await;
         });
 
@@ -421,22 +438,26 @@ impl AgentOs {
 
     /// Subscribe to a spawned process's stdout. No replay; multi-subscriber. Errors if unknown.
     pub fn on_process_stdout(&self, pid: u32) -> std::result::Result<ByteStream, ClientError> {
-        let rx = self
+        let (rx, exit) = self
             .inner()
             .processes
-            .read(&pid, |_, entry| entry.stdout_tx.subscribe())
+            .read(&pid, |_, entry| {
+                (entry.stdout_tx.subscribe(), entry.exit_tx.borrow().clone())
+            })
             .ok_or(ClientError::ProcessNotFound(pid))?;
-        Ok(ByteStream::new(rx))
+        Ok(byte_stream_for_process_route(rx, exit))
     }
 
     /// Subscribe to a spawned process's stderr. No replay; multi-subscriber. Errors if unknown.
     pub fn on_process_stderr(&self, pid: u32) -> std::result::Result<ByteStream, ClientError> {
-        let rx = self
+        let (rx, exit) = self
             .inner()
             .processes
-            .read(&pid, |_, entry| entry.stderr_tx.subscribe())
+            .read(&pid, |_, entry| {
+                (entry.stderr_tx.subscribe(), entry.exit_tx.borrow().clone())
+            })
             .ok_or(ClientError::ProcessNotFound(pid))?;
-        Ok(ByteStream::new(rx))
+        Ok(byte_stream_for_process_route(rx, exit))
     }
 
     /// Register a once-only exit handler. If the process has already exited, the handler fires
@@ -458,8 +479,13 @@ impl AgentOs {
         if let Some(exit) = rx.borrow().clone() {
             match exit {
                 ProcessExit::Exited(code) => handler(code),
-                ProcessExit::Failed(message) => {
-                    tracing::error!(pid, %message, "process exit subscription failed")
+                ProcessExit::EventStreamLagged { skipped } => tracing::error!(
+                    pid,
+                    skipped,
+                    "process exit subscription failed because its event route lagged"
+                ),
+                ProcessExit::EventStreamClosed => {
+                    tracing::error!(pid, "process exit subscription event route closed")
                 }
             }
             return Ok(Subscription::noop());
@@ -472,8 +498,13 @@ impl AgentOs {
                 if let Some(exit) = rx.borrow().clone() {
                     match exit {
                         ProcessExit::Exited(code) => handler(code),
-                        ProcessExit::Failed(message) => {
-                            tracing::error!(pid, %message, "process exit subscription failed")
+                        ProcessExit::EventStreamLagged { skipped } => tracing::error!(
+                            pid,
+                            skipped,
+                            "process exit subscription failed because its event route lagged"
+                        ),
+                        ProcessExit::EventStreamClosed => {
+                            tracing::error!(pid, "process exit subscription event route closed")
                         }
                     }
                     return;
@@ -684,11 +715,12 @@ impl AgentOs {
         keep_stdin_open: bool,
         timeout_ms: Option<u64>,
         capture_output: Option<bool>,
-    ) -> std::result::Result<wire::ProcessStartedResponse, ClientError> {
+    ) -> std::result::Result<(wire::ProcessStartedResponse, WireEventSubscription), ClientError>
+    {
         let ownership = self.vm_scope();
-        let response = self
+        let (response, events) = self
             .transport()
-            .request_wire(
+            .request_wire_with_process_events(
                 ownership,
                 wire::RequestPayload::ExecuteRequest(wire::ExecuteRequest {
                     process_id: None,
@@ -708,7 +740,14 @@ impl AgentOs {
             )
             .await?;
         match response {
-            wire::ResponsePayload::ProcessStartedResponse(started) => Ok(started),
+            wire::ResponsePayload::ProcessStartedResponse(started) => {
+                let events = events.ok_or_else(|| {
+                    ClientError::Sidecar(String::from(
+                        "Execute: sidecar response did not bind a process event route",
+                    ))
+                })?;
+                Ok((started, events))
+            }
             wire::ResponsePayload::RejectedResponse(wire::RejectedResponse { code, message }) => {
                 Err(ClientError::Kernel { code, message })
             }
@@ -719,7 +758,7 @@ impl AgentOs {
     }
 
     /// Kill a wire process and await the sidecar response.
-    async fn kill_wire_process(
+    pub(crate) async fn kill_wire_process(
         &self,
         process_id: &str,
         signal: &str,
@@ -738,6 +777,19 @@ impl AgentOs {
         map_process_control_response(response, "kill_process", |response| {
             matches!(response, wire::ResponsePayload::ProcessKilledResponse(_))
         })
+    }
+
+    pub(crate) async fn abort_wire_process_after_route_failure(
+        &self,
+        process_id: &str,
+        route: &'static str,
+    ) {
+        let result = self
+            .kill_wire_process(process_id, ROUTE_FAILURE_KILL_SIGNAL)
+            .await;
+        handle_route_failure_abort_result(result, process_id, route, || {
+            self.transport().kill_child();
+        });
     }
 
     /// Send a kill signal for an SDK pid. No-op if already exited; errors with `ProcessNotFound` if
@@ -777,7 +829,13 @@ impl AgentOs {
     fn prune_exited_processes_locked(&self, reserve_slots: usize) {
         let mut entries = Vec::new();
         self.inner().processes.scan(|pid, entry| {
-            entries.push((*pid, entry.exit_tx.borrow().is_some()));
+            entries.push((
+                *pid,
+                matches!(
+                    entry.exit_tx.borrow().as_ref(),
+                    Some(ProcessExit::Exited(_))
+                ),
+            ));
         });
         let target_len = PROCESS_REGISTRY_LIMIT.saturating_sub(reserve_slots);
         if entries.len() <= target_len {
@@ -799,32 +857,47 @@ impl AgentOs {
     /// under registry pressure.
     async fn run_spawn_events(
         self,
+        ownership: wire::OwnershipScope,
         process_id: String,
-        mut events: broadcast::Receiver<SharedWireEvent>,
-        stdout_tx: broadcast::Sender<Vec<u8>>,
-        stderr_tx: broadcast::Sender<Vec<u8>>,
+        mut events: WireEventSubscription,
+        stdout_tx: broadcast::Sender<RoutedStreamEvent<Vec<u8>>>,
+        stderr_tx: broadcast::Sender<RoutedStreamEvent<Vec<u8>>>,
         exit_tx: watch::Sender<Option<ProcessExit>>,
     ) {
         loop {
             let event = match events.recv().await {
                 Ok(event) => event,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => {
-                    let _ = exit_tx.send(Some(ProcessExit::Failed(format!(
-                        "process event stream closed before {process_id} reported an exit code"
-                    ))));
+                Err(WireEventRecvError::Lagged { skipped }) => {
+                    let _ = stdout_tx.send(RoutedStreamEvent::Lagged { skipped });
+                    let _ = stderr_tx.send(RoutedStreamEvent::Lagged { skipped });
+                    let _ = exit_tx.send(Some(ProcessExit::EventStreamLagged { skipped }));
+                    self.abort_wire_process_after_route_failure(&process_id, "spawn")
+                        .await;
+                    break;
+                }
+                Err(WireEventRecvError::Closed) => {
+                    let _ = stdout_tx.send(RoutedStreamEvent::Closed {
+                        context: "process output route closed before process exit",
+                    });
+                    let _ = stderr_tx.send(RoutedStreamEvent::Closed {
+                        context: "process output route closed before process exit",
+                    });
+                    let _ = exit_tx.send(Some(ProcessExit::EventStreamClosed));
                     break;
                 }
             };
+            if event.ownership != ownership {
+                continue;
+            }
             match &event.payload {
                 EventPayload::ProcessOutputEvent(output) if output.process_id == process_id => {
                     let bytes = output.chunk.clone();
                     match output.channel {
                         StreamChannel::Stdout => {
-                            let _ = stdout_tx.send(bytes);
+                            let _ = stdout_tx.send(RoutedStreamEvent::Data(bytes));
                         }
                         StreamChannel::Stderr => {
-                            let _ = stderr_tx.send(bytes);
+                            let _ = stderr_tx.send(RoutedStreamEvent::Data(bytes));
                         }
                     }
                 }
@@ -845,59 +918,96 @@ impl AgentOs {
     }
 }
 
-async fn collect_exec_events(
+fn handle_route_failure_abort_result(
+    result: std::result::Result<(), ClientError>,
     process_id: &str,
-    events: &mut broadcast::Receiver<SharedWireEvent>,
+    route: &'static str,
+    fail_closed: impl FnOnce(),
+) {
+    match result {
+        Ok(()) => {}
+        Err(ClientError::Kernel { code, .. }) if code == "ENOENT" || code == "ESRCH" => {}
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                process_id,
+                route,
+                "failed to abort process after event-route loss; killing the sidecar to avoid an orphaned guest"
+            );
+            fail_closed();
+        }
+    }
+}
+
+async fn collect_exec_events(
+    ownership: &wire::OwnershipScope,
+    process_id: &str,
+    events: &mut WireEventSubscription,
     on_stdout: &mut Option<OutputCallback>,
     on_stderr: &mut Option<OutputCallback>,
 ) -> std::result::Result<(i32, String, String), ClientError> {
     loop {
         let event = match events.recv().await {
             Ok(event) => event,
-            Err(broadcast::error::RecvError::Lagged(_)) => continue,
-            Err(broadcast::error::RecvError::Closed) => {
-                return Err(ClientError::Sidecar(
-                    "exec: event stream closed before process exit".to_owned(),
-                ));
+            Err(WireEventRecvError::Lagged { skipped }) => {
+                return Err(ClientError::EventStreamLagged { skipped });
+            }
+            Err(WireEventRecvError::Closed) => {
+                return Err(ClientError::EventStreamClosed {
+                    context: "exec process exit",
+                });
             }
         };
-        match &event.payload {
-            EventPayload::ProcessOutputEvent(output) if output.process_id == process_id => {
-                match output.channel {
-                    StreamChannel::Stdout => {
-                        if let Some(cb) = on_stdout.as_mut() {
-                            cb(&output.chunk);
-                        }
-                    }
-                    StreamChannel::Stderr => {
-                        if let Some(cb) = on_stderr.as_mut() {
-                            cb(&output.chunk);
-                        }
-                    }
-                }
-            }
-            EventPayload::ProcessExitedEvent(exited) if exited.process_id == process_id => {
-                if let Some(error) = &exited.error {
-                    return Err(ClientError::Kernel {
-                        code: error.code.clone(),
-                        message: error.message.clone(),
-                    });
-                }
-                return Ok((
-                    exited.exit_code,
-                    String::from_utf8_lossy(exited.stdout.as_deref().unwrap_or_default())
-                        .into_owned(),
-                    String::from_utf8_lossy(exited.stderr.as_deref().unwrap_or_default())
-                        .into_owned(),
-                ));
-            }
-            EventPayload::ProcessOutputEvent(_)
-            | EventPayload::ProcessExitedEvent(_)
-            | EventPayload::CronDispatchEvent(_)
-            | EventPayload::VmLifecycleEvent(_)
-            | EventPayload::StructuredEvent(_)
-            | EventPayload::ExtEnvelope(_) => {}
+        if &event.ownership != ownership {
+            continue;
         }
+        if let Some(result) = apply_exec_event(&event, process_id, on_stdout, on_stderr)? {
+            return Ok(result);
+        }
+    }
+}
+
+fn apply_exec_event(
+    event: &wire::EventFrame,
+    process_id: &str,
+    on_stdout: &mut Option<OutputCallback>,
+    on_stderr: &mut Option<OutputCallback>,
+) -> std::result::Result<Option<(i32, String, String)>, ClientError> {
+    match &event.payload {
+        EventPayload::ProcessOutputEvent(output) if output.process_id == process_id => {
+            match output.channel {
+                StreamChannel::Stdout => {
+                    if let Some(cb) = on_stdout.as_mut() {
+                        cb(&output.chunk);
+                    }
+                }
+                StreamChannel::Stderr => {
+                    if let Some(cb) = on_stderr.as_mut() {
+                        cb(&output.chunk);
+                    }
+                }
+            }
+            Ok(None)
+        }
+        EventPayload::ProcessExitedEvent(exited) if exited.process_id == process_id => {
+            if let Some(error) = &exited.error {
+                return Err(ClientError::Kernel {
+                    code: error.code.clone(),
+                    message: error.message.clone(),
+                });
+            }
+            Ok(Some((
+                exited.exit_code,
+                String::from_utf8_lossy(exited.stdout.as_deref().unwrap_or_default()).into_owned(),
+                String::from_utf8_lossy(exited.stderr.as_deref().unwrap_or_default()).into_owned(),
+            )))
+        }
+        EventPayload::ProcessOutputEvent(_)
+        | EventPayload::ProcessExitedEvent(_)
+        | EventPayload::CronDispatchEvent(_)
+        | EventPayload::VmLifecycleEvent(_)
+        | EventPayload::StructuredEvent(_)
+        | EventPayload::ExtEnvelope(_) => Ok(None),
     }
 }
 
@@ -915,7 +1025,27 @@ fn spawned_process_info_from_snapshot(process: ProcessInfo) -> SpawnedProcessInf
 fn process_exit_result(exit: ProcessExit) -> std::result::Result<i32, ClientError> {
     match exit {
         ProcessExit::Exited(code) => Ok(code),
-        ProcessExit::Failed(message) => Err(ClientError::Sidecar(message)),
+        ProcessExit::EventStreamLagged { skipped } => {
+            Err(ClientError::EventStreamLagged { skipped })
+        }
+        ProcessExit::EventStreamClosed => Err(ClientError::EventStreamClosed {
+            context: "process exit",
+        }),
+    }
+}
+
+fn byte_stream_for_process_route(
+    rx: broadcast::Receiver<RoutedStreamEvent<Vec<u8>>>,
+    exit: Option<ProcessExit>,
+) -> ByteStream {
+    match exit {
+        Some(ProcessExit::EventStreamLagged { skipped }) => {
+            ByteStream::failed(RoutedStreamEvent::Lagged { skipped })
+        }
+        Some(ProcessExit::EventStreamClosed) => ByteStream::failed(RoutedStreamEvent::Closed {
+            context: "process output",
+        }),
+        Some(ProcessExit::Exited(_)) | None => ByteStream::new(rx),
     }
 }
 
@@ -1040,15 +1170,35 @@ fn exited_pids_to_prune(mut entries: Vec<(u32, bool)>, target_len: usize) -> Vec
 /// never closes (and this task never observes `Closed`) until the entry is dropped. `shutdown`
 /// drains the registry and aborts these handles rather than waiting on the channel close.
 pub(crate) fn install_output_callback(
-    tx: broadcast::Sender<Vec<u8>>,
+    tx: broadcast::Sender<RoutedStreamEvent<Vec<u8>>>,
     mut callback: OutputCallback,
 ) -> JoinHandle<()> {
     let mut rx = tx.subscribe();
     tokio::spawn(async move {
         loop {
             match rx.recv().await {
-                Ok(chunk) => callback(&chunk),
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Ok(RoutedStreamEvent::Data(chunk)) => callback(&chunk),
+                Ok(RoutedStreamEvent::Lagged { skipped }) => {
+                    tracing::error!(
+                        skipped,
+                        "process output callback stopped because its upstream route lagged"
+                    );
+                    break;
+                }
+                Ok(RoutedStreamEvent::Closed { context }) => {
+                    tracing::error!(
+                        context,
+                        "process output callback stopped because its upstream route closed"
+                    );
+                    break;
+                }
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::error!(
+                        skipped,
+                        "process output callback stopped because its stream lagged"
+                    );
+                    break;
+                }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
         }
@@ -1073,18 +1223,21 @@ pub(crate) fn drain_process_output_tasks(processes: &SccHashMap<u32, ProcessEntr
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_exec_events, drain_process_output_tasks, exited_pids_to_prune,
-        install_output_callback, process_exit_result, timeout_to_wire, ExecOptions, OutputCallback,
+        apply_exec_event, byte_stream_for_process_route, drain_process_output_tasks,
+        exited_pids_to_prune, handle_route_failure_abort_result, install_output_callback,
+        process_exit_result, timeout_to_wire, ExecOptions, OutputCallback,
+        ROUTE_FAILURE_KILL_SIGNAL,
     };
     use crate::agent_os::{ProcessEntry, ProcessExit};
+    use crate::stream::RoutedStreamEvent;
     use agentos_sidecar_client::wire;
+    use futures::StreamExt;
     use scc::HashMap as SccHashMap;
     use std::sync::{Arc, Mutex};
     use tokio::sync::{broadcast, watch};
 
     #[tokio::test]
     async fn exec_callbacks_precede_terminal_result_and_do_not_build_it() {
-        let (tx, mut events) = broadcast::channel(4);
         let callback_chunks = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
         let callback_chunks_ref = Arc::clone(&callback_chunks);
         let mut on_stdout: Option<OutputCallback> = Some(Box::new(move |chunk| {
@@ -1097,7 +1250,7 @@ mod tests {
             vm_id: "vm-test".to_owned(),
         });
 
-        tx.send(Arc::new(wire::EventFrame {
+        let streamed = wire::EventFrame {
             schema: wire::protocol_schema(),
             ownership: ownership.clone(),
             payload: wire::EventPayload::ProcessOutputEvent(wire::ProcessOutputEvent {
@@ -1105,9 +1258,8 @@ mod tests {
                 channel: wire::StreamChannel::Stdout,
                 chunk: b"streamed".to_vec(),
             }),
-        }))
-        .expect("stream event");
-        tx.send(Arc::new(wire::EventFrame {
+        };
+        let terminal = wire::EventFrame {
             schema: wire::protocol_schema(),
             ownership,
             payload: wire::EventPayload::ProcessExitedEvent(wire::ProcessExitedEvent {
@@ -1117,11 +1269,15 @@ mod tests {
                 stderr: Some(b"terminal-error".to_vec()),
                 error: None,
             }),
-        }))
-        .expect("terminal event");
+        };
 
-        let result = collect_exec_events("proc-test", &mut events, &mut on_stdout, &mut on_stderr)
-            .await
+        assert!(
+            apply_exec_event(&streamed, "proc-test", &mut on_stdout, &mut on_stderr)
+                .expect("stream event")
+                .is_none()
+        );
+        let result = apply_exec_event(&terminal, "proc-test", &mut on_stdout, &mut on_stderr)
+            .expect("terminal event")
             .expect("terminal result");
 
         assert_eq!(*callback_chunks.lock().unwrap(), vec![b"streamed".to_vec()]);
@@ -1129,6 +1285,66 @@ mod tests {
             result,
             (7, "terminal".to_owned(), "terminal-error".to_owned())
         );
+    }
+
+    #[test]
+    fn process_exit_preserves_typed_event_lag() {
+        let error = process_exit_result(ProcessExit::EventStreamLagged { skipped: 3 })
+            .expect_err("lagged stream must fail wait_process");
+        assert!(matches!(
+            error,
+            crate::error::ClientError::EventStreamLagged { skipped: 3 }
+        ));
+    }
+
+    #[test]
+    fn route_failure_cleanup_is_sigkill_and_fails_closed_on_rejection() {
+        assert_eq!(ROUTE_FAILURE_KILL_SIGNAL, "SIGKILL");
+        let sidecar_killed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sidecar_killed_ref = Arc::clone(&sidecar_killed);
+        handle_route_failure_abort_result(
+            Err(crate::error::ClientError::Sidecar(
+                "kill route rejected".to_string(),
+            )),
+            "process-1",
+            "exec",
+            move || {
+                sidecar_killed_ref.store(true, std::sync::atomic::Ordering::SeqCst);
+            },
+        );
+        assert!(sidecar_killed.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn route_failure_cleanup_accepts_an_already_exited_process() {
+        let sidecar_killed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sidecar_killed_ref = Arc::clone(&sidecar_killed);
+        handle_route_failure_abort_result(
+            Err(crate::error::ClientError::Kernel {
+                code: "ESRCH".to_string(),
+                message: "gone".to_string(),
+            }),
+            "process-1",
+            "shell",
+            move || {
+                sidecar_killed_ref.store(true, std::sync::atomic::Ordering::SeqCst);
+            },
+        );
+        assert!(!sidecar_killed.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn late_process_output_subscriber_receives_retained_route_failure() {
+        let (_tx, rx) = broadcast::channel(1);
+        let mut stream =
+            byte_stream_for_process_route(rx, Some(ProcessExit::EventStreamLagged { skipped: 6 }));
+        assert!(matches!(
+            stream.next().await,
+            Some(Err(crate::error::ClientError::EventStreamLagged {
+                skipped: 6
+            }))
+        ));
+        assert!(stream.next().await.is_none());
     }
 
     /// Regression for the per-process output-callback leak (H3): a `ProcessEntry` retains clones of
@@ -1139,8 +1355,8 @@ mod tests {
     async fn drain_process_output_tasks_clears_registry_and_aborts_tasks() {
         let processes: SccHashMap<u32, ProcessEntry> = SccHashMap::new();
 
-        let (stdout_tx, _) = broadcast::channel::<Vec<u8>>(8);
-        let (stderr_tx, _) = broadcast::channel::<Vec<u8>>(8);
+        let (stdout_tx, _) = broadcast::channel::<RoutedStreamEvent<Vec<u8>>>(8);
+        let (stderr_tx, _) = broadcast::channel::<RoutedStreamEvent<Vec<u8>>>(8);
         let (exit_tx, _) = watch::channel::<Option<ProcessExit>>(None);
 
         // A task that never completes on its own, standing in for an output-callback task that is
@@ -1190,8 +1406,8 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
 
-        let (stdout_tx, _) = broadcast::channel::<Vec<u8>>(8);
-        let (stderr_tx, _) = broadcast::channel::<Vec<u8>>(8);
+        let (stdout_tx, _) = broadcast::channel::<RoutedStreamEvent<Vec<u8>>>(8);
+        let (stderr_tx, _) = broadcast::channel::<RoutedStreamEvent<Vec<u8>>>(8);
         let (exit_tx, _) = watch::channel::<Option<ProcessExit>>(None);
 
         let calls = Arc::new(AtomicUsize::new(0));
@@ -1219,7 +1435,7 @@ mod tests {
 
         // Prove the captured handle is the live callback task: a chunk on the channel runs it.
         stdout_tx
-            .send(b"hello".to_vec())
+            .send(RoutedStreamEvent::Data(b"hello".to_vec()))
             .expect("broadcast send to subscribed callback task");
         for _ in 0..100 {
             if calls.load(Ordering::SeqCst) > 0 {
@@ -1247,10 +1463,8 @@ mod tests {
 
     #[test]
     fn closed_process_event_stream_is_an_error_not_exit_zero() {
-        let error = process_exit_result(ProcessExit::Failed(String::from(
-            "process event stream closed before proc-1 reported an exit code",
-        )))
-        .expect_err("closed stream must fail wait_process");
+        let error = process_exit_result(ProcessExit::EventStreamClosed)
+            .expect_err("closed stream must fail wait_process");
         assert!(error.to_string().contains("event stream closed"));
     }
 
