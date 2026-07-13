@@ -375,6 +375,7 @@ fn vm_resource_limits_cap_active_processes_without_poisoning_followup_execs() {
                 shell_command: None,
                 keep_stdin_open: None,
                 timeout_ms: None,
+                capture_output: None,
             }),
         ))
         .expect("dispatch second execute");
@@ -452,6 +453,7 @@ fn execute_rejects_cwd_outside_vm_sandbox_root() {
                 shell_command: None,
                 keep_stdin_open: None,
                 timeout_ms: None,
+                capture_output: None,
             }),
         ))
         .expect("dispatch execute request");
@@ -523,6 +525,7 @@ fn execute_rejects_host_only_absolute_command_path() {
                 shell_command: None,
                 keep_stdin_open: None,
                 timeout_ms: None,
+                capture_output: None,
             }),
         ))
         .expect("dispatch host-only command execute");
@@ -596,6 +599,7 @@ fn execute_ignores_host_node_binary_override_for_javascript_runtime() {
                 shell_command: None,
                 keep_stdin_open: None,
                 timeout_ms: None,
+                capture_output: None,
             }),
         ))
         .expect("dispatch execute request");

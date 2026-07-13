@@ -646,6 +646,7 @@ macro_rules! limits_struct {
 limits_struct!(ResourceLimitsConfig {
     cpu_count,
     max_processes,
+    max_captured_output_bytes,
     max_open_fds,
     max_pipes,
     max_ptys,

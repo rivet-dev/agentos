@@ -42,4 +42,15 @@ describe("AgentOsOptions validation", () => {
 		).toBe(true);
 	});
 
+	test("preserves a positive VM aggregate captured-output budget", () => {
+		const parsed = agentOsOptionsSchema.parse({
+			limits: { resources: { maxCapturedOutputBytes: 2048 } },
+		});
+		expect(parsed.limits?.resources?.maxCapturedOutputBytes).toBe(2048);
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { resources: { maxCapturedOutputBytes: 0 } },
+			}).success,
+		).toBe(false);
+	});
 });

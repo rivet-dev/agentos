@@ -77,4 +77,53 @@ describe("command execution", () => {
 			expect(result.stdout).toContain("hello");
 		}
 	}, 120_000);
+
+	test("the sidecar bounds captured output without limiting raw streams", async () => {
+		const limitedVm = await AgentOs.create({
+			defaultSoftware: false,
+			limits: { jsRuntime: { capturedOutputLimitBytes: 8 } },
+		});
+		try {
+			await expect(
+				limitedVm.execArgv("node", ["-e", "process.stdout.write('123456789')"]),
+			).rejects.toMatchObject({
+				code: "ERR_CAPTURED_OUTPUT_LIMIT_EXCEEDED",
+				message: expect.stringContaining(
+					"limits.jsRuntime.capturedOutputLimitBytes",
+				),
+			});
+
+			const streamed: string[] = [];
+			const uncaptured = await limitedVm.execArgv(
+				"node",
+				["-e", "process.stdout.write('123456789')"],
+				{
+					captureStdio: false,
+					onStdout: (chunk) =>
+						streamed.push(Buffer.from(chunk).toString("utf8")),
+				},
+			);
+			expect(uncaptured).toEqual({ exitCode: 0, stdout: "", stderr: "" });
+			expect(streamed.join("")).toBe("123456789");
+
+			const spawned: string[] = [];
+			const { pid } = await limitedVm.spawn(
+				"node",
+				[
+					"-e",
+					"process.stdin.once('data', () => process.stdout.write('123456789'))",
+				],
+				{ streamStdin: true },
+			);
+			limitedVm.onProcessStdout(pid, (chunk) => {
+				spawned.push(Buffer.from(chunk).toString("utf8"));
+			});
+			await limitedVm.writeProcessStdin(pid, "go");
+			await limitedVm.closeProcessStdin(pid);
+			await expect(limitedVm.waitProcess(pid)).resolves.toBe(0);
+			expect(spawned.join("")).toBe("123456789");
+		} finally {
+			await limitedVm.dispose();
+		}
+	});
 });

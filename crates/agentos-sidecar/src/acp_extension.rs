@@ -356,6 +356,7 @@ impl AcpExtension {
                 pty: None,
                 keep_stdin_open: Some(true),
                 timeout_ms: None,
+                capture_output: None,
             })
             .await
         {
@@ -1187,6 +1188,7 @@ impl AcpExtension {
                 pty: None,
                 keep_stdin_open: Some(true),
                 timeout_ms: None,
+                capture_output: None,
             })
             .await
         {
@@ -1603,6 +1605,7 @@ impl AcpExtension {
                 pty: None,
                 keep_stdin_open: Some(true),
                 timeout_ms: None,
+                capture_output: None,
             })
             .await
             .map_err(AdapterRestartError::Failed)?;
@@ -2813,6 +2816,7 @@ async fn handle_native_terminal_request(
                     pty: Some(agentos_native_sidecar::wire::PtyOptions { cols, rows }),
                     keep_stdin_open: Some(true),
                     timeout_ms: None,
+                    capture_output: None,
                 })
                 .await
             {

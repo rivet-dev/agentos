@@ -12,7 +12,9 @@ mod common;
 
 use std::sync::{Arc, Mutex};
 
-use agentos_client::{ClientError, ExecOptions, SpawnOptions, StdinInput};
+use agentos_client::{
+    AgentOsLimits, ClientError, ExecOptions, JsRuntimeLimits, SpawnOptions, StdinInput,
+};
 use futures::StreamExt;
 
 #[tokio::test]
@@ -294,4 +296,104 @@ async fn process_surface_exec_spawn_and_snapshot() {
     }
 
     os.shutdown().await.expect("shutdown");
+}
+
+#[tokio::test]
+async fn sidecar_bounds_captured_output_without_limiting_raw_streams() {
+    if !common::require_sidecar("sidecar_bounds_captured_output_without_limiting_raw_streams") {
+        return;
+    }
+    let os = common::new_vm_with_limits(AgentOsLimits {
+        js_runtime: Some(JsRuntimeLimits {
+            captured_output_limit_bytes: Some(8),
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
+    .await;
+
+    let error = os
+        .exec_argv(
+            "node",
+            &[
+                String::from("-e"),
+                String::from("process.stdout.write('123456789')"),
+            ],
+            ExecOptions::default(),
+        )
+        .await
+        .expect_err("captured stdout above the sidecar limit must fail");
+    let typed = error
+        .downcast_ref::<ClientError>()
+        .expect("captured-output failure must preserve ClientError");
+    assert!(
+        matches!(typed, ClientError::Kernel { code, .. } if code == "ERR_CAPTURED_OUTPUT_LIMIT_EXCEEDED"),
+        "unexpected captured-output error: {typed:?}"
+    );
+    let ClientError::Kernel { message, .. } = typed else {
+        unreachable!("captured-output error shape checked above")
+    };
+    assert!(message.contains("limit of 8 bytes"));
+    assert!(message.contains("limits.js_runtime.captured_output_limit_bytes"));
+
+    let streamed = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let streamed_cb = Arc::clone(&streamed);
+    let result = os
+        .exec_argv(
+            "node",
+            &[
+                String::from("-e"),
+                String::from("process.stdout.write('123456789')"),
+            ],
+            ExecOptions {
+                capture_stdio: Some(false),
+                on_stdout: Some(Box::new(move |chunk| {
+                    streamed_cb.lock().unwrap().extend_from_slice(chunk);
+                })),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("uncaptured streaming output must remain available");
+    assert_eq!(result.exit_code, 0);
+    assert!(result.stdout.is_empty());
+    assert!(result.stderr.is_empty());
+    assert_eq!(&*streamed.lock().unwrap(), b"123456789");
+
+    let spawned = os
+        .spawn(
+            "node",
+            vec![
+                String::from("-e"),
+                String::from("process.stdin.once('data', () => process.stdout.write('123456789'))"),
+            ],
+            SpawnOptions {
+                stream_stdin: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("spawn raw streaming process");
+    let mut spawned_stdout = os
+        .on_process_stdout(spawned.pid)
+        .expect("subscribe to raw spawned stdout");
+    os.write_process_stdin(spawned.pid, StdinInput::Text(String::from("go")))
+        .await
+        .expect("release raw spawned process after subscribing");
+    os.close_process_stdin(spawned.pid)
+        .await
+        .expect("close raw spawned stdin");
+    let chunk = tokio::time::timeout(std::time::Duration::from_secs(10), spawned_stdout.next())
+        .await
+        .expect("raw spawned stdout timed out")
+        .expect("raw spawned stdout stream closed");
+    assert_eq!(&chunk[..], b"123456789");
+    assert_eq!(
+        os.wait_process(spawned.pid)
+            .await
+            .expect("wait for raw spawned process"),
+        0
+    );
+
+    os.shutdown().await.expect("shutdown limited VM");
 }

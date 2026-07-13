@@ -18,7 +18,7 @@ use agentos_kernel::kernel::{KernelProcessHandle, KernelVm};
 use agentos_kernel::mount_table::MountTable;
 use agentos_kernel::root_fs::RootFilesystemMode;
 use agentos_kernel::socket_table::SocketId;
-use agentos_native_sidecar_core::VmLayerStore;
+use agentos_native_sidecar_core::{CapturedOutputState, VmLayerStore};
 use agentos_vm_config as vm_config;
 use agentos_vm_config::PermissionsPolicy;
 use rusqlite::Connection;
@@ -323,6 +323,7 @@ pub(crate) struct VmState {
     /// Operator-tunable VM-scoped runtime limits. Immutable for the VM's lifetime;
     /// `ConfigureVm` does not mutate limits.
     pub(crate) limits: crate::limits::VmLimits,
+    pub(crate) captured_output_budget: Arc<agentos_native_sidecar_core::CapturedOutputBudget>,
     pub(crate) dns: VmDnsConfig,
     pub(crate) listen_policy: VmListenPolicy,
     pub(crate) create_loopback_exempt_ports: BTreeSet<u16>,
@@ -469,6 +470,7 @@ pub(crate) struct ActiveProcess {
     pub(crate) pending_self_signal_exit: Option<i32>,
     /// Sidecar-owned absolute deadline for an explicit execute timeout.
     pub(crate) timeout_at: Option<Instant>,
+    pub(crate) captured_output: Option<CapturedOutputState>,
     pub(crate) child_processes: BTreeMap<String, ActiveProcess>,
     pub(crate) next_child_process_id: usize,
     pub(crate) http_servers: BTreeMap<u64, ActiveHttpServer>,

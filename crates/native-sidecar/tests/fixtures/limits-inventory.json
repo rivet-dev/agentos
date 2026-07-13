@@ -529,6 +529,19 @@
 		"wired": "VmLimits.js_runtime.captured_output_limit_bytes"
 	},
 	{
+		"name": "DEFAULT_MAX_CAPTURED_OUTPUT_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Aggregate per-VM cap for bytes retained by active captured processes.",
+		"wired": "VmLimits.max_captured_output_bytes"
+	},
+	{
+		"name": "MAX_PROCESS_ID_BYTES",
+		"path": "crates/native-sidecar-core/src/captured_output.rs",
+		"class": "invariant",
+		"rationale": "Bounds caller-supplied process-id metadata so a maximum captured-output terminal event always fits the negotiated wire-frame limit."
+	},
+	{
 		"name": "DEFAULT_JS_EVENT_PAYLOAD_LIMIT_BYTES",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
@@ -1050,12 +1063,6 @@
 		"wired": "VmLimits.js_runtime.v8_heap_limit_mb"
 	},
 	{
-		"name": "TRAILING_OUTPUT_DRAIN_MAX_MS",
-		"path": "packages/core/src/sidecar/rpc-client.ts",
-		"class": "invariant",
-		"rationale": "Teardown drain heuristic, not a guest-visible bound."
-	},
-	{
 		"name": "MAX_SYMLINK_DEPTH",
 		"path": "packages/core/src/memory-filesystem.ts",
 		"class": "invariant",
@@ -1066,6 +1073,18 @@
 		"path": "crates/native-sidecar-browser/src/wire_dispatch.rs",
 		"class": "policy-deferred",
 		"rationale": "Browser transport frame cap; fixed host transport limit until browser config exposes it."
+	},
+	{
+		"name": "MAX_PENDING_REQUEST_EVENTS",
+		"path": "crates/native-sidecar-browser/src/wire_dispatch.rs",
+		"class": "invariant",
+		"rationale": "Bounds the browser transport's internal response-event queue; overflow is returned immediately as a typed protocol rejection."
+	},
+	{
+		"name": "MAX_REQUEST_EVENTS_PER_DISPATCH",
+		"path": "crates/native-sidecar-browser/src/wire_dispatch.rs",
+		"class": "invariant",
+		"rationale": "Reserves the worst-case number of sidecar events emitted synchronously by one browser request before dispatch."
 	},
 	{
 		"name": "DEFAULT_READ_MAX_BYTES",

@@ -416,6 +416,7 @@ fn execute_python_entrypoint_with_env(
                 shell_command: None,
                 keep_stdin_open: None,
                 timeout_ms: None,
+                capture_output: None,
             }),
         ))
         .expect("start python execution through wire");
@@ -457,6 +458,7 @@ fn execute_javascript_with_env(
                 shell_command: None,
                 keep_stdin_open: None,
                 timeout_ms: None,
+                capture_output: None,
             }),
         ))
         .expect("start JavaScript execution through wire");
@@ -3277,6 +3279,7 @@ fn execute_python_cli(
                 shell_command: None,
                 keep_stdin_open: None,
                 timeout_ms: None,
+                capture_output: None,
             }),
         ))
         .expect("start python CLI execution through wire");
@@ -3318,6 +3321,7 @@ fn execute_python_cli_with_env(
                 shell_command: None,
                 keep_stdin_open: None,
                 timeout_ms: None,
+                capture_output: None,
             }),
         ))
         .expect("start python CLI execution through wire");

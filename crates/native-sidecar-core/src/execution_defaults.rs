@@ -45,6 +45,7 @@ mod tests {
             pty: None,
             keep_stdin_open: None,
             timeout_ms: None,
+            capture_output: None,
         }
     }
 

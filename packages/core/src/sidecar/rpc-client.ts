@@ -43,6 +43,10 @@ function shouldLogStructuredSidecarEvent(name: string): boolean {
 	);
 }
 
+function decodeUtf8(data: Uint8Array): string {
+	return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
+}
+
 function formatStructuredSidecarDetail(
 	detail: Readonly<Record<string, string>>,
 ): string {
@@ -166,15 +170,27 @@ interface TrackedProcessEntry {
 	pty: { cols?: number; rows?: number } | undefined;
 	keepStdinOpen: boolean | undefined;
 	timeoutMs: number | undefined;
+	captureOutput: boolean | undefined;
 	env: Record<string, string> | undefined;
 	exitCode: number | null;
-	waitPromise: Promise<number>;
-	resolveWait: (exitCode: number) => void;
+	waitPromise: Promise<ProcessCompletion>;
+	resolveWait: (completion: ProcessCompletion) => void;
 	rejectWait: (error: Error) => void;
 	settled: boolean;
 	onStdout: Set<(data: Uint8Array) => void>;
 	onStderr: Set<(data: Uint8Array) => void>;
 }
+
+interface ProcessCompletion {
+	exitCode: number;
+	stdout: Uint8Array;
+	stderr: Uint8Array;
+}
+
+const processCompletion = Symbol("agentos.processCompletion");
+type InternalManagedProcess = ManagedProcess & {
+	[processCompletion]: Promise<ProcessCompletion>;
+};
 
 interface NativeSidecarKernelProxyOptions {
 	client: SidecarProcess;
@@ -375,36 +391,27 @@ export class NativeSidecarKernelProxy {
 		command: string,
 		options?: KernelExecOptions,
 	): Promise<KernelExecResult> {
-		const stdoutChunks: Uint8Array[] = [];
-		const stderrChunks: Uint8Array[] = [];
-		const proc = await this.spawn("sh", [], {
+		const captureOutput = options?.captureStdio !== false;
+		const proc = (await this.spawn("sh", [], {
 			...options,
 			shellCommand: command,
-			onStdout: (chunk) => {
-				stdoutChunks.push(chunk);
-				options?.onStdout?.(chunk);
-			},
-			onStderr: (chunk) => {
-				stderrChunks.push(chunk);
-				options?.onStderr?.(chunk);
-			},
-		} as KernelSpawnOptions & { shellCommand: string });
+			captureOutput,
+		} as KernelSpawnOptions & {
+			shellCommand: string;
+			captureOutput: boolean;
+		})) as InternalManagedProcess;
 
 		if (options?.stdin !== undefined) {
 			await proc.writeStdin(options.stdin);
 		}
 		await proc.closeStdin();
 
-		const exitCode = await proc.wait();
+		const completion = await proc[processCompletion];
 
 		return {
-			exitCode,
-			stdout: Buffer.concat(
-				stdoutChunks.map((chunk) => Buffer.from(chunk)),
-			).toString("utf8"),
-			stderr: Buffer.concat(
-				stderrChunks.map((chunk) => Buffer.from(chunk)),
-			).toString("utf8"),
+			exitCode: completion.exitCode,
+			stdout: decodeUtf8(completion.stdout),
+			stderr: decodeUtf8(completion.stderr),
 		};
 	}
 	async execArgv(
@@ -412,27 +419,22 @@ export class NativeSidecarKernelProxy {
 		args: readonly string[] = [],
 		options?: KernelExecOptions,
 	): Promise<KernelExecResult> {
-		const stdoutChunks: Uint8Array[] = [];
-		const stderrChunks: Uint8Array[] = [];
+		const captureOutput = options?.captureStdio !== false;
 		const requestedCwd = options?.cwd;
 		const runAndCapture = async (
-			proc: ManagedProcess,
+			proc: InternalManagedProcess,
 		): Promise<KernelExecResult> => {
 			if (options?.stdin !== undefined) {
 				proc.writeStdin(options.stdin);
 			}
 			proc.closeStdin();
 
-			const exitCode = await proc.wait();
+			const completion = await proc[processCompletion];
 
 			return {
-				exitCode,
-				stdout: Buffer.concat(
-					stdoutChunks.map((chunk) => Buffer.from(chunk)),
-				).toString("utf8"),
-				stderr: Buffer.concat(
-					stderrChunks.map((chunk) => Buffer.from(chunk)),
-				).toString("utf8"),
+				exitCode: completion.exitCode,
+				stdout: decodeUtf8(completion.stdout),
+				stderr: decodeUtf8(completion.stderr),
 			};
 		};
 
@@ -440,20 +442,14 @@ export class NativeSidecarKernelProxy {
 			this.onWasmCommandResolved?.(command);
 		}
 
-		return runAndCapture(
-			await this.spawn(command, [...args], {
-				...options,
-				cwd: requestedCwd,
-				onStdout: (chunk) => {
-					stdoutChunks.push(chunk);
-					options?.onStdout?.(chunk);
-				},
-				onStderr: (chunk) => {
-					stderrChunks.push(chunk);
-					options?.onStderr?.(chunk);
-				},
-			}),
-		);
+		const proc = (await this.spawn(command, [...args], {
+			...options,
+			captureOutput,
+			cwd: requestedCwd,
+		} as KernelSpawnOptions & {
+			captureOutput: boolean;
+		})) as InternalManagedProcess;
+		return runAndCapture(proc);
 	}
 
 	async spawn(
@@ -462,14 +458,17 @@ export class NativeSidecarKernelProxy {
 		options?: KernelSpawnOptions,
 	): Promise<ManagedProcess> {
 		const internalOptions = options as
-			| (KernelSpawnOptions & { shellCommand?: string })
+			| (KernelSpawnOptions & {
+					shellCommand?: string;
+					captureOutput?: boolean;
+			  })
 			| undefined;
 		const spawnCommand = command;
 		const spawnArgs = [...args];
 		const shellCommand = internalOptions?.shellCommand;
-		let resolveWait!: (exitCode: number) => void;
+		let resolveWait!: (completion: ProcessCompletion) => void;
 		let rejectWait!: (error: Error) => void;
-		const waitPromise = new Promise<number>((resolve, reject) => {
+		const waitPromise = new Promise<ProcessCompletion>((resolve, reject) => {
 			resolveWait = resolve;
 			rejectWait = reject;
 		});
@@ -485,6 +484,7 @@ export class NativeSidecarKernelProxy {
 			env: options?.env ? { ...options.env } : undefined,
 			keepStdinOpen: options?.streamStdin,
 			timeoutMs: toSidecarTimeoutMs(options?.timeout),
+			captureOutput: internalOptions?.captureOutput,
 			exitCode: null,
 			waitPromise,
 			resolveWait,
@@ -499,7 +499,8 @@ export class NativeSidecarKernelProxy {
 		}
 		const pid = entry.pid;
 
-		const proc: ManagedProcess = {
+		const proc: InternalManagedProcess = {
+			[processCompletion]: waitPromise,
 			pid,
 			writeStdin: async (data) => {
 				if (entry.exitCode !== null) {
@@ -788,6 +789,9 @@ export class NativeSidecarKernelProxy {
 			...(entry.pty ? { pty: entry.pty } : {}),
 			...(entry.keepStdinOpen ? { keepStdinOpen: true } : {}),
 			...(entry.timeoutMs !== undefined ? { timeoutMs: entry.timeoutMs } : {}),
+			...(entry.captureOutput !== undefined
+				? { captureOutput: entry.captureOutput }
+				: {}),
 		});
 		if (started.pid === null) {
 			throw new Error("sidecar did not return a kernel pid for the process");
@@ -832,7 +836,20 @@ export class NativeSidecarKernelProxy {
 					if (!entry) {
 						continue;
 					}
-					this.finishProcess(entry, event.payload.exit_code);
+					if (event.payload.error_code !== undefined) {
+						const error = new Error(
+							event.payload.error_message ?? event.payload.error_code,
+						) as Error & { code: string };
+						error.code = event.payload.error_code;
+						this.failProcess(entry, error);
+						continue;
+					}
+					this.finishProcess(
+						entry,
+						event.payload.exit_code,
+						event.payload.stdout,
+						event.payload.stderr,
+					);
 					continue;
 				}
 
@@ -862,13 +879,18 @@ export class NativeSidecarKernelProxy {
 		}
 	}
 
-	private finishProcess(entry: TrackedProcessEntry, exitCode: number): void {
+	private finishProcess(
+		entry: TrackedProcessEntry,
+		exitCode: number,
+		stdout: Uint8Array = new Uint8Array(),
+		stderr: Uint8Array = new Uint8Array(),
+	): void {
 		if (entry.settled) {
 			return;
 		}
 		entry.settled = true;
 		entry.exitCode = exitCode;
-		entry.resolveWait(exitCode);
+		entry.resolveWait({ exitCode, stdout, stderr });
 		// The sidecar guarantees that all process_output events precede the terminal
 		// process_exited event. Release client routing immediately after exit; the
 		// exited record lives on in `processes` for listing.
@@ -896,7 +918,7 @@ export class NativeSidecarKernelProxy {
 	}
 
 	private waitForTrackedProcess(entry: TrackedProcessEntry): Promise<number> {
-		return entry.waitPromise;
+		return entry.waitPromise.then((completion) => completion.exitCode);
 	}
 
 	private async signalProcess(

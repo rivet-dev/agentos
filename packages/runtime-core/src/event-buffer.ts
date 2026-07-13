@@ -1,7 +1,4 @@
-import {
-	fromGeneratedExtEnvelope,
-	type LiveExtEnvelope,
-} from "./ext.js";
+import { fromGeneratedExtEnvelope, type LiveExtEnvelope } from "./ext.js";
 import type * as protocol from "./generated-protocol.js";
 import {
 	ownershipMatchesSelector,
@@ -36,6 +33,10 @@ export type LiveSidecarEventPayload =
 			type: "process_exited";
 			process_id: string;
 			exit_code: number;
+			stdout?: Uint8Array;
+			stderr?: Uint8Array;
+			error_code?: string;
+			error_message?: string;
 	  }
 	| {
 			type: "cron_dispatch";
@@ -247,10 +248,9 @@ function buildBufferKey(
 	return parts.join("|");
 }
 
-export function sidecarSelectorMatchesEvent<TEvent extends LiveSidecarEventFrame>(
-	selector: LiveSidecarEventSelector,
-	event: TEvent,
-): boolean {
+export function sidecarSelectorMatchesEvent<
+	TEvent extends LiveSidecarEventFrame,
+>(selector: LiveSidecarEventSelector, event: TEvent): boolean {
 	if ("any" in selector) {
 		return true;
 	}
@@ -382,6 +382,18 @@ export function fromGeneratedEventPayload(
 				type: "process_exited",
 				process_id: payload.val.processId,
 				exit_code: payload.val.exitCode,
+				...(payload.val.stdout === null
+					? {}
+					: { stdout: Buffer.from(payload.val.stdout) }),
+				...(payload.val.stderr === null
+					? {}
+					: { stderr: Buffer.from(payload.val.stderr) }),
+				...(payload.val.error === null
+					? {}
+					: {
+							error_code: payload.val.error.code,
+							error_message: payload.val.error.message,
+						}),
 			};
 		case "CronDispatchEvent":
 			return {
@@ -398,7 +410,7 @@ export function fromGeneratedEventPayload(
 			return {
 				type: "ext",
 				envelope: fromGeneratedExtEnvelope(payload.val),
-		};
+			};
 	}
 }
 

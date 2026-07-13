@@ -130,6 +130,7 @@ impl AgentOs {
             }),
             keep_stdin_open: None,
             timeout_ms: None,
+            capture_output: None,
         };
 
         // Subscribe before Execute so the receiver buffers output emitted immediately after the
@@ -182,12 +183,12 @@ impl AgentOs {
         let pending_key = shell_id.clone();
         let handle = tokio::spawn(async move {
             loop {
-                let (_scope, payload) = match events.recv().await {
-                    Ok(value) => value,
+                let event = match events.recv().await {
+                    Ok(event) => event,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 };
-                match payload {
+                match &event.payload {
                     EventPayload::ProcessOutputEvent(output) => {
                         if output.process_id != route_process_id {
                             continue;
@@ -195,10 +196,10 @@ impl AgentOs {
                         // stdout -> data stream; stderr -> separate stderr stream (TS routing).
                         match output.channel {
                             StreamChannel::Stdout => {
-                                let _ = data_tx.send(output.chunk);
+                                let _ = data_tx.send(output.chunk.clone());
                             }
                             StreamChannel::Stderr => {
-                                let _ = stderr_tx.send(output.chunk);
+                                let _ = stderr_tx.send(output.chunk.clone());
                             }
                         }
                     }

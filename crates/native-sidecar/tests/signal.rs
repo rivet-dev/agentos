@@ -524,6 +524,7 @@ fn execute_timeout_is_enforced_by_the_sidecar() {
                 pty: None,
                 keep_stdin_open: None,
                 timeout_ms: Some(25),
+                capture_output: None,
             }),
         ))
         .expect("start process with sidecar timeout");

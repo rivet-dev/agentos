@@ -720,6 +720,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 shell_command: None,
                 keep_stdin_open: None,
                 timeout_ms: None,
+                capture_output: None,
             }),
         ),
     );

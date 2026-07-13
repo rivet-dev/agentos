@@ -530,6 +530,7 @@ mod shadow_root {
                     shell_command: None,
                     keep_stdin_open: None,
                     timeout_ms: None,
+                    capture_output: None,
                 }),
             ))
             .expect("dispatch execute");
@@ -570,6 +571,7 @@ mod shadow_root {
                     shell_command: None,
                     keep_stdin_open: None,
                     timeout_ms: None,
+                    capture_output: None,
                 }),
             ))
             .expect("dispatch execute");

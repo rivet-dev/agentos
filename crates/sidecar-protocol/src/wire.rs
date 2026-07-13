@@ -438,6 +438,7 @@ fn legacy_limits_config(
     let resources = agentos_vm_config::ResourceLimitsConfig {
         cpu_count: legacy_u64(metadata, "resource.cpu_count"),
         max_processes: legacy_u64(metadata, "resource.max_processes"),
+        max_captured_output_bytes: legacy_u64(metadata, "resource.max_captured_output_bytes"),
         max_open_fds: legacy_u64(metadata, "resource.max_open_fds"),
         max_pipes: legacy_u64(metadata, "resource.max_pipes"),
         max_ptys: legacy_u64(metadata, "resource.max_ptys"),
@@ -676,9 +677,10 @@ impl crate::generated_protocol::v1::OwnershipScope {
 
 pub const PROTOCOL_NAME: &str = "agentos-native-sidecar";
 pub const PROTOCOL_VERSION: u16 = 7;
-// 16 MiB: large enough to carry a trusted-client CreateVm config that inlines an
-// entire base-filesystem snapshot, while still bounding a single frame.
-pub const DEFAULT_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+// 64 MiB: large enough for one terminal event containing the default bounded
+// 16 MiB stdout and stderr captures plus protocol overhead, while still
+// bounding every individual frame.
+pub const DEFAULT_MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProtocolCodecError {

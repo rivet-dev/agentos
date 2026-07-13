@@ -94,17 +94,18 @@ mod service {
         use crate::protocol::VmCreatedResponse;
         use crate::protocol::{
             AuthenticateRequest, BootstrapRootFilesystemRequest, CloseStdinRequest,
-            ConfigureVmRequest, CreateVmRequest, DisposeReason, DisposeVmRequest, EventPayload,
-            FindBoundUdpRequest, FindListenerRequest, FsPermissionRule, FsPermissionRuleSet,
-            FsPermissionScope, GetProcessSnapshotRequest, GetResourceSnapshotRequest,
-            GetZombieTimerCountRequest, GuestFilesystemCallRequest, GuestFilesystemOperation,
-            GuestRuntimeKind, HostCallbackResultResponse, MountDescriptor, MountPluginDescriptor,
-            OpenSessionRequest, OwnershipScope, PatternPermissionRule, PatternPermissionRuleSet,
-            PatternPermissionScope, PermissionMode, PermissionsPolicy,
-            RegisterHostCallbacksRequest, RegisteredHostCallbackDefinition, RejectedResponse,
-            RequestFrame, RequestPayload, ResponsePayload, RootFilesystemEntry,
-            RootFilesystemEntryEncoding, RootFilesystemEntryKind, SessionOpenedResponse,
-            SidecarPlacement, SidecarPlacementShared, SidecarRequestFrame, SidecarRequestPayload,
+            ConfigureVmRequest, CreateVmRequest, DisposeReason, DisposeVmRequest, EventFrame,
+            EventPayload, FindBoundUdpRequest, FindListenerRequest, FsPermissionRule,
+            FsPermissionRuleSet, FsPermissionScope, GetProcessSnapshotRequest,
+            GetResourceSnapshotRequest, GetZombieTimerCountRequest, GuestFilesystemCallRequest,
+            GuestFilesystemOperation, GuestRuntimeKind, HostCallbackResultResponse,
+            MountDescriptor, MountPluginDescriptor, OpenSessionRequest, OwnershipScope,
+            PatternPermissionRule, PatternPermissionRuleSet, PatternPermissionScope,
+            PermissionMode, PermissionsPolicy, ProcessExitedEvent, RegisterHostCallbacksRequest,
+            RegisteredHostCallbackDefinition, RejectedResponse, RequestFrame, RequestPayload,
+            ResponsePayload, RootFilesystemEntry, RootFilesystemEntryEncoding,
+            RootFilesystemEntryKind, SessionOpenedResponse, SidecarPlacement,
+            SidecarPlacementShared, SidecarRequestFrame, SidecarRequestPayload,
             SidecarResponsePayload, WriteStdinRequest,
         };
         use crate::state::{
@@ -1450,6 +1451,7 @@ ykAheWCsAteSEWVc0w==\n\
                         shell_command: None,
                         keep_stdin_open: None,
                         timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch guest command");
@@ -8127,6 +8129,310 @@ ykAheWCsAteSEWVc0w==\n\
             );
         }
 
+        fn create_capture_limited_vm(
+            sidecar: &mut NativeSidecar<RecordingBridge>,
+            connection_id: &str,
+            session_id: &str,
+            runtime: GuestRuntimeKind,
+            per_stream_limit_bytes: u64,
+            total_limit_bytes: u64,
+        ) -> String {
+            let created = sidecar
+                .dispatch_blocking(request(
+                    3,
+                    OwnershipScope::session(connection_id, session_id),
+                    RequestPayload::CreateVm(CreateVmRequest::json_config(
+                        runtime,
+                        agentos_vm_config::CreateVmConfig {
+                            limits: Some(agentos_vm_config::VmLimitsConfig {
+                                resources: Some(agentos_vm_config::ResourceLimitsConfig {
+                                    max_captured_output_bytes: Some(total_limit_bytes),
+                                    ..Default::default()
+                                }),
+                                js_runtime: Some(agentos_vm_config::JsRuntimeLimitsConfig {
+                                    captured_output_limit_bytes: Some(per_stream_limit_bytes),
+                                    ..Default::default()
+                                }),
+                                python: Some(agentos_vm_config::PythonLimitsConfig {
+                                    output_buffer_max_bytes: Some(per_stream_limit_bytes),
+                                    ..Default::default()
+                                }),
+                                wasm: Some(agentos_vm_config::WasmLimitsConfig {
+                                    captured_output_limit_bytes: Some(per_stream_limit_bytes),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        },
+                    )),
+                ))
+                .expect("create capture-limited VM");
+            created_vm_id(created).expect("capture-limited VM id")
+        }
+
+        fn drain_captured_terminal(
+            sidecar: &mut NativeSidecar<RecordingBridge>,
+            vm_id: &str,
+            process_id: &str,
+        ) -> ProcessExitedEvent {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                assert!(
+                    Instant::now() < deadline,
+                    "timed out waiting for captured-output terminal event"
+                );
+                pump_sibling_internal_process_events(sidecar, vm_id, process_id);
+                let event = {
+                    let vm = sidecar.vms.get_mut(vm_id).expect("active limited VM");
+                    let process = vm
+                        .active_processes
+                        .get_mut(process_id)
+                        .expect("active captured process");
+                    process.pending_execution_events.pop_front().or_else(|| {
+                        process
+                            .execution
+                            .poll_event_blocking(Duration::from_secs(5))
+                            .expect("poll captured process")
+                    })
+                };
+                let Some(event) = event else {
+                    continue;
+                };
+                let surfaced = sidecar
+                    .handle_execution_event(vm_id, process_id, event)
+                    .expect("handle captured process event");
+                if let Some(EventFrame {
+                    payload: EventPayload::ProcessExited(exited),
+                    ..
+                }) = surfaced
+                {
+                    return exited;
+                }
+            }
+        }
+
+        fn assert_capture_overflow_terminal(
+            terminal: ProcessExitedEvent,
+            process_id: &str,
+            config_path: &str,
+        ) {
+            assert_eq!(terminal.process_id, process_id);
+            assert_eq!(terminal.stdout.as_deref(), Some(&b""[..]));
+            assert_eq!(terminal.stderr.as_deref(), Some(&b""[..]));
+            let terminal_debug = format!("{terminal:?}");
+            let error = terminal
+                .error
+                .unwrap_or_else(|| panic!("typed capture overflow missing from {terminal_debug}"));
+            assert_eq!(
+                error.code,
+                agentos_native_sidecar_core::CAPTURED_OUTPUT_LIMIT_ERROR_CODE
+            );
+            assert!(error.message.contains("limit of 8 bytes"));
+            assert!(error.message.contains(config_path));
+        }
+
+        fn execute_javascript_capture_limit_is_emitted_by_sidecar_terminal_event() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_capture_limited_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                GuestRuntimeKind::JavaScript,
+                8,
+                32,
+            );
+            let process_id = "captured-output-process";
+            let started = sidecar
+                .dispatch_blocking(request(
+                    4,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        process_id: Some(process_id.to_owned()),
+                        command: Some(String::from("node")),
+                        shell_command: None,
+                        runtime: None,
+                        entrypoint: None,
+                        args: vec![
+                            String::from("-e"),
+                            String::from("process.stdout.write('123456789')"),
+                        ],
+                        env: None,
+                        cwd: None,
+                        wasm_permission_tier: None,
+                        pty: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: Some(true),
+                    }),
+                ))
+                .expect("start captured process");
+            assert!(matches!(
+                started.response.payload,
+                ResponsePayload::ProcessStarted(_)
+            ));
+
+            let terminal = drain_captured_terminal(&mut sidecar, &vm_id, process_id);
+            assert_eq!(terminal.exit_code, 137);
+            assert_capture_overflow_terminal(
+                terminal,
+                process_id,
+                "limits.jsRuntime.capturedOutputLimitBytes",
+            );
+        }
+
+        fn execute_vm_aggregate_capture_limit_is_emitted_by_sidecar_terminal_event() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_capture_limited_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                GuestRuntimeKind::JavaScript,
+                16,
+                8,
+            );
+            let process_id = "captured-output-vm-total";
+            let started = sidecar
+                .dispatch_blocking(request(
+                    4,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        process_id: Some(process_id.to_owned()),
+                        command: Some(String::from("node")),
+                        shell_command: None,
+                        runtime: None,
+                        entrypoint: None,
+                        args: vec![
+                            String::from("-e"),
+                            String::from("process.stdout.write('123456789')"),
+                        ],
+                        env: None,
+                        cwd: None,
+                        wasm_permission_tier: None,
+                        pty: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: Some(true),
+                    }),
+                ))
+                .expect("start aggregate-limited captured process");
+            assert!(matches!(
+                started.response.payload,
+                ResponsePayload::ProcessStarted(_)
+            ));
+
+            let terminal = drain_captured_terminal(&mut sidecar, &vm_id, process_id);
+            assert_eq!(terminal.exit_code, 137);
+            assert_capture_overflow_terminal(
+                terminal,
+                process_id,
+                "limits.resources.maxCapturedOutputBytes",
+            );
+        }
+
+        fn execute_python_capture_limit_is_emitted_by_sidecar_terminal_event() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_capture_limited_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                GuestRuntimeKind::Python,
+                8,
+                32,
+            );
+            let process_id = "captured-output-python";
+            let started = sidecar
+                .dispatch_blocking(request(
+                    4,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        process_id: Some(process_id.to_owned()),
+                        command: None,
+                        shell_command: None,
+                        runtime: Some(GuestRuntimeKind::Python),
+                        entrypoint: Some(String::from("print('123456789')")),
+                        args: Vec::new(),
+                        env: None,
+                        cwd: None,
+                        wasm_permission_tier: None,
+                        pty: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: Some(true),
+                    }),
+                ))
+                .expect("start captured Python process");
+            assert!(matches!(
+                started.response.payload,
+                ResponsePayload::ProcessStarted(_)
+            ));
+
+            let terminal = drain_captured_terminal(&mut sidecar, &vm_id, process_id);
+            assert_capture_overflow_terminal(
+                terminal,
+                process_id,
+                "limits.python.outputBufferMaxBytes",
+            );
+        }
+
+        fn execute_wasm_capture_limit_is_emitted_by_sidecar_terminal_event() {
+            let cwd = temp_dir("agentos-native-sidecar-captured-output-wasm");
+            let entrypoint = cwd.join("output.wasm");
+            write_fixture(&entrypoint, wasm_stdout_module("123456789"));
+
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_capture_limited_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                GuestRuntimeKind::WebAssembly,
+                8,
+                32,
+            );
+            let process_id = "captured-output-wasm";
+            let started = sidecar
+                .dispatch_blocking(request(
+                    4,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        process_id: Some(process_id.to_owned()),
+                        command: None,
+                        shell_command: None,
+                        runtime: Some(GuestRuntimeKind::WebAssembly),
+                        entrypoint: Some(entrypoint.to_string_lossy().into_owned()),
+                        args: Vec::new(),
+                        env: None,
+                        cwd: None,
+                        wasm_permission_tier: None,
+                        pty: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: Some(true),
+                    }),
+                ))
+                .expect("start captured WASM process");
+            assert!(matches!(
+                started.response.payload,
+                ResponsePayload::ProcessStarted(_)
+            ));
+
+            let terminal = drain_captured_terminal(&mut sidecar, &vm_id, process_id);
+            assert_eq!(terminal.exit_code, 137);
+            assert_capture_overflow_terminal(
+                terminal,
+                process_id,
+                "limits.wasm.capturedOutputLimitBytes",
+            );
+        }
+
         fn create_vm_bootstrap_needs_no_guest_filesystem_rights() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
@@ -9010,6 +9316,7 @@ ykAheWCsAteSEWVc0w==\n\
                         shell_command: None,
                         keep_stdin_open: None,
                         timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch python execute");
@@ -9120,6 +9427,7 @@ ykAheWCsAteSEWVc0w==\n\
                         shell_command: None,
                         keep_stdin_open: None,
                         timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch wasm command execute");
@@ -9219,6 +9527,7 @@ ykAheWCsAteSEWVc0w==\n\
                         shell_command: None,
                         keep_stdin_open: None,
                         timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch wasm command execute");
@@ -9285,6 +9594,7 @@ ykAheWCsAteSEWVc0w==\n\
                             shell_command: None,
                             keep_stdin_open: None,
                             timeout_ms: None,
+                            capture_output: None,
                         }),
                     ))
                     .expect("dispatch wasm execute");
@@ -9371,6 +9681,7 @@ ykAheWCsAteSEWVc0w==\n\
                         shell_command: None,
                         keep_stdin_open: None,
                         timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch wasm execute");
@@ -9430,6 +9741,7 @@ ykAheWCsAteSEWVc0w==\n\
                         shell_command: None,
                         keep_stdin_open: None,
                         timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch wasm execute");
@@ -10660,6 +10972,7 @@ process.stdout.write(`${JSON.stringify({
                         shell_command: None,
                         keep_stdin_open: None,
                         timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch javascript command execute");
@@ -10989,6 +11302,7 @@ if (child.status !== 0) {
                         shell_command: None,
                         keep_stdin_open: None,
                         timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch agentos package execute");
@@ -11063,6 +11377,7 @@ if (child.status !== 0) {
                         shell_command: None,
                         keep_stdin_open: None,
                         timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch node eval execute");
@@ -11109,6 +11424,7 @@ if (child.status !== 0) {
                         shell_command: None,
                         keep_stdin_open: None,
                         timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch missing command execute");
@@ -13001,6 +13317,7 @@ console.log(seen.join("\n"));
                         shell_command: None,
                         keep_stdin_open: None,
                         timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch import fresh execute");
@@ -21372,6 +21689,26 @@ console.log(JSON.stringify({
         }
 
         #[test]
+        fn execute_javascript_capture_limit_terminal_event_regression() {
+            run_isolated_service_test("execute-javascript-capture-limit-terminal");
+        }
+
+        #[test]
+        fn execute_vm_aggregate_capture_limit_terminal_event_regression() {
+            run_isolated_service_test("execute-vm-aggregate-capture-limit-terminal");
+        }
+
+        #[test]
+        fn execute_python_capture_limit_terminal_event_regression() {
+            run_isolated_service_test("execute-python-capture-limit-terminal");
+        }
+
+        #[test]
+        fn execute_wasm_capture_limit_terminal_event_regression() {
+            run_isolated_service_test("execute-wasm-capture-limit-terminal");
+        }
+
+        #[test]
         fn __service_isolated_runner() {
             let Ok(test_name) = std::env::var(ISOLATED_SERVICE_TEST_ENV) else {
                 return;
@@ -21485,6 +21822,18 @@ console.log(JSON.stringify({
                 }
                 "loopback-tls-https-pending-write" => {
                     javascript_loopback_tls_https_get_buffers_handshake_pending_write_work();
+                }
+                "execute-javascript-capture-limit-terminal" => {
+                    execute_javascript_capture_limit_is_emitted_by_sidecar_terminal_event();
+                }
+                "execute-vm-aggregate-capture-limit-terminal" => {
+                    execute_vm_aggregate_capture_limit_is_emitted_by_sidecar_terminal_event();
+                }
+                "execute-python-capture-limit-terminal" => {
+                    execute_python_capture_limit_is_emitted_by_sidecar_terminal_event();
+                }
+                "execute-wasm-capture-limit-terminal" => {
+                    execute_wasm_capture_limit_is_emitted_by_sidecar_terminal_event();
                 }
                 other => panic!("unknown isolated service test {other}"),
             }

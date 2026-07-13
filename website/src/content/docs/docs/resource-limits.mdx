@@ -22,6 +22,7 @@ Set caps on the `limits` object in the `agentOS` config. Limits are grouped by s
 | Limit | Controls | Notes |
 |---|---|---|
 | `resources.maxProcesses` | Concurrent processes in the VM process table | Caps fork bombs and runaway spawning. New spawns fail with `EAGAIN`. |
+| `resources.maxCapturedOutputBytes` | Aggregate bytes retained by all active captured processes | Default is `32 MiB`; concurrent `exec` captures share this sidecar-owned VM budget. |
 | `resources.maxOpenFds` | Open file descriptors | Exhausting the table fails with `EMFILE` / `ENFILE`. |
 | `resources.maxSockets` | Open sockets in the socket table | Bounds concurrent connections; excess `connect`/`accept` fail. |
 | `resources.maxFilesystemBytes` | Total bytes stored in the virtual filesystem | Bounds VFS storage; writes past the budget fail with a no-space error. |
@@ -33,10 +34,13 @@ Set caps on the `limits` object in the `agentOS` config. Limits are grouped by s
 | `jsRuntime.wallClockLimitMs` | JavaScript elapsed wall-clock backstop | Default is `0`, disabled. Use this for finite commands, not long-lived adapters. |
 | `jsRuntime.importCacheMaterializeTimeoutMs` | Node import-cache materialization timeout | Default is `30000`. |
 | `jsRuntime.syncRpcWaitTimeoutMs` | JavaScript sync host-RPC wait | Unset keeps the engine default, currently `30000`. |
+| `jsRuntime.capturedOutputLimitBytes` | Captured JavaScript stdout or stderr bytes per stream | Default is `16 MiB`; enforced by the sidecar when a host `exec` call requests a buffered result. |
 | `python.executionTimeoutMs` | Python execution wall-clock timeout | Default is `300000`. |
 | `python.maxOldSpaceMb` | Pyodide runner V8 old-space heap, in MiB | Default is `0`, which keeps the engine default. |
+| `python.outputBufferMaxBytes` | Captured Python stdout or stderr bytes per stream | Default is `1 MiB`; enforced by the sidecar when a host `exec` call requests a buffered result. |
 | `wasm.prewarmTimeoutMs` | WASM compile-cache warmup timeout | Default is `30000`. |
 | `wasm.runnerHeapLimitMb` | Trusted WASI/WASM runner V8 heap, in MiB | Default is `2048`; this is not guest linear memory. |
+| `wasm.capturedOutputLimitBytes` | Captured WASM stdout or stderr bytes per stream | Default is `16 MiB`; enforced by the sidecar when a host `exec` call requests a buffered result. |
 
 ## Behavior at the limit
 
@@ -45,6 +49,20 @@ Set caps on the `limits` object in the `agentOS` config. Limits are grouped by s
 - **JavaScript wall time**: awaiting or blocked JS terminates only when you set `jsRuntime.wallClockLimitMs`; the default is disabled for long-lived adapters.
 - **Filesystem bytes**: writing past the VFS budget fails with a no-space error to the guest.
 - **Counts (fds / processes / sockets)**: hitting a table cap returns the standard POSIX errno (`EMFILE`, `EAGAIN`, etc.), exactly as a real Linux kernel would under `ulimit`.
+- **Captured process output**: `exec` asks the sidecar to bound the buffered
+  result and return it on the terminal protocol event. If either stdout or
+  stderr crosses its runtime-specific capture limit, the process is killed and the call fails with
+  `ERR_CAPTURED_OUTPUT_LIMIT_EXCEEDED`, naming the configured limit to raise.
+  Concurrent captures also share `resources.maxCapturedOutputBytes`; the
+  process whose next chunk would cross that VM-wide budget fails with the same
+  typed error naming the aggregate limit. Completed terminal frames are
+  backpressured like a pipe instead of accumulating in a large sidecar queue.
+  Raw `spawn` output and `captureStdio: false` remain streaming interfaces and
+  do not accumulate a sidecar result buffer; stream callbacks still receive the bytes.
+  The default negotiated wire-frame cap is `64 MiB`, which fits both default
+  JavaScript/WASM `16 MiB` capture streams (or both Python `1 MiB` streams) plus
+  terminal-event overhead. Explicit capture limits that cannot both fit the
+  configured frame cap are rejected when the VM is created.
 
 ## Sidecar liveness
 

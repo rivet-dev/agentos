@@ -1425,6 +1425,7 @@ export class SidecarProcess {
 			pty?: { cols?: number; rows?: number };
 			keepStdinOpen?: boolean;
 			timeoutMs?: number;
+			captureOutput?: boolean;
 		},
 	): Promise<{ processId: string; pid: number | null }> {
 		const response = await this.sendRequest({
@@ -1457,6 +1458,9 @@ export class SidecarProcess {
 				...(options.keepStdinOpen ? { keep_stdin_open: true } : {}),
 				...(options.timeoutMs !== undefined
 					? { timeout_ms: options.timeoutMs }
+					: {}),
+				...(options.captureOutput !== undefined
+					? { capture_output: options.captureOutput }
 					: {}),
 			},
 		});

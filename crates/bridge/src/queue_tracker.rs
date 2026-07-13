@@ -61,7 +61,7 @@ impl LimitCategory {
 }
 
 /// Stable catalog of tracked limits that may emit near-capacity or exhaustion
-/// warnings. Keep `website/src/content/docs/docs/features/resource-limits.mdx`
+/// warnings. Keep `website/src/content/docs/docs/resource-limits.mdx`
 /// in sync when adding, removing, or renaming variants so host-visible warning
 /// names and the documented constants do not drift.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -86,6 +86,8 @@ pub enum TrackedLimit {
     VmInodes,
     VmRecursiveFsDepth,
     VmRecursiveFsEntries,
+    VmCapturedOutputBytes,
+    ProcessCapturedOutputBytes,
     V8HeapBytes,
     V8CpuTimeMs,
     V8WallClockMs,
@@ -118,6 +120,8 @@ impl TrackedLimit {
             TrackedLimit::VmInodes => "vm_inodes",
             TrackedLimit::VmRecursiveFsDepth => "vm_recursive_fs_depth",
             TrackedLimit::VmRecursiveFsEntries => "vm_recursive_fs_entries",
+            TrackedLimit::VmCapturedOutputBytes => "vm_captured_output_bytes",
+            TrackedLimit::ProcessCapturedOutputBytes => "process_captured_output_bytes",
             TrackedLimit::V8HeapBytes => "v8_heap_bytes",
             TrackedLimit::V8CpuTimeMs => "v8_cpu_time_ms",
             TrackedLimit::V8WallClockMs => "v8_wall_clock_ms",
@@ -148,7 +152,10 @@ impl TrackedLimit {
             | TrackedLimit::VmInodes
             | TrackedLimit::VmRecursiveFsDepth
             | TrackedLimit::VmRecursiveFsEntries => LimitCategory::Resource,
-            TrackedLimit::V8HeapBytes | TrackedLimit::WasmMemoryBytes => LimitCategory::Memory,
+            TrackedLimit::VmCapturedOutputBytes
+            | TrackedLimit::ProcessCapturedOutputBytes
+            | TrackedLimit::V8HeapBytes
+            | TrackedLimit::WasmMemoryBytes => LimitCategory::Memory,
             TrackedLimit::V8CpuTimeMs | TrackedLimit::V8WallClockMs | TrackedLimit::WasmFuelMs => {
                 LimitCategory::Cpu
             }

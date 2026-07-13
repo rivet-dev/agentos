@@ -315,6 +315,7 @@ pub fn execute_wire(
                     shell_command: None,
                     keep_stdin_open: None,
                     timeout_ms: None,
+                    capture_output: None,
                 },
             ),
         ))

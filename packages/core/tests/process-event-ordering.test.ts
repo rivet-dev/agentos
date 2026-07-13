@@ -73,6 +73,49 @@ function createProxy(client: unknown) {
 }
 
 describe("sidecar-authoritative process event ordering", () => {
+	it("uses terminal sidecar capture instead of rebuilding output from stream callbacks", async () => {
+		const { client, pushEvent } = createStubClient();
+		const proxy = createProxy(client);
+		try {
+			const streamed: string[] = [];
+			const result = proxy.execArgv("node", ["script.js"], {
+				onStdout(chunk) {
+					streamed.push(new TextDecoder().decode(chunk));
+				},
+			});
+			for (let turn = 0; turn < 3; turn += 1) await Promise.resolve();
+
+			pushEvent({
+				ownership: { scope: "vm", vm_id: vm.vmId },
+				payload: {
+					type: "process_output",
+					process_id: "process-1",
+					channel: "stdout",
+					chunk: new TextEncoder().encode("callback-only"),
+				},
+			});
+			pushEvent({
+				ownership: { scope: "vm", vm_id: vm.vmId },
+				payload: {
+					type: "process_exited",
+					process_id: "process-1",
+					exit_code: 0,
+					stdout: new TextEncoder().encode("sidecar-result"),
+					stderr: new TextEncoder().encode("sidecar-stderr"),
+				},
+			});
+
+			await expect(result).resolves.toEqual({
+				exitCode: 0,
+				stdout: "sidecar-result",
+				stderr: "sidecar-stderr",
+			});
+			expect(streamed.join("")).toBe("callback-only");
+		} finally {
+			await proxy.dispose();
+		}
+	});
+
 	it("completes immediately when ordered output is followed by exit", async () => {
 		vi.useFakeTimers();
 		const { client, pushEvent } = createStubClient();

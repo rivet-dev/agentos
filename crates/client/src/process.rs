@@ -15,6 +15,7 @@ use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 
 use agentos_sidecar_client::wire::{self, EventPayload, ProcessSnapshotStatus, StreamChannel};
+use agentos_sidecar_client::SharedWireEvent;
 
 use crate::agent_os::{AgentOs, ProcessEntry, ProcessExit};
 use crate::error::ClientError;
@@ -178,9 +179,9 @@ pub struct ProcessTreeNode {
 
 impl AgentOs {
     /// Run a command to completion. The wire `Execute` request starts the process and returns a
-    /// process id immediately; stdout/stderr are accumulated and the call resolves once the matching
-    /// `ProcessExited` event arrives. This mirrors the TS pass-through to `kernel.exec` semantically:
-    /// the result is the full captured stdout/stderr plus exit code.
+    /// process id immediately; the sidecar owns bounded stdout/stderr capture and returns it on the
+    /// matching `ProcessExited` event. The client only forwards callbacks and deserializes the
+    /// terminal result.
     pub async fn exec(&self, command: &str, options: ExecOptions) -> Result<ExecResult> {
         self.exec_request(None, Some(command), &[], options).await
     }
@@ -212,6 +213,7 @@ impl AgentOs {
         let resolved_shell_command = shell_command.map(str::to_owned);
         let resolved_args = args.to_vec();
         let timeout_ms = timeout_to_wire(options.timeout)?;
+        let capture_stdio = options.capture_stdio.unwrap_or(true);
         let started = self
             .send_execute(
                 resolved_command,
@@ -221,6 +223,7 @@ impl AgentOs {
                 options.cwd.clone(),
                 false,
                 timeout_ms,
+                Some(capture_stdio),
             )
             .await
             .context("exec: Execute request failed")?;
@@ -266,58 +269,13 @@ impl AgentOs {
         let mut on_stdout = options.on_stdout.take();
         let mut on_stderr = options.on_stderr.take();
 
-        let capture_stdio = options.capture_stdio.unwrap_or(true);
-        let mut stdout = Vec::<u8>::new();
-        let mut stderr = Vec::<u8>::new();
-        let exit_code = loop {
-            let frame = events.recv().await;
-            let (_, payload) = match frame {
-                Ok(frame) => frame,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => {
-                    return Err(ClientError::Sidecar(
-                        "exec: event stream closed before process exit".to_owned(),
-                    )
-                    .into());
-                }
-            };
-            match payload {
-                EventPayload::ProcessOutputEvent(output) if output.process_id == process_id => {
-                    match output.channel {
-                        StreamChannel::Stdout => {
-                            if let Some(cb) = on_stdout.as_mut() {
-                                cb(&output.chunk);
-                            }
-                            if capture_stdio {
-                                stdout.extend_from_slice(&output.chunk);
-                            }
-                        }
-                        StreamChannel::Stderr => {
-                            if let Some(cb) = on_stderr.as_mut() {
-                                cb(&output.chunk);
-                            }
-                            if capture_stdio {
-                                stderr.extend_from_slice(&output.chunk);
-                            }
-                        }
-                    }
-                }
-                EventPayload::ProcessExitedEvent(exited) if exited.process_id == process_id => {
-                    break exited.exit_code;
-                }
-                EventPayload::ProcessOutputEvent(_)
-                | EventPayload::ProcessExitedEvent(_)
-                | EventPayload::CronDispatchEvent(_)
-                | EventPayload::VmLifecycleEvent(_)
-                | EventPayload::StructuredEvent(_)
-                | EventPayload::ExtEnvelope(_) => {}
-            }
-        };
+        let (exit_code, stdout, stderr) =
+            collect_exec_events(&process_id, &mut events, &mut on_stdout, &mut on_stderr).await?;
 
         Ok(ExecResult {
             exit_code,
-            stdout: String::from_utf8_lossy(&stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            stdout,
+            stderr,
         })
     }
 
@@ -370,6 +328,7 @@ impl AgentOs {
                 options.base.cwd.clone(),
                 options.stream_stdin.unwrap_or(false),
                 timeout_to_wire(options.base.timeout)?,
+                None,
             )
             .await
             .context("spawn: Execute request failed")?;
@@ -724,6 +683,7 @@ impl AgentOs {
         cwd: Option<String>,
         keep_stdin_open: bool,
         timeout_ms: Option<u64>,
+        capture_output: Option<bool>,
     ) -> std::result::Result<wire::ProcessStartedResponse, ClientError> {
         let ownership = self.vm_scope();
         let response = self
@@ -743,6 +703,7 @@ impl AgentOs {
                     pty: None,
                     keep_stdin_open: keep_stdin_open.then_some(true),
                     timeout_ms,
+                    capture_output,
                 }),
             )
             .await?;
@@ -839,14 +800,14 @@ impl AgentOs {
     async fn run_spawn_events(
         self,
         process_id: String,
-        mut events: broadcast::Receiver<(wire::OwnershipScope, EventPayload)>,
+        mut events: broadcast::Receiver<SharedWireEvent>,
         stdout_tx: broadcast::Sender<Vec<u8>>,
         stderr_tx: broadcast::Sender<Vec<u8>>,
         exit_tx: watch::Sender<Option<ProcessExit>>,
     ) {
         loop {
-            let (_, payload) = match events.recv().await {
-                Ok(frame) => frame,
+            let event = match events.recv().await {
+                Ok(event) => event,
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(broadcast::error::RecvError::Closed) => {
                     let _ = exit_tx.send(Some(ProcessExit::Failed(format!(
@@ -855,9 +816,9 @@ impl AgentOs {
                     break;
                 }
             };
-            match payload {
+            match &event.payload {
                 EventPayload::ProcessOutputEvent(output) if output.process_id == process_id => {
-                    let bytes = output.chunk;
+                    let bytes = output.chunk.clone();
                     match output.channel {
                         StreamChannel::Stdout => {
                             let _ = stdout_tx.send(bytes);
@@ -881,6 +842,62 @@ impl AgentOs {
         }
         let _guard = self.inner().process_registry_lock.lock();
         self.prune_exited_processes_locked(0);
+    }
+}
+
+async fn collect_exec_events(
+    process_id: &str,
+    events: &mut broadcast::Receiver<SharedWireEvent>,
+    on_stdout: &mut Option<OutputCallback>,
+    on_stderr: &mut Option<OutputCallback>,
+) -> std::result::Result<(i32, String, String), ClientError> {
+    loop {
+        let event = match events.recv().await {
+            Ok(event) => event,
+            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(broadcast::error::RecvError::Closed) => {
+                return Err(ClientError::Sidecar(
+                    "exec: event stream closed before process exit".to_owned(),
+                ));
+            }
+        };
+        match &event.payload {
+            EventPayload::ProcessOutputEvent(output) if output.process_id == process_id => {
+                match output.channel {
+                    StreamChannel::Stdout => {
+                        if let Some(cb) = on_stdout.as_mut() {
+                            cb(&output.chunk);
+                        }
+                    }
+                    StreamChannel::Stderr => {
+                        if let Some(cb) = on_stderr.as_mut() {
+                            cb(&output.chunk);
+                        }
+                    }
+                }
+            }
+            EventPayload::ProcessExitedEvent(exited) if exited.process_id == process_id => {
+                if let Some(error) = &exited.error {
+                    return Err(ClientError::Kernel {
+                        code: error.code.clone(),
+                        message: error.message.clone(),
+                    });
+                }
+                return Ok((
+                    exited.exit_code,
+                    String::from_utf8_lossy(exited.stdout.as_deref().unwrap_or_default())
+                        .into_owned(),
+                    String::from_utf8_lossy(exited.stderr.as_deref().unwrap_or_default())
+                        .into_owned(),
+                ));
+            }
+            EventPayload::ProcessOutputEvent(_)
+            | EventPayload::ProcessExitedEvent(_)
+            | EventPayload::CronDispatchEvent(_)
+            | EventPayload::VmLifecycleEvent(_)
+            | EventPayload::StructuredEvent(_)
+            | EventPayload::ExtEnvelope(_) => {}
+        }
     }
 }
 
@@ -1056,12 +1073,63 @@ pub(crate) fn drain_process_output_tasks(processes: &SccHashMap<u32, ProcessEntr
 #[cfg(test)]
 mod tests {
     use super::{
-        drain_process_output_tasks, exited_pids_to_prune, install_output_callback,
-        process_exit_result, timeout_to_wire, ExecOptions, OutputCallback,
+        collect_exec_events, drain_process_output_tasks, exited_pids_to_prune,
+        install_output_callback, process_exit_result, timeout_to_wire, ExecOptions, OutputCallback,
     };
     use crate::agent_os::{ProcessEntry, ProcessExit};
+    use agentos_sidecar_client::wire;
     use scc::HashMap as SccHashMap;
+    use std::sync::{Arc, Mutex};
     use tokio::sync::{broadcast, watch};
+
+    #[tokio::test]
+    async fn exec_callbacks_precede_terminal_result_and_do_not_build_it() {
+        let (tx, mut events) = broadcast::channel(4);
+        let callback_chunks = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+        let callback_chunks_ref = Arc::clone(&callback_chunks);
+        let mut on_stdout: Option<OutputCallback> = Some(Box::new(move |chunk| {
+            callback_chunks_ref.lock().unwrap().push(chunk.to_vec());
+        }));
+        let mut on_stderr = None;
+        let ownership = wire::OwnershipScope::VmOwnership(wire::VmOwnership {
+            connection_id: "conn-test".to_owned(),
+            session_id: "session-test".to_owned(),
+            vm_id: "vm-test".to_owned(),
+        });
+
+        tx.send(Arc::new(wire::EventFrame {
+            schema: wire::protocol_schema(),
+            ownership: ownership.clone(),
+            payload: wire::EventPayload::ProcessOutputEvent(wire::ProcessOutputEvent {
+                process_id: "proc-test".to_owned(),
+                channel: wire::StreamChannel::Stdout,
+                chunk: b"streamed".to_vec(),
+            }),
+        }))
+        .expect("stream event");
+        tx.send(Arc::new(wire::EventFrame {
+            schema: wire::protocol_schema(),
+            ownership,
+            payload: wire::EventPayload::ProcessExitedEvent(wire::ProcessExitedEvent {
+                process_id: "proc-test".to_owned(),
+                exit_code: 7,
+                stdout: Some(b"terminal".to_vec()),
+                stderr: Some(b"terminal-error".to_vec()),
+                error: None,
+            }),
+        }))
+        .expect("terminal event");
+
+        let result = collect_exec_events("proc-test", &mut events, &mut on_stdout, &mut on_stderr)
+            .await
+            .expect("terminal result");
+
+        assert_eq!(*callback_chunks.lock().unwrap(), vec![b"streamed".to_vec()]);
+        assert_eq!(
+            result,
+            (7, "terminal".to_owned(), "terminal-error".to_owned())
+        );
+    }
 
     /// Regression for the per-process output-callback leak (H3): a `ProcessEntry` retains clones of
     /// its `stdout_tx`/`stderr_tx`, so the output tasks never observe the broadcast `Closed` and hang

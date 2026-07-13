@@ -244,6 +244,12 @@ pub struct ResourceLimits {
     pub max_processes: Option<u64>,
     #[serde(
         default,
+        rename = "maxCapturedOutputBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_captured_output_bytes: Option<u64>,
+    #[serde(
+        default,
         rename = "maxOpenFds",
         skip_serializing_if = "Option::is_none"
     )]

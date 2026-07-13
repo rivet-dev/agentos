@@ -372,6 +372,7 @@ type ExecuteRequest struct {
   pty: optional<PtyOptions>
   keepStdinOpen: optional<bool>
   timeoutMs: optional<u64>
+  captureOutput: optional<bool>
 }
 
 type WriteStdinRequest struct {
@@ -947,6 +948,9 @@ type ProcessOutputEvent struct {
 type ProcessExitedEvent struct {
   processId: str
   exitCode: i32
+  stdout: optional<data>
+  stderr: optional<data>
+  error: optional<RejectedResponse>
 }
 
 # Asynchronous cron state produced after a sidecar-owned action finishes. Hosts

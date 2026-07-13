@@ -1,3 +1,4 @@
+use crate::CapturedOutputResult;
 use agentos_sidecar_protocol::protocol::{
     AgentosProjectedAgent, AuthenticateRequest, AuthenticatedResponse, BoundUdpSnapshotResponse,
     EventFrame, EventPayload, LayerCreatedResponse, LayerSealedResponse, ListenerSnapshotResponse,
@@ -376,11 +377,27 @@ pub fn process_exited_event(
     process_id: &str,
     exit_code: i32,
 ) -> EventFrame {
+    process_exited_event_with_result(ownership, process_id, exit_code, None)
+}
+
+pub fn process_exited_event_with_result(
+    ownership: OwnershipScope,
+    process_id: &str,
+    exit_code: i32,
+    capture: Option<CapturedOutputResult>,
+) -> EventFrame {
+    let (stdout, stderr, error) = match capture {
+        Some(capture) => (Some(capture.stdout), Some(capture.stderr), capture.error),
+        None => (None, None, None),
+    };
     event(
         ownership,
         EventPayload::ProcessExited(ProcessExitedEvent {
             process_id: process_id.to_owned(),
             exit_code,
+            stdout,
+            stderr,
+            error,
         }),
     )
 }

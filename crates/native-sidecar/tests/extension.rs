@@ -109,6 +109,7 @@ impl Extension for EchoExtension {
                     shell_command: None,
                     keep_stdin_open: None,
                     timeout_ms: None,
+                    capture_output: None,
                 })
                 .await?;
             assert_eq!(started.process_id, process_id);
@@ -136,6 +137,7 @@ impl Extension for EchoExtension {
                     shell_command: None,
                     keep_stdin_open: None,
                     timeout_ms: None,
+                    capture_output: None,
                 })
                 .await?;
             assert_eq!(lifecycle_started.process_id, lifecycle_process_id);

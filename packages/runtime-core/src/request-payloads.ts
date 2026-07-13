@@ -182,6 +182,7 @@ export type LiveRequestPayload =
 			pty?: { cols?: number; rows?: number };
 			keep_stdin_open?: boolean;
 			timeout_ms?: number;
+			capture_output?: boolean;
 	  }
 	| {
 			type: "write_stdin";
@@ -492,6 +493,7 @@ export function toGeneratedRequestPayload(
 						payload.timeout_ms === undefined
 							? null
 							: BigInt(payload.timeout_ms),
+					captureOutput: payload.capture_output ?? null,
 				},
 			};
 		case "write_stdin":

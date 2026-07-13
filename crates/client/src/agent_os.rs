@@ -545,45 +545,49 @@ fn spawn_acp_event_pump(client: &AgentOs) {
     let handle = tokio::spawn(async move {
         loop {
             match events.recv().await {
-                Ok((ownership, wire::EventPayload::ExtEnvelope(envelope))) => {
-                    let Some(inner) = inner.upgrade() else {
-                        break;
-                    };
-                    if inner.disposed.load(Ordering::SeqCst) {
-                        break;
+                Ok(event) => match &event.payload {
+                    wire::EventPayload::ExtEnvelope(envelope) => {
+                        let Some(inner) = inner.upgrade() else {
+                            break;
+                        };
+                        if inner.disposed.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        if wire_ownership_vm_id(&event.ownership) != Some(inner.vm_id.as_str()) {
+                            continue;
+                        }
+                        if let Err(error) = deliver_acp_ext_event(&inner, envelope) {
+                            tracing::warn!(?error, "failed to deliver acp extension event");
+                        }
                     }
-                    if wire_ownership_vm_id(&ownership) != Some(inner.vm_id.as_str()) {
-                        continue;
+                    wire::EventPayload::CronDispatchEvent(dispatch) => {
+                        let Some(inner) = inner.upgrade() else {
+                            break;
+                        };
+                        if inner.disposed.load(Ordering::SeqCst)
+                            || wire_ownership_vm_id(&event.ownership) != Some(inner.vm_id.as_str())
+                        {
+                            continue;
+                        }
+                        let client = AgentOs::from_inner(inner.clone());
+                        if let Err(error) = inner
+                            .cron
+                            .consume_dispatch(
+                                &client,
+                                dispatch.alarm.clone(),
+                                dispatch.runs.clone(),
+                                dispatch.events.clone(),
+                            )
+                            .await
+                        {
+                            tracing::error!(?error, "failed to consume sidecar cron dispatch");
+                        }
                     }
-                    if let Err(error) = deliver_acp_ext_event(&inner, envelope) {
-                        tracing::warn!(?error, "failed to deliver acp extension event");
-                    }
-                }
-                Ok((ownership, wire::EventPayload::CronDispatchEvent(dispatch))) => {
-                    let Some(inner) = inner.upgrade() else {
-                        break;
-                    };
-                    if inner.disposed.load(Ordering::SeqCst)
-                        || wire_ownership_vm_id(&ownership) != Some(inner.vm_id.as_str())
-                    {
-                        continue;
-                    }
-                    let client = AgentOs::from_inner(inner.clone());
-                    if let Err(error) = inner
-                        .cron
-                        .consume_dispatch(&client, dispatch.alarm, dispatch.runs, dispatch.events)
-                        .await
-                    {
-                        tracing::error!(?error, "failed to consume sidecar cron dispatch");
-                    }
-                }
-                Ok((
-                    _,
                     wire::EventPayload::VmLifecycleEvent(_)
                     | wire::EventPayload::ProcessOutputEvent(_)
                     | wire::EventPayload::ProcessExitedEvent(_)
-                    | wire::EventPayload::StructuredEvent(_),
-                )) => {}
+                    | wire::EventPayload::StructuredEvent(_) => {}
+                },
                 Err(broadcast::error::RecvError::Lagged(_)) => {}
                 Err(broadcast::error::RecvError::Closed) => break,
             }
@@ -594,7 +598,7 @@ fn spawn_acp_event_pump(client: &AgentOs) {
 
 fn deliver_acp_ext_event(
     inner: &AgentOsInner,
-    envelope: wire::ExtEnvelope,
+    envelope: &wire::ExtEnvelope,
 ) -> Result<(), ClientError> {
     if envelope.namespace != ACP_EXTENSION_NAMESPACE {
         return Ok(());
@@ -2150,6 +2154,7 @@ mod tests {
             limits: Some(AgentOsLimits {
                 resources: Some(ResourceLimits {
                     max_processes: Some(7),
+                    max_captured_output_bytes: Some(2048),
                     max_filesystem_bytes: Some(4096),
                     ..Default::default()
                 }),
@@ -2187,6 +2192,7 @@ mod tests {
 
         let resources = limits.resources.expect("resource limits");
         assert_eq!(resources.max_processes, Some(7));
+        assert_eq!(resources.max_captured_output_bytes, Some(2048));
         assert_eq!(resources.max_filesystem_bytes, Some(4096));
         assert_eq!(
             limits.http.expect("http limits").max_fetch_response_bytes,

@@ -333,6 +333,9 @@ where
             VmState {
                 connection_id: connection_id.clone(),
                 session_id: session_id.clone(),
+                captured_output_budget: agentos_native_sidecar_core::CapturedOutputBudget::for_vm(
+                    &limits,
+                ),
                 limits,
                 dns,
                 listen_policy,

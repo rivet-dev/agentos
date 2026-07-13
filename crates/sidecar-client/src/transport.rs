@@ -55,6 +55,13 @@ pub type WireSidecarCallback = Arc<
         + Sync,
 >;
 
+/// A decoded sidecar event shared across all transport subscribers.
+///
+/// The transport has several independent event consumers. Keeping the decoded frame behind an
+/// [`Arc`] makes broadcast fan-out clone only this pointer instead of deep-cloning payload buffers
+/// such as captured process stdout/stderr for every subscriber.
+pub type SharedWireEvent = Arc<wire::EventFrame>;
+
 /// Owns the spawned sidecar child, the framed BARE stdio I/O tasks, the pending-response map, the
 /// event fan-out, and the callback dispatch table.
 pub struct SidecarTransport {
@@ -68,7 +75,7 @@ pub struct SidecarTransport {
     /// Negotiated max frame size.
     max_frame_bytes: AtomicUsize,
     /// Structured-event fan-out for `Event` frames.
-    event_tx: broadcast::Sender<(wire::OwnershipScope, wire::EventPayload)>,
+    event_tx: broadcast::Sender<SharedWireEvent>,
     /// Registered host callbacks for `SidecarRequest` frames.
     callbacks: SccHashMap<&'static str, WireSidecarCallback>,
     /// Outbound host request frames drained by the writer task into the child's stdin.
@@ -189,9 +196,7 @@ impl SidecarTransport {
     }
 
     /// Subscribe to structured/lifecycle/process events using generated wire protocol types.
-    pub fn subscribe_wire_events(
-        &self,
-    ) -> broadcast::Receiver<(wire::OwnershipScope, wire::EventPayload)> {
+    pub fn subscribe_wire_events(&self) -> broadcast::Receiver<SharedWireEvent> {
         self.event_tx.subscribe()
     }
 
@@ -261,7 +266,7 @@ impl SidecarTransport {
                 ) {
                     return;
                 }
-                let _ = self.event_tx.send((event.ownership, event.payload));
+                let _ = self.event_tx.send(Arc::new(event));
             }
             wire::ProtocolFrame::SidecarRequestFrame(request) => {
                 self.dispatch_sidecar_request(request).await
@@ -618,6 +623,7 @@ mod tests {
     async fn transport_fans_out_generated_wire_events() {
         let transport = Arc::new(test_transport());
         let mut wire_events = transport.subscribe_wire_events();
+        let mut second_subscriber = transport.subscribe_wire_events();
 
         transport
             .handle_wire_frame(wire::ProtocolFrame::EventFrame(wire::EventFrame {
@@ -635,9 +641,14 @@ mod tests {
             }))
             .await;
 
-        let (ownership, payload) = wire_events.recv().await.expect("wire event");
+        let event = wire_events.recv().await.expect("wire event");
+        let second_event = second_subscriber.recv().await.expect("second wire event");
+        assert!(
+            Arc::ptr_eq(&event, &second_event),
+            "fan-out subscribers must share one decoded event frame"
+        );
         assert!(matches!(
-            ownership,
+            &event.ownership,
             wire::OwnershipScope::VmOwnership(wire::VmOwnership {
                 connection_id,
                 session_id,
@@ -645,13 +656,47 @@ mod tests {
             }) if connection_id == "conn-1" && session_id == "session-1" && vm_id == "vm-1"
         ));
         assert!(matches!(
-            payload,
+            &event.payload,
             wire::EventPayload::ProcessOutputEvent(wire::ProcessOutputEvent {
                 process_id,
                 channel: wire::StreamChannel::Stdout,
                 chunk,
-            }) if process_id == "proc-1" && chunk == b"hello".to_vec()
+            }) if process_id == "proc-1" && chunk.as_slice() == b"hello"
         ));
+    }
+
+    #[tokio::test]
+    async fn transport_shares_terminal_capture_buffers_across_subscribers() {
+        let transport = Arc::new(test_transport());
+        let mut first = transport.subscribe_wire_events();
+        let mut second = transport.subscribe_wire_events();
+        let stdout = vec![b'o'; 64 * 1024];
+        let stderr = vec![b'e'; 64 * 1024];
+
+        transport
+            .handle_wire_frame(wire::ProtocolFrame::EventFrame(wire::EventFrame {
+                schema: wire::protocol_schema(),
+                ownership: wire::OwnershipScope::VmOwnership(wire::VmOwnership {
+                    connection_id: "conn-1".to_string(),
+                    session_id: "session-1".to_string(),
+                    vm_id: "vm-1".to_string(),
+                }),
+                payload: wire::EventPayload::ProcessExitedEvent(wire::ProcessExitedEvent {
+                    process_id: "proc-1".to_string(),
+                    exit_code: 0,
+                    stdout: Some(stdout),
+                    stderr: Some(stderr),
+                    error: None,
+                }),
+            }))
+            .await;
+
+        let first = first.recv().await.expect("first terminal event");
+        let second = second.recv().await.expect("second terminal event");
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "terminal capture buffers must not be deep-cloned by broadcast fan-out"
+        );
     }
 
     #[tokio::test]
@@ -732,7 +777,8 @@ mod tests {
             }))
             .await;
 
-        let (_, payload) = wire_events.recv().await.expect("structured event");
+        let event = wire_events.recv().await.expect("structured event");
+        let payload = &event.payload;
         assert!(matches!(
             payload,
             wire::EventPayload::StructuredEvent(wire::StructuredEvent { name, .. })

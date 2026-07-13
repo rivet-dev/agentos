@@ -119,6 +119,10 @@ impl RecordingBridge {
         self.execution_events.push_back(event);
     }
 
+    pub fn pending_execution_event_count(&self) -> usize {
+        self.execution_events.len()
+    }
+
     pub fn push_permission_decision(&mut self, decision: PermissionDecision) {
         self.permission_responses.push_back(Ok(decision));
     }

@@ -1618,6 +1618,7 @@ where
                         pty: None,
                         keep_stdin_open: None,
                         timeout_ms: None,
+                        capture_output: None,
                     };
                     let internal = RequestFrame::new(
                         0,

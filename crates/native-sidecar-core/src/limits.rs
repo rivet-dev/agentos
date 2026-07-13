@@ -30,6 +30,7 @@ pub const DEFAULT_ACP_MAX_READ_LINE_BYTES: usize = 16 * 1024 * 1024;
 pub const DEFAULT_ACP_STDOUT_BUFFER_BYTE_LIMIT: usize = 1024 * 1024;
 
 pub const DEFAULT_JS_CAPTURED_OUTPUT_LIMIT_BYTES: usize = 16 * 1024 * 1024;
+pub const DEFAULT_MAX_CAPTURED_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
 pub const DEFAULT_JS_STDIN_BUFFER_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 pub const DEFAULT_JS_EVENT_PAYLOAD_LIMIT_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_V8_IPC_MAX_FRAME_BYTES: u32 = 64 * 1024 * 1024;
@@ -53,10 +54,12 @@ pub const DEFAULT_WASM_RUNNER_HEAP_LIMIT_MB: u32 = 2048;
 /// All operator-tunable VM-scoped limits. Fields are concrete values; the `Default` impls own the
 /// numbers and equal today's hardcoded constants, so unset operator config leaves behavior
 /// unchanged.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VmLimits {
     /// Kernel resource limits (existing type, existing `resource.*` keys).
     pub resources: ResourceLimits,
+    /// Aggregate bytes retained by all active captured processes in one VM.
+    pub max_captured_output_bytes: usize,
     pub http: HttpLimits,
     pub tools: ToolLimits,
     pub plugins: PluginLimits,
@@ -64,6 +67,22 @@ pub struct VmLimits {
     pub js_runtime: JsRuntimeLimits,
     pub python: PythonLimits,
     pub wasm: WasmLimits,
+}
+
+impl Default for VmLimits {
+    fn default() -> Self {
+        Self {
+            resources: ResourceLimits::default(),
+            max_captured_output_bytes: DEFAULT_MAX_CAPTURED_OUTPUT_BYTES,
+            http: HttpLimits::default(),
+            tools: ToolLimits::default(),
+            plugins: PluginLimits::default(),
+            acp: AcpLimits::default(),
+            js_runtime: JsRuntimeLimits::default(),
+            python: PythonLimits::default(),
+            wasm: WasmLimits::default(),
+        }
+    }
 }
 
 pub fn virtual_os_cpu_count(resource_limits: &ResourceLimits) -> usize {
@@ -250,6 +269,11 @@ pub fn vm_limits_from_config(
     };
 
     if let Some(resources) = config.resources.as_ref() {
+        set_usize(
+            &mut limits.max_captured_output_bytes,
+            resources.max_captured_output_bytes,
+            "limits.resources.maxCapturedOutputBytes",
+        )?;
         apply_resource_limits_config(&mut limits.resources, resources)?;
     }
     if let Some(http) = config.http.as_ref() {
@@ -572,6 +596,11 @@ pub fn validate_vm_limits(
     limits: &VmLimits,
     sidecar_max_frame_bytes: usize,
 ) -> Result<(), SidecarCoreError> {
+    if limits.max_captured_output_bytes == 0 {
+        return Err(SidecarCoreError::new(
+            "limits.resources.maxCapturedOutputBytes must be greater than zero",
+        ));
+    }
     if limits.http.max_fetch_response_bytes == 0 {
         return Err(SidecarCoreError::new(
             "limits.http.max_fetch_response_bytes must be greater than zero".to_string(),
@@ -582,6 +611,32 @@ pub fn validate_vm_limits(
             "limits.http.max_fetch_response_bytes ({}) must be <= the sidecar wire frame cap ({})",
             limits.http.max_fetch_response_bytes, sidecar_max_frame_bytes
         )));
+    }
+
+    // A captured terminal event carries stdout and stderr in one wire frame.
+    // Reserve fixed protocol/identity overhead, then split the remaining frame
+    // budget evenly between the two independently bounded streams.
+    let max_capture_stream_bytes =
+        sidecar_max_frame_bytes.saturating_sub(crate::CAPTURE_TERMINAL_FRAME_OVERHEAD_BYTES) / 2;
+    for (key, value) in [
+        (
+            "limits.jsRuntime.capturedOutputLimitBytes",
+            limits.js_runtime.captured_output_limit_bytes,
+        ),
+        (
+            "limits.python.outputBufferMaxBytes",
+            limits.python.output_buffer_max_bytes,
+        ),
+        (
+            "limits.wasm.capturedOutputLimitBytes",
+            limits.wasm.captured_output_limit_bytes,
+        ),
+    ] {
+        if value > max_capture_stream_bytes {
+            return Err(SidecarCoreError::new(format!(
+                "{key} ({value}) must be <= {max_capture_stream_bytes} so captured stdout and stderr fit in the sidecar wire frame cap ({sidecar_max_frame_bytes})"
+            )));
+        }
     }
 
     if limits.tools.default_tool_timeout_ms > limits.tools.max_tool_timeout_ms {

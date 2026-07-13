@@ -2064,6 +2064,7 @@ export type ExecuteRequest = {
     readonly pty: PtyOptions | null
     readonly keepStdinOpen: boolean | null
     readonly timeoutMs: u64 | null
+    readonly captureOutput: boolean | null
 }
 
 export function readExecuteRequest(bc: bare.ByteCursor): ExecuteRequest {
@@ -2080,6 +2081,7 @@ export function readExecuteRequest(bc: bare.ByteCursor): ExecuteRequest {
         pty: read36(bc),
         keepStdinOpen: read13(bc),
         timeoutMs: read25(bc),
+        captureOutput: read13(bc),
     }
 }
 
@@ -2096,6 +2098,7 @@ export function writeExecuteRequest(bc: bare.ByteCursor, x: ExecuteRequest): voi
     write36(bc, x.pty)
     write13(bc, x.keepStdinOpen)
     write25(bc, x.timeoutMs)
+    write13(bc, x.captureOutput)
 }
 
 export type WriteStdinRequest = {
@@ -4737,21 +4740,52 @@ export function writeProcessOutputEvent(bc: bare.ByteCursor, x: ProcessOutputEve
     bare.writeData(bc, x.chunk)
 }
 
+function read50(bc: bare.ByteCursor): ArrayBuffer | null {
+    return bare.readBool(bc) ? bare.readData(bc) : null
+}
+
+function write50(bc: bare.ByteCursor, x: ArrayBuffer | null): void {
+    bare.writeBool(bc, x != null)
+    if (x != null) {
+        bare.writeData(bc, x)
+    }
+}
+
+function read51(bc: bare.ByteCursor): RejectedResponse | null {
+    return bare.readBool(bc) ? readRejectedResponse(bc) : null
+}
+
+function write51(bc: bare.ByteCursor, x: RejectedResponse | null): void {
+    bare.writeBool(bc, x != null)
+    if (x != null) {
+        writeRejectedResponse(bc, x)
+    }
+}
+
 export type ProcessExitedEvent = {
     readonly processId: string
     readonly exitCode: i32
+    readonly stdout: ArrayBuffer | null
+    readonly stderr: ArrayBuffer | null
+    readonly error: RejectedResponse | null
 }
 
 export function readProcessExitedEvent(bc: bare.ByteCursor): ProcessExitedEvent {
     return {
         processId: bare.readString(bc),
         exitCode: bare.readI32(bc),
+        stdout: read50(bc),
+        stderr: read50(bc),
+        error: read51(bc),
     }
 }
 
 export function writeProcessExitedEvent(bc: bare.ByteCursor, x: ProcessExitedEvent): void {
     bare.writeString(bc, x.processId)
     bare.writeI32(bc, x.exitCode)
+    write50(bc, x.stdout)
+    write50(bc, x.stderr)
+    write51(bc, x.error)
 }
 
 /**

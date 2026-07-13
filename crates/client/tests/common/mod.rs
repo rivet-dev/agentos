@@ -66,6 +66,22 @@ pub async fn new_vm() -> AgentOs {
     new_vm_with_loopback_ports(Vec::new()).await
 }
 
+pub async fn new_vm_with_limits(limits: agentos_client::config::AgentOsLimits) -> AgentOs {
+    ensure_sidecar_env();
+    AgentOs::create(AgentOsConfig {
+        mounts: vec![node_modules_mount(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../node_modules")
+                .to_string_lossy()
+                .into_owned(),
+        )],
+        limits: Some(limits),
+        ..Default::default()
+    })
+    .await
+    .expect("create VM with explicit limits")
+}
+
 pub async fn new_vm_with_sidecar_pool(pool: impl Into<String>) -> AgentOs {
     ensure_sidecar_env();
     AgentOs::create(AgentOsConfig {

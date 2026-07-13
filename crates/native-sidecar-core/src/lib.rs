@@ -3,6 +3,7 @@
 //! Backend-agnostic sidecar logic shared by native and browser shells.
 
 pub mod bridge_bytes;
+pub mod captured_output;
 pub mod command_line;
 pub mod cron;
 pub mod defaults;
@@ -27,6 +28,11 @@ pub use bridge_bytes::{
     bridge_buffer_value, decode_base64, decode_bridge_buffer_value, decode_encoded_bytes_value,
     encoded_bytes_value,
 };
+pub use captured_output::{
+    validate_process_id, CaptureChunkOutcome, CapturedOutputBudget, CapturedOutputResult,
+    CapturedOutputState, CAPTURED_OUTPUT_LIMIT_ERROR_CODE, CAPTURE_TERMINAL_FRAME_OVERHEAD_BYTES,
+    MAX_PROCESS_ID_BYTES,
+};
 pub use command_line::{resolve_command_line, ResolvedCommandLine};
 pub use cron::{
     decode_cron_action, CronAction, CronScheduler, CronSchedulerError, MAX_ACTIVE_CRON_RUNS,
@@ -43,14 +49,15 @@ pub use execution_defaults::apply_execute_defaults;
 pub use frames::{
     authenticated_response, bound_udp_snapshot_response, event, layer_created_response,
     layer_sealed_response, listener_snapshot_response, overlay_created_response,
-    package_linked_response, process_exited_event, process_killed_response, process_output_event,
-    process_snapshot_response, process_started_response, provided_commands_response, reject,
-    respond, response_with_ownership, root_filesystem_bootstrapped_response,
-    root_filesystem_snapshot_response, session_opened_response, signal_state_response,
-    snapshot_exported_response, snapshot_imported_response, stdin_closed_response,
-    stdin_written_response, unsupported_guest_kernel_call_detail,
-    unsupported_guest_kernel_call_event, validate_authenticate_versions, vm_configured_response,
-    vm_created_response, vm_disposed_response, vm_lifecycle_event, zombie_timer_count_response,
+    package_linked_response, process_exited_event, process_exited_event_with_result,
+    process_killed_response, process_output_event, process_snapshot_response,
+    process_started_response, provided_commands_response, reject, respond, response_with_ownership,
+    root_filesystem_bootstrapped_response, root_filesystem_snapshot_response,
+    session_opened_response, signal_state_response, snapshot_exported_response,
+    snapshot_imported_response, stdin_closed_response, stdin_written_response,
+    unsupported_guest_kernel_call_detail, unsupported_guest_kernel_call_event,
+    validate_authenticate_versions, vm_configured_response, vm_created_response,
+    vm_disposed_response, vm_lifecycle_event, zombie_timer_count_response,
     AuthenticateVersionError, DispatchResult, UNSUPPORTED_GUEST_KERNEL_CALL_EVENT,
 };
 pub use guest_fs::{

@@ -12,7 +12,7 @@ use agentos_native_sidecar_core::{
     authenticated_response, bound_udp_snapshot_response, connection_id_of,
     execution_signal_from_number, guest_environment_with_overrides, layer_created_response,
     layer_sealed_response, listener_snapshot_response, overlay_created_response,
-    permissions_from_policy, permissions_with_allow_all_defaults, process_exited_event,
+    permissions_from_policy, permissions_with_allow_all_defaults, process_exited_event_with_result,
     process_killed_response, process_output_event, process_snapshot_response,
     process_started_response, protocol_process_snapshot_entry, protocol_root_filesystem_mode,
     reject, resolve_command_line, respond, root_filesystem_bootstrapped_response,
@@ -20,9 +20,10 @@ use agentos_native_sidecar_core::{
     session_opened_response, session_scope_of, signal_state_response, snapshot_exported_response,
     snapshot_imported_response, stdin_closed_response, stdin_written_response,
     unsupported_guest_kernel_call_event, unsupported_host_callback_direction_dispatch,
-    validate_authenticate_versions, vm_configured_response, vm_created_response,
-    vm_disposed_response, vm_id_of, vm_lifecycle_event, zombie_timer_count_response, CronAction,
-    CronScheduler, DispatchResult, RequestRoute,
+    validate_authenticate_versions, validate_process_id, vm_configured_response,
+    vm_created_response, vm_disposed_response, vm_id_of, vm_lifecycle_event,
+    zombie_timer_count_response, CaptureChunkOutcome, CapturedOutputBudget, CapturedOutputState,
+    CronAction, CronScheduler, DispatchResult, RequestRoute, VmLimits,
 };
 use agentos_sidecar_protocol::protocol::{
     AuthenticateRequest, BootstrapRootFilesystemRequest, CancelCronJobRequest, CloseStdinRequest,
@@ -44,16 +45,20 @@ use agentos_sidecar_protocol::wire::{
 use agentos_vm_config::CreateVmConfig;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fmt;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const BROWSER_SIDECAR_ID: &str = "agentos-native-sidecar-browser";
 pub const BROWSER_MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PENDING_REQUEST_EVENTS: usize = 256;
+const MAX_REQUEST_EVENTS_PER_DISPATCH: usize = 2;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 struct ExecutionRecord {
     vm_id: String,
     process_id: String,
     ownership: OwnershipScope,
+    captured_output: Option<CapturedOutputState>,
 }
 
 type ProcessExecutionKey = (String, String);
@@ -66,6 +71,8 @@ pub struct BrowserWireDispatcher<B: BrowserSidecarBridge> {
     next_vm: usize,
     next_process: u64,
     active_vms: BTreeSet<String>,
+    vm_limits: BTreeMap<String, VmLimits>,
+    vm_capture_budgets: BTreeMap<String, Arc<CapturedOutputBudget>>,
     cron_schedulers: BTreeMap<String, CronScheduler>,
     cron_process_runs: BTreeMap<ProcessExecutionKey, String>,
     executions: BTreeMap<String, ExecutionRecord>,
@@ -87,6 +94,8 @@ where
             next_vm: 0,
             next_process: 0,
             active_vms: BTreeSet::new(),
+            vm_limits: BTreeMap::new(),
+            vm_capture_budgets: BTreeMap::new(),
             cron_schedulers: BTreeMap::new(),
             cron_process_runs: BTreeMap::new(),
             executions: BTreeMap::new(),
@@ -113,10 +122,19 @@ where
             }
         };
         let request = request_frame_to_compat(generated_request)?;
-        let dispatch = self.dispatch(request);
-        for event in dispatch.events.iter().cloned() {
-            self.pending_events.push_back(event);
-        }
+        let dispatch = if MAX_REQUEST_EVENTS_PER_DISPATCH > self.request_event_capacity() {
+            rejected(
+                &request,
+                "event_queue_limit_exceeded",
+                &format!(
+                    "browser sidecar request event queue limit of {MAX_PENDING_REQUEST_EVENTS} events reached; call pollEvent before issuing more requests"
+                ),
+            )
+        } else {
+            self.dispatch(request)
+        };
+        debug_assert!(dispatch.events.len() <= MAX_REQUEST_EVENTS_PER_DISPATCH);
+        self.pending_events.extend(dispatch.events.iter().cloned());
         let generated =
             agentos_sidecar_protocol::wire::dispatch_result_from_compat(CompatDispatchResult {
                 response: dispatch.response,
@@ -127,16 +145,21 @@ where
     }
 
     pub fn poll_event_bytes(&mut self) -> Result<Option<Vec<u8>>, ProtocolCodecError> {
-        if self.pending_events.is_empty() {
-            self.pump_execution_events();
-        }
-        let Some(event) = self.pending_events.pop_front() else {
+        let event = match self.pending_events.pop_front() {
+            Some(event) => Some(event),
+            None => self.poll_one_execution_event()?,
+        };
+        let Some(event) = event else {
             return Ok(None);
         };
         let generated = agentos_sidecar_protocol::wire::event_frame_from_compat(event)?;
         self.codec
             .encode_message(&ProtocolFrame::EventFrame(generated))
             .map(Some)
+    }
+
+    fn request_event_capacity(&self) -> usize {
+        MAX_PENDING_REQUEST_EVENTS.saturating_sub(self.pending_events.len())
     }
 
     fn dispatch(&mut self, request: RequestFrame) -> DispatchResult {
@@ -413,6 +436,7 @@ where
                         pty: None,
                         keep_stdin_open: None,
                         timeout_ms: None,
+                        capture_output: None,
                     };
                     let internal = RequestFrame::new(
                         0,
@@ -1126,7 +1150,7 @@ where
                 return rejected(request, "invalid_config", &error.to_string());
             }
         };
-        kernel_config.resources = limits.resources;
+        kernel_config.resources = limits.resources.clone();
         let permissions = permissions_with_allow_all_defaults(create_config.permissions.clone());
         if let Err(error) = agentos_native_sidecar_core::validate_permissions_policy(&permissions) {
             return rejected(request, "invalid_config", &error.to_string());
@@ -1150,6 +1174,9 @@ where
             return rejected(request, "create_vm_failed", &error.to_string());
         }
         self.active_vms.insert(vm_id.clone());
+        self.vm_capture_budgets
+            .insert(vm_id.clone(), CapturedOutputBudget::for_vm(&limits));
+        self.vm_limits.insert(vm_id.clone(), limits);
 
         let ownership = OwnershipScope::vm(&connection_id, &session_id, &vm_id);
         DispatchResult {
@@ -1280,8 +1307,21 @@ where
         if let Err(error) = self.sidecar.dispose_vm(vm_id) {
             eprintln!("failed to clean up partially initialized browser VM {vm_id}: {error}");
         }
+        self.purge_vm_state(vm_id);
+    }
+
+    fn purge_vm_state(&mut self, vm_id: &str) {
         self.active_vms.remove(vm_id);
+        self.vm_limits.remove(vm_id);
+        self.vm_capture_budgets.remove(vm_id);
         self.cron_schedulers.remove(vm_id);
+        self.cron_process_runs
+            .retain(|(process_vm_id, _), _| process_vm_id != vm_id);
+        self.executions.retain(|_, record| record.vm_id != vm_id);
+        self.process_executions
+            .retain(|(process_vm_id, _), _| process_vm_id != vm_id);
+        self.pending_events
+            .retain(|event| vm_id_of(&event.ownership).as_deref() != Some(vm_id));
     }
 
     fn dispose_vm(&mut self, request: &RequestFrame, _payload: DisposeVmRequest) -> DispatchResult {
@@ -1292,16 +1332,11 @@ where
                 "dispose_vm requires VM ownership",
             );
         };
-        if let Err(error) = self.sidecar.dispose_vm(&vm_id) {
+        let dispose_result = self.sidecar.dispose_vm(&vm_id);
+        self.purge_vm_state(&vm_id);
+        if let Err(error) = dispose_result {
             return rejected(request, "dispose_vm_failed", &error.to_string());
         }
-        self.active_vms.remove(&vm_id);
-        self.cron_schedulers.remove(&vm_id);
-        self.cron_process_runs
-            .retain(|(process_vm_id, _), _| process_vm_id != &vm_id);
-        self.executions.retain(|_, record| record.vm_id != vm_id);
-        self.process_executions
-            .retain(|(process_vm_id, _), _| process_vm_id != &vm_id);
         DispatchResult {
             response: vm_disposed_response(request, vm_id),
             events: Vec::new(),
@@ -1377,13 +1412,6 @@ where
             );
         }
         let process_id = match payload.process_id.take() {
-            Some(process_id) if process_id.is_empty() => {
-                return rejected(
-                    request,
-                    "invalid_request",
-                    "execute process_id must not be empty",
-                );
-            }
             Some(process_id) => process_id,
             None => loop {
                 let Some(next_process) = self.next_process.checked_add(1) else {
@@ -1403,6 +1431,9 @@ where
                 }
             },
         };
+        if let Err(error) = validate_process_id(&process_id) {
+            return rejected(request, "invalid_request", &error.to_string());
+        }
         let process_key = (vm_id.clone(), process_id.clone());
         if self.process_executions.contains_key(&process_key) {
             return rejected(
@@ -1411,11 +1442,11 @@ where
                 "process_id is already active",
             );
         }
-        let runtime = match payload
+        let requested_runtime = payload
             .runtime
             .clone()
-            .unwrap_or(GuestRuntimeKind::JavaScript)
-        {
+            .unwrap_or(GuestRuntimeKind::JavaScript);
+        let runtime = match requested_runtime {
             GuestRuntimeKind::JavaScript | GuestRuntimeKind::Python => GuestRuntime::JavaScript,
             GuestRuntimeKind::WebAssembly => GuestRuntime::WebAssembly,
         };
@@ -1473,12 +1504,29 @@ where
             Err(error) => return rejected(request, "execute_failed", &error.to_string()),
         };
 
+        let captured_output = payload.capture_output.unwrap_or(false).then(|| {
+            CapturedOutputState::for_runtime(
+                self.vm_limits
+                    .get(&vm_id)
+                    .expect("active browser VM must retain its limits"),
+                payload
+                    .runtime
+                    .clone()
+                    .unwrap_or(GuestRuntimeKind::JavaScript),
+                Arc::clone(
+                    self.vm_capture_budgets
+                        .get(&vm_id)
+                        .expect("active browser VM must retain its capture budget"),
+                ),
+            )
+        });
         self.executions.insert(
             started.execution_id.clone(),
             ExecutionRecord {
                 vm_id: vm_id.clone(),
                 process_id: process_id.clone(),
                 ownership: request.ownership.clone(),
+                captured_output,
             },
         );
         self.process_executions
@@ -1612,49 +1660,132 @@ where
         }
     }
 
-    fn pump_execution_events(&mut self) {
+    fn poll_one_execution_event(&mut self) -> Result<Option<EventFrame>, ProtocolCodecError> {
         for vm_id in self.active_vms.iter().cloned().collect::<Vec<_>>() {
-            while let Ok(Some(event)) =
-                self.sidecar
+            loop {
+                match self
+                    .sidecar
                     .poll_execution_event(PollExecutionEventRequest {
                         vm_id: vm_id.clone(),
-                    })
-            {
-                if let Some(frame) = self.execution_event_to_frame(event) {
-                    self.pending_events.push_back(frame);
+                    }) {
+                    Ok(Some(event)) => {
+                        if let Some(frame) = self.execution_event_to_frame(event) {
+                            return Ok(Some(frame));
+                        }
+                        // Suppressed capture chunks and internal cron events are not public frames.
+                        // Keep draining the bridge's already-bounded queue so `None` means every VM
+                        // was actually empty, never merely that an internal event was consumed.
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        return Err(ProtocolCodecError::SerializeFailure(format!(
+                            "browser sidecar failed to poll an execution event: {error:?}"
+                        )));
+                    }
                 }
             }
         }
+        Ok(None)
     }
 
     fn execution_event_to_frame(&mut self, event: ExecutionEvent) -> Option<EventFrame> {
         match event {
             ExecutionEvent::Stdout(chunk) => {
-                let record = self.executions.get(&chunk.execution_id)?;
-                if self
-                    .cron_process_runs
-                    .contains_key(&(record.vm_id.clone(), record.process_id.clone()))
-                {
+                let (vm_id, process_id, ownership, outcome) = {
+                    let record = self.executions.get_mut(&chunk.execution_id)?;
+                    if self
+                        .cron_process_runs
+                        .contains_key(&(record.vm_id.clone(), record.process_id.clone()))
+                    {
+                        return None;
+                    }
+                    let outcome = record
+                        .captured_output
+                        .as_mut()
+                        .map(|capture| {
+                            capture.record_chunk(
+                                &record.process_id,
+                                StreamChannel::Stdout,
+                                &chunk.chunk,
+                            )
+                        })
+                        .unwrap_or(CaptureChunkOutcome::Forward);
+                    (
+                        record.vm_id.clone(),
+                        record.process_id.clone(),
+                        record.ownership.clone(),
+                        outcome,
+                    )
+                };
+                if outcome == CaptureChunkOutcome::LimitExceeded {
+                    if let Err(error) =
+                        self.sidecar
+                            .bridge_mut()
+                            .kill_execution(KillExecutionRequest {
+                                vm_id,
+                                execution_id: chunk.execution_id,
+                                signal: agentos_bridge::ExecutionSignal::Kill,
+                            })
+                    {
+                        eprintln!("failed to kill browser execution after captured-output overflow: {error:?}");
+                    }
+                }
+                if outcome != CaptureChunkOutcome::Forward {
                     return None;
                 }
                 Some(process_output_event(
-                    record.ownership.clone(),
-                    &record.process_id,
+                    ownership,
+                    &process_id,
                     StreamChannel::Stdout,
                     chunk.chunk,
                 ))
             }
             ExecutionEvent::Stderr(chunk) => {
-                let record = self.executions.get(&chunk.execution_id)?;
-                if self
-                    .cron_process_runs
-                    .contains_key(&(record.vm_id.clone(), record.process_id.clone()))
-                {
+                let (vm_id, process_id, ownership, outcome) = {
+                    let record = self.executions.get_mut(&chunk.execution_id)?;
+                    if self
+                        .cron_process_runs
+                        .contains_key(&(record.vm_id.clone(), record.process_id.clone()))
+                    {
+                        return None;
+                    }
+                    let outcome = record
+                        .captured_output
+                        .as_mut()
+                        .map(|capture| {
+                            capture.record_chunk(
+                                &record.process_id,
+                                StreamChannel::Stderr,
+                                &chunk.chunk,
+                            )
+                        })
+                        .unwrap_or(CaptureChunkOutcome::Forward);
+                    (
+                        record.vm_id.clone(),
+                        record.process_id.clone(),
+                        record.ownership.clone(),
+                        outcome,
+                    )
+                };
+                if outcome == CaptureChunkOutcome::LimitExceeded {
+                    if let Err(error) =
+                        self.sidecar
+                            .bridge_mut()
+                            .kill_execution(KillExecutionRequest {
+                                vm_id,
+                                execution_id: chunk.execution_id,
+                                signal: agentos_bridge::ExecutionSignal::Kill,
+                            })
+                    {
+                        eprintln!("failed to kill browser execution after captured-output overflow: {error:?}");
+                    }
+                }
+                if outcome != CaptureChunkOutcome::Forward {
                     return None;
                 }
                 Some(process_output_event(
-                    record.ownership.clone(),
-                    &record.process_id,
+                    ownership,
+                    &process_id,
                     StreamChannel::Stderr,
                     chunk.chunk,
                 ))
@@ -1665,10 +1796,11 @@ where
                     .remove(&(record.vm_id.clone(), record.process_id.clone()));
                 let process_key = (record.vm_id.clone(), record.process_id.clone());
                 let Some(run_id) = self.cron_process_runs.remove(&process_key) else {
-                    return Some(process_exited_event(
+                    return Some(process_exited_event_with_result(
                         record.ownership,
                         &record.process_id,
                         exited.exit_code,
+                        record.captured_output.map(CapturedOutputState::into_result),
                     ));
                 };
                 let completion = self

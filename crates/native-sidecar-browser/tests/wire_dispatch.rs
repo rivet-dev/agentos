@@ -15,9 +15,9 @@ use agentos_native_sidecar_browser::{
 };
 use agentos_sidecar_protocol::wire::{
     protocol_schema, AuthenticateRequest, BootstrapRootFilesystemRequest, ConfigureVmRequest,
-    ConnectionOwnership, CreateOverlayRequest, CreateVmRequest, EventPayload, ExecuteRequest,
-    ExportSnapshotRequest, ExtEnvelope, FilesystemOperation, FindBoundUdpRequest,
-    FindListenerRequest, GetSignalStateRequest, GuestFilesystemCallRequest,
+    ConnectionOwnership, CreateOverlayRequest, CreateVmRequest, DisposeReason, DisposeVmRequest,
+    EventPayload, ExecuteRequest, ExportSnapshotRequest, ExtEnvelope, FilesystemOperation,
+    FindBoundUdpRequest, FindListenerRequest, GetSignalStateRequest, GuestFilesystemCallRequest,
     GuestFilesystemOperation, GuestRuntimeKind, HostFilesystemCallRequest, ImportSnapshotRequest,
     InitializeVmRequest, KillProcessRequest, OpenSessionRequest, OwnershipScope, PermissionsPolicy,
     PersistenceFlushRequest, PersistenceLoadRequest, ProtocolFrame, RegisterHostCallbacksRequest,
@@ -78,14 +78,22 @@ fn create_wire_vm(
     codec: &WireFrameCodec,
     dispatcher: &mut BrowserWireDispatcher<RecordingBridge>,
 ) -> (String, OwnershipScope) {
-    let session_ownership = open_wire_session(codec, dispatcher);
-    let OwnershipScope::SessionOwnership(session) = session_ownership else {
-        unreachable!("open_wire_session always returns session ownership");
-    };
     let config = agentos_vm_config::CreateVmConfig {
         cwd: None,
         permissions: Some(agentos_native_sidecar_core::allow_all_policy()),
         ..Default::default()
+    };
+    create_wire_vm_with_config(codec, dispatcher, config)
+}
+
+fn create_wire_vm_with_config(
+    codec: &WireFrameCodec,
+    dispatcher: &mut BrowserWireDispatcher<RecordingBridge>,
+    config: agentos_vm_config::CreateVmConfig,
+) -> (String, OwnershipScope) {
+    let session_ownership = open_wire_session(codec, dispatcher);
+    let OwnershipScope::SessionOwnership(session) = session_ownership else {
+        unreachable!("open_wire_session always returns session ownership");
     };
     let created = dispatch(
         codec,
@@ -188,6 +196,7 @@ fn execute_wire_process(
                 shell_command: None,
                 keep_stdin_open: None,
                 timeout_ms: None,
+                capture_output: None,
             }),
         },
     )
@@ -372,7 +381,7 @@ fn browser_sidecar_executes_cron_commands_and_emits_completion_dispatch() {
         .sidecar_mut()
         .bridge_mut()
         .push_execution_event(ExecutionEvent::Exited(ExecutionExited {
-            vm_id,
+            vm_id: vm_id.clone(),
             execution_id: String::from("exec-1"),
             exit_code: 0,
         }));
@@ -590,6 +599,7 @@ fn browser_wire_dispatcher_handles_lifecycle_and_execution_frames() {
                 shell_command: None,
                 keep_stdin_open: None,
                 timeout_ms: None,
+                capture_output: None,
             }),
         },
     );
@@ -919,6 +929,7 @@ fn browser_wire_dispatcher_allocates_an_omitted_process_id() {
                 shell_command: None,
                 keep_stdin_open: None,
                 timeout_ms: None,
+                capture_output: None,
             }),
         },
     );
@@ -926,6 +937,578 @@ fn browser_wire_dispatcher_allocates_an_omitted_process_id() {
         panic!("unexpected execute response: {:?}", response.payload);
     };
     assert!(started.process_id.starts_with("sidecar-process-"));
+}
+
+#[test]
+fn browser_wire_dispatcher_rejects_oversized_process_ids() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let (_, ownership) = create_wire_vm(&codec, &mut dispatcher);
+    let process_id = "p".repeat(agentos_native_sidecar_core::MAX_PROCESS_ID_BYTES + 1);
+
+    let response = execute_wire_process(&codec, &mut dispatcher, ownership, 10, &process_id);
+    let ResponsePayload::RejectedResponse(rejected) = response else {
+        panic!("unexpected oversized process ID response: {response:?}");
+    };
+    assert_eq!(rejected.code, "invalid_request");
+    assert!(rejected.message.contains("execute process_id is"));
+    assert!(rejected.message.contains("process ids must be at most"));
+    assert!(rejected
+        .message
+        .contains(&agentos_native_sidecar_core::MAX_PROCESS_ID_BYTES.to_string()));
+}
+
+#[test]
+fn browser_wire_dispatcher_owns_bounded_capture_and_leaves_raw_streaming_uncaptured() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let config = agentos_vm_config::CreateVmConfig {
+        permissions: Some(agentos_native_sidecar_core::allow_all_policy()),
+        limits: Some(agentos_vm_config::VmLimitsConfig {
+            js_runtime: Some(agentos_vm_config::JsRuntimeLimitsConfig {
+                captured_output_limit_bytes: Some(8),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let (vm_id, ownership) = create_wire_vm_with_config(&codec, &mut dispatcher, config);
+
+    let captured = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 10,
+            ownership: ownership.clone(),
+            payload: RequestPayload::ExecuteRequest(ExecuteRequest {
+                process_id: Some(String::from("captured")),
+                command: Some(String::from("node")),
+                runtime: Some(GuestRuntimeKind::JavaScript),
+                entrypoint: Some(String::from("/workspace/main.js")),
+                args: vec![],
+                env: None,
+                cwd: None,
+                wasm_permission_tier: None,
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
+                capture_output: Some(true),
+            }),
+        },
+    );
+    assert!(matches!(
+        captured.payload,
+        ResponsePayload::ProcessStartedResponse(_)
+    ));
+    dispatcher
+        .sidecar_mut()
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Stdout(OutputChunk {
+            vm_id: vm_id.clone(),
+            execution_id: String::from("exec-1"),
+            chunk: b"123456789".to_vec(),
+        }));
+    for _ in 0..8 {
+        let _ = dispatcher
+            .poll_event_bytes()
+            .expect("pump capture overflow");
+        if !dispatcher
+            .sidecar_mut()
+            .bridge()
+            .killed_executions
+            .is_empty()
+        {
+            break;
+        }
+    }
+    let killed = &dispatcher.sidecar_mut().bridge().killed_executions;
+    assert_eq!(killed.len(), 1);
+    assert_eq!(killed[0].signal, ExecutionSignal::Kill);
+
+    dispatcher
+        .sidecar_mut()
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Exited(ExecutionExited {
+            vm_id: vm_id.clone(),
+            execution_id: String::from("exec-1"),
+            exit_code: 137,
+        }));
+    let terminal = loop {
+        let encoded = dispatcher
+            .poll_event_bytes()
+            .expect("poll captured terminal")
+            .expect("captured terminal event");
+        let ProtocolFrame::EventFrame(event) = codec
+            .decode_message(&encoded)
+            .expect("decode captured terminal")
+        else {
+            panic!("expected captured terminal event frame");
+        };
+        if let EventPayload::ProcessExitedEvent(exited) = event.payload {
+            break exited;
+        }
+    };
+    assert_eq!(terminal.stdout.as_deref(), Some(&b""[..]));
+    assert_eq!(terminal.stderr.as_deref(), Some(&b""[..]));
+    assert_eq!(
+        terminal.error.expect("typed capture error").code,
+        "ERR_CAPTURED_OUTPUT_LIMIT_EXCEEDED"
+    );
+
+    assert!(matches!(
+        execute_wire_process(&codec, &mut dispatcher, ownership, 11, "raw"),
+        ResponsePayload::ProcessStartedResponse(_)
+    ));
+    dispatcher
+        .sidecar_mut()
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Stdout(OutputChunk {
+            vm_id: vm_id.clone(),
+            execution_id: String::from("exec-2"),
+            chunk: b"123456789".to_vec(),
+        }));
+    let raw_output = loop {
+        let encoded = dispatcher
+            .poll_event_bytes()
+            .expect("poll raw output")
+            .expect("raw output event");
+        let ProtocolFrame::EventFrame(event) =
+            codec.decode_message(&encoded).expect("decode raw output")
+        else {
+            panic!("expected raw output event frame");
+        };
+        if let EventPayload::ProcessOutputEvent(output) = event.payload {
+            break output;
+        }
+    };
+    assert_eq!(raw_output.chunk, b"123456789");
+
+    dispatcher
+        .sidecar_mut()
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Exited(ExecutionExited {
+            vm_id,
+            execution_id: String::from("exec-2"),
+            exit_code: 0,
+        }));
+    let raw_terminal = loop {
+        let encoded = dispatcher
+            .poll_event_bytes()
+            .expect("poll raw terminal")
+            .expect("raw terminal event");
+        let ProtocolFrame::EventFrame(event) =
+            codec.decode_message(&encoded).expect("decode raw terminal")
+        else {
+            panic!("expected raw terminal event frame");
+        };
+        if let EventPayload::ProcessExitedEvent(exited) = event.payload {
+            break exited;
+        }
+    };
+    assert!(raw_terminal.stdout.is_none());
+    assert!(raw_terminal.stderr.is_none());
+    assert!(raw_terminal.error.is_none());
+}
+
+#[test]
+fn browser_wire_dispatcher_applies_backpressure_to_terminal_events() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let (vm_id, ownership) = create_wire_vm(&codec, &mut dispatcher);
+    while dispatcher
+        .poll_event_bytes()
+        .expect("drain VM lifecycle events")
+        .is_some()
+    {}
+
+    for (request_id, process_id) in [(10, "first"), (11, "second")] {
+        assert!(matches!(
+            execute_wire_process(
+                &codec,
+                &mut dispatcher,
+                ownership.clone(),
+                request_id,
+                process_id,
+            ),
+            ResponsePayload::ProcessStartedResponse(_)
+        ));
+    }
+    for execution_id in ["exec-1", "exec-2"] {
+        dispatcher
+            .sidecar_mut()
+            .bridge_mut()
+            .push_execution_event(ExecutionEvent::Exited(ExecutionExited {
+                vm_id: vm_id.clone(),
+                execution_id: execution_id.to_string(),
+                exit_code: 0,
+            }));
+    }
+
+    let encoded = dispatcher
+        .poll_event_bytes()
+        .expect("poll first terminal event")
+        .expect("first terminal event");
+    let ProtocolFrame::EventFrame(event) = codec
+        .decode_message(&encoded)
+        .expect("decode first terminal event")
+    else {
+        panic!("expected event frame");
+    };
+    let EventPayload::ProcessExitedEvent(exited) = event.payload else {
+        panic!("expected process terminal event");
+    };
+    assert_eq!(exited.process_id, "first");
+    assert_eq!(
+        dispatcher
+            .sidecar_mut()
+            .bridge()
+            .pending_execution_event_count(),
+        1,
+        "pollEvent must leave later terminal events at the bridge until the caller polls again"
+    );
+}
+
+#[test]
+fn browser_wire_dispatcher_does_not_report_empty_between_suppressed_overflow_and_exit() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let (vm_id, ownership) = create_wire_vm_with_config(
+        &codec,
+        &mut dispatcher,
+        agentos_vm_config::CreateVmConfig {
+            limits: Some(agentos_vm_config::VmLimitsConfig {
+                js_runtime: Some(agentos_vm_config::JsRuntimeLimitsConfig {
+                    captured_output_limit_bytes: Some(8),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    );
+    let response = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 10,
+            ownership,
+            payload: RequestPayload::ExecuteRequest(ExecuteRequest {
+                process_id: Some(String::from("captured")),
+                command: Some(String::from("node")),
+                runtime: Some(GuestRuntimeKind::JavaScript),
+                entrypoint: None,
+                args: vec![],
+                env: None,
+                cwd: None,
+                wasm_permission_tier: None,
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
+                capture_output: Some(true),
+            }),
+        },
+    );
+    assert!(matches!(
+        response.payload,
+        ResponsePayload::ProcessStartedResponse(_)
+    ));
+    while dispatcher
+        .poll_event_bytes()
+        .expect("drain setup lifecycle events")
+        .is_some()
+    {}
+
+    dispatcher
+        .sidecar_mut()
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Stdout(OutputChunk {
+            vm_id: vm_id.clone(),
+            execution_id: String::from("exec-1"),
+            chunk: b"123456789".to_vec(),
+        }));
+    dispatcher
+        .sidecar_mut()
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Exited(ExecutionExited {
+            vm_id: vm_id.clone(),
+            execution_id: String::from("exec-1"),
+            exit_code: 137,
+        }));
+
+    let encoded = dispatcher
+        .poll_event_bytes()
+        .expect("poll overflow followed by exit")
+        .expect("suppressed overflow must not masquerade as an empty queue");
+    let ProtocolFrame::EventFrame(event) = codec
+        .decode_message(&encoded)
+        .expect("decode terminal event")
+    else {
+        panic!("expected terminal event frame");
+    };
+    let EventPayload::ProcessExitedEvent(exited) = event.payload else {
+        panic!("expected process terminal event");
+    };
+    assert_eq!(exited.process_id, "captured");
+    assert_eq!(
+        exited.error.expect("typed capture overflow").code,
+        "ERR_CAPTURED_OUTPUT_LIMIT_EXCEEDED"
+    );
+}
+
+#[test]
+fn browser_wire_dispatcher_shares_and_releases_the_vm_capture_budget() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let (vm_id, ownership) = create_wire_vm_with_config(
+        &codec,
+        &mut dispatcher,
+        agentos_vm_config::CreateVmConfig {
+            limits: Some(agentos_vm_config::VmLimitsConfig {
+                resources: Some(agentos_vm_config::ResourceLimitsConfig {
+                    max_captured_output_bytes: Some(8),
+                    ..Default::default()
+                }),
+                js_runtime: Some(agentos_vm_config::JsRuntimeLimitsConfig {
+                    captured_output_limit_bytes: Some(16),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    );
+    for (request_id, process_id) in [(10, "first"), (11, "second")] {
+        let response = dispatch(
+            &codec,
+            &mut dispatcher,
+            RequestFrame {
+                schema: protocol_schema(),
+                request_id,
+                ownership: ownership.clone(),
+                payload: RequestPayload::ExecuteRequest(ExecuteRequest {
+                    process_id: Some(process_id.to_owned()),
+                    command: Some(String::from("node")),
+                    runtime: Some(GuestRuntimeKind::JavaScript),
+                    entrypoint: None,
+                    args: vec![],
+                    env: None,
+                    cwd: None,
+                    wasm_permission_tier: None,
+                    pty: None,
+                    shell_command: None,
+                    keep_stdin_open: None,
+                    timeout_ms: None,
+                    capture_output: Some(true),
+                }),
+            },
+        );
+        assert!(matches!(
+            response.payload,
+            ResponsePayload::ProcessStartedResponse(_)
+        ));
+    }
+    while dispatcher
+        .poll_event_bytes()
+        .expect("drain setup lifecycle events")
+        .is_some()
+    {}
+
+    dispatcher
+        .sidecar_mut()
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Stdout(OutputChunk {
+            vm_id: vm_id.clone(),
+            execution_id: String::from("exec-1"),
+            chunk: b"12345678".to_vec(),
+        }));
+    dispatcher
+        .poll_event_bytes()
+        .expect("poll first captured output")
+        .expect("first captured output should stream while retained");
+
+    dispatcher
+        .sidecar_mut()
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Stdout(OutputChunk {
+            vm_id: vm_id.clone(),
+            execution_id: String::from("exec-2"),
+            chunk: b"x".to_vec(),
+        }));
+    dispatcher
+        .sidecar_mut()
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Exited(ExecutionExited {
+            vm_id: vm_id.clone(),
+            execution_id: String::from("exec-2"),
+            exit_code: 137,
+        }));
+    let encoded = dispatcher
+        .poll_event_bytes()
+        .expect("poll aggregate overflow")
+        .expect("aggregate overflow must produce a terminal event");
+    let ProtocolFrame::EventFrame(event) = codec
+        .decode_message(&encoded)
+        .expect("decode aggregate terminal")
+    else {
+        panic!("expected terminal event frame");
+    };
+    let EventPayload::ProcessExitedEvent(exited) = event.payload else {
+        panic!("expected process terminal event");
+    };
+    let error = exited.error.expect("typed aggregate capture overflow");
+    assert_eq!(error.code, "ERR_CAPTURED_OUTPUT_LIMIT_EXCEEDED");
+    assert!(error
+        .message
+        .contains("limits.resources.maxCapturedOutputBytes"));
+
+    dispatcher
+        .sidecar_mut()
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Exited(ExecutionExited {
+            vm_id: vm_id.clone(),
+            execution_id: String::from("exec-1"),
+            exit_code: 0,
+        }));
+    let encoded = dispatcher
+        .poll_event_bytes()
+        .expect("poll first terminal")
+        .expect("first terminal event");
+    let ProtocolFrame::EventFrame(event) = codec.decode_message(&encoded).expect("decode terminal")
+    else {
+        panic!("expected terminal event frame");
+    };
+    let EventPayload::ProcessExitedEvent(exited) = event.payload else {
+        panic!("expected process terminal event");
+    };
+    assert_eq!(exited.stdout.as_deref(), Some(&b"12345678"[..]));
+
+    let third = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 12,
+            ownership,
+            payload: RequestPayload::ExecuteRequest(ExecuteRequest {
+                process_id: Some(String::from("third")),
+                command: Some(String::from("node")),
+                runtime: Some(GuestRuntimeKind::JavaScript),
+                entrypoint: None,
+                args: vec![],
+                env: None,
+                cwd: None,
+                wasm_permission_tier: None,
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
+                capture_output: Some(true),
+            }),
+        },
+    );
+    assert!(matches!(
+        third.payload,
+        ResponsePayload::ProcessStartedResponse(_)
+    ));
+    dispatcher
+        .sidecar_mut()
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Stdout(OutputChunk {
+            vm_id,
+            execution_id: String::from("exec-3"),
+            chunk: b"abcdefgh".to_vec(),
+        }));
+    let encoded = dispatcher
+        .poll_event_bytes()
+        .expect("poll capture after budget release")
+        .expect("released aggregate budget must be reusable");
+    let ProtocolFrame::EventFrame(event) = codec.decode_message(&encoded).expect("decode output")
+    else {
+        panic!("expected output event frame");
+    };
+    assert!(matches!(
+        event.payload,
+        EventPayload::ProcessOutputEvent(output)
+            if output.process_id == "third" && output.chunk == b"abcdefgh"
+    ));
+}
+
+#[test]
+fn browser_wire_dispatcher_purges_queued_vm_events_on_dispose() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let (_, ownership) = create_wire_vm(&codec, &mut dispatcher);
+
+    let disposed = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 10,
+            ownership,
+            payload: RequestPayload::DisposeVmRequest(DisposeVmRequest {
+                reason: DisposeReason::Requested,
+            }),
+        },
+    );
+    assert!(matches!(
+        disposed.payload,
+        ResponsePayload::VmDisposedResponse(_)
+    ));
+    assert!(
+        dispatcher
+            .poll_event_bytes()
+            .expect("poll after VM disposal")
+            .is_none(),
+        "VM lifecycle events queued before disposal must not escape afterward"
+    );
+}
+
+#[test]
+fn browser_wire_dispatcher_rejects_requests_when_lifecycle_queue_is_full() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let ownership = open_wire_session(&codec, &mut dispatcher);
+    let mut rejection = None;
+
+    for request_id in 3..300 {
+        let response = dispatch(
+            &codec,
+            &mut dispatcher,
+            RequestFrame {
+                schema: protocol_schema(),
+                request_id,
+                ownership: ownership.clone(),
+                payload: RequestPayload::CreateVmRequest(CreateVmRequest::json_config(
+                    GuestRuntimeKind::JavaScript,
+                    agentos_vm_config::CreateVmConfig::default(),
+                )),
+            },
+        );
+        match response.payload {
+            ResponsePayload::VmCreatedResponse(_) => {}
+            ResponsePayload::RejectedResponse(rejected) => {
+                rejection = Some(rejected);
+                break;
+            }
+            payload => panic!("unexpected create VM response: {payload:?}"),
+        }
+    }
+
+    let rejected = rejection.expect("bounded lifecycle event queue must apply backpressure");
+    assert_eq!(rejected.code, "event_queue_limit_exceeded");
+    assert!(rejected.message.contains("limit of 256 events reached"));
+    assert!(rejected.message.contains("call pollEvent"));
+    assert_eq!(
+        dispatcher.vm_count(),
+        128,
+        "the rejected request must not create another VM"
+    );
 }
 
 #[test]
@@ -1560,6 +2143,7 @@ fn browser_wire_dispatcher_configures_wasm_command_permissions() {
                 shell_command: None,
                 keep_stdin_open: None,
                 timeout_ms: None,
+                capture_output: None,
             }),
         },
     );
@@ -1598,6 +2182,7 @@ fn browser_wire_dispatcher_configures_wasm_command_permissions() {
                 shell_command: None,
                 keep_stdin_open: None,
                 timeout_ms: None,
+                capture_output: None,
             }),
         },
     );
@@ -1736,6 +2321,13 @@ fn browser_wire_dispatcher_rolls_back_failed_initialization() {
     assert_eq!(rejected.code, "initialize_vm_failed");
     assert!(rejected.message.contains("already registered"));
     assert_eq!(dispatcher.vm_count(), 0);
+    assert!(
+        dispatcher
+            .poll_event_bytes()
+            .expect("poll after failed initialization")
+            .is_none(),
+        "failed initialization must not leave VM-owned events queued"
+    );
 }
 
 #[test]

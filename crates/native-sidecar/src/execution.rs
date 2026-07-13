@@ -55,6 +55,7 @@ use crate::tools::{
 };
 use crate::wire::{ProtocolFrame as WireProtocolFrame, WireFrameCodec};
 use crate::{DispatchResult, NativeSidecar, NativeSidecarBridge, SidecarError};
+use agentos_native_sidecar_core::{CaptureChunkOutcome, CapturedOutputState};
 
 use base64::Engine;
 use bytes::Bytes;
@@ -482,6 +483,7 @@ impl ActiveProcess {
             pending_execution_events: VecDeque::new(),
             pending_self_signal_exit: None,
             timeout_at: None,
+            captured_output: None,
             child_processes: BTreeMap::new(),
             next_child_process_id: 0,
             http_servers: BTreeMap::new(),
@@ -533,6 +535,14 @@ impl ActiveProcess {
 
     pub(crate) fn with_timeout_at(mut self, timeout_at: Option<Instant>) -> Self {
         self.timeout_at = timeout_at;
+        self
+    }
+
+    pub(crate) fn with_captured_output(
+        mut self,
+        captured_output: Option<CapturedOutputState>,
+    ) -> Self {
+        self.captured_output = captured_output;
         self
     }
 
@@ -3745,6 +3755,7 @@ where
     ) -> Result<DispatchResult, SidecarError> {
         let execute_total_start = Instant::now();
         agentos_native_sidecar_core::apply_execute_defaults(&mut payload);
+        let capture_output = payload.capture_output.unwrap_or(false);
         let timeout_at = payload
             .timeout_ms
             .map(|timeout_ms| {
@@ -3761,11 +3772,6 @@ where
         self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
 
         let process_id = match payload.process_id.take() {
-            Some(process_id) if process_id.is_empty() => {
-                return Err(SidecarError::InvalidState(String::from(
-                    "execute process_id must not be empty",
-                )));
-            }
             Some(process_id) => process_id,
             None => loop {
                 self.next_process_id = self.next_process_id.checked_add(1).ok_or_else(|| {
@@ -3781,6 +3787,8 @@ where
                 }
             },
         };
+        agentos_native_sidecar_core::validate_process_id(&process_id)
+            .map_err(|error| SidecarError::InvalidState(error.to_string()))?;
 
         let vm = self
             .vms
@@ -3796,6 +3804,13 @@ where
             if let Some(tool_resolution) =
                 resolve_tool_command(vm, command, &payload.args, payload.cwd.as_deref())?
             {
+                let captured_output = capture_output.then(|| {
+                    CapturedOutputState::for_runtime(
+                        &vm.limits,
+                        GuestRuntimeKind::JavaScript,
+                        Arc::clone(&vm.captured_output_budget),
+                    )
+                });
                 let guest_cwd = payload
                     .cwd
                     .as_deref()
@@ -3831,6 +3846,7 @@ where
                         ActiveExecution::Tool(tool_execution),
                     )
                     .with_timeout_at(timeout_at)
+                    .with_captured_output(captured_output)
                     .with_guest_cwd(guest_cwd.clone())
                     .with_host_cwd(resolve_vm_guest_path_to_host(vm, &guest_cwd)),
                 );
@@ -3858,6 +3874,13 @@ where
         let mut resolved = resolve_execute_request(vm, &payload)?;
         stage_agentos_package_command(vm, &mut resolved)?;
         let resolved = resolved;
+        let captured_output = capture_output.then(|| {
+            CapturedOutputState::for_runtime(
+                &vm.limits,
+                resolved.runtime.clone(),
+                Arc::clone(&vm.captured_output_budget),
+            )
+        });
         record_execute_phase("resolve_execute_request", phase_start.elapsed());
         let phase_start = Instant::now();
         let mut env = resolved.env.clone();
@@ -4107,6 +4130,7 @@ where
             process_id.clone(),
             ActiveProcess::new(kernel_pid, kernel_handle, resolved.runtime, execution)
                 .with_timeout_at(timeout_at)
+                .with_captured_output(captured_output)
                 .with_kernel_stdin_writer_fd(kernel_stdin_writer_fd)
                 .with_tty_master_fd(tty_master_fd)
                 .with_guest_cwd(resolved.guest_cwd.clone())
@@ -4624,6 +4648,16 @@ where
         process_id: &str,
         signal: &str,
     ) -> Result<(), SidecarError> {
+        self.kill_process_internal_with_source(vm_id, process_id, signal, "control_plane")
+    }
+
+    fn kill_process_internal_with_source(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+        signal: &str,
+        source: &str,
+    ) -> Result<(), SidecarError> {
         let signal_name = signal.to_owned();
         let signal = parse_signal(signal)?;
         let vm = self
@@ -4766,7 +4800,7 @@ where
             vm_id,
             "security.process.kill",
             audit_fields([
-                (String::from("source"), String::from("control_plane")),
+                (String::from("source"), source.to_owned()),
                 (String::from("source_pid"), String::from("0")),
                 (String::from("target_pid"), process.kernel_pid.to_string()),
                 (String::from("process_id"), process_id.to_owned()),
@@ -5453,22 +5487,42 @@ where
         }
 
         match event {
-            ActiveExecutionEvent::Stdout(chunk) => Ok(Some(EventFrame::new(
-                ownership,
-                EventPayload::ProcessOutput(ProcessOutputEvent {
-                    process_id: process_id.to_owned(),
-                    channel: StreamChannel::Stdout,
-                    chunk,
-                }),
-            ))),
-            ActiveExecutionEvent::Stderr(chunk) => Ok(Some(EventFrame::new(
-                ownership,
-                EventPayload::ProcessOutput(ProcessOutputEvent {
-                    process_id: process_id.to_owned(),
-                    channel: StreamChannel::Stderr,
-                    chunk,
-                }),
-            ))),
+            ActiveExecutionEvent::Stdout(chunk) => {
+                if self.captured_output_suppressed(
+                    vm_id,
+                    process_id,
+                    StreamChannel::Stdout,
+                    &chunk,
+                )? {
+                    return Ok(None);
+                }
+                Ok(Some(EventFrame::new(
+                    ownership,
+                    EventPayload::ProcessOutput(ProcessOutputEvent {
+                        process_id: process_id.to_owned(),
+                        channel: StreamChannel::Stdout,
+                        chunk,
+                    }),
+                )))
+            }
+            ActiveExecutionEvent::Stderr(chunk) => {
+                if self.captured_output_suppressed(
+                    vm_id,
+                    process_id,
+                    StreamChannel::Stderr,
+                    &chunk,
+                )? {
+                    return Ok(None);
+                }
+                Ok(Some(EventFrame::new(
+                    ownership,
+                    EventPayload::ProcessOutput(ProcessOutputEvent {
+                        process_id: process_id.to_owned(),
+                        channel: StreamChannel::Stderr,
+                        chunk,
+                    }),
+                )))
+            }
             ActiveExecutionEvent::JavascriptSyncRpcRequest(request) => {
                 self.handle_javascript_sync_rpc_request(vm_id, process_id, request)?;
                 Ok(None)
@@ -5494,6 +5548,16 @@ where
                 Ok(None)
             }
             ActiveExecutionEvent::Exited(exit_code) => {
+                let capture_result = self
+                    .vms
+                    .get_mut(vm_id)
+                    .and_then(|vm| vm.active_processes.get_mut(process_id))
+                    .and_then(|process| process.captured_output.take())
+                    .map(CapturedOutputState::into_result);
+                let (stdout, stderr, capture_error) = match capture_result {
+                    Some(result) => (Some(result.stdout), Some(result.stderr), result.error),
+                    None => (None, None, None),
+                };
                 record_execute_response_to_exit_milestone(
                     "execute_response_to_exit_event_handle",
                     vm_id,
@@ -5517,10 +5581,45 @@ where
                     EventPayload::ProcessExited(ProcessExitedEvent {
                         process_id: process_id.to_owned(),
                         exit_code,
+                        stdout,
+                        stderr,
+                        error: capture_error,
                     }),
                 )))
             }
         }
+    }
+
+    fn captured_output_suppressed(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+        channel: StreamChannel,
+        chunk: &[u8],
+    ) -> Result<bool, SidecarError> {
+        let outcome = {
+            let Some(process) = self
+                .vms
+                .get_mut(vm_id)
+                .and_then(|vm| vm.active_processes.get_mut(process_id))
+            else {
+                return Ok(false);
+            };
+            let Some(capture) = process.captured_output.as_mut() else {
+                return Ok(false);
+            };
+            capture.record_chunk(process_id, channel, chunk)
+        };
+
+        if outcome == CaptureChunkOutcome::LimitExceeded {
+            self.kill_process_internal_with_source(
+                vm_id,
+                process_id,
+                "SIGKILL",
+                "captured_output_limit",
+            )?;
+        }
+        Ok(outcome != CaptureChunkOutcome::Forward)
     }
 
     pub(crate) fn finish_active_process_exit(

@@ -292,6 +292,8 @@ export interface AgentOsLimits {
 	resources?: {
 		cpuCount?: number;
 		maxProcesses?: number;
+		/** Aggregate bytes retained by all active captured processes in this VM. Default: 32 MiB. */
+		maxCapturedOutputBytes?: number;
 		maxOpenFds?: number;
 		maxPipes?: number;
 		maxPtys?: number;

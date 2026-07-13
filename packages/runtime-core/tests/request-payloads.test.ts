@@ -319,6 +319,7 @@ describe("request payload conversion", () => {
 				runtime: "java_script",
 				wasm_permission_tier: "isolated",
 				timeout_ms: 25,
+				capture_output: true,
 			}),
 		).toEqual({
 			tag: "ExecuteRequest",
@@ -335,6 +336,7 @@ describe("request payload conversion", () => {
 				pty: null,
 				keepStdinOpen: null,
 				timeoutMs: 25n,
+				captureOutput: true,
 			},
 		});
 
@@ -354,7 +356,20 @@ describe("request payload conversion", () => {
 				pty: null,
 				keepStdinOpen: null,
 				timeoutMs: null,
+				captureOutput: null,
 			},
+		});
+
+		expect(
+			toGeneratedRequestPayload({
+				type: "execute",
+				command: "node",
+				args: [],
+				capture_output: false,
+			}),
+		).toMatchObject({
+			tag: "ExecuteRequest",
+			val: { captureOutput: false },
 		});
 
 		expect(

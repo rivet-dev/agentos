@@ -60,10 +60,13 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 const HEARTBEAT_CONNECTION_ID: &str = "sidecar-transport";
 const MAX_STDIN_FRAME_QUEUE: usize = 128;
 const MAX_EVENT_READY_QUEUE: usize = 1;
-// Defense-in-depth headroom for the host-bound frame queue: a burst of output
-// frames from a busy turn should be buffered, so the writer only backpressures
-// when the host genuinely stops reading stdout rather than on every spike.
-const MAX_STDOUT_FRAME_QUEUE: usize = 4096;
+// Keep at most two host-bound frames waiting behind the frame currently written
+// to stdout. Because one negotiated frame can contain the full captured terminal
+// result, a large count bound would still permit gigabytes of queued buffers.
+// Two slots retain a hard memory bound while leaving normal one-frame traffic
+// below the queue tracker's near-capacity threshold; sustained backlog still
+// warns and applies pipe-like backpressure.
+const MAX_STDOUT_FRAME_QUEUE: usize = 2;
 
 #[cfg(test)]
 fn request_frame(
@@ -820,6 +823,10 @@ mod tests {
     // succeeds, and overflow only fails when the writer (receiver) is gone.
     #[test]
     fn stdout_frame_queue_applies_backpressure_instead_of_crashing() {
+        assert_eq!(
+            MAX_STDOUT_FRAME_QUEUE, 2,
+            "production must keep one-frame traffic below the warning threshold and retain at most two maximum-size frames behind the active writer"
+        );
         let queue_frame = |request_id: RequestId| {
             ProtocolFrame::RequestFrame(request_frame(
                 request_id,

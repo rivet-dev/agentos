@@ -71,6 +71,7 @@ export const agentOsLimitsSchema = z
 			.object({
 				cpuCount: positiveInteger.optional(),
 				maxProcesses: nonNegativeInteger.optional(),
+				maxCapturedOutputBytes: positiveInteger.optional(),
 				maxOpenFds: nonNegativeInteger.optional(),
 				maxPipes: nonNegativeInteger.optional(),
 				maxPtys: nonNegativeInteger.optional(),
