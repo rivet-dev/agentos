@@ -89,6 +89,8 @@ crates/execution/async-out.txt
 crates/sidecar/.tmp-sidecar-tests/
 packages/browser/.cache/
 packages/runtime-core/.cache/
+registry/agent/pi/.cache/
+scripts/benchmarks/results/
 
 # Vendored V8 bridge bundles staged at release time for crates.io publishing
 crates/execution/assets/generated/

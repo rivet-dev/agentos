@@ -1708,6 +1708,25 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             }
             Ok(json!(total_written))
         }
+        "fs.dupSync" => {
+            let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem dup fd")?;
+            if let Some(mapped) = process.mapped_host_fd(fd) {
+                let duplicate = crate::state::ActiveMappedHostFd {
+                    file: mapped.file.try_clone().map_err(|error| {
+                        SidecarError::Io(format!(
+                            "failed to duplicate mapped guest fd {fd}: {error}"
+                        ))
+                    })?,
+                    path: mapped.path.clone(),
+                    guest_path: mapped.guest_path.clone(),
+                };
+                return Ok(json!(process.allocate_mapped_host_fd(duplicate)));
+            }
+            kernel
+                .fd_dup(EXECUTION_DRIVER_NAME, kernel_pid, fd)
+                .map(Value::from)
+                .map_err(kernel_error)
+        }
         "fs.close" | "fs.closeSync" => {
             let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem close fd")?;
             if process.close_mapped_host_fd(fd) {
@@ -1748,6 +1767,21 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             kernel
                 .fd_link_tmpfile_for_process(EXECUTION_DRIVER_NAME, kernel_pid, fd, &destination)
                 .map(|()| Value::Null)
+                .map_err(kernel_error)
+        }
+        "fs._getPathSync" => {
+            let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem path fd")?;
+            if let Some(mapped) = process.mapped_host_fd(fd) {
+                return Ok(Value::String(
+                    mapped
+                        .guest_path
+                        .clone()
+                        .unwrap_or_else(|| mapped.path.to_string_lossy().into_owned()),
+                ));
+            }
+            kernel
+                .fd_path(EXECUTION_DRIVER_NAME, kernel_pid, fd)
+                .map(Value::String)
                 .map_err(kernel_error)
         }
         "fs.fstat" | "fs.fstatSync" => {

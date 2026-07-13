@@ -1305,6 +1305,7 @@ name = "cmd-spawn-test-host"
 version = "0.1.0"
 dependencies = [
  "secureexec-wasi-spawn",
+ "tokio",
 ]
 
 [[package]]

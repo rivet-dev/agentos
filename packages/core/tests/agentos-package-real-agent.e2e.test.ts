@@ -10,7 +10,7 @@ import { AgentOs } from "../src/index.js";
  * REAL production-agent end-to-end proof: pack the published
  * `@agentos-software/pi` ACP adapter with the toolchain (flat + `--prune-native`),
  * project it as an `/opt/agentos` package, and launch a session via
- * `/opt/agentos/bin/pi-sdk-acp` — exercising the whole new package model on a
+ * `/opt/agentos/bin/pi-acp` — exercising the whole package model on a
  * real ESM agent with dynamic imports.
  *
  * Gated behind `AGENTOS_TEST_REAL_PI=1` because it runs a real `npm install`
@@ -31,7 +31,7 @@ const AGENTS = [
 	// `agentType` is the package's projected agent name. `openSession` asks the
 	// sidecar to resolve it under /opt/agentos/pkgs/<name>/<version>.
 	// `pkg` is only the npm package name used to pack the adapter.
-	{ pkg: "@agentos-software/pi", agentType: "pi", acpEntrypoint: "pi-sdk-acp" },
+	{ pkg: "@agentos-software/pi", agentType: "pi", acpEntrypoint: "pi-acp" },
 	// claude is intentionally NOT here: this block packs from the PUBLISHED npm
 	// package, and `@agentos-software/claude-code` does not yet ship
 	// `agentos-package.json`, so `pack` falls back to the unscoped npm name

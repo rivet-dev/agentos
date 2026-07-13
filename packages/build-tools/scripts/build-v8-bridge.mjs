@@ -741,6 +741,7 @@ const zlibResult = await build({
 	stdin: {
 		contents: [
 			'import * as assertStdlibModuleNs from "node:assert";',
+			'import { Buffer as zlibBuffer } from "node:buffer";',
 			'import * as utilStdlibModuleNs from "node:util";',
 			'import * as zlibStdlibModuleNs from "node:zlib";',
 			"const assertModule = assertStdlibModuleNs.default ?? assertStdlibModuleNs;",
@@ -748,6 +749,8 @@ const zlibResult = await build({
 			"const zlibModule = zlibStdlibModuleNs.default ?? zlibStdlibModuleNs;",
 			'const zlibConstants = typeof zlibModule.constants === "object" && zlibModule.constants !== null ? zlibModule.constants : Object.fromEntries(Object.entries(zlibModule).filter(([key, value]) => /^[A-Z0-9_]+$/.test(key) && typeof value === "number"));',
 			'if(typeof zlibModule.constants === "undefined"){zlibModule.constants = zlibConstants;}',
+			'const normalizeZlibInput = (value) => { if (typeof value === "string" || zlibBuffer.isBuffer(value)) return value; if (value instanceof ArrayBuffer) return zlibBuffer.from(value); if (ArrayBuffer.isView(value)) return zlibBuffer.from(value.buffer, value.byteOffset, value.byteLength); return value; };',
+			'for (const name of ["deflate", "deflateSync", "gzip", "gzipSync", "deflateRaw", "deflateRawSync", "unzip", "unzipSync", "inflate", "inflateSync", "gunzip", "gunzipSync", "inflateRaw", "inflateRawSync"]) { const original = zlibModule[name]; if (typeof original === "function") zlibModule[name] = function(input, ...args) { return original.call(this, normalizeZlibInput(input), ...args); }; }',
 			'if(typeof utilModule.TextEncoder==="undefined"&&typeof globalThis.TextEncoder==="function"){utilModule.TextEncoder=globalThis.TextEncoder;}',
 			'if(typeof utilModule.TextDecoder==="undefined"&&typeof globalThis.TextDecoder==="function"){utilModule.TextDecoder=globalThis.TextDecoder;}',
 			"globalThis.__secureExecBuiltinAssertModule = assertModule;",

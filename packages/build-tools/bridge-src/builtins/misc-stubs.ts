@@ -529,7 +529,7 @@ function formatSafeDateTimeValue(value, options = {}) {
   return datePart;
 }
 
-class SafeDateTimeFormat {
+class SafeDateTimeFormatInstance {
   constructor(locales = "en-US", options = {}) {
     this.locales = locales;
     this.options = options && typeof options === "object" ? { ...options } : {};
@@ -565,6 +565,20 @@ class SafeDateTimeFormat {
   }
 }
 
+// ECMA-402 constructors are deliberately callable with or without `new`.
+// Keep the implementation in a class, but expose a normal function whose
+// explicit return value preserves both call forms and `instanceof` behavior.
+function SafeDateTimeFormat(locales = "en-US", options = {}) {
+  return new SafeDateTimeFormatInstance(locales, options);
+}
+SafeDateTimeFormat.prototype = SafeDateTimeFormatInstance.prototype;
+Object.defineProperty(SafeDateTimeFormat.prototype, "constructor", {
+  value: SafeDateTimeFormat,
+  configurable: true,
+  writable: true
+});
+SafeDateTimeFormat.supportedLocalesOf = SafeDateTimeFormatInstance.supportedLocalesOf;
+
 function normalizeFractionDigitOption(value, fallback) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
@@ -579,7 +593,7 @@ function applySafeNumberGrouping(value) {
   return fraction === void 0 ? `${sign}${grouped}` : `${sign}${grouped}.${fraction}`;
 }
 
-class SafeNumberFormat {
+class SafeNumberFormatInstance {
   constructor(locales = "en-US", options = {}) {
     this.locales = locales;
     this.options = options && typeof options === "object" ? { ...options } : {};
@@ -658,6 +672,17 @@ class SafeListFormat {
     return typeof locales === "string" ? [locales] : [];
   }
 }
+
+function SafeNumberFormat(locales = "en-US", options = {}) {
+  return new SafeNumberFormatInstance(locales, options);
+}
+SafeNumberFormat.prototype = SafeNumberFormatInstance.prototype;
+Object.defineProperty(SafeNumberFormat.prototype, "constructor", {
+  value: SafeNumberFormat,
+  configurable: true,
+  writable: true
+});
+SafeNumberFormat.supportedLocalesOf = SafeNumberFormatInstance.supportedLocalesOf;
 
 function installSafeIntlFormatters(target) {
   const existingIntl = target.Intl && typeof target.Intl === "object" ? target.Intl : {};

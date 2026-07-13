@@ -50,17 +50,17 @@ async function runSessionTurn(
 			}) +
 			"\n" +
 			stdinTail;
-		await vm.execArgv("mkdir", ["-p", "/root/.codex"]);
+		await vm.execArgv("mkdir", ["-p", "/home/agentos/.codex"]);
 		await vm.writeFile(
-			"/root/.codex/config.toml",
+			"/home/agentos/.codex/config.toml",
 			new TextEncoder().encode(codexConfig),
 		);
 		const r = await vm.execArgv("codex-exec", ["--session-turn"], {
 			timeout: 45000,
 			stdin,
 			env: {
-				HOME: "/root",
-				CODEX_HOME: "/root/.codex",
+				HOME: "/home/agentos",
+				CODEX_HOME: "/home/agentos/.codex",
 				OPENAI_API_KEY: "mock-key",
 				OPENAI_BASE_URL: `${mock.url}/v1`,
 			},
@@ -114,6 +114,40 @@ describe.skipIf(!hasCodexExecArtifact)(
 			expect(stdout).toContain('"type":"text_delta"');
 			expect(stdout).toContain("hello from codex");
 			expect(stdout).toContain('"type":"done"');
+		}, 70000);
+
+		test("emits only the final unphased assistant snapshot", async () => {
+			const { stdout, stderr, exitCode } = await runSessionTurn(
+				[
+					{
+						name: "successive-assistant-snapshots",
+						predicate: () => true,
+						response: {
+							id: "resp_successive_messages",
+							output: ["first draft", "second draft", "final answer"].map(
+								(text) => ({
+									type: "message",
+									role: "assistant",
+									content: [{ type: "output_text", text }],
+								}),
+							),
+						},
+					},
+				],
+				{ prompt: "give one answer" },
+			);
+			const events = stdout
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line) as { type: string; delta?: string });
+			const text = events
+				.filter((event) => event.type === "text_delta")
+				.map((event) => event.delta ?? "")
+				.join("");
+			expect(
+				text,
+				`codex-exec emitted repeated snapshots; exitCode=${exitCode}; stderr=${stderr}; stdout=${stdout}`,
+			).toBe("final answer");
 		}, 70000);
 
 		test("runs a shell tool call with on-request approval and reports tool_call updates", async () => {
@@ -225,9 +259,9 @@ describe.skipIf(!hasCodexExecArtifact)(
 					"\n" +
 					JSON.stringify({ decision: "allow" }) +
 					"\n";
-				await vm.execArgv("mkdir", ["-p", "/root/.codex"]);
+				await vm.execArgv("mkdir", ["-p", "/home/agentos/.codex"]);
 				await vm.writeFile(
-					"/root/.codex/config.toml",
+					"/home/agentos/.codex/config.toml",
 					new TextEncoder().encode(codexConfig),
 				);
 				await vm.writeFile(sourcePath, new TextEncoder().encode(marker));
@@ -235,8 +269,8 @@ describe.skipIf(!hasCodexExecArtifact)(
 					timeout: 45000,
 					stdin,
 					env: {
-						HOME: "/root",
-						CODEX_HOME: "/root/.codex",
+						HOME: "/home/agentos",
+						CODEX_HOME: "/home/agentos/.codex",
 						OPENAI_API_KEY: "mock-key",
 						OPENAI_BASE_URL: `${mock.url}/v1`,
 					},

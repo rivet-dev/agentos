@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import {
-	AgentOs,
 	type AgentExitEvent,
+	AgentOs,
 	type AgentOsOptions,
 	type CronEvent,
 	type DynamicMountDescriptor,
@@ -169,6 +169,8 @@ async function ensureVm(
 						namespace: ROOT_NAMESPACE,
 						chunkSize: ACTOR_SQLITE_CHUNK_SIZE,
 						inlineThreshold: ACTOR_SQLITE_INLINE_THRESHOLD,
+						uid: options?.user?.euid ?? options?.user?.uid ?? 1000,
+						gid: options?.user?.egid ?? options?.user?.gid ?? 1000,
 					},
 				},
 			},
@@ -476,8 +478,21 @@ export function createAgentOsActions(
 		});
 	}
 	return {
-		readFile: async (c: AnyContext, ...args: Parameters<AgentOs["readFile"]>) =>
-			(await ensureVm(c, options)).readFile(...args),
+		readFile: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["readFile"]>
+		) => {
+			try {
+				return await (await ensureVm(c, options)).readFile(...args);
+			} catch (error) {
+				c.log.error({
+					msg: "agent-os readFile action failed",
+					path: args[0],
+					error,
+				});
+				throw error;
+			}
+		},
 		writeFile: async (
 			c: AnyContext,
 			...args: Parameters<AgentOs["writeFile"]>
@@ -640,7 +655,26 @@ export function createAgentOsActions(
 			(await ensureVm(c, options)).listAgents(),
 		openSession: async (c: AnyContext, input: OpenSessionInput) => {
 			const vm = await ensureVm(c, options);
-			await vm.openSession(input);
+			try {
+				await vm.openSession(input);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				const causeCode =
+					typeof (error as { code?: unknown })?.code === "string"
+						? (error as { code: string }).code
+						: undefined;
+				c.log.error({
+					msg: "agent-os openSession action failed",
+					sessionId: input.sessionId ?? "main",
+					agent: input.agent,
+					causeCode,
+					error,
+				});
+				throw new UserError(`AgentOS openSession failed: ${message}`, {
+					code: "agentos_session_open_failed",
+					metadata: causeCode ? { causeCode } : undefined,
+				});
+			}
 			trackSessionEvents(
 				c,
 				vm,
@@ -679,7 +713,25 @@ export function createAgentOsActions(
 			trackSessionEvents(c, vm, sessionId, hooks, maxSessionSubscriptions);
 			// The actor is held only through the terminal SQLite commit for this
 			// active turn. Merely having an idle durable session holds nothing.
-			return c.keepAwake(vm.prompt(input));
+			try {
+				return await c.keepAwake(vm.prompt(input));
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				const causeCode =
+					typeof (error as { code?: unknown })?.code === "string"
+						? (error as { code: string }).code
+						: undefined;
+				c.log.error({
+					msg: "agent-os prompt action failed",
+					sessionId,
+					causeCode,
+					error,
+				});
+				throw new UserError(`AgentOS prompt failed: ${message}`, {
+					code: "agentos_prompt_failed",
+					metadata: causeCode ? { causeCode } : undefined,
+				});
+			}
 		},
 		cancelPrompt: async (
 			c: AnyContext,

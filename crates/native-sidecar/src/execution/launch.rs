@@ -643,7 +643,20 @@ pub(super) fn apply_shell_cwd_prefix(
     mut args: Vec<String>,
     guest_cwd: &str,
 ) -> Vec<String> {
-    if guest_cwd == "/" || !is_shell_command(command) {
+    if !is_shell_command(command) {
+        return args;
+    }
+
+    // Bash accepts login-shell flags between `-c` and its command text (for
+    // example `bash -c -l 'echo ok'`). The compact shell shipped in AgentOS
+    // expects the command immediately after `-c`, so preserve Bash semantics
+    // by folding the login flag into the option group before execution.
+    if args.len() >= 3 && args[0] == "-c" && matches!(args[1].as_str(), "-l" | "--login") {
+        args.remove(1);
+        args[0] = String::from("-lc");
+    }
+
+    if guest_cwd == "/" {
         return args;
     }
 
@@ -658,6 +671,51 @@ pub(super) fn apply_shell_cwd_prefix(
     let quoted_cwd = shell_single_quote(guest_cwd);
     args[1] = format!("cd {quoted_cwd} && {command_text}");
     args
+}
+
+#[cfg(test)]
+mod shell_argument_tests {
+    use super::apply_shell_cwd_prefix;
+
+    #[test]
+    fn normalizes_bash_login_flag_after_command_option() {
+        assert_eq!(
+            apply_shell_cwd_prefix(
+                "/bin/bash",
+                vec![
+                    String::from("-c"),
+                    String::from("-l"),
+                    String::from("echo ok")
+                ],
+                "/home/agentos",
+            ),
+            vec![
+                String::from("-lc"),
+                String::from("cd '/home/agentos' && echo ok"),
+            ],
+        );
+    }
+
+    #[test]
+    fn preserves_shell_positional_arguments_after_command_text() {
+        assert_eq!(
+            apply_shell_cwd_prefix(
+                "bash",
+                vec![
+                    String::from("-c"),
+                    String::from("-l"),
+                    String::from("printf '%s' \"$0\""),
+                    String::from("argv-zero"),
+                ],
+                "/work",
+            ),
+            vec![
+                String::from("-lc"),
+                String::from("cd '/work' && printf '%s' \"$0\""),
+                String::from("argv-zero"),
+            ],
+        );
+    }
 }
 
 fn is_shell_command(command: &str) -> bool {
@@ -958,7 +1016,7 @@ fn collect_process_host_sync_roots(
     }
 }
 
-pub(super) fn sync_process_host_writes_to_kernel(
+pub(crate) fn sync_process_host_writes_to_kernel(
     vm: &mut VmState,
     process: &ActiveProcess,
 ) -> Result<(), SidecarError> {
@@ -1640,6 +1698,54 @@ pub(super) fn resolve_special_node_cli_invocation(
             );
             Some((String::from("-e"), args.to_vec()))
         }
+        "--test" => {
+            env.insert(
+                String::from("AGENTOS_NODE_EVAL"),
+                String::from(
+                    r#"
+const fs = require("node:fs");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+
+(async () => {
+const { __agentOSRunTests } = await import("node:test");
+const args = process.argv.slice(1);
+const namePatternArg = args.find((arg) => arg.startsWith("--test-name-pattern="));
+const namePattern = namePatternArg ? namePatternArg.slice("--test-name-pattern=".length) : undefined;
+const requested = args.filter((arg) => !arg.startsWith("--"));
+const root = process.cwd();
+const discovered = [];
+const visit = (entry) => {
+  const stat = fs.lstatSync(entry);
+  if (stat.isSymbolicLink()) return;
+  if (stat.isDirectory()) {
+    if ([".git", "bin", "node_modules"].includes(path.basename(entry))) return;
+    for (const child of fs.readdirSync(entry)) visit(path.join(entry, child));
+    return;
+  }
+  const normalized = entry.replaceAll("\\", "/");
+  if (/(?:^|\/)(?:test\/.*|.*(?:\.test|-test))\.(?:js|mjs|cjs)$/u.test(normalized)) {
+    discovered.push(entry);
+  }
+};
+for (const entry of requested.length > 0 ? requested : [root]) {
+  visit(path.isAbsolute(entry) ? entry : path.resolve(root, entry));
+}
+discovered.sort();
+for (const entry of discovered) {
+  await import(pathToFileURL(entry).href);
+}
+const summary = await __agentOSRunTests(namePattern);
+if (summary.failed > 0) process.exitCode = 1;
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exitCode = 1;
+});
+"#,
+                ),
+            );
+            Some((String::from("-e"), args.iter().skip(1).cloned().collect()))
+        }
         _ => None,
     }
 }
@@ -2175,7 +2281,7 @@ pub(super) fn resolve_exact_guest_command_entrypoint(
         .then_some(normalized)
 }
 
-fn registered_command_name_for_path(vm: &VmState, path: &str) -> Option<String> {
+pub(super) fn registered_command_name_for_path(vm: &VmState, path: &str) -> Option<String> {
     let normalized = normalize_path(path);
     let name = ["/bin/", "/usr/bin/", "/usr/local/bin/", "/opt/agentos/bin/"]
         .into_iter()

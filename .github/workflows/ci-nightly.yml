@@ -28,6 +28,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           targets: wasm32-wasip1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-03-01
+          components: rust-src
+          targets: wasm32-wasip1
       - name: Install toolchain build prerequisites
         run: |
           if ! command -v cmake >/dev/null 2>&1; then
@@ -38,6 +43,7 @@ jobs:
       - run: node --test scripts/generate-secure-exec-mirror.test.mjs
       - run: make -C toolchain commands
       - run: make -C toolchain cmd/duckdb
+      - run: make -C toolchain codex
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
       - name: Use stable Rust for repository validation
         run: echo "RUSTUP_TOOLCHAIN=stable" >> "$GITHUB_ENV"

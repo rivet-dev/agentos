@@ -1121,13 +1121,26 @@ fn runtime_intl_datetime_format_does_not_crash() {
         "entry.mjs",
         r#"
 console.log(JSON.stringify({
-  formatted: new Intl.DateTimeFormat("en-US").format(new Date("2024-01-02T03:04:05Z"))
+  formatted: new Intl.DateTimeFormat("en-US").format(new Date("2024-01-02T03:04:05Z")),
+  calledFormatted: Intl.DateTimeFormat("en-US").format(new Date("2024-01-02T03:04:05Z")),
+  number: Intl.NumberFormat("en-US").format(1234),
+  dateInstance: Intl.DateTimeFormat() instanceof Intl.DateTimeFormat,
+  numberInstance: Intl.NumberFormat() instanceof Intl.NumberFormat
 }));
 "#,
     );
 
     let output = run_guest_json(&fixture, "./entry.mjs");
-    assert_eq!(output, json!({ "formatted": "2024-01-02" }));
+    assert_eq!(
+        output,
+        json!({
+            "formatted": "2024-01-02",
+            "calledFormatted": "2024-01-02",
+            "number": "1,234",
+            "dateInstance": true,
+            "numberInstance": true
+        })
+    );
 }
 
 fn runtime_buffer_base64url_encoding_matches_node_behavior() {

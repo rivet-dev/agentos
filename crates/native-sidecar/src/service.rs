@@ -71,7 +71,7 @@ use agentos_native_sidecar_core::{
     AuthenticateVersionError, RequestRoute,
 };
 use agentos_runtime::metrics::ResourceMetricClass;
-use agentos_vm_config::PermissionsPolicy;
+use agentos_vm_config::{FsPermissionScope, PermissionMode, PermissionsPolicy};
 // root_fs types moved to crate::vm
 use agentos_kernel::vfs::VfsError;
 use serde::Deserialize;
@@ -582,6 +582,16 @@ where
         })?;
         stored.remove(vm_id);
         Ok(())
+    }
+
+    pub(crate) fn filesystem_unrestricted(&self, vm_id: &str) -> bool {
+        let Ok(stored) = self.permissions.lock() else {
+            return false;
+        };
+        matches!(
+            stored.get(vm_id).and_then(|policy| policy.fs.as_ref()),
+            Some(FsPermissionScope::Mode(PermissionMode::Allow))
+        )
     }
 
     pub(crate) fn static_permission_decision(

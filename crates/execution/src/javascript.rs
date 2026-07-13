@@ -2687,7 +2687,6 @@ impl JavascriptExecutionEngine {
 
         self.next_execution_id += 1;
         let execution_id = format!("exec-{}", self.next_execution_id);
-        let sync_rpc_timeout = javascript_sync_rpc_timeout(&request);
 
         let phase_start = Instant::now();
         self.ensure_v8_host()?;
@@ -2772,6 +2771,20 @@ impl JavascriptExecutionEngine {
                 .chain(std::iter::once(guest_entrypoint.clone()))
                 .chain(request.argv.iter().skip(1).cloned())
                 .collect::<Vec<_>>()
+        };
+        // Node resolves relative imports from `node -e` against process.cwd().
+        // Keep the guest-visible argv entry as `-e`, but give V8 an absolute
+        // synthetic resource name so its dynamic-import callback has the same
+        // resolution base instead of trying to resolve from the literal `-e`.
+        let execution_file_path = if matches!(guest_entrypoint.as_str(), "-e" | "--eval") {
+            let cwd = translator.guest_cwd().trim_end_matches('/');
+            if cwd.is_empty() {
+                String::from("/[eval]")
+            } else {
+                format!("{cwd}/[eval]")
+            }
+        } else {
+            guest_entrypoint.clone()
         };
         let inline_code = request
             .inline_code
@@ -2859,7 +2872,6 @@ impl JavascriptExecutionEngine {
             frame_receiver,
             pending_sync_rpc.clone(),
             exited.clone(),
-            sync_rpc_timeout,
             v8_session.clone(),
             local_bridge,
             self.event_notify.clone(),
@@ -2881,7 +2893,7 @@ impl JavascriptExecutionEngine {
         let phase_start = Instant::now();
         let prepared_execute = PreparedJavascriptExecute {
             mode: if use_module_mode { 1 } else { 0 },
-            file_path: guest_entrypoint.clone(),
+            file_path: execution_file_path,
             bridge_code: V8RuntimeHost::bridge_code().to_owned(),
             post_restore_script: String::new(),
             userland_code: snapshot_userland_code,
@@ -3583,6 +3595,13 @@ fn prepend_v8_runtime_shim(
     Object.entries(nextEnv).filter(([key]) => !key.startsWith("AGENTOS_"))
   );
 
+  // Refresh the process module's closure-backed state before user modules run.
+  // Updating only globalThis.process leaves named ESM imports such as
+  // `import {{ cwd }} from "process"` reading the warm snapshot's stale cwd.
+  if (typeof globalThis.__runtimeRefreshProcessConfig === "function") {{
+    globalThis.__runtimeRefreshProcessConfig();
+  }}
+
   if (typeof process !== "undefined") {{
     process.argv = nextArgv;
     process.argv0 = nextArgv0;
@@ -3663,8 +3682,6 @@ fn prepend_v8_runtime_shim(
       process.connected = true;
       __runtimeInstallProcessIpcBridge();
     }}
-    process.cwd = () => nextCwd;
-    process._cwd = nextCwd;
     if (typeof process.getBuiltinModule !== "function") {{
       process.getBuiltinModule = function(specifier) {{
         return globalThis.require ? globalThis.require(specifier) : undefined;
@@ -3672,7 +3689,15 @@ fn prepend_v8_runtime_shim(
     }}
   }}
 
-  globalThis.__runtimeStreamStdin = nextEnv.AGENTOS_KEEP_STDIN_OPEN === "1";
+  const streamStdin = nextEnv.AGENTOS_KEEP_STDIN_OPEN === "1";
+  if (typeof globalThis.__runtimeConfigureStreamStdin === "function") {{
+    globalThis.__runtimeConfigureStreamStdin(
+      streamStdin,
+      nextEnv.AGENTOS_EAGER_STDIN_HANDLE === "1",
+    );
+  }} else {{
+    globalThis.__runtimeStreamStdin = streamStdin;
+  }}
   globalThis.__runtimeKernelStdin =
     nextEnv.AGENTOS_FORWARD_KERNEL_STDIN_RPC === "1";
 
@@ -3813,7 +3838,6 @@ fn spawn_v8_event_bridge(
     frame_receiver: V8SessionFrameReceiver,
     pending_sync_rpc: Arc<Mutex<Option<PendingSyncRpcState>>>,
     exited: Arc<AtomicBool>,
-    _sync_rpc_timeout: Duration,
     v8_session: V8SessionHandle,
     mut local_bridge: LocalBridgeState,
     event_notify: Option<Arc<Notify>>,
@@ -5313,7 +5337,9 @@ impl LocalKernelStdinBridge {
 
 fn normalize_module_resolve_context(path: &str) -> String {
     let normalized = normalize_guest_path(path);
-    if normalized.ends_with(".js")
+    if normalized == "/[eval]"
+        || normalized.ends_with("/[eval]")
+        || normalized.ends_with(".js")
         || normalized.ends_with(".mjs")
         || normalized.ends_with(".cjs")
         || normalized.ends_with(".json")
@@ -5405,6 +5431,8 @@ fn normalize_builtin_specifier(specifier: &str) -> Option<String> {
         | "timers"
         | "tls"
         | "timers/promises"
+        | "test"
+        | "test/reporters"
         | "trace_events"
         | "tty"
         | "url"
@@ -5481,11 +5509,11 @@ function notEqual(actual, expected, message) {
 }
 
 function strictEqual(actual, expected, message) {
-  if (actual !== expected) fail(message ?? `Expected ${actual} === ${expected}`);
+  if (!Object.is(actual, expected)) fail(message ?? `Expected ${actual} to be strictly equal to ${expected}`);
 }
 
 function notStrictEqual(actual, expected, message) {
-  if (actual === expected) fail(message ?? `Expected ${actual} !== ${expected}`);
+  if (Object.is(actual, expected)) fail(message ?? `Expected ${actual} not to be strictly equal to ${expected}`);
 }
 
 function serialize(value) {
@@ -5570,15 +5598,19 @@ function assert(value, message) {
   ok(value, message);
 }
 
+const exportedDeepEqual = __ASSERT_STRICT__ ? deepStrictEqual : deepEqual;
+const exportedEqual = __ASSERT_STRICT__ ? strictEqual : equal;
+const exportedNotEqual = __ASSERT_STRICT__ ? notStrictEqual : notEqual;
+
 Object.assign(assert, {
   AssertionError,
-  deepEqual,
+  deepEqual: exportedDeepEqual,
   deepStrictEqual,
-  equal,
+  equal: exportedEqual,
   fail,
   ifError,
   match,
-  notEqual,
+  notEqual: exportedNotEqual,
   notStrictEqual,
   ok,
   rejects,
@@ -5590,13 +5622,13 @@ Object.assign(assert, {
 export {
   AssertionError,
   assert as default,
-  deepEqual,
+  exportedDeepEqual as deepEqual,
   deepStrictEqual,
-  equal,
+  exportedEqual as equal,
   fail,
   ifError,
   match,
-  notEqual,
+  exportedNotEqual as notEqual,
   notStrictEqual,
   ok,
   rejects,
@@ -5604,6 +5636,139 @@ export {
   strictEqual,
   throws,
 };
+"#,
+        )
+		.replace(
+			"__ASSERT_STRICT__",
+			if module_name == "assert/strict" {
+				"true"
+			} else {
+				"false"
+			},
+		);
+    }
+
+    if module_name == "test" {
+        return String::from(
+            r#"const state = globalThis.__agentOSNodeTestState ??= {
+  tests: [],
+  suite: [],
+  before: [],
+  after: [],
+  beforeEach: [],
+  afterEach: [],
+  ran: false,
+};
+
+function normalizeTest(name, optionsOrFn, maybeFn) {
+  const options = typeof optionsOrFn === "object" && optionsOrFn !== null ? optionsOrFn : {};
+  const fn = typeof optionsOrFn === "function" ? optionsOrFn : maybeFn;
+  return { name: String(name), options, fn };
+}
+
+function test(name, optionsOrFn, maybeFn) {
+  const record = normalizeTest(name, optionsOrFn, maybeFn);
+  state.tests.push({
+    ...record,
+    name: [...state.suite, record.name].join(" > "),
+  });
+}
+test.skip = (name, optionsOrFn, maybeFn) => {
+  const record = normalizeTest(name, optionsOrFn, maybeFn);
+  test(record.name, { ...record.options, skip: true }, record.fn);
+};
+test.todo = (name, optionsOrFn, maybeFn) => {
+  const record = normalizeTest(name, optionsOrFn, maybeFn);
+  test(record.name, { ...record.options, todo: true }, record.fn);
+};
+test.only = test;
+
+function describe(name, optionsOrFn, maybeFn) {
+  const record = normalizeTest(name, optionsOrFn, maybeFn);
+  state.suite.push(record.name);
+  try {
+    record.fn?.();
+  } finally {
+    state.suite.pop();
+  }
+}
+describe.skip = (_name, _optionsOrFn, _maybeFn) => {};
+describe.only = describe;
+
+function before(fn) { state.before.push(fn); }
+function after(fn) { state.after.push(fn); }
+function beforeEach(fn) { state.beforeEach.push(fn); }
+function afterEach(fn) { state.afterEach.push(fn); }
+
+async function __agentOSRunTests(namePattern) {
+  if (state.ran) throw new Error("node:test runner was already consumed");
+  state.ran = true;
+  const pattern = namePattern ? new RegExp(namePattern) : null;
+  const records = pattern ? state.tests.filter((record) => pattern.test(record.name)) : state.tests;
+  let passed = 0;
+  let failed = 0;
+  let skipped = 0;
+  console.log("TAP version 13");
+  for (const hook of state.before) await hook();
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (record.options.skip || record.options.todo || typeof record.fn !== "function") {
+      skipped += 1;
+      console.log(`ok ${index + 1} - ${record.name} # SKIP`);
+      continue;
+    }
+    try {
+      for (const hook of state.beforeEach) await hook();
+      const context = { test, skip() { throw Object.assign(new Error("skip"), { __agentOSTestSkip: true }); } };
+      await record.fn(context);
+      passed += 1;
+      console.log(`ok ${index + 1} - ${record.name}`);
+    } catch (error) {
+      if (error?.__agentOSTestSkip) {
+        skipped += 1;
+        console.log(`ok ${index + 1} - ${record.name} # SKIP`);
+      } else {
+        failed += 1;
+        console.log(`not ok ${index + 1} - ${record.name}`);
+        console.log(`  error: ${JSON.stringify(String(error?.stack ?? error))}`);
+      }
+    } finally {
+      for (const hook of state.afterEach) await hook();
+    }
+  }
+  for (const hook of state.after) await hook();
+  console.log(`1..${records.length}`);
+  console.log(`# tests ${records.length}`);
+  console.log(`# pass ${passed}`);
+  console.log(`# fail ${failed}`);
+  console.log(`# skipped ${skipped}`);
+  return { total: records.length, passed, failed, skipped };
+}
+
+const it = test;
+const suite = describe;
+const mock = {};
+export {
+  __agentOSRunTests,
+  after,
+  afterEach,
+  before,
+  beforeEach,
+  describe,
+  it,
+  mock,
+  suite,
+  test as default,
+  test,
+};
+"#,
+        );
+    }
+
+    if module_name == "test/reporters" {
+        return String::from(
+            r#"const empty = async function* (source) { for await (const event of source) yield event; };
+export { empty as dot, empty as junit, empty as spec, empty as tap };
 "#,
         );
     }
@@ -5718,6 +5883,10 @@ function normalize(path) {
   return join(String(path || ""));
 }
 
+function toNamespacedPath(path) {
+  return String(path || "");
+}
+
 const pathModule = {
   basename,
   delimiter,
@@ -5731,13 +5900,14 @@ const pathModule = {
   relative,
   resolve,
   sep,
+  toNamespacedPath,
 };
 const posix = pathModule;
 const win32 = pathModule;
 pathModule.posix = posix;
 pathModule.win32 = win32;
 
-export { basename, delimiter, dirname, extname, format, isAbsolute, join, normalize, parse, posix, relative, resolve, sep, win32 };
+export { basename, delimiter, dirname, extname, format, isAbsolute, join, normalize, parse, posix, relative, resolve, sep, toNamespacedPath, win32 };
 export default pathModule;
 "#,
         );
@@ -7529,19 +7699,41 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "appendFileSync",
             "chmod",
             "chmodSync",
+            "chown",
+            "chownSync",
+            "close",
             "closeSync",
             "constants",
+            "copyFile",
+            "copyFileSync",
+            "cp",
+            "cpSync",
             "createReadStream",
             "createWriteStream",
+            "exists",
             "existsSync",
+            "lchmod",
+            "lchmodSync",
+            "lchown",
+            "lchownSync",
+            "link",
+            "linkSync",
             "fstat",
             "fstatSync",
             "fsyncSync",
             "lstat",
             "lstatSync",
+            "lutimes",
+            "lutimesSync",
             "mkdir",
             "mkdirSync",
+            "mkdtemp",
+            "mkdtempSync",
+            "open",
             "openSync",
+            "opendir",
+            "opendirSync",
+            "read",
             "readFile",
             "promises",
             "readFileSync",
@@ -7549,22 +7741,33 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "readSync",
             "readdirSync",
             "readlink",
+            "readlinkSync",
             "realpath",
             "realpathSync",
             "rename",
-            "readlinkSync",
             "renameSync",
             "rmdir",
             "rmdirSync",
             "rm",
             "rmSync",
+            "rmdir",
+            "rmdirSync",
             "stat",
             "statSync",
+            "statfs",
+            "statfsSync",
+            "symlink",
+            "symlinkSync",
+            "truncate",
+            "truncateSync",
             "unlink",
             "unlinkSync",
+            "utimes",
+            "utimesSync",
             "watch",
             "watchFile",
             "unwatchFile",
+            "write",
             "writeFile",
             "writeFileSync",
             "writeSync",
@@ -7697,6 +7900,7 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "relative",
             "resolve",
             "sep",
+            "toNamespacedPath",
             "win32",
         ],
         "process" => &[

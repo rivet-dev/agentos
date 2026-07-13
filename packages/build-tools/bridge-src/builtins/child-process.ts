@@ -1,4 +1,4 @@
-import { _fdClose, encodeBridgeBytes, fs } from "./fs.js";
+import { _fdClose, _fdGetPath, encodeBridgeBytes, fs } from "./fs.js";
 import { normalizeChildProcessSignal } from "./os.js";
 import { exposeCustomGlobal } from "../global-exposure.js";
 import { __export } from "../vendor/esbuild-runtime.js";
@@ -16,6 +16,10 @@ __export(child_process_exports, {
   spawnSync: () => spawnSync
 });
 var childProcessInstances = /* @__PURE__ */ new Map();
+var earlyChildProcessEvents = /* @__PURE__ */ new Map();
+const MAX_EARLY_CHILD_PROCESS_IDS = 64;
+const MAX_EARLY_CHILD_PROCESS_EVENTS = 256;
+const CHILD_PROCESS_EXIT_DRAIN_MAX_MS = 1_000;
 const CHILD_PROCESS_EVENT_ROUTES = Symbol.for("agentos.childProcessEventRoutes");
 const childProcessEventRoutes = (() => {
   const existing = globalThis[CHILD_PROCESS_EVENT_ROUTES];
@@ -47,11 +51,15 @@ function publishChildProcessEvent(eventType, payload) {
 // output can still be written to the fd. Per fd we track the number of live
 // children holding it and whether the parent already requested a close.
 var _childInheritedFds = /* @__PURE__ */ new Map();
-function retainChildInheritedFd(fd) {
+function retainChildInheritedFd(fd, closeOnRelease = false) {
   if (typeof fd !== "number") return;
   const entry = _childInheritedFds.get(fd);
-  if (entry) entry.holders += 1;
-  else _childInheritedFds.set(fd, { holders: 1, closePending: false });
+  if (entry) {
+    entry.holders += 1;
+    entry.closePending ||= closeOnRelease;
+  } else {
+    _childInheritedFds.set(fd, { holders: 1, closePending: closeOnRelease });
+  }
 }
 function deferCloseIfChildInheritedFd(fd) {
   const entry = _childInheritedFds.get(fd);
@@ -70,6 +78,15 @@ function releaseChildInheritedFd(fd) {
       _fdClose.applySyncPromise(void 0, [fd]);
     } catch {
     }
+  }
+}
+function childInheritedFdPath(fd) {
+  if (typeof fd !== "number") return null;
+  try {
+    const path = _fdGetPath.applySyncPromise(void 0, [fd]);
+    return typeof path === "string" && path.startsWith("/") ? path : null;
+  } catch {
+    return null;
   }
 }
 function normalizeChildProcessSessionId(payload) {
@@ -285,12 +302,20 @@ function splitChildProcessIpcFrames(buffer, chunk) {
 // bytes straight to that descriptor (matching native node, where the child's
 // output lands in the inherited file/pipe rather than on child.stdout). Returns
 // true when the data was consumed by the fd so the caller skips stream emission.
-function writeChildOutputToInheritedFd(fd, buf) {
+function writeChildOutputToInheritedFd(fd, buf, path = null) {
+  const bytes = typeof Buffer !== "undefined" && Buffer.isBuffer(buf) ? buf : typeof Buffer !== "undefined" ? Buffer.from(buf) : buf;
+  if (typeof path === "string") {
+    try {
+      fs.appendFileSync(path, bytes);
+      return true;
+    } catch {
+    }
+  }
   if (typeof fd !== "number") return false;
   try {
-    const bytes = typeof Buffer !== "undefined" && Buffer.isBuffer(buf) ? buf : typeof Buffer !== "undefined" ? Buffer.from(buf) : buf;
     fs.writeSync(fd, bytes, 0, bytes.length, null);
   } catch {
+    return false;
   }
   return true;
 }
@@ -307,7 +332,20 @@ function redirectSyncOutputToInheritedFd(fd, output) {
 }
 function routeChildProcessEvent(sessionId, type, data) {
   const child = childProcessInstances.get(sessionId);
-  if (!child) return;
+  if (!child) {
+    let events = earlyChildProcessEvents.get(sessionId);
+    if (!events) {
+      if (earlyChildProcessEvents.size >= MAX_EARLY_CHILD_PROCESS_IDS) {
+        earlyChildProcessEvents.delete(earlyChildProcessEvents.keys().next().value);
+      }
+      events = [];
+      earlyChildProcessEvents.set(sessionId, events);
+    }
+    if (events.length < MAX_EARLY_CHILD_PROCESS_EVENTS) {
+      events.push({ type, data });
+    }
+    return;
+  }
   if (type === "stdout") {
     const buf = typeof Buffer !== "undefined" ? Buffer.from(data) : data;
     if (child._ipcEnabled) {
@@ -325,43 +363,102 @@ function routeChildProcessEvent(sessionId, type, data) {
         return;
       }
       const outBuf = typeof Buffer !== "undefined" ? Buffer.from(parsed.output, "utf8") : parsed.output;
-      if (writeChildOutputToInheritedFd(child._stdoutFd, outBuf)) return;
+      if (writeChildOutputToInheritedFd(child._stdoutFd, outBuf, child._stdoutPath)) return;
       child.stdout.emit("data", outBuf);
       return;
     }
-    if (writeChildOutputToInheritedFd(child._stdoutFd, buf)) return;
+    if (writeChildOutputToInheritedFd(child._stdoutFd, buf, child._stdoutPath)) return;
     child.stdout.emit("data", buf);
   } else if (type === "stderr") {
     const buf = typeof Buffer !== "undefined" ? Buffer.from(data) : data;
-    if (writeChildOutputToInheritedFd(child._stderrFd, buf)) return;
+    if (writeChildOutputToInheritedFd(child._stderrFd, buf, child._stderrPath)) return;
     child.stderr.emit("data", buf);
   } else if (type === "exit") {
-    const wasConnected = child.connected;
-    child.connected = false;
     const signalCode = data && typeof data === "object" ? data.signal ?? null : null;
     const exitCode = data && typeof data === "object" ? data.code : data;
-    child._pendingSignalCode = null;
-    child.signalCode = signalCode;
-    child.exitCode = signalCode == null ? exitCode : null;
-    child.stdin.writable = false;
-    child.stdin.destroyed = true;
-    if (wasConnected) {
-      child.emit("disconnect");
-    }
-    child.emit("exit", child.exitCode, child.signalCode);
-    child.stdout.emit("end");
-    child.stderr.emit("end");
-    queueMicrotask(() => {
-      child.emit("close", child.exitCode, child.signalCode);
+    if (child._exitScheduled) return;
+    child._exitScheduled = true;
+    const drainDeadline = Date.now() + CHILD_PROCESS_EXIT_DRAIN_MAX_MS;
+    const finalizeExit = () => {
+      // Effect's Node stream adapter consumes child output through the paused
+      // `readable`/`read()` contract. Let that registered consumer drain bytes
+      // already delivered before publishing exit: otherwise the process scope
+      // can close its stream fiber while those bytes are still buffered. This
+      // normally completes on the next turn and adds no fixed exit delay.
+      const waitingForReadableConsumer = [child.stdout, child.stderr].some(
+        (stream) =>
+          stream._bufferedChunks.length > 0 &&
+          hasOutputListeners(stream, "readable"),
+      );
+      if (waitingForReadableConsumer && Date.now() < drainDeadline) {
+        scheduleOutputFlush(child.stdout);
+        scheduleOutputFlush(child.stderr);
+        setTimeout(finalizeExit, 0);
+        return;
+      }
+      if (waitingForReadableConsumer && typeof console !== "undefined") {
+        console.error(
+          `ERR_AGENTOS_CHILD_STDIO_DRAIN_TIMEOUT: child ${sessionId} output was not consumed within ${CHILD_PROCESS_EXIT_DRAIN_MAX_MS}ms`,
+        );
+      }
+      const wasConnected = child.connected;
+      child.connected = false;
+      child._pendingSignalCode = null;
+      child.signalCode = signalCode;
+      child.exitCode = signalCode == null ? exitCode : null;
+      child.stdin.writable = false;
+      child.stdin.destroyed = true;
+      if (wasConnected) child.emit("disconnect");
       if (Array.isArray(child._inheritedFds)) {
         for (const fd of child._inheritedFds) releaseChildInheritedFd(fd);
         child._inheritedFds = [];
       }
-      childProcessInstances.delete(sessionId);
-      if (typeof _unregisterHandle === "function") {
-        _unregisterHandle(`child:${sessionId}`);
-      }
-    });
+      // Native stdout/stderr reach EOF before `close`, and consumers such as
+      // Effect finish their stream fiber from that EOF. Publish it before the
+      // process exit callback and yield one turn so exit cannot close the
+      // consumer's scope while its final chunk is still being reduced.
+      child.stdout.emit("end");
+      child.stderr.emit("end");
+      const publishExit = () => {
+        // A consumer can attach after finalizeExit's first drain check (Effect
+        // does this while resuming the spawn fiber). Recheck immediately before
+        // close so that attaching during this window cannot strand buffered
+        // output and complete the command with an empty result.
+        const waitingForLateReadableConsumer = [child.stdout, child.stderr].some(
+          (stream) =>
+            stream._bufferedChunks.length > 0 &&
+            hasOutputListeners(stream, "readable"),
+        );
+        if (waitingForLateReadableConsumer && Date.now() < drainDeadline) {
+          scheduleOutputFlush(child.stdout);
+          scheduleOutputFlush(child.stderr);
+          setTimeout(publishExit, 0);
+          return;
+        }
+        if (waitingForLateReadableConsumer && typeof console !== "undefined") {
+          console.error(
+            `ERR_AGENTOS_CHILD_STDIO_DRAIN_TIMEOUT: child ${sessionId} output was not consumed within ${CHILD_PROCESS_EXIT_DRAIN_MAX_MS}ms`,
+          );
+        }
+        child.emit("exit", child.exitCode, child.signalCode);
+        child.emit("close", child.exitCode, child.signalCode);
+        childProcessInstances.delete(sessionId);
+        if (typeof _unregisterHandle === "function") {
+          _unregisterHandle(`child:${sessionId}`);
+        }
+      };
+      // EOF listeners may resume their consumer through a task (Effect's Node
+      // stream adapter does this). A microtask can still publish exit first and
+      // close that consumer's scope before it commits the final chunk/result.
+      setTimeout(publishExit, 0);
+    };
+    // Stream callbacks can hand a chunk to an async consumer (notably Effect's
+    // Node stream adapter) without leaving it in `_bufferedChunks`. Give that
+    // consumer one event-loop turn before EOF/exit closes its scope. A
+    // microtask is too early because the consumer resumes through the runtime's
+    // task queue; this zero-delay turn preserves Node's stdout-before-close
+    // contract without imposing a fixed drain delay on every subprocess.
+    setTimeout(finalizeExit, 0);
   }
 }
 var childProcessDispatch = (eventTypeOrSessionId, payloadOrType, data) => {
@@ -459,11 +556,27 @@ function scheduleOutputFlush(stream) {
       for (const chunk of chunks) {
         stream.emit("data", chunk);
       }
+    } else if (stream._bufferedChunks.length > 0 && hasOutputListeners(stream, "readable")) {
+      stream.emit("readable");
     }
-    if (stream._ended && stream._bufferedChunks.length === 0 && hasOutputListeners(stream, "end")) {
+    if (stream._ended && !stream._endEmitted && stream._bufferedChunks.length === 0) {
       stream.emit("end");
     }
   });
+}
+function readBufferedOutputChunk(stream, size) {
+  const chunk = stream._bufferedChunks.shift();
+  if (chunk === void 0) {
+    return null;
+  }
+  if (Number.isInteger(size) && size > 0 && chunk.length > size) {
+    const head = typeof chunk === "string" ? chunk.slice(0, size) : chunk.subarray(0, size);
+    const tail = typeof chunk === "string" ? chunk.slice(size) : chunk.subarray(size);
+    stream._bufferedChunks.unshift(tail);
+    return head;
+  }
+  if (stream._ended && stream._bufferedChunks.length === 0) scheduleOutputFlush(stream);
+  return chunk;
 }
 function checkStreamMaxListeners(stream, event) {
   if (!(stream._maxListenersWarned instanceof Set)) {
@@ -611,6 +724,9 @@ var ChildProcess = class {
         this._listeners[event].push(listener);
         return this;
       },
+      addListener(event, listener) {
+        return this.on(event, listener);
+      },
       once(event, listener) {
         if (!this._onceListeners[event]) this._onceListeners[event] = [];
         this._onceListeners[event].push(listener);
@@ -650,12 +766,14 @@ var ChildProcess = class {
     };
     this.stdout = {
       readable: true,
+      readableEnded: false,
       isTTY: false,
       destroyed: false,
       _listeners: {},
       _onceListeners: {},
       _bufferedChunks: [],
       _ended: false,
+      _endEmitted: false,
       _flushScheduled: false,
       _maxListeners: 10,
       _maxListenersWarned: /* @__PURE__ */ new Set(),
@@ -664,16 +782,19 @@ var ChildProcess = class {
         if (!this._listeners[event]) this._listeners[event] = [];
         this._listeners[event].push(listener);
         checkStreamMaxListeners(this, event);
-        if (event === "data" || event === "end") {
+        if (event === "data" || event === "readable" || event === "end") {
           scheduleOutputFlush(this);
         }
         return this;
+      },
+      addListener(event, listener) {
+        return this.on(event, listener);
       },
       once(event, listener) {
         if (!this._onceListeners[event]) this._onceListeners[event] = [];
         this._onceListeners[event].push(listener);
         checkStreamMaxListeners(this, event);
-        if (event === "data" || event === "end") {
+        if (event === "data" || event === "readable" || event === "end") {
           scheduleOutputFlush(this);
         }
         return this;
@@ -697,11 +818,22 @@ var ChildProcess = class {
           args[0] = decodeOutputChunk(this, args[0]);
           if (!hasOutputListeners(this, "data")) {
             this._bufferedChunks.push(args[0]);
+            if (hasOutputListeners(this, "readable")) {
+              scheduleOutputFlush(this);
+            }
             return false;
           }
         }
         if (event === "end") {
           this._ended = true;
+          if (this._bufferedChunks.length > 0) {
+            scheduleOutputFlush(this);
+            return false;
+          }
+          if (this._endEmitted) return false;
+          this._endEmitted = true;
+          this.readableEnded = true;
+          this.readable = false;
           if (!hasOutputListeners(this, "end")) {
             return false;
           }
@@ -715,8 +847,8 @@ var ChildProcess = class {
         }
         return true;
       },
-      read() {
-        return null;
+      read(size) {
+        return readBufferedOutputChunk(this, size);
       },
       setEncoding(encoding) {
         this._readableEncoding = encoding == null || encoding === "buffer" ? null : String(encoding);
@@ -773,12 +905,14 @@ var ChildProcess = class {
     };
     this.stderr = {
       readable: true,
+      readableEnded: false,
       isTTY: false,
       destroyed: false,
       _listeners: {},
       _onceListeners: {},
       _bufferedChunks: [],
       _ended: false,
+      _endEmitted: false,
       _flushScheduled: false,
       _maxListeners: 10,
       _maxListenersWarned: /* @__PURE__ */ new Set(),
@@ -787,16 +921,19 @@ var ChildProcess = class {
         if (!this._listeners[event]) this._listeners[event] = [];
         this._listeners[event].push(listener);
         checkStreamMaxListeners(this, event);
-        if (event === "data" || event === "end") {
+        if (event === "data" || event === "readable" || event === "end") {
           scheduleOutputFlush(this);
         }
         return this;
+      },
+      addListener(event, listener) {
+        return this.on(event, listener);
       },
       once(event, listener) {
         if (!this._onceListeners[event]) this._onceListeners[event] = [];
         this._onceListeners[event].push(listener);
         checkStreamMaxListeners(this, event);
-        if (event === "data" || event === "end") {
+        if (event === "data" || event === "readable" || event === "end") {
           scheduleOutputFlush(this);
         }
         return this;
@@ -820,11 +957,22 @@ var ChildProcess = class {
           args[0] = decodeOutputChunk(this, args[0]);
           if (!hasOutputListeners(this, "data")) {
             this._bufferedChunks.push(args[0]);
+            if (hasOutputListeners(this, "readable")) {
+              scheduleOutputFlush(this);
+            }
             return false;
           }
         }
         if (event === "end") {
           this._ended = true;
+          if (this._bufferedChunks.length > 0) {
+            scheduleOutputFlush(this);
+            return false;
+          }
+          if (this._endEmitted) return false;
+          this._endEmitted = true;
+          this.readableEnded = true;
+          this.readable = false;
           if (!hasOutputListeners(this, "end")) {
             return false;
           }
@@ -838,8 +986,8 @@ var ChildProcess = class {
         }
         return true;
       },
-      read() {
-        return null;
+      read(size) {
+        return readBufferedOutputChunk(this, size);
       },
       setEncoding(encoding) {
         this._readableEncoding = encoding == null || encoding === "buffer" ? null : String(encoding);
@@ -904,6 +1052,9 @@ var ChildProcess = class {
       this._flushQueuedIpcMessages();
     }
     return this;
+  }
+  addListener(event, listener) {
+    return this.on(event, listener);
   }
   once(event, listener) {
     if (!this._onceListeners[event]) this._onceListeners[event] = [];
@@ -1231,6 +1382,8 @@ function spawn(command, args, options) {
   // (which native node leaves null in that mode).
   child._stdoutFd = typeof stdio[1] === "number" ? stdio[1] : null;
   child._stderrFd = typeof stdio[2] === "number" ? stdio[2] : null;
+  child._stdoutPath = childInheritedFdPath(child._stdoutFd);
+  child._stderrPath = childInheritedFdPath(child._stderrFd);
   child._inheritedFds = [];
   for (const fd of [child._stdoutFd, child._stderrFd]) {
     if (typeof fd === "number") {
@@ -1250,7 +1403,11 @@ function spawn(command, args, options) {
           env: opts.env,
           argv0: opts.argv0 == null ? void 0 : String(opts.argv0),
           shell: opts.shell === true || typeof opts.shell === "string",
-          detached: opts.detached === true
+          detached: opts.detached === true,
+          pty: opts.agentosPty && typeof opts.agentosPty === "object" ? {
+            cols: Number.isInteger(opts.agentosPty.cols) && opts.agentosPty.cols > 0 ? opts.agentosPty.cols : 80,
+            rows: Number.isInteger(opts.agentosPty.rows) && opts.agentosPty.rows > 0 ? opts.agentosPty.rows : 24
+          } : opts.agentosPty === true ? { cols: 80, rows: 24 } : null
         })
       ]));
     } catch (error) {
@@ -1277,6 +1434,14 @@ function spawn(command, args, options) {
       _registerHandle(child._handleId, child._handleDescription);
       child._handleRefed = true;
     }
+    queueMicrotask(() => {
+      const events = earlyChildProcessEvents.get(sessionId);
+      if (!events) return;
+      earlyChildProcessEvents.delete(sessionId);
+      for (const event of events) {
+        routeChildProcessEvent(sessionId, event.type, event.data);
+      }
+    });
     child.stdin.write = (data, encodingOrCallback, callback) => {
       const done = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
       if (!child.stdin.writable || child.stdin.destroyed) {
@@ -1340,6 +1505,13 @@ function spawn(command, args, options) {
       child.killed = true;
       child._pendingSignalCode = normalizedSignal.signalCode;
       return true;
+    };
+    child.resizePty = (cols, rows) => {
+      if (typeof _childProcessPtyResize === "undefined") {
+        throw new Error("child_process PTY resize bridge is unavailable");
+      }
+      _childProcessPtyResize.applySync(void 0, [sessionId, cols, rows]);
+      return child;
     };
     child.pid = typeof spawnResult === "object" && spawnResult !== null ? Number(spawnResult.pid) || -1 : Number(sessionId) || -1;
     if (stdio[1] === "inherit" || stdio[1] === 1) {

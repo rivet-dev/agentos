@@ -3194,6 +3194,11 @@ if (typeof globalThis !== "undefined") {{
             throw new Error("secure-exec WASM kernel isatty bridge is unavailable");
           }}
           return _kernelIsattyRaw.applySync(void 0, args);
+        case "__kernel_flock_path":
+          if (typeof _kernelFlockRaw === "undefined") {{
+            throw new Error("secure-exec WASM kernel file-lock bridge is unavailable");
+          }}
+          return _kernelFlockRaw.applySync(void 0, args);
         case "__kernel_tty_size":
           if (typeof _kernelTtySizeRaw === "undefined") {{
             throw new Error("secure-exec WASM kernel tty size bridge is unavailable");

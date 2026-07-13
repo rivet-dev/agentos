@@ -906,6 +906,11 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 		rationale: "Host file-descriptor close bridge reference.",
 	},
 	{
+		name: "fs._getPathSync",
+		classification: "hardened",
+		rationale: "Host file-descriptor guest-path bridge reference.",
+	},
+	{
 		name: "fs.readSync",
 		classification: "hardened",
 		rationale: "Host file-descriptor read bridge reference.",
@@ -959,6 +964,11 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 		name: "_childProcessStdinWrite",
 		classification: "hardened",
 		rationale: "Host child_process bridge reference.",
+	},
+	{
+		name: "_childProcessPtyResize",
+		classification: "hardened",
+		rationale: "Host child_process PTY resize bridge reference.",
 	},
 	{
 		name: "_childProcessStdinClose",
@@ -1202,7 +1212,7 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 	{
 		name: "_netSocketWriteSyncRaw",
 		classification: "hardened",
-		rationale: "Host synchronous net socket write bridge reference for WASM.",
+		rationale: "Host synchronous net socket write bridge reference for WASM guests.",
 	},
 	{
 		name: "_netSocketEndRaw",
@@ -1449,6 +1459,11 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 			"Host kernel TTY detection bridge reference for WASM terminal commands.",
 	},
 	{
+		name: "_kernelFlockRaw",
+		classification: "hardened",
+		rationale: "Host kernel file-lock bridge reference.",
+	},
+	{
 		name: "_kernelTtySizeRaw",
 		classification: "hardened",
 		rationale:
@@ -1628,6 +1643,16 @@ function exposeGlobalBinding(target, name, value, options = {}) {
 function exposeCustomGlobal(name, value) {
 	exposeGlobalBinding(globalThis, name, value);
 }
+function exposeInstallCompatibleHardenedGlobal(name, value) {
+	Object.defineProperty(globalThis, name, {
+		get: () => value,
+		// Some Node packages install web globals by assignment. Accept the write
+		// without replacing AgentOS's policy-enforcing implementation.
+		set: () => {},
+		configurable: true,
+		enumerable: true,
+	});
+}
 function exposeMutableRuntimeStateGlobal(name, value) {
 	exposeGlobalBinding(globalThis, name, value, {
 		mutable: true,
@@ -1637,6 +1662,7 @@ function exposeMutableRuntimeStateGlobal(name, value) {
 export {
 	exposeCustomGlobal,
 	exposeGlobalBinding,
+	exposeInstallCompatibleHardenedGlobal,
 	exposeMutableRuntimeStateGlobal,
 	HARDENED_NODE_CUSTOM_GLOBALS,
 	MUTABLE_NODE_CUSTOM_GLOBALS,

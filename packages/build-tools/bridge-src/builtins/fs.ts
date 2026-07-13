@@ -1,7 +1,7 @@
 import { deferCloseIfChildInheritedFd } from "./child-process.js";
 import { builtinCryptoModule } from "./crypto.js";
 import { _umask } from "./process.js";
-import { clearInterval, setInterval } from "./timers.js";
+import { clearTimeout2, setTimeout2 } from "./timers.js";
 import { exposeCustomGlobal } from "../global-exposure.js";
 import { require_buffer } from "../vendor/buffer.js";
 import { __toESM } from "../vendor/esbuild-runtime.js";
@@ -378,6 +378,11 @@ var FileHandle = class _FileHandle {
       handle._emitCloseOnce();
     } finally {
       handle._closing = false;
+    }
+  }
+  async [Symbol.asyncDispose]() {
+    if (!this._closed) {
+      await this.close();
     }
   }
   async stat() {
@@ -801,18 +806,31 @@ function watcherEventType(previous, current) {
   return "change";
 }
 var DEFAULT_FS_WATCH_INTERVAL_MS = 50;
+var MAX_IDLE_FS_WATCH_INTERVAL_MS = 1e3;
 var DEFAULT_FS_WATCH_FILE_INTERVAL_MS = 5007;
 var activeStatWatchers = /* @__PURE__ */ new Map();
 var PollingFsWatcher = class {
   constructor(path, options) {
     this._path = path;
     this._intervalMs = options.interval;
+    this._maxIntervalMs = Math.max(options.interval, options.maxInterval ?? options.interval);
+    this._nextIntervalMs = this._intervalMs;
     this._onChange = options.onChange;
     this._onClose = options.onClose;
     this._listeners = /* @__PURE__ */ new Map();
     this._closed = false;
+    this._persistent = options.persistent !== false;
     this._signal = options.signal;
     this._snapshot = createWatcherSnapshot(path);
+    this._schedulePoll = () => {
+      if (this._closed) {
+        return;
+      }
+      this._timer = setTimeout2(this._poll, this._nextIntervalMs);
+      if (!this._persistent) {
+        this._timer?.unref?.();
+      }
+    };
     this._poll = () => {
       if (this._closed) {
         return;
@@ -821,23 +839,26 @@ var PollingFsWatcher = class {
       try {
         next = createWatcherSnapshot(this._path);
       } catch (error) {
+        this._nextIntervalMs = Math.min(this._nextIntervalMs * 2, this._maxIntervalMs);
+        this._schedulePoll();
         this.emit("error", error);
         return;
       }
       if (next.signature === this._snapshot.signature) {
+        this._nextIntervalMs = Math.min(this._nextIntervalMs * 2, this._maxIntervalMs);
+        this._schedulePoll();
         return;
       }
       const previous = this._snapshot;
       this._snapshot = next;
+      this._nextIntervalMs = this._intervalMs;
+      this._schedulePoll();
       this._onChange(next, previous);
     };
     this._handleAbort = () => {
       this.close();
     };
-    this._timer = setInterval(this._poll, this._intervalMs);
-    if (options.persistent === false) {
-      this._timer?.unref?.();
-    }
+    this._schedulePoll();
     if (this._signal) {
       if (this._signal.aborted) {
         queueMicrotask(() => this.close());
@@ -848,14 +869,18 @@ var PollingFsWatcher = class {
   }
   _path;
   _intervalMs;
+  _maxIntervalMs;
+  _nextIntervalMs;
   _onChange;
   _onClose;
   _listeners;
   _timer;
   _closed;
+  _persistent;
   _signal;
   _handleAbort;
   _snapshot;
+  _schedulePoll;
   _poll;
   on(event, listener) {
     const listeners = this._listeners.get(event) ?? [];
@@ -910,10 +935,12 @@ var PollingFsWatcher = class {
     return true;
   }
   ref() {
+    this._persistent = true;
     this._timer?.ref?.();
     return this;
   }
   unref() {
+    this._persistent = false;
     this._timer?.unref?.();
     return this;
   }
@@ -923,7 +950,7 @@ var PollingFsWatcher = class {
     }
     this._closed = true;
     if (this._timer !== void 0) {
-      clearInterval(this._timer);
+      clearTimeout2(this._timer);
       this._timer = void 0;
     }
     if (this._signal) {
@@ -952,6 +979,7 @@ function createFsWatcher(path, options) {
   const filename = createWatcherFilename(path, options.encoding);
   const watcher = new PollingFsWatcher(path, {
     interval: DEFAULT_FS_WATCH_INTERVAL_MS,
+    maxInterval: MAX_IDLE_FS_WATCH_INTERVAL_MS,
     persistent: options.persistent,
     signal: options.signal,
     onChange(current, previous) {
@@ -2085,19 +2113,59 @@ function _globToRegex(pattern) {
   return new RegExp("^" + regexStr + "$");
 }
 function _globGetBase(pattern) {
+  const absolute = pattern.startsWith("/");
   const parts = pattern.split("/");
   const baseParts = [];
   for (const part of parts) {
     if (/[*?{}\[\]]/.test(part)) break;
     baseParts.push(part);
   }
-  return baseParts.join("/") || "/";
+  return baseParts.join("/") || (absolute ? "/" : ".");
 }
 var MAX_GLOB_DEPTH = 100;
-function _globCollect(pattern, results) {
+function _globJoin(parent, child) {
+  if (!child || child === ".") return parent;
+  if (!parent || parent === ".") return child;
+  if (parent === "/") return `/${child}`;
+  return `${parent.replace(/\/$/, "")}/${child}`;
+}
+function _globExcludeDecision(candidate, entry, options) {
+  if (typeof options.exclude === "function") {
+    const excluded = options.exclude(options.withFileTypes ? entry : candidate) === true;
+    return { excluded, prune: excluded };
+  }
+  let excluded = false;
+  let prune = false;
+  for (const regex of options.excludeRegexes) {
+    excluded ||= regex.test(candidate);
+    prune ||= excluded || regex.test(`${candidate}/`);
+  }
+  return { excluded, prune };
+}
+function _globCollect(pattern, options, results) {
   const regex = _globToRegex(pattern);
-  const base = _globGetBase(pattern);
-  const walk = (dir, depth) => {
+  const patternIsAbsolute = pattern.startsWith("/");
+  const patternBase = _globGetBase(pattern);
+  const scanBase = patternIsAbsolute ? patternBase : _globJoin(options.cwd, patternBase);
+  const relativeBase = patternBase === "." ? "" : patternBase;
+  const addResult = (key, value) => {
+    if (!results.has(key)) results.set(key, value);
+  };
+  if (!/[*?{}\[\]]/.test(pattern)) {
+    try {
+      const stat = _globStat(scanBase);
+      const name = patternBase.split("/").filter(Boolean).pop() ?? patternBase;
+      const lastSlash = scanBase.lastIndexOf("/");
+      const parent = lastSlash < 0 ? "." : lastSlash === 0 ? "/" : scanBase.slice(0, lastSlash);
+      const entry = new Dirent(name, stat.isDirectory(), parent);
+      if (!_globExcludeDecision(patternBase, entry, options).excluded) {
+        addResult(patternBase, options.withFileTypes ? entry : patternBase);
+      }
+    } catch {
+    }
+    return;
+  }
+  const walk = (dir, relativeDir, depth) => {
     if (depth > MAX_GLOB_DEPTH) return;
     let entries;
     try {
@@ -2106,28 +2174,28 @@ function _globCollect(pattern, results) {
       return;
     }
     for (const entry of entries) {
-      const fullPath = dir === "/" ? "/" + entry : dir + "/" + entry;
-      if (regex.test(fullPath)) {
-        results.push(fullPath);
+      const name = typeof entry === "string" ? entry : entry.name;
+      const fullPath = _globJoin(dir, name);
+      const relativePath = relativeDir ? `${relativeDir}/${name}` : name;
+      const candidate = patternIsAbsolute ? fullPath : relativePath;
+      const excludeDecision = _globExcludeDecision(candidate, entry, options);
+      if (!excludeDecision.excluded && regex.test(candidate)) {
+        addResult(candidate, options.withFileTypes ? entry : candidate);
       }
-      try {
-        const stat = _globStat(fullPath);
-        if (stat.isDirectory()) {
-          walk(fullPath, depth + 1);
+      let isDirectory = typeof entry !== "string" && entry?.isDirectory?.() === true;
+      if (typeof entry === "string") {
+        try {
+          isDirectory = _globStat(fullPath).isDirectory();
+        } catch {
         }
-      } catch {
+      }
+      if (isDirectory && !excludeDecision.prune) {
+        walk(fullPath, relativePath, depth + 1);
       }
     }
   };
   try {
-    if (regex.test(base)) {
-      const stat = _globStat(base);
-      if (!stat.isDirectory()) {
-        results.push(base);
-        return;
-      }
-    }
-    walk(base, 0);
+    walk(scanBase, relativeBase, 0);
   } catch {
   }
 }
@@ -2347,9 +2415,11 @@ async function fsReadFileAsync(path, options) {
 }
 async function fsWriteFileAsync(file, data, options) {
   validateEncodingOption(options);
-  const rawPath = typeof file === "number" ? _fdGetPath.applySync(void 0, [normalizeFdInteger(file)]) : normalizePathLike(file);
-  if (!rawPath) throw createFsError("EBADF", "EBADF: bad file descriptor", "write");
-  const pathStr = typeof file === "number" ? rawPath : resolveOperationPath(file);
+  if (typeof file === "number") {
+    return new FileHandle(normalizeFdInteger(file)).writeFile(data, options);
+  }
+  const rawPath = normalizePathLike(file);
+  const pathStr = resolveOperationPath(file);
   try {
     if (typeof data === "string") {
       return await _fsAsync.writeFile.apply(void 0, [pathStr, data]);
@@ -2668,9 +2738,18 @@ var fs = {
   },
   writeFileSync(file, data, _options) {
     validateEncodingOption(_options);
-    const rawPath = typeof file === "number" ? _fdGetPath.applySync(void 0, [normalizeFdInteger(file)]) : normalizePathLike(file);
-    if (!rawPath) throw createFsError("EBADF", "EBADF: bad file descriptor", "write");
-    const pathStr = typeof file === "number" ? rawPath : resolveOperationPath(file);
+    if (typeof file === "number") {
+      const fd = normalizeFdInteger(file);
+      const encoding = typeof _options === "string" ? _options : _options?.encoding;
+      const bytes = toUint8ArrayChunk(data, encoding);
+      let offset = 0;
+      while (offset < bytes.byteLength) {
+        offset += fs.writeSync(fd, bytes, offset, bytes.byteLength - offset, null);
+      }
+      return;
+    }
+    const rawPath = normalizePathLike(file);
+    const pathStr = resolveOperationPath(file);
     try {
       if (typeof data === "string") {
         return _fs.writeFile.applySyncPromise(void 0, [pathStr, data]);
@@ -2980,7 +3059,9 @@ var fs = {
       }
     } catch (e) {
       const msg = e?.message ?? String(e);
-      if (msg.includes("EBADF")) throw createFsError("EBADF", msg, "read");
+      if (msg.includes("EBADF")) {
+        throw createFsError("EBADF", msg, "read");
+      }
       throw e;
     }
     const targetBuffer = new Uint8Array(
@@ -3012,7 +3093,9 @@ var fs = {
       return _fdWrite.applySyncPromise(void 0, [fd, encodeBridgeBytes(dataBytes), pos]);
     } catch (e) {
       const msg = e?.message ?? String(e);
-      if (msg.includes("EBADF")) throw createFsError("EBADF", msg, "write");
+      if (msg.includes("EBADF")) {
+        throw createFsError("EBADF", msg, "write");
+      }
       throw e;
     }
   },
@@ -3103,11 +3186,23 @@ var fs = {
   // glob — pattern matching over VFS files
   globSync(pattern, _options) {
     const patterns = Array.isArray(pattern) ? pattern : [pattern];
-    const results = [];
-    for (const pat of patterns) {
-      _globCollect(pat, results);
+    const rawOptions = _options && typeof _options === "object" ? _options : {};
+    const cwd = normalizePathLike(rawOptions.cwd ?? globalThis.process?.cwd?.() ?? ".", "options.cwd");
+    const exclude = rawOptions.exclude;
+    if (exclude !== void 0 && typeof exclude !== "function" && !Array.isArray(exclude)) {
+      throw createInvalidArgTypeError("options.exclude", "of type function or an Array", exclude);
     }
-    return [...new Set(results)].sort();
+    const options = {
+      cwd,
+      exclude,
+      excludeRegexes: Array.isArray(exclude) ? exclude.map((value) => _globToRegex(normalizePathLike(value, "options.exclude"))) : [],
+      withFileTypes: rawOptions.withFileTypes === true
+    };
+    const results = /* @__PURE__ */ new Map();
+    for (const pat of patterns) {
+      _globCollect(normalizePathLike(pat, "pattern"), options, results);
+    }
+    return [...results.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, value]) => value);
   },
   // Metadata and link sync methods — delegate to VFS via host refs
   chmodSync(path, mode) {
@@ -3518,7 +3613,28 @@ var fs = {
     }
   },
   read(fd, buffer, offset, length, position, callback) {
+    // Node also supports read(fd, options, callback) and read(fd, callback).
+    // Effect's platform filesystem uses the options form for readAlloc().
+    if (typeof buffer === "function") {
+      callback = buffer;
+      buffer = import_buffer.Buffer.alloc(FILE_HANDLE_READ_BUFFER_BYTES);
+      offset = 0;
+      length = buffer.byteLength;
+      position = null;
+    } else if (
+      buffer !== null &&
+      typeof buffer === "object" &&
+      !ArrayBuffer.isView(buffer)
+    ) {
+      const options = buffer;
+      callback = typeof offset === "function" ? offset : callback;
+      buffer = options.buffer ?? import_buffer.Buffer.alloc(FILE_HANDLE_READ_BUFFER_BYTES);
+      offset = options.offset ?? 0;
+      length = options.length ?? buffer.byteLength - offset;
+      position = options.position ?? null;
+    }
     if (callback) {
+      validateCallback(callback);
       const cb = callback;
       if (fd === 0 && (position === null || position === void 0) && typeof _kernelStdinRead !== "undefined") {
         const target = new Uint8Array(buffer.buffer, buffer.byteOffset + offset, length);
@@ -4189,7 +4305,7 @@ var fs = {
     }
   }
 };
-_globReadDir = (dir) => fs.readdirSync(dir);
+_globReadDir = (dir) => fs.readdirSync(dir, { withFileTypes: true });
 _globStat = (path) => fs.statSync(path);
 var fs_default = fs;
 exposeCustomGlobal("_fsModule", fs_default);

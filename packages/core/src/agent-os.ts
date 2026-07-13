@@ -332,7 +332,7 @@ export interface DynamicMountDescriptor {
 }
 
 /** Callback-free options accepted by the portable spawn API. */
-export type SpawnOptions = Omit<KernelSpawnOptions, "onStdout" | "onStderr">;
+export type SpawnOptions = KernelSpawnOptions;
 
 /** Callback-free options accepted by the portable openShell API. */
 export type ShellOptions = Omit<OpenShellOptions, "onStderr">;
@@ -3069,11 +3069,13 @@ export class AgentOs {
 		const proc = this.#kernel.spawn(command, args, {
 			...options,
 			onStdout: (data) => {
+				options?.onStdout?.(data);
 				for (const h of outputHandlers) {
 					h({ pid: proc.pid, stream: "stdout", data });
 				}
 			},
 			onStderr: (data) => {
+				options?.onStderr?.(data);
 				for (const h of outputHandlers) {
 					h({ pid: proc.pid, stream: "stderr", data });
 				}

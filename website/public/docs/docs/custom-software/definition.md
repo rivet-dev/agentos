@@ -125,6 +125,7 @@ author the `agent` block (or `agentos-toolchain pack --agent <cmd>` writes it).
 
 - **`name`** — the package name; commands and the package mount under `/opt/agentos/<name>`.
 - **`agent.acpEntrypoint`** — the `bin/` command spawned to start a session; speaks ACP over stdio.
+- The entrypoint runtime is detected with normal executable semantics: a shebang selects its interpreter and the `\0asm` header selects WebAssembly.
 - **`agent.env`** — static env vars for the adapter, merged under the user env. Every command is on `$PATH`, so point at one directly, e.g. `{ "PI_ACP_PI_COMMAND": "/opt/agentos/bin/pi" }` so `pi-acp` can spawn the `pi` CLI.
 - **`agent.launchArgs`** — extra CLI args prepended when launching the adapter.
 - **`agent.snapshot`** (default `false`) — load the SDK [once per sidecar](#sdk-snapshotting--snapshot-safety) via a shared V8 heap snapshot instead of per session. Falls back to per-session loading if the SDK isn't snapshot-safe, so it only affects startup latency.

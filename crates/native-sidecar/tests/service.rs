@@ -13697,7 +13697,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 ResponsePayload::Rejected(rejected) => {
                     assert_eq!(rejected.code, "invalid_state");
                     assert!(
-                        rejected.message.contains("registered bindings"),
+                        rejected.message.contains("registered binding collections"),
                         "unexpected rejection: {rejected:?}"
                     );
                 }
@@ -18191,6 +18191,8 @@ if (journalModeRows[0]?.journal_mode !== "wal") {
 }
 
 db.exec("CREATE TABLE items (id INTEGER PRIMARY KEY, payload BLOB NOT NULL, quantity INTEGER NOT NULL)");
+const peer = new DatabaseSync(dbPath);
+const observer = new DatabaseSync(dbPath, { readOnly: true });
 const insert = db.prepare("INSERT INTO items(id, payload, quantity) VALUES (:id, :payload, :quantity)");
 insert.setAllowBareNamedParameters(true);
 const insertResult = insert.run({
@@ -18203,6 +18205,11 @@ if (insertResult.changes !== 1) {
 }
 if (typeof insertResult.lastInsertRowid !== "bigint" || insertResult.lastInsertRowid !== 9007199254740993n) {
   throw new Error(`unexpected lastInsertRowid: ${String(insertResult.lastInsertRowid)}`);
+}
+const allInsert = peer.prepare("INSERT INTO items(id, payload, quantity) VALUES (?, ?, ?)");
+const allRows = allInsert.all(9007199254740994n, new Uint8Array([10, 11]), 7);
+if (allRows.length !== 0) {
+  throw new Error(`unexpected INSERT all rows: ${JSON.stringify(allRows)}`);
 }
 
 const select = db.prepare("SELECT id, payload, quantity FROM items WHERE id = ?");
@@ -18236,16 +18243,26 @@ if (!fileHeader.startsWith("SQLite format 3")) {
   throw new Error(`unexpected sqlite file header: ${JSON.stringify(fileHeader)}`);
 }
 
+// Mutate after the explicit checkpoint, then close the read-only handle last.
+// Process teardown must not transfer dirty snapshot ownership to that observer.
+peer.prepare("INSERT INTO items(id, payload, quantity) VALUES (?, ?, ?)").all(
+  9007199254740995n,
+  new Uint8Array([12]),
+  1,
+);
+
 db.close();
+peer.close();
+observer.close();
 
 const reopened = new DatabaseSync(dbPath);
 const verify = reopened.prepare("SELECT COUNT(*) AS count, SUM(quantity) AS totalQuantity FROM items");
 verify.setReadBigInts(true);
 const count = verify.get();
-if (count.count !== 1n) {
+if (count.count !== 3n) {
   throw new Error(`unexpected persisted count: count=${String(count.count)} totalQuantity=${String(count.totalQuantity)}`);
 }
-if (count.totalQuantity !== 42n) {
+if (count.totalQuantity !== 50n) {
   throw new Error(`unexpected persisted quantity total: count=${String(count.count)} totalQuantity=${String(count.totalQuantity)}`);
 }
 reopened.close();
@@ -25231,6 +25248,12 @@ try {
         #[test]
         fn object_s3_plugin_remains_dormant() {
             object_s3_mount_plugin_is_not_registered();
+        }
+
+        #[test]
+        fn service_javascript_sqlite_persists_multiple_handles_and_wal() {
+            javascript_sqlite_sync_rpcs_round_trip_and_persist_vm_files();
+            javascript_sqlite_builtin_round_trips_through_sidecar_sync_rpc();
         }
 
         #[test]

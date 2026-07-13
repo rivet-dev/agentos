@@ -142,6 +142,14 @@ function defineMissingModuleProperty(target, key, value) {
 		target[key] = value;
 	}
 }
+function defineModuleProperty(target, key, value) {
+	if (target == null) return;
+	Object.defineProperty(target, key, {
+		configurable: true,
+		writable: true,
+		value,
+	});
+}
 function bufferValidationBytes(input) {
 	if (
 		input instanceof ArrayBuffer ||
@@ -296,6 +304,16 @@ if (builtinPathStdlibModule?.normalize) {
 	builtinPathStdlibModule.normalize = (pathValue) =>
 		trimNonRootTrailingSlash(builtinPathNormalize(pathValue));
 }
+defineMissingModuleProperty(
+	builtinPathStdlibModule,
+	"toNamespacedPath",
+	(pathValue) => String(pathValue),
+);
+defineMissingModuleProperty(
+	builtinPathStdlibModule.posix,
+	"toNamespacedPath",
+	builtinPathStdlibModule.toNamespacedPath,
+);
 var builtinPunycodeStdlibModule = cloneStdlibModule(punycodeStdlibModuleNs);
 var builtinQuerystringStdlibModule = cloneStdlibModule(
 	querystringStdlibModuleNs,
@@ -437,6 +455,49 @@ defineMissingModuleProperty(
 		else defaultByteHighWaterMark = value;
 	},
 );
+// readable-stream's browser build exposes toWeb(), but its lazy internal adapter
+// table is empty. Replace those unusable stubs with the bridge-owned adapters.
+defineModuleProperty(
+	builtinStreamStdlibModule?.Readable,
+	"toWeb",
+	(stream) =>
+		new ReadableStream({
+			start(controller) {
+				stream.on("data", (chunk) => controller.enqueue(chunk));
+				stream.once("end", () => controller.close());
+				stream.once("error", (error) => controller.error(error));
+				stream.resume?.();
+			},
+			cancel(reason) {
+				stream.destroy?.(reason instanceof Error ? reason : void 0);
+			},
+		}),
+);
+defineModuleProperty(
+	builtinStreamStdlibModule?.Writable,
+	"toWeb",
+	(stream) =>
+		new WritableStream({
+			write(chunk) {
+				return new Promise((resolve, reject) => {
+					stream.write(chunk, (error) => (error ? reject(error) : resolve()));
+				});
+			},
+			close() {
+				return new Promise((resolve, reject) => {
+					stream.once?.("error", reject);
+					stream.end(resolve);
+				});
+			},
+			abort(reason) {
+				stream.destroy?.(reason instanceof Error ? reason : void 0);
+			},
+		}),
+);
+defineModuleProperty(builtinStreamStdlibModule?.Duplex, "toWeb", (stream) => ({
+	readable: builtinStreamStdlibModule.Readable.toWeb(stream),
+	writable: builtinStreamStdlibModule.Writable.toWeb(stream),
+}));
 defineMissingModuleProperty(
 	builtinStreamStdlibModule,
 	"isReadable",

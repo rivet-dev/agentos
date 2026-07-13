@@ -78,6 +78,23 @@ jobs:
           path: packages/runtime-core/commands
           if-no-files-found: error
 
+  codex-wasm:
+    name: Codex WASI
+    runs-on: [self-hosted, agentos-builder]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-03-01
+          components: rust-src
+          targets: wasm32-wasip1
+      - run: make -C toolchain codex
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-wasm
+          path: software/codex/wasm
+          if-no-files-found: error
+
   build-sidecar:
     needs: [context]
     name: "Build linux native artifacts (${{ matrix.platform }})"
@@ -221,9 +238,9 @@ jobs:
           if-no-files-found: error
 
   publish-npm:
-    needs: [context, wasm-commands, build-sidecar, build-sidecar-darwin]
+    needs: [context, wasm-commands, codex-wasm, build-sidecar, build-sidecar-darwin]
     name: Publish npm
-    if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
+    if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.codex-wasm.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -239,6 +256,10 @@ jobs:
         with:
           name: wasm-commands
           path: packages/runtime-core/commands
+      - uses: actions/download-artifact@v4
+        with:
+          name: codex-wasm
+          path: software/codex/wasm
       - uses: actions/download-artifact@v4
         with:
           pattern: sidecar-*

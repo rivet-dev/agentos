@@ -2011,14 +2011,12 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		}
 		if (isNetBridgeMetricsEnabled()) {
 			const nowUs = netBridgeNowUs();
-			if (this._emittingData) {
+			if (this._emittingData && this._currentDataEmitStartUs > 0) {
 				countNetBridgeMetric("userWriteDuringDataEmitCalls");
-				if (this._currentDataEmitStartUs > 0) {
-					countNetBridgeMetric(
-						"dataEmitStartToUserWriteUs",
-						nowUs - this._currentDataEmitStartUs,
-					);
-				}
+				countNetBridgeMetric(
+					"dataEmitStartToUserWriteUs",
+					nowUs - this._currentDataEmitStartUs,
+				);
 			} else if (this._lastDataEmitEndUs > 0) {
 				countNetBridgeMetric(
 					"dataEmitEndToUserWriteUs",

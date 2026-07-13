@@ -36,7 +36,7 @@ The ACP adapter is a thin **bridge** that spawns the real agent as its **own pro
   <text x="170" y="202" text-anchor="middle" font-size="11" fill="#1b1916">Agent process</text>
   <text x="170" y="217" text-anchor="middle" font-size="10" fill="#56524a">(CLI / SDK)</text>
 
-For example, an adapter to run **Pi**: the `pi` CLI doesn't speak ACP, so `pi-acp` speaks ACP and spawns the CLI as a separate process. The packaged agent bundles both — its `agentos-package.json` names `pi-acp` as the `acpEntrypoint` and points it at the `pi` CLI via `agent.env`.
+For example, an adapter to run **Pi**: the `pi` CLI doesn't speak ACP, so `pi-acp` speaks ACP and spawns the CLI as a separate process. The packaged agent bundles both — its `agentos-package.json` names `pi-acp` as the `acpEntrypoint`, declares its `webassembly` runtime, and points it at the Pi CLI via `agent.env`.
 
 ## Use your agent
 
@@ -61,7 +61,7 @@ All built-in agents are defined exactly this way. Browse them for reference on [
 
 ## Read more
 
-- [Defining software packages](/docs/custom-software/definition): the full descriptor reference, including the `agentos-package.json` schema and every `agent` field (`acpEntrypoint`, `env`, `launchArgs`, `snapshot`).
+- [Defining software packages](/docs/custom-software/definition): the full descriptor reference, including the `agentos-package.json` schema and every `agent` field (`acpEntrypoint`, `runtime`, `env`, `launchArgs`, `snapshot`).
 - [Building binaries](/docs/custom-software/building-wasm): compile WASM command binaries and use the registry.
 
 ## Debugging

@@ -2424,6 +2424,17 @@ async function initRuntime(payload: BrowserWorkerInitPayload): Promise<void> {
 	);
 
 	exposeCustomGlobal(
+		"_childProcessPtyResize",
+		makeApplySync((sessionId: number, cols: number, rows: number) => {
+			syncBridge.requestVoid("child_process.resize_pty", [
+				sessionId,
+				cols,
+				rows,
+			]);
+		}),
+	);
+
+	exposeCustomGlobal(
 		"_childProcessSpawnSync",
 		makeApplySync((request: BrowserChildProcessSpawnRequest) => {
 			return syncBridge.requestText("child_process.spawn_sync", [request]);

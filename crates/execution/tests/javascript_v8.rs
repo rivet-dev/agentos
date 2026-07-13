@@ -1063,6 +1063,62 @@ if (process.ppid !== 41) throw new Error(`ppid=${process.ppid}`);
     assert!(result.stderr.is_empty(), "unexpected stderr: {stderr}");
 }
 
+fn javascript_execution_refreshes_process_cwd_between_reused_context_executions() {
+    let temp = tempdir().expect("create temp dir");
+    let nested = temp.path().join("nested");
+    fs::create_dir_all(&nested).expect("create nested cwd");
+    let mut engine = support::javascript_engine();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js-cwd"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+
+    for (cwd, expected) in [
+        (temp.path(), "/workspace-first"),
+        (nested.as_path(), "/workspace-second"),
+    ] {
+        write_fixture(
+            &cwd.join("capture-cwd.mjs"),
+            r#"
+export const capturedCwd = process.cwd();
+export const capturedPwd = process.env.PWD;
+"#,
+        );
+        let execution = engine
+            .start_execution(StartJavascriptExecutionRequest {
+                limits: Default::default(),
+				argv0: None,
+                guest_runtime: Default::default(),
+                vm_id: String::from("vm-js-cwd"),
+                context_id: context.context_id.clone(),
+                argv: vec![String::from("./entry.mjs")],
+                env: BTreeMap::from([
+                    (String::from("PWD"), String::from(expected)),
+                    (String::from("EXECUTION_MARKER"), format!("marker-{expected}")),
+                ]),
+                cwd: cwd.to_path_buf(),
+                wasm_module_bytes: None,
+                inline_code: Some(format!(
+					r#"
+import {{ capturedCwd, capturedPwd }} from "./capture-cwd.mjs";
+if (capturedCwd !== {expected:?}) throw new Error(`import cwd=${{capturedCwd}}`);
+if (capturedPwd !== {expected:?}) throw new Error(`import PWD=${{capturedPwd}}`);
+if (process.cwd() !== {expected:?}) throw new Error(`cwd=${{process.cwd()}}`);
+if (process.env.PWD !== {expected:?}) throw new Error(`PWD=${{process.env.PWD}}`);
+if (process.env.EXECUTION_MARKER !== {marker:?}) throw new Error(`marker=${{process.env.EXECUTION_MARKER}}`);
+"#,
+					marker = format!("marker-{expected}"),
+                )),
+            })
+            .expect("start JavaScript execution");
+
+        let result = execution.wait().expect("wait for JavaScript execution");
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert_eq!(result.exit_code, 0, "stderr:\n{stderr}");
+    }
+}
+
 fn javascript_execution_process_kill_rejects_invalid_pid_in_guest_js() {
     let temp = tempdir().expect("create temp dir");
     let mut engine = support::javascript_engine();
@@ -3037,16 +3093,18 @@ fn javascript_execution_v8_builtin_wrappers_expose_common_named_exports() {
             inline_code: Some(String::from(
                 r#"
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, toNamespacedPath } from "node:path";
 
 if (typeof spawn !== "function" || typeof spawnSync !== "function") throw new Error("child_process exports missing");
 if (typeof closeSync !== "function" || typeof existsSync !== "function" || typeof mkdirSync !== "function") throw new Error("fs exports missing");
 if (typeof openSync !== "function" || typeof readFileSync !== "function" || typeof readSync !== "function") throw new Error("fs exports missing");
 if (typeof readdirSync !== "function" || typeof realpathSync !== "function" || typeof statSync !== "function" || typeof writeFileSync !== "function") throw new Error("fs exports missing");
+if (typeof copyFileSync !== "function" || typeof cpSync !== "function" || typeof mkdtempSync !== "function" || typeof rmSync !== "function" || typeof symlinkSync !== "function") throw new Error("fs package exports missing");
 if (typeof homedir !== "function" || typeof platform !== "function") throw new Error("os exports missing");
 if (typeof basename !== "function" || typeof dirname !== "function" || typeof isAbsolute !== "function" || typeof join !== "function" || typeof resolve !== "function") throw new Error("path exports missing");
+if (typeof toNamespacedPath !== "function") throw new Error("path package exports missing");
 "#,
             )),
         })
@@ -3950,6 +4008,29 @@ if (writableOutput !== "hi") {
 }
 if (lifecycle.join(",") !== "write,finish,destroy") {
   throw new Error(`unexpected writable lifecycle: ${lifecycle.join(",")}`);
+}
+
+let webWritableOutput = "";
+const webWritable = Writable.toWeb(new Writable({
+  write(chunk, _encoding, callback) {
+    webWritableOutput += Buffer.from(chunk).toString("utf8");
+    callback();
+  },
+}));
+const webWriter = webWritable.getWriter();
+await webWriter.write(Buffer.from("web-write"));
+await webWriter.close();
+if (webWritableOutput !== "web-write") {
+  throw new Error(`Writable.toWeb lost output: ${webWritableOutput}`);
+}
+
+const webReader = Readable.toWeb(Readable.from([Buffer.from("web-read")])).getReader();
+const webRead = await webReader.read();
+if (webRead.done || Buffer.from(webRead.value).toString("utf8") !== "web-read") {
+  throw new Error(`Readable.toWeb returned the wrong first chunk: ${JSON.stringify(webRead)}`);
+}
+if (!(await webReader.read()).done) {
+  throw new Error("Readable.toWeb did not close after the source ended");
 }
 "#,
     );
@@ -5774,6 +5855,60 @@ console.log(JSON.stringify({ href, value: module.default.value }));
     );
 }
 
+fn javascript_execution_v8_import_meta_resolve_uses_guest_module_resolution() {
+    let temp = tempdir().expect("create temp dir");
+    write_fixture(
+        &temp.path().join("dep.mjs"),
+        r#"
+export default "ok";
+"#,
+    );
+    write_fixture(
+        &temp.path().join("entry.mjs"),
+        r#"
+const relative = import.meta.resolve("./dep.mjs");
+const builtin = import.meta.resolve("node:path");
+console.log(JSON.stringify({ relative, builtin }));
+"#,
+    );
+
+    let mut engine = support::javascript_engine();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+
+    let execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            limits: Default::default(),
+            argv0: None,
+            guest_runtime: Default::default(),
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./entry.mjs")],
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            wasm_module_bytes: None,
+            inline_code: None,
+        })
+        .expect("start JavaScript execution");
+
+    let result = execution.wait().expect("wait for JavaScript execution");
+    let stderr = String::from_utf8(result.stderr).expect("stderr utf8");
+    assert_eq!(result.exit_code, 0, "unexpected stderr: {stderr}");
+    assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+
+    let output: Value = serde_json::from_slice(&result.stdout).expect("parse stdout JSON");
+    assert_eq!(output["relative"], "file:///root/dep.mjs");
+    assert!(
+        output["builtin"]
+            .as_str()
+            .is_some_and(|url| !url.is_empty()),
+        "builtin resolution should return a non-empty URL: {output}"
+    );
+}
+
 fn javascript_execution_v8_wasm_instantiate_streaming_never_hangs() {
     let temp = tempdir().expect("create temp dir");
     let mut engine = support::javascript_engine();
@@ -7012,6 +7147,7 @@ fn javascript_v8_suite() {
     javascript_execution_virtual_os_identity_comes_from_guest_runtime_not_env();
     javascript_execution_uses_v8_runtime_without_spawning_guest_node_binary();
     javascript_execution_virtualizes_process_metadata_for_inline_v8_code();
+    javascript_execution_refreshes_process_cwd_between_reused_context_executions();
     javascript_execution_process_kill_rejects_invalid_pid_in_guest_js();
     javascript_execution_preserves_binary_process_stdio_writes();
     javascript_execution_intl_number_format_does_not_require_host_icu();
@@ -7081,6 +7217,7 @@ fn javascript_v8_suite() {
     javascript_execution_v8_net_socket_backpressure_stops_and_resumes_transport_reads();
     javascript_execution_v8_net_close_connect_and_accept_wakes_match_node_ordering();
     javascript_execution_v8_dynamic_import_accepts_file_urls();
+    javascript_execution_v8_import_meta_resolve_uses_guest_module_resolution();
     javascript_execution_v8_wasm_instantiate_streaming_never_hangs();
     javascript_execution_v8_structured_clone_rebinds_to_sandbox_realm();
     js_runtime_node_platform_keeps_full_node_surface();

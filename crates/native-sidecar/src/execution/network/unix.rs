@@ -602,6 +602,7 @@ impl ActiveUnixSocket {
             saw_local_shutdown,
             saw_remote_end,
             close_notified,
+            pending_read_event: Arc::new(Mutex::new(None)),
             read_buffer: Arc::new(Mutex::new(VecDeque::new())),
             description_handles: Arc::new(()),
             listener_connection_retirement: None,
@@ -640,6 +641,7 @@ impl ActiveUnixSocket {
             saw_local_shutdown: Arc::clone(&self.saw_local_shutdown),
             saw_remote_end: Arc::clone(&self.saw_remote_end),
             close_notified: Arc::clone(&self.close_notified),
+            pending_read_event: Arc::clone(&self.pending_read_event),
             read_buffer: Arc::clone(&self.read_buffer),
             description_handles: Arc::clone(&self.description_handles),
             listener_connection_retirement: self.listener_connection_retirement.clone(),
@@ -708,6 +710,16 @@ impl ActiveUnixSocket {
         &mut self,
         _wait: Duration,
     ) -> Result<Option<JavascriptTcpSocketEvent>, SidecarError> {
+        if let Some(event) = self
+            .pending_read_event
+            .lock()
+            .map_err(|_| {
+                SidecarError::InvalidState(String::from("Unix pending read event lock poisoned"))
+            })?
+            .take()
+        {
+            return Ok(Some(event));
+        }
         match self
             .events
             .lock()
@@ -719,6 +731,31 @@ impl ActiveUnixSocket {
             Ok(event) => Ok(Some(event)),
             Err(TokioTryRecvError::Empty | TokioTryRecvError::Disconnected) => Ok(None),
         }
+    }
+
+    pub(in crate::execution) fn poll_limited(
+        &mut self,
+        wait: Duration,
+        max_bytes: usize,
+    ) -> Result<Option<JavascriptTcpSocketEvent>, SidecarError> {
+        let pending = self
+            .pending_read_event
+            .lock()
+            .map_err(|_| {
+                SidecarError::InvalidState(String::from("Unix pending read event lock poisoned"))
+            })?
+            .take();
+        let event = match pending {
+            Some(event) => Some(event),
+            None => self.poll(wait)?,
+        };
+        let (event, remainder) = limit_tcp_socket_event(event, max_bytes);
+        if let Some(remainder) = remainder {
+            *self.pending_read_event.lock().map_err(|_| {
+                SidecarError::InvalidState(String::from("Unix pending read event lock poisoned"))
+            })? = Some(remainder);
+        }
+        Ok(event)
     }
 
     pub(in crate::execution) fn socket_info(&self) -> Value {

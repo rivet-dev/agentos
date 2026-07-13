@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -44,6 +45,28 @@ fn package_format_round_trips_manifest_all_none_and_mount_index() {
     };
     let decoded = decode_mount_index(&encode_mount_index(index.clone()).unwrap()).unwrap();
     assert_eq!(decoded, index);
+}
+
+#[test]
+fn package_format_round_trips_agent_metadata() {
+    let manifest = v1::PackageManifest {
+        name: "wasm-agent".into(),
+        version: "1.0.0".into(),
+        agent: Some(v1::AgentBlock {
+            acp_entrypoint: "pi-acp".into(),
+            snapshot: false,
+            env: HashMap::new(),
+            launch_args: Vec::new(),
+        }),
+        provides: None,
+        commands: Vec::new(),
+        man_pages: Vec::new(),
+        snapshot_bundle_path: None,
+    };
+    let encoded = encode_package_manifest(manifest).expect("encode v1 manifest");
+    assert_eq!(u16::from_le_bytes([encoded[0], encoded[1]]), 1);
+    let decoded = decode_package_manifest(&encoded).expect("decode v1 manifest");
+    assert_eq!(decoded.agent.expect("agent block").acp_entrypoint, "pi-acp");
 }
 
 #[test]

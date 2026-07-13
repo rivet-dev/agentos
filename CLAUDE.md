@@ -117,6 +117,11 @@ add compatibility views, aliases, legacy adoption paths, or dual writes.
   only when the caller explicitly supplied them.
 - Agent adapters must use real upstream SDKs. Do not replace SDK adapters with
   direct API-call stubs.
+- `rivet-dev/pi-acp` is an AgentOS-maintained fork. When Pi ACP behavior needs
+  to change, fix and test the fork directly, push the fork commit, then update
+  the pinned commit and verified source-archive checksum in
+  `software/pi/scripts/build-pi-acp.mjs`; do not work around fork bugs in the
+  AgentOS package wrapper or resolve `pi-acp` from npm.
 - WASM command binaries and every toolchain build output are generated
   artifacts. Never commit `packages/runtime-core/commands/`, `software/*/bin/`,
   `toolchain/vendor/`, `toolchain/c/{build,vendor,libs,sysroot,.cache}/`, or
@@ -256,6 +261,29 @@ custom host-syscall imports. Treat that target as **native POSIX**;
   limits, or watchdog timeouts must be ignored/skipped by default with a clear
   reason. Fast tests where the configured safeguard fires should stay in the
   default suite.
+
+## Gigacode Performance Investigations
+
+- For cold-start latency, run `gigacode` directly and use the plain
+  `[gigacode]` phase lines and durations mirrored from `daemon.log` while the
+  client waits for provider bootstrap. These startup lines are intentionally
+  human-readable and separate from Pino session logs.
+- Investigate Gigacode latency from its per-session Pino JSONL logs, not by
+  inferring timing from the OpenCode screen or the aggregate `daemon.log`.
+- Logs live at
+  `~/.local/state/gigacode/session-logs/<open-code-session-id>.jsonl` by default,
+  or under `$GIGACODE_STATE_DIR/session-logs/` when that override is set.
+- Reproduce one turn in a fresh session, identify the newest log with
+  `ls -lt ~/.local/state/gigacode/session-logs`, then inspect its ordered
+  `event` and `durationMs` fields with `jq`.
+- Compare `rivet.actor.resolved`, `agentos.session.created`,
+  `agentos.prompt.completed`, `prompt.completed`, `session.idle`, and
+  `agentos.connection.disposed` before optimizing. The actor event measures
+  resolution of the shared per-cwd workspace actor; the ACP event measures the
+  distinct harness session created inside it.
+- Preserve the raw JSONL file when reporting a regression. Use
+  `GIGACODE_LOG_LEVEL` to change the Pino level; performance phase records are
+  emitted at `info`.
 
 ## Version Control
 

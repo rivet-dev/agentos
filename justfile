@@ -56,6 +56,25 @@ install-shell:
 	done
 	(cd packages/shell && PATH="$global_bin_dir:$PATH" pnpm link --global)
 
+install-gigacode:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	repo_root='{{justfile_directory()}}'
+	pnpm --dir "$repo_root" install
+	make -C "$repo_root/toolchain" wasm
+	if [[ -n "${CODEX_REPO:-}" ]]; then
+		make -C "$repo_root/toolchain" codex-required CODEX_REPO="$CODEX_REPO"
+	else
+		make -C "$repo_root/toolchain" codex-required
+	fi
+	if [[ -n "${AGENTOS_SIDECAR_BIN:-}" ]]; then
+		export AGENTOS_SKIP_NATIVE_META_BUILD=1
+	fi
+	pnpm --dir "$repo_root" --filter '@rivet-dev/agentos-experiment-gigacode...' build
+	pnpm --dir "$repo_root/experiments/gigacode" check-types
+	pnpm --dir "$repo_root/experiments/gigacode" install-global
+	"$HOME/.local/bin/gigacode" --version
+
 shell *args:
 	#!/usr/bin/env bash
 	set -euo pipefail

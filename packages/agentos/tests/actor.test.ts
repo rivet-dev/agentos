@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { AgentOs } from "@rivet-dev/agentos-core";
 import {
 	AGENT_OS_CONFORMANCE_ACTIONS,
@@ -5,14 +7,12 @@ import {
 } from "@rivet-dev/agentos-test-harness/agent-os-conformance";
 import { event } from "rivetkit";
 import type { RawAccess } from "rivetkit/db";
-import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { describe, expect, test, vi } from "vitest";
-import { agentOS, createAgentOsActions } from "../src/index.js";
 import {
 	migrateAgentOsActorTables,
 	validateAgentOsActorMigrationLadder,
 } from "../src/actor.js";
+import { agentOS, createAgentOsActions } from "../src/index.js";
 
 const { DatabaseSync } = createRequire(import.meta.url)(
 	"node:sqlite",
@@ -326,9 +326,7 @@ describe("agentOS actor", () => {
 		);
 		const actions = createAgentOsActions({}, {}, { maxActiveTokens: 1 });
 		const context = { db: { execute } } as never;
-		await expect(
-			actions.createPreviewUrl(context, 8080, 60),
-		).rejects.toThrow(
+		await expect(actions.createPreviewUrl(context, 8080, 60)).rejects.toThrow(
 			"preview token limit 1 reached; raise preview.maxActiveTokens",
 		);
 	});
@@ -540,6 +538,52 @@ describe("agentOS actor", () => {
 		await expect(result).resolves.toEqual(promptResult);
 	});
 
+	test("returns public typed prompt errors", async () => {
+		const adapterError = Object.assign(new Error("Invalid API key."), {
+			code: "acp_api_error",
+		});
+		vi.spyOn(AgentOs, "create").mockResolvedValue({
+			prompt: vi.fn(async () => {
+				throw adapterError;
+			}),
+			onCronEvent: vi.fn(),
+			onSessionEvent: vi.fn(),
+		} as never);
+		const actions = createAgentOsActions({});
+		const log = { info: vi.fn(), error: vi.fn() };
+		const context = {
+			actorId: "prompt-error-test",
+			actorUds: vi.fn(async () => ({
+				path: "/tmp/actor.sock",
+				token: "token",
+			})),
+			broadcast: vi.fn(),
+			db: { execute: vi.fn(async () => []) },
+			keepAwake: <T>(promise: Promise<T>) => promise,
+			waitUntil: vi.fn(),
+			log,
+		} as never;
+
+		await expect(
+			actions.prompt(context, {
+				sessionId: "credential-test",
+				content: [{ type: "text", text: "hello" }],
+			}),
+		).rejects.toMatchObject({
+			message: "AgentOS prompt failed: Invalid API key.",
+			code: "agentos_prompt_failed",
+			public: true,
+			metadata: { causeCode: "acp_api_error" },
+		});
+		expect(log.error).toHaveBeenCalledWith(
+			expect.objectContaining({
+				msg: "agent-os prompt action failed",
+				sessionId: "credential-test",
+				causeCode: "acp_api_error",
+			}),
+		);
+	});
+
 	test("logs adapter crashes without holding an idle durable session awake", async () => {
 		let onAgentExit:
 			| ((event: {
@@ -553,12 +597,9 @@ describe("agentOS actor", () => {
 					maxRestarts: number;
 			  }) => void)
 			| undefined;
-		let sessionIndex = 0;
 		const vm = {
 			onCronEvent: vi.fn(),
-			openSession: vi.fn(async () => {
-				sessionIndex += 1;
-			}),
+			openSession: vi.fn(async () => undefined),
 			onSessionEvent: vi.fn(),
 		};
 		vi.spyOn(AgentOs, "create").mockImplementation(async (options) => {

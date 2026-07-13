@@ -8,7 +8,7 @@ Agents run inside isolated VMs with their own filesystem, process table, and net
 
 - **VM lifecycle** — create, configure, and dispose isolated virtual machines
 - **Sidecar placement** — reuse the default shared sidecar or inject an explicit sidecar handle
-- **Agent sessions (ACP)** — launch coding agents (Pi, Pi CLI, OpenCode, Claude) via JSON-RPC over stdio
+- **Agent sessions (ACP)** — launch coding agents (Pi, OpenCode, Claude) via JSON-RPC over stdio
 - **Filesystem operations** — read, write, mkdir, stat, move, delete, recursive listing, batch read/write
 - **Process management** — spawn, exec, stop, kill processes; inspect process trees across all runtimes
 - **Agent registry** — discover available agents and their installation status
@@ -21,7 +21,7 @@ Agents run inside isolated VMs with their own filesystem, process table, and net
 ```bash
 npm install @rivet-dev/agentos-core
 # Install an agent adapter + its underlying agent
-npm install @agentos-software/pi @mariozechner/pi-coding-agent
+npm install @agentos-software/pi
 ```
 
 ```typescript

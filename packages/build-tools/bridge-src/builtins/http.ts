@@ -411,6 +411,7 @@ var ClientRequest = class {
   writable = true;
   writableEnded = false;
   writableFinished = false;
+  headersSent = false;
   aborted = false;
   destroyed = false;
   path;
@@ -504,6 +505,7 @@ var ClientRequest = class {
     }
   }
   async _dispatchWithSocket(socket) {
+    this.headersSent = true;
     try {
       const normalizedHeaders = normalizeRequestHeaders(this._options.headers);
       const requestMethod = String(this._options.method || "GET").toUpperCase();
@@ -766,6 +768,12 @@ var ClientRequest = class {
     return this._headers[name.toLowerCase()];
   }
   setHeader(name, value) {
+    if (this.headersSent) {
+      throw createErrorWithCode(
+        "Cannot set headers after they are sent to the client",
+        "ERR_HTTP_HEADERS_SENT"
+      );
+    }
     this._setHeaderValue(name, value);
     return this;
   }
@@ -1425,6 +1433,17 @@ var Agent = class _Agent {
     }
     return createHttpRequestSocket(options, cb);
   }
+  createSocket(_request, options, cb) {
+    let callbackCalled = false;
+    const finish = (error, socket) => {
+      if (callbackCalled) return;
+      callbackCalled = true;
+      cb?.(error, socket);
+    };
+    const socket = this.createConnection(options, finish);
+    if (socket) finish(null, socket);
+    return socket;
+  }
   addRequest(request, options) {
     const name = this.getName(options);
     const freeSocket = this._takeFreeSocket(name);
@@ -1551,7 +1570,7 @@ var Agent = class _Agent {
       keepAliveInitialDelay: this.keepAliveMsecs
     };
     try {
-      const maybeSocket = this.createConnection(connectionOptions, (err, socket) => {
+      const maybeSocket = this.createSocket(request, connectionOptions, (err, socket) => {
         finish(err, socket);
       });
       if (maybeSocket) {
@@ -2955,6 +2974,8 @@ var ServerResponseBridge = class {
   _streamSocket = null;
   _streamRequest = null;
   _streamedDirectly = false;
+  _streamHeadSent = false;
+  _streamUsesChunked = false;
   _streamCloseConnection = false;
   constructor() {
     this._closedPromise = new Promise((resolve) => {
@@ -3158,6 +3179,29 @@ var ServerResponseBridge = class {
     return true;
   }
   write(chunk, encodingOrCallback, callback) {
+	if (this._streamSocket && !this.writableFinished) {
+	  const buf = typeof chunk === "string" ? Buffer.from(chunk, typeof encodingOrCallback === "string" ? encodingOrCallback : void 0) : Buffer.from(chunk);
+	  if (this._chunksBytes + buf.byteLength > MAX_HTTP_BODY_BYTES) {
+		throw new Error("ERR_HTTP_BODY_TOO_LARGE: response body exceeds " + MAX_HTTP_BODY_BYTES + " byte limit");
+	  }
+	  this._chunksBytes += buf.byteLength;
+	  this._streamed = true;
+	  this.headersSent = true;
+	  this.outputSize += buf.byteLength;
+	  this._streamWriteHead();
+	  if (!this._streamSocket.destroyed && buf.length > 0) {
+		if (this._streamUsesChunked) {
+		  this._streamSocket.write(Buffer.from(buf.length.toString(16) + "\r\n", "latin1"));
+		  this._streamSocket.write(buf);
+		  this._streamSocket.write(Buffer.from("\r\n", "latin1"));
+		} else {
+		  this._streamSocket.write(buf);
+		}
+	  }
+	  const writeCallback = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+	  if (typeof writeCallback === "function") queueMicrotask(writeCallback);
+	  return true;
+	}
     this._appendChunk(chunk, typeof encodingOrCallback === "string" ? encodingOrCallback : void 0, true);
     const writeCallback = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
     if (typeof writeCallback === "function") {
@@ -3186,7 +3230,8 @@ var ServerResponseBridge = class {
       this._streamSocket &&
       this._chunks.length === 0 &&
       !this.writableFinished &&
-      !this._streamedDirectly
+      !this._streamedDirectly &&
+      !this._streamHeadSent
     ) {
       const encoding =
         typeof encodingOrCallback === "string" ? encodingOrCallback : void 0;
@@ -3196,6 +3241,24 @@ var ServerResponseBridge = class {
       }
       return this;
     }
+	if (this._streamSocket && this._streamHeadSent && !this.writableFinished) {
+	  if (chunk != null) this.write(chunk, typeof encodingOrCallback === "string" ? encodingOrCallback : void 0);
+	  if (this._streamUsesChunked && !this._streamSocket.destroyed) {
+		const trailers = [];
+		for (const [key, value] of this._trailers) {
+		  const rawName = this._rawTrailerNames.get(key) || key;
+		  const serialized = serializeHeaderValue(value);
+		  for (const entry of Array.isArray(serialized) ? serialized : [serialized]) {
+			trailers.push(`${rawName}: ${entry}\r\n`);
+		  }
+		}
+		this._streamSocket.write(Buffer.from(`0\r\n${trailers.join("")}\r\n`, "latin1"));
+	  }
+	  this._streamedDirectly = true;
+	  this._finalize();
+	  if (typeof endCallback === "function") queueMicrotask(endCallback);
+	  return this;
+	}
     if (chunk != null) {
       if (typeof chunk === "string" && typeof encodingOrCallback === "string") {
         this._appendChunk(chunk, encodingOrCallback, false);
@@ -3260,6 +3323,24 @@ var ServerResponseBridge = class {
     }
     this._finalize();
   }
+	_streamWriteHead() {
+	  if (this._streamHeadSent || !this._streamSocket || this._streamSocket.destroyed) return;
+	  const hasContentLength = this._headers.has("content-length");
+	  const transferEncoding = this._headers.get("transfer-encoding");
+	  this._streamUsesChunked = !hasContentLength && (transferEncoding == null || String(transferEncoding).toLowerCase().includes("chunked"));
+	  if (this._streamUsesChunked && transferEncoding == null) {
+		this._headers.set("transfer-encoding", "chunked");
+		this._rawHeaderNames.set("transfer-encoding", "Transfer-Encoding");
+	  }
+	  this._streamHeadSent = true;
+	  const built = serializeLoopbackResponse(this.serialize(), this._streamRequest, true);
+	  this._streamCloseConnection = built.closeConnection;
+	  let payload = built.payload;
+	  if (this._streamUsesChunked && payload.length >= 5 && payload.subarray(payload.length - 5).toString("latin1") === "0\r\n\r\n") {
+		payload = payload.subarray(0, payload.length - 5);
+	  }
+	  if (payload.length > 0) this._streamSocket.write(payload);
+	}
   getHeaderNames() {
     return Array.from(this._headers.keys());
   }
@@ -3354,6 +3435,7 @@ var ServerResponseBridge = class {
   }
   flushHeaders() {
     this.headersSent = true;
+	this._streamWriteHead();
   }
   destroy(err) {
     this._connectionReset = true;

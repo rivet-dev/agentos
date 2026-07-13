@@ -2273,6 +2273,27 @@ console.log(JSON.stringify({
     );
 }
 
+fn write_file_sync_numeric_fd_matches_host_node_impl() {
+    assert_conformance(
+        "fs-write-file-numeric-fd",
+        r#"
+import fs from "node:fs";
+
+const path = "numeric-fd.txt";
+const fd = fs.openSync(path, "wx");
+fs.writeFileSync(fd, "first");
+fs.closeSync(fd);
+fs.appendFileSync(path, "-second");
+console.log(JSON.stringify({ content: fs.readFileSync(path, "utf8") }));
+"#,
+    );
+}
+
+#[test]
+fn write_file_sync_numeric_fd_matches_host_node() {
+    run_isolated_builtin_conformance_test("fs-write-file-numeric-fd");
+}
+
 fn console_conformance_matches_host_node() {
     assert_conformance(
         "console",
@@ -4302,6 +4323,7 @@ fn __builtin_conformance_extra_test_runner() {
         "os-resource-limits" => os_resource_limits_are_vm_scoped_impl(),
         "timer-handle-ref-refresh" => timer_handle_ref_refresh_matches_host_node_impl(),
         "timer-unref-exit" => unrefd_timeout_does_not_keep_guest_process_alive_impl(),
+        "fs-write-file-numeric-fd" => write_file_sync_numeric_fd_matches_host_node_impl(),
         other => panic!("unknown builtin conformance extra test: {other}"),
     }
 }

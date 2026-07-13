@@ -18,6 +18,7 @@ type AcpCreateSessionRequest struct {
   agentType: str
   runtime: AcpRuntimeKind
   cwd: str
+  additionalDirectories: list<str>
   args: list<str>
   env: map<str><str>
   protocolVersion: i32
@@ -188,6 +189,8 @@ type AcpResumeSessionRequest struct {
   agentType: str
   transcriptPath: optional<str>
   cwd: str
+  additionalDirectories: list<str>
+  mcpServers: JsonUtf8
   env: map<str><str>
 }
 
@@ -315,6 +318,10 @@ type AcpSessionCreatedResponse struct {
 type AcpSessionRpcResponse struct {
   sessionId: str
   response: JsonUtf8
+  # Number of request-scoped AcpSessionEvent frames emitted before this
+  # terminal response. Clients use this as an event-delivery barrier because
+  # response and event frames travel on separate priority lanes.
+  eventCount: u32
 }
 
 type AcpSessionStateResponse struct {

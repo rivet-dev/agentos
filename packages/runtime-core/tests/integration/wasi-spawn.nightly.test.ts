@@ -133,6 +133,14 @@ describeIf(!skipReason(), 'wasi-spawn: WasiChild host_process integration', { ti
     expect(result.stdout).toContain('PASS');
   });
 
+  it('spawns the Tokio shell command shape used by Codex', async () => {
+    await vfs.createDir('/workspace');
+    const result = await kernel.exec('spawn-test-host tokio-bash');
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('PASS');
+    expect(result.stderr).toBe('');
+  });
+
   it('spawn failing command, verify non-zero exit code', async () => {
     const result = await kernel.exec('spawn-test-host fail');
     expect(result.stdout).toContain('exit:42');

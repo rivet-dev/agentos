@@ -46,16 +46,22 @@ jobs:
             npx turbo build \
               --concurrency=4 \
               --filter='!@rivet-dev/agentos-website' \
+              --filter='!@agentos-software/codex' \
               --filter='!@rivet-dev/agentos-browser' \
               --filter='!@rivet-dev/agentos-runtime-browser' \
               --filter='!@rivet-dev/agentos-playground'
           else
             npx turbo build \
               --concurrency=4 \
+              --filter='!@agentos-software/codex' \
               --filter='!@rivet-dev/agentos-browser' \
               --filter='!@rivet-dev/agentos-runtime-browser' \
               --filter='!@rivet-dev/agentos-playground'
           fi
+      # The Codex adapter is ordinary TypeScript, while its executable is a
+      # reproducibly built 56 MB WASI artifact. Keep the cheap PR lane source-only;
+      # nightly and publish workflows build the pinned executable explicitly.
+      - run: pnpm --dir software/codex check-types
       - run: pnpm --dir scripts/publish run check-types
       - run: pnpm --dir scripts/publish test
       - run: node --test scripts/check-rust-package-metadata.test.mjs

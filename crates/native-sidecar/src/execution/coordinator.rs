@@ -165,9 +165,10 @@ pub(super) fn is_javascript_child_process_gone_error(error: &SidecarError) -> bo
     )
 }
 
-pub(super) fn missing_javascript_child_kill_result(
+pub(super) fn missing_javascript_child_cleanup_result(
     next_child_process_id: usize,
     child_process_id: &str,
+    operation: &str,
 ) -> Result<(), SidecarError> {
     let previously_allocated = child_process_id
         .strip_prefix("child-")
@@ -181,27 +182,33 @@ pub(super) fn missing_javascript_child_kill_result(
         return Ok(());
     }
     Err(SidecarError::InvalidState(format!(
-        "unknown child process {child_process_id} during kill"
+        "unknown child process {child_process_id} during {operation}"
     )))
 }
 
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod child_kill_result_tests {
-    use super::missing_javascript_child_kill_result;
+    use super::missing_javascript_child_cleanup_result;
 
     #[test]
     fn cleanup_kill_ignores_reaped_child_but_rejects_unknown_id() {
-        missing_javascript_child_kill_result(1, "child-1")
+        missing_javascript_child_cleanup_result(1, "child-1", "kill")
             .expect("a previously allocated child is confirmed gone");
-        assert!(missing_javascript_child_kill_result(1, "child-2")
-            .expect_err("a never-allocated child must remain an error")
-            .to_string()
-            .contains("unknown child process child-2"));
-        assert!(missing_javascript_child_kill_result(1, "child-01")
-            .expect_err("a non-canonical child id must remain an error")
-            .to_string()
-            .contains("unknown child process child-01"));
+        missing_javascript_child_cleanup_result(1, "child-1", "stdin close")
+            .expect("closing stdin after a child exits is idempotent");
+        assert!(
+            missing_javascript_child_cleanup_result(1, "child-2", "kill")
+                .expect_err("a never-allocated child must remain an error")
+                .to_string()
+                .contains("unknown child process child-2")
+        );
+        assert!(
+            missing_javascript_child_cleanup_result(1, "child-01", "stdin close")
+                .expect_err("a non-canonical child id must remain an error")
+                .to_string()
+                .contains("unknown child process child-01")
+        );
     }
 }
 

@@ -12,7 +12,7 @@ var setUndiciGlobalDispatcher = undiciGlobalModule?.setGlobalDispatcher;
 var getUndiciGlobalDispatcher = undiciGlobalModule?.getGlobalDispatcher;
 var secureExecUndiciDispatcher = null;
 function createSecureExecUndiciDispatcher() {
-  return new UndiciAgent({
+  const dispatcher = new UndiciAgent({
     // Bound the per-origin connection pool. With an unbounded pool, requests that
     // overlap while the pool's clients are still connecting each find every client
     // marked kNeedDrain and spawn a brand-new Client+socket (HTTP/2: a whole new
@@ -76,6 +76,7 @@ function createSecureExecUndiciDispatcher() {
       }
     }
   });
+  return dispatcher;
 }
 function getSecureExecUndiciDispatcher() {
   if (!secureExecUndiciDispatcher) {

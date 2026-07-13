@@ -996,7 +996,7 @@ thread_local! {
 // cache bounded, but leave enough headroom for Astro/Vite production builds.
 const MAX_MODULE_RESOLVE_MODULES: usize = 4096;
 const MAX_MODULE_RESOLVE_CACHE_ENTRIES: usize = 16384;
-const MAX_MODULE_PREFETCH_GRAPH_MODULES: usize = 1024;
+const MAX_MODULE_PREFETCH_GRAPH_MODULES: usize = 4096;
 const MAX_MODULE_PREFETCH_BATCH_SIZE: usize = 256;
 const MAX_MODULE_BATCH_RESOLVE_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_CJS_NAMED_EXPORTS: usize = 1024;
@@ -1743,8 +1743,65 @@ fn cache_resolved_module(
     })
 }
 
+fn import_meta_resolve_callback(
+    scope: &mut v8::HandleScope,
+    args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue,
+) {
+    let specifier = args.get(0);
+    if specifier.is_undefined() {
+        let message = v8::String::new(scope, "import.meta.resolve requires a specifier").unwrap();
+        let error = v8::Exception::type_error(scope, message);
+        scope.throw_exception(error);
+        return;
+    }
+
+    let specifier = specifier.to_rust_string_lossy(scope);
+    let referrer = args.data().to_rust_string_lossy(scope);
+    let bridge_ctx_ptr = MODULE_RESOLVE_STATE.with(|cell| {
+        let state = cell.borrow();
+        state.as_ref().map(|state| state.bridge_ctx)
+    });
+    let Some(bridge_ctx_ptr) = bridge_ctx_ptr else {
+        throw_module_error(scope, "module resolver is unavailable");
+        return;
+    };
+
+    let direct_resolved = MODULE_RESOLVE_STATE.with(|cell| {
+        cell.borrow_mut()
+            .as_mut()
+            .and_then(|state| state.guest_reader.as_mut())
+            .and_then(|reader| reader.resolve_module(&specifier, &referrer))
+    });
+    let resolved = match direct_resolved {
+        Some(resolved) => resolved,
+        None => {
+            // SAFETY: ModuleResolveState owns this pointer for the lifetime of the
+            // active module execution, and import.meta callbacks run synchronously
+            // on that same session thread.
+            let bridge_ctx = unsafe { &*bridge_ctx_ptr };
+            let Some(resolved) = resolve_module_via_ipc(scope, bridge_ctx, &specifier, &referrer)
+            else {
+                return;
+            };
+            resolved
+        }
+    };
+
+    let resolved_url = if resolved.starts_with('/') {
+        format!("file://{resolved}")
+    } else {
+        resolved
+    };
+    let Some(value) = v8::String::new(scope, &resolved_url) else {
+        throw_module_error(scope, "resolved module URL is too large for V8");
+        return;
+    };
+    rv.set(value.into());
+}
+
 /// Callback invoked by V8 when `import.meta` is accessed in an ES module.
-/// Sets `import.meta.url` to a `file://` URL derived from the module's resource name.
+/// Sets `import.meta.url` and Node-compatible `import.meta.resolve` values.
 #[cfg_attr(test, allow(dead_code))]
 pub extern "C" fn import_meta_object_callback(
     context: v8::Local<v8::Context>,
@@ -1756,27 +1813,37 @@ pub extern "C" fn import_meta_object_callback(
     // Look up the module's resource name from MODULE_RESOLVE_STATE.module_names
     // which maps identity_hash → resource_name.
     let identity_hash = module.get_identity_hash();
-    let url_str = MODULE_RESOLVE_STATE.with(|cell| {
+    let module_location = MODULE_RESOLVE_STATE.with(|cell| {
         let state_opt = cell.borrow();
         if let Some(ref state) = *state_opt {
             if let Some(name) = state.module_names.get(&identity_hash) {
                 let n = name.clone();
-                if n.starts_with("file://") {
-                    return Some(n);
+                let url = if n.starts_with("file://") {
+                    n.clone()
                 } else if n.starts_with("/") {
-                    return Some(format!("file://{}", n));
+                    format!("file://{n}")
                 } else {
-                    return Some(n);
-                }
+                    n.clone()
+                };
+                return Some((n, url));
             }
         }
         None
     });
 
-    if let Some(url) = url_str {
+    if let Some((referrer, url)) = module_location {
         let key = v8::String::new(scope, "url").unwrap();
         let value = v8::String::new(scope, &url).unwrap();
         meta.set(scope, key.into(), value.into());
+
+        let data = v8::String::new(scope, &referrer).unwrap();
+        let template = v8::FunctionTemplate::builder(import_meta_resolve_callback)
+            .data(data.into())
+            .build(scope);
+        if let Some(resolve) = template.get_function(scope) {
+            let key = v8::String::new(scope, "resolve").unwrap();
+            meta.set(scope, key.into(), resolve.into());
+        }
     }
 }
 

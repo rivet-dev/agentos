@@ -2746,6 +2746,14 @@ pub struct JavascriptSpawnHostNetFd {
 }
 
 #[derive(Debug, Deserialize, Default)]
+pub struct JavascriptChildProcessPtyOptions {
+    #[serde(default)]
+    pub cols: Option<u16>,
+    #[serde(default)]
+    pub rows: Option<u16>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 pub struct JavascriptChildProcessSpawnOptions {
     #[serde(default)]
     pub argv0: Option<String>,
@@ -2817,6 +2825,8 @@ pub struct JavascriptChildProcessSpawnOptions {
     pub timeout: Option<u64>,
     #[serde(rename = "killSignal", default)]
     pub kill_signal: Option<String>,
+    #[serde(default)]
+    pub pty: Option<JavascriptChildProcessPtyOptions>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2834,6 +2844,8 @@ pub struct JavascriptNetConnectRequest {
     pub host: Option<String>,
     #[serde(default)]
     pub port: Option<u16>,
+    #[serde(default)]
+    pub family: Option<u8>,
     #[serde(default)]
     pub path: Option<String>,
     #[serde(rename = "abstractPathHex", default)]

@@ -97,7 +97,7 @@ where
             match sidecar.bridge.restore_vm_permissions_fail_closed(
                 &vm_id,
                 &original_permissions,
-                "collection registration rollback",
+                "binding collection registration rollback",
                 &error,
             ) {
                 Ok(()) => return Err(error),

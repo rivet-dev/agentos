@@ -1,3 +1,11 @@
+Warning: Refused to snapshot some files:
+  registry/agent/pi/.cache/pi-acp-rust-target/wasm32-wasip1/release/deps/libagent_client_protocol_schema-a8b47b6b940f80a1.rlib: 18.9MiB (19837300 bytes); the maximum size allowed is 16.0MiB (16777216 bytes)
+Hint: This is to prevent large files from being added by accident. To fix this:
+  * Add the file(s) to `.gitignore`
+  * Run `jj config set --repo snapshot.max-new-file-size 19837300`
+    This will increase the maximum file size allowed for new files, in this repository only.
+  * Run `jj --config snapshot.max-new-file-size=19837300 status`
+    This will increase the maximum file size allowed for new files, for this command only.
 import { agentOS, setup } from "../../dist/index.js";
 import { allowAll } from "@rivet-dev/agentos-core/internal/runtime-compat";
 import {

@@ -121,6 +121,7 @@ export type AcpCreateSessionRequest = {
     readonly agentType: string
     readonly runtime: AcpRuntimeKind
     readonly cwd: string
+    readonly additionalDirectories: readonly string[]
     readonly args: readonly string[]
     readonly env: ReadonlyMap<string, string>
     readonly protocolVersion: i32
@@ -135,6 +136,7 @@ export function readAcpCreateSessionRequest(bc: bare.ByteCursor): AcpCreateSessi
         agentType: bare.readString(bc),
         runtime: readAcpRuntimeKind(bc),
         cwd: bare.readString(bc),
+        additionalDirectories: read0(bc),
         args: read0(bc),
         env: read1(bc),
         protocolVersion: bare.readI32(bc),
@@ -149,6 +151,7 @@ export function writeAcpCreateSessionRequest(bc: bare.ByteCursor, x: AcpCreateSe
     bare.writeString(bc, x.agentType)
     writeAcpRuntimeKind(bc, x.runtime)
     bare.writeString(bc, x.cwd)
+    write0(bc, x.additionalDirectories)
     write0(bc, x.args)
     write1(bc, x.env)
     bare.writeI32(bc, x.protocolVersion)
@@ -647,6 +650,8 @@ export type AcpResumeSessionRequest = {
     readonly agentType: string
     readonly transcriptPath: string | null
     readonly cwd: string
+    readonly additionalDirectories: readonly string[]
+    readonly mcpServers: JsonUtf8
     readonly env: ReadonlyMap<string, string>
 }
 
@@ -656,6 +661,8 @@ export function readAcpResumeSessionRequest(bc: bare.ByteCursor): AcpResumeSessi
         agentType: bare.readString(bc),
         transcriptPath: read2(bc),
         cwd: bare.readString(bc),
+        additionalDirectories: read0(bc),
+        mcpServers: readJsonUtf8(bc),
         env: read1(bc),
     }
 }
@@ -665,6 +672,8 @@ export function writeAcpResumeSessionRequest(bc: bare.ByteCursor, x: AcpResumeSe
     bare.writeString(bc, x.agentType)
     write2(bc, x.transcriptPath)
     bare.writeString(bc, x.cwd)
+    write0(bc, x.additionalDirectories)
+    writeJsonUtf8(bc, x.mcpServers)
     write1(bc, x.env)
 }
 
@@ -1343,18 +1352,26 @@ export function writeAcpSessionCreatedResponse(bc: bare.ByteCursor, x: AcpSessio
 export type AcpSessionRpcResponse = {
     readonly sessionId: string
     readonly response: JsonUtf8
+    /**
+     * Number of request-scoped AcpSessionEvent frames emitted before this
+     * terminal response. Clients use this as an event-delivery barrier because
+     * response and event frames travel on separate priority lanes.
+     */
+    readonly eventCount: u32
 }
 
 export function readAcpSessionRpcResponse(bc: bare.ByteCursor): AcpSessionRpcResponse {
     return {
         sessionId: bare.readString(bc),
         response: readJsonUtf8(bc),
+        eventCount: bare.readU32(bc),
     }
 }
 
 export function writeAcpSessionRpcResponse(bc: bare.ByteCursor, x: AcpSessionRpcResponse): void {
     bare.writeString(bc, x.sessionId)
     writeJsonUtf8(bc, x.response)
+    bare.writeU32(bc, x.eventCount)
 }
 
 function read11(bc: bare.ByteCursor): i32 | null {

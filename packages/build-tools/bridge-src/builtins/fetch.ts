@@ -1,5 +1,5 @@
 import { getSecureExecUndiciDispatcher, undiciFetch } from "./undici.js";
-import { exposeCustomGlobal } from "../global-exposure.js";
+import { exposeCustomGlobal, exposeInstallCompatibleHardenedGlobal } from "../global-exposure.js";
 import { undiciHeadersModule, undiciRequestModule, undiciResponseModule } from "../prelude.js";
 import { isFlatHeaderList, onUpgradeSocketEnd } from "./http.js";
 
@@ -90,7 +90,7 @@ async function fetch(input, options = {}) {
   }
   let resolvedInput = input;
   let normalizedOptions = options;
-  if (input instanceof Request) {
+  if (input instanceof Request || typeof UndiciRequest === "function" && input instanceof UndiciRequest) {
     resolvedInput = input.url;
     normalizedOptions = {
       method: input.method,
@@ -262,21 +262,21 @@ var Response = class _Response {
 
 exposeCustomGlobal("_upgradeSocketEnd", onUpgradeSocketEnd);
 
-exposeCustomGlobal("fetch", fetch);
+exposeInstallCompatibleHardenedGlobal("fetch", fetch);
 
-exposeCustomGlobal("Headers", UndiciHeaders);
+exposeInstallCompatibleHardenedGlobal("Headers", UndiciHeaders);
 
-exposeCustomGlobal("Request", UndiciRequest);
+exposeInstallCompatibleHardenedGlobal("Request", UndiciRequest);
 
-exposeCustomGlobal("Response", UndiciResponse);
+exposeInstallCompatibleHardenedGlobal("Response", UndiciResponse);
 
 var Blob = globalThis.Blob;
 
 if (typeof Blob === "undefined") {
   Blob = class BlobStub {
   };
-  exposeCustomGlobal("Blob", Blob);
 }
+exposeInstallCompatibleHardenedGlobal("Blob", Blob);
 
 var File = globalThis.File;
 
@@ -292,11 +292,13 @@ if (typeof File === "undefined") {
       this.webkitRelativePath = "";
     }
   };
-  exposeCustomGlobal("File", File);
 }
+exposeInstallCompatibleHardenedGlobal("File", File);
 
-if (typeof globalThis.FormData === "undefined") {
-  class FormDataStub {
+var FormData = globalThis.FormData;
+
+if (typeof FormData === "undefined") {
+  FormData = class FormDataStub {
     _entries = [];
     append(name, value) {
       this._entries.push([name, value]);
@@ -320,7 +322,7 @@ if (typeof globalThis.FormData === "undefined") {
     [Symbol.iterator]() {
       return this.entries();
     }
-  }
-  exposeCustomGlobal("FormData", FormDataStub);
+  };
 }
+exposeInstallCompatibleHardenedGlobal("FormData", FormData);
 export { Blob, File, Headers, MAX_HTTP_BODY_BYTES, MAX_HTTP_REQUEST_HEADERS, MAX_HTTP_REQUEST_HEADER_BYTES, Request, Response, UndiciHeaders, UndiciRequest, UndiciResponse, _fetchHandleCounter, createFetchHeaders, ensureFetchAcceptEncoding, fetch, normalizeFetchRequestInit, serializeFetchHeaders };

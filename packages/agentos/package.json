@@ -36,6 +36,12 @@
 				"default": "./dist/client.js"
 			}
 		},
+		"./node": {
+			"import": {
+				"types": "./dist/node.d.ts",
+				"default": "./dist/node.js"
+			}
+		},
 		"./react": {
 			"import": {
 				"types": "./dist/react.d.ts",
@@ -48,7 +54,7 @@
 	},
 	"scripts": {
 		"build": "pnpm build:actor && pnpm build:tabs",
-		"build:actor": "tsup src/index.ts src/client.ts src/react.ts",
+		"build:actor": "tsup src/index.ts src/client.ts src/node.ts src/react.ts",
 		"build:tabs": "vite build --config vite.tabs.config.ts",
 		"check-types": "tsc --noEmit",
 		"test": "vitest run --exclude '**/*.nightly.test.ts'",

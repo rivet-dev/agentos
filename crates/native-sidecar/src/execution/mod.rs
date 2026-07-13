@@ -10,9 +10,10 @@ pub(crate) use self::launch::{
     host_path_from_runtime_guest_mappings, initial_shadow_sync_inventory,
     is_protected_agentos_shadow_sync_path,
     sanitize_javascript_child_process_internal_bootstrap_env,
-    sync_active_process_host_writes_to_kernel,
+    sync_active_process_host_writes_to_kernel, sync_process_host_writes_to_kernel,
 };
 mod process;
+pub(crate) use self::process::terminate_child_process_tree;
 use self::process::*;
 mod process_events;
 #[cfg(test)]
@@ -33,15 +34,16 @@ pub(crate) use self::signals::{
     signal_runtime_process,
 };
 mod stdio;
-use self::stdio::*;
-pub(crate) use self::stdio::{
-    close_kernel_process_stdin, flush_pending_kernel_stdin, kernel_poll_response,
-    kernel_stdin_read_response, parse_kernel_poll_args, parse_kernel_stdin_read_args,
-    service_javascript_kernel_fd_write_sync_rpc, write_kernel_process_stdin,
-};
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use self::stdio::{drain_tty_master_output, install_kernel_stdin_pipe};
+pub(crate) use self::stdio::drain_tty_master_output;
+use self::stdio::*;
+pub(crate) use self::stdio::{
+    close_kernel_process_stdin, flush_pending_kernel_stdin, install_kernel_stdin_pipe,
+    kernel_poll_response, kernel_stdin_read_response, parse_kernel_poll_args,
+    parse_kernel_stdin_read_args, service_javascript_kernel_fd_write_sync_rpc,
+    write_kernel_process_stdin,
+};
 mod network;
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -232,7 +234,8 @@ use agentos_runtime::capability::{
 use agentos_runtime::fairness::{FairBudget, FairWorkTurn};
 use rusqlite::types::ValueRef as SqliteValueRef;
 use rusqlite::{
-    Connection as SqliteConnection, OpenFlags as SqliteOpenFlags, Statement as SqliteStatement,
+    backup::Backup as SqliteBackup, Connection as SqliteConnection, OpenFlags as SqliteOpenFlags,
+    Statement as SqliteStatement,
 };
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::aws_lc_rs;

@@ -225,6 +225,9 @@ pub(crate) fn deferred_kernel_wait_request_for_process(
         return Ok(None);
     }
     let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem write fd")?;
+    // Projected host files live in the process-local mapped-fd table rather
+    // than the kernel fd table. They are regular files and can never require
+    // the nonblocking pipe-write path below.
     if process.mapped_host_fd(fd).is_some() {
         return Ok(None);
     }
@@ -2706,6 +2709,16 @@ where
             && [JavascriptSocketFamily::Ipv4, JavascriptSocketFamily::Ipv6]
                 .iter()
                 .any(|family| {
+                    let family_number = match family {
+                        JavascriptSocketFamily::Ipv4 => 4,
+                        JavascriptSocketFamily::Ipv6 => 6,
+                    };
+                    if payload
+                        .family
+                        .is_some_and(|requested| requested != family_number)
+                    {
+                        return false;
+                    }
                     request
                         .socket_paths
                         .http_loopback_target(*family, port)
@@ -2724,6 +2737,7 @@ where
                 request.dns,
                 host,
                 port,
+                payload.family,
                 request.socket_paths,
             )?;
             if !resolved.use_kernel_loopback {
@@ -2797,6 +2811,13 @@ where
     } = request;
     let trace_enabled = net_tcp_trace_enabled(&process.env);
     let socket_id = javascript_sync_rpc_arg_str(&request.args, 0, "net.socket_read socket id")?;
+    let max_bytes = javascript_sync_rpc_arg_u64_optional(
+        &request.args,
+        1,
+        "net.socket_read maximum byte count",
+    )?
+    .map(|value| usize::try_from(value).unwrap_or(usize::MAX))
+    .unwrap_or(64 * 1024);
     if trace_enabled {
         NET_TCP_TRACE_COUNTERS
             .socket_read_calls
@@ -2808,14 +2829,20 @@ where
 
     let event = if let Some(socket) = process.tcp_sockets.get_mut(socket_id) {
         socket.set_application_read_interest(true)?;
-        socket.poll(kernel, process.kernel_pid, Duration::ZERO, trace_enabled)?
+        socket.poll_limited(
+            kernel,
+            process.kernel_pid,
+            Duration::ZERO,
+            trace_enabled,
+            max_bytes,
+        )?
     } else {
         let socket = process
             .unix_sockets
             .get_mut(socket_id)
             .ok_or_else(|| SidecarError::InvalidState(format!("unknown net socket {socket_id}")))?;
         socket.set_application_read_interest(true)?;
-        socket.poll(Duration::ZERO)?
+        socket.poll_limited(Duration::ZERO, max_bytes)?
     };
 
     match event {
@@ -3568,6 +3595,16 @@ where
                 if is_loopback_socket_host(host) {
                     let families = [JavascriptSocketFamily::Ipv4, JavascriptSocketFamily::Ipv6];
                     if let Some((family, target)) = families.iter().find_map(|family| {
+                        let family_number = match family {
+                            JavascriptSocketFamily::Ipv4 => 4,
+                            JavascriptSocketFamily::Ipv6 => 6,
+                        };
+                        if payload
+                            .family
+                            .is_some_and(|requested| requested != family_number)
+                        {
+                            return None;
+                        }
                         socket_paths
                             .http_loopback_target(*family, port)
                             .map(|target| (*family, target))
@@ -3610,6 +3647,7 @@ where
                     dns,
                     host,
                     port,
+                    family: payload.family,
                     local_address: payload.local_address.as_deref(),
                     local_port: payload.local_port,
                     local_reservation: local_reservation
@@ -4062,7 +4100,6 @@ where
                     "unknown net socket {socket_id}"
                 )));
             };
-
             match event {
                 Some(JavascriptTcpSocketEvent::Data { bytes: chunk, .. }) => Ok(json!({
                     "type": "data",

@@ -1780,6 +1780,13 @@ impl SessionManager {
     /// `publish_readiness`; ordinary events are never reclassified by name.
     pub fn try_send_to_session(&self, session_id: &str, msg: SessionMessage) -> Result<(), String> {
         let terminate_requested = matches!(&msg, SessionMessage::TerminateExecution);
+        let incoming_kind = match &msg {
+            SessionMessage::InjectGlobals { .. } => String::from("inject_globals"),
+            SessionMessage::Execute { .. } => String::from("execute"),
+            SessionMessage::BridgeResponse(_) => String::from("bridge_response"),
+            SessionMessage::StreamEvent(event) => format!("stream_event:{}", event.event_type),
+            SessionMessage::TerminateExecution => String::from("terminate_execution"),
+        };
         let (sender, command_capacity) = self.session_command_sender(session_id, &msg)?;
         let command = SessionCommand::Message(msg);
 
@@ -1792,7 +1799,8 @@ impl SessionManager {
             }
             Err(crossbeam_channel::TrySendError::Full(_)) => {
                 Err(format!(
-                    "ERR_AGENTOS_SESSION_COMMAND_LIMIT: session {session_id} command queue exceeded limit of {command_capacity}; raise limits.reactor.maxHandleCommands"
+                    "ERR_AGENTOS_SESSION_COMMAND_LIMIT: session {session_id} command queue exceeded limit of {command_capacity} while admitting {incoming_kind} (queued={}); raise limits.reactor.maxHandleCommands",
+                    sender.len()
                 ))
             }
             Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
@@ -2868,60 +2876,73 @@ fn session_thread(
                         // ACP adapters often run as plain scripts, so this
                         // cannot be limited to ESM entrypoints.
                         if !terminated && error.is_none() {
-                            // Phase 1: call _waitForActiveHandles() to register a pending promise
-                            {
-                                let scope = &mut v8::HandleScope::new(iso);
-                                let ctx = v8::Local::new(scope, &exec_context);
-                                let scope = &mut v8::ContextScope::new(scope, ctx);
-                                let global = ctx.global(scope);
-                                let key = v8::String::new(scope, "_waitForActiveHandles").unwrap();
-                                if let Some(func) = global.get(scope, key.into()) {
-                                    if func.is_function() {
-                                        let func =
-                                            v8::Local::<v8::Function>::try_from(func).unwrap();
-                                        let recv = v8::undefined(scope).into();
-                                        if let Some(result) = func.call(scope, recv, &[]) {
-                                            if result.is_promise() {
-                                                let promise =
-                                                    v8::Local::<v8::Promise>::try_from(result)
-                                                        .unwrap();
-                                                if promise.state() == v8::PromiseState::Pending {
-                                                    execution::set_pending_script_evaluation(
-                                                        scope, promise,
-                                                    );
+                            // Destruction can race with the short gap before the
+                            // active-handle pass. Observe its durable abort before
+                            // calling into an isolate another thread terminated.
+                            if execution_abort_requested(&abort_rx) {
+                                terminated = true;
+                            } else {
+                                // Phase 1: call _waitForActiveHandles() once. Repeating
+                                // this after it resolves can re-capture an idle HTTP
+                                // keep-alive socket and prevent an otherwise-complete
+                                // one-shot script from ever exiting.
+                                {
+                                    let scope = &mut v8::HandleScope::new(iso);
+                                    let ctx = v8::Local::new(scope, &exec_context);
+                                    let scope = &mut v8::ContextScope::new(scope, ctx);
+                                    let global = ctx.global(scope);
+                                    let key =
+                                        v8::String::new(scope, "_waitForActiveHandles").unwrap();
+                                    if let Some(func) = global.get(scope, key.into()) {
+                                        if func.is_function() {
+                                            let func =
+                                                v8::Local::<v8::Function>::try_from(func).unwrap();
+                                            let recv = v8::undefined(scope).into();
+                                            if let Some(result) = func.call(scope, recv, &[]) {
+                                                if result.is_promise() {
+                                                    let promise =
+                                                        v8::Local::<v8::Promise>::try_from(result)
+                                                            .unwrap();
+                                                    if promise.state() == v8::PromiseState::Pending
+                                                    {
+                                                        execution::set_pending_script_evaluation(
+                                                            scope, promise,
+                                                        );
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 }
-                            }
 
-                            // Phase 2: pump event loop for active handles
-                            if !pending.is_empty() || execution::has_pending_script_evaluation() {
-                                let scope = &mut v8::HandleScope::new(iso);
-                                let ctx = v8::Local::new(scope, &exec_context);
-                                let scope = &mut v8::ContextScope::new(scope, ctx);
-                                let event_loop_status = run_event_loop_with_readiness(
-                                    scope,
-                                    EventLoopSources {
-                                        commands: &rx,
-                                        readiness: &ready_broker,
-                                        readiness_wakes: &ready_rx,
-                                        bridge_responses: Some(&async_response_rx),
-                                        abort: Some(&abort_rx),
-                                        pause: Some(&pause_control),
-                                    },
-                                    &pending,
-                                );
-
-                                if matches!(event_loop_status, EventLoopStatus::Terminated) {
-                                    terminated = true;
-                                }
-                                if let EventLoopStatus::Failed(next_code, next_error) =
-                                    event_loop_status
+                                // Phase 2: pump the event loop for that quiescence wait.
+                                if !pending.is_empty() || execution::has_pending_script_evaluation()
                                 {
-                                    code = next_code;
-                                    error = Some(next_error);
+                                    let scope = &mut v8::HandleScope::new(iso);
+                                    let ctx = v8::Local::new(scope, &exec_context);
+                                    let scope = &mut v8::ContextScope::new(scope, ctx);
+                                    let event_loop_status = run_event_loop_with_readiness(
+                                        scope,
+                                        EventLoopSources {
+                                            commands: &rx,
+                                            readiness: &ready_broker,
+                                            readiness_wakes: &ready_rx,
+                                            bridge_responses: Some(&async_response_rx),
+                                            abort: Some(&abort_rx),
+                                            pause: Some(&pause_control),
+                                        },
+                                        &pending,
+                                    );
+
+                                    if matches!(event_loop_status, EventLoopStatus::Terminated) {
+                                        terminated = true;
+                                    }
+                                    if let EventLoopStatus::Failed(next_code, next_error) =
+                                        event_loop_status
+                                    {
+                                        code = next_code;
+                                        error = Some(next_error);
+                                    }
                                 }
                             }
                         }
@@ -3228,12 +3249,23 @@ fn run_event_loop_with_readiness(
         pause: pause_control,
     } = sources;
     let mut bridge_lane_open = bridge_rx.is_some();
-    while !pending.is_empty()
-        || execution::pending_module_evaluation_needs_wait(scope)
-        || execution::pending_script_evaluation_needs_wait(scope)
-        || pending_guest_timer_count(scope) > 0
-        || pending_guest_immediate_count(scope) > 0
-    {
+    loop {
+        // An out-of-band isolate termination may arrive between event-loop
+        // passes. Check the durable abort lane before any V8 API call; querying
+        // promises or timers on an already-terminated isolate can otherwise
+        // spin forever and prevent explicit session destruction from joining.
+        if abort_rx.is_some_and(execution_abort_requested) {
+            scope.terminate_execution();
+            return EventLoopStatus::Terminated;
+        }
+        if pending.is_empty()
+            && !execution::pending_module_evaluation_needs_wait(scope)
+            && !execution::pending_script_evaluation_needs_wait(scope)
+            && pending_guest_timer_count(scope) == 0
+            && pending_guest_immediate_count(scope) == 0
+        {
+            break;
+        }
         if let Some(control) = pause_control {
             control.wait_while_paused();
         }
@@ -3340,6 +3372,17 @@ fn run_event_loop_with_readiness(
                     }
                 }
             }
+            // Preserve admission order between ordinary commands and readiness.
+            // Level-triggered socket readiness can immediately rearm after every
+            // batch; consuming that wake first on every pass starves stdin and
+            // control commands until an idle keep-alive socket expires.
+            match rx.try_recv() {
+                Ok(command) => break command,
+                Err(crossbeam_channel::TryRecvError::Empty) => {}
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    return EventLoopStatus::Completed;
+                }
+            }
             if let Ok(wake) = ready_rx.try_recv() {
                 match ready_batch_command(ready_broker, wake) {
                     Ok(command) => break command,
@@ -3437,6 +3480,13 @@ fn run_event_loop_with_readiness(
     EventLoopStatus::Completed
 }
 
+fn execution_abort_requested(abort: &crossbeam_channel::Receiver<()>) -> bool {
+    !matches!(
+        abort.try_recv(),
+        Err(crossbeam_channel::TryRecvError::Empty)
+    )
+}
+
 fn try_recv_session_command(
     scope: &mut v8::HandleScope,
     rx: &Receiver<SessionCommand>,
@@ -3455,6 +3505,20 @@ fn try_recv_session_command(
             Err(crossbeam_channel::TryRecvError::Empty) => {}
             Err(crossbeam_channel::TryRecvError::Disconnected) => {}
         }
+    }
+    if let Some(abort) = abort_rx {
+        match abort.try_recv() {
+            Ok(()) | Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                scope.terminate_execution();
+                return Err(EventLoopStatus::Terminated);
+            }
+            Err(crossbeam_channel::TryRecvError::Empty) => {}
+        }
+    }
+    match rx.try_recv() {
+        Ok(command) => return Ok(Some(command)),
+        Err(crossbeam_channel::TryRecvError::Empty) => {}
+        Err(crossbeam_channel::TryRecvError::Disconnected) => return Ok(None),
     }
     match ready_rx.try_recv() {
         Ok(wake) => match ready_batch_command(ready_broker, wake) {

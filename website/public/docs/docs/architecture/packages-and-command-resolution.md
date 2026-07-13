@@ -65,7 +65,7 @@ is what the runtime **projects** from that package when it mounts it:
 
 ```jsonc
 // package.json — commands come from "bin"; an agent's ACP entrypoint is just one of them
-{ "name": "pi", "version": "0.60.0", "bin": { "pi-acp": "dist/acp.js" } }
+{ "name": "@agentos-software/pi", "version": "0.0.1", "bin": { "pi-acp": "dist/pi-acp.wasm" } }
 ```
 
 A directory is a **valid package** when:

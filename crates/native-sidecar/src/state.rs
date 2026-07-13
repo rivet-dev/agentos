@@ -1198,6 +1198,10 @@ pub(crate) struct ActiveProcess {
     /// Durable event backlog bound inherited from
     /// `runtime.protocol.maxProcessEvents` when this process is admitted.
     pub(crate) process_event_capacity: usize,
+    /// Kernel file descriptors held on behalf of WASI `File::lock` calls,
+    /// keyed by canonical guest path. These preserve advisory-lock ownership
+    /// until the guest unlocks the file or the process exits.
+    pub(crate) wasm_flock_fds: BTreeMap<String, u32>,
     pub(crate) pending_execution_events: VecDeque<ActiveExecutionEvent>,
     pub(crate) pending_execution_event_bytes: usize,
     pub(crate) pending_execution_event_count_limit: usize,
@@ -1257,6 +1261,10 @@ pub(crate) struct ActiveProcess {
     pub(crate) diffie_hellman_sessions: BTreeMap<u64, ActiveDiffieHellmanSession>,
     pub(crate) next_diffie_hellman_session_id: u64,
     pub(crate) sqlite_databases: BTreeMap<u64, ActiveSqliteDatabase>,
+    /// Host-side SQLite materializations must not be keyed by the guest PID:
+    /// each VM starts a fresh PID namespace, while the native sidecar process
+    /// and its temporary directory survive across VM generations.
+    pub(crate) sqlite_host_namespace: String,
     pub(crate) next_sqlite_database_id: u64,
     pub(crate) sqlite_statements: BTreeMap<u64, ActiveSqliteStatement>,
     pub(crate) next_sqlite_statement_id: u64,
@@ -2064,6 +2072,10 @@ pub(crate) struct ActiveTcpSocket {
     pub(crate) saw_local_shutdown: Arc<AtomicBool>,
     pub(crate) saw_remote_end: Arc<AtomicBool>,
     pub(crate) close_notified: Arc<AtomicBool>,
+    /// A transport event may contain more bytes than the guest requested from
+    /// `net.socket_read`. Retain the unread suffix on the shared socket
+    /// description so the next read observes it before later transport events.
+    pub(crate) pending_read_event: Arc<Mutex<Option<JavascriptTcpSocketEvent>>>,
     /// Bytes already read from the transport but not yet consumed by the
     /// shared open socket description. Keeping this in the sidecar (rather
     /// than per runner fd) preserves dup/SCM_RIGHTS read and MSG_PEEK
@@ -2334,6 +2346,7 @@ pub(crate) struct ActiveUnixSocket {
     pub(crate) saw_local_shutdown: Arc<AtomicBool>,
     pub(crate) saw_remote_end: Arc<AtomicBool>,
     pub(crate) close_notified: Arc<AtomicBool>,
+    pub(crate) pending_read_event: Arc<Mutex<Option<JavascriptTcpSocketEvent>>>,
     /// Bytes already drained from the async completion lane but not yet
     /// consumed by the shared Unix open description. Duplicated and
     /// SCM_RIGHTS-transferred descriptors retain this same buffer so partial

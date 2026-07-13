@@ -787,7 +787,10 @@ pub(super) fn validate_host_net_metadata(
         != 0
         || socket_type & HOST_NET_SOCKET_TYPE_MASK != expected.socket_type
     {
-        return Err(host_net_metadata_mismatch(label, "socketType"));
+        return Err(SidecarError::InvalidState(format!(
+            "EINVAL: {label} metadata socketType {socket_type:#x} does not match the sidecar-owned socket type {:#x}",
+            expected.socket_type
+        )));
     }
     let protocol = required_host_net_u32(object, "protocol", label)?;
     if protocol != 0 && protocol != expected.protocol {
@@ -2350,6 +2353,7 @@ where
         let mut work = 0usize;
         let mut child_work = vec![0usize; child_candidates.len()];
         let mut yielded = false;
+        let mut delivery_backpressured = false;
 
         loop {
             let mut emitted_this_round = false;
@@ -2419,13 +2423,17 @@ where
                 if event.is_null() {
                     continue;
                 }
-                self.route_child_process_bridge_event(
+                if !self.route_child_process_bridge_event(
                     vm_id,
                     process_id,
                     &parent_path,
                     &child_process_id,
                     event,
-                )?;
+                )? {
+                    yielded = true;
+                    delivery_backpressured = true;
+                    break;
+                }
                 emitted_any = true;
                 emitted_this_round = true;
                 work += 1;
@@ -2436,7 +2444,19 @@ where
             }
         }
 
-        if yielded {
+        if delivery_backpressured {
+            // The parent V8 lane is bounded and deliberately nonblocking: a
+            // blocking send here can deadlock when that isolate is waiting on
+            // a synchronous sidecar RPC. Retry after a short gap so the
+            // isolate can drain its lane and the stdio loop can continue
+            // servicing control requests. An immediate self-notification
+            // hot-loops this pump and can starve session/new for seconds.
+            let notify = Arc::clone(&self.process_event_notify);
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+                notify.notify_one();
+            });
+        } else if yielded {
             self.process_event_notify.notify_one();
         }
         Ok(emitted_any)
@@ -2493,7 +2513,7 @@ where
         parent_path: &[&str],
         child_process_id: &str,
         event: Value,
-    ) -> Result<(), SidecarError> {
+    ) -> Result<bool, SidecarError> {
         let event_type = event
             .get("type")
             .and_then(Value::as_str)
@@ -2507,17 +2527,53 @@ where
             _ => None,
         };
         let mut kill_for_buffer = false;
+        let mut direct_delivery = None;
         let completion = {
             let Some(vm) = self.vms.get_mut(vm_id) else {
-                return Ok(());
+                return Ok(true);
             };
             let Some(root) = vm.active_processes.get_mut(process_id) else {
-                return Ok(());
+                return Ok(true);
             };
             let Some(parent) = Self::active_process_by_path_mut(root, parent_path) else {
-                return Ok(());
+                return Ok(true);
             };
-            let Some(pending) = parent.pending_child_process_sync.get_mut(child_process_id) else {
+            if let Some(pending) = parent.pending_child_process_sync.get_mut(child_process_id) {
+                match event_type {
+                    "stdout" | "stderr" => {
+                        let output = if event_type == "stdout" {
+                            &mut pending.stdout
+                        } else {
+                            &mut pending.stderr
+                        };
+                        let remaining = pending
+                            .max_buffer
+                            .saturating_add(1)
+                            .saturating_sub(output.len());
+                        if let Some(chunk) = chunk.as_deref() {
+                            output.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+                        }
+                        if output.len() > pending.max_buffer && !pending.kill_sent {
+                            pending.max_buffer_exceeded = true;
+                            pending.kill_sent = true;
+                            kill_for_buffer = true;
+                        }
+                        None
+                    }
+                    "exit" => parent
+                        .pending_child_process_sync
+                        .remove(child_process_id)
+                        .map(|pending| {
+                            let exit_code = event
+                                .get("exitCode")
+                                .and_then(Value::as_i64)
+                                .map(|value| value as i32)
+                                .unwrap_or(1);
+                            (pending, exit_code)
+                        }),
+                    _ => None,
+                }
+            } else {
                 let payload = match event_type {
                     "stdout" => json!({
                         "sessionId": child_process_id,
@@ -2536,54 +2592,55 @@ where
                         "code": event.get("exitCode").and_then(Value::as_i64).unwrap_or(1),
                         "signal": event.get("signal").cloned().unwrap_or(Value::Null),
                     }),
-                    _ => return Ok(()),
+                    _ => return Ok(true),
                 };
-                parent.execution.send_javascript_stream_event(
+                direct_delivery = Some(parent.execution.send_javascript_stream_event(
                     match event_type {
                         "stdout" => "child_stdout",
                         "stderr" => "child_stderr",
                         _ => "child_exit",
                     },
                     payload,
-                )?;
-                return Ok(());
-            };
-
-            match event_type {
-                "stdout" | "stderr" => {
-                    let output = if event_type == "stdout" {
-                        &mut pending.stdout
-                    } else {
-                        &mut pending.stderr
-                    };
-                    let remaining = pending
-                        .max_buffer
-                        .saturating_add(1)
-                        .saturating_sub(output.len());
-                    if let Some(chunk) = chunk.as_deref() {
-                        output.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
-                    }
-                    if output.len() > pending.max_buffer && !pending.kill_sent {
-                        pending.max_buffer_exceeded = true;
-                        pending.kill_sent = true;
-                        kill_for_buffer = true;
-                    }
-                    None
-                }
-                "exit" => parent
-                    .pending_child_process_sync
-                    .remove(child_process_id)
-                    .map(|pending| {
-                        let exit_code = event
-                            .get("exitCode")
-                            .and_then(Value::as_i64)
-                            .map(|value| value as i32)
-                            .unwrap_or(1);
-                        (pending, exit_code)
-                    }),
-                _ => None,
+                ));
+                None
             }
         };
+
+        if let Some(delivery) = direct_delivery {
+            match delivery {
+                Ok(()) => return Ok(true),
+                Err(SidecarError::Execution(message))
+                    if message.contains("ERR_AGENTOS_SESSION_COMMAND_LIMIT") =>
+                {
+                    let retry_event = match event_type {
+                        "stdout" => ActiveExecutionEvent::Stdout(chunk.unwrap_or_default()),
+                        "stderr" => ActiveExecutionEvent::Stderr(chunk.unwrap_or_default()),
+                        "exit" => ActiveExecutionEvent::Exited(
+                            event
+                                .get("exitCode")
+                                .and_then(Value::as_i64)
+                                .map(|value| value as i32)
+                                .unwrap_or(1),
+                        ),
+                        _ => return Ok(true),
+                    };
+                    let Some(child) = self
+                        .vms
+                        .get_mut(vm_id)
+                        .and_then(|vm| vm.active_processes.get_mut(process_id))
+                        .and_then(|root| Self::active_process_by_path_mut(root, parent_path))
+                        .and_then(|parent| parent.child_processes.get_mut(child_process_id))
+                    else {
+                        return Ok(true);
+                    };
+                    child.requeue_pending_execution_event(PolledExecutionEvent::unreserved(
+                        retry_event,
+                    ))?;
+                    return Ok(false);
+                }
+                Err(error) => return Err(error),
+            }
+        }
 
         if kill_for_buffer {
             self.kill_descendant_javascript_child_process(
@@ -2632,7 +2689,7 @@ where
                 }
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     pub(super) async fn pump_detached_child_process_events(
@@ -3303,7 +3360,12 @@ where
             });
         }
 
-        if !exact_exec_path && is_node_runtime_command(&command) {
+        let resolves_to_registered_node_runtime = exact_exec_path
+            && registered_command_name_for_path(vm, &command)
+                .is_some_and(|name| is_node_runtime_command(&name));
+        if (!exact_exec_path || resolves_to_registered_node_runtime)
+            && is_node_runtime_command(&command)
+        {
             if let Some(cli) = resolve_host_node_cli_entrypoint(&command) {
                 env.insert(
                     String::from("AGENTOS_NODE_EVAL"),
@@ -3731,6 +3793,19 @@ where
                 .ok_or_else(|| missing_vm_error(vm_id))?;
             stage_agentos_package_command(vm, &mut resolved)?;
         }
+        tracing::debug!(
+            vm_id,
+            process_id,
+            command = %resolved.command,
+            runtime = ?resolved.runtime,
+            entrypoint = %resolved.entrypoint,
+            execution_args = ?resolved.execution_args,
+            parent_guest_cwd = %parent_guest_cwd,
+            requested_cwd = ?request.options.cwd,
+            guest_cwd = %resolved.guest_cwd,
+            host_cwd = %resolved.host_cwd.display(),
+            "resolved JavaScript child process"
+        );
         let resolved = resolved;
         if prepared_host_net_fds.inherited_fd_count() != 0
             && (resolved.runtime != GuestRuntimeKind::WebAssembly || resolved.binding_command)
@@ -4631,6 +4706,9 @@ where
                 execution_env.extend(sanitize_javascript_child_process_internal_bootstrap_env(
                     &request.options.internal_bootstrap_env,
                 ));
+                if !process_path.is_empty() {
+                    execution_env.remove("AGENTOS_EAGER_STDIN_HANDLE");
+                }
                 execution_env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
                 if direct_posix_stdin {
                     execution_env.insert(
@@ -5228,6 +5306,20 @@ where
                 .ok_or_else(|| missing_vm_error(vm_id))?;
             stage_agentos_package_command(vm, &mut resolved)?;
         }
+        tracing::debug!(
+            vm_id,
+            process_id,
+            parent = %current_process_label,
+            command = %resolved.command,
+            runtime = ?resolved.runtime,
+            entrypoint = %resolved.entrypoint,
+            execution_args = ?resolved.execution_args,
+            parent_guest_cwd = %parent_guest_cwd,
+            requested_cwd = ?request.options.cwd,
+            guest_cwd = %resolved.guest_cwd,
+            host_cwd = %resolved.host_cwd.display(),
+            "resolved nested JavaScript child process"
+        );
         let resolved = resolved;
         if prepared_host_net_fds.inherited_fd_count() != 0
             && (resolved.runtime != GuestRuntimeKind::WebAssembly || resolved.binding_command)
@@ -5475,6 +5567,7 @@ where
                                 &request.options.internal_bootstrap_env,
                             ),
                         );
+                        execution_env.remove("AGENTOS_EAGER_STDIN_HANDLE");
                         execution_env
                             .insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
                         if posix_spawn_controls_stdin {
@@ -7426,7 +7519,11 @@ where
             return Err(javascript_child_process_gone_error(process_id, &child_path));
         };
         let Some(child) = parent.child_processes.get_mut(child_process_id) else {
-            return Err(javascript_child_process_gone_error(process_id, &child_path));
+            return missing_javascript_child_cleanup_result(
+                parent.next_child_process_id,
+                child_process_id,
+                "stdin close",
+            );
         };
         child.execution.close_stdin()?;
         close_kernel_process_stdin(&mut vm.kernel, child)
@@ -7769,17 +7866,16 @@ where
                 &[child_process_id],
             ));
         };
-        let Some(child) = vm
+        let process = vm
             .active_processes
             .get_mut(process_id)
-            .ok_or_else(|| missing_process_error(vm_id, process_id))?
-            .child_processes
-            .get_mut(child_process_id)
-        else {
-            return Err(javascript_child_process_gone_error(
-                process_id,
-                &[child_process_id],
-            ));
+            .ok_or_else(|| missing_process_error(vm_id, process_id))?;
+        let Some(child) = process.child_processes.get_mut(child_process_id) else {
+            return missing_javascript_child_cleanup_result(
+                process.next_child_process_id,
+                child_process_id,
+                "stdin close",
+            );
         };
         child.execution.close_stdin()?;
         close_kernel_process_stdin(&mut vm.kernel, child)
@@ -7811,9 +7907,10 @@ where
             // Child IDs are monotonically allocated per parent. An allocated
             // ID that is no longer present was already reaped (or rolled back),
             // so cleanup kills are idempotent without hiding never-issued IDs.
-            return missing_javascript_child_kill_result(
+            return missing_javascript_child_cleanup_result(
                 process.next_child_process_id,
                 child_process_id,
+                "kill",
             );
         };
         terminate_tracked_child_process_for_signal(
