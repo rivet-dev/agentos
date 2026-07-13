@@ -1,0 +1,128 @@
+import { describe, expect, it, vi } from "vitest";
+import { NativeSidecarKernelProxy } from "../src/sidecar/rpc-client.js";
+
+const session = { connectionId: "conn-1", sessionId: "sess-1" };
+const vm = { vmId: "vm-process-ordering" };
+
+interface PumpEvent {
+	ownership: { scope: string; vm_id: string };
+	payload: Record<string, unknown>;
+}
+
+function createStubClient() {
+	const queue: PumpEvent[] = [];
+	let notify: (() => void) | null = null;
+
+	const client = {
+		async execute() {
+			return { processId: "process-1", pid: 4242 };
+		},
+		async getProcessSnapshot() {
+			return [];
+		},
+		async killProcess() {},
+		async writeStdin() {},
+		async closeStdin() {},
+		async disposeVm() {},
+		async dispose() {},
+		waitForEvent(
+			_filter: unknown,
+			_unused: unknown,
+			options: { signal: AbortSignal },
+		) {
+			return new Promise<PumpEvent>((resolve, reject) => {
+				const deliver = () => {
+					const event = queue.shift();
+					if (!event) return false;
+					resolve(event);
+					return true;
+				};
+				if (!deliver()) {
+					notify = () => {
+						if (deliver()) notify = null;
+					};
+				}
+				options.signal.addEventListener("abort", () => {
+					reject(new Error("aborted"));
+				});
+			});
+		},
+	};
+
+	return {
+		client,
+		pushEvent(event: PumpEvent) {
+			queue.push(event);
+			notify?.();
+		},
+	};
+}
+
+function createProxy(client: unknown) {
+	return new NativeSidecarKernelProxy({
+		client,
+		session,
+		vm,
+		env: {},
+		cwd: "/work",
+		localMounts: [],
+		sidecarMounts: [],
+		commandGuestPaths: new Map<string, string>(),
+		ownsClient: true,
+	} as ConstructorParameters<typeof NativeSidecarKernelProxy>[0]);
+}
+
+describe("sidecar-authoritative process event ordering", () => {
+	it("completes immediately when ordered output is followed by exit", async () => {
+		vi.useFakeTimers();
+		const { client, pushEvent } = createStubClient();
+		const proxy = createProxy(client);
+		try {
+			let resolveOutput!: () => void;
+			const outputSeen = new Promise<void>((resolve) => {
+				resolveOutput = resolve;
+			});
+			const stdout: string[] = [];
+			const proc = await proxy.spawn("node", ["script.js"], {
+				onStdout(chunk) {
+					stdout.push(new TextDecoder().decode(chunk));
+					resolveOutput();
+				},
+			});
+
+			pushEvent({
+				ownership: { scope: "vm", vm_id: vm.vmId },
+				payload: {
+					type: "process_output",
+					process_id: "process-1",
+					channel: "stdout",
+					chunk: new TextEncoder().encode("tail"),
+				},
+			});
+			await outputSeen;
+
+			let settled = false;
+			const waiting = proc.wait().then((exitCode) => {
+				settled = true;
+				return exitCode;
+			});
+			pushEvent({
+				ownership: { scope: "vm", vm_id: vm.vmId },
+				payload: {
+					type: "process_exited",
+					process_id: "process-1",
+					exit_code: 0,
+				},
+			});
+			for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
+
+			expect(stdout.join("")).toBe("tail");
+			expect(settled).toBe(true);
+			expect(vi.getTimerCount()).toBe(0);
+			await expect(waiting).resolves.toBe(0);
+		} finally {
+			await proxy.dispose();
+			vi.useRealTimers();
+		}
+	});
+});

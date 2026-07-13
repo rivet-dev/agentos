@@ -104,8 +104,6 @@ describe("python CLI (Pyodide runtime)", () => {
 			vm.writeProcessStdin(pid, "print('from stdin program')\n");
 			vm.closeProcessStdin(pid);
 			const exitCode = await vm.waitProcess(pid);
-			// Native-sidecar process_output can lag the exit notification by a turn.
-			await new Promise((resolve) => setTimeout(resolve, 0));
 			expect(exitCode).toBe(0);
 			expect(chunks.join("")).toContain("from stdin program");
 		},

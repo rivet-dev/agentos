@@ -32,10 +32,6 @@ import type {
 	SidecarProcessSnapshotEntry,
 } from "./native-process-client.js";
 
-const TRAILING_OUTPUT_DRAIN_INTERVAL_MS = 10;
-const TRAILING_OUTPUT_DRAIN_MAX_MS = 250;
-const TRAILING_OUTPUT_DRAIN_QUIET_TURNS = 2;
-
 function shouldLogStructuredSidecarEvent(name: string): boolean {
 	const normalized = name.toLowerCase();
 	return (
@@ -72,16 +68,6 @@ function logStructuredSidecarEvent(
 			? `[agent-os] sidecar ${name}: ${formatted}`
 			: `[agent-os] sidecar ${name}`,
 	);
-}
-
-async function drainTrailingProcessOutputTurn(delayMs = 0): Promise<void> {
-	// Native-sidecar `process_output` events can lag one macrotask behind the
-	// terminal `process_exited` notification for very short-lived processes, and
-	// under suite load the sidecar event pump can need a little extra time to
-	// flush delayed output through its listener callbacks.
-	await new Promise<void>((resolve) => {
-		setTimeout(resolve, delayMs);
-	});
 }
 
 const PREFERRED_SIGNAL_NAMES = [
@@ -188,7 +174,6 @@ interface TrackedProcessEntry {
 	settled: boolean;
 	onStdout: Set<(data: Uint8Array) => void>;
 	onStderr: Set<(data: Uint8Array) => void>;
-	outputGeneration: number;
 }
 
 interface NativeSidecarKernelProxyOptions {
@@ -412,7 +397,6 @@ export class NativeSidecarKernelProxy {
 
 		const exitCode = await proc.wait();
 
-		await drainTrailingProcessOutputTurn();
 		return {
 			exitCode,
 			stdout: Buffer.concat(
@@ -440,8 +424,6 @@ export class NativeSidecarKernelProxy {
 			proc.closeStdin();
 
 			const exitCode = await proc.wait();
-
-			await drainTrailingProcessOutputTurn();
 
 			return {
 				exitCode,
@@ -510,7 +492,6 @@ export class NativeSidecarKernelProxy {
 			settled: false,
 			onStdout: new Set(options?.onStdout ? [options.onStdout] : []),
 			onStderr: new Set(options?.onStderr ? [options.onStderr] : []),
-			outputGeneration: 0,
 		};
 		await this.startTrackedProcess(entry);
 		if (entry.pid === null) {
@@ -542,11 +523,7 @@ export class NativeSidecarKernelProxy {
 				);
 			},
 			kill: (signal = 15) => this.signalProcess(entry, signal),
-			wait: async () => {
-				const exitCode = await this.waitForTrackedProcess(entry);
-				await this.drainTrailingProcessOutput(entry);
-				return exitCode;
-			},
+			wait: () => this.waitForTrackedProcess(entry),
 			get exitCode() {
 				return entry.exitCode;
 			},
@@ -797,35 +774,6 @@ export class NativeSidecarKernelProxy {
 		return this.processSnapshotRefresh;
 	}
 
-	private async drainTrailingProcessOutput(
-		entry: TrackedProcessEntry,
-	): Promise<void> {
-		if (entry.onStdout.size === 0 && entry.onStderr.size === 0) {
-			return;
-		}
-
-		let observedGeneration = entry.outputGeneration;
-		let quietTurns = 0;
-		let delayMs = 0;
-		const deadline = Date.now() + TRAILING_OUTPUT_DRAIN_MAX_MS;
-
-		while (quietTurns < TRAILING_OUTPUT_DRAIN_QUIET_TURNS) {
-			const remainingMs = deadline - Date.now();
-			if (remainingMs <= 0) {
-				return;
-			}
-
-			await drainTrailingProcessOutputTurn(Math.min(delayMs, remainingMs));
-			if (entry.outputGeneration === observedGeneration) {
-				quietTurns += 1;
-			} else {
-				observedGeneration = entry.outputGeneration;
-				quietTurns = 0;
-			}
-			delayMs = TRAILING_OUTPUT_DRAIN_INTERVAL_MS;
-		}
-	}
-
 	private async startTrackedProcess(entry: TrackedProcessEntry): Promise<void> {
 		await this.waitForMountReconfigure();
 		const started = await this.client.execute(this.session, this.vm, {
@@ -868,7 +816,6 @@ export class NativeSidecarKernelProxy {
 					if (!entry) {
 						continue;
 					}
-					entry.outputGeneration += 1;
 					const chunk = event.payload.chunk;
 					const listeners =
 						event.payload.channel === "stdout"
@@ -922,12 +869,10 @@ export class NativeSidecarKernelProxy {
 		entry.settled = true;
 		entry.exitCode = exitCode;
 		entry.resolveWait(exitCode);
-		// Release per-process tracking now that the process has terminated so these
-		// maps/Sets don't grow without bound. Defer the release until trailing
-		// output has drained: `wait()`'s drain and late `process_output` events
-		// still need the entry + its listeners during the drain window. The exited
-		// record lives on in `processes` for listing.
-		void this.releaseProcessTrackingAfterDrain(entry);
+		// The sidecar guarantees that all process_output events precede the terminal
+		// process_exited event. Release client routing immediately after exit; the
+		// exited record lives on in `processes` for listing.
+		this.releaseProcessTracking(entry);
 	}
 
 	private failProcess(entry: TrackedProcessEntry, error: Error): void {
@@ -936,24 +881,18 @@ export class NativeSidecarKernelProxy {
 		}
 		entry.settled = true;
 		entry.rejectWait(error);
-		void this.releaseProcessTrackingAfterDrain(entry);
+		this.releaseProcessTracking(entry);
 	}
 
-	private async releaseProcessTrackingAfterDrain(
-		entry: TrackedProcessEntry,
-	): Promise<void> {
-		try {
-			await this.drainTrailingProcessOutput(entry);
-		} finally {
-			if (entry.pid !== null) {
-				this.trackedProcesses.delete(entry.pid);
-			}
-			if (entry.processId !== null) {
-				this.trackedProcessesById.delete(entry.processId);
-			}
-			entry.onStdout.clear();
-			entry.onStderr.clear();
+	private releaseProcessTracking(entry: TrackedProcessEntry): void {
+		if (entry.pid !== null) {
+			this.trackedProcesses.delete(entry.pid);
 		}
+		if (entry.processId !== null) {
+			this.trackedProcessesById.delete(entry.processId);
+		}
+		entry.onStdout.clear();
+		entry.onStderr.clear();
 	}
 
 	private waitForTrackedProcess(entry: TrackedProcessEntry): Promise<number> {

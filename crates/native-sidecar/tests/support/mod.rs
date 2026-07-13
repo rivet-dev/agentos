@@ -340,7 +340,6 @@ pub fn collect_process_output_wire_with_timeout(
     let deadline = Instant::now() + timeout;
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
-    let mut exit = None;
 
     loop {
         let event = sidecar
@@ -375,23 +374,17 @@ pub fn collect_process_output_wire_with_timeout(
                 agentos_native_sidecar::wire::EventPayload::ProcessExitedEvent(exited)
                     if exited.process_id == process_id =>
                 {
-                    exit = Some((exited.exit_code, Instant::now()));
+                    return (
+                        process_stream_to_string(&stdout),
+                        process_stream_to_string(&stderr),
+                        exited.exit_code,
+                    );
                 }
                 agentos_native_sidecar::wire::EventPayload::ProcessExitedEvent(_)
                 | agentos_native_sidecar::wire::EventPayload::CronDispatchEvent(_)
                 | agentos_native_sidecar::wire::EventPayload::VmLifecycleEvent(_)
                 | agentos_native_sidecar::wire::EventPayload::StructuredEvent(_)
                 | agentos_native_sidecar::wire::EventPayload::ExtEnvelope(_) => {}
-            }
-        }
-
-        if let Some((exit_code, seen_at)) = exit {
-            if Instant::now().duration_since(seen_at) >= Duration::from_millis(200) {
-                return (
-                    process_stream_to_string(&stdout),
-                    process_stream_to_string(&stderr),
-                    exit_code,
-                );
             }
         }
 
