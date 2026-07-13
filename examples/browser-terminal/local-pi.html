@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent OS browser-local Pi</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #0b0e14; color: #c7d0e0; }
+      #status { position: absolute; top: 8px; right: 12px; z-index: 1; color: #7c869c; font: 12px system-ui, sans-serif; }
+      #terminal { width: 100vw; height: 100vh; padding: 12px; box-sizing: border-box; }
+      .xterm { height: 100%; }
+    </style>
+  </head>
+  <body>
+    <div id="status">loading</div>
+    <div id="terminal" aria-label="Browser-local Pi terminal"></div>
+    <script type="module" src="/src/local-pi.ts"></script>
+  </body>
+</html>

@@ -1,13 +1,13 @@
+import { guestEncodingBootstrapCode } from "./encoding.js";
+import { BROWSER_BUFFER_POLYFILL_CODE } from "./generated/buffer-polyfill.js";
+import { BROWSER_PATH_POLYFILL_CODE } from "./generated/path-polyfill.js";
+import { BROWSER_UTIL_POLYFILL_CODE } from "./generated/util-polyfill.js";
 import {
 	createInMemoryFileSystem,
 	InMemoryFileSystem,
 } from "./os-filesystem.js";
-import { guestEncodingBootstrapCode } from "./encoding.js";
-import { BROWSER_WASI_POLYFILL_CODE } from "./wasi-polyfill.js";
 import { PROCESS_SIGNAL_NUMBERS } from "./signals.js";
-import { BROWSER_BUFFER_POLYFILL_CODE } from "./generated/buffer-polyfill.js";
-import { BROWSER_PATH_POLYFILL_CODE } from "./generated/path-polyfill.js";
-import { BROWSER_UTIL_POLYFILL_CODE } from "./generated/util-polyfill.js";
+import { BROWSER_WASI_POLYFILL_CODE } from "./wasi-polyfill.js";
 
 export type StdioChannel = "stdout" | "stderr";
 export type TimingMitigation = "off" | "freeze";
@@ -295,7 +295,11 @@ export interface NodeRuntimeDriver {
 	/** End stdin for a running `streamingStdin` execution. */
 	endStdin?(executionId: string): void;
 	/** Write bytes to a PTY fd owned by the execution. */
-	writePty?(executionId: string, fd: number, data: string | Uint8Array): Promise<number>;
+	writePty?(
+		executionId: string,
+		fd: number,
+		data: string | Uint8Array,
+	): Promise<number>;
 	/** Read bytes from a PTY fd owned by the execution. */
 	readPty?(
 		executionId: string,
@@ -1128,6 +1132,23 @@ export function transformDynamicImport(code: string): string {
 	// call form `import(` preceded by a non-identifier char; leaves `import.meta` and
 	// static `import ` statements untouched.
 	return code.replace(/(^|[^.\w$])import(\s*\()/g, "$1__dynamicImport$2");
+}
+
+export function transformImportMeta(code: string, filePath?: string): string {
+	const absolutePath = filePath?.startsWith("/")
+		? filePath
+		: `/${filePath ?? "index.mjs"}`;
+	const importMeta = JSON.stringify({
+		url: new URL(`file://${absolutePath}`).href,
+	});
+	return code.replace(/\bimport\.meta\b/g, `(${importMeta})`);
+}
+
+export function normalizeEsmTransformOutput(code: string): string {
+	// Sucrase can concatenate the `return` and injected `await` tokens when a
+	// minified source has no whitespace between `return` and an expression that
+	// needs its async-nullish helper. Keep the repair at the generic ESM boundary.
+	return code.replace(/\breturnawait\b/g, "return await");
 }
 
 export const POLYFILL_CODE_MAP: Record<string, string> = {
@@ -2943,29 +2964,37 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 			const modules = new Map();
 			for (const [name, source] of Object.entries(commands || {})) {
 				const value = await readCommandBytes(source);
-				modules.set(name, value instanceof WebAssembly.Module ? value : new WebAssembly.Module(value));
+				try {
+					modules.set(name, value instanceof WebAssembly.Module ? value : new WebAssembly.Module(value));
+				} catch (error) {
+					throw new Error("failed to compile command wasm " + name + " from " + String(source) + ": " + (error && error.message ? error.message : String(error)));
+				}
 			}
 			return modules;
 		}
 		async function createWasiCommandHost(options) {
 			const WASI = options && options.WASI ? options.WASI : require("node:wasi").WASI;
 			const commandModules = await loadCommandModules(options && options.commands);
+			const externalCommands = new Set((options && options.externalCommands) || []);
 			let memory = null;
 			let nextPid = 100;
 			const exitedChildren = new Map();
 			const deferredChildren = new Map();
+			const externalChildren = new Map();
 			const waitBuffer = new SharedArrayBuffer(4);
 			const wait = new Int32Array(waitBuffer);
 			const errnoSuccess = 0;
 			const errnoBadf = 8;
 			const errnoChild = 10;
+			const errnoNoexec = 45;
 			const errnoNosys = 52;
 			let nextSyntheticFd = 1000;
-			const syntheticFdEntries = new Map();
-			let activeFdOverrides = null;
-			let activeChildCwd = null;
+			const parentFdEntries = new Map();
+			let activeExecution = null;
 			let previousLookupFdHandle = null;
 			let parentWasi = null;
+			let processLikeTarget = globalThis.process;
+			let pendingStdin = new Uint8Array(0);
 			const getMemory = () => {
 				if (!memory) throw new Error("WASI host command memory is not set");
 				return memory;
@@ -2994,8 +3023,8 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 				return fallback >>> 0;
 			};
 			const currentGuestCwd = () => {
-				const cwd = typeof activeChildCwd === "string" && activeChildCwd.startsWith("/")
-					? activeChildCwd
+				const cwd = typeof activeExecution?.cwd === "string" && activeExecution.cwd.startsWith("/")
+					? activeExecution.cwd
 					: typeof options?.cwd === "string" && options.cwd.startsWith("/")
 					? options.cwd
 					: "/";
@@ -3009,23 +3038,33 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 			};
 			const lookupSyntheticFd = (fd) => {
 				const descriptor = fd >>> 0;
-				const override = activeFdOverrides && activeFdOverrides.get(descriptor);
-				if (override && override.open !== false) return override;
-				const handle = syntheticFdEntries.get(descriptor);
+				const entries = activeExecution?.fdEntries || parentFdEntries;
+				const handle = entries.get(descriptor);
 				if (handle && handle.open !== false) return handle;
 				if (typeof previousLookupFdHandle === "function") return previousLookupFdHandle(descriptor);
-				const parentEntry = parentWasi && parentWasi.fdTable && parentWasi.fdTable.get(descriptor);
-				if (parentEntry && parentEntry.kind === "file" && typeof parentEntry.realFd === "number") {
+				return null;
+			};
+			const currentWasi = () => activeExecution?.wasi || parentWasi;
+			const currentWasiFdEntry = (fd) => {
+				const wasi = currentWasi();
+				return wasi && wasi.fdTable ? wasi.fdTable.get(fd >>> 0) : null;
+			};
+			const wasiFdHandle = (fd) => {
+				const descriptor = fd >>> 0;
+				const entry = currentWasiFdEntry(descriptor);
+				if (entry && entry.kind === "file" && typeof entry.realFd === "number") {
 					return {
 						kind: "guest-file",
-						targetFd: parentEntry.realFd,
-						position: typeof parentEntry.offset === "number" ? parentEntry.offset : 0,
-						readOnly: parentEntry.readOnly === true,
+						targetFd: entry.realFd,
+						position: typeof entry.offset === "number" ? entry.offset : 0,
+						readOnly: entry.readOnly === true,
+						append: Boolean(entry.fdFlags && (entry.fdFlags & 1)),
 						open: true,
 					};
 				}
 				return null;
 			};
+			const lookupProcessFd = (fd) => lookupSyntheticFd(fd) || wasiFdHandle(fd);
 			const closeSyntheticHandle = (handle) => {
 				if (!handle || handle.open === false) return;
 				handle.open = false;
@@ -3067,20 +3106,177 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 			};
 			const allocateSyntheticFd = (handle) => {
 				const fd = nextSyntheticFd++;
-				syntheticFdEntries.set(fd, handle);
+				const entries = activeExecution?.fdEntries || parentFdEntries;
+				entries.set(fd, handle);
 				return fd;
 			};
 			const replaceSyntheticFd = (fd, handle) => {
 				const descriptor = fd >>> 0;
-				closeSyntheticHandle(syntheticFdEntries.get(descriptor));
-				syntheticFdEntries.set(descriptor, handle);
+				const entries = activeExecution?.fdEntries || parentFdEntries;
+				closeSyntheticHandle(entries.get(descriptor));
+				entries.set(descriptor, handle);
 			};
 			const pipeHasOpenWriters = (handle) =>
 				handle && handle.kind === "pipe-read" && handle.pipe && (handle.pipe.writeHandleCount || 0) > 0;
+			const callSyncBridge = (ref, ...args) => {
+				if (typeof ref === "function") return ref(...args);
+				if (ref && typeof ref.applySync === "function") return ref.applySync(undefined, args);
+				if (ref && typeof ref.applySyncPromise === "function") return ref.applySyncPromise(undefined, args);
+				throw new Error("browser child process bridge is not configured");
+			};
+			const normalizeBridgeBytes = (value) => {
+				if (value instanceof Uint8Array) return value;
+				if (typeof value === "string") return new TextEncoder().encode(value);
+				const decode = globalThis.__agentOSEncoding && globalThis.__agentOSEncoding.decodeBytesPayload;
+				if (typeof decode === "function") return decode(value);
+				return new Uint8Array(0);
+			};
+			const resolveCommand = (commandPath, commandName, argv, depth = 0) => {
+				const registered = commandModules.get(commandName);
+				if (registered) return { module: registered, commandPath, argv };
+				if (options && options.resolveCommandsFromFilesystem === false) return null;
+				const guestPath = resolveGuestPath(commandPath);
+				let value;
+				try {
+					value = fs().readFileSync(guestPath);
+				} catch {
+					return null;
+				}
+				const commandBytes = normalizeBridgeBytes(value);
+				if (
+					commandBytes.length >= 4 &&
+					commandBytes[0] === 0 && commandBytes[1] === 97 &&
+					commandBytes[2] === 115 && commandBytes[3] === 109
+				) {
+					try {
+						return {
+							module: new WebAssembly.Module(commandBytes),
+							commandPath: guestPath,
+							argv,
+						};
+					} catch (error) {
+						throw new Error(
+							"failed to compile command wasm from guest path " + guestPath + ": " +
+							(error && error.message ? error.message : String(error)),
+						);
+					}
+				}
+				const header = defaultDecode(commandBytes.subarray(0, Math.min(commandBytes.length, 4096)));
+				if (header.startsWith("#!") && depth < 4) {
+					const line = header.slice(2).split(/\\r?\\n/, 1)[0].trim();
+					const [interpreterPath, ...interpreterArgs] = line.split(/\\s+/).filter(Boolean);
+					if (interpreterPath) {
+						const interpreterName = interpreterPath.split("/").filter(Boolean).at(-1) || interpreterPath;
+						return resolveCommand(
+							interpreterPath,
+							interpreterName,
+							[interpreterPath, ...interpreterArgs, guestPath, ...argv.slice(1)],
+							depth + 1,
+						);
+					}
+				}
+				return { error: errnoNoexec };
+			};
+			const readProcessStdinNonBlocking = (maxBytes) => {
+				const limit = Math.max(1, Number(maxBytes) || 4096);
+				if (pendingStdin.length > 0) {
+					const chunk = pendingStdin.subarray(0, limit);
+					pendingStdin = pendingStdin.subarray(chunk.length);
+					return chunk;
+				}
+				const value = processLikeTarget && processLikeTarget.stdin &&
+					typeof processLikeTarget.stdin.read === "function"
+						? processLikeTarget.stdin.read(limit)
+						: null;
+				const chunk = normalizeBridgeBytes(value);
+				return chunk.length > 0 ? chunk : null;
+			};
+			const pollProcessStdin = () => {
+				if (pendingStdin.length > 0) return true;
+				const value = processLikeTarget && processLikeTarget.stdin &&
+					typeof processLikeTarget.stdin.read === "function"
+						? processLikeTarget.stdin.read(4096)
+						: null;
+				const chunk = normalizeBridgeBytes(value);
+				if (chunk.length === 0) return false;
+				pendingStdin = chunk;
+				return true;
+			};
+			const readExternalInput = (handle, fallbackFd, maxBytes) => {
+				if (handle && handle.kind === "pipe-read" && handle.pipe) {
+					const chunk = handle.pipe.chunks.shift();
+					if (!chunk) return null;
+					if (chunk.length <= maxBytes) return chunk;
+					handle.pipe.chunks.unshift(chunk.subarray(maxBytes));
+					return chunk.subarray(0, maxBytes);
+				}
+				if (handle && handle.kind === "guest-file" && typeof handle.targetFd === "number") {
+					const buffer = new Uint8Array(maxBytes);
+					const read = fs().readSync(handle.targetFd, buffer, 0, maxBytes, handle.position || 0);
+					handle.position = (handle.position || 0) + read;
+					return read > 0 ? buffer.subarray(0, read) : null;
+				}
+				if ((!handle && fallbackFd === 0) || (handle && handle.kind === "stdio" && handle.targetFd === 0)) {
+					const wasiHost = globalThis.__agentOSWasiHost;
+					return wasiHost && typeof wasiHost.readStdinNonBlocking === "function"
+						? normalizeBridgeBytes(wasiHost.readStdinNonBlocking(maxBytes))
+						: null;
+				}
+				return null;
+			};
+			const writeExternalOutput = (handle, fallbackFd, value) => {
+				const data = normalizeBridgeBytes(value);
+				if (data.length === 0) return;
+				if (handle && handle.kind === "pipe-write" && handle.pipe) {
+					handle.pipe.chunks.push(data);
+					return;
+				}
+				if (handle && handle.kind === "guest-file" && typeof handle.targetFd === "number") {
+					const position = handle.append ? null : (handle.position || 0);
+					const written = fs().writeSync(handle.targetFd, data, 0, data.length, position);
+					handle.position = (handle.position || 0) + written;
+					return;
+				}
+				const targetFd = handle && handle.kind === "stdio" ? handle.targetFd : fallbackFd;
+				if (targetFd === 2) processLikeTarget.stderr.write(data);
+				else processLikeTarget.stdout.write(data);
+			};
+			const closeExternalHandles = (child) => {
+				for (const handle of child.childOverrideHandles) closeSyntheticHandle(handle);
+			};
+			const pumpExternalChild = (child, waitMs) => {
+				const stdinHandle = child.overrides.get(0);
+				const input = readExternalInput(stdinHandle, child.stdinFd, 4096);
+				if (input && input.length > 0) {
+					callSyncBridge(globalThis._childProcessStdinWrite, child.sessionId, input);
+				} else if (
+					!child.stdinClosed && stdinHandle && stdinHandle.kind === "pipe-read" &&
+					!pipeHasOpenWriters(stdinHandle) && stdinHandle.pipe.chunks.length === 0
+				) {
+					callSyncBridge(globalThis._childProcessStdinClose, child.sessionId);
+					child.stdinClosed = true;
+				}
+				const event = callSyncBridge(globalThis._childProcessPoll, child.sessionId, waitMs);
+				if (!event) return false;
+				if (event.type === "stdout") {
+					writeExternalOutput(child.overrides.get(1), child.stdoutFd, event.data);
+					return false;
+				}
+				if (event.type === "stderr") {
+					writeExternalOutput(child.overrides.get(2), child.stderrFd, event.data);
+					return false;
+				}
+				if (event.type === "exit") {
+					externalChildren.delete(child.pid);
+					closeExternalHandles(child);
+					exitedChildren.set(child.pid, (Number(event.exitCode) || 0) << 8);
+					return true;
+				}
+				return false;
+			};
 			const runChild = (child) => {
 				const parentMemory = memory;
-				const previousActiveFdOverrides = activeFdOverrides;
-				const previousActiveChildCwd = activeChildCwd;
+				const previousActiveExecution = activeExecution;
 				try {
 					const childWasi = new WASI({
 						returnOnExit: true,
@@ -3094,16 +3290,26 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 					};
 					const childInstance = new WebAssembly.Instance(child.module, childImports);
 					memory = childInstance.exports.memory;
-					activeFdOverrides = child.overrides;
-					activeChildCwd = child.cwd || "/";
+					activeExecution = {
+						wasi: childWasi,
+						cwd: child.cwd || "/",
+						fdEntries: child.overrides,
+						pid: child.pid,
+						parentPid: child.parentPid,
+					};
 					const exitCode = childWasi.start(childInstance);
 					exitedChildren.set(child.pid, exitCode << 8);
-				} catch {
+				} catch (error) {
+					processLikeTarget.stderr.write(
+						new TextEncoder().encode(
+							"failed to execute WASI child " + child.commandPath + ": " +
+							(error && error.stack ? error.stack : String(error)) + "\\n",
+						),
+					);
 					exitedChildren.set(child.pid, 127 << 8);
 				} finally {
 					for (const handle of child.childOverrideHandles) closeSyntheticHandle(handle);
-					activeFdOverrides = previousActiveFdOverrides;
-					activeChildCwd = previousActiveChildCwd;
+					activeExecution = previousActiveExecution;
 					memory = parentMemory;
 				}
 			};
@@ -3131,16 +3337,16 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 				},
 				setParentWasi(wasi) {
 					parentWasi = wasi || null;
+					parentFdEntries.clear();
 					return host;
 				},
 				installBlockingStdin(processLike) {
 					const target = processLike || globalThis.process;
+					processLikeTarget = target;
 					const wasiHost = globalThis.__agentOSWasiHost || (globalThis.__agentOSWasiHost = {});
 					wasiHost.readStdin = (maxBytes) => {
 						while (true) {
-							const value = target && target.stdin && typeof target.stdin.read === "function"
-								? target.stdin.read(maxBytes)
-								: null;
+							const value = readProcessStdinNonBlocking(maxBytes);
 							const length = typeof value === "string"
 								? value.length
 								: value instanceof Uint8Array
@@ -3152,11 +3358,9 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 							Atomics.wait(wait, 0, 0, 10);
 						}
 					};
-					wasiHost.readStdinNonBlocking = (maxBytes) =>
-							target && target.stdin && typeof target.stdin.read === "function"
-								? target.stdin.read(maxBytes)
-								: null;
-						wasiHost.stdinReadableBytes = () => 1;
+					wasiHost.readStdinNonBlocking = readProcessStdinNonBlocking;
+					wasiHost.stdinReadableBytes = () => pendingStdin.length ||
+						Number(target && target.stdin && target.stdin.readableLength) || 0;
 					if (typeof wasiHost.lookupFdHandle === "function" && wasiHost.lookupFdHandle !== lookupSyntheticFd) {
 						previousLookupFdHandle = wasiHost.lookupFdHandle;
 					}
@@ -3165,6 +3369,16 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 				},
 				imports: {
 					host_tty: {
+						isatty(fd) {
+							return fd === 0 || fd === 1 || fd === 2 ? 1 : 0;
+						},
+						get_size(_fd, columnsPtr, rowsPtr) {
+							const columns = Number(processLikeTarget.stdout && processLikeTarget.stdout.columns) || 80;
+							const rows = Number(processLikeTarget.stdout && processLikeTarget.stdout.rows) || 24;
+							view().setUint16(columnsPtr >>> 0, columns >>> 0, true);
+							view().setUint16(rowsPtr >>> 0, rows >>> 0, true);
+							return errnoSuccess;
+						},
 						// crossterm WasiEventSource keystroke source: read(ptr, len, timeout_ms) -> usize.
 						// usize::MAX (-1 as i32) means block until input; the brush/reedline read loop
 						// polls with None (blocking), so we wait on the kernel PTY stdin and copy bytes
@@ -3207,8 +3421,68 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 						// of tcsetattr; route it to the kernel via process.stdin.setRawMode (which
 						// drives __pty_set_raw_mode), so reedline gets raw \\r keystrokes and submits
 						// commands. Returns errno 0.
-						set_raw_mode(_enabled) {
+						set_raw_mode(enabled) {
+							if (processLikeTarget.stdin && typeof processLikeTarget.stdin.setRawMode === "function") {
+								processLikeTarget.stdin.setRawMode(Boolean(enabled));
+							}
 							return 0;
+						},
+					},
+					host_net: {
+						// Browser raw sockets are not implemented yet. Keep the complete
+						// command ABI callable so binaries that link network-capable libraries
+						// can still run local-only code paths; actual socket use fails with the
+						// explicit WASI ENOSYS errno instead of a WebAssembly LinkError.
+						net_socket() { return errnoNosys; },
+						net_connect() { return errnoNosys; },
+						net_close() { return errnoNosys; },
+						net_tls_connect() { return errnoNosys; },
+						net_setsockopt() { return errnoNosys; },
+						net_send() { return errnoNosys; },
+						net_recv() { return errnoNosys; },
+						net_poll(fdsPtr, nfds, timeoutMs, retReady) {
+							const pollIn = 0x001;
+							const pollOut = 0x004;
+							const pollHup = 0x010;
+							const pollNval = 0x020;
+							const count = nfds >>> 0;
+							const timeout = timeoutMs | 0;
+							const deadline = timeout < 0 ? Infinity : Date.now() + timeout;
+							for (;;) {
+								let ready = 0;
+								for (let index = 0; index < count; index += 1) {
+									const entry = (fdsPtr >>> 0) + index * 8;
+									const descriptor = view().getInt32(entry, true);
+									const events = view().getInt16(entry + 4, true);
+									const handle = lookupSyntheticFd(descriptor);
+									let revents = 0;
+									if ((events & pollIn) !== 0) {
+										if ((descriptor === 0 && !handle) ||
+											(handle && handle.kind === "stdio" && handle.targetFd === 0)) {
+											if (pollProcessStdin()) revents |= pollIn;
+										} else if (handle && handle.kind === "pipe-read" && handle.pipe) {
+											if (handle.pipe.chunks.length > 0) revents |= pollIn;
+											else if (!pipeHasOpenWriters(handle)) revents |= pollHup;
+										} else if (handle && handle.kind === "guest-file") {
+											revents |= pollIn;
+										}
+									}
+									if ((events & pollOut) !== 0 &&
+										((descriptor === 1 || descriptor === 2) && !handle ||
+											handle && (handle.kind === "stdio" || handle.kind === "pipe-write" || handle.kind === "guest-file"))) {
+										revents |= pollOut;
+									}
+									if (!handle && descriptor > 2) revents |= pollNval;
+									view().setInt16(entry + 6, revents, true);
+									if (revents !== 0) ready += 1;
+								}
+								if (ready > 0 || timeout === 0 || Date.now() >= deadline) {
+									writeU32(retReady, ready);
+									return errnoSuccess;
+								}
+								const remaining = deadline === Infinity ? 10 : Math.max(1, Math.min(10, deadline - Date.now()));
+								Atomics.wait(wait, 0, 0, remaining);
+							}
 						},
 					},
 					host_user: {
@@ -3226,11 +3500,11 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 							return errnoSuccess;
 						},
 					},
-					host_fs: {
-						fd_mode(fd) {
-							const descriptor = fd >>> 0;
-							if (descriptor <= 2) return 0o020666;
-							const handle = lookupSyntheticFd(descriptor);
+						host_fs: {
+							fd_mode(fd) {
+								const descriptor = fd >>> 0;
+								if (descriptor <= 2) return 0o020666;
+								const handle = lookupSyntheticFd(descriptor);
 							if (handle && (handle.kind === "pipe-read" || handle.kind === "pipe-write")) return 0o010600;
 							if (handle && handle.kind === "guest-file" && typeof handle.targetFd === "number") {
 								try {
@@ -3239,11 +3513,11 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 									return 0o100644;
 								}
 							}
-							const parentEntry = parentWasi && parentWasi.fdTable && parentWasi.fdTable.get(descriptor);
-							if (parentEntry && (parentEntry.kind === "preopen" || parentEntry.kind === "directory")) return 0o040755;
-							if (parentEntry && parentEntry.kind === "file" && typeof parentEntry.realFd === "number") {
-								try {
-									return modeFromStat(fs().fstatSync(parentEntry.realFd), 0o100644);
+								const entry = currentWasiFdEntry(descriptor);
+								if (entry && (entry.kind === "preopen" || entry.kind === "directory")) return 0o040755;
+								if (entry && entry.kind === "file" && typeof entry.realFd === "number") {
+									try {
+										return modeFromStat(fs().fstatSync(entry.realFd), 0o100644);
 								} catch {
 									return 0o100644;
 								}
@@ -3291,14 +3565,13 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 								) {
 									return BigInt(fs().fstatSync(handle.targetFd).size ?? -1);
 								}
-								const parentEntry =
-									parentWasi && parentWasi.fdTable && parentWasi.fdTable.get(descriptor);
-								if (
-									parentEntry &&
-									parentEntry.kind === "file" &&
-									typeof parentEntry.realFd === "number"
-								) {
-									return BigInt(fs().fstatSync(parentEntry.realFd).size ?? -1);
+									const entry = currentWasiFdEntry(descriptor);
+									if (
+										entry &&
+										entry.kind === "file" &&
+										typeof entry.realFd === "number"
+									) {
+										return BigInt(fs().fstatSync(entry.realFd).size ?? -1);
 								}
 								return (1n << 64n) - 1n;
 							} catch {
@@ -3327,15 +3600,25 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 							return 1;
 						},
 					},
-					host_process: {
+						host_process: {
 							proc_spawn(argvPtr, argvLen, envpPtr, envpLen, stdinFd, stdoutFd, stderrFd, cwdPtr, cwdLen, retPid) {
 								try {
-									const argv = decodeNullSeparated(readBytes(argvPtr, argvLen));
+									let argv = decodeNullSeparated(readBytes(argvPtr, argvLen));
 									if (argv.length === 0) return errnoNosys;
-									const commandPath = argv[0];
-									const commandName = commandPath.split("/").filter(Boolean).at(-1) || commandPath;
-								const module = commandModules.get(commandName);
-									if (!module) return errnoNosys;
+									let commandPath = argv[0];
+									let commandName = commandPath.split("/").filter(Boolean).at(-1) || commandPath;
+									const externalCommand = externalCommands.has(commandName);
+									const target = externalCommand
+										? null
+										: resolveCommand(commandPath, commandName, argv);
+									if (target?.error) return target.error;
+									const module = target?.module || null;
+									if (target) {
+										commandPath = target.commandPath;
+										commandName = commandPath.split("/").filter(Boolean).at(-1) || commandPath;
+										argv = target.argv;
+									}
+									if (!module && !externalCommands.has(commandName)) return errnoNosys;
 								const env = {
 									...(options && options.env ? options.env : {}),
 									...parseEnv(readBytes(envpPtr, envpLen)),
@@ -3349,64 +3632,110 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 									[1, stdoutFd >>> 0, "write"],
 									[2, stderrFd >>> 0, "write"],
 								]) {
-									const parentHandle = lookupSyntheticFd(parentFd);
-									if (parentFd <= 2 && !parentHandle) continue;
+										const parentHandle = lookupProcessFd(parentFd);
+									if (parentFd <= 2 && !parentHandle) {
+										const childHandle = {
+											kind: "stdio",
+											targetFd: parentFd,
+											open: true,
+										};
+										overrides.set(childFd, childHandle);
+										childOverrideHandles.push(childHandle);
+										continue;
+									}
 									if (!handleMatchesStdio(parentHandle, expectedKind)) return errnoBadf;
 									const childHandle = cloneSyntheticHandle(parentHandle);
 									if (!childHandle) return errnoBadf;
 									overrides.set(childFd, childHandle);
 									childOverrideHandles.push(childHandle);
-									}
-									const pid = nextPid++;
-									const child = { pid, module, commandPath, argv, env, cwd, overrides, childOverrideHandles };
-									for (const parentFd of [stdinFd >>> 0, stdoutFd >>> 0, stderrFd >>> 0]) {
-										if (parentFd > 2) {
-											closeSyntheticHandle(syntheticFdEntries.get(parentFd));
-										}
 								}
-								if (pipeHasOpenWriters(overrides.get(0))) {
+								const pid = nextPid++;
+									const child = {
+										pid, parentPid: activeExecution?.pid || 1,
+										module, commandPath, argv, env, cwd, overrides, childOverrideHandles,
+									stdinFd: stdinFd >>> 0, stdoutFd: stdoutFd >>> 0, stderrFd: stderrFd >>> 0,
+									stdinClosed: false,
+								};
+									for (const parentFd of [stdinFd >>> 0, stdoutFd >>> 0, stderrFd >>> 0]) {
+										const entries = activeExecution?.fdEntries || parentFdEntries;
+										if (parentFd > 2) closeSyntheticHandle(entries.get(parentFd));
+								}
+								if (!module) {
+									child.sessionId = callSyncBridge(globalThis._childProcessSpawnStart, {
+										command: commandPath,
+										args: argv.slice(1),
+										options: { cwd, env },
+									});
+									externalChildren.set(pid, child);
+								} else if (pipeHasOpenWriters(overrides.get(0))) {
 									deferredChildren.set(pid, child);
 								} else {
 									runChild(child);
 								}
 								return writeU32(retPid, pid);
-							} catch {
+							} catch (error) {
+								processLikeTarget.stderr.write(
+									new TextEncoder().encode(
+										"failed to spawn child command: " +
+										(error && error.stack ? error.stack : String(error)) + "\\n",
+									),
+								);
 								return errnoNosys;
 							}
 						},
-							proc_waitpid(pid, _options, retStatus, retPid) {
-								const requested = pid >>> 0;
-								runReadyDeferredChildren(requested === 0xffffffff ? undefined : requested);
+						proc_waitpid(pid, waitOptions, retStatus, retPid) {
+							const requested = pid >>> 0;
+							const nonBlocking = (waitOptions >>> 0) !== 0;
+							runReadyDeferredChildren(requested === 0xffffffff ? undefined : requested);
+							const external = requested === 0xffffffff
+								? externalChildren.values().next().value
+								: externalChildren.get(requested);
+							if (external) {
+								do {
+									pumpExternalChild(external, nonBlocking ? 0 : 10);
+								} while (!nonBlocking && externalChildren.has(external.pid));
+							}
 							const childPid = requested === 0xffffffff
 								? exitedChildren.keys().next().value
 								: requested;
 							if (!childPid || !exitedChildren.has(childPid)) {
-									if ((_options >>> 0) !== 0) {
-										writeU32(retStatus, 0);
-										writeU32(retPid, 0);
-										return errnoSuccess;
-									}
+								if (nonBlocking) {
+									writeU32(retStatus, 0);
 									writeU32(retPid, 0);
-									return errnoChild;
+									return errnoSuccess;
 								}
+								writeU32(retPid, 0);
+								return errnoChild;
+							}
 							writeU32(retStatus, exitedChildren.get(childPid) || 0);
 							writeU32(retPid, childPid);
 							exitedChildren.delete(childPid);
 							return errnoSuccess;
 						},
-						fd_dup(fd, retNewFd) {
-							const descriptor = fd >>> 0;
-							const handle = lookupSyntheticFd(descriptor) || (descriptor <= 2
-								? { kind: "stdio", targetFd: descriptor, open: true }
-								: null);
-							if (!handle) return writeU32(retNewFd, fd);
+							fd_dup(fd, retNewFd) {
+								const descriptor = fd >>> 0;
+								const handle = lookupProcessFd(descriptor) || (descriptor <= 2
+									? { kind: "stdio", targetFd: descriptor, open: true }
+									: null);
+								if (!handle) return errnoBadf;
 							const cloned = cloneSyntheticHandle(handle);
 							if (!cloned) return errnoBadf;
 							return writeU32(retNewFd, allocateSyntheticFd(cloned));
 						},
+						fd_dup_min(fd, minFd, retNewFd) {
+							const descriptor = fd >>> 0;
+								const handle = lookupProcessFd(descriptor) || (descriptor <= 2
+								? { kind: "stdio", targetFd: descriptor, open: true }
+								: null);
+							if (!handle) return errnoBadf;
+							const cloned = cloneSyntheticHandle(handle);
+							if (!cloned) return errnoBadf;
+							nextSyntheticFd = Math.max(nextSyntheticFd, minFd >>> 0);
+							return writeU32(retNewFd, allocateSyntheticFd(cloned));
+						},
 						fd_dup2(oldFd, newFd) {
 							if (oldFd === newFd) return errnoSuccess;
-							const handle = lookupSyntheticFd(oldFd >>> 0);
+								const handle = lookupProcessFd(oldFd >>> 0);
 							if (!handle) return oldFd <= 2 && newFd <= 2 ? errnoSuccess : errnoBadf;
 							const cloned = cloneSyntheticHandle(handle);
 							if (!cloned) return errnoBadf;
@@ -3427,9 +3756,14 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 							writeU32(retWriteFd, writeFd);
 							return errnoSuccess;
 						},
-						proc_getpid(retPid) { return writeU32(retPid, 1); },
-						proc_getppid(retPid) { return writeU32(retPid, 0); },
-						proc_kill() { return errnoNosys; },
+							proc_getpid(retPid) { return writeU32(retPid, activeExecution?.pid || 1); },
+							proc_getppid(retPid) { return writeU32(retPid, activeExecution?.parentPid || 0); },
+						proc_kill(pid, signal) {
+							const child = externalChildren.get(pid >>> 0);
+							if (!child) return errnoNosys;
+							callSyncBridge(globalThis._childProcessKill, child.sessionId, signal >>> 0);
+							return errnoSuccess;
+						},
 						sleep_ms(milliseconds) {
 							Atomics.wait(wait, 0, 0, milliseconds >>> 0);
 							return errnoSuccess;

@@ -71,6 +71,7 @@
 		"build:dist-wasm": "node ./scripts/build-dist-wasm.mjs",
 		"build:dist": "pnpm build && pnpm build:dist-wasm",
 		"generate:wasi-polyfill": "node ./scripts/generate-wasi-polyfill.mjs",
+		"generate:native-bridge": "node ../build-tools/scripts/build-browser-native-bridge.mjs",
 		"test:browser": "node ./scripts/run-browser-tests.mjs",
 		"test:converged": "pnpm test && pnpm test:browser",
 		"test:integration": "pnpm build:sidecar-wasm && vitest run tests/integration",

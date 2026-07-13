@@ -22,6 +22,7 @@
   "fd_write",
   "path_create_directory",
   "path_filestat_get",
+  "path_filestat_set_times",
   "path_link",
   "path_open",
   "path_readlink",

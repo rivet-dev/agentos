@@ -5669,6 +5669,7 @@ ykAheWCsAteSEWVc0w==\n\
                 assert!(!termios.icanon);
                 assert!(!termios.echo);
                 assert!(!termios.isig);
+                assert!(!termios.icrnl);
             }
 
             let cooked = call_javascript_sync_rpc(
@@ -5695,6 +5696,7 @@ ykAheWCsAteSEWVc0w==\n\
                 assert!(termios.icanon);
                 assert!(termios.echo);
                 assert!(termios.isig);
+                assert!(termios.icrnl);
             }
 
             sidecar
@@ -21284,6 +21286,11 @@ console.log(JSON.stringify({
         }
 
         #[test]
+        fn javascript_sync_rpc_pty_raw_mode_toggles_tty_discipline_regression() {
+            run_isolated_service_test("javascript-pty-raw-mode");
+        }
+
+        #[test]
         fn javascript_http_external_get_reaches_host_listener_regression() {
             javascript_http_external_get_reaches_host_listener();
         }
@@ -21478,6 +21485,9 @@ console.log(JSON.stringify({
                 }
                 "javascript-fs-promises-hot-metadata" => {
                     javascript_fs_promises_hot_metadata_ops_use_sync_semantics();
+                }
+                "javascript-pty-raw-mode" => {
+                    javascript_sync_rpc_pty_set_raw_mode_toggles_kernel_tty_discipline();
                 }
                 "wasm-shell-external-stdout-redirect" => {
                     wasm_shell_external_stdout_redirect_writes_file();

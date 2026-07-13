@@ -1,26 +1,22 @@
-import { hmac as nobleHmac } from "@noble/hashes/hmac.js";
 import {
 	cbc as nobleAesCbc,
 	ctr as nobleAesCtr,
 	gcm as nobleAesGcm,
 } from "@noble/ciphers/aes.js";
+import { hmac as nobleHmac } from "@noble/hashes/hmac.js";
 import { md5, sha1 } from "@noble/hashes/legacy.js";
 import { pbkdf2 as noblePbkdf2 } from "@noble/hashes/pbkdf2.js";
-import { sha224, sha256, sha384, sha512 } from "@noble/hashes/sha2.js";
 import { scrypt as nobleScrypt } from "@noble/hashes/scrypt.js";
+import { sha224, sha256, sha384, sha512 } from "@noble/hashes/sha2.js";
 import { transform } from "sucrase";
 import type {
 	BrowserChildProcessPollEvent,
 	BrowserChildProcessSpawnRequest,
 } from "./child-process-bridge.js";
 import { createBrowserNetworkAdapter } from "./driver.js";
-import { base64ToBytes, toUint8Array } from "./encoding.js";
+import { base64ToBytes, bytesToBase64, toUint8Array } from "./encoding.js";
 import { posixErrno } from "./errno.js";
-import {
-	PROCESS_SIGNAL_NUMBERS,
-	defaultSignalExitCode,
-	signalNumberForEvent,
-} from "./signals.js";
+import { NATIVE_V8_BRIDGE_CODE } from "./generated/native-v8-bridge.js";
 import type {
 	ExecResult,
 	NetworkAdapter,
@@ -35,11 +31,17 @@ import {
 	exposeCustomGlobal,
 	exposeMutableRuntimeStateGlobal,
 	getIsolateRuntimeSource,
-	getRequireSetupCode,
 	isESM,
+	normalizeEsmTransformOutput,
 	POLYFILL_CODE_MAP,
 	transformDynamicImport,
+	transformImportMeta,
 } from "./runtime.js";
+import {
+	defaultSignalExitCode,
+	PROCESS_SIGNAL_NUMBERS,
+	signalNumberForEvent,
+} from "./signals.js";
 import {
 	assertBrowserSyncBridgeSupport,
 	type BrowserSyncBridgeErrorPayload,
@@ -56,12 +58,202 @@ import {
 	SYNC_BRIDGE_SIGNAL_STATUS_INDEX,
 	SYNC_BRIDGE_STATUS_ERROR,
 } from "./sync-bridge.js";
+import { BROWSER_WASI_POLYFILL_CODE } from "./wasi-polyfill.js";
 import type {
 	BrowserWorkerExecOptions,
 	BrowserWorkerInitPayload,
 	BrowserWorkerOutboundMessage,
 	BrowserWorkerRequestMessage,
 } from "./worker-protocol.js";
+
+// Runtime initialization installs the native guest timer globals. Worker
+// control-plane scheduling (PTY pumps, bridge callbacks, and execution bounds)
+// must keep using the browser's host timers rather than recursively entering the
+// guest kernel timer implementation.
+const hostSetTimeout = globalThis.setTimeout.bind(globalThis);
+const hostClearTimeout = globalThis.clearTimeout.bind(globalThis);
+
+const MAX_BROWSER_KERNEL_TIMERS = 1024;
+const MAX_BROWSER_KERNEL_HANDLES = 1024;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+type BrowserKernelTimer = {
+	delayMs: number;
+	repeat: boolean;
+	generation: number;
+	hostHandle?: ReturnType<typeof hostSetTimeout>;
+};
+
+const browserKernelTimers = new Map<number, BrowserKernelTimer>();
+const browserKernelHandles = new Map<string, string>();
+let nextBrowserKernelTimerId = 0;
+
+function bridgeDispatchResult(result: unknown): string {
+	return JSON.stringify({ __bd_result: result });
+}
+
+function bridgeDispatchError(message: string, code?: string): string {
+	return JSON.stringify({
+		__bd_error: {
+			name: "Error",
+			message,
+			...(code ? { code } : {}),
+		},
+	});
+}
+
+function normalizeBrowserTimerDelay(value: unknown): number {
+	const delay = Number(value);
+	if (!Number.isFinite(delay) || delay <= 0) return 0;
+	return Math.min(Math.floor(delay), MAX_TIMER_DELAY_MS);
+}
+
+function clearBrowserKernelTimer(timerId: number): void {
+	const timer = browserKernelTimers.get(timerId);
+	if (!timer) return;
+	if (timer.hostHandle !== undefined) {
+		hostClearTimeout(timer.hostHandle);
+	}
+	browserKernelTimers.delete(timerId);
+}
+
+function armBrowserKernelTimer(timerId: number): void {
+	const timer = browserKernelTimers.get(timerId);
+	if (!timer) return;
+	if (timer.hostHandle !== undefined) {
+		hostClearTimeout(timer.hostHandle);
+	}
+	const generation = ++timer.generation;
+	timer.hostHandle = hostSetTimeout(() => {
+		const current = browserKernelTimers.get(timerId);
+		if (!current || current.generation !== generation) return;
+		current.hostHandle = undefined;
+		if (!current.repeat) {
+			browserKernelTimers.delete(timerId);
+		}
+		const dispatch = (globalThis as Record<string, unknown>)._timerDispatch;
+		if (typeof dispatch !== "function") {
+			console.error(
+				`AgentOS browser timer ${timerId} fired without _timerDispatch`,
+			);
+			return;
+		}
+		(dispatch as (eventType: string, payload: number) => void)(
+			"timer",
+			timerId,
+		);
+	}, timer.delayMs);
+}
+
+function dispatchBrowserKernelOperation(request: string): string | null {
+	if (!request.startsWith("__bd:")) return null;
+	const methodEnd = request.indexOf(":", 5);
+	if (methodEnd === -1) {
+		return bridgeDispatchError("invalid AgentOS bridge dispatch request");
+	}
+	const method = request.slice(5, methodEnd);
+	let args: unknown[];
+	try {
+		const parsed = JSON.parse(request.slice(methodEnd + 1));
+		args = Array.isArray(parsed) ? parsed : [];
+	} catch {
+		return bridgeDispatchError(`invalid arguments for ${method}`);
+	}
+
+	switch (method) {
+		case "kernelHandleRegister": {
+			const id = typeof args[0] === "string" ? args[0] : null;
+			const description = typeof args[1] === "string" ? args[1] : null;
+			if (id && description) {
+				if (
+					!browserKernelHandles.has(id) &&
+					browserKernelHandles.size >= MAX_BROWSER_KERNEL_HANDLES
+				) {
+					return bridgeDispatchError(
+						`EAGAIN: maximum active handles exceeded (${MAX_BROWSER_KERNEL_HANDLES}); close a handle before creating another`,
+						"EAGAIN",
+					);
+				}
+				browserKernelHandles.set(id, description);
+			}
+			return bridgeDispatchResult(null);
+		}
+		case "kernelHandleUnregister": {
+			if (typeof args[0] === "string") {
+				browserKernelHandles.delete(args[0]);
+			}
+			return bridgeDispatchResult(null);
+		}
+		case "kernelHandleList":
+			return bridgeDispatchResult(
+				Array.from(browserKernelHandles, ([id, description]) => ({
+					id,
+					description,
+				})),
+			);
+		case "kernelTimerCreate": {
+			if (browserKernelTimers.size >= MAX_BROWSER_KERNEL_TIMERS) {
+				return bridgeDispatchError(
+					`EAGAIN: maximum number of timers exceeded (${MAX_BROWSER_KERNEL_TIMERS}); clear a timer before creating another`,
+					"EAGAIN",
+				);
+			}
+			const timerId = ++nextBrowserKernelTimerId;
+			browserKernelTimers.set(timerId, {
+				delayMs: normalizeBrowserTimerDelay(args[0]),
+				repeat: args[1] === true,
+				generation: 0,
+			});
+			return bridgeDispatchResult(timerId);
+		}
+		case "kernelTimerArm": {
+			const timerId = Number(args[0]);
+			if (Number.isSafeInteger(timerId)) {
+				armBrowserKernelTimer(timerId);
+			}
+			return bridgeDispatchResult(null);
+		}
+		case "kernelTimerClear": {
+			const timerId = Number(args[0]);
+			if (Number.isSafeInteger(timerId)) {
+				clearBrowserKernelTimer(timerId);
+			}
+			return bridgeDispatchResult(null);
+		}
+		default:
+			return bridgeDispatchError(`No handler: ${method}`);
+	}
+}
+
+function normalizeChildProcessSpawnRequest(
+	commandOrRequest: unknown,
+	argsJson?: unknown,
+	optionsJson?: unknown,
+): BrowserChildProcessSpawnRequest {
+	if (commandOrRequest && typeof commandOrRequest === "object") {
+		return commandOrRequest as BrowserChildProcessSpawnRequest;
+	}
+	if (typeof commandOrRequest !== "string") {
+		throw new TypeError("child_process command must be a string");
+	}
+	const args =
+		typeof argsJson === "string" ? JSON.parse(argsJson) : (argsJson ?? []);
+	const options =
+		typeof optionsJson === "string"
+			? JSON.parse(optionsJson)
+			: (optionsJson ?? {});
+	if (!Array.isArray(args)) {
+		throw new TypeError("child_process args must be an array");
+	}
+	if (!options || typeof options !== "object") {
+		throw new TypeError("child_process options must be an object");
+	}
+	return {
+		command: commandOrRequest,
+		args: args.map(String),
+		options: options as BrowserChildProcessSpawnRequest["options"],
+	};
+}
 
 let networkAdapter: NetworkAdapter | null = null;
 let initialized = false;
@@ -72,6 +264,7 @@ let activeProcessRequestId: number | null = null;
 let activeExecutionId: string | null = null;
 let activeCaptureStdio = false;
 let activeSyncBridge: ReturnType<typeof createSyncBridgeClient> | null = null;
+let browserProcessAdapter: Record<string, unknown> | null = null;
 const pendingExecutionSignals = new Map<string, (signal: number) => void>();
 
 const dynamicImportCache = new Map<string, unknown>();
@@ -94,8 +287,9 @@ const MAX_STDIO_MESSAGE_CHARS = 8192;
 
 function eventForSignalNumber(signal: number): string {
 	return (
-		Object.entries(PROCESS_SIGNAL_NUMBERS).find(([, value]) => value === signal)?.[0] ??
-		`SIG${signal}`
+		Object.entries(PROCESS_SIGNAL_NUMBERS).find(
+			([, value]) => value === signal,
+		)?.[0] ?? `SIG${signal}`
 	);
 }
 
@@ -1634,6 +1828,9 @@ function createFsModule(syncBridge: ReturnType<typeof createSyncBridgeClient>) {
 		},
 		fsyncSync() {},
 		fdatasyncSync() {},
+		_getPathSync(fd: number) {
+			return requireOpenFd(fd, "getPath").path;
+		},
 		promises,
 	};
 }
@@ -2014,6 +2211,47 @@ async function initRuntime(payload: BrowserWorkerInitPayload): Promise<void> {
 	const renameRef = makeApplySync((oldPath: string, newPath: string) => {
 		syncBridge.requestVoid("fs.rename", [oldPath, newPath]);
 	});
+	const lstatRef = makeApplySync((path: string) => {
+		return JSON.stringify(
+			syncBridge.requestJson<VirtualStat>("fs.lstat", [path]),
+		);
+	});
+	const realpathRef = makeApplySync((path: string) =>
+		syncBridge.requestText("fs.realpath", [path]),
+	);
+	const readlinkRef = makeApplySync((path: string) =>
+		syncBridge.requestText("fs.readlink", [path]),
+	);
+	const symlinkRef = makeApplySync((target: string, path: string) => {
+		syncBridge.requestVoid("fs.symlink", [target, path]);
+	});
+	const linkRef = makeApplySync((existingPath: string, newPath: string) => {
+		syncBridge.requestVoid("fs.link", [existingPath, newPath]);
+	});
+	const chmodRef = makeApplySync((path: string, mode: number) => {
+		syncBridge.requestVoid("fs.chmod", [path, mode]);
+	});
+	const truncateRef = makeApplySync((path: string, length: number) => {
+		syncBridge.requestVoid("fs.truncate", [path, length]);
+	});
+	const decodeBridgeBytes = (value: unknown): Uint8Array => {
+		if (
+			value &&
+			typeof value === "object" &&
+			(value as { __agentOSType?: unknown }).__agentOSType === "bytes" &&
+			typeof (value as { base64?: unknown }).base64 === "string"
+		) {
+			return base64ToBytes((value as { base64: string }).base64);
+		}
+		return toUint8Array(value);
+	};
+	const unsupportedFsRef = (operation: string) =>
+		makeApplySync(() => {
+			const error = new Error(`ENOSYS: ${operation} is not supported`);
+			(error as { code?: string }).code = "ENOSYS";
+			throw error;
+		});
+	const browserFsModule = createFsModule(syncBridge);
 
 	exposeCustomGlobal("_fs", {
 		readFile: readFileRef,
@@ -2029,9 +2267,235 @@ async function initRuntime(payload: BrowserWorkerInitPayload): Promise<void> {
 		rename: renameRef,
 	});
 
+	// The generated native bridge consumes one host binding per filesystem
+	// operation. Route those bindings to the converged browser kernel instead of
+	// maintaining a second browser-only fs implementation.
+	exposeCustomGlobal(
+		"_fsReadFile",
+		makeApplySync((path: string) => readFileRef.applySync(undefined, [path])),
+	);
+	exposeCustomGlobal(
+		"_fsReadFileBinary",
+		makeApplySync((path: string) => bytesToBase64(readFileBinaryRef.applySync(undefined, [path]))),
+	);
+	exposeCustomGlobal(
+		"_fsWriteFile",
+		makeApplySync((path: string, content: string) =>
+			writeFileRef.applySync(undefined, [path, content]),
+		),
+	);
+	exposeCustomGlobal(
+		"_fsWriteFileBinary",
+		makeApplySync((path: string, value: unknown) => {
+			syncBridge.requestVoid("fs.writeFileBinary", [
+				path,
+				decodeBridgeBytes(value),
+			]);
+		}),
+	);
+	exposeCustomGlobal(
+		"_fsWriteFileBinaryRaw",
+		makeApplySync((path: string, value: Uint8Array) => {
+			syncBridge.requestVoid("fs.writeFileBinary", [path, value]);
+		}),
+	);
+	exposeCustomGlobal(
+		"_fsReadDir",
+		makeApplySync((path: string) => readDirRef.applySync(undefined, [path])),
+	);
+	exposeCustomGlobal(
+		"_fsMkdir",
+		makeApplySync((path: string) => mkdirRef.applySync(undefined, [path])),
+	);
+	exposeCustomGlobal(
+		"_fsRmdir",
+		makeApplySync((path: string) => rmdirRef.applySync(undefined, [path])),
+	);
+	exposeCustomGlobal(
+		"_fsExists",
+		makeApplySync((path: string) => existsRef.applySync(undefined, [path])),
+	);
+	exposeCustomGlobal(
+		"_fsStat",
+		makeApplySync((path: string) => statRef.applySync(undefined, [path])),
+	);
+	exposeCustomGlobal(
+		"_fsLstat",
+		makeApplySync((path: string) => lstatRef.applySync(undefined, [path])),
+	);
+	exposeCustomGlobal(
+		"_fsUnlink",
+		makeApplySync((path: string) => unlinkRef.applySync(undefined, [path])),
+	);
+	exposeCustomGlobal(
+		"_fsRename",
+		makeApplySync((oldPath: string, newPath: string) =>
+			renameRef.applySync(undefined, [oldPath, newPath]),
+		),
+	);
+	exposeCustomGlobal(
+		"_fsChmod",
+		makeApplySync((path: string, mode: number) =>
+			chmodRef.applySync(undefined, [path, mode]),
+		),
+	);
+	exposeCustomGlobal(
+		"_fsChown",
+		makeApplySync(() => unsupportedFsRef("fs.chown").applySync(undefined, [])),
+	);
+	exposeCustomGlobal(
+		"_fsLink",
+		makeApplySync((existingPath: string, newPath: string) =>
+			linkRef.applySync(undefined, [existingPath, newPath]),
+		),
+	);
+	exposeCustomGlobal(
+		"_fsSymlink",
+		makeApplySync((target: string, path: string) =>
+			symlinkRef.applySync(undefined, [target, path]),
+		),
+	);
+	exposeCustomGlobal(
+		"_fsReadlink",
+		makeApplySync((path: string) => readlinkRef.applySync(undefined, [path])),
+	);
+	exposeCustomGlobal(
+		"_fsTruncate",
+		makeApplySync((path: string, length: number) =>
+			truncateRef.applySync(undefined, [path, length]),
+		),
+	);
+	exposeCustomGlobal(
+		"_fsUtimes",
+		makeApplySync(() => unsupportedFsRef("fs.utimes").applySync(undefined, [])),
+	);
+	exposeCustomGlobal(
+		"_fsLutimes",
+		makeApplySync(() => unsupportedFsRef("fs.lutimes").applySync(undefined, [])),
+	);
+
+	const exposeAsyncFs = <TArgs extends unknown[], TResult>(
+		name: string,
+		fn: (...args: TArgs) => TResult,
+	) => exposeCustomGlobal(name, makeApplyPromise(async (...args: TArgs) => fn(...args)));
+	exposeAsyncFs("_fsReadFileAsync", (path: string) =>
+		readFileRef.applySync(undefined, [path]),
+	);
+	exposeAsyncFs("_fsReadFileBinaryAsync", (path: string) =>
+		bytesToBase64(readFileBinaryRef.applySync(undefined, [path])),
+	);
+	exposeAsyncFs("_fsWriteFileAsync", (path: string, content: string) =>
+		writeFileRef.applySync(undefined, [path, content]),
+	);
+	exposeAsyncFs("_fsWriteFileBinaryAsync", (path: string, value: unknown) =>
+		syncBridge.requestVoid("fs.writeFileBinary", [path, decodeBridgeBytes(value)]),
+	);
+	exposeAsyncFs("_fsReadDirAsync", (path: string) =>
+		readDirRef.applySync(undefined, [path]),
+	);
+	exposeAsyncFs("_fsMkdirAsync", (path: string) =>
+		mkdirRef.applySync(undefined, [path]),
+	);
+	exposeAsyncFs("_fsRmdirAsync", (path: string) =>
+		rmdirRef.applySync(undefined, [path]),
+	);
+	exposeAsyncFs("_fsStatAsync", (path: string) =>
+		statRef.applySync(undefined, [path]),
+	);
+	exposeAsyncFs("_fsLstatAsync", (path: string) =>
+		lstatRef.applySync(undefined, [path]),
+	);
+	exposeAsyncFs("_fsUnlinkAsync", (path: string) =>
+		unlinkRef.applySync(undefined, [path]),
+	);
+	exposeAsyncFs("_fsRenameAsync", (oldPath: string, newPath: string) =>
+		renameRef.applySync(undefined, [oldPath, newPath]),
+	);
+	exposeAsyncFs("_fsChmodAsync", (path: string, mode: number) =>
+		chmodRef.applySync(undefined, [path, mode]),
+	);
+	exposeAsyncFs("_fsLinkAsync", (existingPath: string, newPath: string) =>
+		linkRef.applySync(undefined, [existingPath, newPath]),
+	);
+	exposeAsyncFs("_fsSymlinkAsync", (target: string, path: string) =>
+		symlinkRef.applySync(undefined, [target, path]),
+	);
+	exposeAsyncFs("_fsReadlinkAsync", (path: string) =>
+		readlinkRef.applySync(undefined, [path]),
+	);
+	exposeAsyncFs("_fsTruncateAsync", (path: string, length: number) =>
+		truncateRef.applySync(undefined, [path, length]),
+	);
+	exposeAsyncFs("_fsAccessAsync", (path: string) => {
+		if (existsRef.applySync(undefined, [path])) return;
+		const error = new Error(`ENOENT: no such file or directory, access '${path}'`);
+		(error as { code?: string }).code = "ENOENT";
+		throw error;
+	});
+	exposeCustomGlobal(
+		"_fsChownAsync",
+		makeApplyPromise(async () => {
+			throw Object.assign(new Error("ENOSYS: fs.chown is not supported"), { code: "ENOSYS" });
+		}),
+	);
+	exposeCustomGlobal(
+		"_fsUtimesAsync",
+		makeApplyPromise(async () => {
+			throw Object.assign(new Error("ENOSYS: fs.utimes is not supported"), { code: "ENOSYS" });
+		}),
+	);
+	exposeCustomGlobal(
+		"_fsLutimesAsync",
+		makeApplyPromise(async () => {
+			throw Object.assign(new Error("ENOSYS: fs.lutimes is not supported"), { code: "ENOSYS" });
+		}),
+	);
+
+	exposeCustomGlobal(
+		"fs.openSync",
+		makeApplySync((path: string, flags: number | string) =>
+			browserFsModule.openSync(path, flags),
+		),
+	);
+	exposeCustomGlobal("fs.closeSync", makeApplySync((fd: number) => browserFsModule.closeSync(fd)));
+	exposeCustomGlobal(
+		"_fsReadRaw",
+		makeApplySync((fd: number, length: number, position: number | null) => {
+			const buffer = new Uint8Array(length);
+			const bytesRead = browserFsModule.readSync(fd, buffer, 0, length, position);
+			return buffer.subarray(0, bytesRead);
+		}),
+	);
+	exposeCustomGlobal(
+		"_fsWriteRaw",
+		makeApplySync((fd: number, value: Uint8Array, position: number | null) =>
+			browserFsModule.writeSync(fd, value, 0, value.byteLength, position),
+		),
+	);
+	exposeCustomGlobal(
+		"fs.fstatSync",
+		makeApplySync((fd: number) => JSON.stringify(browserFsModule.fstatSync(fd))),
+	);
+	exposeCustomGlobal(
+		"fs.ftruncateSync",
+		makeApplySync((fd: number, length: number) =>
+			browserFsModule.ftruncateSync(fd, length),
+		),
+	);
+	exposeCustomGlobal(
+		"fs.fsyncSync",
+		makeApplySync((_fd: number) => browserFsModule.fsyncSync()),
+	);
+	exposeCustomGlobal(
+		"fs._getPathSync",
+		makeApplySync((fd: number) => browserFsModule._getPathSync(fd)),
+	);
+
 	exposeCustomGlobal(
 		"_loadPolyfill",
 		makeApplySync((moduleName: string) => {
+			const dispatchResult = dispatchBrowserKernelOperation(moduleName);
+			if (dispatchResult !== null) return dispatchResult;
 			const name = moduleName.replace(/^node:/, "");
 			const polyfillMap = POLYFILL_CODE_MAP as Record<string, string>;
 			return polyfillMap[name] ?? null;
@@ -2056,7 +2520,10 @@ async function initRuntime(payload: BrowserWorkerInitPayload): Promise<void> {
 		}
 		let code = source;
 		if (isESM(source, path)) {
-			code = transform(code, { transforms: ["imports"] }).code;
+			code = normalizeEsmTransformOutput(
+				transform(code, { transforms: ["imports"] }).code,
+			);
+			code = transformImportMeta(code, path);
 		}
 		return transformDynamicImport(code);
 	};
@@ -2265,7 +2732,7 @@ async function initRuntime(payload: BrowserWorkerInitPayload): Promise<void> {
 	exposeCustomGlobal("_scheduleTimer", {
 		apply(_ctx: undefined, args: [number]) {
 			return new Promise<void>((resolve) => {
-				setTimeout(resolve, args[0]);
+				hostSetTimeout(resolve, args[0]);
 			});
 		},
 	});
@@ -2370,16 +2837,21 @@ async function initRuntime(payload: BrowserWorkerInitPayload): Promise<void> {
 		exposeCustomGlobal(
 			"setImmediate",
 			(fn: (...a: unknown[]) => void, ...args: unknown[]) =>
-				setTimeout(() => fn(...args), 0),
+				hostSetTimeout(() => fn(...args), 0),
 		);
 		exposeCustomGlobal("clearImmediate", (handle: unknown) =>
-			clearTimeout(handle as number),
+			hostClearTimeout(handle as number),
 		);
 	}
 
 	exposeCustomGlobal(
 		"_childProcessSpawnStart",
-		makeApplySync((request: BrowserChildProcessSpawnRequest) => {
+		makeApplySync((command: unknown, argsJson?: unknown, optionsJson?: unknown) => {
+			const request = normalizeChildProcessSpawnRequest(
+				command,
+				argsJson,
+				optionsJson,
+			);
 			return syncBridge.requestJson<number>("child_process.spawn", [request]);
 		}),
 	);
@@ -2417,7 +2889,12 @@ async function initRuntime(payload: BrowserWorkerInitPayload): Promise<void> {
 
 	exposeCustomGlobal(
 		"_childProcessSpawnSync",
-		makeApplySync((request: BrowserChildProcessSpawnRequest) => {
+		makeApplySync((command: unknown, argsJson?: unknown, optionsJson?: unknown) => {
+			const request = normalizeChildProcessSpawnRequest(
+				command,
+				argsJson,
+				optionsJson,
+			);
 			return syncBridge.requestText("child_process.spawn_sync", [request]);
 		}),
 	);
@@ -2488,12 +2965,114 @@ async function initRuntime(payload: BrowserWorkerInitPayload): Promise<void> {
 			return syncBridge.requestJson("dgram.getBufferSize", [socketId, which]);
 		}),
 	);
-	exposeCustomGlobal("_fsModule", createFsModule(syncBridge));
-	exposeMutableRuntimeStateGlobal("_moduleCache", {});
-	exposeMutableRuntimeStateGlobal("_pendingModules", {});
-	exposeMutableRuntimeStateGlobal("_currentModule", { dirname: "/" });
-	globalEval(getRequireSetupCode());
-	ensureProcessGlobal();
+	// Native and browser execution use the exact same generated V8 bridge. The
+	// browser-only layer below adapts that bridge's process stdio to the Web Worker
+	// PTY transport; builtin registration and require resolution stay shared.
+	browserProcessAdapter = createBrowserProcess();
+	const browserNetworkFetch = (globalThis as Record<string, unknown>).fetch;
+	globalEval(NATIVE_V8_BRIDGE_CODE);
+	// Browser networking is serviced by the converged kernel's network.fetch
+	// operation. Keep that host adapter as the global fetch implementation while
+	// Node builtin modules continue to come from the shared native bridge.
+	Object.defineProperty(globalThis, "fetch", {
+		configurable: true,
+		enumerable: true,
+		writable: false,
+		value: browserNetworkFetch,
+	});
+	const nativeProcess = getRuntimeProcess();
+	if (!nativeProcess) {
+		throw new Error("native AgentOS V8 bridge did not install process");
+	}
+	for (const name of [
+		"stdin",
+		"stdout",
+		"stderr",
+		"exit",
+		"__secureExecStopPtyStdio",
+	] as const) {
+		nativeProcess[name] = browserProcessAdapter[name];
+	}
+	const resizeBrowserPty = browserProcessAdapter.__secureExecResizePty as
+		| ((columns: number, rows: number) => void)
+		| undefined;
+	const killBrowserProcess = browserProcessAdapter.kill as
+		| ((pid: number, signal?: string | number) => boolean)
+		| undefined;
+	const nativeKill = nativeProcess.kill as
+		| ((pid: number, signal?: string | number) => boolean)
+		| undefined;
+	nativeProcess.kill = (pid: number, signal: string | number = "SIGTERM") => {
+		const event =
+			typeof signal === "number" ? eventForSignalNumber(signal) : String(signal);
+		if (event === "SIGWINCH") {
+			const handled = killBrowserProcess?.(pid, signal) ?? false;
+			const emit = nativeProcess.emit as
+				| ((event: string, value?: unknown) => boolean)
+				| undefined;
+			return emit?.call(nativeProcess, event) || handled;
+		}
+		return nativeKill?.call(nativeProcess, pid, signal) ?? false;
+	};
+	nativeProcess.__secureExecResizePty = (columns: number, rows: number) => {
+		resizeBrowserPty?.(columns, rows);
+		const emit = nativeProcess.emit as
+			| ((event: string, value?: unknown) => boolean)
+			| undefined;
+		emit?.call(nativeProcess, "SIGWINCH");
+	};
+	const sharedRequireFrom = (globalThis as Record<string, unknown>)
+		._requireFrom as ((request: string, parentDir: string) => unknown) | undefined;
+	if (typeof sharedRequireFrom !== "function") {
+		throw new Error("native AgentOS V8 bridge did not install _requireFrom");
+	}
+	Object.defineProperty(globalThis, "require", {
+		configurable: true,
+		enumerable: true,
+		writable: false,
+		value: (request: string) => {
+			const current = (globalThis as Record<string, unknown>)._currentModule as
+				| { dirname?: unknown; path?: unknown }
+				| undefined;
+			const parentDir =
+				typeof current?.dirname === "string"
+					? current.dirname
+					: typeof current?.path === "string"
+						? current.path
+						: "/";
+			return sharedRequireFrom(request, parentDir);
+		},
+	});
+	const wasiModule = { exports: {} as Record<string, unknown> };
+	new Function("module", "exports", "require", BROWSER_WASI_POLYFILL_CODE)(
+		wasiModule,
+		wasiModule.exports,
+		(globalThis as Record<string, unknown>).require,
+	);
+	Object.defineProperty(globalThis, "__agentOSBuiltinWasiModule", {
+		configurable: true,
+		enumerable: false,
+		value: wasiModule.exports,
+		writable: false,
+	});
+	const commandHostModule = { exports: {} as Record<string, unknown> };
+	new Function(
+		"module",
+		"exports",
+		"require",
+		POLYFILL_CODE_MAP["secure-exec:wasi-command-host"],
+	)(
+		commandHostModule,
+		commandHostModule.exports,
+		(globalThis as Record<string, unknown>).require,
+	);
+	Object.defineProperty(globalThis, "__agentOSWasiCommandHost", {
+		configurable: true,
+		enumerable: false,
+		value: commandHostModule.exports,
+		writable: false,
+	});
+	refreshRuntimeProcess();
 
 	// Block dangerous Web APIs that bypass bridge permission checks
 	const dangerousApis = [
@@ -2711,7 +3290,11 @@ function createBrowserProcess(): Record<string, unknown> {
 			slaveFd = pair.slaveFd;
 			path = typeof pair.path === "string" ? pair.path : undefined;
 			ptySyncBridge().requestVoid("pty.resize", [
-				{ fd: slaveFd as number, cols: Math.max(1, columns), rows: Math.max(1, rows) },
+				{
+					fd: slaveFd as number,
+					cols: Math.max(1, columns),
+					rows: Math.max(1, rows),
+				},
 			]);
 			if (activeExecutionId && activeProcessRequestId !== null) {
 				postPtyOpened(activeExecutionId, activeProcessRequestId, {
@@ -2783,7 +3366,7 @@ function createBrowserProcess(): Record<string, unknown> {
 		if (!stdioPty || stdinEnded || stdin.paused || ptyPumpScheduled) return;
 		const generation = ptyPumpGeneration;
 		ptyPumpScheduled = true;
-		setTimeout(() => {
+		hostSetTimeout(() => {
 			ptyPumpScheduled = false;
 			if (
 				generation !== ptyPumpGeneration ||
@@ -3265,7 +3848,9 @@ function createBrowserProcess(): Record<string, unknown> {
 		},
 		kill(pid: number, signal: string | number = "SIGTERM") {
 			if (pid !== processBridge.pid) {
-				throw new Error(`process.kill only supports the current browser process pid (${processBridge.pid})`);
+				throw new Error(
+					`process.kill only supports the current browser process pid (${processBridge.pid})`,
+				);
 			}
 			const event =
 				typeof signal === "number"
@@ -3372,6 +3957,17 @@ function getRuntimeProcess(): Record<string, unknown> | undefined {
 }
 
 function refreshRuntimeProcess(): void {
+	const nativeRefresh = (globalThis as Record<string, unknown>)
+		.__runtimeRefreshProcessConfig as (() => void) | undefined;
+	if (typeof nativeRefresh === "function") {
+		nativeRefresh();
+	}
+	const adapterRefresh = browserProcessAdapter?.__secureExecRefreshProcess as
+		| ((nextConfig?: Record<string, unknown> | null) => void)
+		| undefined;
+	if (typeof adapterRefresh === "function") {
+		adapterRefresh(runtimeProcessConfig);
+	}
 	const proc = getRuntimeProcess();
 	const refresh = proc?.__secureExecRefreshProcess as
 		| ((nextConfig?: Record<string, unknown> | null) => void)
@@ -3493,7 +4089,10 @@ async function execScript(
 		const scriptResult = (async (): Promise<ExecResult> => {
 			let transformed = code;
 			if (isESM(code, options?.filePath)) {
-				transformed = transform(transformed, { transforms: ["imports"] }).code;
+				transformed = normalizeEsmTransformOutput(
+					transform(transformed, { transforms: ["imports"] }).code,
+				);
+				transformed = transformImportMeta(transformed, options?.filePath);
 			}
 			transformed = transformDynamicImport(transformed);
 
@@ -3549,7 +4148,7 @@ async function execScript(
 				const code = await Promise.race([
 					persistentExitPromise,
 					new Promise<number>((resolve) =>
-						setTimeout(() => {
+						hostSetTimeout(() => {
 							persistentExitResolver = null;
 							resolve(currentExitCode());
 						}, PERSISTENT_EXEC_TIMEOUT_MS),
@@ -3557,8 +4156,8 @@ async function execScript(
 				]);
 				// Drain remaining microtasks + a macrotask turn so any final async output
 				// (the program's last stdout writes) flushes before teardown.
-				await new Promise((resolve) => setTimeout(resolve, 0));
-				await new Promise((resolve) => setTimeout(resolve, 0));
+				await new Promise((resolve) => hostSetTimeout(resolve, 0));
+				await new Promise((resolve) => hostSetTimeout(resolve, 0));
 				return { code };
 			}
 

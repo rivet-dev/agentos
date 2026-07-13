@@ -86,22 +86,32 @@ const coreutilsCommandsDir = path.join(repoRoot, "registry", "software", "coreut
 const browserCommandsDir = path.join(browserTestsDir, "commands");
 
 function copyCommandsFrom(commandsDir) {
+	if (!existsSync(commandsDir)) return 0;
 	mkdirSync(browserCommandsDir, { recursive: true });
+	let copied = 0;
 	for (const entry of readdirSync(commandsDir)) {
 		copyFileSync(path.join(commandsDir, entry), path.join(browserCommandsDir, entry));
+		copied += 1;
 	}
 	console.log(`copied real wasm commands from ${commandsDir}`);
+	return copied;
 }
 
-if (existsSync(repoNativeCommandsDir)) {
-	copyCommandsFrom(repoNativeCommandsDir);
-} else if (existsSync(secureExecCommandsDir)) {
-	copyCommandsFrom(secureExecCommandsDir);
-} else if (existsSync(runtimeCoreCommandsDir)) {
-	copyCommandsFrom(runtimeCoreCommandsDir);
-} else if (existsSync(coreutilsCommandsDir)) {
-	copyCommandsFrom(coreutilsCommandsDir);
-} else {
+// Layer the complete checked-in command set first, then let locally rebuilt
+// native artifacts override individual commands. Looking at only the first
+// existing directory made a partial target/commands directory hide every
+// command that had not been rebuilt locally.
+const commandSources = [
+	coreutilsCommandsDir,
+	runtimeCoreCommandsDir,
+	secureExecCommandsDir,
+	repoNativeCommandsDir,
+];
+let copiedCommands = 0;
+for (const commandsDir of [...new Set(commandSources)]) {
+	copiedCommands += copyCommandsFrom(commandsDir);
+}
+if (copiedCommands === 0) {
 	console.log(
 		`skipping real wasm command copy; missing ${repoNativeCommandsDir}, ${secureExecCommandsDir}, ${runtimeCoreCommandsDir}, and ${coreutilsCommandsDir}`,
 	);

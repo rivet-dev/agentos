@@ -5,6 +5,7 @@ import { wireStatToVirtualStat } from "../../src/converged-fs-bridge.js";
 type WasiInstance = {
 	fdTable: Map<number, unknown>;
 	instance: { exports: { memory: WebAssembly.Memory } };
+	wasiImport: Record<string, (...args: unknown[]) => number>;
 	_collectIovs: (...args: unknown[]) => Uint8Array;
 	_boundedReadLength: (...args: unknown[]) => number;
 	_writeToIovs: (...args: unknown[]) => number;
@@ -84,6 +85,15 @@ function createWasi(fsModule: unknown): WasiTestContext {
 }
 
 describe("browser WASI polyfill", () => {
+	it("exports path_filestat_set_times for current AgentOS commands", () => {
+		const { wasi, restore } = createWasi({});
+		try {
+			expect(wasi.wasiImport.path_filestat_set_times).toBeTypeOf("function");
+		} finally {
+			restore();
+		}
+	});
+
 	it("passes fd_pwrite offsets above 4 GiB without wasm32 truncation", () => {
 		const positions: unknown[] = [];
 		const { wasi, restore } = createWasi({

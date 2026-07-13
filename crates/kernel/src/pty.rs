@@ -64,6 +64,7 @@ impl Error for PtyError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LineDisciplineConfig {
+    pub icrnl: Option<bool>,
     pub canonical: Option<bool>,
     pub echo: Option<bool>,
     pub isig: Option<bool>,
@@ -756,6 +757,9 @@ impl PtyManager {
             .ok_or_else(|| PtyError::bad_file_descriptor("PTY not found"))?;
         if let Some(canonical) = config.canonical {
             pty.termios.icanon = canonical;
+        }
+        if let Some(icrnl) = config.icrnl {
+            pty.termios.icrnl = icrnl;
         }
         if let Some(echo) = config.echo {
             pty.termios.echo = echo;

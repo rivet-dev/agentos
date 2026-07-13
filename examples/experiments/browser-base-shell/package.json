@@ -1,0 +1,32 @@
+{
+	"name": "@rivet-dev/agentos-experiment-browser-base-shell",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"prepare:commands": "node scripts/prepare-commands.mjs",
+		"prepare:assets": "pnpm --dir ../../../packages/runtime-browser build && pnpm --dir ../../../packages/browser build:wasm-test-assets",
+		"prepare:runtime-assets": "pnpm prepare:commands && pnpm prepare:assets",
+		"start": "pnpm prepare:runtime-assets && tsx src/cli.ts",
+		"start:ready": "tsx src/cli.ts",
+		"test:e2e": "pnpm prepare:runtime-assets && tsx src/e2e.ts",
+		"test:e2e:ready": "tsx src/e2e.ts",
+		"tunnel:status": "tsx src/tunnel-cli.ts status",
+		"tunnel:stop": "tsx src/tunnel-cli.ts stop",
+		"build": "tsc --noEmit",
+		"build:demo": "pnpm prepare:assets && vite build",
+		"check-types": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@rivet-dev/agentos-browser": "workspace:*",
+		"@rivet-dev/agentos-runtime-browser": "workspace:*",
+		"buffer": "^6.0.3",
+		"playwright-core": "^1.57.0"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.2",
+		"tsx": "^4.19.0",
+		"typescript": "^5.7.2",
+		"vite": "^6.0.0"
+	}
+}

@@ -72,6 +72,10 @@ crates/execution/.agentos-pyodide-cache/
 crates/execution/async-out.txt
 crates/sidecar/.tmp-sidecar-tests/
 packages/browser/.cache/
+examples/browser-terminal/.cache/
+examples/browser-terminal/.rivetkit-data/
+examples/browser-terminal/test-results/
+examples/experiments/browser-base-shell/.cache/
 
 # Vendored V8 bridge bundles staged at release time for crates.io publishing
 crates/execution/assets/generated/

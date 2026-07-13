@@ -1,6 +1,6 @@
 // Integration test: drives the converged TypeScript executor stack
 // (ConvergedExecutorSession + ConvergedSyncBridgeHandler + the fs/net bridges)
-// against the REAL wasm sidecar kernel (crates/sidecar-browser built with
+// against the REAL wasm sidecar kernel (crates/native-sidecar-browser built with
 // `pnpm build:sidecar-wasm`). This is the end-to-end proof that guest syscalls
 // route through the kernel over the wire, replacing the legacy in-process TS
 // kernel.

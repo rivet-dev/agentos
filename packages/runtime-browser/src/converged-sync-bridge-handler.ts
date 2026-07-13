@@ -2,7 +2,7 @@
 //
 // Replaces the legacy `runtime-driver.ts` `handleSyncBridgeOperation` (which
 // serviced guest syscalls against an in-process TypeScript kernel) with one
-// that routes every guest syscall to the wasm sidecar (`crates/sidecar-browser`)
+// that routes every guest syscall to the wasm sidecar (`crates/native-sidecar-browser`)
 // over the wire protocol. The kernel becomes the single enforcement point for
 // both native and browser; the legacy fail-open TS executor is retired once this
 // is the live path.

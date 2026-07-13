@@ -3,7 +3,7 @@
 // The legacy browser executor serviced guest `fs.*` sync-bridge operations
 // against an in-process TypeScript kernel (`runtime-driver.ts`'s
 // `handleSyncBridgeOperation`). The converged executor instead routes every
-// guest filesystem syscall to the wasm sidecar (`crates/sidecar-browser`) over
+// guest filesystem syscall to the wasm sidecar (`crates/native-sidecar-browser`) over
 // the wire protocol, so the kernel is the single enforcement point on both
 // native and browser.
 //

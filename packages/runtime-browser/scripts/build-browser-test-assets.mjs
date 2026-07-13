@@ -95,7 +95,7 @@ function buildSidecarWasm() {
 		"wasm-pack",
 		[
 			"build",
-			path.join(packageDir, "..", "..", "crates", "sidecar-browser"),
+			path.join(packageDir, "..", "..", "crates", "native-sidecar-browser"),
 			"--dev",
 			"--target",
 			"web",

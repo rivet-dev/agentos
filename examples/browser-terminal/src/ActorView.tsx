@@ -15,6 +15,108 @@ interface ShellDataPayload {
 interface ShellExitPayload {
 	shellId: string;
 }
+interface ProcessOutputPayload {
+	pid: number;
+	stream: "stdout" | "stderr";
+	data: unknown;
+}
+interface ActorProcessInfo {
+	pid: number;
+	command: string;
+	args: string[];
+	running: boolean;
+}
+
+const ACTOR_PI_ENV = {
+	HOME: "/home/agentos",
+	PI_CODING_AGENT_DIR: "/home/agentos/.pi/agent",
+};
+const ACTOR_PI_AGENT_DIR = ACTOR_PI_ENV.PI_CODING_AGENT_DIR;
+const ACTOR_PI_MODEL_SERVER = "/home/agentos/actor-demo-model.mjs";
+const ACTOR_PI_PROVIDER = "actor-demo";
+const ACTOR_PI_MODEL = "deterministic";
+const ACTOR_PI_MODEL_SERVER_SOURCE = `
+import { createServer } from "node:http";
+const MAX_REQUEST_BYTES = 1024 * 1024;
+function event(name, data) { return "event: " + name + "\\ndata: " + JSON.stringify(data) + "\\n\\n"; }
+function reply(prompt) {
+  const exact = prompt.match(/reply exactly\\s+([A-Z0-9_]+)/i)?.[1];
+  return "[MOCK actor model — not real] " + (exact ?? ("Received: " + prompt.trim().slice(0, 240)));
+}
+function sse(text) {
+  return [
+    event("message_start", { type: "message_start", message: { id: "msg_actor_demo", type: "message", role: "assistant", model: "actor-demo", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } }),
+    event("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
+    event("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } }),
+    event("content_block_stop", { type: "content_block_stop", index: 0 }),
+    event("message_delta", { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } }),
+    event("message_stop", { type: "message_stop" }),
+  ].join("");
+}
+const server = createServer((request, response) => {
+  if (request.method !== "POST" || request.url !== "/v1/messages") {
+    response.writeHead(404).end("not found");
+    return;
+  }
+  let size = 0;
+  const chunks = [];
+  request.on("data", (chunk) => {
+    size += chunk.length;
+    if (size > MAX_REQUEST_BYTES) {
+      response.writeHead(413).end("request too large");
+      request.destroy();
+      return;
+    }
+    chunks.push(chunk);
+  });
+  request.on("end", () => {
+    if (response.writableEnded) return;
+    try {
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      const message = [...(body.messages ?? [])].reverse().find((entry) => entry.role === "user");
+      const prompt = typeof message?.content === "string"
+        ? message.content
+        : (message?.content ?? []).map((part) => part?.text ?? "").join("");
+      response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" });
+      response.end(sse(reply(prompt)));
+    } catch (error) {
+      console.error("actor demo model rejected malformed input", error);
+      response.writeHead(400).end("malformed request");
+    }
+  });
+  request.on("error", (error) => console.error("actor demo model request failed", error));
+});
+await new Promise((resolve, reject) => {
+  server.once("error", reject);
+  server.listen(6431, "127.0.0.1", resolve);
+});
+console.error("actor demo model ready on 6431");
+await new Promise(() => {});
+`;
+const ACTOR_PI_MODELS = JSON.stringify({
+	providers: {
+		[ACTOR_PI_PROVIDER]: {
+			baseUrl: "http://127.0.0.1:6431",
+			api: "anthropic-messages",
+			apiKey: "sk-agentos-actor-demo",
+			models: [
+				{
+					id: ACTOR_PI_MODEL,
+					name: "Actor demo model (mock)",
+					reasoning: false,
+					input: ["text"],
+					contextWindow: 8192,
+					maxTokens: 1024,
+				},
+			],
+		},
+	},
+});
+const ACTOR_PI_SETTINGS = JSON.stringify({
+	defaultProvider: ACTOR_PI_PROVIDER,
+	defaultModel: ACTOR_PI_MODEL,
+	enabledModels: [`${ACTOR_PI_PROVIDER}/${ACTOR_PI_MODEL}`],
+});
 
 function toBytes(data: unknown): Uint8Array {
 	if (data instanceof Uint8Array) return data;
@@ -38,6 +140,7 @@ export function ActorView({ actorId }: { actorId: string }) {
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const initedRef = useRef(false);
+	const modelServerPidRef = useRef<number | null>(null);
 
 	const writers = useRef<Map<string, (bytes: Uint8Array) => void>>(new Map());
 	const pending = useRef<Map<string, Uint8Array[]>>(new Map());
@@ -95,16 +198,27 @@ export function ActorView({ actorId }: { actorId: string }) {
 		const offData = events.on("shellData", (p: ShellDataPayload) =>
 			dispatchData(p.shellId, toBytes(p.data)),
 		);
-		const offStderr = events.on("shellStderr", (p: ShellDataPayload) =>
-			dispatchData(p.shellId, toBytes(p.data)),
-		);
 		const offExit = events.on("shellExit", (p: ShellExitPayload) =>
 			dropTab(p.shellId),
 		);
+		const offProcessOutput = events.on(
+			"processOutput",
+			(payload: ProcessOutputPayload) => {
+				if (payload.stream !== "stderr") return;
+				const message = new TextDecoder().decode(toBytes(payload.data)).trim();
+				if (!message) return;
+				if (message.includes("actor demo model ready")) {
+					console.info(`actor process ${payload.pid}: ${message}`);
+					return;
+				}
+				console.error(`actor process ${payload.pid}: ${message}`);
+				setError(`Actor Pi demo model: ${message}`);
+			},
+		);
 		return () => {
 			offData();
-			offStderr();
 			offExit();
+			offProcessOutput();
 		};
 	}, [conn, dispatchData, dropTab]);
 
@@ -140,18 +254,61 @@ export function ActorView({ actorId }: { actorId: string }) {
 		setTabs([]);
 		setActive(null);
 		setError(null);
+		modelServerPidRef.current = null;
 	}, [actorId]);
 
-	const openShell = useCallback(async () => {
+	const openShell = useCallback(async (command?: string) => {
 		if (!conn) return;
 		setBusy(true);
 		setError(null);
 		try {
-			const { shellId } = await conn.openShell({ cols: 80, rows: 24 });
+			if (command === "pi") {
+				for (const directory of ["/home/agentos/.pi", ACTOR_PI_AGENT_DIR]) {
+					if (!(await conn.exists(directory))) await conn.mkdir(directory);
+				}
+				await conn.writeFiles([
+					{ path: `${ACTOR_PI_AGENT_DIR}/models.json`, content: ACTOR_PI_MODELS },
+					{
+						path: `${ACTOR_PI_AGENT_DIR}/settings.json`,
+						content: ACTOR_PI_SETTINGS,
+					},
+					{
+						path: ACTOR_PI_MODEL_SERVER,
+						content: ACTOR_PI_MODEL_SERVER_SOURCE,
+					},
+				]);
+				if (modelServerPidRef.current === null) {
+					const runningServer = (await conn.listProcesses()).find(
+						(process: ActorProcessInfo) =>
+							process.running &&
+							process.command === "node" &&
+							process.args.includes(ACTOR_PI_MODEL_SERVER),
+					);
+					if (runningServer) {
+						modelServerPidRef.current = runningServer.pid;
+					} else {
+						const { pid } = await conn.spawn("node", [ACTOR_PI_MODEL_SERVER]);
+						modelServerPidRef.current = pid;
+						await new Promise((resolve) => setTimeout(resolve, 250));
+					}
+				}
+			}
+			const { shellId } = await conn.openShell({
+				...(command ? { command } : {}),
+				...(!command
+					? { args: ["--input-backend", "minimal", "-i"] }
+					: {}),
+				...(command === "pi" ? { env: ACTOR_PI_ENV } : {}),
+				cols: 80,
+				rows: 24,
+			});
 			setTabs((prev) => {
 				const next = [
 					...prev,
-					{ shellId, title: `shell ${prev.length + 1}` },
+					{
+						shellId,
+						title: command === "pi" ? "pi" : `shell ${prev.length + 1}`,
+					},
 				];
 				saveShellIds(
 					actorId,
@@ -172,13 +329,22 @@ export function ActorView({ actorId }: { actorId: string }) {
 			dropTab(shellId);
 			try {
 				await conn?.closeShell(shellId);
-			} catch {}
+			} catch (cause) {
+				setError(`Failed to close terminal: ${String(cause)}`);
+			}
 		},
 		[conn, dropTab],
 	);
 
 	return (
 		<div className="actor-view">
+			<div className="mode-banner">
+				<span className="mode-badge actor-badge">ACTOR API</span>
+				<span>
+					Runtime and PTYs execute behind the RivetKit actor. Pi uses the
+					 labeled deterministic demo model.
+				</span>
+			</div>
 			<div className="tabbar">
 				{tabs.map((t) => (
 					<div
@@ -205,9 +371,18 @@ export function ActorView({ actorId }: { actorId: string }) {
 					className="tab-new"
 					disabled={!conn || busy}
 					onClick={() => void openShell()}
-					title="New terminal"
+					title="New shell terminal"
 				>
-					+
+					+ shell
+				</button>
+				<button
+					type="button"
+					className="tab-new"
+					disabled={!conn || busy}
+					onClick={() => void openShell("pi")}
+					title="New Pi terminal"
+				>
+					+ pi
 				</button>
 				<span className="conn-status">
 					{conn ? "connected" : "connecting…"}
@@ -230,6 +405,7 @@ export function ActorView({ actorId }: { actorId: string }) {
 						shellId={t.shellId}
 						active={t.shellId === active}
 						onInput={(text) => conn?.writeShell(t.shellId, text)}
+						onError={(cause) => setError(String(cause))}
 						onResize={(cols, rows) => conn?.resizeShell(t.shellId, cols, rows)}
 						subscribe={subscribe(t.shellId)}
 					/>

@@ -7,6 +7,18 @@ export interface WasiCommandBootstrapOptions {
 	args?: string[];
 	/** Command registry used by host_process.proc_spawn for child WASI commands. */
 	commands?: Record<string, string>;
+	/**
+	 * Real WASM command files to stage in the guest VFS before the main command
+	 * starts. Child process resolution then follows the executable path selected
+	 * by the guest shell instead of a host-side basename registry.
+	 */
+	commandFiles?: Record<string, string>;
+	/**
+	 * Commands delegated to the browser SystemDriver CommandExecutor. This is the
+	 * JavaScript-command counterpart to `commands`: argv and stdio still originate
+	 * in the guest shell, while the trusted browser driver selects the executor.
+	 */
+	externalCommands?: string[];
 	env?: Record<string, string>;
 	cwd?: string;
 	preopens?: Record<string, string>;
@@ -33,11 +45,14 @@ export function createWasiCommandBootstrapScript(
 	const preopens = options.preopens ?? { "/": "/" };
 	const args = [options.command, ...(options.args ?? [])];
 	const commands = options.commands ?? {};
+	const commandFiles = options.commandFiles ?? {};
+	const externalCommands = options.externalCommands ?? [];
 	const bootMessage = options.bootMessage ?? "";
 	const bytesMessagePrefix = options.bytesMessagePrefix ?? "";
 	const startMessage = options.startMessage ?? "";
 	const exitMessagePrefix = options.exitMessagePrefix ?? "WASI_EXIT:";
-	const errorMessagePrefix = options.errorMessagePrefix ?? "WASI_COMMAND_ERROR:";
+	const errorMessagePrefix =
+		options.errorMessagePrefix ?? "WASI_COMMAND_ERROR:";
 
 	return `
 	(async () => {
@@ -53,14 +68,43 @@ export function createWasiCommandBootstrapScript(
 				const encoded = new TextDecoder().decode(bytes);
 				bytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
 			}
-			if (${json(bytesMessagePrefix)}) {
-				process.stdout.write(${json(bytesMessagePrefix)} + bytes.byteLength + "\\n");
+				if (${json(bytesMessagePrefix)}) {
+					process.stdout.write(${json(bytesMessagePrefix)} + bytes.byteLength + "\\n");
+				}
+				const commandFiles = ${json(commandFiles)};
+				if (Object.keys(commandFiles).length > 0) {
+					const fs = require("node:fs");
+					const path = require("node:path");
+					for (const [guestPath, source] of Object.entries(commandFiles)) {
+						let commandBytes = bytes;
+						if (source !== commandSource) {
+							const commandResponse = await fetch(source);
+							if (!commandResponse.ok) {
+								throw new Error("failed to fetch real command wasm " + source + ": " + commandResponse.status);
+							}
+							commandBytes = new Uint8Array(await commandResponse.arrayBuffer());
+							if (commandResponse.headers.get("x-body-encoding") === "base64") {
+								const encoded = new TextDecoder().decode(commandBytes);
+								commandBytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
+							}
+						}
+						fs.mkdirSync(path.dirname(guestPath), { recursive: true });
+						fs.writeFileSync(guestPath, commandBytes);
+						fs.chmodSync(guestPath, 0o755);
+					}
+				}
+				const WASI = globalThis.__agentOSWasiModule && globalThis.__agentOSWasiModule.WASI;
+			if (typeof WASI !== "function") {
+				throw new Error("browser AgentOS WASI command host is not initialized");
 			}
-			const { WASI } = require("node:wasi");
-			const { createWasiCommandHost } = require("secure-exec:wasi-command-host");
+			const createWasiCommandHost = globalThis.__agentOSWasiCommandHost && globalThis.__agentOSWasiCommandHost.createWasiCommandHost;
+			if (typeof createWasiCommandHost !== "function") {
+				throw new Error("browser AgentOS WASI process host is not initialized");
+			}
 			const commandHost = await createWasiCommandHost({
 				WASI,
 				commands: ${json(commands)},
+				externalCommands: ${json(externalCommands)},
 				env: ${json(env)},
 				cwd: ${json(cwd)},
 			});
