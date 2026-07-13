@@ -711,7 +711,7 @@ export class NativeSidecarKernelProxy {
 	}
 
 	openShell(options?: OpenShellOptions): ShellHandle {
-		const stdoutHandlers = new Set<(data: Uint8Array) => void>();
+		const terminalHandlers = new Set<(data: Uint8Array) => void>();
 		const stderrHandlers = new Set<(data: Uint8Array) => void>();
 		const command = options?.command ?? "sh";
 		const args =
@@ -774,7 +774,7 @@ export class NativeSidecarKernelProxy {
 			const normalized = normalizeSyntheticTerminalText(text);
 			updateSyntheticCursor(normalized);
 			const chunk = textEncoder.encode(normalized);
-			for (const handler of stdoutHandlers) {
+			for (const handler of terminalHandlers) {
 				handler(chunk);
 			}
 		};
@@ -785,7 +785,7 @@ export class NativeSidecarKernelProxy {
 			const normalized = normalizeSyntheticTerminalText(text);
 			updateSyntheticCursor(normalized);
 			const chunk = textEncoder.encode(normalized);
-			for (const handler of stdoutHandlers) {
+			for (const handler of terminalHandlers) {
 				handler(chunk);
 			}
 		};
@@ -830,7 +830,7 @@ export class NativeSidecarKernelProxy {
 			commandInFlight = false;
 			const promptPrefix = syntheticCursorAtLineStart ? "" : "\r\n";
 			const promptChunk = textEncoder.encode(`${promptPrefix}${promptText}`);
-			for (const handler of stdoutHandlers) {
+			for (const handler of terminalHandlers) {
 				handler(promptChunk);
 			}
 			syntheticCursorAtLineStart = false;
@@ -873,7 +873,7 @@ export class NativeSidecarKernelProxy {
 		};
 
 		let onData: ((data: Uint8Array) => void) | null = null;
-		stdoutHandlers.add((data) => onData?.(data));
+		terminalHandlers.add((data) => onData?.(data));
 		if (options?.onStderr) {
 			stderrHandlers.add(options.onStderr);
 		}
@@ -1052,7 +1052,7 @@ export class NativeSidecarKernelProxy {
 			cwd: options?.cwd,
 			streamStdin: true,
 			onStdout: (chunk) => {
-				for (const handler of stdoutHandlers) {
+				for (const handler of terminalHandlers) {
 					handler(chunk);
 				}
 				if (commandInFlight) {
@@ -1060,6 +1060,11 @@ export class NativeSidecarKernelProxy {
 				}
 			},
 			onStderr: (chunk) => {
+				// `onData` is the ordered PTY rendering stream. `onStderr` remains an
+				// optional channel-specific diagnostic tap and must not also be rendered.
+				for (const handler of terminalHandlers) {
+					handler(chunk);
+				}
 				for (const handler of stderrHandlers) {
 					handler(chunk);
 				}
@@ -1117,14 +1122,7 @@ export class NativeSidecarKernelProxy {
 		const stdin = process.stdin;
 		const stdout = process.stdout;
 		const { onData, ...shellOptions } = options ?? {};
-		const shell = this.openShell({
-			...shellOptions,
-			onStderr:
-				shellOptions.onStderr ??
-				((data) => {
-					process.stderr.write(data);
-				}),
-		});
+		const shell = this.openShell(shellOptions);
 		const outputHandler =
 			onData ??
 			((data: Uint8Array) => {

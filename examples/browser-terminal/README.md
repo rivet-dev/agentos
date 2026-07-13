@@ -24,17 +24,18 @@ Browser (React + xterm.js)                Node (server.ts)
   ├─ useActor({ name:"shellVm", key })      ├─ agentOS({ software:[…] })
   ├─ openShell / writeShell / resize ──────▶│    setup({ use:{ shellVm } })
   ├─ closeShell                             │    registry.start()
-  └─ conn.on("shellData"|"shellStderr"|     │
-        "shellExit") ◀─────────────────────┘  openShell ─▶ broadcast shellData/…
+  └─ conn.on("shellData"|"shellExit") ◀────┘  openShell ─▶ broadcast events
 ```
 
 The browser opens a shell with `openShell`, sends keystrokes with `writeShell`,
-and renders output delivered as `shellData` / `shellStderr` broadcast **events**
-(routed to the right tab by `shellId`, with a small buffer for output that arrives
-before a tab subscribes). This mirrors the actor terminal in
-`packages/shell/src/actor-vm.ts`. The VM and its shells live inside the actor's
-Rust plugin, so there is no server-side terminal code here — `registry.start()`
-hosts the actor and the browser talks to it directly.
+and renders the ordered stdout/stderr bytes delivered by the `shellData` broadcast
+**event** (routed to the right tab by `shellId`, with a small buffer for output
+that arrives before a tab subscribes). `shellStderr` remains available as an
+optional diagnostic tap and must not be rendered alongside `shellData`. This
+mirrors the actor terminal in `packages/shell/src/actor-vm.ts`. The VM and its
+shells live inside the actor's Rust plugin, so there is no server-side terminal
+code here — `registry.start()` hosts the actor and the browser talks to it
+directly.
 
 ## Run
 

@@ -73,9 +73,9 @@ pub(crate) struct ProcessEntry {
 
 /// A PTY-backed shell (TS `_shells` value). Keyed by synthetic `shell-N` id.
 ///
-/// `data_tx` carries stdout only, matching TS where the kernel handle's `onData` is fed exclusively
-/// by `stdoutHandlers`. `stderr_tx` is the dedicated stderr channel that backs the `on_stderr` option
-/// and `on_shell_stderr`, matching TS where stderr reaches the host only through `stderrHandlers`.
+/// `data_tx` carries stdout and stderr in their original wire order for terminal renderers.
+/// `stderr_tx` is an optional channel-specific diagnostic tap backing the `on_stderr` option and
+/// `on_shell_stderr`; terminal consumers must not render both streams or stderr would be duplicated.
 pub(crate) struct ShellEntry {
     pub pid: u32,
     pub data_tx: broadcast::Sender<Vec<u8>>,

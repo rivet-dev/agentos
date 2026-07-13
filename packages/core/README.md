@@ -104,7 +104,7 @@ await vm.dispose();
 | `connectTerminal` | `connectTerminal(options?: ConnectTerminalOptions): Promise<number>` | Attach a shell directly to the host terminal and wait for exit |
 | `openShell` | `openShell(options?: OpenShellOptions): { shellId: string }` | Open an interactive shell with PTY support |
 | `writeShell` | `writeShell(shellId: string, data: string \| Uint8Array): void` | Write data to a shell's PTY input |
-| `onShellData` | `onShellData(shellId: string, handler: (data: Uint8Array) => void): () => void` | Subscribe to shell output data |
+| `onShellData` | `onShellData(shellId: string, handler: (data: Uint8Array) => void): () => void` | Subscribe to ordered PTY output (stdout and stderr exactly once) |
 | `resizeShell` | `resizeShell(shellId: string, cols: number, rows: number): void` | Notify terminal resize |
 | `closeShell` | `closeShell(shellId: string): void` | Kill the shell process |
 

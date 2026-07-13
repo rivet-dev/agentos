@@ -2,6 +2,8 @@
 
 How agentOS extends WASI in two layers so WebAssembly guests behave like normal POSIX programs on top of the kernel.
 
+<Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
+
 Not everything inside an agentOS VM is JavaScript. The shell (`sh`) and the
 coreutils behind [process execution](/docs/processes) ship as WebAssembly
 binaries, and you can run your own WASM programs too. To make those programs

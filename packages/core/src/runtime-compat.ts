@@ -219,6 +219,7 @@ export interface ManagedProcess {
 export interface ShellHandle {
 	pid: number;
 	write(data: Uint8Array | string): Promise<void>;
+	/** Ordered PTY output containing stdout and stderr exactly once. */
 	onData: ((data: Uint8Array) => void) | null;
 	resize(cols: number, rows: number): void;
 	kill(signal?: number): void;
@@ -232,6 +233,7 @@ export interface OpenShellOptions {
 	cwd?: string;
 	cols?: number;
 	rows?: number;
+	/** Optional stderr-only diagnostic tap; do not render it alongside `onData`. */
 	onStderr?: (data: Uint8Array) => void;
 }
 

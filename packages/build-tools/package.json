@@ -19,7 +19,7 @@
 		"check:generated": "node ../../scripts/check-generated-artifacts.mjs",
 		"check-types": "node --check ./scripts/build-base-filesystem.mjs && node --check ./scripts/build-browser-buffer-polyfill.mjs && node --check ./scripts/build-browser-path-polyfill.mjs && node --check ./scripts/build-browser-util-polyfill.mjs && node --check ./scripts/build-v8-bridge.mjs && node --check ./scripts/compile-sidecar-protocol.mjs",
 		"build": "pnpm run check-types",
-		"test": "pnpm run check-types",
+		"test": "pnpm run check-types && node --test ./scripts/tty-config.test.mjs",
 		"build:package-format": "node ./scripts/compile-package-format.mjs"
 	},
 	"dependencies": {

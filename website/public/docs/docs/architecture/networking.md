@@ -2,6 +2,8 @@
 
 How the kernel socket table works: a single VM-local transport that carries host, JavaScript, and WASM traffic, where fetch / net / dns route through it, how egress policy and loopback confinement are enforced, and how preview URLs are served.
 
+<Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
+
 This is the internals view of agentOS networking: the kernel socket table, the layers a request crosses, and where policy is enforced. For the user-facing API (`vmFetch`, preview URLs, the confinement model from a caller's perspective), see [Networking & Previews](/docs/networking). For the trust boundary this all sits inside, see [Architecture](/docs/architecture).
 
 The governing rule is that there is exactly **one authoritative transport for everything VM-local**: the kernel socket table. No part of guest networking opens a real host socket on its own. Guest `fetch()`, `node:http`, `node:net`, WASM TCP clients and servers, and host-into-guest requests (`vmFetch` / `rt.fetch`) all target the same listener table.

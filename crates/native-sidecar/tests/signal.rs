@@ -2,15 +2,16 @@ mod support;
 
 use agentos_native_sidecar::wire::{
     EventPayload, GetSignalStateRequest, GuestRuntimeKind, KillProcessRequest,
-    ProcessSnapshotStatus, RequestPayload, ResponsePayload, SignalDispositionAction,
-    SignalHandlerRegistration, StreamChannel,
+    ProcessSnapshotStatus, RequestPayload, ResizePtyRequest, ResponsePayload,
+    SignalDispositionAction, SignalHandlerRegistration, StreamChannel,
 };
 use nix::libc;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use support::{
-    assert_node_available, authenticate_wire, create_vm_wire_with_metadata, execute_wire,
-    new_sidecar, open_session_wire, temp_dir, wire_request, wire_vm, write_fixture,
+    assert_node_available, authenticate_wire, collect_process_output_wire_with_timeout,
+    create_vm_wire_with_metadata, execute_wire, new_sidecar, open_session_wire, temp_dir,
+    wire_request, wire_vm, write_fixture,
 };
 
 fn wait_for_process_output(
@@ -715,6 +716,146 @@ fn embedded_runtime_process_group_kill_terminates_detached_tree() {
     );
 }
 
+fn pty_resize_delivers_sigwinch_to_nested_foreground_runtime() {
+    assert_node_available();
+
+    let mut sidecar = new_sidecar("pty-resize-nested-sigwinch");
+    let cwd = temp_dir("pty-resize-nested-sigwinch-cwd");
+    let parent_entry = cwd.join("parent.mjs");
+    let child_entry = cwd.join("child.mjs");
+    write_fixture(
+        &child_entry,
+        [
+            "process.on('SIGWINCH', () => {",
+            "  console.log('child-winch');",
+            "  process.exit(0);",
+            "});",
+            "console.log('child-winch-ready');",
+            "setInterval(() => {}, 25);",
+        ]
+        .join("\n"),
+    );
+    write_fixture(
+        &parent_entry,
+        [
+            "import { spawn } from 'node:child_process';",
+            "let parentWinch = false;",
+            "process.on('SIGWINCH', () => {",
+            "  parentWinch = true;",
+            "  console.log('parent-winch');",
+            "});",
+            "const child = spawn('node', ['./child.mjs'], { stdio: 'inherit' });",
+            "await new Promise((resolve, reject) => {",
+            "  child.on('error', reject);",
+            "  child.on('close', (code) => code === 0 ? resolve() : reject(new Error(`child exit ${code}`)));",
+            "});",
+            "const deadline = Date.now() + 2000;",
+            "while (!parentWinch && Date.now() < deadline) {",
+            "  await new Promise((resolve) => setTimeout(resolve, 10));",
+            "}",
+            "if (!parentWinch) throw new Error('parent did not receive SIGWINCH');",
+            "console.log('nested-winch-complete');",
+        ]
+        .join("\n"),
+    );
+
+    let connection_id = authenticate_wire(&mut sidecar, "conn-pty-resize-nested-sigwinch");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let allowed_builtins = serde_json::to_string(&[
+        "assert",
+        "buffer",
+        "child_process",
+        "console",
+        "crypto",
+        "events",
+        "fs",
+        "path",
+        "querystring",
+        "stream",
+        "string_decoder",
+        "timers",
+        "url",
+        "util",
+        "zlib",
+    ])
+    .expect("serialize builtins");
+    let (vm_id, _) = create_vm_wire_with_metadata(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::JavaScript,
+        &cwd,
+        HashMap::from([(
+            String::from("env.AGENTOS_ALLOWED_NODE_BUILTINS"),
+            allowed_builtins,
+        )]),
+    );
+    let ownership = wire_vm(&connection_id, &session_id, &vm_id);
+    let started = sidecar
+        .dispatch_wire_blocking(wire_request(
+            4,
+            ownership.clone(),
+            RequestPayload::ExecuteRequest(agentos_native_sidecar::wire::ExecuteRequest {
+                process_id: String::from("pty-winch-parent"),
+                command: None,
+                runtime: Some(GuestRuntimeKind::JavaScript),
+                entrypoint: Some(parent_entry.to_string_lossy().into_owned()),
+                args: Vec::new(),
+                env: HashMap::from([(String::from("AGENTOS_EXEC_TTY"), String::from("1"))]),
+                cwd: None,
+                wasm_permission_tier: None,
+            }),
+        ))
+        .expect("start PTY parent");
+    assert!(matches!(
+        started.response.payload,
+        ResponsePayload::ProcessStartedResponse(_)
+    ));
+
+    wait_for_process_output(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "pty-winch-parent",
+        "child-winch-ready",
+    );
+    sidecar
+        .dispatch_wire_blocking(wire_request(
+            5,
+            ownership,
+            RequestPayload::ResizePtyRequest(ResizePtyRequest {
+                process_id: String::from("pty-winch-parent"),
+                cols: 132,
+                rows: 48,
+            }),
+        ))
+        .expect("resize parent PTY");
+
+    let (stdout, stderr, exit_code) = collect_process_output_wire_with_timeout(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "pty-winch-parent",
+        Duration::from_secs(10),
+    );
+    assert_eq!(exit_code, 0, "PTY parent failed: {stderr}");
+    assert!(
+        stdout.contains("parent-winch"),
+        "root runtime missed SIGWINCH: {stdout}"
+    );
+    assert!(
+        stdout.contains("child-winch"),
+        "nested foreground runtime missed SIGWINCH: {stdout}"
+    );
+    assert!(
+        stdout.contains("nested-winch-complete"),
+        "parent did not observe nested signal completion: {stdout}"
+    );
+}
+
 fn embedded_runtime_signal_delivers_sigchld_on_child_exit() {
     assert_node_available();
 
@@ -887,5 +1028,6 @@ fn embedded_runtime_signal_suite() {
     embedded_runtime_kill_process_rejects_invalid_signal_without_killing_process();
     embedded_runtime_process_kill_signal_zero_checks_child_liveness();
     embedded_runtime_process_group_kill_terminates_detached_tree();
+    pty_resize_delivers_sigwinch_to_nested_foreground_runtime();
     embedded_runtime_signal_delivers_sigchld_on_child_exit();
 }

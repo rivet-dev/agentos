@@ -15,9 +15,12 @@ WASI_SYSROOT_SELF_CONTAINED := $(shell rustc --print sysroot)/lib/rustlib/$(WASM
 # Discover command binary names from crates/commands/. Keep known slow/heavy
 # commands out of the default registry gate; they can still be built explicitly
 # with `make cmd/<name>`.
-SKIPPED_BULK_COMMANDS := _stubs git codex codex-exec
+SKIPPED_BULK_COMMANDS := git codex codex-exec
 COMMAND_NAMES := $(filter-out $(SKIPPED_BULK_COMMANDS),$(notdir $(wildcard crates/commands/*)))
-COMMAND_PACKAGES := $(addprefix -p cmd-,$(COMMAND_NAMES))
+# `_stubs` is the binary name but its Cargo package is `cmd-stubs`; every
+# other command follows the `cmd-<directory>` convention.
+COMMAND_PACKAGE_NAMES := $(patsubst _stubs,stubs,$(COMMAND_NAMES))
+COMMAND_PACKAGES := $(addprefix -p cmd-,$(COMMAND_PACKAGE_NAMES))
 
 # Alias symlinks: link_name:target_binary
 ALIAS_SYMLINKS := \
@@ -47,7 +50,7 @@ all: wasm
 
 # Build the fast command set that lands in COMMANDS_DIR: Rust commands except
 # known heavy/external ones, then the opted-in fast C commands. Heavy commands
-# (git, duckdb, vim), generated helpers (_stubs), and the external codex build
+# (git, duckdb, vim) and the external codex build
 # are intentionally excluded from the default registry-build gate.
 commands: wasm
 	$(MAKE) -C c programs install

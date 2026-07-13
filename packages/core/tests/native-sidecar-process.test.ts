@@ -1874,7 +1874,7 @@ describe("native sidecar process client", () => {
 		}
 	}, 60_000);
 
-	test("openShell keeps stdout and stderr separate on the native sidecar path", async () => {
+	test("openShell preserves terminal order and exposes diagnostic stderr", async () => {
 		const kernel = createKernel({
 			filesystem: createInMemoryFileSystem(),
 			permissions: ALLOW_ALL_VM_PERMISSIONS,
@@ -1883,7 +1883,7 @@ describe("native sidecar process client", () => {
 		try {
 			await kernel.mount(createNodeRuntime());
 
-			let stdout = "";
+			let terminal = "";
 			let stderr = "";
 			const decoder = new TextDecoder();
 			const shell = kernel.openShell({
@@ -1905,20 +1905,26 @@ describe("native sidecar process client", () => {
 			});
 
 			shell.onData = (chunk) => {
-				stdout += decoder.decode(chunk);
+				terminal += decoder.decode(chunk);
 			};
 
-			shell.write("hello-shell\n");
+			await shell.write("hello-shell\n");
 
-			await waitFor(() => stdout, {
-				isReady: (value) => value.includes("OUT:hello-shell"),
+			await waitFor(() => terminal, {
+				isReady: (value) =>
+					value.includes("OUT:hello-shell") &&
+					value.includes("ERR:hello-shell"),
 			});
 			await waitFor(() => stderr, {
 				isReady: (value) => value.includes("ERR:hello-shell"),
 			});
 
-			expect(stdout).toContain("OUT:hello-shell");
-			expect(stdout).not.toContain("ERR:hello-shell");
+			expect(terminal).toContain("OUT:hello-shell");
+			expect(terminal).toContain("ERR:hello-shell");
+			expect(terminal.indexOf("OUT:hello-shell")).toBeLessThan(
+				terminal.indexOf("ERR:hello-shell"),
+			);
+			expect(terminal.match(/ERR:hello-shell/g)).toHaveLength(1);
 			expect(stderr).toContain("ERR:hello-shell");
 			expect(stderr).not.toContain("OUT:hello-shell");
 			expect(await shell.wait()).toBe(0);

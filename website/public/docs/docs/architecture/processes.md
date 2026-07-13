@@ -2,6 +2,8 @@
 
 Internals of the kernel process model: the virtual process table, how spawns are serviced, stdio bridging, PTYs, and how WASM sh and coreutils map onto it.
 
+<Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
+
 This page is an internals deep-dive on the kernel's **process model**: the data
 structures and syscall paths behind every guest process. For the client-facing
 API (`exec`, `spawn`, `openShell`, lifecycle, the process tree), see

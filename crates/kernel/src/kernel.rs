@@ -2803,6 +2803,45 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         Ok(())
     }
 
+    /// Toggle PTY raw mode and, when the caller belongs to the terminal's
+    /// foreground process group, create a generation-scoped recovery lease.
+    /// The lease can be released during process cleanup without overwriting a
+    /// newer terminal mutation from another process.
+    pub fn pty_set_raw_mode(
+        &self,
+        requester_driver: &str,
+        pid: u32,
+        fd: u32,
+        enabled: bool,
+    ) -> KernelResult<Option<u64>> {
+        let description = self.description_for_fd(requester_driver, pid, fd)?;
+        let foreground_pgid = self.ptys.get_foreground_pgid(description.id())?;
+        let process_pgid = self.processes.getpgid(pid)?;
+        let lease_owner =
+            (!enabled || foreground_pgid == 0 || foreground_pgid == process_pgid).then_some(pid);
+        Ok(self
+            .ptys
+            .set_raw_mode(description.id(), lease_owner, enabled)?)
+    }
+
+    /// Release a raw-mode recovery lease through any descriptor for the same
+    /// PTY. `fd` normally belongs to the terminal owner because the exiting
+    /// child may already have closed its own descriptor zero.
+    pub fn pty_release_raw_mode(
+        &self,
+        requester_driver: &str,
+        descriptor_owner_pid: u32,
+        fd: u32,
+        raw_mode_owner_pid: u32,
+        generation: u64,
+    ) -> KernelResult<bool> {
+        self.assert_driver_owns(requester_driver, raw_mode_owner_pid)?;
+        let description = self.description_for_fd(requester_driver, descriptor_owner_pid, fd)?;
+        Ok(self
+            .ptys
+            .release_raw_mode(description.id(), raw_mode_owner_pid, generation)?)
+    }
+
     pub fn pty_set_foreground_pgid(
         &self,
         requester_driver: &str,

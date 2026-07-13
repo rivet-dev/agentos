@@ -36,9 +36,6 @@ export class TerminalHarness {
 			rows,
 			env: options?.env,
 			cwd: options?.cwd,
-			onStderr: (data: Uint8Array) => {
-				this.term.write(data);
-			},
 		});
 		this.shell.onData = (data: Uint8Array) => {
 			this.term.write(data);

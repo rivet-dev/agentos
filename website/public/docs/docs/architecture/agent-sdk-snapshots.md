@@ -2,6 +2,8 @@
 
 How an agent's SDK is evaluated once per sidecar into a V8 heap snapshot and reused across sessions instead of re-imported on every createSession: the bundle, the userland snapshot, the process-wide cache, pre-warm, per-session restore, isolation, and the snapshot-safety rules an SDK must follow.
 
+<Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
+
 This page is an internals deep-dive on **agent SDK snapshotting** — an optional optimization that loads an agent's SDK *once per sidecar* and reuses it for every session, instead of re-evaluating the whole SDK module graph on each `createSession`. For the agent-author view (how to opt in and the rules your SDK must follow), see [Software Definition → SDK snapshotting & snapshot-safety](/docs/custom-software/definition). For how sessions work in general, see [Agent Sessions](/docs/architecture/agent-sessions).
 
 ## The problem: per-session SDK re-evaluation

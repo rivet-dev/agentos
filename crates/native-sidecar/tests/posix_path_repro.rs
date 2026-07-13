@@ -5,6 +5,7 @@ use agentos_native_sidecar::wire::{
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -29,33 +30,19 @@ const ALLOWED_NODE_BUILTINS: &[&str] = &[
     "util",
 ];
 
-fn strip_benign_child_pid_warnings(stderr: &str) -> String {
-    stderr
-        .lines()
-        .filter(|line| !line.contains("WARN") || !line.contains("could not retrieve pid"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 fn registry_command_root() -> PathBuf {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
         .expect("canonicalize repo root");
-    let copied = repo_root.join("registry/software/coreutils/wasm");
-    if copied.exists() {
-        return copied;
-    }
-
-    let fallback = repo_root.join("registry/native/target/wasm32-wasip1/release/commands");
-    if fallback.exists() {
-        return fallback;
+    let commands = repo_root.join("registry/native/target/wasm32-wasip1/release/commands");
+    if commands.exists() {
+        return commands;
     }
 
     panic!(
-        "registry WASM commands are required for posix path repro tests: expected {} or {}",
-        copied.display(),
-        fallback.display()
+        "registry WASM commands are required for posix path repro tests: run `just registry-native`; expected {}",
+        commands.display()
     );
 }
 
@@ -356,11 +343,9 @@ console.log(JSON.stringify({
         "guest shell should resolve relative paths inside the cwd: {guest}"
     );
     assert_eq!(
-        strip_benign_child_pid_warnings(
-            guest["stderr"]
-                .as_str()
-                .expect("child stderr should be encoded as a string")
-        ),
+        guest["stderr"]
+            .as_str()
+            .expect("child stderr should be encoded as a string"),
         "",
         "guest shell should not emit unexpected stderr: {guest}"
     );
@@ -480,11 +465,9 @@ console.log(JSON.stringify({
         "guest shell should still succeed with absolute paths: {guest}"
     );
     assert_eq!(
-        strip_benign_child_pid_warnings(
-            guest["stderr"]
-                .as_str()
-                .expect("child stderr should be encoded as a string")
-        ),
+        guest["stderr"]
+            .as_str()
+            .expect("child stderr should be encoded as a string"),
         "",
         "guest shell should not emit unexpected stderr: {guest}"
     );
@@ -502,6 +485,7 @@ fn node_path_posix_edge_cases_match_host_node() {
 import path from "node:path";
 
 console.log(JSON.stringify({
+  posixIdentity: path.posix === path,
   resolve: path.resolve("/workspace/project/", "./src", "../tests", "spec.ts"),
   join: path.join("/workspace", "project", "..", "project", "note.txt"),
   normalize: path.normalize("/workspace//project/tests/../nested//file.txt"),
@@ -511,6 +495,113 @@ console.log(JSON.stringify({
   basename: path.basename("/workspace/project/tests/spec.ts/"),
 }));
 "#,
+    );
+}
+
+fn node_console_formatting_matches_host_node() {
+    assert_guest_matches_host(
+        "console-formatting",
+        r#"
+const writes = [];
+const originalWrite = process.stdout.write;
+process.stdout.write = (chunk) => {
+  writes.push(String(chunk));
+  return true;
+};
+console.log("value:%s count:%d object:%o", "ok", 3, { nested: true });
+process.stdout.write = originalWrite;
+originalWrite.call(process.stdout, JSON.stringify({ writes }));
+"#,
+    );
+}
+
+fn javascript_child_process_executes_guest_shebang_scripts() {
+    assert_node_available();
+
+    let (cwd, entrypoint) = write_probe(
+        "child-shebang",
+        r#"
+import childProcess from "node:child_process";
+
+const result = childProcess.spawnSync(
+  "/workspace/hello.sh",
+  ["native"],
+  { encoding: "utf8" },
+);
+const denied = childProcess.spawnSync(
+  "/workspace/not-executable.sh",
+  [],
+  { encoding: "utf8" },
+);
+console.log(JSON.stringify({
+  status: result.status,
+  signal: result.signal,
+  stdout: result.stdout,
+  stderr: result.stderr,
+  denied: {
+    status: denied.status,
+    signal: denied.signal,
+    errorCode: denied.error?.code ?? null,
+    stderr: denied.stderr,
+  },
+}));
+"#,
+    );
+    let script = cwd.join("hello.sh");
+    write_fixture(
+        &script,
+        "#!/usr/bin/env -S sh\nprintf 'shebang:%s\\n' \"$1\"\n",
+    );
+    let mut permissions = fs::metadata(&script)
+        .expect("read shebang fixture metadata")
+        .permissions();
+    use std::os::unix::fs::PermissionsExt;
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script, permissions).expect("make shebang fixture executable");
+    write_fixture(
+        &cwd.join("not-executable.sh"),
+        "#!/bin/sh\nprintf 'must-not-run\\n'\n",
+    );
+
+    let guest = run_guest_probe(
+        "child-shebang",
+        &cwd,
+        &entrypoint,
+        true,
+        HashMap::new(),
+        vec![MountDescriptor {
+            guest_path: String::from("/workspace"),
+            read_only: false,
+            plugin: MountPluginDescriptor {
+                id: String::from("host_dir"),
+                config: serde_json::to_string(&json!({
+                    "hostPath": cwd,
+                    "readOnly": false,
+                }))
+                .expect("serialize shebang workspace mount config"),
+            },
+        }],
+    );
+
+    assert_eq!(guest["status"], json!(0), "shebang child failed: {guest}");
+    assert_eq!(
+        guest["signal"],
+        Value::Null,
+        "shebang child signaled: {guest}"
+    );
+    assert_eq!(guest["stdout"], "shebang:native\n");
+    assert_eq!(guest["stderr"], "");
+    assert_ne!(
+        guest["denied"]["status"],
+        json!(0),
+        "non-executable script unexpectedly ran: {guest}"
+    );
+    assert!(
+        guest["denied"]["errorCode"] == "EACCES"
+            || guest["denied"]["stderr"]
+                .as_str()
+                .is_some_and(|stderr| stderr.contains("EACCES")),
+        "non-executable script did not surface EACCES: {guest}"
     );
 }
 
@@ -556,5 +647,7 @@ fn posix_path_repro_suite() {
     filesystem_path_edge_cases_match_host_node();
     guest_shell_absolute_paths_still_work_after_cd();
     guest_shell_relative_paths_follow_cwd_after_cd();
+    javascript_child_process_executes_guest_shebang_scripts();
+    node_console_formatting_matches_host_node();
     node_path_posix_edge_cases_match_host_node();
 }

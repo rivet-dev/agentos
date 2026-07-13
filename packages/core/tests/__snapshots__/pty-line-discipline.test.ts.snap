@@ -638,6 +638,51 @@ cols=80 rows=24 cursor=0,5
 24|"
 `;
 
+exports[`PTY line discipline matrix > js-node > resize-sigwinch > js-node/resize-sigwinch/resize 1`] = `
+"# js-node/resize-sigwinch/resize
+cols=120 rows=40 cursor=0,7
+01|#START id=resize-sigwinch
+02|#SIZE tag=before rc=0 cols=80 rows=24
+03|#READY tag=resize
+04|!
+05|#SIG name=SIGWINCH
+06|#SIZE tag=after rc=0 cols=120 rows=40
+07|#DONE id=resize-sigwinch
+08|
+09|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|
+36|
+37|
+38|
+39|
+40|"
+`;
+
 exports[`PTY line discipline matrix > js-node > sigint > js-node/sigint/after 1`] = `
 "# js-node/sigint/after
 cols=80 rows=24 cursor=0,3

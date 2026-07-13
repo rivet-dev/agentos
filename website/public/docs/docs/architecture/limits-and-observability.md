@@ -2,6 +2,8 @@
 
 How agentOS bounds resources, applies backpressure, warns before a limit is hit, and surfaces it all to the host.
 
+<Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
+
 agentOS runs untrusted, AI-generated code inside disposable VMs. Every resource
 that code can consume is **bounded by default**, and every bound is designed to
 **warn before it is hit**, **fail with a clear error when it is**, and stay

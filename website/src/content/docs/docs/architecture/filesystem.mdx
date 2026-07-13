@@ -4,6 +4,8 @@ description: "Internals of the kernel VFS: the overlay/mount/root engines, how g
 skill: true
 ---
 
+<Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
+
 This page is an internals deep-dive on the **kernel virtual filesystem (VFS)**: how it is layered, how a guest `fs` syscall is routed through it, and how guest I/O is confined to the VM. For the user-facing API (reading, writing, mounting, persistence), see [Filesystem](/docs/filesystem).
 
 The invariant this whole subsystem exists to uphold: **every guest filesystem operation is serviced by the kernel-owned VFS, never by a real host capability.** There is no host disk reachable from the guest. The VFS presents normal Linux semantics to tools while keeping every byte inside the kernel.

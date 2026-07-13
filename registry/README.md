@@ -32,7 +32,7 @@ registry/software/<pkg>/
 ├── agentos-package.json   manifest: runtime fields (name/agent/provides) +
 │                          staging fields (commands/aliases/stubs)
 ├── src/index.ts           descriptor: packageDir -> ./package/ (dist/package)
-├── bin/                   staged command binaries (gitignored, built)
+├── bin/                   staged command binaries (generated build output)
 └── dist/package/          the assembled runtime dir (shipped in the npm tarball):
     ├── package.json       { name, version, bin: { <cmd>: "bin/<cmd>" } }
     ├── agentos-package.json
@@ -59,10 +59,43 @@ All recipes run from the repo root (see `justfile`):
 just registry-native            # compile the fast native wasm command gate
 just registry-native-cmd <name> # build ONE command binary, whatever its toolchain
 just registry-build             # stage + assemble every registry package
-just registry-build coreutils   # ... or just one
+pnpm --filter @agentos-software/coreutils build:runtime # assemble runnable coreutils
 just registry-status            # per-package state; --remote adds npm dist-tags
 just registry-test              # registry integration tests (registry/tests)
 ```
+
+### Building coreutils from a clean checkout
+
+`registry/software/coreutils/bin/` is deliberately gitignored and must never be
+committed. A fresh checkout has no runnable coreutils package: VMs, browser
+demos, and tests that use `sh`, `cat`, `chmod`, or the other bundled commands
+will not work until the native WASM commands are compiled and staged.
+
+Run the complete build from the repository root:
+
+```bash
+pnpm install --frozen-lockfile
+just registry-native
+pnpm --filter @agentos-software/coreutils build:runtime
+```
+
+The native build compiles the patched Rust and C WASI sources into
+`registry/native/target/wasm32-wasip1/release/commands/`. `build:runtime`
+strictly stages every command, alias, and stub into
+`registry/software/coreutils/bin/`, then assembles `dist/package/`. It fails if
+the native command set is absent or incomplete; an empty placeholder is not a
+usable coreutils package.
+
+The ordinary `build` script retains `--if-missing skip` so repository-wide
+TypeScript builds can run without first compiling the WASM toolchain. On a
+source-only checkout that script assembles an empty placeholder. It does not
+make `sh` or any coreutils command available and is not a runtime build.
+Publishing coreutils runs `build:runtime` through its `prepublishOnly` lifecycle
+and fails rather than publishing an empty or incomplete command package.
+
+`just registry-native-cmd sh` is useful when iterating on only the shell, but it
+does not build the other commands and therefore is not enough to assemble
+coreutils. Use the complete sequence above for demos, packaging, and E2E tests.
 
 `registry-native-cmd` (= `make -C registry/native cmd/<name>`) is the uniform
 per-binary entry point; it dispatches to whichever toolchain owns the command:
@@ -82,9 +115,10 @@ The default native build (`registry/native`) compiles the fast command gate to
 intentionally excludes slow/heavy or non-default commands: `git`, `duckdb`,
 `vim`, `wget`, and the external `codex`/`codex-exec` fork build. Build those explicitly with
 `just registry-native-cmd <name>` when working on them. Package builds then run
-`agentos-toolchain stage` (with `--if-missing skip`, so a checkout without the
-native build still assembles valid empty placeholders) followed by `tsc` and
-`agentos-toolchain build`.
+`agentos-toolchain stage`, followed by `tsc` and `agentos-toolchain build`.
+Use coreutils `build:runtime` for strict staging as described above; software
+packages may use skip mode for source-only checks or commands outside the
+default native gate.
 
 Within this repo, everything consumes the LOCAL builds by default: the registry
 packages are pnpm workspace members, so tests and examples resolve them via

@@ -10,13 +10,10 @@
 //! spawned via [`ExecuteRequest`]: its `process_id` is what `write_shell`/`close_shell` address on
 //! the wire, while the public boundary keeps the synthetic `shell-N` id.
 //!
-//! Stream routing mirrors the TS real-process spawn path exactly: the public `data` stream
-//! (`on_shell_data`) carries stdout ONLY, because TS wires only the kernel handle's `onData` (fed
-//! exclusively by `stdoutHandlers`) into the data handlers. stderr is delivered on a SEPARATE channel
-//! (`on_shell_stderr` + the [`OpenShellOptions::on_stderr`] callback), matching TS where stderr
-//! reaches the host only through `stderrHandlers` / the `onStderr` option. Fanning stderr into the
-//! data stream is only correct for the synthetic-prompt PTY path, which this native real-process path
-//! does not implement.
+//! Stream routing mirrors the TS PTY path: the public `data` stream (`on_shell_data`) carries stdout
+//! and stderr in the order received from the sidecar. stderr is also delivered on an optional
+//! channel-specific diagnostic tap (`on_shell_stderr` + [`OpenShellOptions::on_stderr`]); terminal
+//! renderers consume only `data` so prompts and control sequences are neither reordered nor doubled.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -31,7 +28,7 @@ use crate::error::ClientError;
 use crate::process::{install_output_callback, OutputCallback, ProcessStatus, StdinInput};
 use crate::stream::ByteStream;
 
-/// Channel capacity for a shell's data / stderr broadcasts.
+/// Channel capacity for a shell's ordered terminal-data and diagnostic-stderr broadcasts.
 const SHELL_DATA_CHANNEL_CAPACITY: usize = 1024;
 
 /// Maximum active or spawning terminals created by `connect_terminal` per VM.
@@ -47,9 +44,9 @@ const DEFAULT_SHELL_COMMAND: &str = "sh";
 
 /// Options for `open_shell`.
 ///
-/// `on_stderr` mirrors the TS `OpenShellOptions.onStderr` raw-byte callback: it is the dedicated
-/// path stderr reaches the caller (stderr is never fanned into the data stream). It is seeded into
-/// the stderr fan-out at open time, matching the TS `stderrHandlers.add(options.onStderr)` behavior.
+/// `on_stderr` mirrors the TS `OpenShellOptions.onStderr` raw-byte callback. It is an optional
+/// stderr-only diagnostic tap; the same bytes are already present once in ordered shell data, so a
+/// terminal renderer must not consume both surfaces.
 #[derive(Default)]
 pub struct OpenShellOptions {
     pub command: Option<String>,
@@ -230,9 +227,9 @@ impl AgentOs {
     /// on a background task because the wire spawn is async. The exit task is tracked in the
     /// pending-shell-exit set so `dispose` can drain it (two-phase teardown).
     ///
-    /// Stdout is fanned into the shell's `data` broadcast (`on_shell_data`); stderr is fanned into a
-    /// SEPARATE `stderr` broadcast (`on_shell_stderr` + the [`OpenShellOptions::on_stderr`] callback),
-    /// matching the TS real-process routing where stderr never reaches the data stream.
+    /// Stdout and stderr are fanned into the shell's ordered `data` broadcast (`on_shell_data`).
+    /// Stderr is also fanned into a dedicated diagnostic broadcast (`on_shell_stderr` and the
+    /// [`OpenShellOptions::on_stderr`] callback); terminal renderers should consume only `data`.
     pub fn open_shell(&self, mut options: OpenShellOptions) -> Result<ShellHandle> {
         let inner = self.inner();
         let counter = inner.shell_counter.fetch_add(1, Ordering::SeqCst) + 1;
@@ -352,14 +349,12 @@ impl AgentOs {
                         if output.process_id != route_process_id {
                             continue;
                         }
-                        // stdout -> data stream; stderr -> separate stderr stream (TS routing).
-                        match output.channel {
-                            StreamChannel::Stdout => {
-                                let _ = data_tx.send(output.chunk);
-                            }
-                            StreamChannel::Stderr => {
-                                let _ = stderr_tx.send(output.chunk);
-                            }
+                        // Publish every PTY chunk from this single wire-event consumer so terminal
+                        // control sequences retain their original stdout/stderr order.
+                        let _ = data_tx.send(output.chunk.clone());
+                        if output.channel == StreamChannel::Stderr {
+                            // Channel identity remains available as an optional diagnostic tap.
+                            let _ = stderr_tx.send(output.chunk);
                         }
                     }
                     EventPayload::ProcessExitedEvent(exited) => {
@@ -502,8 +497,11 @@ impl AgentOs {
                         if output.process_id != route_process_id {
                             continue;
                         }
-                        // Both stdout and stderr are appended to the same terminal output buffer
-                        // (the agent reads a single combined stream), matching the TS handle.
+                        let _ = data_tx.send(output.chunk.clone());
+                        if output.channel == StreamChannel::Stderr {
+                            let _ = stderr_tx.send(output.chunk.clone());
+                        }
+                        // Both channels are appended exactly once to the terminal output buffer.
                         on_output(&output.chunk);
                     }
                     EventPayload::ProcessExitedEvent(exited) => {
@@ -559,8 +557,8 @@ impl AgentOs {
     /// be addressed by other shell methods. Killed during dispose via the ACP-terminal registry.
     ///
     /// Mirrors the TS `connectTerminal`, which routes its `onData`/`onStderr` callbacks through
-    /// `openShell`. The Rust port opens a shell, wires the caller's `on_data` to the shell's data
-    /// stream and `on_stderr` to the shell's stderr stream, then returns the shell's pid. Host
+    /// `openShell`. The Rust port opens a shell, wires the caller's `on_data` to ordered terminal data
+    /// and `on_stderr` to the optional diagnostic tap, then returns the shell's pid. Host
     /// stdin binding, terminal raw-mode, and SIGWINCH/resize forwarding are host-process concerns
     /// that have no native wire op and are intentionally not bound here.
     pub async fn connect_terminal(&self, options: ConnectTerminalOptions) -> Result<u32> {
@@ -575,9 +573,8 @@ impl AgentOs {
         let (stderr_tx, _) =
             tokio::sync::broadcast::channel::<Vec<u8>>(SHELL_DATA_CHANNEL_CAPACITY);
 
-        // Wire the caller's onData/onStderr to the terminal's streams (TS routes both through the
-        // shell handle's onData/onStderr). onData defaults to host stdout in TS; the Rust port has no
-        // host process stdout to bind to, so it only fans out when a sink is supplied.
+        // onData defaults to host stdout in TS; the Rust port has no host process stdout to bind to,
+        // so it only fans out when a sink is supplied. onStderr is diagnostic and independent.
         if let Some(cb) = on_data {
             install_output_callback(data_tx.clone(), cb);
         }
@@ -631,13 +628,9 @@ impl AgentOs {
                         if output.process_id != route_process_id {
                             continue;
                         }
-                        match output.channel {
-                            StreamChannel::Stdout => {
-                                let _ = data_tx.send(output.chunk);
-                            }
-                            StreamChannel::Stderr => {
-                                let _ = stderr_tx.send(output.chunk);
-                            }
+                        let _ = data_tx.send(output.chunk.clone());
+                        if output.channel == StreamChannel::Stderr {
+                            let _ = stderr_tx.send(output.chunk);
                         }
                     }
                     EventPayload::ProcessExitedEvent(exited) => {
@@ -752,9 +745,10 @@ impl AgentOs {
         }
     }
 
-    /// Subscribe to a shell's stdout data. SYNC register; multi-handler; dropping the returned stream
-    /// is the unsubscribe. Carries stdout ONLY (stderr is on `on_shell_stderr`). Errors with
-    /// [`ClientError::ShellNotFound`].
+    /// Subscribe to a shell's ordered terminal data. SYNC register; multi-handler; dropping the
+    /// returned stream is the unsubscribe. Carries stdout and stderr exactly once in wire order.
+    /// Use [`Self::on_shell_stderr`] only as a channel-specific diagnostic tap, not as a second
+    /// terminal-rendering stream. Errors with [`ClientError::ShellNotFound`].
     pub fn on_shell_data(&self, shell_id: &str) -> std::result::Result<ByteStream, ClientError> {
         self.inner()
             .shells
@@ -764,8 +758,9 @@ impl AgentOs {
     }
 
     /// Subscribe to a shell's stderr. SYNC register; multi-handler; dropping the returned stream is
-    /// the unsubscribe. This is the dedicated stderr channel backing the TS `onStderr` option; stderr
-    /// is never fanned into `on_shell_data`. Errors with [`ClientError::ShellNotFound`].
+    /// the unsubscribe. This is the optional diagnostic channel backing the TS `onStderr` option;
+    /// stderr is also present once in ordered `on_shell_data`. Errors with
+    /// [`ClientError::ShellNotFound`].
     pub fn on_shell_stderr(&self, shell_id: &str) -> std::result::Result<ByteStream, ClientError> {
         self.inner()
             .shells

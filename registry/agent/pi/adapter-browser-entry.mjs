@@ -1,9 +1,9 @@
 // Browser-bundle entry for the pi ACP adapter. The adapter normally loads its SDK via
 // computed dynamic import() from a VM-mounted node_modules; in the browser converged
 // executor there is no such mount, so we statically import the SDK submodules (which
-// esbuild bundles into a single self-contained file) and hand them to the adapter via
-// the `__piSdkModules` override (see loadPiSdkRuntime). The adapter is otherwise
-// unchanged — same ACP behavior, just bundled instead of VFS-resolved.
+// esbuild bundles into a single self-contained file) and publish the same
+// `__PI_SDK_RUNTIME__` object used by the native V8 startup snapshot. The adapter is
+// otherwise unchanged — same ACP behavior, just bundled instead of VFS-resolved.
 //
 // Imports use relative node_modules file paths (not bare package subpaths) so esbuild
 // resolves the dist files directly, bypassing the packages' restrictive `exports`.
@@ -19,20 +19,23 @@ import * as sessionManager from "./node_modules/@mariozechner/pi-coding-agent/di
 import * as settingsManager from "./node_modules/@mariozechner/pi-coding-agent/dist/core/settings-manager.js";
 import * as tools from "./node_modules/@mariozechner/pi-coding-agent/dist/core/tools/index.js";
 
-// loadPiSdkRuntime reads this lazily (at session/new), so setting it after the adapter
-// import (ESM-hoisted) is fine.
-globalThis.__piSdkModules = {
-	agentCore,
-	authStorage,
-	config,
-	defaults,
-	messages,
-	modelRegistry,
-	resourceLoader,
-	sdk,
-	sessionManager,
-	settingsManager,
-	tools,
+// Keep this shape identical to `runtime` in src/snapshot-entry.ts. The adapter reads
+// it lazily at session/new, so setting it after the adapter import (ESM-hoisted) is
+// safe.
+globalThis.__PI_SDK_RUNTIME__ = {
+	Agent: agentCore.Agent,
+	AuthStorage: authStorage.AuthStorage,
+	DefaultResourceLoader: resourceLoader.DefaultResourceLoader,
+	DEFAULT_THINKING_LEVEL: defaults.DEFAULT_THINKING_LEVEL,
+	ModelRegistry: modelRegistry.ModelRegistry,
+	SettingsManager: settingsManager.SettingsManager,
+	SessionManager: sessionManager.SessionManager,
+	convertToLlm: messages.convertToLlm,
+	getAgentDir: config.getAgentDir,
+	getDocsPath: config.getDocsPath,
+	createAgentSession: sdk.createAgentSession,
+	createCodingTools: sdk.createCodingTools,
+	createAllTools: tools.createAllTools,
 };
 
 import "./dist/adapter.js";

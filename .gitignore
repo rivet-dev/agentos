@@ -45,6 +45,7 @@ registry/native/c/vendor/
 registry/native/c/libs/
 registry/native/c/.cache/
 registry/native/c/sysroot/
+registry/software/coreutils/bin/
 registry/software/*/wasm/
 registry/software/*/agentos-package.meta.json
 registry/.last-publish-hash

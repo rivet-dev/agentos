@@ -3358,7 +3358,11 @@ export class AgentOs {
 		return entry.handle.write(data);
 	}
 
-	/** Subscribe to data output from a shell. Returns an unsubscribe function. */
+	/**
+	 * Subscribe to ordered PTY output (stdout and stderr). Returns an unsubscribe
+	 * function. `OpenShellOptions.onStderr` is a diagnostic tap for callers that
+	 * need channel identity; do not render both surfaces.
+	 */
 	onShellData(
 		shellId: string,
 		handler: (data: Uint8Array) => void,
@@ -4920,9 +4924,6 @@ export class AgentOs {
 				...(cwd ? { cwd } : {}),
 				...(cols !== undefined ? { cols: Math.trunc(cols) } : {}),
 				...(rows !== undefined ? { rows: Math.trunc(rows) } : {}),
-				onStderr: (data) => {
-					this._appendAcpTerminalOutput(terminal, data);
-				},
 			}),
 			output: "",
 			truncated: false,

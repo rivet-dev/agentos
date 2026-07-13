@@ -609,12 +609,6 @@ async function runTerminalAttempt(
 		env,
 		cols: process.stdout.columns,
 		rows: process.stdout.rows,
-		onStderr: (data: Uint8Array) => {
-			detectBackendError(data);
-			if (suppress()) return;
-			const sanitized = stripDiagnostics(data);
-			if (sanitized) process.stderr.write(sanitized);
-		},
 	};
 	const { shellId } = await vm.openShell({
 		...shellOptions,

@@ -88,8 +88,9 @@ export interface AgentOsEvents {
 	vmShutdown: VmShutdownPayload;
 	processOutput: ProcessOutputPayload;
 	processExit: ProcessExitPayload;
+	/** Ordered PTY output containing stdout and stderr exactly once. */
 	shellData: ShellDataPayload;
-	/** Shell stderr (the dedicated channel backing the TS `onStderr` option). */
+	/** Optional stderr-only diagnostic tap; do not render it with `shellData`. */
 	shellStderr: ShellDataPayload;
 	/** Shell process exit (mirrors `waitShell` resolution). */
 	shellExit: ShellExitPayload;

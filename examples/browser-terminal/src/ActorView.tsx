@@ -95,15 +95,11 @@ export function ActorView({ actorId }: { actorId: string }) {
 		const offData = events.on("shellData", (p: ShellDataPayload) =>
 			dispatchData(p.shellId, toBytes(p.data)),
 		);
-		const offStderr = events.on("shellStderr", (p: ShellDataPayload) =>
-			dispatchData(p.shellId, toBytes(p.data)),
-		);
 		const offExit = events.on("shellExit", (p: ShellExitPayload) =>
 			dropTab(p.shellId),
 		);
 		return () => {
 			offData();
-			offStderr();
 			offExit();
 		};
 	}, [conn, dispatchData, dropTab]);

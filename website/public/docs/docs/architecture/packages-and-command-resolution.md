@@ -2,6 +2,8 @@
 
 How software is packaged, linked, resolved, and executed in an agentOS VM: a package is a directory, resolution is a $PATH walk, and a file's header picks its runtime.
 
+<Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
+
 How a command name becomes a running program, and how the software that provides it
 is packaged and linked. Everything is real files under
 [`/opt/agentos`](/docs/architecture/filesystem) — there is no command registry; the
