@@ -269,12 +269,24 @@ async function retryRunnerReady<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 async function stopChild(child: ChildProcess): Promise<void> {
-	if (child.exitCode !== null) return;
-	child.kill("SIGTERM");
+	const signalTree = (signal: NodeJS.Signals): void => {
+		if (process.platform !== "win32" && child.pid !== undefined) {
+			try {
+				process.kill(-child.pid, signal);
+				return;
+			} catch {
+				// The process group may already be gone; fall back to the direct child.
+			}
+		}
+		child.kill(signal);
+	};
+
+	if (child.exitCode !== null && process.platform === "win32") return;
+	signalTree("SIGTERM");
 	await Promise.race([
 		new Promise<void>((resolve) => child.once("exit", () => resolve())),
 		sleep(2_000).then(() => {
-			if (child.exitCode === null) child.kill("SIGKILL");
+			signalTree("SIGKILL");
 		}),
 	]);
 }
@@ -395,6 +407,7 @@ async function main(): Promise<void> {
 			["exec", "tsx", "scripts/benchmarks/actor-session-server.ts"],
 			{
 				cwd: join(import.meta.dirname, "..", ".."),
+				detached: process.platform !== "win32",
 				env: {
 					...process.env,
 					BENCH_AGENTS: agents.map((agent) => agent.id).join(","),
