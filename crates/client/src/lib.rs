@@ -83,8 +83,8 @@ pub use json_rpc::{
 };
 
 pub use cron::{
-    CronAction, CronAlarmHandler, CronAlarmUpdate, CronEvent, CronJobHandle, CronJobInfo,
-    CronJobOptions, CronManager, CronOverlap,
+    CronAction, CronAlarmHandler, CronAlarmUpdate, CronCallback, CronCallbackResult, CronEvent,
+    CronJobHandle, CronJobInfo, CronJobOptions, CronManager, CronOverlap,
 };
 
 // `shell` is declared here because its methods live in a sibling module to keep `lib.rs` re-exports

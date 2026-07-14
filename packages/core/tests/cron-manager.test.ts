@@ -128,6 +128,41 @@ describe("CronManager thin host adapter", () => {
 		);
 	});
 
+	it("forwards a rejected callback message to sidecar completion", async () => {
+		await manager.schedule({
+			id: "failed-callback-job",
+			schedule: "* * * * *",
+			action: {
+				type: "callback",
+				fn: async () => {
+					throw new Error("typescript callback failed");
+				},
+			},
+		});
+		const action = transport.scheduleCron.mock.calls[0][2].action;
+		transport.wakeCron.mockResolvedValueOnce({
+			alarm: { generation: 2 },
+			events: [],
+			runs: [
+				{
+					runId: "run-failed",
+					jobId: "failed-callback-job",
+					action,
+				},
+			],
+		});
+
+		await alarmDriver.fire();
+		await vi.waitFor(() =>
+			expect(transport.completeCronRun).toHaveBeenCalledWith(
+				session,
+				sidecarVm,
+				"run-failed",
+				"typescript callback failed",
+			),
+		);
+	});
+
 	it("never executes a serializable action returned by a malformed sidecar", async () => {
 		await manager.schedule({
 			id: "exec-job",

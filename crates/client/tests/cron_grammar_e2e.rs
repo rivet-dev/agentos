@@ -13,7 +13,7 @@ use chrono::Utc;
 
 fn noop_action() -> CronAction {
     CronAction::Callback {
-        callback: std::sync::Arc::new(|| Box::pin(async {})),
+        callback: std::sync::Arc::new(|| Box::pin(async { Ok(()) })),
     }
 }
 

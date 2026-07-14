@@ -31,6 +31,13 @@ pub enum CronOverlap {
     Queue,
 }
 
+/// Result returned by a host cron callback and forwarded to the sidecar.
+pub type CronCallbackResult = Result<(), String>;
+
+/// Host callback retained by the client because closures cannot cross the wire.
+pub type CronCallback =
+    Arc<dyn Fn() -> futures::future::BoxFuture<'static, CronCallbackResult> + Send + Sync>;
+
 /// A cron action. `Callback` holds an in-process closure and cannot cross the wire.
 #[derive(Clone)]
 pub enum CronAction {
@@ -43,10 +50,7 @@ pub enum CronAction {
     /// Run a command with structured argv.
     Exec { command: String, args: Vec<String> },
     /// Invoke a host-side callback.
-    Callback {
-        #[allow(clippy::type_complexity)]
-        callback: Arc<dyn Fn() -> futures::future::BoxFuture<'static, ()> + Send + Sync>,
-    },
+    Callback { callback: CronCallback },
 }
 
 impl std::fmt::Debug for CronAction {
@@ -199,7 +203,7 @@ enum WireCronAction {
 }
 
 struct CallbackRoute {
-    callback: Arc<dyn Fn() -> futures::future::BoxFuture<'static, ()> + Send + Sync>,
+    callback: CronCallback,
     scheduled: bool,
     active_runs: usize,
 }
@@ -306,10 +310,7 @@ impl CronManager {
         *self.alarm_handler.lock() = Some(handler);
     }
 
-    fn allocate_callback(
-        &self,
-        callback: Arc<dyn Fn() -> futures::future::BoxFuture<'static, ()> + Send + Sync>,
-    ) -> Result<String, ClientError> {
+    fn allocate_callback(&self, callback: CronCallback) -> Result<String, ClientError> {
         let mut registry = self.callbacks.lock();
         registry.sequence = registry.sequence.checked_add(1).ok_or_else(|| {
             ClientError::Sidecar("cron callback id counter exhausted; recreate the VM".to_string())
@@ -351,15 +352,12 @@ impl CronManager {
         release_callback(&mut registry, callback_id);
     }
 
-    fn callback_for_run(
-        &self,
-        callback_id: &str,
-    ) -> Result<Arc<dyn Fn() -> futures::future::BoxFuture<'static, ()> + Send + Sync>, ClientError>
-    {
+    fn callback_for_run(&self, callback_id: &str) -> Result<CronCallback, String> {
         let mut registry = self.callbacks.lock();
-        let route = registry.routes.get_mut(callback_id).ok_or_else(|| {
-            ClientError::Sidecar(format!("cron callback route not found: {callback_id}"))
-        })?;
+        let route = registry
+            .routes
+            .get_mut(callback_id)
+            .ok_or_else(|| format!("cron callback route not found: {callback_id}"))?;
         route.active_runs += 1;
         Ok(route.callback.clone())
     }
@@ -380,14 +378,11 @@ impl CronManager {
             .get(callback_id)
             .map(|route| route.callback.clone())
             .unwrap_or_else(|| {
-                let callback_id = callback_id.to_string();
-                Arc::new(move || {
-                    let callback_id = callback_id.clone();
-                    Box::pin(async move {
-                        tracing::error!(
-                            callback_id,
-                            "cron callback route is unavailable on this host"
-                        );
+                Arc::new(|| {
+                    Box::pin(async {
+                        Err(String::from(
+                            "cron callback route is unavailable on this host",
+                        ))
                     })
                 })
             });
@@ -560,7 +555,7 @@ impl CronManager {
         run: wire::CronRun,
     ) -> Result<(), ClientError> {
         let action = serde_json::from_str::<WireCronAction>(&run.action)
-            .map_err(|error| ClientError::Sidecar(format!("invalid cron action: {error}")));
+            .map_err(|error| format!("invalid cron action: {error}"));
         let callback_id = match action.as_ref() {
             Ok(WireCronAction::Callback { callback_id }) => Some(callback_id.clone()),
             _ => None,
@@ -586,7 +581,7 @@ impl CronManager {
                 cron_ownership(client),
                 wire::RequestPayload::CompleteCronRunRequest(wire::CompleteCronRunRequest {
                     run_id: run.run_id,
-                    error: action_result.err().map(|error| error.to_string()),
+                    error: action_result.err(),
                 }),
             )
             .await?;
@@ -611,21 +606,17 @@ fn release_callback(registry: &mut CallbackRegistry, callback_id: &str) {
     }
 }
 
-async fn run_host_action(
-    manager: &Arc<CronManager>,
-    action: WireCronAction,
-) -> Result<(), ClientError> {
+async fn run_host_action(manager: &Arc<CronManager>, action: WireCronAction) -> CronCallbackResult {
     match action {
-        WireCronAction::Session { .. } => Err(ClientError::Sidecar(String::from(
+        WireCronAction::Session { .. } => Err(String::from(
             "sidecar returned non-host cron action to client: session",
-        ))),
-        WireCronAction::Exec { .. } => Err(ClientError::Sidecar(String::from(
+        )),
+        WireCronAction::Exec { .. } => Err(String::from(
             "sidecar returned non-host cron action to client: exec",
-        ))),
+        )),
         WireCronAction::Callback { callback_id } => {
             let callback = manager.callback_for_run(&callback_id)?;
-            callback().await;
-            Ok(())
+            callback().await
         }
     }
 }
@@ -1041,5 +1032,41 @@ mod tests {
         // the beginning of `consume_dispatch`, before it can apply a newer alarm or start work.
         let alarm = manager.alarm.lock();
         assert_eq!(alarm.next_alarm_ms, None);
+    }
+
+    #[tokio::test]
+    async fn host_callback_failure_is_forwarded_exactly_and_releases_route() {
+        let manager = Arc::new(CronManager::new());
+        let callback_id = manager
+            .allocate_callback(Arc::new(|| {
+                Box::pin(async { Err(String::from("rust callback failed")) })
+            }))
+            .expect("allocate callback route");
+
+        let result = run_host_action(
+            &manager,
+            WireCronAction::Callback {
+                callback_id: callback_id.clone(),
+            },
+        )
+        .await;
+        assert_eq!(result, Err(String::from("rust callback failed")));
+
+        manager.complete_callback_run(&callback_id);
+        assert!(!manager.callbacks.lock().routes.contains_key(&callback_id));
+    }
+
+    #[tokio::test]
+    async fn unavailable_host_callback_reports_failure_instead_of_success() {
+        let manager = CronManager::new();
+        let CronAction::Callback { callback } = manager.callback_action("missing") else {
+            panic!("expected callback action");
+        };
+        assert_eq!(
+            callback().await,
+            Err(String::from(
+                "cron callback route is unavailable on this host"
+            ))
+        );
     }
 }
