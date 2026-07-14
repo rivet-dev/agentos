@@ -302,7 +302,7 @@ async function configureLocalRunner(
 	throw new Error("Local Rivet runner did not register an envoy");
 }
 
-async function retryRunnerReady<T>(operation: () => Promise<T>): Promise<T> {
+async function retryActorReady<T>(operation: () => Promise<T>): Promise<T> {
 	const startedAt = performance.now();
 	while (true) {
 		try {
@@ -312,14 +312,15 @@ async function retryRunnerReady<T>(operation: () => Promise<T>): Promise<T> {
 			const group = (error as { group?: unknown } | null)?.group;
 			const runnerStarting =
 				code === "no_runner_config_configured" ||
-				(group === "namespace" && code === "not_found");
+				(group === "namespace" && code === "not_found") ||
+				(group === "core" && code === "internal_error");
 			if (
 				!runnerStarting ||
-				performance.now() - startedAt >= 30_000
+				performance.now() - startedAt >= 120_000
 			) {
 				throw error;
 			}
-			await sleep(100);
+			await sleep(code === "internal_error" ? 1_000 : 100);
 		}
 	}
 }
@@ -542,7 +543,7 @@ async function main(): Promise<void> {
 			const activePrompts = new Map<string, ActivePrompt>();
 
 			try {
-				const actorWarmupMs = await retryRunnerReady(() => warmActor(actor));
+				const actorWarmupMs = await retryActorReady(() => warmActor(actor));
 				actorWarmups.push({
 					agent: agent.id,
 					actorWarmupMs,
