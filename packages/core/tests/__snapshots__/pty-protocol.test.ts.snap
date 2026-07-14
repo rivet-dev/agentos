@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`PTY protocol snapshots > C WASM probe snapshots raw, cooked, CPR, resize, and EOF terminal protocol 1`] = `
+exports[`PTY protocol snapshots (set AGENTOS_CORE_PTY_C=1) > C WASM probe snapshots raw, cooked, CPR, resize, and EOF terminal protocol 1`] = `
 "# startup through CPR
 cols=80 rows=18 cursor=11,8
 01|PTY_PROBE start
@@ -23,7 +23,7 @@ cols=80 rows=18 cursor=11,8
 18|"
 `;
 
-exports[`PTY protocol snapshots > C WASM probe snapshots raw, cooked, CPR, resize, and EOF terminal protocol 2`] = `
+exports[`PTY protocol snapshots (set AGENTOS_CORE_PTY_C=1) > C WASM probe snapshots raw, cooked, CPR, resize, and EOF terminal protocol 2`] = `
 "# after raw input bytes
 cols=80 rows=18 cursor=14,11
 01|PTY_PROBE start
@@ -46,7 +46,7 @@ cols=80 rows=18 cursor=14,11
 18|"
 `;
 
-exports[`PTY protocol snapshots > C WASM probe snapshots raw, cooked, CPR, resize, and EOF terminal protocol 3`] = `
+exports[`PTY protocol snapshots (set AGENTOS_CORE_PTY_C=1) > C WASM probe snapshots raw, cooked, CPR, resize, and EOF terminal protocol 3`] = `
 "# after cooked enter
 cols=80 rows=18 cursor=14,14
 01|PTY_PROBE start
@@ -69,7 +69,7 @@ cols=80 rows=18 cursor=14,14
 18|"
 `;
 
-exports[`PTY protocol snapshots > C WASM probe snapshots raw, cooked, CPR, resize, and EOF terminal protocol 4`] = `
+exports[`PTY protocol snapshots (set AGENTOS_CORE_PTY_C=1) > C WASM probe snapshots raw, cooked, CPR, resize, and EOF terminal protocol 4`] = `
 "# after resize trigger
 cols=100 rows=20 cursor=11,17
 01|PTY_PROBE start
@@ -94,7 +94,7 @@ cols=100 rows=20 cursor=11,17
 20|"
 `;
 
-exports[`PTY protocol snapshots > C WASM probe snapshots raw, cooked, CPR, resize, and EOF terminal protocol 5`] = `
+exports[`PTY protocol snapshots (set AGENTOS_CORE_PTY_C=1) > C WASM probe snapshots raw, cooked, CPR, resize, and EOF terminal protocol 5`] = `
 "# after eof
 cols=100 rows=20 cursor=0,19
 01|PTY_PROBE start

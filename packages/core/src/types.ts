@@ -112,7 +112,6 @@ export type {
 	ProcessInfo,
 	RulePermissions,
 	StdioChannel,
-	TimingMitigation,
 	VirtualDirEntry,
 	VirtualFileSystem,
 	VirtualStat,

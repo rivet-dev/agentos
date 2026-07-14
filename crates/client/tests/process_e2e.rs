@@ -243,10 +243,7 @@ async fn process_surface_exec_spawn_and_snapshot() {
                 String::from("setInterval(() => {}, 1000)"),
             ],
             SpawnOptions {
-                base: ExecOptions {
-                    timeout: Some(25.0),
-                    ..ExecOptions::default()
-                },
+                timeout: Some(25.0),
                 ..SpawnOptions::default()
             },
         )

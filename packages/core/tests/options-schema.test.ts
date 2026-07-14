@@ -54,6 +54,18 @@ describe("AgentOsOptions validation", () => {
 		).toBe(false);
 	});
 
+	test.each([
+		"stdinBufferLimitBytes",
+		"eventPayloadLimitBytes",
+		"v8IpcMaxFrameBytes",
+	])("rejects fixed executor bound limits.jsRuntime.%s", (field) => {
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { jsRuntime: { [field]: 1024 } },
+			}).success,
+		).toBe(false);
+	});
+
 	test.each([undefined, null, false, 42, {}, { packagePath: 42 }])(
 		"rejects malformed software entry %# instead of dropping it",
 		(entry) => {

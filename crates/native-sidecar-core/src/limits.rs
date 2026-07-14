@@ -44,9 +44,6 @@ pub const DEFAULT_ACP_STDOUT_BUFFER_BYTE_LIMIT: usize = 1024 * 1024;
 
 pub const DEFAULT_JS_CAPTURED_OUTPUT_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 pub const DEFAULT_MAX_CAPTURED_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
-pub const DEFAULT_JS_STDIN_BUFFER_LIMIT_BYTES: usize = 16 * 1024 * 1024;
-pub const DEFAULT_JS_EVENT_PAYLOAD_LIMIT_BYTES: usize = 1024 * 1024;
-pub const DEFAULT_V8_IPC_MAX_FRAME_BYTES: u32 = 64 * 1024 * 1024;
 pub const DEFAULT_V8_HEAP_LIMIT_MB: u32 = 128;
 pub const DEFAULT_V8_CPU_TIME_LIMIT_MS: u32 = 30_000;
 pub const DEFAULT_V8_WALL_CLOCK_LIMIT_MS: u32 = 0;
@@ -161,11 +158,6 @@ pub struct JsRuntimeLimits {
     /// Timeout for materializing the per-VM Node import cache.
     pub import_cache_materialize_timeout_ms: u64,
     pub captured_output_limit_bytes: usize,
-    pub stdin_buffer_limit_bytes: usize,
-    pub event_payload_limit_bytes: usize,
-    /// V8 IPC codec frame cap. Must feed both codec sides (`crates/execution/src/v8_ipc.rs` and
-    /// `crates/v8-runtime/src/ipc_binary.rs`).
-    pub v8_ipc_max_frame_bytes: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -241,9 +233,6 @@ impl Default for JsRuntimeLimits {
             wall_clock_limit_ms: DEFAULT_V8_WALL_CLOCK_LIMIT_MS,
             import_cache_materialize_timeout_ms: DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS,
             captured_output_limit_bytes: DEFAULT_JS_CAPTURED_OUTPUT_LIMIT_BYTES,
-            stdin_buffer_limit_bytes: DEFAULT_JS_STDIN_BUFFER_LIMIT_BYTES,
-            event_payload_limit_bytes: DEFAULT_JS_EVENT_PAYLOAD_LIMIT_BYTES,
-            v8_ipc_max_frame_bytes: DEFAULT_V8_IPC_MAX_FRAME_BYTES,
         }
     }
 }
@@ -387,20 +376,6 @@ pub fn vm_limits_from_config(
             js_runtime.captured_output_limit_bytes,
             "limits.jsRuntime.capturedOutputLimitBytes",
         )?;
-        set_usize(
-            &mut limits.js_runtime.stdin_buffer_limit_bytes,
-            js_runtime.stdin_buffer_limit_bytes,
-            "limits.jsRuntime.stdinBufferLimitBytes",
-        )?;
-        set_usize(
-            &mut limits.js_runtime.event_payload_limit_bytes,
-            js_runtime.event_payload_limit_bytes,
-            "limits.jsRuntime.eventPayloadLimitBytes",
-        )?;
-        if let Some(value) = js_runtime.v8_ipc_max_frame_bytes {
-            limits.js_runtime.v8_ipc_max_frame_bytes = u32::try_from(value)
-                .map_err(|_| integer_too_large("limits.jsRuntime.v8IpcMaxFrameBytes", value))?;
-        }
         if let Some(value) = js_runtime.sync_rpc_wait_timeout_ms {
             limits.js_runtime.sync_rpc_wait_timeout_ms = Some(value);
         }
@@ -686,7 +661,7 @@ pub fn validate_vm_limits(
         )));
     }
 
-    let nonzero_usize: [(&str, usize); 13] = [
+    let nonzero_usize: [(&str, usize); 11] = [
         (
             "limits.tools.max_registered_toolkits",
             limits.tools.max_registered_toolkits,
@@ -724,14 +699,6 @@ pub fn validate_vm_limits(
             limits.js_runtime.captured_output_limit_bytes,
         ),
         (
-            "limits.js_runtime.stdin_buffer_limit_bytes",
-            limits.js_runtime.stdin_buffer_limit_bytes,
-        ),
-        (
-            "limits.js_runtime.event_payload_limit_bytes",
-            limits.js_runtime.event_payload_limit_bytes,
-        ),
-        (
             "limits.python.output_buffer_max_bytes",
             limits.python.output_buffer_max_bytes,
         ),
@@ -766,11 +733,6 @@ pub fn validate_vm_limits(
     if limits.wasm.max_module_file_bytes == 0 {
         return Err(SidecarCoreError::new(
             "limits.wasm.max_module_file_bytes must be greater than zero".to_string(),
-        ));
-    }
-    if limits.js_runtime.v8_ipc_max_frame_bytes == 0 {
-        return Err(SidecarCoreError::new(
-            "limits.js_runtime.v8_ipc_max_frame_bytes must be greater than zero".to_string(),
         ));
     }
     if limits.python.execution_timeout_ms == 0 {

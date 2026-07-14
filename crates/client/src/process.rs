@@ -34,15 +34,6 @@ const ROUTE_FAILURE_KILL_SIGNAL: &str = "SIGKILL";
 // Supporting types
 // ---------------------------------------------------------------------------
 
-/// Timing-mitigation mode for an execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TimingMitigation {
-    #[default]
-    Off,
-    Freeze,
-}
-
 /// `stdin` value: a string or raw bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StdinInput {
@@ -54,11 +45,8 @@ pub enum StdinInput {
 /// per output chunk as it arrives. Never assume UTF-8: chunks are delivered as raw bytes.
 pub type OutputCallback = Box<dyn FnMut(&[u8]) + Send>;
 
-/// Base options shared by `exec` and `spawn`.
-///
 /// `on_stdout`/`on_stderr` mirror the TS `ExecOptions.onStdout`/`onStderr` raw-byte streaming
-/// callbacks. For `exec` they fire for the duration of the call; for `spawn` they are seeded into the
-/// stdout/stderr fan-out at spawn time (matching the TS initial-handler-set behavior).
+/// callbacks. They fire for the duration of the call.
 pub struct ExecOptions {
     pub env: BTreeMap<String, String>,
     pub cwd: Option<String>,
@@ -67,9 +55,6 @@ pub struct ExecOptions {
     pub on_stdout: Option<OutputCallback>,
     pub on_stderr: Option<OutputCallback>,
     pub capture_stdio: Option<bool>,
-    pub file_path: Option<String>,
-    pub cpu_time_limit_ms: Option<f64>,
-    pub timing_mitigation: Option<TimingMitigation>,
 }
 
 impl Default for ExecOptions {
@@ -82,9 +67,6 @@ impl Default for ExecOptions {
             on_stdout: None,
             on_stderr: None,
             capture_stdio: None,
-            file_path: None,
-            cpu_time_limit_ms: None,
-            timing_mitigation: None,
         }
     }
 }
@@ -97,23 +79,14 @@ pub struct ExecResult {
     pub stderr: String,
 }
 
-/// `stdio` mode for a spawn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SpawnStdio {
-    #[default]
-    Pipe,
-    Inherit,
-}
-
-/// Options for `spawn` (extends [`ExecOptions`]).
+/// Options for a streaming spawned process.
 #[derive(Default)]
 pub struct SpawnOptions {
-    pub base: ExecOptions,
-    pub stdio: Option<SpawnStdio>,
-    pub stdin_fd: Option<i32>,
-    pub stdout_fd: Option<i32>,
-    pub stderr_fd: Option<i32>,
+    pub env: BTreeMap<String, String>,
+    pub cwd: Option<String>,
+    pub timeout: Option<f64>,
+    pub on_stdout: Option<OutputCallback>,
+    pub on_stderr: Option<OutputCallback>,
     pub stream_stdin: Option<bool>,
 }
 
@@ -311,10 +284,10 @@ impl AgentOs {
         // handles are retained on the entry so `shutdown` can abort them (the entry's own sender
         // clones keep the channel open, so the tasks never observe `Closed` on their own).
         let mut output_tasks = Vec::new();
-        if let Some(cb) = options.base.on_stdout.take() {
+        if let Some(cb) = options.on_stdout.take() {
             output_tasks.push(install_output_callback(stdout_tx.clone(), cb));
         }
-        if let Some(cb) = options.base.on_stderr.take() {
+        if let Some(cb) = options.on_stderr.take() {
             output_tasks.push(install_output_callback(stderr_tx.clone(), cb));
         }
 
@@ -324,10 +297,10 @@ impl AgentOs {
                 Some(command.to_owned()),
                 None,
                 args.clone(),
-                options.base.env.clone(),
-                options.base.cwd.clone(),
+                options.env.clone(),
+                options.cwd.clone(),
                 options.stream_stdin,
-                timeout_to_wire(options.base.timeout)?,
+                timeout_to_wire(options.timeout)?,
                 None,
             )
             .await
@@ -1182,7 +1155,7 @@ mod tests {
         apply_exec_event, build_process_execute_request, byte_stream_for_process_route,
         drain_process_output_tasks, handle_route_failure_abort_result, install_output_callback,
         process_exit_result, process_info_from_snapshot_entry, record_process_terminal_and_prune,
-        terminal_pids_to_prune, timeout_to_wire, ExecOptions, OutputCallback,
+        terminal_pids_to_prune, timeout_to_wire, ExecOptions, OutputCallback, SpawnOptions,
         ROUTE_FAILURE_KILL_SIGNAL,
     };
     use crate::agent_os::{ProcessEntry, ProcessExit};
@@ -1299,6 +1272,52 @@ mod tests {
         assert_eq!(build(Some(false)).keep_stdin_open, Some(false));
         assert_eq!(build(Some(true)).keep_stdin_open, Some(true));
         assert_eq!(build(None).keep_stdin_open, None);
+    }
+
+    #[test]
+    fn reduced_process_options_forward_only_implemented_fields() {
+        let exec = ExecOptions {
+            env: std::collections::BTreeMap::from([(String::from("EXEC"), String::from("1"))]),
+            cwd: Some(String::from("/workspace/exec")),
+            timeout: Some(100.0),
+            capture_stdio: Some(false),
+            ..ExecOptions::default()
+        };
+        let spawn = SpawnOptions {
+            env: std::collections::BTreeMap::from([(String::from("SPAWN"), String::from("1"))]),
+            cwd: Some(String::from("/workspace/spawn")),
+            timeout: Some(250.0),
+            stream_stdin: Some(true),
+            ..SpawnOptions::default()
+        };
+
+        let request = build_process_execute_request(
+            Some(String::from("node")),
+            None,
+            Vec::new(),
+            spawn.env,
+            spawn.cwd,
+            spawn.stream_stdin,
+            spawn.timeout.map(|value| value as u64),
+            None,
+        );
+        assert_eq!(
+            request
+                .env
+                .as_ref()
+                .and_then(|env| env.get("SPAWN"))
+                .map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(request.cwd.as_deref(), Some("/workspace/spawn"));
+        assert_eq!(request.keep_stdin_open, Some(true));
+        assert_eq!(request.timeout_ms, Some(250));
+        assert_eq!(request.pty, None);
+        assert_eq!(request.capture_output, None);
+        assert_eq!(exec.env.get("EXEC").map(String::as_str), Some("1"));
+        assert_eq!(exec.cwd.as_deref(), Some("/workspace/exec"));
+        assert_eq!(exec.timeout, Some(100.0));
+        assert_eq!(exec.capture_stdio, Some(false));
     }
 
     #[test]

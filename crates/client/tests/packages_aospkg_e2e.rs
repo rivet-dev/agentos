@@ -37,15 +37,12 @@ async fn spawn_capture(os: &AgentOs, cmd: &str, args: Vec<String>) -> (i32, Stri
             cmd,
             args,
             SpawnOptions {
-                base: ExecOptions {
-                    on_stdout: Some(Box::new(move |chunk: &[u8]| {
-                        cb.lock().unwrap().extend_from_slice(chunk);
-                    })),
-                    on_stderr: Some(Box::new(move |chunk: &[u8]| {
-                        ecb.lock().unwrap().extend_from_slice(chunk);
-                    })),
-                    ..Default::default()
-                },
+                on_stdout: Some(Box::new(move |chunk: &[u8]| {
+                    cb.lock().unwrap().extend_from_slice(chunk);
+                })),
+                on_stderr: Some(Box::new(move |chunk: &[u8]| {
+                    ecb.lock().unwrap().extend_from_slice(chunk);
+                })),
                 ..Default::default()
             },
         )

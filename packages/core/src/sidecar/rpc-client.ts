@@ -160,6 +160,12 @@ export interface LocalCompatMount {
 	sidecarMount?: SidecarMountDescriptor;
 }
 
+interface InternalSpawnOptions extends KernelSpawnOptions {
+	pty?: { cols?: number; rows?: number };
+	shellCommand?: string;
+	captureOutput?: boolean;
+}
+
 interface TrackedProcessEntry {
 	pid: number | null;
 	processId: string | null;
@@ -395,13 +401,14 @@ export class NativeSidecarKernelProxy {
 		options?: KernelExecOptions,
 	): Promise<KernelExecResult> {
 		const captureOutput = options?.captureStdio !== false;
-		const proc = (await this.spawn("sh", [], {
-			...options,
+		const proc = (await this.spawnTracked("sh", [], {
+			env: options?.env,
+			cwd: options?.cwd,
+			timeout: options?.timeout,
+			onStdout: options?.onStdout,
+			onStderr: options?.onStderr,
 			shellCommand: command,
 			captureOutput,
-		} as KernelSpawnOptions & {
-			shellCommand: string;
-			captureOutput: boolean;
 		})) as InternalManagedProcess;
 
 		if (options?.stdin !== undefined) {
@@ -441,12 +448,13 @@ export class NativeSidecarKernelProxy {
 			};
 		};
 
-		const proc = (await this.spawn(command, [...args], {
-			...options,
-			captureOutput,
+		const proc = (await this.spawnTracked(command, [...args], {
+			env: options?.env,
 			cwd: requestedCwd,
-		} as KernelSpawnOptions & {
-			captureOutput: boolean;
+			timeout: options?.timeout,
+			onStdout: options?.onStdout,
+			onStderr: options?.onStderr,
+			captureOutput,
 		})) as InternalManagedProcess;
 		return runAndCapture(proc);
 	}
@@ -456,15 +464,17 @@ export class NativeSidecarKernelProxy {
 		args: string[],
 		options?: KernelSpawnOptions,
 	): Promise<ManagedProcess> {
-		const internalOptions = options as
-			| (KernelSpawnOptions & {
-					shellCommand?: string;
-					captureOutput?: boolean;
-			  })
-			| undefined;
+		return this.spawnTracked(command, args, options);
+	}
+
+	private async spawnTracked(
+		command: string | undefined,
+		args: string[],
+		options?: InternalSpawnOptions,
+	): Promise<ManagedProcess> {
 		const spawnCommand = command;
 		const spawnArgs = [...args];
-		const shellCommand = internalOptions?.shellCommand;
+		const shellCommand = options?.shellCommand;
 		let resolveWait!: (completion: ProcessCompletion) => void;
 		let rejectWait!: (error: Error) => void;
 		const waitPromise = new Promise<ProcessCompletion>((resolve, reject) => {
@@ -483,7 +493,7 @@ export class NativeSidecarKernelProxy {
 			env: options?.env ? { ...options.env } : undefined,
 			keepStdinOpen: options?.streamStdin,
 			timeoutMs: toSidecarTimeoutMs(options?.timeout),
-			captureOutput: internalOptions?.captureOutput,
+			captureOutput: options?.captureOutput,
 			exitCode: null,
 			waitPromise,
 			resolveWait,
@@ -541,7 +551,7 @@ export class NativeSidecarKernelProxy {
 			stderrHandlers.add(options.onStderr);
 		}
 
-		const proc = await this.spawn(options?.command, options?.args ?? [], {
+		const proc = await this.spawnTracked(options?.command, options?.args ?? [], {
 			env: options?.env,
 			cwd: options?.cwd,
 			pty: { cols: options?.cols, rows: options?.rows },

@@ -43,7 +43,6 @@ import {
 	type ResumeSessionOptions,
 	type ResumeSessionResult,
 	type StdioChannel,
-	type TimingMitigation,
 	type UnknownSessionErrorData,
 } from "../src/index.js";
 
@@ -96,7 +95,6 @@ describe("root public API exports", () => {
 		void (null as ResumeSessionOptions | null);
 		void (null as ResumeSessionResult | null);
 		void (null as StdioChannel | null);
-		void (null as TimingMitigation | null);
 		void (null as UnknownSessionErrorData | null);
 
 		expect(true).toBe(true);

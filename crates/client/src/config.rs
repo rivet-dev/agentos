@@ -482,24 +482,6 @@ pub struct JsRuntimeLimits {
         skip_serializing_if = "Option::is_none"
     )]
     pub captured_output_limit_bytes: Option<u64>,
-    #[serde(
-        default,
-        rename = "stdinBufferLimitBytes",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub stdin_buffer_limit_bytes: Option<u64>,
-    #[serde(
-        default,
-        rename = "eventPayloadLimitBytes",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub event_payload_limit_bytes: Option<u64>,
-    #[serde(
-        default,
-        rename = "v8IpcMaxFrameBytes",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub v8_ipc_max_frame_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

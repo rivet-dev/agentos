@@ -701,9 +701,6 @@ limits_struct!(JsRuntimeLimitsConfig {
     wall_clock_limit_ms,
     import_cache_materialize_timeout_ms,
     captured_output_limit_bytes,
-    stdin_buffer_limit_bytes,
-    event_payload_limit_bytes,
-    v8_ipc_max_frame_bytes,
 });
 
 limits_struct!(PythonLimitsConfig {

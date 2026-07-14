@@ -61,19 +61,13 @@ pub async fn spawn(
     args: Vec<String>,
     options: SpawnActionOptions,
 ) -> Result<SpawnHandle> {
-    let mut base = ExecOptions {
-        env: options.env,
-        ..Default::default()
-    };
-    if options.cwd.is_some() {
-        base.cwd = options.cwd;
-    }
     let handle = vm
         .spawn(
             command,
             args,
             SpawnOptions {
-                base,
+                env: options.env,
+                cwd: options.cwd,
                 stream_stdin: options.stream_stdin,
                 ..SpawnOptions::default()
             },

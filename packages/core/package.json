@@ -41,7 +41,7 @@
 		}
 	},
 	"scripts": {
-		"check-types": "pnpm run build:protocols && tsc --noEmit",
+		"check-types": "pnpm run build:protocols && tsc --noEmit && tsc --noEmit -p tsconfig.public-api.json",
 		"build": "pnpm run build:protocols && tsc",
 		"build:agentos-protocol": "node ./scripts/compile-agentos-protocol.mjs",
 		"build:protocols": "pnpm run build:agentos-protocol",

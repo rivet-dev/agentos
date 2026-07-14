@@ -75,16 +75,14 @@
 	{
 		"name": "JAVASCRIPT_EVENT_PAYLOAD_LIMIT_BYTES",
 		"path": "crates/execution/src/javascript.rs",
-		"class": "policy",
-		"rationale": "Per-event payload cap for the JS event channel.",
-		"wired": "VmLimits.js_runtime.event_payload_limit_bytes"
+		"class": "policy-deferred",
+		"rationale": "Fixed executor safety bound for the JS event channel; no runtime path currently supports a per-VM override."
 	},
 	{
 		"name": "KERNEL_STDIN_BUFFER_LIMIT_BYTES",
 		"path": "crates/execution/src/javascript.rs",
-		"class": "policy",
-		"rationale": "Guest stdin buffering cap.",
-		"wired": "VmLimits.js_runtime.stdin_buffer_limit_bytes"
+		"class": "policy-deferred",
+		"rationale": "Fixed executor safety bound for guest stdin buffering; no runtime path currently supports a per-VM override."
 	},
 	{
 		"name": "NODE_SYNC_RPC_RESPONSE_QUEUE_CAPACITY",
@@ -162,9 +160,8 @@
 	{
 		"name": "MAX_FRAME_SIZE",
 		"path": "crates/execution/src/v8_ipc.rs",
-		"class": "policy",
-		"rationale": "V8 IPC frame size; single value feeds BOTH codec sides.",
-		"wired": "VmLimits.js_runtime.v8_ipc_max_frame_bytes"
+		"class": "policy-deferred",
+		"rationale": "Fixed V8 IPC codec safety bound mirrored in the executor; both codec endpoints must change together before it can be tunable."
 	},
 	{
 		"name": "DEFAULT_WASM_RUNNER_HEAP_LIMIT_MB",
@@ -567,20 +564,6 @@
 		"rationale": "Bounds caller-supplied process-id metadata so a maximum captured-output terminal event always fits the negotiated wire-frame limit."
 	},
 	{
-		"name": "DEFAULT_JS_EVENT_PAYLOAD_LIMIT_BYTES",
-		"path": "crates/native-sidecar-core/src/limits.rs",
-		"class": "policy",
-		"rationale": "Per-event payload cap for JS event channel.",
-		"wired": "VmLimits.js_runtime.event_payload_limit_bytes"
-	},
-	{
-		"name": "DEFAULT_JS_STDIN_BUFFER_LIMIT_BYTES",
-		"path": "crates/native-sidecar-core/src/limits.rs",
-		"class": "policy",
-		"rationale": "Guest JS stdin buffering cap.",
-		"wired": "VmLimits.js_runtime.stdin_buffer_limit_bytes"
-	},
-	{
 		"name": "DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS",
 		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
@@ -649,13 +632,6 @@
 		"class": "policy",
 		"rationale": "Default JavaScript wall-clock backstop; zero keeps it disabled.",
 		"wired": "VmLimits.js_runtime.wall_clock_limit_ms"
-	},
-	{
-		"name": "DEFAULT_V8_IPC_MAX_FRAME_BYTES",
-		"path": "crates/native-sidecar-core/src/limits.rs",
-		"class": "policy",
-		"rationale": "V8 IPC codec frame cap.",
-		"wired": "VmLimits.js_runtime.v8_ipc_max_frame_bytes"
 	},
 	{
 		"name": "DEFAULT_WASM_CAPTURED_OUTPUT_LIMIT_BYTES",
@@ -1028,9 +1004,8 @@
 	{
 		"name": "MAX_FRAME_SIZE",
 		"path": "crates/v8-runtime/src/ipc_binary.rs",
-		"class": "policy",
-		"rationale": "Pair of execution/v8_ipc.rs; feeds the same V8 IPC frame field.",
-		"wired": "VmLimits.js_runtime.v8_ipc_max_frame_bytes"
+		"class": "policy-deferred",
+		"rationale": "Fixed V8 IPC codec safety bound mirrored in the host; both codec endpoints must change together before it can be tunable."
 	},
 	{
 		"name": "MAX_UNHANDLED_PROMISE_REJECTIONS",

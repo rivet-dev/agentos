@@ -116,15 +116,12 @@ async fn link_software_makes_command_resolve_live() {
             "linked-cmd",
             Vec::new(),
             SpawnOptions {
-                base: ExecOptions {
-                    on_stdout: Some(Box::new(move |chunk: &[u8]| {
-                        cb.lock().unwrap().extend_from_slice(chunk);
-                    })),
-                    on_stderr: Some(Box::new(move |chunk: &[u8]| {
-                        ecb.lock().unwrap().extend_from_slice(chunk);
-                    })),
-                    ..Default::default()
-                },
+                on_stdout: Some(Box::new(move |chunk: &[u8]| {
+                    cb.lock().unwrap().extend_from_slice(chunk);
+                })),
+                on_stderr: Some(Box::new(move |chunk: &[u8]| {
+                    ecb.lock().unwrap().extend_from_slice(chunk);
+                })),
                 ..Default::default()
             },
         )

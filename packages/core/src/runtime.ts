@@ -1,5 +1,4 @@
 export type StdioChannel = "stdout" | "stderr";
-export type TimingMitigation = "off" | "freeze";
 export type PermissionMode = "allow" | "deny";
 export type PermissionDecision = PermissionMode;
 
@@ -142,17 +141,17 @@ export interface OpenShellOptions {
 	onStderr?: (data: Uint8Array) => void;
 }
 
-export interface ExecOptions {
+interface ProcessLaunchOptions {
 	env?: Record<string, string>;
 	cwd?: string;
-	stdin?: string | Uint8Array;
 	timeout?: number;
 	onStdout?: (data: Uint8Array) => void;
 	onStderr?: (data: Uint8Array) => void;
+}
+
+export interface ExecOptions extends ProcessLaunchOptions {
+	stdin?: string | Uint8Array;
 	captureStdio?: boolean;
-	filePath?: string;
-	cpuTimeLimitMs?: number;
-	timingMitigation?: TimingMitigation;
 }
 
 export interface ExecResult {
@@ -161,13 +160,8 @@ export interface ExecResult {
 	stderr: string;
 }
 
-export interface KernelSpawnOptions extends ExecOptions {
-	stdio?: "pipe" | "inherit";
-	stdinFd?: number;
-	stdoutFd?: number;
-	stderrFd?: number;
+export interface KernelSpawnOptions extends ProcessLaunchOptions {
 	streamStdin?: boolean;
-	pty?: { cols?: number; rows?: number };
 }
 
 export type KernelExecOptions = ExecOptions;

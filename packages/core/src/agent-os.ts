@@ -342,9 +342,6 @@ export interface AgentOsLimits {
 		wallClockLimitMs?: number;
 		importCacheMaterializeTimeoutMs?: number;
 		capturedOutputLimitBytes?: number;
-		stdinBufferLimitBytes?: number;
-		eventPayloadLimitBytes?: number;
-		v8IpcMaxFrameBytes?: number;
 	};
 	/** Guest Python runtime limits. */
 	python?: {

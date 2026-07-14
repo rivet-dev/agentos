@@ -132,9 +132,6 @@ export const agentOsLimitsSchema = z
 				wallClockLimitMs: nonNegativeInteger.optional(),
 				importCacheMaterializeTimeoutMs: positiveInteger.optional(),
 				capturedOutputLimitBytes: positiveInteger.optional(),
-				stdinBufferLimitBytes: positiveInteger.optional(),
-				eventPayloadLimitBytes: positiveInteger.optional(),
-				v8IpcMaxFrameBytes: positiveInteger.optional(),
 			})
 			.strict()
 			.optional(),

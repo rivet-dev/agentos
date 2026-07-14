@@ -58,8 +58,8 @@ pub use config::{
 };
 
 pub use process::{
-    ExecOptions, ExecResult, ProcessInfo, ProcessStatus, SpawnHandle, SpawnOptions, SpawnStdio,
-    SpawnedProcessInfo, StdinInput, TimingMitigation,
+    ExecOptions, ExecResult, ProcessInfo, ProcessStatus, SpawnHandle, SpawnOptions,
+    SpawnedProcessInfo, StdinInput,
 };
 
 pub use fs::{

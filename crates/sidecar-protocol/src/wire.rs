@@ -512,15 +512,6 @@ fn legacy_limits_config(
             metadata,
             "limits.js_runtime.captured_output_limit_bytes",
         ),
-        stdin_buffer_limit_bytes: legacy_u64(
-            metadata,
-            "limits.js_runtime.stdin_buffer_limit_bytes",
-        ),
-        event_payload_limit_bytes: legacy_u64(
-            metadata,
-            "limits.js_runtime.event_payload_limit_bytes",
-        ),
-        v8_ipc_max_frame_bytes: legacy_u64(metadata, "limits.js_runtime.v8_ipc_max_frame_bytes"),
     };
     let python = agentos_vm_config::PythonLimitsConfig {
         output_buffer_max_bytes: legacy_u64(metadata, "limits.python.output_buffer_max_bytes"),
@@ -623,9 +614,6 @@ fn legacy_has_js_runtime_limits(config: &agentos_vm_config::JsRuntimeLimitsConfi
         || config.wall_clock_limit_ms.is_some()
         || config.import_cache_materialize_timeout_ms.is_some()
         || config.captured_output_limit_bytes.is_some()
-        || config.stdin_buffer_limit_bytes.is_some()
-        || config.event_payload_limit_bytes.is_some()
-        || config.v8_ipc_max_frame_bytes.is_some()
 }
 
 fn legacy_has_python_limits(config: &agentos_vm_config::PythonLimitsConfig) -> bool {
