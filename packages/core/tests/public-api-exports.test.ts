@@ -6,6 +6,7 @@ import {
 	KernelError,
 	InvalidScheduleError,
 	PastScheduleError,
+	SidecarRequestRejected,
 	agentOsLimitsSchema,
 	agentOsOptionsSchema,
 	createHostDirBackend,
@@ -67,6 +68,7 @@ describe("root public API exports", () => {
 		});
 		expect(createInMemoryFileSystem).toBeTypeOf("function");
 		expect(KernelError).toBeTypeOf("function");
+		expect(SidecarRequestRejected).toBeTypeOf("function");
 		expect(createInMemoryLayerStore).toBeTypeOf("function");
 		expect(createSnapshotExport).toBeTypeOf("function");
 		// Package dirs are the public software descriptor.

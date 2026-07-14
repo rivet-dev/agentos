@@ -52,6 +52,7 @@ export { SidecarEventBufferOverflow } from "./event-buffer.js";
 export {
 	SidecarProcessError,
 	SidecarProcessExited,
+	SidecarRequestRejected,
 	SidecarSilenceTimeout,
 } from "./sidecar-errors.js";
 // `Sidecar` is the public name for the native sidecar process client. The class

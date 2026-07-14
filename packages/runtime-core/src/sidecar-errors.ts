@@ -1,5 +1,29 @@
+import type { LiveOwnershipScope } from "./ownership.js";
+import type { LiveResponseFrame } from "./protocol-frames.js";
+
 function formatSidecarStderrSuffix(stderr: string): string {
 	return stderr ? `\nstderr:\n${stderr}` : "";
+}
+
+/** A sidecar-owned request failure, preserving its stable code and wire context. */
+export class SidecarRequestRejected extends Error {
+	readonly code: string;
+	readonly requestId: number;
+	readonly ownership: LiveOwnershipScope;
+	readonly response: LiveResponseFrame;
+
+	constructor(options: {
+		code: string;
+		message: string;
+		response: LiveResponseFrame;
+	}) {
+		super(options.message);
+		this.name = "SidecarRequestRejected";
+		this.code = options.code;
+		this.requestId = options.response.request_id;
+		this.ownership = options.response.ownership;
+		this.response = options.response;
+	}
 }
 
 export class SidecarProcessExited extends Error {

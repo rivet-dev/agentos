@@ -27,7 +27,10 @@ import {
 	resolveSidecarRequestFramePayload,
 } from "./protocol-frames.js";
 import type { LiveRequestPayload } from "./request-payloads.js";
-import { SidecarSilenceTimeout } from "./sidecar-errors.js";
+import {
+	SidecarRequestRejected,
+	SidecarSilenceTimeout,
+} from "./sidecar-errors.js";
 
 /**
  * How long the host tolerates TOTAL inbound silence (no responses, events,
@@ -221,9 +224,11 @@ export class SidecarProtocolClient {
 		);
 
 		if (response.payload.type === "rejected") {
-			throw new Error(
-				`sidecar rejected request ${request.request_id}: ${response.payload.code}: ${response.payload.message}`,
-			);
+			throw new SidecarRequestRejected({
+				code: response.payload.code,
+				message: response.payload.message,
+				response,
+			});
 		}
 		return response;
 	}

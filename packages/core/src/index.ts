@@ -40,6 +40,7 @@ export {
 	isUnknownSessionErrorData,
 } from "./json-rpc.js";
 export { createInMemoryFileSystem, KernelError } from "./memory-filesystem.js";
+export { SidecarRequestRejected } from "@rivet-dev/agentos-runtime-core/sidecar-errors";
 export type {
 	ExecOptions,
 	ExecResult,
