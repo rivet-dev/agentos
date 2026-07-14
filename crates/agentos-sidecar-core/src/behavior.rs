@@ -31,18 +31,24 @@ pub enum AcpJsonRpcMessageKind {
     InboundRequest,
     Response,
     Notification,
-    Unknown,
 }
 
-pub fn classify_json_rpc_message(message: &Value) -> AcpJsonRpcMessageKind {
+pub fn classify_json_rpc_message(message: &Value) -> Result<AcpJsonRpcMessageKind, AcpCoreError> {
     match (
         message.get("id").is_some(),
         message.get("method").and_then(Value::as_str).is_some(),
     ) {
-        (true, true) => AcpJsonRpcMessageKind::InboundRequest,
-        (true, false) => AcpJsonRpcMessageKind::Response,
-        (false, true) => AcpJsonRpcMessageKind::Notification,
-        (false, false) => AcpJsonRpcMessageKind::Unknown,
+        (true, true) => Ok(AcpJsonRpcMessageKind::InboundRequest),
+        (true, false) => Ok(AcpJsonRpcMessageKind::Response),
+        (false, true) => Ok(AcpJsonRpcMessageKind::Notification),
+        (false, false) if message.get("result").is_some() || message.get("error").is_some() => {
+            Err(AcpCoreError::InvalidState(String::from(
+                "ACP adapter emitted invalid JSON-RPC response: response is missing id",
+            )))
+        }
+        (false, false) => Err(AcpCoreError::InvalidState(String::from(
+            "ACP adapter emitted invalid JSON-RPC envelope: message has neither a string method nor an id",
+        ))),
     }
 }
 
@@ -925,27 +931,43 @@ mod tests {
     }
 
     #[test]
-    fn json_rpc_classifier_prioritizes_inbound_requests_over_notifications() {
+    fn json_rpc_classifier_rejects_complete_invalid_envelopes() {
         assert_eq!(
             classify_json_rpc_message(&json!({
                 "jsonrpc": "2.0",
                 "id": "host-1",
                 "method": "host/read",
-            })),
+            }))
+            .expect("inbound request"),
             AcpJsonRpcMessageKind::InboundRequest
         );
         assert_eq!(
-            classify_json_rpc_message(&json!({"jsonrpc": "2.0", "id": 1, "result": {}})),
+            classify_json_rpc_message(&json!({"jsonrpc": "2.0", "id": 1, "result": {}}))
+                .expect("response"),
             AcpJsonRpcMessageKind::Response
         );
         assert_eq!(
-            classify_json_rpc_message(&json!({"jsonrpc": "2.0", "method": "session/update"})),
+            classify_json_rpc_message(&json!({"jsonrpc": "2.0", "method": "session/update"}))
+                .expect("notification"),
             AcpJsonRpcMessageKind::Notification
         );
-        assert_eq!(
-            classify_json_rpc_message(&json!({"jsonrpc": "2.0"})),
-            AcpJsonRpcMessageKind::Unknown
-        );
+
+        let missing_id = classify_json_rpc_message(&json!({
+            "jsonrpc": "2.0",
+            "result": {"ok": true},
+        }))
+        .expect_err("response without id must fail closed");
+        assert_eq!(missing_id.code(), "invalid_state");
+        assert!(missing_id.to_string().contains("response is missing id"));
+
+        for invalid in [json!({"jsonrpc": "2.0"}), Value::Null] {
+            let error = classify_json_rpc_message(&invalid)
+                .expect_err("complete non-protocol JSON must fail closed");
+            assert_eq!(error.code(), "invalid_state");
+            assert!(error
+                .to_string()
+                .contains("neither a string method nor an id"));
+        }
     }
 
     #[test]

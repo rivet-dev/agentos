@@ -32,12 +32,84 @@ const GUEST_CWD: &str = "/workspace";
 #[test]
 fn acp_extension_suite() {
     acp_extension_creates_reports_and_closes_session_over_ext();
+    acp_missing_initialize_response_id_fails_closed();
     acp_terminal_requests_stay_inside_sidecar();
     acp_get_session_state_denies_cross_connection_session_id();
     acp_close_session_is_owner_scoped_and_idempotent();
     acp_session_request_denies_cross_connection_prompt_and_cancel();
     closing_wire_session_preserves_same_connection_sibling_acp_state();
     cron_session_actions_execute_inside_the_native_sidecar();
+}
+
+fn acp_missing_initialize_response_id_fails_closed() {
+    assert_node_available();
+    let mut sidecar = new_sidecar("agentos-acp-missing-initialize-id");
+    let connection_id = authenticate(&mut sidecar);
+    let session_id = open_session(&mut sidecar, &connection_id);
+    let fixture_dir = temp_dir("agentos-acp-missing-initialize-id-cwd");
+    fs::write(
+        fixture_dir.join("adapter.mjs"),
+        missing_initialize_response_id_adapter_script(),
+    )
+    .expect("write malformed ACP adapter script");
+    let vm_id = create_vm(&mut sidecar, &connection_id, &session_id, &fixture_dir);
+
+    let response = dispatch_acp(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
+            agent_type: String::from("pi"),
+            runtime: Some(AcpRuntimeKind::JavaScript),
+            cwd: Some(String::from(GUEST_CWD)),
+            args: Some(Vec::new()),
+            env: Some(HashMap::new()),
+            protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
+            client_capabilities: Some(String::from("{}")),
+            mcp_servers: Some(String::from("[]")),
+            skip_os_instructions: Some(true),
+            additional_instructions: None,
+        }),
+    );
+    let AcpResponse::AcpErrorResponse(error) = response else {
+        panic!("missing initialize response id must fail closed: {response:?}");
+    };
+    assert_eq!(error.code, "invalid_state");
+    assert!(error.message.contains("response is missing id"));
+
+    let listed = dispatch_acp(
+        &mut sidecar,
+        5,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        AcpRequest::AcpListSessionsRequest(AcpListSessionsRequest { reserved: false }),
+    );
+    let AcpResponse::AcpListSessionsResponse(listed) = listed else {
+        panic!("unexpected list response after failed bootstrap: {listed:?}");
+    };
+    assert!(listed.sessions.is_empty());
+
+    let closed = sidecar
+        .dispatch_wire_blocking(RequestFrame {
+            schema: agentos_native_sidecar::wire::protocol_schema(),
+            request_id: 6,
+            ownership: OwnershipScope::ConnectionOwnership(ConnectionOwnership {
+                connection_id: connection_id.clone(),
+            }),
+            payload: RequestPayload::CloseSessionRequest(CloseWireSessionRequest { session_id }),
+        })
+        .expect("close owning wire session after failed ACP bootstrap");
+    assert!(
+        matches!(
+            closed.response.payload,
+            ResponsePayload::SessionClosedResponse(_)
+        ),
+        "unexpected failed-bootstrap wire-session close response: {:?}",
+        closed.response.payload
+    );
 }
 
 fn closing_wire_session_preserves_same_connection_sibling_acp_state() {
@@ -1354,6 +1426,24 @@ for await (const line of lines) {
       jsonrpc: "2.0",
       id: message.id,
       error: { code: -32601, message: `unknown method ${message.method}` }
+    }));
+  }
+}
+"#
+}
+
+fn missing_initialize_response_id_adapter_script() -> &'static str {
+    r#"
+import readline from "node:readline";
+
+const lines = readline.createInterface({ input: process.stdin });
+for await (const line of lines) {
+  if (!line.trim()) continue;
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      result: { protocolVersion: message.params.protocolVersion }
     }));
   }
 }

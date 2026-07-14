@@ -1038,24 +1038,56 @@ impl AcpExtension {
                         signal: String::from("SIGKILL"),
                     })
                     .await;
-                let kill = match kill {
-                    Ok(_) => Ok(()),
-                    Err(error) if is_process_already_gone(&error) => Ok(()),
-                    Err(error) => Err(error),
+                let mut errors = Vec::new();
+                let wait_for_exit = match kill {
+                    Ok(_) => true,
+                    Err(error) if is_process_already_gone(&error) => false,
+                    Err(error) => {
+                        errors.push(sidecar_to_core_error(error));
+                        false
+                    }
                 };
+                if wait_for_exit {
+                    let deadline = Instant::now() + ACP_CANCEL_DRAIN_TIMEOUT;
+                    loop {
+                        let remaining = deadline.saturating_duration_since(Instant::now());
+                        if remaining.is_zero() {
+                            errors.push(AcpCoreError::Execution(format!(
+                                "timed out after {} ms waiting for aborted native ACP adapter {process_id} to exit",
+                                ACP_CANCEL_DRAIN_TIMEOUT.as_millis()
+                            )));
+                            break;
+                        }
+                        match self
+                            .poll_native_core_output(
+                                ctx,
+                                &process_id,
+                                remaining.min(ACP_TERMINAL_OUTPUT_POLL_INTERVAL),
+                            )
+                            .await
+                        {
+                            Ok(Some(AgentOutput::Exited(_))) => break,
+                            Ok(_) => {}
+                            Err(error) => {
+                                errors.push(error);
+                                break;
+                            }
+                        }
+                    }
+                }
                 let cleanup = self
                     .cleanup_native_agent_route(ctx, None, &process_id, broker_events)
                     .await;
-                let result = match (kill, cleanup) {
-                    (Ok(()), Ok(())) => Ok(()),
-                    (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(AcpCoreError::Cleanup {
+                if let Err(error) = cleanup {
+                    errors.push(sidecar_to_core_error(error));
+                }
+                let result = if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(AcpCoreError::Cleanup {
                         context: "failed to abort native ACP adapter completely",
-                        errors: vec![sidecar_to_core_error(error)],
-                    }),
-                    (Err(kill), Err(cleanup)) => Err(AcpCoreError::Cleanup {
-                        context: "failed to abort native ACP adapter completely",
-                        errors: vec![sidecar_to_core_error(kill), sidecar_to_core_error(cleanup)],
-                    }),
+                        errors,
+                    })
                 };
                 send_native_core_reply(reply, result, "abort agent");
             }

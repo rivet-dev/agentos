@@ -91,7 +91,7 @@ pub fn send_json_rpc_exchange<H: AcpHost>(
                     }
                 };
                 for message in messages {
-                    match classify_json_rpc_message(&message) {
+                    match classify_json_rpc_message(&message)? {
                         AcpJsonRpcMessageKind::InboundRequest => {
                             let response = host.handle_inbound_request(process_id, &message)?;
                             write_json_line(host, process_id, &response)?;
@@ -126,7 +126,7 @@ pub fn send_json_rpc_exchange<H: AcpHost>(
                             notification_bytes = notification_bytes.saturating_add(message_bytes);
                             notifications.push(message);
                         }
-                        AcpJsonRpcMessageKind::Response | AcpJsonRpcMessageKind::Unknown => {}
+                        AcpJsonRpcMessageKind::Response => {}
                     }
                 }
             }
@@ -306,5 +306,39 @@ mod tests {
         assert_eq!(host.writes.len(), 2);
         assert_eq!(host.writes[1]["id"], "host-1");
         assert_eq!(host.writes[1]["error"]["code"], -32601);
+    }
+
+    #[test]
+    fn complete_response_without_id_fails_without_a_wire_reply() {
+        let mut host = EchoHost {
+            inbound_before_response: Some(json!({
+                "jsonrpc": "2.0",
+                "result": {"ok": true},
+            })),
+            ..EchoHost::default()
+        };
+        let mut stdout = String::new();
+
+        let error = match send_json_rpc_exchange(
+            &mut host,
+            "proc-1",
+            &json!({"jsonrpc": "2.0", "id": 7, "method": "initialize", "params": {}}),
+            7,
+            10_000,
+            &mut stdout,
+            16,
+            usize::MAX,
+        ) {
+            Ok(_) => panic!("missing response id must fail immediately"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.code(), "invalid_state");
+        assert!(error.to_string().contains("response is missing id"));
+        assert_eq!(
+            host.writes.len(),
+            1,
+            "sidecar must not answer an invalid response with an uncorrelated -32600 frame"
+        );
     }
 }

@@ -242,27 +242,30 @@ That is distinct from replying to the response-shaped fixture tracked here.
 
 ### Before behavior evidence
 
-- [ ] First add a characterization assertion on the item's parent to
+- [x] First add a characterization assertion on the item's parent to
   `json_rpc_classifier_prioritizes_inbound_requests_over_notifications` for the
   exact fixture `{"jsonrpc":"2.0","result":{"ok":true}}`. Run
   `cargo test -p agentos-sidecar-core --lib json_rpc_classifier_prioritizes_inbound_requests_over_notifications`.
   It currently returns `Unknown`, proving the shared production classifier does
   not recognize the malformed Response.
-- [ ] Add a temporary resumable characterization beside the existing terminal
+- [x] Add a temporary resumable characterization beside the existing terminal
   parse-error test: begin a resume, feed the exact missing-id fixture, and assert
   `ResumeStep::Pending`, pending resume count `1`, and no recorded kill. This is a
   deterministic proof that the production state machine keeps waiting; it avoids
   sleeping for the 10-second initialize deadline. Run it on the parent, record the
   result in the tracker, then rewrite that same test into the after regression.
-- [ ] Optionally characterize the blocking loop by giving `EchoHost` a switch that
+- Optional blocking-loop timeout characterization was not needed; the lasting
+  no-wire-reply regression instead gives `EchoHost` a missing-id injection and
+  proves immediate failure deterministically. The original optional approach would
+  have given `EchoHost` a switch that
   suppresses its automatic matching reply, injecting only the missing-id object,
   and using the mock clock to assert the current `execution` timeout. This exercises
   the one non-resumable ignore arm without a wall-clock wait.
-- [ ] Before Item 81 deletes the harness (run against Item 80 or Item 81's parent), run
+- [x] Before Item 81 deletes the harness (run against Item 80 or Item 81's parent), run
   `cargo test -p agentos-native-sidecar --test acp_session malformed_acp_frames_with_missing_ids_return_invalid_request_errors`.
   This proves only that the obsolete harness emitted `-32600`; record it as the
   behavior being consciously replaced, not as the target production contract.
-- [ ] Inspect/record the five current `Unknown` arms with
+- [x] Inspect/record the five current `Unknown` arms with
   `rg -n 'AcpJsonRpcMessageKind::.*Unknown|Unknown =>' crates/agentos-sidecar-core/src`.
   There should be one blocking and four resumable ignore sites before the fix.
 
@@ -340,18 +343,27 @@ would be flaky in CI.
 
 ### Validation commands after the fix
 
-- [ ] `cargo test -p agentos-sidecar-core --lib json_rpc_classifier_rejects_complete_invalid_envelopes`
-- [ ] `cargo test -p agentos-sidecar-core --lib complete_response_without_id_fails_without_a_wire_reply`
-- [ ] `cargo test -p agentos-sidecar-core --lib resumable_resume_missing_response_id_clears_state_and_aborts_agent`
-- [ ] `cargo test -p agentos-sidecar --test acp_extension acp_extension_suite -- --nocapture`
-- [ ] `cargo test -p agentos-sidecar-core --lib`
-- [ ] `cargo test -p agentos-sidecar-core --test acp_conformance`
-- [ ] `cargo test -p agentos-sidecar --test acp_wrapper_conformance`
-- [ ] `cargo check --workspace`
-- [ ] `cargo fmt --all --check`
-- [ ] `git diff --check`
-- [ ] `rg -n 'AcpJsonRpcMessageKind::Unknown|Unknown =>' crates/agentos-sidecar-core/src`
+- [x] `cargo test -p agentos-sidecar-core --lib json_rpc_classifier_rejects_complete_invalid_envelopes`
+- [x] `cargo test -p agentos-sidecar-core --lib complete_response_without_id_fails_without_a_wire_reply`
+- [x] `cargo test -p agentos-sidecar-core --lib resumable_resume_missing_response_id_clears_state_and_aborts_agent`
+- [x] `cargo test -p agentos-sidecar --test acp_extension acp_extension_suite -- --nocapture`
+- [x] `cargo test -p agentos-sidecar-core --lib` (80/80)
+- [x] `cargo test -p agentos-sidecar-core --test acp_conformance` (8/8)
+- [x] `cargo test -p agentos-sidecar --test acp_wrapper_conformance` (15/15)
+- [x] `cargo check --workspace`
+- [x] `cargo fmt --all --check`
+- [x] `git diff --check`
+- [x] `rg -n 'AcpJsonRpcMessageKind::Unknown|Unknown =>' crates/agentos-sidecar-core/src`
   returns no hit.
+
+## Implementation result
+
+Revision `vsqvzlkn` makes complete invalid ACP envelopes terminal in the shared
+sidecar core. A response without `id` returns focused `invalid_state`, no
+`-32600` is written back to the adapter, and the same classifier feeds blocking,
+native resumable, and browser resumable paths. The native abort host also confirms
+the killed adapter's exit before releasing its route, so immediate owner teardown
+cannot race a still-active execution. No SDK code changed.
 
 ## Scope and dependencies
 

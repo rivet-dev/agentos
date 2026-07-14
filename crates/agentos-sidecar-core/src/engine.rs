@@ -1667,7 +1667,7 @@ impl AcpCore {
         pending.stdout_buffer = lines.into_retained();
 
         for message in messages {
-            match classify_json_rpc_message(&message) {
+            match classify_json_rpc_message(&message)? {
                 AcpJsonRpcMessageKind::InboundRequest => {
                     answer_inbound_request(host, process_id, &message)?;
                     continue;
@@ -1686,7 +1686,7 @@ impl AcpCore {
                     pending.notifications.push(message);
                     continue;
                 }
-                AcpJsonRpcMessageKind::Response | AcpJsonRpcMessageKind::Unknown => {}
+                AcpJsonRpcMessageKind::Response => {}
             }
             match pending.step {
                 CreateStep::AwaitingInitialize => {
@@ -1813,7 +1813,7 @@ impl AcpCore {
         let mut completed = None;
 
         for mut message in messages {
-            match classify_json_rpc_message(&message) {
+            match classify_json_rpc_message(&message)? {
                 AcpJsonRpcMessageKind::InboundRequest => {
                     answer_inbound_request(host, process_id, &message)?;
                     continue;
@@ -1832,7 +1832,7 @@ impl AcpCore {
                     pending.notifications.push(message);
                     continue;
                 }
-                AcpJsonRpcMessageKind::Response | AcpJsonRpcMessageKind::Unknown => {}
+                AcpJsonRpcMessageKind::Response => {}
             }
 
             match pending.step {
@@ -2182,7 +2182,7 @@ impl AcpCore {
         pending.stdout_buffer = lines.into_retained();
 
         for message in messages {
-            match classify_json_rpc_message(&message) {
+            match classify_json_rpc_message(&message)? {
                 AcpJsonRpcMessageKind::InboundRequest => {
                     answer_inbound_request(host, process_id, &message)?;
                     continue;
@@ -2192,7 +2192,7 @@ impl AcpCore {
                     // the replacement has successfully rebound the session.
                     continue;
                 }
-                AcpJsonRpcMessageKind::Response | AcpJsonRpcMessageKind::Unknown => {}
+                AcpJsonRpcMessageKind::Response => {}
             }
 
             match pending.step {
@@ -2322,7 +2322,7 @@ impl AcpCore {
         let messages = lines.push_json(chunk, DEFAULT_ACP_MAX_READ_LINE_BYTES)?;
         pending.stdout_buffer = lines.into_retained();
         for message in messages {
-            match classify_json_rpc_message(&message) {
+            match classify_json_rpc_message(&message)? {
                 AcpJsonRpcMessageKind::InboundRequest => {
                     answer_inbound_request(host, process_id, &message)?;
                     continue;
@@ -2358,7 +2358,7 @@ impl AcpCore {
                     });
                     continue;
                 }
-                AcpJsonRpcMessageKind::Response | AcpJsonRpcMessageKind::Unknown => {}
+                AcpJsonRpcMessageKind::Response => {}
             }
             if message.get("id").and_then(Value::as_i64) != Some(pending.rpc_id) {
                 continue;
@@ -6137,6 +6137,31 @@ mod tests {
             .feed_agent_output(&mut host, "conn-a", &process_id, b"not-json\n")
             .expect_err("malformed adapter output must fail closed");
         assert!(error.to_string().contains("invalid JSON-RPC"));
+        assert_eq!(core.pending_resume_count(), 0);
+        assert_eq!(core.session_count(), 0);
+        assert_eq!(host.killed, vec![(process_id, String::from("SIGKILL"))]);
+    }
+
+    #[test]
+    fn resumable_resume_missing_response_id_clears_state_and_aborts_agent() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let process_id = core
+            .begin_resume_session(&mut host, "conn-a", &echo_resume_request("durable-1", None))
+            .expect("begin resumable resume");
+
+        let error = core
+            .feed_agent_output(
+                &mut host,
+                "conn-a",
+                &process_id,
+                br#"{"jsonrpc":"2.0","result":{"protocolVersion":1}}
+"#,
+            )
+            .expect_err("missing response id must fail closed");
+
+        assert_eq!(error.code(), "invalid_state");
+        assert!(error.to_string().contains("response is missing id"));
         assert_eq!(core.pending_resume_count(), 0);
         assert_eq!(core.session_count(), 0);
         assert_eq!(host.killed, vec![(process_id, String::from("SIGKILL"))]);
