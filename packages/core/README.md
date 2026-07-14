@@ -19,26 +19,37 @@ Agents run inside isolated VMs with their own filesystem, process table, and net
 ## Quick Start
 
 ```bash
-npm install @rivet-dev/agentos-core
-# Install an agent adapter + its underlying agent
-npm install @agentos-software/pi @mariozechner/pi-coding-agent
+npm install @rivet-dev/agentos-core @agentos-software/pi
 ```
 
 ```typescript
+import pi from "@agentos-software/pi";
 import { AgentOs } from "@rivet-dev/agentos-core";
 
-// 1. Create a VM
-const vm = await AgentOs.create();
+const apiKey = process.env.ANTHROPIC_API_KEY;
+if (!apiKey) {
+	throw new Error("ANTHROPIC_API_KEY is required");
+}
 
-// 2. Create an agent session
-const { sessionId } = await vm.createSession("pi");
+const vm = await AgentOs.create({ software: [pi] });
 
-// 3. Send a prompt
-const response = await vm.prompt(sessionId, "Write a hello world in TypeScript");
+try {
+	const { sessionId } = await vm.createSession("pi", {
+		env: { ANTHROPIC_API_KEY: apiKey },
+	});
 
-// 4. Clean up
-await vm.closeSession(sessionId);
-await vm.dispose();
+	try {
+		const { text } = await vm.prompt(
+			sessionId,
+			"Write a hello world in TypeScript",
+		);
+		console.log(text);
+	} finally {
+		await vm.closeSession(sessionId);
+	}
+} finally {
+	await vm.dispose();
+}
 ```
 
 ## API Reference

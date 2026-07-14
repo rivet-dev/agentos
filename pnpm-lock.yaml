@@ -1321,42 +1321,12 @@ importers:
 
   examples/quickstart/agent-session:
     dependencies:
-      '@agentos-software/claude-code':
-        specifier: workspace:*
-        version: link:../../../registry/agent/claude
-      '@agentos-software/git':
-        specifier: workspace:*
-        version: link:../../../registry/software/git
-      '@agentos-software/opencode':
-        specifier: workspace:*
-        version: link:../../../registry/agent/opencode
       '@agentos-software/pi':
         specifier: workspace:*
         version: link:../../../registry/agent/pi
-      '@rivet-dev/agentos':
-        specifier: workspace:*
-        version: link:../../../packages/agentos
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../../../packages/core
-      '@rivet-dev/agentos-sandbox':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
-      rivetkit:
-        specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
-      zod:
-        specifier: ^4.1.11
-        version: 4.3.6
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
