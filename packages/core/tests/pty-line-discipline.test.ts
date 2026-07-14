@@ -600,20 +600,21 @@ const CASES: Case[] = [
 	},
 	{
 		// SIGWINCH / live window size: after the host resizes the PTY, the probe
-		// re-queries and must see the NEW size. js-node freezes at the launch
-		// size and never sees the resize (broken).
+		// re-queries and must see the NEW size. The native sidecar forwards the
+		// kernel resize as SIGWINCH to embedded V8 so js-node re-queries it.
 		id: "resize-sigwinch",
 		knownBroken: false,
-		ttyDependent: true,
+		ttyDependent: false,
 		cols: 80,
 		rows: 24,
 		async run(ctx) {
 			await ctx.waitForScreen("#SIZE tag=before");
 			await ctx.waitForScreen("#READY tag=resize");
 			await ctx.resizeShell(120, 40);
+			await ctx.waitForScreen("#SIZE tag=after rc=0 cols=120 rows=40");
 			// Sentinel '!' + CR (ICRNL -> NL flushes the cooked line).
 			await ctx.writeShell("!\r");
-			await ctx.waitForScreen("#SIZE tag=after rc=0 cols=120 rows=40");
+			await ctx.waitForScreen("#DONE id=resize-sigwinch");
 			ctx.snapshot("resize");
 			ctx
 				.expect(ctx.screen())

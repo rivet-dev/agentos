@@ -106,7 +106,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: wasm-commands
-          path: packages/runtime-core/commands
+          # Restore the canonical build output so registry packages can stage
+          # from the same path used by a local `just registry-native` build.
+          path: registry/native/target/wasm32-wasip1/release/commands
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
       - run: |
           if grep -qE '^[[:space:]]*-[[:space:]]*website[[:space:]]*$' pnpm-workspace.yaml; then
@@ -114,6 +116,8 @@ jobs:
           else
             npx turbo build
           fi
+      - name: Verify complete coreutils runtime package
+        run: pnpm --filter @agentos-software/coreutils build:runtime
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Build sidecar for actor persistence E2E
         run: cargo build -p agentos-sidecar

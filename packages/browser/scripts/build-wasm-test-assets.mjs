@@ -280,8 +280,9 @@ if (existsSync(piAdapterDist) && existsSync(piAgentCore)) {
 		"--external:node:*",
 		`--outfile=${path.join(browserTestsDir, "pi-adapter.bundle.js")}`,
 	]);
-	// (b) The M4b full-SDK bundle: the browser entry (adapter + SDK submodules statically
-	// inlined via the __piSdkModules override) as ONE self-contained .cjs. The `.cjs`
+	// (b) The M4b full-SDK bundle: the browser entry (adapter + SDK submodules
+	// statically published through the native __PI_SDK_RUNTIME__ contract) as ONE
+	// self-contained .cjs. The `.cjs`
 	// extension tells the executor it is CommonJS so it does NOT apply the ESM import
 	// transform (which trips on the bundle's dynamic import()). The SDK still needs a few
 	// more node-builtin shims before it reaches session/prompt; tracked as M4b/pi-4.

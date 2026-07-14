@@ -626,6 +626,10 @@ pub(crate) struct ActiveProcess {
     /// terminal reading the PTY master (a shell never relays its child's tty
     /// output).
     pub(crate) tty_master_owner: Option<(u32, u32)>,
+    /// Generation of the foreground PTY raw-mode lease owned by this process.
+    /// Cleanup releases only this generation, so an unrelated/background child
+    /// or a newer terminal mutation cannot restore a stale termios snapshot.
+    pub(crate) tty_raw_mode_generation: Option<u64>,
     /// A parked `__kernel_stdin_read` / `__kernel_poll` sync RPC awaiting
     /// kernel readiness (reply-by-token deferral so servicing never blocks the
     /// dispatch loop). At most one per process: the guest thread is blocked in

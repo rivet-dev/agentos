@@ -6,7 +6,7 @@ const DEFAULT_RUNTIME_TTY_CONFIG = {
   rows: 24
 };
 
-var _cachedRuntimeTtyConfig;
+var _cachedRuntimeTtyConfig = null;
 
 function _kernelIsatty(fd) {
   if (typeof _kernelIsattyRaw === "undefined") {
@@ -27,33 +27,38 @@ function _kernelTtySize(fd) {
 }
 
 function _resolveRuntimeTtyConfig() {
-  if (_cachedRuntimeTtyConfig) {
-    return _cachedRuntimeTtyConfig;
-  }
   if (typeof __runtimeTtyConfig !== "undefined") {
     _cachedRuntimeTtyConfig = __runtimeTtyConfig;
     return _cachedRuntimeTtyConfig;
   }
-  try {
-    _cachedRuntimeTtyConfig = {
-      stdinIsTTY: _kernelIsatty(0),
-      stdoutIsTTY: _kernelIsatty(1),
-      stderrIsTTY: _kernelIsatty(2),
-      cols: 80,
-      rows: 24
-    };
-  } catch {
-    _cachedRuntimeTtyConfig = DEFAULT_RUNTIME_TTY_CONFIG;
-    return _cachedRuntimeTtyConfig;
-  }
-  for (const fd of [1, 0]) {
+  if (!_cachedRuntimeTtyConfig) {
     try {
-      const size = _kernelTtySize(fd);
-      _cachedRuntimeTtyConfig.cols = size.cols;
-      _cachedRuntimeTtyConfig.rows = size.rows;
-      break;
+      _cachedRuntimeTtyConfig = {
+        stdinIsTTY: _kernelIsatty(0),
+        stdoutIsTTY: _kernelIsatty(1),
+        stderrIsTTY: _kernelIsatty(2),
+        cols: 80,
+        rows: 24
+      };
     } catch {
+      // Snapshot/bootstrap evaluation can touch process stdio before the kernel
+      // sync bridge is attached. Return the safe default for that early read, but
+      // do not cache it: the execution must retry once the bridge is available.
+      return DEFAULT_RUNTIME_TTY_CONFIG;
     }
+  }
+
+  // TTY identity is stable for an execution, but its window size is not. Query
+  // the live kernel dimensions so SIGWINCH observers see the resized PTY.
+  const sizeFd = _cachedRuntimeTtyConfig.stdoutIsTTY
+    ? 1
+    : _cachedRuntimeTtyConfig.stdinIsTTY
+      ? 0
+      : undefined;
+  if (sizeFd !== undefined) {
+    const size = _kernelTtySize(sizeFd);
+    _cachedRuntimeTtyConfig.cols = size.cols;
+    _cachedRuntimeTtyConfig.rows = size.rows;
   }
   return _cachedRuntimeTtyConfig;
 }

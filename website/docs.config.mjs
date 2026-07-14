@@ -33,7 +33,6 @@ import {
 	faTowerBroadcast,
 	faArrowsLeftRight,
 	faDiagramNext,
-	faBug,
 	faWindowMaximize,
 } from "@rivet-gg/icons";
 
@@ -179,7 +178,7 @@ export const siteConfig = {
 							collapsible: true,
 							pages: [
 								{ title: "Core SDK", href: "/docs/core" },
-								{ title: "Debugging", href: "/docs/debugging", icon: faBug },
+								{ title: "Debugging", href: "/docs/debugging" },
 								{ title: "Benchmarks", href: "/docs/benchmarks" },
 								{ title: "Cost Evaluation", href: "/docs/cost-evaluation" },
 							],

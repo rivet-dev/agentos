@@ -1,9 +1,9 @@
 //! Shell actions — the actor-side port of the `AgentOs` PTY shell surface
 //! (`openShell` / `writeShell` / `resizeShell` / `closeShell` / `waitShell`).
 //!
-//! `open_shell` subscribes the shell's stdout/stderr streams and pumps each
-//! chunk to connected clients as `shellData` / `shellStderr` broadcasts (the
-//! event-driven mirror of the TS `onShellData` subscription); a third task
+//! `open_shell` subscribes the shell's ordered terminal-data stream and optional
+//! diagnostic stderr tap. It pumps terminal bytes to clients as `shellData` and
+//! preserves channel-specific diagnostics as `shellStderr`; a third task
 //! broadcasts `shellExit` when the shell process exits. Pump task handles are
 //! tracked in [`super::Vars::shell_tasks`] so VM teardown aborts them.
 
@@ -108,13 +108,13 @@ pub async fn open_shell(
         .await?;
     let shell_id = handle.shell_id;
 
-    let mut data_stream = vm.on_shell_data(&shell_id)?;
+    let mut terminal_stream = vm.on_shell_data(&shell_id)?;
     let mut stderr_stream = vm.on_shell_stderr(&shell_id)?;
 
     let data_host = host.clone();
     let data_shell_id = shell_id.clone();
     vars.shell_tasks.push(tokio::spawn(async move {
-        while let Some(result) = data_stream.next().await {
+        while let Some(result) = terminal_stream.next().await {
             let chunk = match result {
                 Ok(chunk) => chunk,
                 Err(error) => {

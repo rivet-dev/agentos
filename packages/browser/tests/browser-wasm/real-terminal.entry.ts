@@ -32,7 +32,7 @@ const SHELL_COMMANDS = [
 	"readlink", "realpath", "basename", "dirname", "du", "df", "date", "seq",
 	"sleep", "true", "false", "yes", "test", "expr", "tee", "xargs", "which",
 	"whoami", "id", "uname", "hostname", "tree", "diff", "od", "base64", "md5sum",
-	"sha256sum", "cksum", "rg", "fd", "jq", "yq", "git", "tar", "gzip", "gunzip",
+	"sha256sum", "cksum", "rg", "fd", "jq", "yq", "tar", "gzip", "gunzip",
 ];
 
 // proc_spawn resolves a command by basename (/usr/bin/ls -> the "ls" module), but

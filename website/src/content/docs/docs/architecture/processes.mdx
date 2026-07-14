@@ -4,6 +4,8 @@ description: "Internals of the kernel process model: the virtual process table, 
 skill: true
 ---
 
+<Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
+
 This page is an internals deep-dive on the kernel's **process model**: the data
 structures and syscall paths behind every guest process. For the client-facing
 API (`exec`, `spawn`, `openShell`, lifecycle, and the flat `allProcesses`

@@ -11,10 +11,8 @@
 //
 // GUEST-NODE TTY STATUS (the runtime now routes guest-node stdin through the
 // kernel PTY and populates the TTY config from the kernel, so most cells match
-// the wasm-c probe). Remaining honest gaps (asserted-as-broken by the host, NOT
+// the wasm-c probe). Remaining honest gap (asserted-as-broken by the host, NOT
 // faked here):
-//   - live PTY resize is not delivered as SIGWINCH, so a re-query after resize
-//     still reports the launch size.
 //   - a raw lone-LF stdout write does not flow through OPOST/ONLCR (guest-node
 //     stdout payload-write quirk), so `a\nb` is not rewritten to `a\r\nb`.
 
@@ -286,8 +284,7 @@ async function caseEof() {
 
 async function caseResizeSigwinch() {
 	out(`#SIZE tag=before rc=0 cols=${process.stdout.columns} rows=${process.stdout.rows}\r\n`);
-	// A real TTY delivers SIGWINCH on resize; guest-node never receives it, so
-	// the #SIG / #SIZE tag=after lines simply never print (honest broken).
+	// The native sidecar mirrors foreground-group SIGWINCH into embedded V8.
 	process.on("SIGWINCH", () => {
 		out("#SIG name=SIGWINCH\r\n");
 		out(`#SIZE tag=after rc=0 cols=${process.stdout.columns} rows=${process.stdout.rows}\r\n`);

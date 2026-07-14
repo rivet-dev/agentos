@@ -2,6 +2,8 @@
 
 Internals of agent sessions: how a session is created and bound to a VM, how prompts and events flow from client to sidecar to agent adapter and back, the session lifecycle, and where session state lives.
 
+<Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
+
 This page is an internals deep-dive on how agent sessions work under the hood. For the usage API (creating sessions, sending prompts, streaming responses, replaying events), see [Sessions](/docs/sessions).
 
 A session is a long-lived conversation with an agent (such as [Pi](https://github.com/mariozechner/pi-coding-agent)) running inside a VM. Where a bare `exec()` / `run()` starts a fresh guest process and returns when it exits, a session keeps an agent process alive across many prompts, streams its output back as events, and persists a transcript that survives sleep/wake cycles. Everything below describes the machinery that makes that possible while keeping the agent inside the same isolation boundary as any other guest.

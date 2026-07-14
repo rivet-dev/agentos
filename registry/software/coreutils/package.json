@@ -19,7 +19,9 @@
 	},
 	"scripts": {
 		"build": "agentos-toolchain stage --commands-dir ../../native/target/wasm32-wasip1/release/commands --if-missing skip && tsc && agentos-toolchain build",
-		"check-types": "tsc --noEmit"
+		"build:runtime": "agentos-toolchain stage --commands-dir ../../native/target/wasm32-wasip1/release/commands && tsc && agentos-toolchain build",
+		"check-types": "tsc --noEmit",
+		"prepublishOnly": "pnpm run build:runtime"
 	},
 	"devDependencies": {
 		"@agentos-software/manifest": "workspace:*",

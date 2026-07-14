@@ -3,6 +3,8 @@ title: "Sessions & Persistence"
 description: "How agentOS, ACP, RivetKit actors, and durable session persistence fit together."
 ---
 
+<Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
+
 agentOS runs coding agents inside VMs and talks to them through the Agent
 Communication Protocol (ACP). RivetKit wraps those VMs in durable actors, so a
 session can survive actor sleep/wake even though the live VM and agent process

@@ -169,6 +169,17 @@ libs/zlib/zutil.c:
 	@cd $(LIBS_CACHE) && unzip -qo zlib.zip
 	@cp $(LIBS_CACHE)/zlib-*/*.c $(LIBS_CACHE)/zlib-*/*.h $(LIBS_DIR)/zlib/
 
+# The fetch recipe above materializes the complete archive. Declare the other
+# files as outputs that depend on its representative target so a clean `make
+# programs` can construct its dependency graph before the archive exists.
+ZLIB_FETCHED_SRCS := \
+	libs/zlib/adler32.c libs/zlib/compress.c libs/zlib/crc32.c \
+	libs/zlib/deflate.c libs/zlib/infback.c libs/zlib/inffast.c \
+	libs/zlib/inflate.c libs/zlib/inftrees.c libs/zlib/trees.c \
+	libs/zlib/uncompr.c
+$(ZLIB_FETCHED_SRCS): libs/zlib/zutil.c
+	@test -f "$@" || { echo "Error: zlib fetch did not produce $@"; exit 1; }
+
 libs/minizip/ioapi.c:
 	@echo "Fetching minizip (from zlib contrib)..."
 	@mkdir -p $(LIBS_CACHE) $(LIBS_DIR)/minizip
@@ -181,6 +192,10 @@ libs/minizip/ioapi.c:
 	    $(LIBS_CACHE)/zlib-*/contrib/minizip/unzip.c $(LIBS_CACHE)/zlib-*/contrib/minizip/unzip.h \
 	    $(LIBS_CACHE)/zlib-*/contrib/minizip/crypt.h \
 	    $(LIBS_DIR)/minizip/
+
+MINIZIP_FETCHED_SRCS := libs/minizip/zip.c libs/minizip/unzip.c
+$(MINIZIP_FETCHED_SRCS): libs/minizip/ioapi.c
+	@test -f "$@" || { echo "Error: minizip fetch did not produce $@"; exit 1; }
 
 libs/cjson/cJSON.c:
 	@echo "Fetching cJSON..."
@@ -689,7 +704,7 @@ $(BUILD_DIR)/vim: fetch-vim $(VIM_BRIDGE_BUILD)/libtermcap.a $(VIM_WCC) wasm-opt
 	vim_cv_tty_mode=0620 \
 	./configure --host=wasm32-wasip1 --build=$$(cc -dumpmachine 2>/dev/null || echo x86_64-pc-linux-gnu) \
 		--with-features=normal --with-tlib=termcap \
-		--disable-gui --without-x --disable-nls --disable-channel \
+		--disable-gui --without-x --without-wayland --disable-nls --disable-channel \
 		--disable-netbeans --disable-selinux --disable-gpm --disable-sysmouse \
 		--disable-icon-cache-update --disable-desktop-database-update
 	$(MAKE) -C $(VIM_SRC)/src vim

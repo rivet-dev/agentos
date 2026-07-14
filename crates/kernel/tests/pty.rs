@@ -18,6 +18,93 @@ fn wait_for(predicate: impl Fn() -> bool, timeout: Duration) {
 }
 
 #[test]
+fn raw_mode_leases_unwind_nested_owners_after_out_of_order_exit() {
+    let manager = PtyManager::new();
+    let pty = manager.create_pty();
+    let description_id = pty.slave.description.id();
+
+    let first = manager
+        .set_raw_mode(description_id, Some(101), true)
+        .expect("first foreground owner enters raw mode")
+        .expect("first foreground owner receives a lease");
+    let second = manager
+        .set_raw_mode(description_id, Some(102), true)
+        .expect("nested foreground owner enters raw mode")
+        .expect("nested foreground owner receives a lease");
+
+    assert!(manager
+        .release_raw_mode(description_id, 101, first)
+        .expect("older owner exits first"));
+    let still_raw = manager
+        .get_termios(description_id)
+        .expect("read nested raw state");
+    assert!(!still_raw.icanon);
+    assert!(!still_raw.echo);
+
+    assert!(manager
+        .release_raw_mode(description_id, 102, second)
+        .expect("newer owner exits last"));
+    let restored = manager
+        .get_termios(description_id)
+        .expect("read restored state");
+    assert!(restored.icanon);
+    assert!(restored.echo);
+    assert!(restored.icrnl);
+    assert!(restored.opost);
+}
+
+#[test]
+fn stale_raw_mode_lease_does_not_overwrite_newer_termios_change() {
+    let manager = PtyManager::new();
+    let pty = manager.create_pty();
+    let description_id = pty.slave.description.id();
+    let generation = manager
+        .set_raw_mode(description_id, Some(201), true)
+        .expect("foreground owner enters raw mode")
+        .expect("foreground owner receives a lease");
+
+    manager
+        .set_discipline(
+            description_id,
+            LineDisciplineConfig {
+                echo: Some(true),
+                ..Default::default()
+            },
+        )
+        .expect("newer process changes terminal state");
+    assert!(manager
+        .release_raw_mode(description_id, 201, generation)
+        .expect("release stale owner"));
+
+    let current = manager
+        .get_termios(description_id)
+        .expect("read current termios");
+    assert!(current.echo, "newer echo change must survive stale cleanup");
+    assert!(
+        !current.icanon,
+        "stale cleanup must not restore the older canonical snapshot"
+    );
+}
+
+#[test]
+fn background_raw_mode_change_does_not_create_recovery_lease() {
+    let manager = PtyManager::new();
+    let pty = manager.create_pty();
+    let description_id = pty.slave.description.id();
+
+    let generation = manager
+        .set_raw_mode(description_id, None, true)
+        .expect("background raw-mode request");
+    assert_eq!(generation, None);
+    assert!(
+        !manager
+            .get_termios(description_id)
+            .expect("read background mutation")
+            .icanon
+    );
+}
+
+#[test]
 fn raw_mode_delivers_bytes_and_applies_icrnl_translation() {
     let manager = PtyManager::new();
     let pty = manager.create_pty();

@@ -2,6 +2,8 @@
 
 How agentOS compiles its command suite to WebAssembly: Rust coreutils via cargo and C programs via wasi-sdk, linked against a patched wasi-libc plus the wasi-ext bindings, and how the resulting .wasm files become the guest's commands.
 
+<Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
+
 The commands a guest runs through [process execution](/docs/processes), the shell
 (`sh`) and the coreutils behind it, are not native host binaries. They are
 WebAssembly modules compiled ahead of time and mounted into the VM. This page

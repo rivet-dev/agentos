@@ -79,9 +79,9 @@ pub(crate) struct ProcessEntry {
 
 /// A PTY-backed shell host route, keyed by the sidecar-owned process id.
 ///
-/// `data_tx` carries stdout only, matching TS where the kernel handle's `onData` is fed exclusively
-/// by `stdoutHandlers`. `stderr_tx` is the dedicated stderr channel that backs the `on_stderr` option
-/// and `on_shell_stderr`, matching TS where stderr reaches the host only through `stderrHandlers`.
+/// `data_tx` carries stdout and stderr in their original wire order for terminal renderers.
+/// `stderr_tx` is an optional channel-specific diagnostic tap backing the `on_stderr` option and
+/// `on_shell_stderr`; terminal consumers must not render both streams or stderr would be duplicated.
 pub(crate) struct ShellEntry {
     pub data_tx: broadcast::Sender<RoutedStreamEvent<Vec<u8>>>,
     pub stderr_tx: broadcast::Sender<RoutedStreamEvent<Vec<u8>>>,

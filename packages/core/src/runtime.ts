@@ -125,6 +125,7 @@ export interface ShellHandle {
 	/** Sidecar-owned process correlation id. */
 	processId: string;
 	write(data: Uint8Array | string): Promise<void>;
+	/** Ordered PTY output containing stdout and stderr exactly once. */
 	onData: ((data: Uint8Array) => void) | null;
 	resize(cols: number, rows: number): void | Promise<void>;
 	kill(signal?: number): void | Promise<void>;
@@ -138,6 +139,7 @@ export interface OpenShellOptions {
 	cwd?: string;
 	cols?: number;
 	rows?: number;
+	/** Optional stderr-only diagnostic tap; do not render it alongside `onData`. */
 	onStderr?: (data: Uint8Array) => void;
 }
 

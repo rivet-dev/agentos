@@ -37,7 +37,8 @@ From the repo root:
 ```bash
 just registry-native            # compile the fast native wasm command gate
 just registry-native-cmd <name> # build one command (required for git, duckdb, vim, wget, codex)
-just registry-build <pkg>       # stage bin/ + assemble dist/package/
+pnpm --filter @agentos-software/<pkg> build # stage bin/ + assemble one package
+just registry-build             # stage + assemble every software package
 just registry-status            # per-package state
 just registry-test              # registry integration tests
 ```
@@ -56,7 +57,8 @@ for toolchain details (Rust vs C builds, the patched WASI sysroot).
    that block the package is not listed on the website registry page.
 4. Register the directory in `pnpm-workspace.yaml` (it is covered by the
    `registry/software/*` glob) and run `pnpm install`.
-5. `just registry-build <pkg>` and check `just registry-status`.
+5. Run `pnpm --filter @agentos-software/<pkg> build` and check
+   `just registry-status`.
 
 See [Software Definition](https://agentos-sdk.dev/docs/custom-software/definition)
 for every manifest field.
@@ -94,4 +96,4 @@ default) — see [Publishing Packages](https://agentos-sdk.dev/docs/custom-softw
   independently); never touch other packages' versions or the `latest`
   dist-tag.
 - Cheap gates before pushing: `cargo check --workspace`, `pnpm build`,
-  `pnpm check-types`, and `just registry-build <pkg>`.
+  `pnpm check-types`, and `pnpm --filter @agentos-software/<pkg> build`.

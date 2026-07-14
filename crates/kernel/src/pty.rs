@@ -64,6 +64,7 @@ impl Error for PtyError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LineDisciplineConfig {
+    pub icrnl: Option<bool>,
     pub canonical: Option<bool>,
     pub echo: Option<bool>,
     pub isig: Option<bool>,
@@ -235,6 +236,14 @@ struct PendingRead {
     result: Option<Option<Vec<u8>>>,
 }
 
+#[derive(Debug, Clone)]
+struct RawModeLease {
+    owner_pid: u32,
+    generation: u64,
+    applied_termios_generation: u64,
+    restore_termios: Termios,
+}
+
 #[derive(Debug, Clone, Default)]
 struct PtyState {
     path: String,
@@ -246,6 +255,9 @@ struct PtyState {
     waiting_input_reads: VecDeque<u64>,
     waiting_output_reads: VecDeque<u64>,
     termios: Termios,
+    termios_generation: u64,
+    next_raw_mode_generation: u64,
+    raw_mode_leases: Vec<RawModeLease>,
     line_buffer: Vec<u8>,
     foreground_pgid: u32,
     window_size: PtyWindowSize,
@@ -754,8 +766,15 @@ impl PtyManager {
             .ptys
             .get_mut(&pty_ref.pty_id)
             .ok_or_else(|| PtyError::bad_file_descriptor("PTY not found"))?;
+        pty.termios_generation = pty
+            .termios_generation
+            .checked_add(1)
+            .ok_or_else(|| PtyError::io("PTY terminal-attribute generation counter exhausted"))?;
         if let Some(canonical) = config.canonical {
             pty.termios.icanon = canonical;
+        }
+        if let Some(icrnl) = config.icrnl {
+            pty.termios.icrnl = icrnl;
         }
         if let Some(echo) = config.echo {
             pty.termios.echo = echo;
@@ -770,6 +789,108 @@ impl PtyManager {
             pty.termios.onlcr = onlcr;
         }
         Ok(())
+    }
+
+    /// Apply or release raw mode for a process. A foreground owner receives a
+    /// generation-scoped lease so teardown can recover the exact attributes it
+    /// inherited without letting an unrelated child restore a stale snapshot.
+    ///
+    /// `lease_owner_pid = None` applies the requested mode but deliberately
+    /// does not register teardown recovery (used for a background process).
+    pub fn set_raw_mode(
+        &self,
+        description_id: u64,
+        lease_owner_pid: Option<u32>,
+        enabled: bool,
+    ) -> PtyResult<Option<u64>> {
+        let mut state = lock_or_recover(&self.inner.state);
+        let pty_ref = state
+            .desc_to_pty
+            .get(&description_id)
+            .copied()
+            .ok_or_else(|| PtyError::bad_file_descriptor("not a PTY end"))?;
+        let pty = state
+            .ptys
+            .get_mut(&pty_ref.pty_id)
+            .ok_or_else(|| PtyError::bad_file_descriptor("PTY not found"))?;
+
+        if !enabled {
+            if let Some(owner_pid) = lease_owner_pid {
+                if release_raw_mode_lease(pty, owner_pid, None)? {
+                    return Ok(None);
+                }
+            }
+            advance_termios_generation(pty)?;
+            apply_raw_mode(&mut pty.termios, false);
+            return Ok(None);
+        }
+
+        let Some(owner_pid) = lease_owner_pid else {
+            advance_termios_generation(pty)?;
+            apply_raw_mode(&mut pty.termios, true);
+            return Ok(None);
+        };
+
+        // Repeated setRawMode(true) by one process keeps its original restore
+        // point. If another owner acquired raw mode in between, remove this
+        // owner's older frame first and re-acquire at the top of the stack.
+        if let Some(index) = pty
+            .raw_mode_leases
+            .iter()
+            .position(|lease| lease.owner_pid == owner_pid)
+        {
+            if index + 1 == pty.raw_mode_leases.len() {
+                advance_termios_generation(pty)?;
+                apply_raw_mode(&mut pty.termios, true);
+                let lease = pty
+                    .raw_mode_leases
+                    .last_mut()
+                    .expect("raw-mode lease index was just validated");
+                lease.applied_termios_generation = pty.termios_generation;
+                return Ok(Some(lease.generation));
+            }
+            let generation = pty.raw_mode_leases[index].generation;
+            release_raw_mode_lease(pty, owner_pid, Some(generation))?;
+        }
+
+        let generation = pty
+            .next_raw_mode_generation
+            .checked_add(1)
+            .ok_or_else(|| PtyError::io("PTY raw-mode generation counter exhausted"))?;
+        pty.next_raw_mode_generation = generation;
+        let restore_termios = pty.termios.clone();
+        advance_termios_generation(pty)?;
+        apply_raw_mode(&mut pty.termios, true);
+        pty.raw_mode_leases.push(RawModeLease {
+            owner_pid,
+            generation,
+            applied_termios_generation: pty.termios_generation,
+            restore_termios,
+        });
+        Ok(Some(generation))
+    }
+
+    /// Release a particular foreground raw-mode lease during process cleanup.
+    /// Returns whether the lease still existed. A stale/non-top release never
+    /// changes live terminal attributes; its restore point is transferred to
+    /// the next owner so out-of-order child exits still unwind correctly.
+    pub fn release_raw_mode(
+        &self,
+        description_id: u64,
+        owner_pid: u32,
+        generation: u64,
+    ) -> PtyResult<bool> {
+        let mut state = lock_or_recover(&self.inner.state);
+        let pty_ref = state
+            .desc_to_pty
+            .get(&description_id)
+            .copied()
+            .ok_or_else(|| PtyError::bad_file_descriptor("not a PTY end"))?;
+        let pty = state
+            .ptys
+            .get_mut(&pty_ref.pty_id)
+            .ok_or_else(|| PtyError::bad_file_descriptor("PTY not found"))?;
+        release_raw_mode_lease(pty, owner_pid, Some(generation))
     }
 
     pub fn get_termios(&self, description_id: u64) -> PtyResult<Termios> {
@@ -798,6 +919,7 @@ impl PtyManager {
             .ptys
             .get_mut(&pty_ref.pty_id)
             .ok_or_else(|| PtyError::bad_file_descriptor("PTY not found"))?;
+        advance_termios_generation(pty)?;
         pty.termios.merge(termios);
         Ok(())
     }
@@ -1171,6 +1293,62 @@ fn deliver_output(
 
     pty.output_buffer.push_back(data.to_vec());
     Ok(())
+}
+
+fn advance_termios_generation(pty: &mut PtyState) -> PtyResult<()> {
+    pty.termios_generation = pty
+        .termios_generation
+        .checked_add(1)
+        .ok_or_else(|| PtyError::io("PTY terminal-attribute generation counter exhausted"))?;
+    Ok(())
+}
+
+fn apply_raw_mode(termios: &mut Termios, enabled: bool) {
+    termios.icrnl = !enabled;
+    termios.icanon = !enabled;
+    termios.echo = !enabled;
+    termios.isig = !enabled;
+    termios.opost = !enabled;
+    termios.onlcr = !enabled;
+}
+
+fn release_raw_mode_lease(
+    pty: &mut PtyState,
+    owner_pid: u32,
+    expected_generation: Option<u64>,
+) -> PtyResult<bool> {
+    let Some(index) = pty.raw_mode_leases.iter().position(|lease| {
+        lease.owner_pid == owner_pid
+            && expected_generation.is_none_or(|generation| lease.generation == generation)
+    }) else {
+        return Ok(false);
+    };
+
+    let was_top = index + 1 == pty.raw_mode_leases.len();
+    let lease = pty.raw_mode_leases.remove(index);
+    if !was_top {
+        // The newer owner inherited this owner's effective state. If the older
+        // owner exits first, splice its restore point into that newer frame so
+        // the eventual top-level release still reaches the pre-stack state.
+        pty.raw_mode_leases[index].restore_termios = lease.restore_termios;
+        return Ok(true);
+    }
+
+    // A direct tcsetattr/set-discipline after this lease was applied supersedes
+    // it. Do not clobber that newer terminal state during delayed process reap.
+    if pty.termios_generation != lease.applied_termios_generation {
+        return Ok(true);
+    }
+
+    advance_termios_generation(pty)?;
+    pty.termios = lease.restore_termios;
+    let restored_generation = pty.termios_generation;
+    if let Some(previous) = pty.raw_mode_leases.last_mut() {
+        // The previous owner is active again after unwinding the top frame.
+        // Point its compare-and-restore token at the state just restored.
+        previous.applied_termios_generation = restored_generation;
+    }
+    Ok(true)
 }
 
 fn signal_for_byte(termios: &Termios, byte: u8) -> Option<i32> {

@@ -66,6 +66,74 @@ fn minimal_vm_lifecycle_transitions_between_ready_busy_and_terminated() {
 }
 
 #[test]
+fn raw_mode_recovery_lease_is_limited_to_foreground_process_group() {
+    let mut config = KernelVmConfig::new("vm-pty-raw-owner");
+    config.permissions = Permissions::allow_all();
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .register_driver(CommandDriver::new("shell", ["sh"]))
+        .expect("register shell");
+
+    let shell = kernel
+        .spawn_process(
+            "sh",
+            Vec::new(),
+            SpawnOptions {
+                requester_driver: Some(String::from("shell")),
+                ..SpawnOptions::default()
+            },
+        )
+        .expect("spawn shell");
+    let (master_fd, slave_fd, _) = kernel
+        .open_pty("shell", shell.pid())
+        .expect("open controlling pty");
+    kernel
+        .fd_dup2("shell", shell.pid(), slave_fd, 0)
+        .expect("install shell stdin");
+    kernel
+        .pty_set_foreground_pgid("shell", shell.pid(), master_fd, shell.pid())
+        .expect("make shell group foreground");
+
+    let foreground_child = kernel
+        .spawn_process(
+            "sh",
+            Vec::new(),
+            SpawnOptions {
+                requester_driver: Some(String::from("shell")),
+                parent_pid: Some(shell.pid()),
+                ..SpawnOptions::default()
+            },
+        )
+        .expect("spawn foreground child");
+    assert!(kernel
+        .pty_set_raw_mode("shell", foreground_child.pid(), 0, true)
+        .expect("foreground raw mode")
+        .is_some());
+
+    let background_child = kernel
+        .spawn_process(
+            "sh",
+            Vec::new(),
+            SpawnOptions {
+                requester_driver: Some(String::from("shell")),
+                parent_pid: Some(shell.pid()),
+                ..SpawnOptions::default()
+            },
+        )
+        .expect("spawn background child");
+    kernel
+        .setpgid("shell", background_child.pid(), background_child.pid())
+        .expect("move child into background process group");
+    assert_eq!(
+        kernel
+            .pty_set_raw_mode("shell", background_child.pid(), 0, true)
+            .expect("background raw mode"),
+        None,
+        "background process must not own foreground recovery"
+    );
+}
+
+#[test]
 fn dispose_kills_running_processes_and_cleans_special_resources() {
     let mut config = KernelVmConfig::new("vm-dispose");
     config.permissions = Permissions::allow_all();

@@ -78,6 +78,26 @@ the guest — over inventing a softer fallback that hides the failure.
   only when the caller explicitly supplied them.
 - Agent adapters must use real upstream SDKs. Do not replace SDK adapters with
   direct API-call stubs.
+- Native registry command binaries are generated artifacts. Do not commit
+  `registry/software/coreutils/bin/`; a fresh checkout intentionally has no
+  staged coreutils commands. Any VM, browser demo, or test that needs `sh` or
+  coreutils must build and stage the complete package from the repository root:
+
+  ```bash
+  pnpm install --frozen-lockfile
+  just registry-native
+  pnpm --filter @agentos-software/coreutils build:runtime
+  ```
+
+  `just registry-native` compiles the patched Rust and C WASI sources into
+  `registry/native/target/wasm32-wasip1/release/commands/`; the pnpm command
+  then stages `bin/` and assembles `dist/package/`. `just registry-native-cmd
+  sh` builds only one development artifact and is not sufficient to assemble
+  the complete coreutils package. The ordinary `build` script may create an
+  empty placeholder for source-only repository checks; that placeholder is not
+  runnable and must never be treated as proof that coreutils was built.
+  Publishing coreutils must run the strict `build:runtime` lifecycle and fail
+  when the generated command set is absent or incomplete.
 
 ## Publishing
 

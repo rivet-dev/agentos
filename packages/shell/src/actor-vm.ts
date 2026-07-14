@@ -62,10 +62,12 @@ export interface ShellVmHandle {
 		env?: Record<string, string>;
 		cols?: number;
 		rows?: number;
+		/** Optional stderr-only diagnostic tap; do not render it with `onShellData`. */
 		onStderr?: (data: Uint8Array) => void;
 	}): { shellId: string } | Promise<{ shellId: string }>;
 	writeShell(shellId: string, data: Uint8Array | string): Promise<void>;
 	resizeShell(shellId: string, cols: number, rows: number): void;
+	/** Ordered PTY output containing stdout and stderr exactly once. */
 	onShellData(shellId: string, handler: (data: Uint8Array) => void): () => void;
 	waitShell(shellId: string): Promise<number>;
 	dispose(): Promise<void>;

@@ -154,11 +154,10 @@ function ensureBuiltinEventsStdlibModule() {
   return builtinEventsStdlibModule;
 }
 var builtinPathStdlibModule = cloneStdlibModule(pathStdlibModuleNs);
-if (!builtinPathStdlibModule?.posix) {
-  builtinPathStdlibModule.posix = cloneStdlibModule(
-    pathStdlibModuleNs?.posix ?? pathStdlibModuleNs?.default?.posix
-  ) ?? builtinPathStdlibModule;
-}
+// AgentOS targets Linux. Node exposes the selected platform implementation as
+// both `path` and `path.posix`; cloning the stdlib namespace would otherwise
+// leave `posix` pointing at the uncloned source object.
+builtinPathStdlibModule.posix = builtinPathStdlibModule;
 if (!builtinPathStdlibModule?.win32) {
   builtinPathStdlibModule.win32 = cloneStdlibModule(
     pathStdlibModuleNs?.win32 ?? pathStdlibModuleNs?.default?.win32
