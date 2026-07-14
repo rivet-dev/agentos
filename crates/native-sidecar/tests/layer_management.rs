@@ -394,8 +394,6 @@ fn vm_layer_store_rejects_new_layers_at_limit() {
 #[test]
 fn create_vm_root_filesystem_composes_multiple_lowers_with_bootstrap_upper() {
     let mut sidecar = new_sidecar("vm-root-multi-layer");
-    let cwd = temp_dir("vm-root-multi-layer-cwd");
-
     let connection_id = authenticate_wire(&mut sidecar, "conn-1");
     let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
     let create = sidecar
@@ -404,7 +402,7 @@ fn create_vm_root_filesystem_composes_multiple_lowers_with_bootstrap_upper() {
             wire_session(&connection_id, &session_id),
             RequestPayload::CreateVmRequest(CreateVmRequest::legacy_test_config(
                 GuestRuntimeKind::JavaScript,
-                HashMap::from([(String::from("cwd"), cwd.to_string_lossy().into_owned())]),
+                HashMap::from([(String::from("cwd"), String::from("/workspace"))]),
                 RootFilesystemDescriptor {
                     disable_default_base_layer: true,
                     lowers: vec![

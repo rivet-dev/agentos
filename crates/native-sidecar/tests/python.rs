@@ -441,6 +441,13 @@ fn execute_javascript_with_env(
     args: Vec<String>,
     env: HashMap<String, String>,
 ) {
+    let guest_entrypoint = format!(
+        "/workspace/{}",
+        entrypoint
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("JavaScript fixture filename")
+    );
     let result = sidecar
         .dispatch_wire_blocking(wire_request(
             request_id,
@@ -449,7 +456,7 @@ fn execute_javascript_with_env(
                 process_id: Some(process_id.to_owned()),
                 command: None,
                 runtime: Some(GuestRuntimeKind::JavaScript),
-                entrypoint: Some(entrypoint.to_string_lossy().into_owned()),
+                entrypoint: Some(guest_entrypoint),
                 args,
                 env: Some(env),
                 cwd: None,
@@ -477,7 +484,7 @@ fn create_vm_with_root_filesystem(
     connection_id: &str,
     session_id: &str,
     runtime: GuestRuntimeKind,
-    cwd: &Path,
+    _cwd: &Path,
     root_filesystem: RootFilesystemDescriptor,
 ) -> String {
     let result = sidecar
@@ -486,7 +493,7 @@ fn create_vm_with_root_filesystem(
             wire_session(connection_id, session_id),
             RequestPayload::CreateVmRequest(CreateVmRequest::legacy_test_config(
                 runtime,
-                HashMap::from([(String::from("cwd"), cwd.to_string_lossy().into_owned())]),
+                HashMap::from([(String::from("cwd"), String::from("/workspace"))]),
                 root_filesystem,
                 Some(wire_permissions_allow_all()),
             )),
@@ -506,13 +513,13 @@ fn create_vm_with_metadata_and_permissions(
     connection_id: &str,
     session_id: &str,
     runtime: GuestRuntimeKind,
-    cwd: &Path,
+    _cwd: &Path,
     mut metadata: HashMap<String, String>,
     permissions: PermissionsPolicy,
 ) -> String {
     metadata
         .entry(String::from("cwd"))
-        .or_insert_with(|| cwd.to_string_lossy().into_owned());
+        .or_insert_with(|| String::from("/workspace"));
 
     let result = sidecar
         .dispatch_wire_blocking(wire_request(
@@ -1300,26 +1307,23 @@ fn python_runtime_mounts_workspace_over_the_kernel_vfs() {
     let cwd = temp_dir("python-workspace-vfs-cwd");
     let connection_id = authenticate_wire(&mut sidecar, "conn-python");
     let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
-    let (vm_id, _) = create_vm_wire(
+    let vm_id = create_vm_with_root_filesystem(
         &mut sidecar,
         3,
         &connection_id,
         &session_id,
         GuestRuntimeKind::Python,
         &cwd,
-    );
-
-    bootstrap_root_filesystem(
-        &mut sidecar,
-        4,
-        &connection_id,
-        &session_id,
-        &vm_id,
-        vec![root_dir("/workspace")],
+        RootFilesystemDescriptor {
+            mode: RootFilesystemMode::Ephemeral,
+            disable_default_base_layer: false,
+            lowers: Vec::new(),
+            bootstrap_entries: vec![root_dir("/workspace")],
+        },
     );
     guest_write_file_utf8(
         &mut sidecar,
-        5,
+        4,
         &connection_id,
         &session_id,
         &vm_id,
@@ -1329,7 +1333,7 @@ fn python_runtime_mounts_workspace_over_the_kernel_vfs() {
 
     execute_inline_python(
         &mut sidecar,
-        6,
+        5,
         &connection_id,
         &session_id,
         &vm_id,
@@ -1374,7 +1378,7 @@ print(json.dumps({
 
     let python_written = guest_read_file_utf8(
         &mut sidecar,
-        7,
+        6,
         &connection_id,
         &session_id,
         &vm_id,
@@ -1618,29 +1622,26 @@ fn python_runtime_supports_symlink_readlink_and_metadata() {
     let cwd = temp_dir("python-fs-hooks-cwd");
     let connection_id = authenticate_wire(&mut sidecar, "conn-python");
     let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
-    let (vm_id, _) = create_vm_wire(
+    let vm_id = create_vm_with_root_filesystem(
         &mut sidecar,
         3,
         &connection_id,
         &session_id,
         GuestRuntimeKind::Python,
         &cwd,
-    );
-
-    bootstrap_root_filesystem(
-        &mut sidecar,
-        4,
-        &connection_id,
-        &session_id,
-        &vm_id,
-        vec![root_dir("/workspace")],
+        RootFilesystemDescriptor {
+            mode: RootFilesystemMode::Ephemeral,
+            disable_default_base_layer: false,
+            lowers: Vec::new(),
+            bootstrap_entries: vec![root_dir("/workspace")],
+        },
     );
 
     // A symlink that already exists on the host (created via the wire, not by
     // Python) — exercises lstat-based detection of pre-existing links.
     guest_symlink(
         &mut sidecar,
-        5,
+        4,
         &connection_id,
         &session_id,
         &vm_id,
@@ -1650,7 +1651,7 @@ fn python_runtime_supports_symlink_readlink_and_metadata() {
 
     execute_inline_python(
         &mut sidecar,
-        6,
+        5,
         &connection_id,
         &session_id,
         &vm_id,
@@ -1711,7 +1712,7 @@ print(json.dumps(result))
     // Cross-check the host kernel VFS.
     let host_target = guest_readlink(
         &mut sidecar,
-        7,
+        6,
         &connection_id,
         &session_id,
         &vm_id,

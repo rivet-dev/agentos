@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 use support::{
     assert_node_available, authenticate_wire, collect_process_output_wire_with_timeout,
-    execute_wire, new_sidecar, open_session_wire, temp_dir, wire_permissions_allow_all,
-    wire_request, wire_session, write_fixture,
+    configure_host_workspace_mount, execute_wire, new_sidecar, open_session_wire, temp_dir,
+    wire_permissions_allow_all, wire_request, wire_session, write_fixture,
 };
 
 fn root_dir(path: &str, mode: u32) -> RootFilesystemEntry {
@@ -128,7 +128,7 @@ console.log(
             wire_session(&connection_id, &session_id),
             RequestPayload::CreateVmRequest(CreateVmRequest::legacy_test_config(
                 GuestRuntimeKind::JavaScript,
-                HashMap::from([(String::from("cwd"), cwd.to_string_lossy().into_owned())]),
+                HashMap::from([(String::from("cwd"), String::from("/workspace"))]),
                 RootFilesystemDescriptor {
                     mode: RootFilesystemMode::Ephemeral,
                     disable_default_base_layer: false,
@@ -148,6 +148,7 @@ console.log(
         ResponsePayload::VmCreatedResponse(response) => response.vm_id,
         other => panic!("unexpected create vm response: {other:?}"),
     };
+    configure_host_workspace_mount(&mut sidecar, 3, &connection_id, &session_id, &vm_id, &cwd);
 
     execute_wire(
         &mut sidecar,
@@ -157,7 +158,7 @@ console.log(
         &vm_id,
         "fs-watch-and-streams",
         GuestRuntimeKind::JavaScript,
-        &entry,
+        "/workspace/fs-watch-and-streams.mjs",
         Vec::new(),
     );
 

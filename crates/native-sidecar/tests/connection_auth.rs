@@ -7,7 +7,7 @@ use agentos_native_sidecar::wire::{
 use std::collections::HashMap;
 use support::{
     authenticate_wire, authenticate_wire_with_token, new_sidecar, new_sidecar_with_auth_token,
-    open_session_wire, temp_dir, wire_connection, wire_request, wire_session, TEST_AUTH_TOKEN,
+    open_session_wire, wire_connection, wire_request, wire_session, TEST_AUTH_TOKEN,
 };
 
 #[test]
@@ -30,14 +30,13 @@ fn authenticate_ignores_client_connection_hints_and_preserves_existing_owners() 
         other => panic!("unexpected second auth response: {other:?}"),
     };
 
-    let cwd = temp_dir("connection-auth-cwd");
     let create_vm = sidecar
         .dispatch_wire_blocking(wire_request(
             4,
             wire_session(&connection_b, &session_a),
             RequestPayload::CreateVmRequest(CreateVmRequest::legacy_test_config(
                 GuestRuntimeKind::JavaScript,
-                HashMap::from([(String::from("cwd"), cwd.to_string_lossy().into_owned())]),
+                HashMap::from([(String::from("cwd"), String::from("/workspace"))]),
                 RootFilesystemDescriptor {
                     mode: agentos_native_sidecar::wire::RootFilesystemMode::Ephemeral,
                     disable_default_base_layer: false,

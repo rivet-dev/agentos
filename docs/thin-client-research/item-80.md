@@ -322,7 +322,7 @@ cwd is translated to the guest root. Mounted workspace executions should expect
 
 ### Characterize before deletion
 
-- [ ] Keep Item 42's current regression: create a directory only below
+- [x] Keep Item 42's current regression: create a directory only below
   `vm.host_cwd`, send the absolute host path as Execute `cwd`, and prove the old
   code starts the process and manufactures a guest directory.
 - [ ] Add a direct-entrypoint escape regression in `security_hardening.rs`:
@@ -336,28 +336,46 @@ cwd is translated to the guest root. Mounted workspace executions should expect
 
 ### Validate after deletion
 
-- [ ] Convert the Item 42 host-cwd regression: the same absolute string is an
+- [x] Convert the Item 42 host-cwd regression: the same absolute string is an
   ordinary guest path and returns `kernel_error` with `ENOENT`; assert no guest
   directory and no active/retained process were created.
-- [ ] Direct host-only JavaScript, Python-file, and Wasm entrypoints return
+- [x] Direct host-only JavaScript, Python-file, and Wasm entrypoints return
   Linux errno before process admission, never emit the sentinel, and leave no
   engine context/process.
-- [ ] A guest child `node <host-only-path>` returns `ENOENT`, never executes or
+- [x] A guest child `node <host-only-path>` returns `ENOENT`, never executes or
   copies the file, and leaves no child route.
-- [ ] A relative and absolute guest cwd both succeed when present; a missing
+- [x] A relative and absolute guest cwd both succeed when present; a missing
   cwd returns `ENOENT`, a file cwd returns `ENOTDIR`, and no case creates it.
-- [ ] The same fixture succeeds at `/workspace/entry.mjs` with an explicit
+- [x] The same fixture succeeds at `/workspace/entry.mjs` with an explicit
   `host_dir` mount. Assert argv/PWD/cwd are guest paths while intentional host
   writes appear only under the mounted directory.
-- [ ] Read-only `host_dir` entrypoints load successfully and writes return
+- [x] Read-only `host_dir` entrypoints load successfully and writes return
   `EROFS`/`EACCES` through the VFS rather than falling back to a shadow copy.
-- [ ] Nested JavaScript `child_process`, Python subprocess, and Wasm command
+- [x] Nested JavaScript `child_process`, Python subprocess, and Wasm command
   paths retain guest cwd and explicit-mount behavior.
-- [ ] Run the complete native sidecar service, security-hardening, builtin,
+- [x] Run the complete native sidecar service, security-hardening, builtin,
   POSIX, Python, signal, process/session lifecycle, filesystem, and mount suites.
 - [ ] Add or retain one native/browser conformance case showing that a
   host-looking absolute string has identical guest-path semantics in both
   adapters.
+
+## Implementation result
+
+Revision `pzzlonpr` removes implicit host cwd and entrypoint handling from the
+native sidecar. Execute and child-process paths are validated through the guest
+kernel, explicit `host_dir` mounts remain the sole host bridge, package
+entrypoint symlinks resolve through a bounded guest-VFS walk, and V8
+`fs.realpath` now calls the sidecar-owned filesystem operation.
+
+The focused security, service, package-launcher, POSIX path, Python, builtin,
+stdio, and bridge tests pass. The broad native run passed 620 of 630 tests; the
+ten failures were independently classified as pre-existing registry-build,
+limits-inventory, connection-error, and stale-suite failures, and the one
+Item-80-related POSIX failure found by that run was fixed and rerun green.
+`cargo check --workspace`, `cargo fmt --all --check`, the bridge crate tests,
+the V8 bridge build, and the build-tools typecheck also pass. The declared
+`check:generated` command remains unavailable because its referenced script
+does not exist; this pre-existing repository friction is logged separately.
 
 ## Risks and implementation order
 

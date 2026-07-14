@@ -285,6 +285,7 @@ fn mount_operations_emit_security_audit_events() {
         .find(|event| {
             event.name == "security.mount.mounted"
                 && event.fields.get("guest_path").map(String::as_str) == Some("/workspace")
+                && event.fields.get("plugin_id").map(String::as_str) == Some("memory")
         })
         .expect("missing /workspace mount audit event");
     assert_eq!(mounted.vm_id, vm_id);
@@ -338,7 +339,7 @@ fn kill_requests_emit_security_audit_events() {
         &vm_id,
         "proc-kill",
         GuestRuntimeKind::JavaScript,
-        &entry,
+        "/workspace/sleep.cjs",
         Vec::new(),
     );
 

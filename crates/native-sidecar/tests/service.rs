@@ -111,11 +111,12 @@ mod service {
         use crate::state::{
             ActiveCipherSession, ActiveDiffieHellmanSession, ActiveEcdhSession, ActiveExecution,
             ActiveExecutionEvent, ActiveProcess, ActiveSqliteDatabase, ActiveSqliteStatement,
-            ActiveTcpListener, ActiveUdpSocket, ProcessEventEnvelope, SidecarKernel, ToolExecution,
-            VmListenPolicy, EXECUTION_SANDBOX_ROOT_ENV, JAVASCRIPT_COMMAND,
-            LOOPBACK_EXEMPT_PORTS_ENV, PYTHON_COMMAND, VM_DNS_SERVERS_METADATA_KEY,
-            VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY, VM_LISTEN_PORT_MAX_METADATA_KEY,
-            VM_LISTEN_PORT_MIN_METADATA_KEY, WASM_COMMAND, WASM_STDIO_SYNC_RPC_ENV,
+            ActiveTcpListener, ActiveUdpSocket, ProcessEventEnvelope,
+            ResolvedChildProcessExecution, SidecarKernel, ToolExecution, VmListenPolicy,
+            EXECUTION_SANDBOX_ROOT_ENV, JAVASCRIPT_COMMAND, LOOPBACK_EXEMPT_PORTS_ENV,
+            PYTHON_COMMAND, VM_DNS_SERVERS_METADATA_KEY, VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY,
+            VM_LISTEN_PORT_MAX_METADATA_KEY, VM_LISTEN_PORT_MIN_METADATA_KEY, WASM_COMMAND,
+            WASM_STDIO_SYNC_RPC_ENV,
         };
         use crate::state::{NetworkResourceCounts, VmDnsConfig};
         use agentos_bridge::SymlinkRequest;
@@ -170,11 +171,31 @@ mod service {
         };
         use std::thread;
         use std::time::{Duration, SystemTime, UNIX_EPOCH};
+        use vfs::package_format::pack::pack_aospkg_from_tar;
 
         const TEST_AUTH_TOKEN: &str = "sidecar-test-token";
         const ISOLATED_SERVICE_TEST_ENV: &str = "AGENTOS_SERVICE_ISOLATED_TEST";
         const ISOLATED_SERVICE_CACHE_SUFFIX_ENV: &str = "AGENTOS_SERVICE_ISOLATED_CACHE_SUFFIX";
         const MAX_SERVICE_PROCESS_STREAM_BYTES: usize = 1024 * 1024;
+
+        fn resolve_javascript_child_process_for_test(
+            sidecar: &mut NativeSidecar<RecordingBridge>,
+            vm_id: &str,
+            request: &crate::protocol::JavascriptChildProcessSpawnRequest,
+        ) -> Result<ResolvedChildProcessExecution, SidecarError> {
+            let (env, guest_cwd, host_cwd) = {
+                let vm = sidecar.vms.get(vm_id).expect("configured test VM");
+                (
+                    vm.guest_env.clone(),
+                    vm.guest_cwd.clone(),
+                    vm.host_cwd.clone(),
+                )
+            };
+            let vm = sidecar.vms.get_mut(vm_id).expect("configured test VM");
+            NativeSidecar::<RecordingBridge>::resolve_javascript_child_process_execution(
+                vm, &env, &guest_cwd, &host_cwd, request,
+            )
+        }
         const TLS_TEST_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----\n\
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQClvETzHfSyd1Y+\n\
 sjCfGkuyGxFMzwQlYjUrE0iwdMF774LYHFdpvtEo3sLOW6/b1xfXS/55jq+aggxS\n\
@@ -1418,6 +1439,44 @@ ykAheWCsAteSEWVc0w==\n\
                     }),
                 ))
                 .expect("configure registry command mount");
+        }
+
+        fn configure_host_fixture_mount(
+            sidecar: &mut NativeSidecar<RecordingBridge>,
+            connection_id: &str,
+            session_id: &str,
+            vm_id: &str,
+            request_id: agentos_native_sidecar::protocol::RequestId,
+            guest_path: &str,
+            host_path: &Path,
+            read_only: bool,
+        ) {
+            sidecar
+                .dispatch_blocking(request(
+                    request_id,
+                    OwnershipScope::vm(connection_id, session_id, vm_id),
+                    RequestPayload::ConfigureVm(ConfigureVmRequest {
+                        mounts: Some(vec![MountDescriptor {
+                            guest_path: guest_path.to_owned(),
+                            read_only: Some(read_only),
+                            plugin: MountPluginDescriptor {
+                                id: String::from("host_dir"),
+                                config: json!({
+                                    "hostPath": host_path,
+                                    "readOnly": read_only,
+                                })
+                                .to_string()
+                                .into(),
+                            },
+                        }]),
+                        permissions: None,
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
+                    }),
+                ))
+                .expect("configure explicit host fixture mount");
         }
 
         #[allow(clippy::too_many_arguments)] // test helper mirroring the exec surface
@@ -6753,7 +6812,6 @@ ykAheWCsAteSEWVc0w==\n\
         //      observes the new bytes (no stale skip).
         fn read_side_ops_skip_unchanged_shadow_files_repro() {
             use std::time::{Duration, Instant};
-
             fn fs_payload(
                 operation: GuestFilesystemOperation,
                 path: &str,
@@ -8398,17 +8456,27 @@ ykAheWCsAteSEWVc0w==\n\
                 8,
                 32,
             );
+            configure_host_fixture_mount(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                4,
+                "/fixture",
+                &cwd,
+                true,
+            );
             let process_id = "captured-output-wasm";
             let started = sidecar
                 .dispatch_blocking(request(
-                    4,
+                    5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
                         process_id: Some(process_id.to_owned()),
                         command: None,
                         shell_command: None,
                         runtime: Some(GuestRuntimeKind::WebAssembly),
-                        entrypoint: Some(entrypoint.to_string_lossy().into_owned()),
+                        entrypoint: Some(String::from("/fixture/output.wasm")),
                         args: Vec::new(),
                         env: None,
                         cwd: None,
@@ -9573,11 +9641,30 @@ ykAheWCsAteSEWVc0w==\n\
                 PermissionsPolicy::allow_all(),
             )
             .expect("create vm B");
+            configure_host_fixture_mount(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_a,
+                4,
+                "/workspace",
+                &cwd_a,
+                true,
+            );
+            configure_host_fixture_mount(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_b,
+                5,
+                "/workspace",
+                &cwd_b,
+                true,
+            );
 
-            for (request_id, vm_id, process_id, entrypoint) in [
-                (6, &vm_a, "proc-wasm-a", cwd_a.join("guest.wasm")),
-                (7, &vm_b, "proc-wasm-b", cwd_b.join("guest.wasm")),
-            ] {
+            for (request_id, vm_id, process_id) in
+                [(6, &vm_a, "proc-wasm-a"), (7, &vm_b, "proc-wasm-b")]
+            {
                 let response = sidecar
                     .dispatch_blocking(request(
                         request_id,
@@ -9586,7 +9673,7 @@ ykAheWCsAteSEWVc0w==\n\
                             process_id: Some(String::from(process_id)),
                             command: None,
                             runtime: Some(GuestRuntimeKind::WebAssembly),
-                            entrypoint: Some(entrypoint.to_string_lossy().into_owned()),
+                            entrypoint: Some(String::from("/workspace/guest.wasm")),
                             args: Vec::new(),
                             env: None,
                             cwd: None,
@@ -9635,12 +9722,11 @@ ykAheWCsAteSEWVc0w==\n\
             );
         }
         fn wasm_path_open_read_goes_through_kernel_filesystem_permissions() {
-            let cwd = temp_dir("agentos-native-sidecar-wasm-fs-permissions");
+            let fixture = temp_dir("agentos-native-sidecar-wasm-fs-permissions");
             write_fixture(
-                &cwd.join("guest.wasm"),
+                &fixture.join("guest.wasm"),
                 wasm_expect_read_errno_module("secret.txt", 2),
             );
-
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -9648,22 +9734,52 @@ ykAheWCsAteSEWVc0w==\n\
                 &mut sidecar,
                 &connection_id,
                 &session_id,
-                capability_permissions(&[
-                    ("fs", PermissionMode::Allow),
-                    ("fs.read", PermissionMode::Deny),
-                    ("child_process.spawn", PermissionMode::Allow),
-                ]),
+                PermissionsPolicy {
+                    fs: Some(FsPermissionScope::FsPermissionRuleSet(
+                        FsPermissionRuleSet {
+                            default: Some(PermissionMode::Allow),
+                            rules: vec![FsPermissionRule {
+                                mode: PermissionMode::Deny,
+                                operations: Some(vec![String::from("read")]),
+                                paths: Some(vec![String::from("/secret.txt")]),
+                            }],
+                        },
+                    )),
+                    network: None,
+                    child_process: Some(PatternPermissionScope::PatternPermissionRuleSet(
+                        PatternPermissionRuleSet {
+                            default: Some(PermissionMode::Deny),
+                            rules: vec![PatternPermissionRule {
+                                mode: PermissionMode::Allow,
+                                operations: Some(vec![String::from("spawn")]),
+                                patterns: Some(vec![String::from("**")]),
+                            }],
+                        },
+                    )),
+                    process: None,
+                    env: None,
+                    binding: None,
+                },
             )
             .expect("create vm");
 
-            sidecar
-                .vms
-                .get_mut(&vm_id)
-                .expect("wasm vm")
-                .kernel
-                .filesystem_mut()
-                .write_file("/secret.txt", b"should-not-read".to_vec())
-                .expect("seed denied-read fixture");
+            configure_host_fixture_mount(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                5,
+                "/fixture",
+                &fixture,
+                true,
+            );
+            {
+                let vm = sidecar.vms.get_mut(&vm_id).expect("wasm vm");
+                vm.kernel
+                    .filesystem_mut()
+                    .write_file("/secret.txt", b"should-not-read".to_vec())
+                    .expect("seed denied-read fixture");
+            }
 
             let response = sidecar
                 .dispatch_blocking(request(
@@ -9673,7 +9789,7 @@ ykAheWCsAteSEWVc0w==\n\
                         process_id: Some(String::from("proc-wasm-fs-permission")),
                         command: None,
                         runtime: Some(GuestRuntimeKind::WebAssembly),
-                        entrypoint: Some(cwd.join("guest.wasm").to_string_lossy().into_owned()),
+                        entrypoint: Some(String::from("/fixture/guest.wasm")),
                         args: Vec::new(),
                         env: None,
                         cwd: Some(String::from("/")),
@@ -9703,12 +9819,11 @@ ykAheWCsAteSEWVc0w==\n\
         }
 
         fn wasm_path_open_write_goes_through_kernel_filesystem_permissions() {
-            let cwd = temp_dir("agentos-native-sidecar-wasm-fs-write-permissions");
+            let fixture = temp_dir("agentos-native-sidecar-wasm-fs-write-permissions");
             write_fixture(
-                &cwd.join("guest.wasm"),
+                &fixture.join("guest.wasm"),
                 wasm_expect_write_open_errno_module("created.txt", 2),
             );
-
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -9724,6 +9839,16 @@ ykAheWCsAteSEWVc0w==\n\
                 ]),
             )
             .expect("create vm");
+            configure_host_fixture_mount(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                5,
+                "/fixture",
+                &fixture,
+                true,
+            );
 
             let response = sidecar
                 .dispatch_blocking(request(
@@ -9733,7 +9858,7 @@ ykAheWCsAteSEWVc0w==\n\
                         process_id: Some(String::from("proc-wasm-fs-write-permission")),
                         command: None,
                         runtime: Some(GuestRuntimeKind::WebAssembly),
-                        entrypoint: Some(cwd.join("guest.wasm").to_string_lossy().into_owned()),
+                        entrypoint: Some(String::from("/fixture/guest.wasm")),
                         args: Vec::new(),
                         env: None,
                         cwd: Some(String::from("/")),
@@ -10007,15 +10132,9 @@ ykAheWCsAteSEWVc0w==\n\
                     ],
                 ),
             ] {
-                let resolved = sidecar
-                    .resolve_javascript_child_process_execution(
-                        vm,
-                        &vm.guest_env,
-                        &vm.guest_cwd,
-                        &vm.host_cwd,
-                        &request,
-                    )
-                    .unwrap_or_else(|error| panic!("failed to resolve {command}: {error}"));
+                let resolved =
+                    resolve_javascript_child_process_for_test(&mut sidecar, &vm_id, &request)
+                        .unwrap_or_else(|error| panic!("failed to resolve {command}: {error}"));
                 assert_eq!(
                     resolved.runtime,
                     GuestRuntimeKind::WebAssembly,
@@ -10032,11 +10151,9 @@ ykAheWCsAteSEWVc0w==\n\
                 );
             }
 
-            let missing = sidecar.resolve_javascript_child_process_execution(
-                vm,
-                &vm.guest_env,
-                &vm.guest_cwd,
-                &vm.host_cwd,
+            let missing = resolve_javascript_child_process_for_test(
+                &mut sidecar,
+                &vm_id,
                 &crate::protocol::JavascriptChildProcessSpawnRequest {
                     command: String::from("definitely-not-a-command"),
                     args: Vec::new(),
@@ -10077,14 +10194,7 @@ ykAheWCsAteSEWVc0w==\n\
                     ..Default::default()
                 },
             };
-            let error = sidecar
-                .resolve_javascript_child_process_execution(
-                    vm,
-                    &vm.guest_env,
-                    &vm.guest_cwd,
-                    &vm.host_cwd,
-                    &request,
-                )
+            let error = resolve_javascript_child_process_for_test(&mut sidecar, &vm_id, &request)
                 .expect_err("shell-mode command without guest sh must fail instead of tokenizing");
             assert!(
                 error.to_string().contains("/bin/sh"),
@@ -10170,26 +10280,22 @@ ykAheWCsAteSEWVc0w==\n\
                 ))
                 .expect("register math toolkit");
 
-            let vm = sidecar.vms.get(&vm_id).expect("configured vm");
-            let resolved = sidecar
-                .resolve_javascript_child_process_execution(
-                    vm,
-                    &vm.guest_env,
-                    &vm.guest_cwd,
-                    &vm.host_cwd,
-                    &crate::protocol::JavascriptChildProcessSpawnRequest {
-                        command: String::from("/usr/local/bin/agentos-math"),
-                        args: vec![
-                            String::from("add"),
-                            String::from("--a"),
-                            String::from("2"),
-                            String::from("--b"),
-                            String::from("3"),
-                        ],
-                        options: crate::protocol::JavascriptChildProcessSpawnOptions::default(),
-                    },
-                )
-                .expect("resolve toolkit child process");
+            let resolved = resolve_javascript_child_process_for_test(
+                &mut sidecar,
+                &vm_id,
+                &crate::protocol::JavascriptChildProcessSpawnRequest {
+                    command: String::from("/usr/local/bin/agentos-math"),
+                    args: vec![
+                        String::from("add"),
+                        String::from("--a"),
+                        String::from("2"),
+                        String::from("--b"),
+                        String::from("3"),
+                    ],
+                    options: crate::protocol::JavascriptChildProcessSpawnOptions::default(),
+                },
+            )
+            .expect("resolve toolkit child process");
 
             assert!(
                 resolved.tool_command,
@@ -10287,26 +10393,22 @@ ykAheWCsAteSEWVc0w==\n\
                 ))
                 .expect("register math toolkit");
 
-            let vm = sidecar.vms.get(&vm_id).expect("configured vm");
-            let resolved = sidecar
-                .resolve_javascript_child_process_execution(
-                    vm,
-                    &vm.guest_env,
-                    &vm.guest_cwd,
-                    &vm.host_cwd,
-                    &crate::protocol::JavascriptChildProcessSpawnRequest {
-                        command: String::from("/__secure_exec/commands/0/agentos-math"),
-                        args: vec![
-                            String::from("add"),
-                            String::from("--a"),
-                            String::from("2"),
-                            String::from("--b"),
-                            String::from("3"),
-                        ],
-                        options: crate::protocol::JavascriptChildProcessSpawnOptions::default(),
-                    },
-                )
-                .expect("resolve toolkit child process");
+            let resolved = resolve_javascript_child_process_for_test(
+                &mut sidecar,
+                &vm_id,
+                &crate::protocol::JavascriptChildProcessSpawnRequest {
+                    command: String::from("/__secure_exec/commands/0/agentos-math"),
+                    args: vec![
+                        String::from("add"),
+                        String::from("--a"),
+                        String::from("2"),
+                        String::from("--b"),
+                        String::from("3"),
+                    ],
+                    options: crate::protocol::JavascriptChildProcessSpawnOptions::default(),
+                },
+            )
+            .expect("resolve toolkit child process");
 
             assert!(
                 resolved.tool_command,
@@ -10347,23 +10449,19 @@ ykAheWCsAteSEWVc0w==\n\
                     .expect("create cwd file");
             }
             let child_cwd_error = {
-                let vm = sidecar.vms.get(&vm_id).expect("created vm");
-                sidecar
-                    .resolve_javascript_child_process_execution(
-                        vm,
-                        &vm.guest_env,
-                        &vm.guest_cwd,
-                        &vm.host_cwd,
-                        &crate::protocol::JavascriptChildProcessSpawnRequest {
-                            command: String::from("node"),
-                            args: vec![String::from("-e"), String::new()],
-                            options: crate::protocol::JavascriptChildProcessSpawnOptions {
-                                cwd: Some(String::new()),
-                                ..Default::default()
-                            },
+                resolve_javascript_child_process_for_test(
+                    &mut sidecar,
+                    &vm_id,
+                    &crate::protocol::JavascriptChildProcessSpawnRequest {
+                        command: String::from("node"),
+                        args: vec![String::from("-e"), String::new()],
+                        options: crate::protocol::JavascriptChildProcessSpawnOptions {
+                            cwd: Some(String::new()),
+                            ..Default::default()
                         },
-                    )
-                    .expect_err("empty child cwd must fail")
+                    },
+                )
+                .expect_err("empty child cwd must fail")
             };
             assert!(
                 matches!(child_cwd_error, SidecarError::Kernel(ref message) if message.contains("ENOENT")),
@@ -10513,7 +10611,8 @@ ykAheWCsAteSEWVc0w==\n\
                 .expect("created vm")
                 .host_cwd
                 .join("host-nested");
-            fs::create_dir_all(&host_nested_cwd).expect("create compatible host cwd");
+            fs::create_dir_all(&host_nested_cwd).expect("create host-only cwd");
+            let host_nested_cwd = host_nested_cwd.to_string_lossy().into_owned();
             let response = sidecar
                 .dispatch_blocking(request(
                     14,
@@ -10525,7 +10624,7 @@ ykAheWCsAteSEWVc0w==\n\
                         entrypoint: None,
                         args: vec![String::from("-e"), String::new()],
                         env: None,
-                        cwd: Some(host_nested_cwd.to_string_lossy().into_owned()),
+                        cwd: Some(host_nested_cwd.clone()),
                         wasm_permission_tier: None,
                         pty: None,
                         shell_command: None,
@@ -10534,24 +10633,25 @@ ykAheWCsAteSEWVc0w==\n\
                         capture_output: None,
                     }),
                 ))
-                .expect("dispatch compatible host cwd");
-            assert!(matches!(
-                response.response.payload,
-                ResponsePayload::ProcessStarted(_)
-            ));
+                .expect("dispatch host-looking guest cwd");
+            assert!(
+                matches!(
+                    response.response.payload,
+                    ResponsePayload::Rejected(ref rejected)
+                        if rejected.code == "kernel_error"
+                            && rejected.message.contains("ENOENT")
+                ),
+                "unexpected host-looking cwd response: {:?}",
+                response.response.payload
+            );
             let vm = sidecar.vms.get_mut(&vm_id).expect("created vm");
-            assert_eq!(
-                vm.active_processes
-                    .get("proc-host-cwd")
-                    .expect("host-cwd process")
-                    .guest_cwd,
-                "/host-nested"
+            assert!(
+                !vm.active_processes.contains_key("proc-host-cwd"),
+                "host-looking cwd must fail before process admission"
             );
             assert!(
-                vm.kernel
-                    .stat("/host-nested")
-                    .expect("materialized host cwd")
-                    .is_directory
+                !vm.kernel.exists(&host_nested_cwd).unwrap_or(false),
+                "host-looking cwd must not be manufactured in the guest"
             );
         }
         fn tools_register_host_callbacks_rejects_duplicate_names_without_replacing_existing_toolkit(
@@ -11298,11 +11398,13 @@ if (child.status !== 0) {
                 fs::set_permissions(package.join("adapter.mjs"), perms).expect("chmod adapter.mjs");
             }
 
-            write_agentos_package_tar(&package);
-            package
+            let source_tar = write_agentos_package_tar(&package);
+            let packed = package.join("package.aospkg");
+            pack_aospkg_from_tar(&source_tar, &packed).expect("pack agentOS package fixture");
+            packed
         }
 
-        fn write_agentos_package_tar(package: &Path) {
+        fn write_agentos_package_tar(package: &Path) -> PathBuf {
             let tar_path = package.join("package.tar");
             let _ = fs::remove_file(&tar_path);
             let file = fs::File::create(&tar_path).expect("create package tar");
@@ -11320,6 +11422,7 @@ if (child.status !== 0) {
                 .expect("finish package tar file")
                 .flush()
                 .expect("flush package tar");
+            tar_path
         }
 
         fn append_agentos_package_tree(

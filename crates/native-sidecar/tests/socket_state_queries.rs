@@ -141,7 +141,7 @@ fn v8_signal_delivery_routes_kill_process_and_process_kill() {
         &vm_id,
         "signal-routing",
         GuestRuntimeKind::JavaScript,
-        &entry,
+        "/workspace/signal-routing.mjs",
         Vec::new(),
     );
 
@@ -282,7 +282,7 @@ fn v8_signal_stop_and_continue_updates_process_snapshot() {
         &vm_id,
         "signal-stop-cont",
         GuestRuntimeKind::JavaScript,
-        &entry,
+        "/workspace/signal-stop-cont.mjs",
         Vec::new(),
     );
 
@@ -421,7 +421,7 @@ fn sidecar_queries_listener_udp_and_signal_state() {
         &vm_id,
         "tcp-listener",
         GuestRuntimeKind::JavaScript,
-        &tcp_entry,
+        "/workspace/tcp-listener.mjs",
         Vec::new(),
     );
     wait_for_process_output(
@@ -509,7 +509,7 @@ fn sidecar_queries_listener_udp_and_signal_state() {
         &vm_id,
         "udp-listener",
         GuestRuntimeKind::JavaScript,
-        &udp_entry,
+        "/workspace/udp-listener.mjs",
         Vec::new(),
     );
     wait_for_process_output(
@@ -529,7 +529,7 @@ fn sidecar_queries_listener_udp_and_signal_state() {
         &wasm_vm_id,
         "signal-state",
         GuestRuntimeKind::WebAssembly,
-        &signal_entry,
+        "/workspace/signal-state.wasm",
         Vec::new(),
     );
     let wasm_ownership = wire_vm(&connection_id, &session_id, &wasm_vm_id);
@@ -702,7 +702,7 @@ fn sidecar_tracks_javascript_sigchld_and_delivers_it_on_child_exit() {
         &vm_id,
         "sigchld-parent",
         GuestRuntimeKind::JavaScript,
-        &parent_entry,
+        "/workspace/parent.mjs",
         Vec::new(),
     );
 

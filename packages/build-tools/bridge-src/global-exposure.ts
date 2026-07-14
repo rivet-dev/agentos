@@ -596,6 +596,11 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
     rationale: "Host filesystem bridge reference."
   },
   {
+    name: "fs.realpathSync",
+    classification: "hardened",
+    rationale: "Sidecar-owned guest realpath bridge reference."
+  },
+  {
     name: "fs.openSync",
     classification: "hardened",
     rationale: "Host file-descriptor open bridge reference."

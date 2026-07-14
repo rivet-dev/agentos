@@ -473,12 +473,8 @@ fn registered_extension_round_trips_ext_request_callback_and_event() {
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExtEnvelope(ExtEnvelope {
                 namespace: TEST_NAMESPACE.to_string(),
-                payload: format!(
-                    "{}\n{}",
-                    entrypoint.to_string_lossy(),
-                    lifecycle_entrypoint.to_string_lossy()
-                )
-                .into_bytes(),
+                payload: b"/workspace/extension-entrypoint.mjs\n/workspace/extension-lifecycle-entrypoint.mjs"
+                    .to_vec(),
             }),
         ))
         .expect("dispatch extension request");
@@ -709,12 +705,8 @@ fn exact_extension_output_buffer_preserves_sibling_events_and_cleans_captured_ex
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExtEnvelope(ExtEnvelope {
                 namespace: String::from("dev.rivet.agentos.buffered-exit-isolation-test"),
-                payload: format!(
-                    "{}\n{}",
-                    target_entrypoint.to_string_lossy(),
-                    sibling_entrypoint.to_string_lossy()
-                )
-                .into_bytes(),
+                payload: b"/workspace/buffered-target.mjs\n/workspace/ordinary-sibling.mjs"
+                    .to_vec(),
             }),
         ))
         .expect("dispatch buffered-exit extension request");
@@ -789,7 +781,7 @@ fn silent_buffered_exit_completes_handoff_without_binding_or_leaking_the_buffer(
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ExtEnvelope(ExtEnvelope {
                 namespace: String::from("dev.rivet.agentos.silent-exit-handoff-test"),
-                payload: entrypoint.to_string_lossy().into_owned().into_bytes(),
+                payload: b"/workspace/silent-exit.mjs".to_vec(),
             }),
         ))
         .expect("dispatch silent-exit handoff request");

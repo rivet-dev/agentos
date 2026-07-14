@@ -36,7 +36,7 @@ fn sessions_and_vms_reject_cross_connection_access() {
             wire_session(&connection_b, &session_a),
             RequestPayload::CreateVmRequest(CreateVmRequest::legacy_test_config(
                 GuestRuntimeKind::JavaScript,
-                HashMap::from([(String::from("cwd"), cwd.to_string_lossy().into_owned())]),
+                HashMap::from([(String::from("cwd"), String::from("/workspace"))]),
                 RootFilesystemDescriptor {
                     mode: agentos_native_sidecar::wire::RootFilesystemMode::Ephemeral,
                     disable_default_base_layer: false,

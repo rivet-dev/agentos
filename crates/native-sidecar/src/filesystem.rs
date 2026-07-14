@@ -1929,6 +1929,19 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .map(Value::String)
                 .map_err(kernel_error)
         }
+        "fs.realpathSync" | "fs.promises.realpath" => {
+            let path = javascript_sync_rpc_path_arg(
+                process,
+                &request.args,
+                0,
+                "filesystem realpath path",
+            )?;
+            let path = normalized_process_guest_path(process, &path);
+            kernel
+                .realpath_for_process(EXECUTION_DRIVER_NAME, kernel_pid, &path)
+                .map(Value::String)
+                .map_err(|error| kernel_path_error("fs.realpath", &path, error))
+        }
         "fs.symlinkSync" | "fs.promises.symlink" => {
             let target =
                 javascript_sync_rpc_arg_str(&request.args, 0, "filesystem symlink target")?;

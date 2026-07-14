@@ -136,7 +136,7 @@ fn embedded_runtime_signal_routes_sigterm_and_process_kill() {
         &vm_id,
         "signal-routing",
         GuestRuntimeKind::JavaScript,
-        &entry,
+        "/workspace/signal-routing.mjs",
         Vec::new(),
     );
 
@@ -274,7 +274,7 @@ fn embedded_runtime_signal_stop_continue_updates_kernel_state_and_guest_handler(
         &vm_id,
         "signal-stop-cont",
         GuestRuntimeKind::JavaScript,
-        &entry,
+        "/workspace/signal-stop-cont.mjs",
         Vec::new(),
     );
 
@@ -382,7 +382,7 @@ fn embedded_runtime_kill_process_rejects_invalid_signal_without_killing_process(
         &vm_id,
         "invalid-signal",
         GuestRuntimeKind::JavaScript,
-        &entry,
+        "/workspace/invalid-signal.mjs",
         Vec::new(),
     );
 
@@ -516,7 +516,7 @@ fn execute_timeout_is_enforced_by_the_sidecar() {
                 command: None,
                 shell_command: None,
                 runtime: Some(GuestRuntimeKind::JavaScript),
-                entrypoint: Some(entry.to_string_lossy().into_owned()),
+                entrypoint: Some(String::from("/workspace/timeout.mjs")),
                 args: Vec::new(),
                 env: None,
                 cwd: None,
@@ -605,7 +605,7 @@ fn embedded_runtime_process_kill_signal_zero_checks_child_liveness() {
         &vm_id,
         "process-kill-sig0",
         GuestRuntimeKind::JavaScript,
-        &entry,
+        "/workspace/process-kill-sig0.mjs",
         Vec::new(),
     );
 
@@ -756,7 +756,7 @@ fn embedded_runtime_process_group_kill_terminates_detached_tree() {
         &vm_id,
         "group-kill-parent",
         GuestRuntimeKind::JavaScript,
-        &parent_entry,
+        "/workspace/group-parent.mjs",
         Vec::new(),
     );
 
@@ -923,7 +923,7 @@ fn embedded_runtime_signal_delivers_sigchld_on_child_exit() {
         &vm_id,
         "sigchld-parent",
         GuestRuntimeKind::JavaScript,
-        &parent_entry,
+        "/workspace/parent.mjs",
         Vec::new(),
     );
 

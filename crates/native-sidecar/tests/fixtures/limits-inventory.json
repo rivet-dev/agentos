@@ -508,6 +508,12 @@
 		"rationale": "Command-resolution recursion guard (symlink/shim chains); safety invariant."
 	},
 	{
+		"name": "MAX_PACKAGE_SYMLINK_DEPTH",
+		"path": "crates/native-sidecar/src/execution.rs",
+		"class": "invariant",
+		"rationale": "Linux-compatible ELOOP bound for package launcher mount and symlink resolution."
+	},
+	{
 		"name": "MAX_PER_PROCESS_STATE_HANDLES",
 		"path": "crates/native-sidecar/src/execution.rs",
 		"class": "policy-deferred",

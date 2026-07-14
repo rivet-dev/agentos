@@ -2008,38 +2008,9 @@ fn resolve_vm_cwds(
     metadata_cwd: Option<&String>,
     shadow_root: &Path,
 ) -> Result<(String, PathBuf), SidecarError> {
-    if let Some(raw_cwd) = metadata_cwd {
-        let candidate = PathBuf::from(raw_cwd);
-        if candidate.is_absolute() || raw_cwd.starts_with('.') {
-            let resolved_host_cwd = resolve_host_path(Some(raw_cwd))?;
-            return Ok((String::from("/"), resolved_host_cwd));
-        }
-    }
-
     let guest_cwd = resolve_guest_cwd(metadata_cwd);
     let host_cwd = shadow_path_for_guest(shadow_root, &guest_cwd);
     Ok((guest_cwd, host_cwd))
-}
-
-fn resolve_host_path(value: Option<&String>) -> Result<PathBuf, SidecarError> {
-    match value {
-        Some(path) => {
-            let cwd = PathBuf::from(path);
-            let resolved = if cwd.is_absolute() {
-                cwd
-            } else {
-                std::env::current_dir()
-                    .map_err(|error| {
-                        SidecarError::Io(format!("failed to resolve current directory: {error}"))
-                    })?
-                    .join(cwd)
-            };
-            Ok(resolved)
-        }
-        None => std::env::current_dir().map_err(|error| {
-            SidecarError::Io(format!("failed to resolve current directory: {error}"))
-        }),
-    }
 }
 
 fn create_vm_shadow_root(vm_id: &str) -> Result<PathBuf, SidecarError> {

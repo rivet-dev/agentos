@@ -26,7 +26,7 @@ fn create_vm_with_root_filesystem(
     connection_id: &str,
     session_id: &str,
     runtime: GuestRuntimeKind,
-    cwd: &std::path::Path,
+    _cwd: &std::path::Path,
     root_filesystem: RootFilesystemDescriptor,
 ) -> String {
     let result = sidecar
@@ -35,7 +35,7 @@ fn create_vm_with_root_filesystem(
             wire_session(connection_id, session_id),
             RequestPayload::CreateVmRequest(CreateVmRequest::legacy_test_config(
                 runtime,
-                HashMap::from([(String::from("cwd"), cwd.to_string_lossy().into_owned())]),
+                HashMap::from([(String::from("cwd"), String::from("/workspace"))]),
                 root_filesystem,
                 Some(wire_permissions_allow_all()),
             )),
@@ -110,7 +110,7 @@ console.log(JSON.stringify({
         &vm_id,
         "proc-js-identity",
         GuestRuntimeKind::JavaScript,
-        &entrypoint,
+        "/workspace/identity.mjs",
         Vec::new(),
     );
 
@@ -131,7 +131,7 @@ console.log(JSON.stringify({
     let parsed = parse_json_stdout(&stdout);
     assert_eq!(parsed["envUser"], "agentos");
     assert_eq!(parsed["envHome"], "/home/agentos");
-    assert_eq!(parsed["envPwd"], "/");
+    assert_eq!(parsed["envPwd"], "/workspace");
     assert_eq!(parsed["envShell"], "/bin/sh");
     assert_eq!(parsed["envPath"], DEFAULT_GUEST_PATH_ENV);
     assert_eq!(parsed["internalKeys"], Value::Array(Vec::new()));
@@ -141,7 +141,7 @@ console.log(JSON.stringify({
     assert_eq!(parsed["egid"], 1000);
     assert_eq!(parsed["groups"], Value::Array(vec![Value::from(1000)]));
     assert_eq!(parsed["homedir"], "/home/agentos");
-    assert_eq!(parsed["cwd"], "/");
+    assert_eq!(parsed["cwd"], "/workspace");
     assert_eq!(parsed["userInfo"]["username"], "agentos");
     assert_eq!(parsed["userInfo"]["uid"], 1000);
     assert_eq!(parsed["userInfo"]["gid"], 1000);
@@ -221,7 +221,7 @@ print(json.dumps({
         &vm_id,
         "proc-python-identity",
         GuestRuntimeKind::Python,
-        std::path::Path::new("/workspace/identity.py"),
+        "/workspace/identity.py",
         Vec::new(),
     );
 
@@ -242,7 +242,7 @@ print(json.dumps({
     let parsed = parse_json_stdout(&stdout);
     assert_eq!(parsed["env_user"], "agentos");
     assert_eq!(parsed["env_home"], "/home/agentos");
-    assert_eq!(parsed["env_pwd"], "/");
+    assert_eq!(parsed["env_pwd"], "/workspace");
     assert_eq!(parsed["env_shell"], "/bin/sh");
     assert_eq!(parsed["env_path"], DEFAULT_GUEST_PATH_ENV);
     assert_eq!(parsed["internal_keys"], Value::Array(Vec::new()));
@@ -351,7 +351,7 @@ fn wasm_guest_identity_commands_use_kernel_owned_defaults() {
         &vm_id,
         "proc-wasm-identity",
         GuestRuntimeKind::WebAssembly,
-        &wasm_path,
+        "/workspace/identity.wasm",
         Vec::new(),
     );
 
@@ -493,7 +493,7 @@ fn wasm_guest_env_filters_internal_control_vars_and_uses_kernel_defaults() {
         &vm_id,
         "proc-wasm-env",
         GuestRuntimeKind::WebAssembly,
-        &wasm_path,
+        "/workspace/env.wasm",
         Vec::new(),
     );
 

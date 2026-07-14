@@ -57,7 +57,7 @@ fn connection_loss_forces_reclamation_after_cleanup_event_limit() {
         &vm_id,
         "process-1",
         GuestRuntimeKind::JavaScript,
-        &entrypoint,
+        "/workspace/ignore-term.mjs",
         Vec::new(),
     );
 

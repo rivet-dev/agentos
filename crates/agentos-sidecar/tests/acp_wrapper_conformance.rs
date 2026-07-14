@@ -44,6 +44,8 @@ use browser_bridge_support::RecordingBridge as BrowserBridge;
 use native_bridge_support::RecordingBridge as NativeBridge;
 use serde_json::{json, Value};
 
+const GUEST_CWD: &str = "/workspace";
+
 const ECHO_AGENT_SOURCE: &str =
     include_str!("../../../packages/browser/tests/fixtures/acp-echo-agent.mjs");
 static NATIVE_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -197,7 +199,7 @@ fn browser_initialize_vm_projects_real_packed_agent_then_lists_and_creates_it() 
     let create = CreateVmRequest::json_config(
         GuestRuntimeKind::JavaScript,
         agentos_vm_config::CreateVmConfig {
-            cwd: Some(root.to_string_lossy().into_owned()),
+            cwd: Some(String::from(GUEST_CWD)),
             ..Default::default()
         },
     );
@@ -1884,11 +1886,11 @@ fn semantic_response(response: &AcpResponse) -> Value {
     }
 }
 
-fn create_fixture_request(root: &Path) -> AcpRequest {
+fn create_fixture_request(_root: &Path) -> AcpRequest {
     AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
         agent_type: String::from("echo"),
         runtime: Some(AcpRuntimeKind::JavaScript),
-        cwd: Some(root.to_string_lossy().into_owned()),
+        cwd: Some(String::from(GUEST_CWD)),
         args: Some(Vec::new()),
         env: Some(HashMap::new()),
         protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
@@ -2048,7 +2050,7 @@ fn create_native_vm_at(
     sidecar: &mut NativeSidecar<NativeBridge>,
     connection_id: &str,
     session_id: &str,
-    root: &Path,
+    _root: &Path,
     request_id: i64,
 ) -> String {
     let result = sidecar
@@ -2062,7 +2064,7 @@ fn create_native_vm_at(
             payload: RequestPayload::CreateVmRequest(CreateVmRequest::json_config(
                 GuestRuntimeKind::JavaScript,
                 agentos_vm_config::CreateVmConfig {
-                    cwd: Some(root.to_string_lossy().into_owned()),
+                    cwd: Some(String::from(GUEST_CWD)),
                     ..Default::default()
                 },
             )),
@@ -2226,7 +2228,7 @@ fn create_browser_vm(
 fn create_browser_vm_at(
     codec: &WireFrameCodec,
     dispatcher: &mut BrowserWireDispatcher<BrowserBridge>,
-    root: &Path,
+    _root: &Path,
     request_id: i64,
     client_name: &str,
 ) -> (String, OwnershipScope) {
@@ -2282,7 +2284,7 @@ fn create_browser_vm_at(
             payload: RequestPayload::CreateVmRequest(CreateVmRequest::json_config(
                 GuestRuntimeKind::JavaScript,
                 agentos_vm_config::CreateVmConfig {
-                    cwd: Some(root.to_string_lossy().into_owned()),
+                    cwd: Some(String::from(GUEST_CWD)),
                     ..Default::default()
                 },
             )),

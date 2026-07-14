@@ -178,7 +178,7 @@ console.log(JSON.stringify({{ ok: true, count: done }}));
         &vm_id,
         "fetch-keepalive-process",
         GuestRuntimeKind::JavaScript,
-        &entry,
+        "/workspace/fetch-keepalive-entry.mjs",
         Vec::new(),
     );
 
@@ -352,7 +352,7 @@ console.log(JSON.stringify({{
         &vm_id,
         "fetch-process",
         GuestRuntimeKind::JavaScript,
-        &entry,
+        "/workspace/fetch-entry.mjs",
         Vec::new(),
     );
 
@@ -506,7 +506,7 @@ console.log(JSON.stringify({{
         &vm_id,
         "fetch-abort-process",
         GuestRuntimeKind::JavaScript,
-        &entry,
+        "/workspace/fetch-abort-entry.mjs",
         Vec::new(),
     );
 

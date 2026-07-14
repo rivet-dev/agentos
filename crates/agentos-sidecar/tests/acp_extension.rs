@@ -27,6 +27,8 @@ use agentos_vm_config as vm_config;
 use bridge_support::RecordingBridge;
 use serde_json::Value;
 
+const GUEST_CWD: &str = "/workspace";
+
 #[test]
 fn acp_extension_suite() {
     acp_extension_creates_reports_and_closes_session_over_ext();
@@ -58,7 +60,7 @@ fn closing_wire_session_preserves_same_connection_sibling_acp_state() {
         AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
             agent_type: String::from("pi"),
             runtime: Some(AcpRuntimeKind::JavaScript),
-            cwd: Some(cwd.to_string_lossy().into_owned()),
+            cwd: Some(String::from(GUEST_CWD)),
             args: Some(Vec::new()),
             env: Some(HashMap::new()),
             protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
@@ -132,7 +134,7 @@ fn cron_session_actions_execute_inside_the_native_sidecar() {
                     "agentType": "pi",
                     "prompt": "run from cron",
                     "options": {
-                        "cwd": cwd.to_string_lossy(),
+                        "cwd": GUEST_CWD,
                         "skipOsInstructions": true
                     }
                 })
@@ -229,7 +231,7 @@ fn acp_terminal_requests_stay_inside_sidecar() {
         AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
             agent_type: String::from("pi"),
             runtime: Some(AcpRuntimeKind::JavaScript),
-            cwd: Some(cwd.to_string_lossy().into_owned()),
+            cwd: Some(String::from(GUEST_CWD)),
             args: Some(Vec::new()),
             env: Some(HashMap::new()),
             protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
@@ -338,7 +340,7 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
     let create_request = AcpCreateSessionRequest {
         agent_type: String::from("pi"),
         runtime: Some(AcpRuntimeKind::JavaScript),
-        cwd: Some(cwd.to_string_lossy().into_owned()),
+        cwd: Some(String::from(GUEST_CWD)),
         args: Some(Vec::new()),
         env: Some(HashMap::new()),
         protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
@@ -633,7 +635,7 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
         AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
             agent_type: String::from("pi"),
             runtime: Some(AcpRuntimeKind::JavaScript),
-            cwd: Some(cwd.to_string_lossy().into_owned()),
+            cwd: Some(String::from(GUEST_CWD)),
             args: Some(Vec::new()),
             env: Some(HashMap::new()),
             protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
@@ -752,7 +754,7 @@ fn acp_close_session_is_owner_scoped_and_idempotent() {
         AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
             agent_type: String::from("pi"),
             runtime: Some(AcpRuntimeKind::JavaScript),
-            cwd: Some(cwd.to_string_lossy().into_owned()),
+            cwd: Some(String::from(GUEST_CWD)),
             args: Some(Vec::new()),
             env: Some(HashMap::new()),
             protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
@@ -877,7 +879,7 @@ fn acp_session_request_denies_cross_connection_prompt_and_cancel() {
         AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
             agent_type: String::from("pi"),
             runtime: Some(AcpRuntimeKind::JavaScript),
-            cwd: Some(cwd.to_string_lossy().into_owned()),
+            cwd: Some(String::from(GUEST_CWD)),
             args: Some(Vec::new()),
             env: Some(HashMap::new()),
             protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
@@ -1597,7 +1599,7 @@ fn create_vm_with_additional_instructions(
             payload: RequestPayload::CreateVmRequest(CreateVmRequest {
                 runtime: GuestRuntimeKind::JavaScript,
                 config: serde_json::to_string(&vm_config::CreateVmConfig {
-                    cwd: Some(cwd.to_string_lossy().into_owned()),
+                    cwd: Some(String::from(GUEST_CWD)),
                     agent_additional_instructions: agent_additional_instructions.map(String::from),
                     permissions: Some(allow_all_permissions()),
                     root_filesystem: Some(vm_config::RootFilesystemConfig {
@@ -1654,7 +1656,7 @@ fn bootstrap_mock_agents(
     fs::write(bin_dir.join("pi"), script).expect("write mock agent command");
     fs::write(
         bin_dir.join("terminal-fixture"),
-        r#"
+        r#"#!/usr/bin/env node
 process.stdin.resume();
 process.stdin.on("data", () => {
   process.stdout.write("native-terminal");

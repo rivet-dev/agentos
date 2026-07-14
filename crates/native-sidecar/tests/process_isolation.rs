@@ -63,7 +63,7 @@ fn concurrent_vm_processes_stay_isolated_with_vm_scoped_events() {
         &slow_vm_id,
         "proc",
         GuestRuntimeKind::JavaScript,
-        &slow_entry,
+        "/workspace/slow.cjs",
         Vec::new(),
     );
     execute_wire(
@@ -74,7 +74,7 @@ fn concurrent_vm_processes_stay_isolated_with_vm_scoped_events() {
         &fast_vm_id,
         "proc",
         GuestRuntimeKind::JavaScript,
-        &fast_entry,
+        "/workspace/fast.cjs",
         Vec::new(),
     );
 
