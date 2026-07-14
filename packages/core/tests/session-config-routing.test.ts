@@ -160,6 +160,93 @@ describe("AgentOs session config routing", () => {
 		});
 	});
 
+	it.each([
+		{
+			name: "a transport failure",
+			fail: async (): Promise<AcpResponse> => {
+				throw new Error("transport closed");
+			},
+			error: "transport closed",
+		},
+		{
+			name: "an unexpected response",
+			fail: async (): Promise<AcpResponse> => ({
+				tag: "AcpListSessionsResponse",
+				val: { sessions: [] },
+			}),
+			error: "unexpected response to AcpCloseSessionRequest",
+		},
+		{
+			name: "a mismatched session id",
+			fail: async (): Promise<AcpResponse> => ({
+				tag: "AcpSessionClosedResponse",
+				val: { sessionId: "other-session" },
+			}),
+			error: "unexpected session id in AcpSessionClosedResponse",
+		},
+	])("retains ACP routes after $name and removes them after a confirmed retry", async ({
+		fail,
+		error,
+	}) => {
+		const sessionId = "session-1";
+		const rejectPendingPermission = vi.fn();
+		const cleanupTimer = setTimeout(() => {}, 60_000);
+		const session = {
+			pendingPermissionReplies: new Map([
+				[
+					"permission-1",
+					{
+						resolve: vi.fn(),
+						reject: rejectPendingPermission,
+						cleanupTimer,
+					},
+				],
+			]),
+		};
+		let attempt = 0;
+		const sendAcpRequest = vi.fn(
+			async (request: AcpRequest): Promise<AcpResponse> => {
+				attempt += 1;
+				if (attempt === 1) {
+					return fail();
+				}
+				if (request.tag !== "AcpCloseSessionRequest") {
+					throw new Error(`unexpected request: ${request.tag}`);
+				}
+				return {
+					tag: "AcpSessionClosedResponse",
+					val: { sessionId: request.val.sessionId },
+				};
+			},
+		);
+		const agent = Object.create(AgentOs.prototype) as AgentOs;
+		const backdoor = agent as unknown as {
+			_sessions: Map<string, typeof session>;
+			_sendAcpRequest: typeof sendAcpRequest;
+		};
+		backdoor._sessions = new Map([[sessionId, session]]);
+		backdoor._sendAcpRequest = sendAcpRequest;
+
+		try {
+			await expect(agent.closeSession(sessionId)).rejects.toThrow(error);
+			expect(backdoor._sessions.get(sessionId)).toBe(session);
+			expect(session.pendingPermissionReplies.has("permission-1")).toBe(true);
+			expect(rejectPendingPermission).not.toHaveBeenCalled();
+
+			await expect(agent.closeSession(sessionId)).resolves.toBeUndefined();
+			expect(backdoor._sessions.has(sessionId)).toBe(false);
+			expect(session.pendingPermissionReplies.size).toBe(0);
+			expect(rejectPendingPermission).toHaveBeenCalledOnce();
+			expect(rejectPendingPermission).toHaveBeenCalledWith(
+				expect.objectContaining({
+					message: "Session closed before permission reply: permission-1",
+				}),
+			);
+		} finally {
+			clearTimeout(cleanupTimer);
+		}
+	});
+
 	it("uses sidecar-accumulated prompt text without a client event route", async () => {
 		const agent = Object.create(AgentOs.prototype) as AgentOs;
 		const sendAcpRequest = vi.fn(

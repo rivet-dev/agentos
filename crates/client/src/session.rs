@@ -42,11 +42,17 @@ pub(crate) struct PermissionRouteRequest {
 #[cfg(test)]
 mod stream_tests {
     use super::{
-        broadcast_result_stream, failed_result_stream, send_bridged_permission_reply,
-        wait_for_permission_reply, PendingPermissionOutcome, PermissionReply,
+        broadcast_result_stream, failed_result_stream, finalize_acp_session_close,
+        send_bridged_permission_reply, wait_for_permission_reply, AgentExitEvent,
+        PendingPermissionOutcome, PermissionReply, PermissionRequest,
     };
+    use crate::agent_os::SessionEntry;
     use crate::error::ClientError;
+    use crate::json_rpc::JsonRpcNotification;
     use crate::stream::{RoutedStreamEvent, StreamRouteFailure};
+    use agentos_protocol::generated::v1::{
+        AcpListAgentsResponse, AcpResponse, AcpSessionClosedResponse,
+    };
     use futures::StreamExt;
 
     #[tokio::test]
@@ -163,6 +169,107 @@ mod stream_tests {
             pending_reply.await.expect("joined pending reply"),
             PermissionReply::Once
         );
+    }
+
+    #[tokio::test]
+    async fn acp_close_routes_survive_every_failed_confirmation_until_retry_succeeds() {
+        const SESSION_ID: &str = "session-retry";
+
+        let sessions = scc::HashMap::new();
+        let (event_tx, mut event_rx) =
+            tokio::sync::broadcast::channel::<RoutedStreamEvent<JsonRpcNotification>>(1);
+        let (permission_tx, mut permission_rx) =
+            tokio::sync::broadcast::channel::<RoutedStreamEvent<PermissionRequest>>(1);
+        let (agent_exit_tx, mut agent_exit_rx) =
+            tokio::sync::broadcast::channel::<RoutedStreamEvent<AgentExitEvent>>(1);
+        let pending_permission_replies = scc::HashMap::new();
+        let (pending_tx, mut pending_rx) = tokio::sync::oneshot::channel();
+        pending_permission_replies
+            .insert(String::from("permission-1"), pending_tx)
+            .expect("insert pending permission route");
+        assert!(
+            sessions
+                .insert(
+                    String::from(SESSION_ID),
+                    SessionEntry {
+                        event_tx,
+                        permission_tx,
+                        agent_exit_tx,
+                        pending_permission_replies,
+                    },
+                )
+                .is_ok(),
+            "insert session route"
+        );
+
+        let failures = [
+            Err(ClientError::Sidecar(String::from("transport unavailable"))),
+            Err(ClientError::Kernel {
+                code: String::from("acp_close_rejected"),
+                message: String::from("close rejected"),
+            }),
+            Ok(AcpResponse::AcpListAgentsResponse(AcpListAgentsResponse {
+                agents: Vec::new(),
+            })),
+            Ok(AcpResponse::AcpSessionClosedResponse(
+                AcpSessionClosedResponse {
+                    session_id: String::from("wrong-session"),
+                },
+            )),
+        ];
+
+        for failure in failures {
+            assert!(finalize_acp_session_close(&sessions, SESSION_ID, failure).is_err());
+            assert!(
+                sessions.read(SESSION_ID, |_, _| ()).is_some(),
+                "a failed close must retain the complete session route for retry"
+            );
+            assert!(matches!(
+                pending_rx.try_recv(),
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+            ));
+            assert!(matches!(
+                event_rx.try_recv(),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ));
+            assert!(matches!(
+                permission_rx.try_recv(),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ));
+            assert!(matches!(
+                agent_exit_rx.try_recv(),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ));
+        }
+
+        finalize_acp_session_close(
+            &sessions,
+            SESSION_ID,
+            Ok(AcpResponse::AcpSessionClosedResponse(
+                AcpSessionClosedResponse {
+                    session_id: String::from(SESSION_ID),
+                },
+            )),
+        )
+        .expect("matching close confirmation finalizes the session route");
+
+        assert!(sessions.read(SESSION_ID, |_, _| ()).is_none());
+        assert!(matches!(
+            pending_rx.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+        ));
+        assert!(matches!(
+            event_rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Closed)
+        ));
+        assert!(matches!(
+            permission_rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Closed)
+        ));
+        assert!(matches!(
+            agent_exit_rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Closed)
+        ));
     }
 }
 
@@ -737,6 +844,32 @@ fn unexpected_acp_response(operation: &str, response: AcpResponse) -> ClientErro
     ClientError::Sidecar(format!("unexpected response to {operation}: {response:?}"))
 }
 
+/// Validate the sidecar's ACP close response before releasing any host callback/event routes.
+/// Passing the request result into this one finalization point keeps transport failures and typed
+/// rejections retryable as well as rejecting unrelated or wrong-session success responses.
+fn finalize_acp_session_close(
+    sessions: &scc::HashMap<String, SessionEntry>,
+    requested_session_id: &str,
+    response: std::result::Result<AcpResponse, ClientError>,
+) -> std::result::Result<(), ClientError> {
+    let response = response?;
+    match response {
+        AcpResponse::AcpSessionClosedResponse(closed)
+            if closed.session_id == requested_session_id =>
+        {
+            // Removing the complete entry closes its event/permission routes and drops every
+            // pending permission responder only after the authoritative close is confirmed.
+            let _ = sessions.remove(requested_session_id);
+            Ok(())
+        }
+        AcpResponse::AcpSessionClosedResponse(closed) => Err(ClientError::Sidecar(format!(
+            "ACP close returned session {} for requested session {requested_session_id}",
+            closed.session_id
+        ))),
+        other => Err(unexpected_acp_response("AcpCloseSessionRequest", other)),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Methods
 // ---------------------------------------------------------------------------
@@ -1055,27 +1188,11 @@ impl AgentOs {
             .await?)
     }
 
-    /// Reject all pending permission replies. The TS path clears their 120s timers and rejects them;
-    /// here dropping the responder side closes the awaiting channel. Mirrors
-    /// `_rejectPendingPermissionReplies`.
-    fn reject_pending_permission_replies(&self, session_id: &str) {
-        let _ = self.require_session(session_id, |entry| {
-            let mut ids = Vec::new();
-            entry
-                .pending_permission_replies
-                .scan(|id, _| ids.push(id.clone()));
-            for id in ids {
-                let _ = entry.pending_permission_replies.remove(&id);
-            }
-        });
-    }
-
     /// Close a session through the sidecar. The sidecar makes repeated or unknown
-    /// closes idempotent, so the client keeps no closed-id or in-flight-close state.
+    /// closes idempotent, so the client keeps no closed-id or in-flight-close state. Host callback,
+    /// event, and permission routes remain live until a matching close response is validated; every
+    /// failure retains them so callers can retry without losing correlation state.
     pub async fn close_session(&self, session_id: &str) -> std::result::Result<(), ClientError> {
-        self.reject_pending_permission_replies(session_id);
-        let _ = self.inner().sessions.remove(session_id);
-
         // Session processes live entirely inside the VM, so the only safe teardown is the ACP close
         // request, which targets the guest process by its in-VM session/process handle.
         //
@@ -1090,11 +1207,8 @@ impl AgentOs {
             .send_acp_request(AcpRequest::AcpCloseSessionRequest(AcpCloseSessionRequest {
                 session_id: session_id.to_string(),
             }))
-            .await?;
-        match response {
-            AcpResponse::AcpSessionClosedResponse(_) => Ok(()),
-            other => Err(unexpected_acp_response("AcpCloseSessionRequest", other)),
-        }
+            .await;
+        finalize_acp_session_close(&self.inner().sessions, session_id, response)
     }
 
     async fn send_acp_request(

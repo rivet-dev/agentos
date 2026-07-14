@@ -2636,8 +2636,6 @@ export class AgentOs {
 	}
 
 	private async _closeSessionInternal(sessionId: string): Promise<void> {
-		this._rejectPendingPermissionReplies(sessionId);
-		this._removeSession(sessionId);
 		const response = await this._sendAcpRequest({
 			tag: "AcpCloseSessionRequest",
 			val: { sessionId },
@@ -2647,6 +2645,13 @@ export class AgentOs {
 				`unexpected response to AcpCloseSessionRequest: ${response.tag}`,
 			);
 		}
+		if (response.val.sessionId !== sessionId) {
+			throw new Error(
+				`unexpected session id in AcpSessionClosedResponse: expected ${sessionId}, received ${response.val.sessionId}`,
+			);
+		}
+		this._rejectPendingPermissionReplies(sessionId);
+		this._removeSession(sessionId);
 	}
 
 	private async _getSessionState(
@@ -3118,6 +3123,10 @@ export class AgentOs {
 
 		// Only release local correlation after authoritative remote teardown. A
 		// failed close leaves these routes and the lease intact for a safe retry.
+		for (const session of this._sessions.values()) {
+			this._rejectPendingPermissionRepliesFromSession(session);
+		}
+		this._sessions.clear();
 		this._cronManager.dispose();
 		this._shells.clear();
 		this._processes.clear();
