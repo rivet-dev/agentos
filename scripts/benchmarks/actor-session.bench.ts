@@ -25,6 +25,9 @@ import { LLMock } from "@copilotkit/llmock";
 import { createClient } from "@rivet-dev/agentos/client";
 
 const SENTINEL = "agentos-actor-session-benchmark-ok";
+const RIVET_NAMESPACE = "default";
+const RIVET_TOKEN = "dev";
+const RIVET_POOL_NAME = "default";
 const ALL_AGENTS = [
 	{
 		id: "claude",
@@ -247,6 +250,58 @@ async function waitForServer(
 	throw new Error(`Actor server did not become ready at ${endpoint}`);
 }
 
+async function configureLocalRunner(
+	child: ChildProcess,
+	endpoint: string,
+): Promise<void> {
+	const headers = { Authorization: `Bearer ${RIVET_TOKEN}` };
+	const datacentersResponse = await fetch(
+		`${endpoint}/datacenters?namespace=${RIVET_NAMESPACE}`,
+		{ headers },
+	);
+	if (!datacentersResponse.ok) {
+		throw new Error(
+			`Failed to list local Rivet datacenters: ${datacentersResponse.status}`,
+		);
+	}
+	const datacenters = (await datacentersResponse.json()) as {
+		datacenters: Array<{ name: string }>;
+	};
+	const datacenter = datacenters.datacenters[0]?.name;
+	if (!datacenter) throw new Error("Local Rivet engine returned no datacenters");
+
+	const configResponse = await fetch(
+		`${endpoint}/runner-configs/${RIVET_POOL_NAME}?namespace=${RIVET_NAMESPACE}`,
+		{
+			method: "PUT",
+			headers: { ...headers, "Content-Type": "application/json" },
+			body: JSON.stringify({ datacenters: { [datacenter]: { normal: {} } } }),
+		},
+	);
+	if (!configResponse.ok) {
+		throw new Error(
+			`Failed to configure local Rivet runner: ${configResponse.status}`,
+		);
+	}
+
+	const startedAt = performance.now();
+	while (performance.now() - startedAt < 30_000) {
+		if (child.exitCode !== null) {
+			throw new Error(`Actor server exited early with code ${child.exitCode}`);
+		}
+		const response = await fetch(
+			`${endpoint}/envoys?namespace=${RIVET_NAMESPACE}&name=${RIVET_POOL_NAME}`,
+			{ headers },
+		);
+		if (response.ok) {
+			const body = (await response.json()) as { envoys: unknown[] };
+			if (body.envoys.length > 0) return;
+		}
+		await sleep(100);
+	}
+	throw new Error("Local Rivet runner did not register an envoy");
+}
+
 async function retryRunnerReady<T>(operation: () => Promise<T>): Promise<T> {
 	const startedAt = performance.now();
 	while (true) {
@@ -328,7 +383,7 @@ async function warmActor(actor: any): Promise<number> {
 		"actor-warm-ok\n",
 	);
 	const execResult = await actor.exec(
-		"printf 'exec-warm-ok\\n' > /home/agentos/benchmark/exec-warm.txt",
+		"node -e \"require('fs').writeFileSync('/home/agentos/benchmark/exec-warm.txt', 'exec-warm-ok\\n')\"",
 	);
 	const warmText = new TextDecoder()
 		.decode(await actor.readFile("/home/agentos/benchmark/actor-warm.txt"))
@@ -341,7 +396,13 @@ async function warmActor(actor: any): Promise<number> {
 		warmText !== "actor-warm-ok" ||
 		execText !== "exec-warm-ok"
 	) {
-		throw new Error("Actor filesystem/exec warmup verification failed");
+		throw new Error(
+			`Actor filesystem/exec warmup verification failed: ${JSON.stringify({
+				execResult,
+				warmText,
+				execText,
+			})}`,
+		);
 	}
 	return elapsed(startedAt);
 }
@@ -440,6 +501,8 @@ async function main(): Promise<void> {
 					detached: process.platform !== "win32",
 					env: {
 						...process.env,
+						RIVET_TOKEN,
+						RIVET_NAMESPACE,
 						BENCH_AGENTS: agents.map((agent) => agent.id).join(","),
 						RIVET_RUN_ENGINE_PORT: String(enginePort),
 						BENCH_MOCK_PORT: String(mockPort),
@@ -452,6 +515,7 @@ async function main(): Promise<void> {
 			pipeServerOutput(server);
 			try {
 				await waitForServer(server, endpoint);
+				await configureLocalRunner(server, endpoint);
 				break;
 			} catch (error) {
 				await stopChild(server, storagePath);
@@ -464,7 +528,12 @@ async function main(): Promise<void> {
 			}
 		}
 
-		const client = createClient({ endpoint });
+		const client = createClient({
+			endpoint,
+			token: RIVET_TOKEN,
+			namespace: RIVET_NAMESPACE,
+			poolName: RIVET_POOL_NAME,
+		});
 		for (const agent of agents) {
 			const actor = client.vm.getOrCreate(
 				`actor-session-benchmark-${agent.id}-${process.pid}`,
