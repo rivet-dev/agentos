@@ -1,15 +1,42 @@
 import { describe, expect, test } from "vitest";
 import {
+	type AcpCallback,
+	type AcpCallbackResponse,
 	type AcpRequest,
 	type AcpResponse,
 	AcpRuntimeKind,
+	decodeAcpCallback,
+	decodeAcpCallbackResponse,
 	decodeAcpRequest,
 	decodeAcpResponse,
+	encodeAcpCallback,
+	encodeAcpCallbackResponse,
 	encodeAcpRequest,
 	encodeAcpResponse,
 } from "../src/sidecar/agentos-protocol.js";
 
 describe("agent-os ACP protocol", () => {
+	test("round-trips the typed permission callback and response", () => {
+		const callback: AcpCallback = {
+			tag: "AcpPermissionCallback",
+			val: {
+				sessionId: "session-1",
+				permissionId: "permission-1",
+				params: '{"reason":"approve"}',
+				cleanupAfterMs: 125_000n,
+			},
+		};
+		expect(decodeAcpCallback(encodeAcpCallback(callback))).toEqual(callback);
+
+		const response: AcpCallbackResponse = {
+			tag: "AcpPermissionCallbackResponse",
+			val: { permissionId: "permission-1", reply: "once" },
+		};
+		expect(
+			decodeAcpCallbackResponse(encodeAcpCallbackResponse(response)),
+		).toEqual(response);
+	});
+
 	test("round-trips create-session requests", () => {
 		const request: AcpRequest = {
 			tag: "AcpCreateSessionRequest",

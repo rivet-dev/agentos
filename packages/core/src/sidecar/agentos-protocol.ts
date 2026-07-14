@@ -1248,26 +1248,8 @@ export function writeAcpPermissionCallback(bc: bare.ByteCursor, x: AcpPermission
     bare.writeU64(bc, x.cleanupAfterMs)
 }
 
-export type AcpHostRequestCallback = {
-    readonly sessionId: string
-    readonly request: JsonUtf8
-}
-
-export function readAcpHostRequestCallback(bc: bare.ByteCursor): AcpHostRequestCallback {
-    return {
-        sessionId: bare.readString(bc),
-        request: readJsonUtf8(bc),
-    }
-}
-
-export function writeAcpHostRequestCallback(bc: bare.ByteCursor, x: AcpHostRequestCallback): void {
-    bare.writeString(bc, x.sessionId)
-    writeJsonUtf8(bc, x.request)
-}
-
 export type AcpCallback =
     | { readonly tag: "AcpPermissionCallback"; readonly val: AcpPermissionCallback }
-    | { readonly tag: "AcpHostRequestCallback"; readonly val: AcpHostRequestCallback }
 
 export function readAcpCallback(bc: bare.ByteCursor): AcpCallback {
     const offset = bc.offset
@@ -1275,8 +1257,6 @@ export function readAcpCallback(bc: bare.ByteCursor): AcpCallback {
     switch (tag) {
         case 0:
             return { tag: "AcpPermissionCallback", val: readAcpPermissionCallback(bc) }
-        case 1:
-            return { tag: "AcpHostRequestCallback", val: readAcpHostRequestCallback(bc) }
         default: {
             bc.offset = offset
             throw new bare.BareError(offset, "invalid tag")
@@ -1289,11 +1269,6 @@ export function writeAcpCallback(bc: bare.ByteCursor, x: AcpCallback): void {
         case "AcpPermissionCallback": {
             bare.writeU8(bc, 0)
             writeAcpPermissionCallback(bc, x.val)
-            break
-        }
-        case "AcpHostRequestCallback": {
-            bare.writeU8(bc, 1)
-            writeAcpHostRequestCallback(bc, x.val)
             break
         }
     }
@@ -1339,23 +1314,8 @@ export function writeAcpPermissionCallbackResponse(bc: bare.ByteCursor, x: AcpPe
     write1(bc, x.reply)
 }
 
-export type AcpHostRequestCallbackResponse = {
-    readonly response: JsonUtf8 | null
-}
-
-export function readAcpHostRequestCallbackResponse(bc: bare.ByteCursor): AcpHostRequestCallbackResponse {
-    return {
-        response: read7(bc),
-    }
-}
-
-export function writeAcpHostRequestCallbackResponse(bc: bare.ByteCursor, x: AcpHostRequestCallbackResponse): void {
-    write7(bc, x.response)
-}
-
 export type AcpCallbackResponse =
     | { readonly tag: "AcpPermissionCallbackResponse"; readonly val: AcpPermissionCallbackResponse }
-    | { readonly tag: "AcpHostRequestCallbackResponse"; readonly val: AcpHostRequestCallbackResponse }
 
 export function readAcpCallbackResponse(bc: bare.ByteCursor): AcpCallbackResponse {
     const offset = bc.offset
@@ -1363,8 +1323,6 @@ export function readAcpCallbackResponse(bc: bare.ByteCursor): AcpCallbackRespons
     switch (tag) {
         case 0:
             return { tag: "AcpPermissionCallbackResponse", val: readAcpPermissionCallbackResponse(bc) }
-        case 1:
-            return { tag: "AcpHostRequestCallbackResponse", val: readAcpHostRequestCallbackResponse(bc) }
         default: {
             bc.offset = offset
             throw new bare.BareError(offset, "invalid tag")
@@ -1377,11 +1335,6 @@ export function writeAcpCallbackResponse(bc: bare.ByteCursor, x: AcpCallbackResp
         case "AcpPermissionCallbackResponse": {
             bare.writeU8(bc, 0)
             writeAcpPermissionCallbackResponse(bc, x.val)
-            break
-        }
-        case "AcpHostRequestCallbackResponse": {
-            bare.writeU8(bc, 1)
-            writeAcpHostRequestCallbackResponse(bc, x.val)
             break
         }
     }

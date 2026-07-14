@@ -277,14 +277,8 @@ type AcpPermissionCallback struct {
   cleanupAfterMs: u64
 }
 
-type AcpHostRequestCallback struct {
-  sessionId: str
-  request: JsonUtf8
-}
-
 type AcpCallback union {
-  AcpPermissionCallback |
-  AcpHostRequestCallback
+  AcpPermissionCallback
 }
 
 type AcpPermissionCallbackResponse struct {
@@ -294,11 +288,6 @@ type AcpPermissionCallbackResponse struct {
   reply: optional<str>
 }
 
-type AcpHostRequestCallbackResponse struct {
-  response: optional<JsonUtf8>
-}
-
 type AcpCallbackResponse union {
-  AcpPermissionCallbackResponse |
-  AcpHostRequestCallbackResponse
+  AcpPermissionCallbackResponse
 }

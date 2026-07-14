@@ -18,8 +18,8 @@ use agentos_native_sidecar::{
 };
 use agentos_protocol::generated::v1::{
     AcpAbortPendingRequest, AcpCallback, AcpCallbackResponse, AcpDeliverAgentOutputRequest,
-    AcpDeliverAgentStderrRequest, AcpErrorResponse, AcpEvent, AcpHostRequestCallback,
-    AcpPendingAbortReason, AcpPermissionCallback, AcpRequest, AcpResponse, AcpRuntimeKind,
+    AcpDeliverAgentStderrRequest, AcpErrorResponse, AcpEvent, AcpPendingAbortReason,
+    AcpPermissionCallback, AcpRequest, AcpResponse, AcpRuntimeKind,
 };
 use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use agentos_sidecar_core::behavior::{cancel_notification, unsupported_inbound_request_response};
@@ -1989,16 +1989,6 @@ fn encode_session_rpc_response(
     encode_response(response).ok()
 }
 
-fn json_rpc_id_label(id: Option<&Value>) -> String {
-    match id {
-        Some(Value::String(value)) => value.clone(),
-        Some(Value::Number(value)) => value.to_string(),
-        Some(Value::Null) => String::from("null"),
-        Some(other) => other.to_string(),
-        None => String::from("unknown"),
-    }
-}
-
 async fn build_inbound_response(
     extension: &AcpExtension,
     ctx: &mut ExtensionContext<'_>,
@@ -2100,7 +2090,7 @@ async fn build_inbound_response(
                 handle_native_terminal_request(extension, ctx, session_id, message, &id, method)
                     .await
             }
-            _ => forward_inbound_host_request(ctx, session_id, message, &id)?,
+            _ => unsupported_inbound_request_response(message),
         },
     };
     Ok(response)
@@ -2857,39 +2847,6 @@ fn json_rpc_error(id: Value, code: i64, message: String, data: Option<Value>) ->
     json!({ "jsonrpc": "2.0", "id": id, "error": error })
 }
 
-fn forward_inbound_host_request(
-    ctx: &ExtensionContext<'_>,
-    session_id: &str,
-    message: &Value,
-    id: &Value,
-) -> Result<Value, SidecarError> {
-    let callback = AcpCallback::AcpHostRequestCallback(AcpHostRequestCallback {
-        session_id: session_id.to_string(),
-        request: serde_json::to_string(message).map_err(|error| {
-            SidecarError::InvalidState(format!("failed to serialize ACP host request: {error}"))
-        })?,
-    });
-    let response = ctx.invoke_callback(encode_callback(callback)?, Duration::from_secs(120))?;
-    let response: AcpCallbackResponse = serde_bare::from_slice(&response).map_err(|error| {
-        SidecarError::InvalidState(format!("invalid ACP host request response: {error}"))
-    })?;
-    let AcpCallbackResponse::AcpHostRequestCallbackResponse(response) = response else {
-        return Ok(unsupported_inbound_request_response(message));
-    };
-    let Some(response) = response.response else {
-        return Ok(unsupported_inbound_request_response(message));
-    };
-    let response = parse_json_text(&response, "ACP host request response")?;
-    if response.get("id") != Some(id) {
-        return Err(SidecarError::InvalidState(format!(
-            "ACP host request response id {} did not match request id {}",
-            json_rpc_id_label(response.get("id")),
-            json_rpc_id_label(Some(id))
-        )));
-    }
-    Ok(response)
-}
-
 fn permission_result(reply: &str, params: &Value) -> Value {
     let option_id = match resolve_permission_option_id(params, reply) {
         Some(option_id) => option_id,
@@ -2904,12 +2861,8 @@ fn permission_result(reply: &str, params: &Value) -> Value {
 }
 
 fn permission_callback_reply(response: AcpCallbackResponse) -> String {
-    match response {
-        AcpCallbackResponse::AcpPermissionCallbackResponse(response) => {
-            response.reply.unwrap_or_else(|| String::from("reject"))
-        }
-        AcpCallbackResponse::AcpHostRequestCallbackResponse(_) => String::from("reject"),
-    }
+    let AcpCallbackResponse::AcpPermissionCallbackResponse(response) = response;
+    response.reply.unwrap_or_else(|| String::from("reject"))
 }
 
 fn permission_callback_reply_from_result(
@@ -3017,11 +2970,6 @@ fn registered_owner_ids_for_session(
         })
         .map(|(owner_id, _)| owner_id.clone())
         .collect()
-}
-
-fn parse_json_text(text: &str, label: &str) -> Result<Value, SidecarError> {
-    serde_json::from_str(text)
-        .map_err(|error| SidecarError::InvalidState(format!("invalid {label} JSON: {error}")))
 }
 
 fn to_record(value: Value) -> Map<String, Value> {

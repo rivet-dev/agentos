@@ -1,7 +1,32 @@
 use agentos_protocol::generated::v1::{
-    AcpCreateSessionRequest, AcpRequest, AcpResponse, AcpRuntimeKind, AcpSessionCreatedResponse,
-    AcpSessionResumedResponse,
+    AcpCallback, AcpCallbackResponse, AcpCreateSessionRequest, AcpPermissionCallback,
+    AcpPermissionCallbackResponse, AcpRequest, AcpResponse, AcpRuntimeKind,
+    AcpSessionCreatedResponse, AcpSessionResumedResponse,
 };
+
+#[test]
+fn acp_protocol_round_trips_permission_callback_and_response() {
+    let callback = AcpCallback::AcpPermissionCallback(AcpPermissionCallback {
+        session_id: String::from("session-1"),
+        permission_id: String::from("permission-1"),
+        params: String::from(r#"{"reason":"approve"}"#),
+        cleanup_after_ms: 125_000,
+    });
+    let encoded = serde_bare::to_vec(&callback).expect("encode permission callback");
+    let decoded: AcpCallback =
+        serde_bare::from_slice(&encoded).expect("decode permission callback");
+    assert_eq!(decoded, callback);
+
+    let response =
+        AcpCallbackResponse::AcpPermissionCallbackResponse(AcpPermissionCallbackResponse {
+            permission_id: String::from("permission-1"),
+            reply: Some(String::from("once")),
+        });
+    let encoded = serde_bare::to_vec(&response).expect("encode permission callback response");
+    let decoded: AcpCallbackResponse =
+        serde_bare::from_slice(&encoded).expect("decode permission callback response");
+    assert_eq!(decoded, response);
+}
 use agentos_protocol::{
     read_only_config_message, select_config_by_category, AcpPromptTextAccumulator,
     ResolvedAcpCreateSessionRequest, DEFAULT_ACP_CLIENT_CAPABILITIES, DEFAULT_ACP_CWD,

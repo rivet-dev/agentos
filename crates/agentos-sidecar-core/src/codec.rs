@@ -3,7 +3,7 @@
 //! Identical (de)serialization to the native sidecar's private codec, lifted here
 //! so both backends share it. BARE over the `agentos-protocol` generated types.
 
-use agentos_protocol::generated::v1::{AcpCallback, AcpEvent, AcpRequest, AcpResponse};
+use agentos_protocol::generated::v1::{AcpEvent, AcpRequest, AcpResponse};
 
 use crate::AcpCoreError;
 
@@ -20,11 +20,6 @@ pub fn encode_response(response: &AcpResponse) -> Result<Vec<u8>, AcpCoreError> 
 pub fn encode_event(event: &AcpEvent) -> Result<Vec<u8>, AcpCoreError> {
     serde_bare::to_vec(event)
         .map_err(|error| AcpCoreError::InvalidState(format!("invalid ACP event: {error}")))
-}
-
-pub fn encode_callback(callback: &AcpCallback) -> Result<Vec<u8>, AcpCoreError> {
-    serde_bare::to_vec(callback)
-        .map_err(|error| AcpCoreError::InvalidState(format!("invalid ACP callback: {error}")))
 }
 
 #[cfg(test)]

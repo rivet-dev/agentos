@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentos_native_sidecar::wire::{
@@ -16,7 +18,7 @@ use agentos_native_sidecar::wire::{
     SidecarPlacement, SidecarPlacementShared, SidecarRequestPayload, SidecarResponseFrame,
     SidecarResponsePayload, VmOwnership, WakeCronRequest,
 };
-use agentos_native_sidecar::{NativeSidecar, NativeSidecarConfig};
+use agentos_native_sidecar::{NativeSidecar, NativeSidecarConfig, SidecarError};
 use agentos_protocol::generated::v1::{
     AcpCallback, AcpCallbackResponse, AcpCloseSessionRequest, AcpCreateSessionRequest, AcpEvent,
     AcpGetSessionStateRequest, AcpListSessionsRequest, AcpPermissionCallbackResponse, AcpRequest,
@@ -260,32 +262,13 @@ fn cron_session_actions_execute_inside_the_native_sidecar() {
 fn acp_terminal_requests_stay_inside_sidecar() {
     assert_node_available();
     let mut sidecar = new_sidecar("agentos-acp-extension-terminal");
-    sidecar.set_wire_sidecar_request_handler(|frame| {
-        let SidecarRequestPayload::ExtEnvelope(envelope) = frame.payload else {
-            panic!("unexpected sidecar callback payload");
-        };
-        let AcpCallback::AcpHostRequestCallback(callback) =
-            serde_bare::from_slice(&envelope.payload).expect("decode unknown host callback")
-        else {
-            panic!("unexpected ACP callback variant");
-        };
-        let request: Value = serde_json::from_str(&callback.request).expect("host request json");
-        assert_eq!(
-            request["method"], "host/not-found",
-            "native ACP terminal requests must not reach the client callback"
-        );
-        let response = AcpCallbackResponse::AcpHostRequestCallbackResponse(
-            agentos_protocol::generated::v1::AcpHostRequestCallbackResponse { response: None },
-        );
-        Ok(SidecarResponseFrame {
-            schema: frame.schema,
-            request_id: frame.request_id,
-            ownership: frame.ownership,
-            payload: SidecarResponsePayload::ExtEnvelope(ExtEnvelope {
-                namespace: envelope.namespace,
-                payload: serde_bare::to_vec(&response).expect("encode unknown host response"),
-            }),
-        })
+    let unknown_callback_count = Arc::new(AtomicUsize::new(0));
+    let callback_count = Arc::clone(&unknown_callback_count);
+    sidecar.set_wire_sidecar_request_handler(move |_frame| {
+        callback_count.fetch_add(1, Ordering::SeqCst);
+        Err(SidecarError::InvalidState(String::from(
+            "unexpected ACP client callback",
+        )))
     });
     let connection_id = authenticate(&mut sidecar);
     let session_id = open_session(&mut sidecar, &connection_id);
@@ -339,7 +322,19 @@ fn acp_terminal_requests_stay_inside_sidecar() {
         .contains("native-terminal"));
     assert_eq!(terminal["result"]["exitCode"], 0);
     assert_eq!(terminal["result"]["truncated"], false);
-    assert_eq!(terminal["result"]["unknownMethodCode"], -32601);
+    let unknown = &terminal["result"]["unknownMethodResponse"];
+    assert_eq!(unknown["id"], 105);
+    assert_eq!(unknown["error"]["code"], -32601);
+    assert_eq!(
+        unknown["error"]["message"],
+        "method not found: host/not-found"
+    );
+    assert_eq!(unknown["error"]["data"]["method"], "host/not-found");
+    assert_eq!(
+        unknown_callback_count.load(Ordering::SeqCst),
+        0,
+        "unknown native ACP methods must be rejected inside the sidecar"
+    );
 
     let closed = dispatch_acp(
         &mut sidecar,
@@ -362,27 +357,19 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
             assert_eq!(envelope.namespace, ACP_EXTENSION_NAMESPACE);
             let callback: AcpCallback =
                 serde_bare::from_slice(&envelope.payload).expect("decode ACP callback");
-            let response = match callback {
-                AcpCallback::AcpPermissionCallback(callback) => {
-                    assert_eq!(callback.session_id, "adapter-session");
-                    assert_eq!(callback.permission_id, "perm-1");
-                    assert_eq!(callback.cleanup_after_ms, 125_000);
-                    assert!(
-                        callback.cleanup_after_ms > 120_000,
-                        "client cleanup must occur after the sidecar permission deadline"
-                    );
-                    AcpCallbackResponse::AcpPermissionCallbackResponse(
-                        AcpPermissionCallbackResponse {
-                            permission_id: callback.permission_id,
-                            reply: Some(String::from("once")),
-                        },
-                    )
-                }
-                AcpCallback::AcpHostRequestCallback(callback) => panic!(
-                    "native ACP filesystem requests must not reach the client callback: {}",
-                    callback.request
-                ),
-            };
+            let AcpCallback::AcpPermissionCallback(callback) = callback;
+            assert_eq!(callback.session_id, "adapter-session");
+            assert_eq!(callback.permission_id, "perm-1");
+            assert_eq!(callback.cleanup_after_ms, 125_000);
+            assert!(
+                callback.cleanup_after_ms > 120_000,
+                "client cleanup must occur after the sidecar permission deadline"
+            );
+            let response =
+                AcpCallbackResponse::AcpPermissionCallbackResponse(AcpPermissionCallbackResponse {
+                    permission_id: callback.permission_id,
+                    reply: Some(String::from("once")),
+                });
             Ok(SidecarResponseFrame {
                 schema: frame.schema,
                 request_id: frame.request_id,
@@ -1102,25 +1089,17 @@ fn install_default_acp_callback_handler(sidecar: &mut NativeSidecar<RecordingBri
             assert_eq!(envelope.namespace, ACP_EXTENSION_NAMESPACE);
             let callback: AcpCallback =
                 serde_bare::from_slice(&envelope.payload).expect("decode ACP callback");
-            let response = match callback {
-                AcpCallback::AcpPermissionCallback(callback) => {
-                    assert_eq!(callback.cleanup_after_ms, 125_000);
-                    assert!(
-                        callback.cleanup_after_ms > 120_000,
-                        "client cleanup must occur after the sidecar permission deadline"
-                    );
-                    AcpCallbackResponse::AcpPermissionCallbackResponse(
-                        AcpPermissionCallbackResponse {
-                            permission_id: callback.permission_id,
-                            reply: Some(String::from("once")),
-                        },
-                    )
-                }
-                AcpCallback::AcpHostRequestCallback(callback) => panic!(
-                    "native ACP filesystem requests must not reach the client callback: {}",
-                    callback.request
-                ),
-            };
+            let AcpCallback::AcpPermissionCallback(callback) = callback;
+            assert_eq!(callback.cleanup_after_ms, 125_000);
+            assert!(
+                callback.cleanup_after_ms > 120_000,
+                "client cleanup must occur after the sidecar permission deadline"
+            );
+            let response =
+                AcpCallbackResponse::AcpPermissionCallbackResponse(AcpPermissionCallbackResponse {
+                    permission_id: callback.permission_id,
+                    reply: Some(String::from("once")),
+                });
             Ok(SidecarResponseFrame {
                 schema: frame.schema,
                 request_id: frame.request_id,
@@ -1502,13 +1481,13 @@ let terminalId = null;
 let exitCode = null;
 let terminalOutput = "";
 let truncated = false;
-let unknownMethodCode = null;
+let unknownMethodResponse = null;
 
 for await (const line of lines) {
   if (!line.trim()) continue;
   const message = JSON.parse(line);
   if (!message.method && message.id === 105) {
-    unknownMethodCode = message.error.code;
+    unknownMethodResponse = message;
     console.log(JSON.stringify({
       jsonrpc: "2.0",
       id: promptRequestId,
@@ -1516,7 +1495,7 @@ for await (const line of lines) {
         terminalOutput,
         exitCode,
         truncated,
-        unknownMethodCode
+        unknownMethodResponse
       }
     }));
   } else if (!message.method && message.error && promptRequestId !== null) {

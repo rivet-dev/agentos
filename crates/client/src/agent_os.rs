@@ -17,8 +17,7 @@ use tokio::sync::{broadcast, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use agentos_protocol::generated::v1::{
-    AcpCallback, AcpCallbackResponse, AcpEvent, AcpHostRequestCallbackResponse,
-    AcpPermissionCallbackResponse,
+    AcpCallback, AcpCallbackResponse, AcpEvent, AcpPermissionCallbackResponse,
 };
 use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use agentos_sidecar_client::wire;
@@ -1290,35 +1289,28 @@ async fn handle_acp_ext_callback(
     }
     let callback: AcpCallback = serde_bare::from_slice(&envelope.payload)
         .map_err(|error| ClientError::Sidecar(format!("invalid ACP callback: {error}")))?;
-    let response = match callback {
-        AcpCallback::AcpPermissionCallback(callback) => {
-            let params = serde_json::from_str(&callback.params).map_err(|error| {
-                ClientError::Sidecar(format!(
-                    "invalid ACP permission callback params for {}: {error}",
-                    callback.permission_id
-                ))
-            })?;
-            let result = route_permission_request(
-                ownership,
-                PermissionRouteRequest {
-                    session_id: callback.session_id,
-                    permission_id: callback.permission_id.clone(),
-                    params,
-                    cleanup_after_ms: callback.cleanup_after_ms,
-                },
-            )
-            .await;
-            AcpCallbackResponse::AcpPermissionCallbackResponse(AcpPermissionCallbackResponse {
-                permission_id: callback.permission_id,
-                reply: result.reply,
-            })
-        }
-        AcpCallback::AcpHostRequestCallback(_) => {
-            AcpCallbackResponse::AcpHostRequestCallbackResponse(AcpHostRequestCallbackResponse {
-                response: None,
-            })
-        }
-    };
+    let AcpCallback::AcpPermissionCallback(callback) = callback;
+    let params = serde_json::from_str(&callback.params).map_err(|error| {
+        ClientError::Sidecar(format!(
+            "invalid ACP permission callback params for {}: {error}",
+            callback.permission_id
+        ))
+    })?;
+    let result = route_permission_request(
+        ownership,
+        PermissionRouteRequest {
+            session_id: callback.session_id,
+            permission_id: callback.permission_id.clone(),
+            params,
+            cleanup_after_ms: callback.cleanup_after_ms,
+        },
+    )
+    .await;
+    let response =
+        AcpCallbackResponse::AcpPermissionCallbackResponse(AcpPermissionCallbackResponse {
+            permission_id: callback.permission_id,
+            reply: result.reply,
+        });
     let payload = serde_bare::to_vec(&response).map_err(|error| {
         ClientError::Sidecar(format!("failed to encode ACP callback response: {error}"))
     })?;

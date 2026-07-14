@@ -2829,48 +2829,33 @@ export class AgentOs {
 			};
 		}
 		const callback = decodeAcpCallback(envelope.payload);
-		switch (callback.tag) {
-			case "AcpPermissionCallback": {
-				if (callback.val.cleanupAfterMs > BigInt(Number.MAX_SAFE_INTEGER)) {
-					throw new Error(
-						"ACP permission callback cleanup deadline exceeds JS range",
-					);
-				}
-				const reply = await this._handleAcpPermissionCallback(
-					callback.val.sessionId,
-					callback.val.permissionId,
-					{
-						...toRecord(JSON.parse(callback.val.params)),
-						_acpMethod: ACP_PERMISSION_METHOD,
-					},
-					Number(callback.val.cleanupAfterMs),
-				);
-				return {
-					type: "ext_result",
-					envelope: {
-						namespace: ACP_EXTENSION_NAMESPACE,
-						payload: encodeAcpCallbackResponse({
-							tag: "AcpPermissionCallbackResponse",
-							val: {
-								permissionId: callback.val.permissionId,
-								reply: reply ?? null,
-							},
-						}),
-					},
-				};
-			}
-			case "AcpHostRequestCallback":
-				return {
-					type: "ext_result",
-					envelope: {
-						namespace: ACP_EXTENSION_NAMESPACE,
-						payload: encodeAcpCallbackResponse({
-							tag: "AcpHostRequestCallbackResponse",
-							val: { response: null },
-						}),
-					},
-				};
+		if (callback.val.cleanupAfterMs > BigInt(Number.MAX_SAFE_INTEGER)) {
+			throw new Error(
+				"ACP permission callback cleanup deadline exceeds JS range",
+			);
 		}
+		const reply = await this._handleAcpPermissionCallback(
+			callback.val.sessionId,
+			callback.val.permissionId,
+			{
+				...toRecord(JSON.parse(callback.val.params)),
+				_acpMethod: ACP_PERMISSION_METHOD,
+			},
+			Number(callback.val.cleanupAfterMs),
+		);
+		return {
+			type: "ext_result",
+			envelope: {
+				namespace: ACP_EXTENSION_NAMESPACE,
+				payload: encodeAcpCallbackResponse({
+					tag: "AcpPermissionCallbackResponse",
+					val: {
+						permissionId: callback.val.permissionId,
+						reply: reply ?? null,
+					},
+				}),
+			},
+		};
 	}
 
 	private async _handleAcpPermissionCallback(
