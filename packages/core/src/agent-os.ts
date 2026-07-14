@@ -1049,7 +1049,7 @@ async function handleHostCallback(
 		return {
 			type: "host_callback_result",
 			invocation_id: payload.invocation_id,
-			result: await executeHostTool(tool, parsed.data),
+			result: await tool.execute(parsed.data),
 		};
 	} catch (error) {
 		return {
@@ -1253,18 +1253,6 @@ async function handleJsBridgeCall(
 			error: bridgeErrorMessage(error),
 		};
 	}
-}
-
-async function executeHostTool(
-	tool: HostTool,
-	input: unknown,
-): Promise<unknown> {
-	const parsed = tool.inputSchema.safeParse(input);
-	if (!parsed.success) {
-		throw new Error(validationMessage(parsed.error));
-	}
-
-	return tool.execute(parsed.data);
 }
 
 function serializeToolkitsForSidecar(toolKits: ToolKit[]): Array<{

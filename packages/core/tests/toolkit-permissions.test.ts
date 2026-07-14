@@ -417,6 +417,47 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 		).toBe(false);
 	});
 
+	test("host_callback applies a non-idempotent Zod transform exactly once", async () => {
+		let transformCount = 0;
+		let executedInput: { value: number } | undefined;
+		const registrationSchema = z.object({ value: z.number() });
+		const tool = hostTool({
+			description: "Transform one value",
+			inputSchema: registrationSchema,
+			execute: (input) => {
+				executedInput = input;
+				return input;
+			},
+		});
+		const kit = toolKit({
+			name: "transform",
+			description: "Transform utilities",
+			tools: { once: tool },
+		});
+		const created = await createVmCapturingHandler({ toolKits: [kit] });
+		vm = created.vm;
+
+		// Registration converts the representable schema to JSON Schema. The parsed options retain
+		// that Zod schema object, so replace only its host-side parser with a real transform that makes
+		// a second parse observable without asking the sidecar to represent the transform.
+		const transformSchema = z
+			.object({ value: z.number() })
+			.transform(({ value }) => {
+				transformCount += 1;
+				return { value: value + 1 };
+			});
+		registrationSchema.safeParse = transformSchema.safeParse.bind(transformSchema);
+
+		const response = await created.handler(
+			hostCallbackFrame("transform:once", { value: 1 }),
+		);
+
+		expect(response.error).toBeUndefined();
+		expect(response.result).toEqual({ value: 2 });
+		expect(executedInput).toEqual({ value: 2 });
+		expect(transformCount).toBe(1);
+	});
+
 	// AOSFS-2 (P2): a guest can send schema-failing input on the raw host_callback
 	// RPC path (which does NOT go through the CLI argv parser / sidecar-tool
 	// dispatch validation at sidecar-tool-dispatch:108). The handler must
