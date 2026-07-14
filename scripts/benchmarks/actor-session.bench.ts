@@ -340,7 +340,19 @@ function gitMetadata(): { revision: string; dirty: boolean } {
 					.length > 0,
 		};
 	} catch {
-		return { revision: "unknown", dirty: true };
+		try {
+			return {
+				revision: execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+					encoding: "utf8",
+				}).trim(),
+				dirty:
+					execFileSync("git", ["status", "--porcelain"], {
+						encoding: "utf8",
+					}).trim().length > 0,
+			};
+		} catch {
+			return { revision: "unknown", dirty: true };
+		}
 	}
 }
 
