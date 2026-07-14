@@ -53,4 +53,34 @@ describe("AgentOsOptions validation", () => {
 			}).success,
 		).toBe(false);
 	});
+
+	test.each([undefined, null, false, 42, {}, { packagePath: 42 }])(
+		"rejects malformed software entry %# instead of dropping it",
+		(entry) => {
+			expect(
+				agentOsOptionsSchema.safeParse({ software: [entry] }).success,
+			).toBe(false);
+		},
+	);
+
+	test("accepts serializable software refs and meta-package arrays", () => {
+		expect(
+			agentOsOptionsSchema.safeParse({
+				software: [{ packagePath: "/packages/future.aospkg", future: true }],
+			}).success,
+		).toBe(true);
+		expect(
+			agentOsOptionsSchema.parse({
+				software: [
+					"/packages/local",
+					{ packagePath: "/packages/packed.aospkg" },
+					[{ packagePath: "/packages/meta.aospkg" }],
+				],
+			}).software,
+		).toEqual([
+			"/packages/local",
+			{ packagePath: "/packages/packed.aospkg" },
+			[{ packagePath: "/packages/meta.aospkg" }],
+		]);
+	});
 });

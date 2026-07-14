@@ -673,7 +673,7 @@ interface NormalizedPackageRef {
 	path: string;
 }
 
-function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
+function normalizePackageRef(value: unknown): NormalizedPackageRef {
 	// The single package reference is `packagePath`: the packed `.aospkg` file
 	// (registry-built packages export `{ packagePath }`), or a package dir for
 	// local transition fixtures. A raw string is shorthand for the same path.
@@ -684,18 +684,9 @@ function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
 	if (typeof record.packagePath === "string") {
 		return { path: record.packagePath };
 	}
-	// Recognizably-legacy shapes fail loudly: silently dropping a software
-	// entry boots a VM with missing packages and no diagnostic.
-	for (const legacy of ["packageTar", "packageDir", "dir"]) {
-		if (typeof record[legacy] === "string") {
-			throw new Error(
-				`agentOS package ref uses removed field "${legacy}" (value: ${JSON.stringify(record[legacy])}); ` +
-					"packages are referenced by a single `packagePath` — update the package " +
-					"(rebuild @agentos-software/* dependencies) or pass { packagePath }",
-			);
-		}
-	}
-	return undefined;
+	throw new TypeError(
+		"Invalid software package reference: expected a path string or { packagePath: string }",
+	);
 }
 
 type AcpResponseValue<TTag extends AcpResponse["tag"]> = Extract<
@@ -1378,7 +1369,7 @@ export class AgentOs {
 		const seenPackagePaths = new Set<string>();
 		const sidecarPackages = flatSoftware.flatMap((entry) => {
 			const ref = normalizePackageRef(entry);
-			if (!ref || seenPackagePaths.has(ref.path)) {
+			if (seenPackagePaths.has(ref.path)) {
 				return [];
 			}
 			seenPackagePaths.add(ref.path);
@@ -2094,9 +2085,6 @@ export class AgentOs {
 		descriptor: PackageRef | SoftwarePackageRef,
 	): Promise<void> {
 		const ref = normalizePackageRef(descriptor);
-		if (!ref) {
-			throw new Error("Invalid agentOS package reference");
-		}
 		// Forward to the sidecar, which owns the `/opt/agentos` projection and
 		// appends the package to its live host-backed staging dir; the commands
 		// appear under `/opt/agentos/bin` immediately. The sidecar rejects a

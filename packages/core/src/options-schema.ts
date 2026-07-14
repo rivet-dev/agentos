@@ -265,6 +265,15 @@ export const toolKitSchema = z
 	})
 	.strict() as z.ZodType<ToolKit>;
 
+const softwarePackageRefSchema = z.union([
+	z.string(),
+	z.object({ packagePath: z.string() }),
+]);
+const softwareInputSchema = z.union([
+	softwarePackageRefSchema,
+	z.array(softwarePackageRefSchema),
+]);
+
 /**
  * Shared AgentOsOptions field schemas.
  *
@@ -274,7 +283,7 @@ export const toolKitSchema = z
  * adding options that cross the native boundary.
  */
 export const agentOsOptionFieldSchemas = {
-	software: z.array(z.unknown()).optional(),
+	software: z.array(softwareInputSchema).optional(),
 	defaultSoftware: z.boolean().optional(),
 	loopbackExemptPorts: z.array(z.number().int().min(0).max(65535)).optional(),
 	allowedNodeBuiltins: stringArray.optional(),

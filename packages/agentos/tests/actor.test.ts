@@ -534,8 +534,19 @@ describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
 						software: [{ [legacy]: "/abs/old-package" }],
 					},
 				} as never),
-			).toThrow(`removed field "${legacy}"`);
+			).toThrow(/software/);
 		}
+	});
+
+	test("rejects an unrecognized software entry instead of omitting it", () => {
+		expect(() =>
+			buildConfigJson({
+				options: {
+					defaultSoftware: false,
+					software: [{ packagePath: 42 }],
+				},
+			} as never),
+		).toThrow(/software/);
 	});
 
 	async function setupActorTest(c: TestContext): Promise<{

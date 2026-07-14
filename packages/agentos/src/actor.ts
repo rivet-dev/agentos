@@ -100,7 +100,7 @@ function toRecord(value: unknown): Record<string, unknown> {
 		: {};
 }
 
-function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
+function normalizePackageRef(value: unknown): NormalizedPackageRef {
 	// Single package reference: `packagePath` (packed `.aospkg` file, or a
 	// transition package dir); a raw string is shorthand for the same path.
 	if (typeof value === "string") {
@@ -110,17 +110,9 @@ function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
 	if (typeof record.packagePath === "string") {
 		return { path: record.packagePath };
 	}
-	// Recognizably-legacy shapes fail loudly instead of silently dropping the
-	// package from the VM.
-	for (const legacy of ["packageTar", "packageDir", "commandDir", "dir"]) {
-		if (typeof record[legacy] === "string") {
-			throw new Error(
-				`agentOS package ref uses removed field "${legacy}"; packages are referenced ` +
-					"by a single `packagePath` — rebuild @agentos-software/* dependencies or pass { packagePath }",
-			);
-		}
-	}
-	return undefined;
+	throw new TypeError(
+		"Invalid software package reference: expected a path string or { packagePath: string }",
+	);
 }
 
 function normalizedPackageRefs(software: unknown[]): NormalizedPackageRef[] {
@@ -128,7 +120,7 @@ function normalizedPackageRefs(software: unknown[]): NormalizedPackageRef[] {
 	const seen = new Set<string>();
 	for (const entry of software.flat()) {
 		const ref = normalizePackageRef(entry);
-		if (!ref || seen.has(ref.path)) continue;
+		if (seen.has(ref.path)) continue;
 		seen.add(ref.path);
 		refs.push(ref);
 	}
