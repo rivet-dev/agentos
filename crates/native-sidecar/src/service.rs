@@ -4182,6 +4182,11 @@ where
                                 resources.process_ids.remove(&process_id);
                             }
                         }
+                        Err(error) if crate::execution::error_code(&error) == "ESRCH" => {
+                            if let Some(resources) = self.extension_sessions.get_mut(&key) {
+                                resources.process_ids.remove(&process_id);
+                            }
+                        }
                         Err(error) => {
                             tracing::error!(
                                 connection_id,
