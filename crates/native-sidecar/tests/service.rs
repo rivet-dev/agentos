@@ -10325,6 +10325,235 @@ ykAheWCsAteSEWVc0w==\n\
                 ]
             );
         }
+        fn execute_tool_resolves_relative_cwd_and_rejects_invalid_cwds_before_admission() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+
+            {
+                let vm = sidecar.vms.get_mut(&vm_id).expect("created vm");
+                vm.kernel
+                    .mkdir("/workspace/project", true)
+                    .expect("create relative cwd");
+                vm.kernel
+                    .write_file("/workspace/not-a-directory", b"file".to_vec())
+                    .expect("create cwd file");
+            }
+            let child_cwd_error = {
+                let vm = sidecar.vms.get(&vm_id).expect("created vm");
+                sidecar
+                    .resolve_javascript_child_process_execution(
+                        vm,
+                        &vm.guest_env,
+                        &vm.guest_cwd,
+                        &vm.host_cwd,
+                        &crate::protocol::JavascriptChildProcessSpawnRequest {
+                            command: String::from("node"),
+                            args: vec![String::from("-e"), String::new()],
+                            options: crate::protocol::JavascriptChildProcessSpawnOptions {
+                                cwd: Some(String::new()),
+                                ..Default::default()
+                            },
+                        },
+                    )
+                    .expect_err("empty child cwd must fail")
+            };
+            assert!(
+                matches!(child_cwd_error, SidecarError::Kernel(ref message) if message.contains("ENOENT")),
+                "unexpected child cwd error: {child_cwd_error:?}"
+            );
+            sidecar
+                .dispatch_blocking(request(
+                    9,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::RegisterHostCallbacks(test_toolkit_payload(
+                        "math",
+                        "Math utilities",
+                        "add",
+                    )),
+                ))
+                .expect("register math toolkit");
+
+            let response = sidecar
+                .dispatch_blocking(request(
+                    10,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        process_id: Some(String::from("proc-relative-tool-cwd")),
+                        command: Some(String::from("agentos-math")),
+                        runtime: None,
+                        entrypoint: None,
+                        args: vec![
+                            String::from("add"),
+                            String::from("--a"),
+                            String::from("2"),
+                            String::from("--b"),
+                            String::from("3"),
+                        ],
+                        env: None,
+                        cwd: Some(String::from("project")),
+                        wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
+                    }),
+                ))
+                .expect("execute tool with relative cwd");
+            assert!(matches!(
+                response.response.payload,
+                ResponsePayload::ProcessStarted(_)
+            ));
+            assert_eq!(
+                sidecar
+                    .vms
+                    .get(&vm_id)
+                    .expect("created vm")
+                    .active_processes
+                    .get("proc-relative-tool-cwd")
+                    .expect("active tool process")
+                    .guest_cwd,
+                "/workspace/project"
+            );
+
+            for (request_id, process_id, cwd, expected_errno) in [
+                (11, "proc-empty-cwd", "", "ENOENT"),
+                (12, "proc-file-cwd", "/workspace/not-a-directory", "ENOTDIR"),
+            ] {
+                let response = sidecar
+                    .dispatch_blocking(request(
+                        request_id,
+                        OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                        RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                            process_id: Some(String::from(process_id)),
+                            command: Some(String::from("agentos-math")),
+                            runtime: None,
+                            entrypoint: None,
+                            args: vec![String::from("add")],
+                            env: None,
+                            cwd: Some(String::from(cwd)),
+                            wasm_permission_tier: None,
+                            pty: None,
+                            shell_command: None,
+                            keep_stdin_open: None,
+                            timeout_ms: None,
+                            capture_output: None,
+                        }),
+                    ))
+                    .expect("dispatch invalid cwd");
+                assert!(
+                    matches!(
+                        response.response.payload,
+                        ResponsePayload::Rejected(ref rejected)
+                            if rejected.code == "kernel_error"
+                                && rejected.message.contains(expected_errno)
+                    ),
+                    "unexpected cwd response: {:?}",
+                    response.response.payload
+                );
+                assert!(
+                    !sidecar
+                        .vms
+                        .get(&vm_id)
+                        .expect("created vm")
+                        .active_processes
+                        .contains_key(process_id),
+                    "invalid cwd must not admit a process"
+                );
+            }
+
+            let response = sidecar
+                .dispatch_blocking(request(
+                    13,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        process_id: Some(String::from("proc-direct-file-cwd")),
+                        command: Some(String::from("node")),
+                        runtime: Some(GuestRuntimeKind::JavaScript),
+                        entrypoint: Some(String::from("/workspace/main.js")),
+                        args: Vec::new(),
+                        env: None,
+                        cwd: Some(String::from("/workspace/not-a-directory")),
+                        wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
+                    }),
+                ))
+                .expect("dispatch direct command with invalid cwd");
+            assert!(matches!(
+                response.response.payload,
+                ResponsePayload::Rejected(ref rejected)
+                    if rejected.code == "kernel_error"
+                        && rejected.message.contains("ENOTDIR")
+            ));
+            assert!(
+                !sidecar
+                    .vms
+                    .get(&vm_id)
+                    .expect("created vm")
+                    .active_processes
+                    .contains_key("proc-direct-file-cwd"),
+                "direct execution must reject invalid cwd before process admission"
+            );
+
+            let host_nested_cwd = sidecar
+                .vms
+                .get(&vm_id)
+                .expect("created vm")
+                .host_cwd
+                .join("host-nested");
+            fs::create_dir_all(&host_nested_cwd).expect("create compatible host cwd");
+            let response = sidecar
+                .dispatch_blocking(request(
+                    14,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        process_id: Some(String::from("proc-host-cwd")),
+                        command: Some(String::from("node")),
+                        runtime: None,
+                        entrypoint: None,
+                        args: vec![String::from("-e"), String::new()],
+                        env: None,
+                        cwd: Some(host_nested_cwd.to_string_lossy().into_owned()),
+                        wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
+                    }),
+                ))
+                .expect("dispatch compatible host cwd");
+            assert!(matches!(
+                response.response.payload,
+                ResponsePayload::ProcessStarted(_)
+            ));
+            let vm = sidecar.vms.get_mut(&vm_id).expect("created vm");
+            assert_eq!(
+                vm.active_processes
+                    .get("proc-host-cwd")
+                    .expect("host-cwd process")
+                    .guest_cwd,
+                "/host-nested"
+            );
+            assert!(
+                vm.kernel
+                    .stat("/host-nested")
+                    .expect("materialized host cwd")
+                    .is_directory
+            );
+        }
         fn tools_register_host_callbacks_rejects_duplicate_names_without_replacing_existing_toolkit(
         ) {
             let mut sidecar = create_test_sidecar();
@@ -21381,6 +21610,7 @@ console.log(JSON.stringify({
             javascript_child_process_resolves_path_resolved_tool_commands_as_tools();
             javascript_child_process_spawns_internal_tool_command_paths();
             javascript_child_process_resolves_internal_tool_command_paths_as_tools();
+            execute_tool_resolves_relative_cwd_and_rejects_invalid_cwds_before_admission();
             tools_register_host_callbacks_rejects_duplicate_names_without_replacing_existing_toolkit();
             tools_register_host_callbacks_rejects_registry_overflow_without_mutating_vm();
             tools_register_host_callbacks_rejects_total_tool_overflow_without_mutating_vm();
@@ -21462,6 +21692,11 @@ console.log(JSON.stringify({
         fn service_toolkit_registry_is_bounded() {
             tools_register_host_callbacks_rejects_registry_overflow_without_mutating_vm();
             tools_register_host_callbacks_rejects_total_tool_overflow_without_mutating_vm();
+        }
+
+        #[test]
+        fn service_execute_cwd_matches_linux_before_process_admission() {
+            execute_tool_resolves_relative_cwd_and_rejects_invalid_cwds_before_admission();
         }
 
         #[test]

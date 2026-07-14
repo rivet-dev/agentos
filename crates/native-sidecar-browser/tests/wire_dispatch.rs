@@ -1154,17 +1154,30 @@ fn browser_wire_dispatcher_handles_lifecycle_and_execution_frames() {
             ownership: ownership.clone(),
             payload: RequestPayload::BootstrapRootFilesystemRequest(
                 BootstrapRootFilesystemRequest {
-                    entries: vec![RootFilesystemEntry {
-                        path: String::from("/workspace/wire.txt"),
-                        kind: RootFilesystemEntryKind::File,
-                        mode: Some(0o644),
-                        uid: Some(1000),
-                        gid: Some(1000),
-                        content: Some(String::from("aGVsbG8gd2lyZQ==")),
-                        encoding: Some(RootFilesystemEntryEncoding::Base64),
-                        target: None,
-                        executable: false,
-                    }],
+                    entries: vec![
+                        RootFilesystemEntry {
+                            path: String::from("/workspace/project"),
+                            kind: RootFilesystemEntryKind::Directory,
+                            mode: Some(0o755),
+                            uid: Some(1000),
+                            gid: Some(1000),
+                            content: None,
+                            encoding: None,
+                            target: None,
+                            executable: false,
+                        },
+                        RootFilesystemEntry {
+                            path: String::from("/workspace/wire.txt"),
+                            kind: RootFilesystemEntryKind::File,
+                            mode: Some(0o644),
+                            uid: Some(1000),
+                            gid: Some(1000),
+                            content: Some(String::from("aGVsbG8gd2lyZQ==")),
+                            encoding: Some(RootFilesystemEntryEncoding::Base64),
+                            target: None,
+                            executable: false,
+                        },
+                    ],
                 },
             ),
         },
@@ -1225,6 +1238,47 @@ fn browser_wire_dispatcher_handles_lifecycle_and_execution_frames() {
         .any(|entry| entry.path == "/workspace/wire.txt"
             && entry.content.as_deref() == Some("hello wire")));
 
+    for (request_id, process_id, cwd, expected_errno) in [
+        (61, "proc-empty-cwd", "", "ENOENT"),
+        (62, "proc-file-cwd", "/workspace/wire.txt", "ENOTDIR"),
+    ] {
+        let rejected = dispatch(
+            &codec,
+            &mut dispatcher,
+            RequestFrame {
+                schema: protocol_schema(),
+                request_id,
+                ownership: ownership.clone(),
+                payload: RequestPayload::ExecuteRequest(ExecuteRequest {
+                    process_id: Some(String::from(process_id)),
+                    command: Some(String::from("node")),
+                    runtime: Some(GuestRuntimeKind::JavaScript),
+                    entrypoint: Some(String::from("/workspace/main.js")),
+                    args: vec![String::from("main.js")],
+                    env: Default::default(),
+                    cwd: Some(String::from(cwd)),
+                    wasm_permission_tier: None,
+                    pty: None,
+                    shell_command: None,
+                    keep_stdin_open: None,
+                    timeout_ms: None,
+                    capture_output: None,
+                }),
+            },
+        );
+        assert!(matches!(
+            rejected.payload,
+            ResponsePayload::RejectedResponse(ref response)
+                if response.code == "kernel_error"
+                    && response.message.contains(expected_errno)
+        ));
+        assert_eq!(
+            dispatcher.sidecar_mut().context_count(&created.vm_id),
+            0,
+            "invalid cwd must be rejected before creating a runtime context"
+        );
+    }
+
     let execute = dispatch(
         &codec,
         &mut dispatcher,
@@ -1239,7 +1293,7 @@ fn browser_wire_dispatcher_handles_lifecycle_and_execution_frames() {
                 entrypoint: Some(String::from("/workspace/main.js")),
                 args: vec![String::from("main.js")],
                 env: Default::default(),
-                cwd: Some(String::from("/workspace")),
+                cwd: Some(String::from("project")),
                 wasm_permission_tier: None,
                 pty: None,
                 shell_command: None,
@@ -1328,7 +1382,7 @@ fn browser_wire_dispatcher_handles_lifecycle_and_execution_frames() {
         .find(|process| process.process_id == "proc-1")
         .expect("client process should be represented in snapshot");
     assert!(process.pid > 0);
-    assert_eq!(process.cwd, "/workspace");
+    assert_eq!(process.cwd, "/workspace/project");
 
     dispatcher
         .sidecar_mut()

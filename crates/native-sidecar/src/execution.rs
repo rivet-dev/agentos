@@ -124,7 +124,7 @@ use agentos_native_sidecar_core::{
     listener_snapshot_response, local_endpoint_value, parse_kernel_http_fetch_response,
     parse_process_signal_state_request, process_killed_response,
     process_snapshot_entry_from_kernel, process_snapshot_response, process_started_response,
-    remote_endpoint_value, resolve_command_line, shared_guest_runtime_identity,
+    remote_endpoint_value, resolve_command_line, resolve_guest_path, shared_guest_runtime_identity,
     signal_state_response, socket_addr_family, socket_address_value, stdin_closed_response,
     stdin_written_response, tcp_socket_info_value, unix_socket_info_value,
     zombie_timer_count_response, SharedProcessSnapshotEntry, SharedProcessSnapshotStatus,
@@ -787,7 +787,9 @@ fn missing_process_error(vm_id: &str, process_id: &str) -> SidecarError {
 /// Map a shared guest-kernel-call dispatcher error into a sidecar error,
 /// preserving POSIX errno codes (`ECODE: message`) as kernel errors so guest
 /// callers observe Linux-faithful failures, mirroring the filesystem path.
-fn guest_kernel_core_error(error: agentos_native_sidecar_core::SidecarCoreError) -> SidecarError {
+pub(crate) fn guest_kernel_core_error(
+    error: agentos_native_sidecar_core::SidecarCoreError,
+) -> SidecarError {
     let message = error.to_string();
     let is_errno = message.split_once(':').is_some_and(|(code, _)| {
         code.len() >= 2
@@ -3800,9 +3802,17 @@ where
             )));
         }
 
-        if let Some(command) = payload.command.as_deref() {
+        if let Some(command) = payload
+            .command
+            .as_deref()
+            .filter(|command| is_tool_command(vm, command))
+        {
+            let guest_cwd = resolve_guest_execution_cwd(vm, payload.cwd.as_deref())?;
+            vm.kernel
+                .validate_process_cwd(&guest_cwd)
+                .map_err(kernel_error)?;
             if let Some(tool_resolution) =
-                resolve_tool_command(vm, command, &payload.args, payload.cwd.as_deref())?
+                resolve_tool_command(vm, command, &payload.args, Some(&guest_cwd))?
             {
                 let captured_output = capture_output.then(|| {
                     CapturedOutputState::for_runtime(
@@ -3811,11 +3821,6 @@ where
                         Arc::clone(&vm.captured_output_budget),
                     )
                 });
-                let guest_cwd = payload
-                    .cwd
-                    .as_deref()
-                    .map(normalize_path)
-                    .unwrap_or_else(|| vm.guest_cwd.clone());
                 let kernel_handle = vm
                     .kernel
                     .create_virtual_process(
@@ -6392,10 +6397,12 @@ where
             .options
             .cwd
             .as_deref()
-            .map(|cwd| {
+            .map(|cwd| -> Result<_, SidecarError> {
                 let normalized_parent_host_cwd = normalize_host_path(parent_host_cwd);
                 let requested_host_cwd = normalize_host_path(Path::new(cwd));
-                if path_is_within_root(&requested_host_cwd, &normalized_parent_host_cwd) {
+                if Path::new(cwd).is_absolute()
+                    && path_is_within_root(&requested_host_cwd, &normalized_parent_host_cwd)
+                {
                     let relative = requested_host_cwd
                         .strip_prefix(&normalized_parent_host_cwd)
                         .unwrap_or_else(|_| Path::new(""));
@@ -6405,16 +6412,22 @@ where
                     } else {
                         normalize_path(&format!("{parent_guest_cwd}/{relative}"))
                     };
-                    (guest_cwd, Some(requested_host_cwd))
+                    Ok((guest_cwd, Some(requested_host_cwd)))
                 } else if Path::new(cwd).is_relative() {
-                    (
-                        normalize_path(&format!("{parent_guest_cwd}/{cwd}")),
+                    Ok((
+                        resolve_guest_path(parent_guest_cwd, cwd)
+                            .map_err(guest_kernel_core_error)?,
                         Some(normalize_host_path(&parent_host_cwd.join(cwd))),
-                    )
+                    ))
                 } else {
-                    (normalize_path(cwd), None)
+                    Ok((
+                        resolve_guest_path(parent_guest_cwd, cwd)
+                            .map_err(guest_kernel_core_error)?,
+                        None,
+                    ))
                 }
             })
+            .transpose()?
             .unwrap_or_else(|| (parent_guest_cwd.to_owned(), None));
         let inherited_host_cwd = (host_cwd_override.is_none() && guest_cwd == parent_guest_cwd)
             .then(|| normalize_host_path(parent_host_cwd));
@@ -6773,6 +6786,12 @@ where
                 .vms
                 .get_mut(vm_id)
                 .ok_or_else(|| missing_vm_error(vm_id))?;
+            validate_or_materialize_execution_cwd(
+                vm,
+                &resolved.guest_cwd,
+                &resolved.host_cwd,
+                true,
+            )?;
             stage_agentos_package_command(vm, &mut resolved)?;
         }
         let resolved = resolved;
@@ -7276,6 +7295,12 @@ where
                 .vms
                 .get_mut(vm_id)
                 .ok_or_else(|| missing_vm_error(vm_id))?;
+            validate_or_materialize_execution_cwd(
+                vm,
+                &resolved.guest_cwd,
+                &resolved.host_cwd,
+                true,
+            )?;
             stage_agentos_package_command(vm, &mut resolved)?;
         }
         let resolved = resolved;
@@ -9327,7 +9352,7 @@ fn javascript_child_process_sync_input_bytes(
 // reconcile_mounts, resolve_cwd moved to crate::vm
 
 fn resolve_execute_request(
-    vm: &VmState,
+    vm: &mut VmState,
     payload: &ExecuteRequest,
 ) -> Result<ResolvedChildProcessExecution, SidecarError> {
     let payload_env: BTreeMap<String, String> = payload
@@ -9375,7 +9400,8 @@ fn resolve_execute_request(
         ))
     })?;
     let (guest_cwd, host_cwd, allow_host_path_overrides) =
-        resolve_execution_cwds(vm, payload.cwd.as_deref());
+        resolve_execution_cwds(vm, payload.cwd.as_deref())?;
+    validate_or_materialize_execution_cwd(vm, &guest_cwd, &host_cwd, allow_host_path_overrides)?;
     let mut env = vm.guest_env.clone();
     env.extend(payload_env.clone());
 
@@ -9420,14 +9446,15 @@ fn resolve_execute_request(
 }
 
 fn resolve_command_execution(
-    vm: &VmState,
+    vm: &mut VmState,
     command: &str,
     args: &[String],
     extra_env: &BTreeMap<String, String>,
     cwd: Option<&str>,
     explicit_wasm_permission_tier: Option<WasmPermissionTier>,
 ) -> Result<ResolvedChildProcessExecution, SidecarError> {
-    let (guest_cwd, host_cwd, allow_host_path_overrides) = resolve_execution_cwds(vm, cwd);
+    let (guest_cwd, host_cwd, allow_host_path_overrides) = resolve_execution_cwds(vm, cwd)?;
+    validate_or_materialize_execution_cwd(vm, &guest_cwd, &host_cwd, allow_host_path_overrides)?;
     let mut env = vm.guest_env.clone();
     env.extend(extra_env.clone());
     let args = apply_shell_cwd_prefix(command, args.to_vec(), &guest_cwd);
@@ -9886,37 +9913,63 @@ fn is_probable_javascript_entrypoint(path: &Path, script: &str) -> bool {
             || preview.starts_with("require("))
 }
 
-fn resolve_guest_execution_cwd(vm: &VmState, value: Option<&str>) -> String {
-    value
-        .map(normalize_path)
-        .unwrap_or_else(|| vm.guest_cwd.clone())
+fn resolve_guest_execution_cwd(vm: &VmState, value: Option<&str>) -> Result<String, SidecarError> {
+    value.map_or_else(
+        || Ok(vm.guest_cwd.clone()),
+        |value| resolve_guest_path(&vm.guest_cwd, value).map_err(guest_kernel_core_error),
+    )
 }
 
-fn resolve_execution_cwds(vm: &VmState, value: Option<&str>) -> (String, PathBuf, bool) {
+fn resolve_execution_cwds(
+    vm: &VmState,
+    value: Option<&str>,
+) -> Result<(String, PathBuf, bool), SidecarError> {
     if let Some(raw_cwd) = value {
-        let normalized_vm_host_cwd = normalize_host_path(&vm.host_cwd);
-        let requested_host_cwd = normalize_host_path(Path::new(raw_cwd));
-        if path_is_within_root(&requested_host_cwd, &normalized_vm_host_cwd) {
-            let relative = requested_host_cwd
-                .strip_prefix(&normalized_vm_host_cwd)
-                .unwrap_or_else(|_| Path::new(""));
-            let relative = relative.to_string_lossy().replace('\\', "/");
-            let guest_cwd = if relative.is_empty() {
-                String::from("/")
-            } else {
-                normalize_path(&format!("/{relative}"))
-            };
-            return (guest_cwd, requested_host_cwd, true);
+        if Path::new(raw_cwd).is_absolute() {
+            let normalized_vm_host_cwd = normalize_host_path(&vm.host_cwd);
+            let requested_host_cwd = normalize_host_path(Path::new(raw_cwd));
+            if path_is_within_root(&requested_host_cwd, &normalized_vm_host_cwd) {
+                let relative = requested_host_cwd
+                    .strip_prefix(&normalized_vm_host_cwd)
+                    .unwrap_or_else(|_| Path::new(""));
+                let relative = relative.to_string_lossy().replace('\\', "/");
+                let guest_cwd = if relative.is_empty() {
+                    String::from("/")
+                } else {
+                    normalize_path(&format!("/{relative}"))
+                };
+                return Ok((guest_cwd, requested_host_cwd, true));
+            }
         }
     }
 
-    let guest_cwd = resolve_guest_execution_cwd(vm, value);
+    let guest_cwd = resolve_guest_execution_cwd(vm, value)?;
     let host_cwd = if value.is_none() {
         vm.host_cwd.clone()
     } else {
         resolve_vm_guest_path_to_host(vm, &guest_cwd)
     };
-    (guest_cwd, host_cwd, value.is_none())
+    Ok((guest_cwd, host_cwd, value.is_none()))
+}
+
+fn validate_or_materialize_execution_cwd(
+    vm: &mut VmState,
+    guest_cwd: &str,
+    host_cwd: &Path,
+    allow_host_path_compatibility: bool,
+) -> Result<(), SidecarError> {
+    match vm.kernel.validate_process_cwd(guest_cwd) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if error.code() == "ENOENT" && allow_host_path_compatibility && host_cwd.is_dir() =>
+        {
+            vm.kernel.mkdir(guest_cwd, true).map_err(kernel_error)?;
+            vm.kernel
+                .validate_process_cwd(guest_cwd)
+                .map_err(kernel_error)
+        }
+        Err(error) => Err(kernel_error(error)),
+    }
 }
 
 fn resolve_vm_guest_path_to_host(vm: &VmState, guest_path: &str) -> PathBuf {

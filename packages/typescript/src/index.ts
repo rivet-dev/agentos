@@ -82,7 +82,6 @@ type RuntimeCompilerEnvelope =
 	| { ok: false; errorMessage?: string };
 
 const DEFAULT_COMPILER_SPECIFIER = "typescript";
-let nextRuntimeRequestId = 0;
 
 export function createTypeScriptTools(
 	options: TypeScriptToolsOptions,
@@ -138,71 +137,43 @@ async function runCompilerInAgentOs(
 	agentOs: AgentOs,
 	request: CompilerRequest,
 ): Promise<CompilerResponse> {
+	let result;
 	try {
-		await agentOs.mkdir("/tmp", { recursive: true });
-	} catch (error) {
-		throw new Error(`failed to prepare TypeScript runner directory: ${String(error)}`, {
-			cause: error,
-		});
-	}
-	const requestId = `${Date.now()}-${nextRuntimeRequestId++}`;
-	const requestPath = `/tmp/agentos-typescript-request-${requestId}.json`;
-	const runnerPath = `/tmp/agentos-typescript-runner-${requestId}.cjs`;
-	try {
-		try {
-			await agentOs.writeFile(requestPath, JSON.stringify(request));
-			await agentOs.writeFile(
-				runnerPath,
-				buildCompilerRuntimeScript(requestPath),
-			);
-		} catch (error) {
-			throw new Error(`failed to write TypeScript runner files: ${String(error)}`, {
-				cause: error,
-			});
-		}
-		let result;
-		try {
-			result = await agentOs.execArgv("node", [runnerPath], {
+		result = await agentOs.execArgv(
+			"node",
+			["-e", buildCompilerRuntimeScript()],
+			{
+				stdin: JSON.stringify(request),
 				...(request.options.cwd === undefined
 					? {}
 					: { cwd: request.options.cwd }),
-			});
-		} catch (error) {
-			throw new Error(`TypeScript runner execution failed: ${String(error)}`, {
-				cause: error,
-			});
-		}
-		if (result.stdout.trim()) {
-			let response;
-			try {
-				response = parseRuntimeResponse(result.stdout);
-			} catch (error) {
-				throw new Error(
-					`failed to decode TypeScript runner response: ${String(error)}`,
-					{ cause: error },
-				);
-			}
-			return response;
-		}
-		if (result.exitCode !== 0) {
-			throw new Error(
-				`TypeScript runtime exited ${result.exitCode}${
-					result.stderr.trim() ? `: ${result.stderr.trim()}` : ""
-				}`,
-			);
-		}
-		throw new Error("TypeScript runtime produced no response");
-	} finally {
+			},
+		);
+	} catch (error) {
+		throw new Error(`TypeScript runner execution failed: ${String(error)}`, {
+			cause: error,
+		});
+	}
+	if (result.stdout.trim()) {
+		let response;
 		try {
-			await removeGuestFileIfExists(agentOs, requestPath);
-			await removeGuestFileIfExists(agentOs, runnerPath);
+			response = parseRuntimeResponse(result.stdout);
 		} catch (error) {
 			throw new Error(
-				`failed to remove TypeScript runner files: ${String(error)}`,
+				`failed to decode TypeScript runner response: ${String(error)}`,
 				{ cause: error },
 			);
 		}
+		return response;
 	}
+	if (result.exitCode !== 0) {
+		throw new Error(
+			`TypeScript runtime exited ${result.exitCode}${
+				result.stderr.trim() ? `: ${result.stderr.trim()}` : ""
+			}`,
+		);
+	}
+	throw new Error("TypeScript runtime produced no response");
 }
 
 function createFailureResult<TResult extends CompilerResponse>(
@@ -248,9 +219,8 @@ function normalizeCompilerFailureMessage(errorMessage?: string): string {
 	return message;
 }
 
-function buildCompilerRuntimeScript(requestPath: string): string {
+function buildCompilerRuntimeScript(): string {
 	return `
-const fs = require("node:fs");
 const path = require("node:path");
 
 function loadTypeScriptCompiler(compilerSpecifier) {
@@ -266,19 +236,26 @@ function loadTypeScriptCompiler(compilerSpecifier) {
 	return imported.default ?? imported;
 }
 
-try {
-	const request = JSON.parse(fs.readFileSync(${JSON.stringify(requestPath)}, "utf8"));
-	const ts = loadTypeScriptCompiler(request.compilerSpecifier);
-	const __name = (target) => target;
-	const result = (${compilerRuntimeMain.toString()})(request, ts);
-	process.stdout.write(JSON.stringify({ ok: true, result }));
-} catch (error) {
-	process.stdout.write(JSON.stringify({
-		ok: false,
-		errorMessage: error instanceof Error ? (error.stack ?? error.message) : String(error),
-	}));
-	process.exitCode = 1;
-}
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+	input += chunk;
+});
+process.stdin.on("end", () => {
+	try {
+		const request = JSON.parse(input);
+		const ts = loadTypeScriptCompiler(request.compilerSpecifier);
+		const __name = (target) => target;
+		const result = (${compilerRuntimeMain.toString()})(request, ts);
+		process.stdout.write(JSON.stringify({ ok: true, result }));
+	} catch (error) {
+		process.stdout.write(JSON.stringify({
+			ok: false,
+			errorMessage: error instanceof Error ? (error.stack ?? error.message) : String(error),
+		}));
+		process.exitCode = 1;
+	}
+});
 `;
 }
 
@@ -295,15 +272,6 @@ function parseRuntimeEnvelope(
 		return payload.result;
 	}
 	throw new Error(payload.errorMessage ?? "TypeScript runtime failed");
-}
-
-async function removeGuestFileIfExists(
-	agentOs: AgentOs,
-	targetPath: string,
-): Promise<void> {
-	if (await agentOs.exists(targetPath)) {
-		await agentOs.delete(targetPath);
-	}
 }
 
 function compilerRuntimeMain(
@@ -384,7 +352,7 @@ function compilerRuntimeMain(
 		options: ProjectCompilerOptions,
 		overrideCompilerOptions: import("typescript").CompilerOptions = {},
 	) {
-		const cwd = path.resolve(options.cwd ?? "/root");
+		const cwd = process.cwd();
 		const configFilePath = options.configFilePath
 			? path.resolve(cwd, options.configFilePath)
 			: ts.findConfigFile(cwd, ts.sys.fileExists, "tsconfig.json");
@@ -419,10 +387,10 @@ function compilerRuntimeMain(
 		options: SourceCompilerOptions,
 		overrideCompilerOptions: import("typescript").CompilerOptions = {},
 	) {
-		const cwd = path.resolve(options.cwd ?? "/root");
+		const cwd = process.cwd();
 		const filePath = path.resolve(
 			cwd,
-			options.filePath ?? "__secure_exec_typescript_input__.ts",
+			options.filePath ?? "__agentos_typescript_input__.ts",
 		);
 		const projectCompilerOptions = options.configFilePath
 			? resolveProjectConfig(

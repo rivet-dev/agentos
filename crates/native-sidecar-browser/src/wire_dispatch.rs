@@ -16,7 +16,7 @@ use agentos_native_sidecar_core::{
     process_exited_event_with_result, process_killed_response, process_output_event,
     process_route_retention, process_snapshot_response, process_started_response,
     protocol_process_snapshot_entry, protocol_root_filesystem_mode, provided_commands_response,
-    record_session_close_outcome, reject, resolve_command_line, respond,
+    record_session_close_outcome, reject, resolve_command_line, resolve_guest_path, respond,
     root_filesystem_bootstrapped_response, root_filesystem_snapshot_response, root_snapshot_entry,
     route_request_payload, session_close_history_capacity, session_closed_response,
     session_id_was_allocated, session_limit_near_capacity, session_limit_rejection_message,
@@ -1979,6 +1979,20 @@ where
                 "process_id is already active",
             );
         }
+        let vm_guest_cwd = match self.sidecar.guest_cwd(&vm_id) {
+            Ok(cwd) => cwd,
+            Err(error) => return rejected(request, "execute_failed", &error.to_string()),
+        };
+        let guest_cwd = match payload.cwd.as_deref() {
+            Some(cwd) => match resolve_guest_path(&vm_guest_cwd, cwd) {
+                Ok(cwd) => cwd,
+                Err(error) => return rejected(request, "kernel_error", &error.to_string()),
+            },
+            None => vm_guest_cwd,
+        };
+        if let Err(error) = self.sidecar.validate_guest_cwd(&vm_id, &guest_cwd) {
+            return rejected(request, "kernel_error", &error.to_string());
+        }
         let requested_runtime = payload
             .runtime
             .clone()
@@ -2016,22 +2030,6 @@ where
             argv.push(command);
         }
         argv.extend(payload.args.clone());
-        let guest_cwd = match payload.cwd.clone() {
-            Some(cwd) => cwd,
-            None => match self.sidecar.guest_cwd(&vm_id) {
-                Ok(cwd) => cwd,
-                Err(error) => {
-                    let error = match self.sidecar.release_context(&vm_id, &context_id) {
-                        Ok(()) => error,
-                        Err(cleanup) => BrowserSidecarError::Cleanup {
-                            context: "failed to resolve execution cwd and release browser context",
-                            errors: vec![error, cleanup],
-                        },
-                    };
-                    return rejected(request, "execute_failed", &error.to_string());
-                }
-            },
-        };
         let started = match self.sidecar.start_execution_with_options(
             StartExecutionRequest {
                 vm_id: vm_id.clone(),

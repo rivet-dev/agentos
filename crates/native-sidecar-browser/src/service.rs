@@ -913,6 +913,17 @@ where
             .unwrap_or_default()
     }
 
+    pub(crate) fn validate_guest_cwd(
+        &mut self,
+        vm_id: &str,
+        cwd: &str,
+    ) -> Result<(), BrowserSidecarError> {
+        self.vm_mut(vm_id)?
+            .kernel
+            .validate_process_cwd(cwd)
+            .map_err(Self::kernel_error)
+    }
+
     pub fn active_worker_count(&self, vm_id: &str) -> usize {
         self.vms
             .get(vm_id)

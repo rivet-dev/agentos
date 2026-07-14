@@ -20,11 +20,9 @@ pub fn resolve_guest_filesystem_request(
     Ok(payload)
 }
 
-fn resolve_guest_path(guest_cwd: &str, path: &str) -> Result<String, SidecarCoreError> {
+pub fn resolve_guest_path(guest_cwd: &str, path: &str) -> Result<String, SidecarCoreError> {
     if path.is_empty() {
-        return Err(SidecarCoreError::new(
-            "ENOENT: guest filesystem path is empty",
-        ));
+        return Err(SidecarCoreError::new("ENOENT: guest path is empty"));
     }
     Ok(if path.starts_with('/') {
         normalize_path(path)
@@ -599,6 +597,18 @@ mod tests {
     }
 
     #[test]
+    fn resolves_guest_paths_with_linux_cwd_semantics() {
+        assert_eq!(
+            resolve_guest_path("/workspace/project", "src/../input.ts").unwrap(),
+            "/workspace/project/input.ts"
+        );
+        assert_eq!(
+            resolve_guest_path("/workspace/project", "/tmp/../root/input.ts").unwrap(),
+            "/root/input.ts"
+        );
+    }
+
+    #[test]
     fn rejects_empty_guest_filesystem_paths() {
         let error = resolve_guest_filesystem_request(
             "/workspace",
@@ -606,6 +616,6 @@ mod tests {
         )
         .unwrap_err();
 
-        assert_eq!(error.to_string(), "ENOENT: guest filesystem path is empty");
+        assert_eq!(error.to_string(), "ENOENT: guest path is empty");
     }
 }

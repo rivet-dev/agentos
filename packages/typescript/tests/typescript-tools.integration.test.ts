@@ -121,18 +121,102 @@ describe("@rivet-dev/agentos-typescript", () => {
 		).toBe(true);
 	});
 
-	it("uses the caller-owned VM and removes its temporary runner files", async () => {
+	it("uses stdin without compiler transport files and inherits the VM cwd", async () => {
+		const restrictedVm = await AgentOs.create({
+			defaultSoftware: false,
+			mounts: [nodeModulesMount(join(workspaceRoot, "node_modules"))],
+			permissions: {
+				fs: {
+					default: "allow",
+					rules: [
+						{
+							mode: "deny",
+							operations: ["write", "create_dir", "rm"],
+							paths: ["/tmp", "/tmp/**"],
+						},
+					],
+				},
+			},
+			limits: { jsRuntime: { v8HeapLimitMb: 256, cpuTimeLimitMs: 5_000 } },
+		});
+
+		try {
+			const tools = createTypeScriptTools({ agentOs: restrictedVm });
+			const result = await tools.typecheckSource({
+				sourceText: "const value: string = 1;\n",
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.diagnostics).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						code: 2322,
+						filePath: "/workspace/__agentos_typescript_input__.ts",
+					}),
+				]),
+			);
+			expect(
+				(await restrictedVm.readdir("/tmp")).filter((name) =>
+					name.startsWith("agentos-typescript-"),
+				),
+			).toEqual([]);
+		} finally {
+			await restrictedVm.dispose();
+		}
+	});
+
+	it("resolves a relative project cwd once against the VM cwd", async () => {
+		const relativeVm = await AgentOs.create({
+			defaultSoftware: false,
+			mounts: [nodeModulesMount(join(workspaceRoot, "node_modules"))],
+			limits: { jsRuntime: { v8HeapLimitMb: 256, cpuTimeLimitMs: 5_000 } },
+		});
+
+		try {
+			await relativeVm.mkdir("/workspace/project/src", { recursive: true });
+			await relativeVm.writeFile(
+				"/workspace/project/tsconfig.json",
+				JSON.stringify({
+					compilerOptions: {
+						module: "commonjs",
+						target: "es2022",
+					},
+					include: ["src/**/*.ts"],
+				}),
+			);
+			await relativeVm.writeFile(
+				"/workspace/project/src/index.ts",
+				"export const value: number = 7;\n",
+			);
+
+			const tools = createTypeScriptTools({ agentOs: relativeVm });
+			await expect(tools.typecheckProject({ cwd: "project" })).resolves.toEqual(
+				{
+					success: true,
+					diagnostics: [],
+				},
+			);
+		} finally {
+			await relativeVm.dispose();
+		}
+	});
+
+	it("uses the caller-owned VM without temporary runner files", async () => {
 		const tools = createTools();
 		await vm.writeFile("/tmp/caller-owned.txt", "still here");
 
-		await expect(tools.typecheckSource({
-			sourceText: "const value: number = 1;\n",
-			filePath: "/root/input.ts",
-		})).resolves.toEqual({
+		await expect(
+			tools.typecheckSource({
+				sourceText: "const value: number = 1;\n",
+				filePath: "/root/input.ts",
+			}),
+		).resolves.toEqual({
 			success: true,
 			diagnostics: [],
 		});
-		expect(new TextDecoder().decode(await vm.readFile("/tmp/caller-owned.txt"))).toBe("still here");
+		expect(
+			new TextDecoder().decode(await vm.readFile("/tmp/caller-owned.txt")),
+		).toBe("still here");
 		expect(
 			(await vm.readdir("/tmp")).filter((name) =>
 				name.startsWith("agentos-typescript-"),

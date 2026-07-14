@@ -1,3 +1,4 @@
+use crate::execution::guest_kernel_core_error;
 use crate::protocol::{
     HostCallbackRequest, HostCallbacksRegisteredResponse, RegisterHostCallbacksRequest,
     RequestFrame, ResponsePayload,
@@ -9,6 +10,7 @@ use agentos_kernel::command_registry::CommandDriver;
 use agentos_native_sidecar_core::permissions::{
     allow_all_policy, deny_all_policy, evaluate_permissions_policy,
 };
+use agentos_native_sidecar_core::resolve_guest_path;
 use agentos_native_sidecar_core::tools::{
     build_host_tool_reference as core_build_host_tool_reference,
     ensure_toolkit_name_available as core_ensure_toolkit_name_available,
@@ -146,9 +148,10 @@ pub(crate) fn resolve_tool_command(
     let Some(kind) = identify_tool_command(vm, command) else {
         return Ok(None);
     };
-    let guest_cwd = cwd
-        .map(normalize_path)
-        .unwrap_or_else(|| vm.guest_cwd.clone());
+    let guest_cwd = cwd.map_or_else(
+        || Ok(vm.guest_cwd.clone()),
+        |cwd| resolve_guest_path(&vm.guest_cwd, cwd).map_err(guest_kernel_core_error),
+    )?;
     let resolution = match kind {
         ToolCommand::Registry(command_name) => {
             resolve_registry_command(vm, &command_name, args, &guest_cwd)?

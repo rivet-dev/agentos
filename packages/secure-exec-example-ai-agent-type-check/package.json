@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check-types": "tsc --noEmit -p tsconfig.json",
+    "check-types": "tsc --noEmit -p tsconfig.json && pnpm verify-docs",
     "dev": "tsx src/index.ts",
     "verify-docs": "node scripts/verify-docs.mjs"
   },

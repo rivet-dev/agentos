@@ -63,7 +63,7 @@ pub use frames::{
 pub use guest_fs::{
     decode_guest_filesystem_content, empty_guest_filesystem_response,
     encode_guest_filesystem_content, guest_filesystem_stat, handle_guest_filesystem_call,
-    resolve_guest_filesystem_request, targeted_guest_filesystem_response,
+    resolve_guest_filesystem_request, resolve_guest_path, targeted_guest_filesystem_response,
 };
 pub use guest_net::handle_guest_kernel_call;
 pub use identity::{shared_guest_runtime_identity, SharedGuestRuntimeIdentity};

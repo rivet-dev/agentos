@@ -21,6 +21,108 @@ fn new_kernel(vm_id: &str) -> KernelVm<MemoryFileSystem> {
 }
 
 #[test]
+fn explicit_process_cwd_must_be_an_existing_directory_before_admission() {
+    let mut kernel = new_kernel("vm-virtual-process-cwd");
+    kernel
+        .mkdir("/workspace/project", true)
+        .expect("create valid cwd");
+    kernel
+        .write_file("/workspace/file", b"not a directory".to_vec())
+        .expect("create cwd file");
+
+    let process = kernel
+        .create_virtual_process(
+            "tool-dispatch",
+            "tool",
+            "agentos-toolkit",
+            Vec::new(),
+            VirtualProcessOptions {
+                cwd: Some(String::from("/workspace/project")),
+                ..VirtualProcessOptions::default()
+            },
+        )
+        .expect("create process in valid cwd");
+    assert_eq!(
+        kernel
+            .list_processes()
+            .get(&process.pid())
+            .expect("valid process")
+            .cwd,
+        "/workspace/project"
+    );
+    let process_count = kernel.list_processes().len();
+
+    assert_kernel_error_code(
+        kernel.create_virtual_process(
+            "tool-dispatch",
+            "tool",
+            "agentos-toolkit",
+            Vec::new(),
+            VirtualProcessOptions {
+                cwd: Some(String::new()),
+                ..VirtualProcessOptions::default()
+            },
+        ),
+        "ENOENT",
+    );
+    assert_kernel_error_code(
+        kernel.create_virtual_process(
+            "tool-dispatch",
+            "tool",
+            "agentos-toolkit",
+            Vec::new(),
+            VirtualProcessOptions {
+                cwd: Some(String::from("/workspace/missing")),
+                ..VirtualProcessOptions::default()
+            },
+        ),
+        "ENOENT",
+    );
+    assert_kernel_error_code(
+        kernel.create_virtual_process(
+            "tool-dispatch",
+            "tool",
+            "agentos-toolkit",
+            Vec::new(),
+            VirtualProcessOptions {
+                cwd: Some(String::from("/workspace/file")),
+                ..VirtualProcessOptions::default()
+            },
+        ),
+        "ENOTDIR",
+    );
+    let mut inaccessible_permissions = Permissions::allow_all();
+    inaccessible_permissions.filesystem = Some(std::sync::Arc::new(|request| {
+        if request.op == agentos_kernel::permissions::FsOperation::Stat
+            && request.path == "/workspace/project"
+        {
+            agentos_kernel::permissions::PermissionDecision::deny("cwd is inaccessible")
+        } else {
+            agentos_kernel::permissions::PermissionDecision::allow()
+        }
+    }));
+    kernel.set_permissions(inaccessible_permissions);
+    assert_kernel_error_code(
+        kernel.create_virtual_process(
+            "tool-dispatch",
+            "tool",
+            "agentos-toolkit",
+            Vec::new(),
+            VirtualProcessOptions {
+                cwd: Some(String::from("/workspace/project")),
+                ..VirtualProcessOptions::default()
+            },
+        ),
+        "EACCES",
+    );
+    assert_eq!(
+        kernel.list_processes().len(),
+        process_count,
+        "invalid cwd requests must not admit processes"
+    );
+}
+
+#[test]
 fn virtual_processes_appear_in_process_listings_and_wait_like_children() {
     let mut kernel = new_kernel("vm-virtual-process-tree");
 

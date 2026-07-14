@@ -1243,6 +1243,20 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.processes.zombie_timer_count()
     }
 
+    pub fn validate_process_cwd(&mut self, path: &str) -> KernelResult<()> {
+        if path.is_empty() {
+            return Err(KernelError::new("ENOENT", "chdir path is empty"));
+        }
+        let stat = self.stat(path)?;
+        if !stat.is_directory {
+            return Err(KernelError::new(
+                "ENOTDIR",
+                format!("not a directory, chdir '{path}'"),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn spawn_process(
         &mut self,
         command: &str,
@@ -1254,6 +1268,10 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             (options.requester_driver.as_deref(), options.parent_pid)
         {
             self.assert_driver_owns(requester, parent_pid)?;
+        }
+
+        if let Some(cwd) = options.cwd.as_deref() {
+            self.validate_process_cwd(cwd)?;
         }
 
         let cwd = options.cwd.clone().unwrap_or_else(|| self.cwd.clone());
@@ -1315,6 +1333,10 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.assert_not_terminated()?;
         if let Some(parent_pid) = options.parent_pid {
             self.assert_driver_owns(requester_driver, parent_pid)?;
+        }
+
+        if let Some(cwd) = options.cwd.as_deref() {
+            self.validate_process_cwd(cwd)?;
         }
 
         let cwd = options.cwd.clone().unwrap_or_else(|| self.cwd.clone());

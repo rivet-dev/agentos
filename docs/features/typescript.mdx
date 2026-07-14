@@ -75,7 +75,6 @@ try {
 				}
 
 				try {
-					await vm.mkdir("/root", { recursive: true });
 					await vm.writeFile("/root/generated.js", compiled.outputText);
 					const executed = await vm.execArgv("node", [
 						"-e",
@@ -140,6 +139,11 @@ const ts = createTypeScriptTools({
 `nodeModulesMount` exposes the host package's `node_modules/` to the VM as
 a read-only module tree, which lets the compiler runtime import packages like
 `typescript` without copying them into the VM filesystem first.
+
+Compiler requests use the Node process's stdin, so the tooling does not create
+transport files or bootstrap directories. Omit `cwd` to inherit the VM working
+directory. A relative `cwd` is resolved once against that VM directory with
+normal Linux path semantics; an absolute `cwd` is used as written.
 
 ## Type-check a source string
 

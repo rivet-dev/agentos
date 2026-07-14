@@ -61,7 +61,6 @@ try {
 				}
 
 				try {
-					await vm.mkdir("/root", { recursive: true });
 					await vm.writeFile("/root/generated.js", compiled.outputText);
 					const executed = await vm.execArgv("node", [
 						"-e",
