@@ -1249,9 +1249,25 @@ impl VirtualFileSystem for MountTable {
                     ));
                 }
 
-                let target = self.read_link(&candidate)?;
+                // Mounted filesystems express absolute symlink targets in their
+                // own root namespace. Keep the mount index while reading the
+                // link so the component-walk fallback does not accidentally
+                // reinterpret `/target` as the VM root after crossing a
+                // synthetic leaf mount.
+                let (link_index, relative_path) = self.resolve_link_leaf_index(&candidate)?;
+                let target = self.mounts[link_index]
+                    .filesystem
+                    .read_link(&relative_path)?;
                 let target_path = if target.starts_with('/') {
-                    normalize_path(&target)
+                    if self.mounts[link_index].path == "/" {
+                        normalize_path(&target)
+                    } else {
+                        normalize_path(&format!(
+                            "{}/{}",
+                            self.mounts[link_index].path,
+                            target.trim_start_matches('/')
+                        ))
+                    }
                 } else {
                     normalize_path(&format!("{}/{}", parent_path(&candidate), target))
                 };

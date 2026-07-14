@@ -1617,10 +1617,20 @@ pub(crate) mod test_support {
         }
 
         pub(crate) fn requests(&self) -> Vec<LoggedRequest> {
-            self.requests
-                .lock()
-                .expect("lock mock sandbox-agent request log")
-                .clone()
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let requests = self
+                    .requests
+                    .lock()
+                    .expect("lock mock sandbox-agent request log")
+                    .clone();
+                if requests.iter().all(|request| request.response_status != 0)
+                    || Instant::now() >= deadline
+                {
+                    return requests;
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
         }
     }
 

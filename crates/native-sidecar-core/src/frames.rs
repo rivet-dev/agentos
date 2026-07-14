@@ -121,6 +121,19 @@ pub fn reject(request: &RequestFrame, code: &str, message: &str) -> ResponseFram
         ResponsePayload::Rejected(RejectedResponse {
             code: code.to_owned(),
             message: message.to_owned(),
+            limit_name: None,
+            configured_limit: None,
+            current_usage: None,
+            requested: None,
+            unit: None,
+            scope: None,
+            vm_id: None,
+            session_generation: None,
+            capability_id: None,
+            operation: None,
+            configuration_path: None,
+            retryable: None,
+            errno: None,
         }),
     )
 }

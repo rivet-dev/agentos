@@ -12,9 +12,14 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
+#[cfg(unix)]
+use command_fds::{CommandFdExt, FdMapping};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream as StdUnixStream;
+
 use scc::HashMap as SccHashMap;
-use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::process::{Child, ChildStdout, Command};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::wire::{self, WireFrameCodec};
@@ -35,6 +40,10 @@ const PENDING_REQUEST_LIMIT: usize = 4096;
 /// Env var that overrides the sidecar binary path. Defaults to `agentos-native-sidecar` on `PATH`.
 /// Product clients can pass an explicit binary path to [`SidecarTransport::spawn`].
 const SIDECAR_BIN_ENV: &str = "AGENTOS_SIDECAR_BIN";
+
+/// Fixed inherited descriptor carrying the full-duplex response/control lane.
+#[cfg(unix)]
+const CONTROL_FD: std::os::fd::RawFd = 3;
 
 /// How long the host tolerates TOTAL inbound silence (no responses, events, sidecar requests, or
 /// heartbeats) before declaring the sidecar dead. The sidecar heartbeats every 10s from a dedicated
@@ -85,17 +94,48 @@ impl SidecarTransport {
     /// Does NOT run the handshake. Product clients drive Authenticate and any follow-up setup using
     /// [`request_wire`](Self::request_wire) once the transport is live.
     pub async fn spawn(binary_path: Option<String>) -> Result<Arc<Self>, TransportError> {
+        #[cfg(not(unix))]
+        {
+            let _ = binary_path;
+            return Err(TransportError::Sidecar(
+                "the native sidecar response/control transport is unsupported on this platform"
+                    .to_string(),
+            ));
+        }
+
+        #[cfg(unix)]
+        {
+            Self::spawn_unix(binary_path).await
+        }
+    }
+
+    #[cfg(unix)]
+    async fn spawn_unix(binary_path: Option<String>) -> Result<Arc<Self>, TransportError> {
         let bin = resolve_sidecar_binary_path(binary_path);
-        let mut child = Command::new(&bin)
+        let (control_parent, control_child) = StdUnixStream::pair().map_err(|error| {
+            TransportError::Sidecar(format!(
+                "failed to create sidecar control socketpair: {error}"
+            ))
+        })?;
+        control_parent.set_nonblocking(true).map_err(|error| {
+            TransportError::Sidecar(format!(
+                "failed to configure sidecar control socket: {error}"
+            ))
+        })?;
+        let mut command = Command::new(&bin);
+        command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|error| {
-                TransportError::Sidecar(format!("failed to spawn sidecar '{bin}': {error}"))
-            })?;
-
+            .kill_on_drop(true);
+        // `command-fds` performs the child-only dup after fork, avoiding the
+        // CLOEXEC race caused by making an arbitrary descriptor inheritable in
+        // this multithreaded process.
+        map_control_fd(&mut command, control_child)?;
+        let mut child = command.spawn().map_err(|error| {
+            TransportError::Sidecar(format!("failed to spawn sidecar '{bin}': {error}"))
+        })?;
+        drop(command);
         let stdin = child
             .stdin
             .take()
@@ -104,6 +144,10 @@ impl SidecarTransport {
             .stdout
             .take()
             .ok_or_else(|| TransportError::Sidecar("sidecar stdout was not piped".to_string()))?;
+        let control = tokio::net::UnixStream::from_std(control_parent).map_err(|error| {
+            TransportError::Sidecar(format!("failed to adopt sidecar control socket: {error}"))
+        })?;
+        let (control_reader, control_writer) = control.into_split();
 
         let (request_writer_tx, request_writer_rx) = mpsc::channel(REQUEST_FRAME_QUEUE_CAPACITY);
         let (control_writer_tx, control_writer_rx) = mpsc::channel(CONTROL_FRAME_QUEUE_CAPACITY);
@@ -122,8 +166,28 @@ impl SidecarTransport {
             last_inbound_at: parking_lot::Mutex::new(std::time::Instant::now()),
         });
 
-        tokio::spawn(run_writer(stdin, control_writer_rx, request_writer_rx));
-        tokio::spawn(run_reader(Arc::downgrade(&transport), stdout));
+        tokio::spawn(run_writer(
+            Arc::downgrade(&transport),
+            "ordinary request",
+            stdin,
+            request_writer_rx,
+        ));
+        tokio::spawn(run_writer(
+            Arc::downgrade(&transport),
+            "response/control",
+            control_writer,
+            control_writer_rx,
+        ));
+        tokio::spawn(run_reader(
+            Arc::downgrade(&transport),
+            stdout,
+            InboundLane::Event,
+        ));
+        tokio::spawn(run_reader(
+            Arc::downgrade(&transport),
+            control_reader,
+            InboundLane::Control,
+        ));
         tokio::spawn(run_silence_watchdog(
             Arc::downgrade(&transport),
             SIDECAR_SILENCE_TIMEOUT,
@@ -212,6 +276,22 @@ impl SidecarTransport {
             .store(max_frame_bytes, Ordering::SeqCst);
     }
 
+    /// Request graceful process termination through the physically independent
+    /// response/control lane. This does not reinterpret an ordinary request as
+    /// control traffic.
+    pub async fn shutdown(&self, reason: impl Into<String>) -> Result<(), TransportError> {
+        let frame = wire::ProtocolFrame::ControlFrame(wire::ControlFrame {
+            schema: wire::protocol_schema(),
+            payload: wire::ControlPayload::ShutdownControl(wire::ShutdownControl {
+                reason: reason.into(),
+            }),
+        });
+        let bytes = self.encode_wire_frame(&frame, None)?;
+        self.control_writer_tx.send(bytes).await.map_err(|_| {
+            TransportError::Sidecar("sidecar response/control transport closed".to_string())
+        })
+    }
+
     /// Kill the child sidecar process if this transport still owns one.
     pub fn kill_child(&self) {
         if let Some(mut child) = self.child.lock().take() {
@@ -266,7 +346,9 @@ impl SidecarTransport {
             wire::ProtocolFrame::SidecarRequestFrame(request) => {
                 self.dispatch_sidecar_request(request).await
             }
-            wire::ProtocolFrame::SidecarResponseFrame(_) | wire::ProtocolFrame::RequestFrame(_) => {
+            wire::ProtocolFrame::SidecarResponseFrame(_)
+            | wire::ProtocolFrame::RequestFrame(_)
+            | wire::ProtocolFrame::ControlFrame(_) => {
                 tracing::warn!("unexpected inbound frame on host transport")
             }
         }
@@ -314,6 +396,11 @@ impl SidecarTransport {
         self.pending.clear();
     }
 
+    fn disconnect(&self) {
+        self.kill_child();
+        self.fail_all_pending();
+    }
+
     fn register_pending_request(
         &self,
         request_id: wire::RequestId,
@@ -328,6 +415,24 @@ impl SidecarTransport {
         let _ = self.pending.insert(request_id, tx);
         Ok(())
     }
+}
+
+#[cfg(unix)]
+fn map_control_fd(
+    command: &mut Command,
+    control_child: StdUnixStream,
+) -> Result<(), TransportError> {
+    command
+        .fd_mappings(vec![FdMapping {
+            parent_fd: control_child.into(),
+            child_fd: CONTROL_FD,
+        }])
+        .map_err(|error| {
+            TransportError::Sidecar(format!(
+                "failed to map sidecar response/control fd: {error}"
+            ))
+        })?;
+    Ok(())
 }
 
 struct PendingRequestGuard<'a> {
@@ -367,72 +472,75 @@ fn sidecar_request_key(payload: &wire::SidecarRequestPayload) -> &'static str {
     }
 }
 
-/// Drain outbound channels into the child's stdin. Control responses are preferred so a full request
-/// queue cannot starve sidecar-request replies.
+/// Drain one bounded outbound lane into its physically independent stream.
 async fn run_writer<W>(
-    mut stdin: W,
-    mut control_rx: mpsc::Receiver<Vec<u8>>,
-    mut request_rx: mpsc::Receiver<Vec<u8>>,
+    transport: Weak<SidecarTransport>,
+    lane: &'static str,
+    mut writer: W,
+    mut frames: mpsc::Receiver<Vec<u8>>,
 ) where
     W: AsyncWrite + Unpin,
 {
-    let mut prefer_control = true;
-    loop {
-        let (bytes, wrote_control) = if prefer_control {
-            tokio::select! {
-                biased;
-                bytes = control_rx.recv() => match bytes {
-                    Some(bytes) => (bytes, true),
-                    None => match request_rx.recv().await {
-                        Some(bytes) => (bytes, false),
-                        None => break,
-                    },
-                },
-                bytes = request_rx.recv() => match bytes {
-                    Some(bytes) => (bytes, false),
-                    None => match control_rx.recv().await {
-                        Some(bytes) => (bytes, true),
-                        None => break,
-                    },
-                },
-            }
-        } else {
-            tokio::select! {
-                biased;
-                bytes = request_rx.recv() => match bytes {
-                    Some(bytes) => (bytes, false),
-                    None => match control_rx.recv().await {
-                        Some(bytes) => (bytes, true),
-                        None => break,
-                    },
-                },
-                bytes = control_rx.recv() => match bytes {
-                    Some(bytes) => (bytes, true),
-                    None => match request_rx.recv().await {
-                        Some(bytes) => (bytes, false),
-                        None => break,
-                    },
-                },
-            }
-        };
-        if stdin.write_all(&bytes).await.is_err() {
-            break;
+    while let Some(bytes) = frames.recv().await {
+        let result = async {
+            writer.write_all(&bytes).await?;
+            writer.flush().await
         }
-        if stdin.flush().await.is_err() {
-            break;
+        .await;
+        if let Err(error) = result {
+            tracing::warn!(?error, lane, "sidecar writer failed");
+            if let Some(transport) = transport.upgrade() {
+                transport.disconnect();
+            }
+            return;
         }
-        prefer_control = !wrote_control;
     }
 }
 
-/// Read length-prefixed BARE frames from the child's stdout and route them. Holds a `Weak` so the
-/// transport can drop (and `kill_on_drop` the child) independently; exits on EOF/read error or once
-/// the transport is gone.
-async fn run_reader(transport: Weak<SidecarTransport>, mut stdout: ChildStdout) {
+#[derive(Clone, Copy, Debug)]
+enum InboundLane {
+    Event,
+    Control,
+}
+
+impl InboundLane {
+    fn accepts(self, frame: &wire::ProtocolFrame) -> bool {
+        match self {
+            Self::Event => {
+                matches!(frame, wire::ProtocolFrame::EventFrame(event) if !is_heartbeat(event))
+            }
+            Self::Control => match frame {
+                wire::ProtocolFrame::ResponseFrame(_)
+                | wire::ProtocolFrame::SidecarRequestFrame(_) => true,
+                wire::ProtocolFrame::EventFrame(event) => is_heartbeat(event),
+                wire::ProtocolFrame::RequestFrame(_)
+                | wire::ProtocolFrame::SidecarResponseFrame(_)
+                | wire::ProtocolFrame::ControlFrame(_) => false,
+            },
+        }
+    }
+}
+
+fn is_heartbeat(event: &wire::EventFrame) -> bool {
+    matches!(
+        &event.payload,
+        wire::EventPayload::StructuredEvent(structured) if structured.name == "heartbeat"
+    )
+}
+
+/// Read length-prefixed BARE frames from one physical inbound lane and route them.
+async fn run_reader<R>(transport: Weak<SidecarTransport>, mut reader: R, lane: InboundLane)
+where
+    R: AsyncRead + Unpin,
+{
     loop {
         let mut length_buf = [0u8; 4];
-        if stdout.read_exact(&mut length_buf).await.is_err() {
-            break;
+        if let Err(error) = reader.read_exact(&mut length_buf).await {
+            if let Some(transport) = transport.upgrade() {
+                tracing::warn!(?error, ?lane, "sidecar reader ended");
+                transport.disconnect();
+            }
+            return;
         }
         let length = u32::from_be_bytes(length_buf) as usize;
 
@@ -446,13 +554,16 @@ async fn run_reader(transport: Weak<SidecarTransport>, mut stdout: ChildStdout) 
                 max = max_frame_bytes,
                 "sidecar frame exceeds negotiated limit"
             );
-            break;
+            transport.disconnect();
+            return;
         }
 
         let mut frame_bytes = vec![0u8; 4 + length];
         frame_bytes[..4].copy_from_slice(&length_buf);
-        if stdout.read_exact(&mut frame_bytes[4..]).await.is_err() {
-            break;
+        if let Err(error) = reader.read_exact(&mut frame_bytes[4..]).await {
+            tracing::warn!(?error, ?lane, "sidecar reader ended mid-frame");
+            transport.disconnect();
+            return;
         }
         // Any complete inbound frame proves the sidecar is alive; the silence
         // watchdog measures from here.
@@ -460,13 +571,18 @@ async fn run_reader(transport: Weak<SidecarTransport>, mut stdout: ChildStdout) 
 
         let codec = WireFrameCodec::new(max_frame_bytes);
         match codec.decode(&frame_bytes) {
-            Ok(frame) => transport.handle_wire_frame(frame).await,
-            Err(error) => tracing::warn!(?error, "failed to decode sidecar frame"),
+            Ok(frame) if lane.accepts(&frame) => transport.handle_wire_frame(frame).await,
+            Ok(frame) => {
+                tracing::warn!(?lane, frame = ?frame, "sidecar frame arrived on wrong transport lane");
+                transport.disconnect();
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(?error, ?lane, "failed to decode sidecar frame");
+                transport.disconnect();
+                return;
+            }
         }
-    }
-
-    if let Some(transport) = transport.upgrade() {
-        transport.fail_all_pending();
     }
 }
 
@@ -783,49 +899,145 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn writer_prioritizes_control_frames_over_request_backlog() {
-        let (client, mut server) = tokio::io::duplex(64);
+    async fn shutdown_uses_typed_control_frame() {
+        let (request_writer_tx, _request_writer_rx) = mpsc::channel(4);
+        let (control_writer_tx, mut control_writer_rx) = mpsc::channel(4);
+        let (event_tx, _) = broadcast::channel(4);
+        let transport = SidecarTransport {
+            child: parking_lot::Mutex::new(None),
+            pending: SccHashMap::new(),
+            pending_request_lock: parking_lot::Mutex::new(()),
+            request_counter: AtomicI64::new(1),
+            max_frame_bytes: AtomicUsize::new(wire::DEFAULT_MAX_FRAME_BYTES),
+            event_tx,
+            callbacks: SccHashMap::new(),
+            request_writer_tx,
+            control_writer_tx,
+            last_inbound_at: parking_lot::Mutex::new(std::time::Instant::now()),
+        };
+
+        transport
+            .shutdown("test complete")
+            .await
+            .expect("enqueue typed shutdown");
+        let bytes = control_writer_rx.recv().await.expect("control frame bytes");
+        let frame = WireFrameCodec::default()
+            .decode(&bytes)
+            .expect("decode shutdown frame");
+        assert!(matches!(
+            frame,
+            wire::ProtocolFrame::ControlFrame(wire::ControlFrame {
+                payload: wire::ControlPayload::ShutdownControl(wire::ShutdownControl { reason }),
+                ..
+            }) if reason == "test complete"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unix_spawn_maps_duplex_control_socket_to_fd_three() {
+        let (mut parent, child) = StdUnixStream::pair().expect("control socketpair");
+        parent
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .expect("control read timeout");
+        let mut command = Command::new("sh");
+        command.arg("-c").arg("printf mapped-control >&3");
+        map_control_fd(&mut command, child).expect("map child control fd");
+        let mut child = command.spawn().expect("spawn fd mapping probe");
+        drop(command);
+
+        let mut received = [0_u8; 14];
+        std::io::Read::read_exact(&mut parent, &mut received).expect("read mapped fd output");
+        assert_eq!(&received, b"mapped-control");
+        assert!(child
+            .wait()
+            .await
+            .expect("wait for mapping probe")
+            .success());
+    }
+
+    #[tokio::test]
+    async fn control_writer_progresses_while_ordinary_stream_is_blocked() {
+        let transport = Arc::new(test_transport());
+        let (ordinary_client, _ordinary_server) = tokio::io::duplex(1);
+        let (control_client, mut control_server) = tokio::io::duplex(64);
         let (control_tx, control_rx) = mpsc::channel(CONTROL_FRAME_QUEUE_CAPACITY);
         let (request_tx, request_rx) = mpsc::channel(REQUEST_FRAME_QUEUE_CAPACITY);
         request_tx
-            .send(vec![b'r'])
+            .send(vec![b'r'; 64])
             .await
             .expect("send request frame");
         control_tx
             .send(vec![b'c'])
             .await
             .expect("send control frame");
-        drop(control_tx);
-        drop(request_tx);
-
-        let writer = tokio::spawn(run_writer(client, control_rx, request_rx));
+        let ordinary_writer = tokio::spawn(run_writer(
+            Arc::downgrade(&transport),
+            "ordinary",
+            ordinary_client,
+            request_rx,
+        ));
+        let control_writer = tokio::spawn(run_writer(
+            Arc::downgrade(&transport),
+            "control",
+            control_client,
+            control_rx,
+        ));
         let mut first = [0u8; 1];
-        server
-            .read_exact(&mut first)
-            .await
-            .expect("read first byte");
-        writer.await.expect("writer task");
-
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            control_server.read_exact(&mut first),
+        )
+        .await
+        .expect("control write must not wait for ordinary stream")
+        .expect("read first byte");
         assert_eq!(first, [b'c']);
+        ordinary_writer.abort();
+        control_writer.abort();
     }
 
     #[tokio::test]
-    async fn writer_alternates_when_control_and_request_are_ready() {
-        let (client, mut server) = tokio::io::duplex(64);
-        let (control_tx, control_rx) = mpsc::channel(CONTROL_FRAME_QUEUE_CAPACITY);
-        let (request_tx, request_rx) = mpsc::channel(REQUEST_FRAME_QUEUE_CAPACITY);
-        control_tx.send(vec![b'c']).await.expect("control one");
-        control_tx.send(vec![b'C']).await.expect("control two");
-        request_tx.send(vec![b'r']).await.expect("request one");
-        request_tx.send(vec![b'R']).await.expect("request two");
-        drop(control_tx);
-        drop(request_tx);
+    async fn eof_on_either_inbound_lane_fails_pending_requests() {
+        for lane in [InboundLane::Event, InboundLane::Control] {
+            let transport = Arc::new(test_transport());
+            let (tx, rx) = oneshot::channel();
+            transport
+                .register_pending_request(1, tx)
+                .expect("register pending request");
+            let (reader, peer) = tokio::io::duplex(64);
+            drop(peer);
 
-        let writer = tokio::spawn(run_writer(client, control_rx, request_rx));
-        let mut output = [0u8; 4];
+            tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                run_reader(Arc::downgrade(&transport), reader, lane),
+            )
+            .await
+            .expect("reader must terminate on EOF");
+
+            rx.await.expect_err("EOF must fail pending requests");
+            assert_eq!(pending_request_count(&transport), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn writer_preserves_order_within_one_lane() {
+        let transport = Arc::new(test_transport());
+        let (client, mut server) = tokio::io::duplex(64);
+        let (tx, rx) = mpsc::channel(CONTROL_FRAME_QUEUE_CAPACITY);
+        tx.send(vec![b'c']).await.expect("control one");
+        tx.send(vec![b'C']).await.expect("control two");
+        drop(tx);
+
+        let writer = tokio::spawn(run_writer(
+            Arc::downgrade(&transport),
+            "control",
+            client,
+            rx,
+        ));
+        let mut output = [0u8; 2];
         server.read_exact(&mut output).await.expect("read output");
         writer.await.expect("writer task");
 
-        assert_eq!(output, [b'c', b'r', b'C', b'R']);
+        assert_eq!(output, [b'c', b'C']);
     }
 }

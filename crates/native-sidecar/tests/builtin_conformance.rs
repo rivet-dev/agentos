@@ -878,7 +878,10 @@ agent.destroy();
         guest["first"]["socketLocalPort"], guest["second"]["socketLocalPort"],
         "expected second request to reuse the first socket"
     );
-    assert_eq!(guest["freeSockets"], 1);
+    // The second response explicitly closes the connection. Node removes that
+    // reused socket from both the active and free pools by the next timer turn.
+    assert_eq!(guest["freeSockets"], 0);
+    assert_eq!(guest["totalSocketCount"], 0);
 }
 
 fn http_request_denied_egress_returns_permission_error_impl() {
@@ -1876,6 +1879,7 @@ console.log(JSON.stringify({
   totalmem: os.totalmem(),
   username: os.userInfo().username,
   homedir: os.homedir(),
+  userInfoHomedir: os.userInfo().homedir,
   envUser: process.env.USER,
   envHome: process.env.HOME,
 }));
@@ -1897,6 +1901,10 @@ console.log(JSON.stringify({
         HashMap::from([
             (String::from("resource.cpu_count"), String::from("2")),
             (
+                String::from("env.HOME"),
+                String::from("/tmp/constrained-home"),
+            ),
+            (
                 String::from("resource.max_wasm_memory_bytes"),
                 (64_u64 * 1024 * 1024).to_string(),
             ),
@@ -1912,6 +1920,7 @@ console.log(JSON.stringify({
         &entrypoint,
         HashMap::from([
             (String::from("resource.cpu_count"), String::from("5")),
+            (String::from("env.HOME"), String::from("/tmp/expanded-home")),
             (
                 String::from("resource.max_wasm_memory_bytes"),
                 (256_u64 * 1024 * 1024).to_string(),
@@ -1930,9 +1939,13 @@ console.log(JSON.stringify({
     // hardcoded root/"/root" defaults) — this is the sidecar-level coverage that
     // exercises the guestOs/`import os` path, which an engine-only test does not.
     assert_eq!(constrained["username"], "agentos");
-    assert_eq!(constrained["homedir"], "/home/agentos");
+    assert_eq!(constrained["homedir"], "/tmp/constrained-home");
+    assert_eq!(constrained["envHome"], "/tmp/constrained-home");
+    assert_eq!(constrained["userInfoHomedir"], "/home/agentos");
     assert_eq!(expanded["username"], "agentos");
-    assert_eq!(expanded["homedir"], "/home/agentos");
+    assert_eq!(expanded["homedir"], "/tmp/expanded-home");
+    assert_eq!(expanded["envHome"], "/tmp/expanded-home");
+    assert_eq!(expanded["userInfoHomedir"], "/home/agentos");
 
     assert_eq!(constrained["availableParallelism"], 2);
     assert_eq!(constrained["cpusLength"], 2);
@@ -2260,6 +2273,7 @@ console.log(JSON.stringify({
   statSize: fs.statSync("scratchdir/nested/alpha.txt").size,
   existsAlpha: fs.existsSync("scratchdir/nested/alpha.txt"),
   existsBeta: fs.existsSync("scratchdir/beta.txt"),
+  existsOverlongPath: fs.existsSync("x".repeat(5000)),
   missingStatCode,
   missingReadCode,
 }));

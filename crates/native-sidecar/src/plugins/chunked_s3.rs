@@ -69,17 +69,14 @@ impl<B> ChunkedS3CallbackContext for MountPluginContext<B> {
     }
 }
 
-impl<Context> FileSystemPluginFactory<Context> for ChunkedS3MountPlugin
-where
-    Context: ChunkedS3CallbackContext,
-{
+impl<B> FileSystemPluginFactory<MountPluginContext<B>> for ChunkedS3MountPlugin {
     fn plugin_id(&self) -> &'static str {
         "chunked_s3"
     }
 
     fn open(
         &self,
-        request: OpenFileSystemPluginRequest<'_, Context>,
+        request: OpenFileSystemPluginRequest<'_, MountPluginContext<B>>,
     ) -> Result<Box<dyn MountedFileSystem>, PluginError> {
         let config: ChunkedS3MountConfig = serde_json::from_value(request.config.clone())
             .map_err(|error| PluginError::invalid_input(error.to_string()))?;
@@ -157,7 +154,10 @@ where
                     cache_entries,
                 );
                 let fs = ChunkedFs::with_options(metadata, block_store, options);
-                Ok(Box::new(MountedEngineFileSystem::new(fs)?))
+                Ok(Box::new(MountedEngineFileSystem::with_runtime_context(
+                    fs,
+                    request.context.runtime_context.clone(),
+                )))
             }
             "sqlite" | "local" => {
                 let metadata_path = config.metadata_path.ok_or_else(|| {
@@ -167,7 +167,10 @@ where
                     .map_err(|error| PluginError::new(error.code(), error.message().to_owned()))?;
                 let metadata = CachedMetadataStore::new(metadata, cache_entries);
                 let fs = ChunkedFs::with_options(metadata, block_store, options);
-                Ok(Box::new(MountedEngineFileSystem::new(fs)?))
+                Ok(Box::new(MountedEngineFileSystem::with_runtime_context(
+                    fs,
+                    request.context.runtime_context.clone(),
+                )))
             }
             _ => unreachable!("metadata backend was validated above"),
         }

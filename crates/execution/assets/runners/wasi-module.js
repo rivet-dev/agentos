@@ -969,10 +969,22 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
       };
     }
 
-    _hostPathExists(hostPath) {
-      return this._measureWasiPhase("hostPathExists", () => {
+    _mappedPathExists(guestPath, hostPath) {
+      const sidecarGuestPath =
+        this._sidecarManagedProcess() && typeof guestPath === "string"
+          ? guestPath
+          : null;
+      const target = sidecarGuestPath ?? hostPath;
+      if (typeof target !== "string") {
+        return false;
+      }
+      return this._measureWasiPhase("mappedPathExists", () => {
         try {
-          __agentOSFs().statSync(hostPath);
+          if (sidecarGuestPath !== null) {
+            __agentOSWasiSyncRpc().callSync("fs.statSync", [sidecarGuestPath]);
+          } else {
+            __agentOSFs().statSync(target);
+          }
           return true;
         } catch {
           return false;
@@ -981,16 +993,22 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
     }
 
     _createParentExists(guestPath, hostPath) {
-      const target =
+      const sidecarGuestPath =
         this._sidecarManagedProcess() && typeof guestPath === "string"
           ? guestPath
-          : hostPath;
+          : null;
+      const target = sidecarGuestPath ?? hostPath;
       if (typeof target !== "string") {
         return false;
       }
       return this._measureWasiPhase("createParentExists", () => {
         try {
-          __agentOSFs().statSync(__agentOSPath().dirname(target));
+          const parent = __agentOSPath().dirname(target);
+          if (sidecarGuestPath !== null) {
+            __agentOSWasiSyncRpc().callSync("fs.statSync", [parent]);
+          } else {
+            __agentOSFs().statSync(parent);
+          }
           return true;
         } catch {
           return false;
@@ -1113,8 +1131,8 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
             ) ||
             this._rootRelativeTargetPrefersCwd(target) ||
             (
-              this._hostPathExists(cwdHostTarget) &&
-              !(typeof rootHostPath === "string" && this._hostPathExists(rootHostPath))
+              this._mappedPathExists(cwdGuestTarget, cwdHostTarget) &&
+              !this._mappedPathExists(rootGuestPath, rootHostPath)
             )
           )
         ) {
@@ -1155,8 +1173,8 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
               this._createParentExists(cwdGuestTarget, cwdHostTarget)
             ) ||
             (
-              this._hostPathExists(cwdHostTarget) &&
-              !(typeof rootHostPath === "string" && this._hostPathExists(rootHostPath))
+              this._mappedPathExists(cwdGuestTarget, cwdHostTarget) &&
+              !this._mappedPathExists(rootGuestPath, rootHostPath)
             )
           )
         ) {
@@ -1852,7 +1870,11 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
           }
           return 0;
         })();
-        if (entry.kind === "file" && retainedDelegateRefs <= 0) {
+        if (
+          (entry.kind === "file" || entry.kind === "directory") &&
+          typeof entry.realFd === "number" &&
+          retainedDelegateRefs <= 0
+        ) {
           __agentOSFs().closeSync(entry.realFd);
         }
         if (descriptor > 2 && retainedDelegateRefs <= 0) {

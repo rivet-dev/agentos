@@ -2,37 +2,73 @@ use crate::posix::{
     MountedFileSystem, VfsError as PosixVfsError, VfsResult as PosixVfsResult, VirtualDirEntry,
     VirtualStat,
 };
+use agentos_runtime::{BlockingJobError, RuntimeContext};
 use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::runtime::{Builder, Runtime};
+use std::sync::Arc;
 
 static NEXT_ENGINE_DEVICE_ID: AtomicU64 = AtomicU64::new(4096);
 
 pub struct MountedEngineFileSystem<F> {
-    inner: F,
-    runtime: Runtime,
+    inner: Arc<F>,
+    runtime: RuntimeContext,
     device_id: u64,
 }
 
 impl<F> MountedEngineFileSystem<F> {
-    pub fn new(inner: F) -> PosixVfsResult<Self> {
-        Ok(Self {
-            inner,
-            runtime: Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| {
-                    PosixVfsError::io(format!("create vfs engine runtime: {error}"))
-                })?,
+    pub fn with_runtime_context(inner: F, runtime: RuntimeContext) -> Self {
+        Self {
+            inner: Arc::new(inner),
+            runtime,
             device_id: NEXT_ENGINE_DEVICE_ID.fetch_add(1, Ordering::Relaxed),
-        })
+        }
     }
 
-    fn block_on<T>(
+    fn run<T>(
         &self,
-        future: impl std::future::Future<Output = crate::engine::VfsResult<T>>,
-    ) -> PosixVfsResult<T> {
-        self.runtime.block_on(future).map_err(convert_error)
+        reserved_bytes: usize,
+        future: impl std::future::Future<Output = crate::engine::VfsResult<T>> + Send + 'static,
+    ) -> PosixVfsResult<T>
+    where
+        T: Send + 'static,
+    {
+        if agentos_runtime::is_runtime_worker_thread() {
+            return Err(PosixVfsError::new(
+                "EDEADLK",
+                "ERR_AGENTOS_VFS_RUNTIME_WORKER_WAIT: synchronous mounted filesystem calls must run outside an AgentOS Tokio worker",
+            ));
+        }
+        let handle = self.runtime.handle().clone();
+        let runtime = self.runtime.clone();
+        let cancel = Arc::new(tokio::sync::Notify::new());
+        let worker_cancel = Arc::clone(&cancel);
+        let result = self.runtime.blocking().run_sync(
+            reserved_bytes,
+            self.runtime.blocking_job_timeout(),
+            move || {
+                handle.block_on(async move {
+                    tokio::select! {
+                        result = future => Some(result),
+                        () = runtime.admission_closed() => None,
+                        () = worker_cancel.notified() => None,
+                    }
+                })
+            },
+        );
+        match result {
+            Ok(Some(result)) => result.map_err(convert_error),
+            Ok(None) => Err(PosixVfsError::new(
+                "ECANCELED",
+                "ERR_AGENTOS_VFS_CANCELLED: mounted filesystem runtime admission closed",
+            )),
+            Err(error) => {
+                // `run_sync` stops waiting at the configured deadline. Wake the
+                // still-admitted worker so the engine future is dropped and the
+                // fixed blocking-executor slot cannot remain stranded.
+                cancel.notify_one();
+                Err(blocking_job_error(error))
+            }
+        }
     }
 }
 
@@ -49,29 +85,45 @@ where
     }
 
     fn read_file(&mut self, path: &str) -> PosixVfsResult<Vec<u8>> {
-        self.block_on(self.inner.read_file(path))
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move { inner.read_file(&path).await })
     }
 
     fn read_dir(&mut self, path: &str) -> PosixVfsResult<Vec<String>> {
-        self.block_on(self.inner.read_dir(path))
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move { inner.read_dir(&path).await })
     }
 
     fn read_dir_with_types(&mut self, path: &str) -> PosixVfsResult<Vec<VirtualDirEntry>> {
-        self.block_on(self.inner.read_dir_with_types(path))
-            .map(|entries| {
-                entries
-                    .into_iter()
-                    .map(|entry| VirtualDirEntry {
-                        name: entry.name,
-                        is_directory: entry.kind == crate::engine::InodeType::Directory,
-                        is_symbolic_link: entry.kind == crate::engine::InodeType::Symlink,
-                    })
-                    .collect()
-            })
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move {
+            inner.read_dir_with_types(&path).await
+        })
+        .map(|entries| {
+            entries
+                .into_iter()
+                .map(|entry| VirtualDirEntry {
+                    name: entry.name,
+                    is_directory: entry.kind == crate::engine::InodeType::Directory,
+                    is_symbolic_link: entry.kind == crate::engine::InodeType::Symlink,
+                })
+                .collect()
+        })
     }
 
     fn write_file(&mut self, path: &str, content: Vec<u8>) -> PosixVfsResult<()> {
-        self.block_on(self.inner.write_file(path, &content))
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len().saturating_add(content.len());
+        self.run(reserved_bytes, async move {
+            inner.write_file(&path, &content).await
+        })
     }
 
     fn write_file_with_mode(
@@ -111,11 +163,19 @@ where
     }
 
     fn append_file(&mut self, path: &str, content: Vec<u8>) -> PosixVfsResult<u64> {
-        self.block_on(self.inner.append(path, &content))
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len().saturating_add(content.len());
+        self.run(reserved_bytes, async move {
+            inner.append(&path, &content).await
+        })
     }
 
     fn create_dir(&mut self, path: &str) -> PosixVfsResult<()> {
-        self.block_on(self.inner.create_dir(path))
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move { inner.create_dir(&path).await })
     }
 
     fn create_dir_with_mode(&mut self, path: &str, mode: Option<u32>) -> PosixVfsResult<()> {
@@ -127,7 +187,12 @@ where
     }
 
     fn mkdir(&mut self, path: &str, recursive: bool) -> PosixVfsResult<()> {
-        self.block_on(self.inner.mkdir(path, recursive))
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move {
+            inner.mkdir(&path, recursive).await
+        })
     }
 
     fn mkdir_with_mode(
@@ -144,66 +209,151 @@ where
     }
 
     fn exists(&self, path: &str) -> bool {
-        self.runtime.block_on(self.inner.exists(path))
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        match self.run(reserved_bytes, async move { Ok(inner.exists(&path).await) }) {
+            Ok(exists) => exists,
+            Err(error) => {
+                eprintln!("ERR_AGENTOS_VFS_EXISTS: {error}");
+                false
+            }
+        }
     }
 
     fn stat(&mut self, path: &str) -> PosixVfsResult<VirtualStat> {
-        let stat = self.block_on(self.inner.stat(path))?;
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        let stat = self.run(reserved_bytes, async move { inner.stat(&path).await })?;
         Ok(convert_stat(stat, self.device_id))
     }
 
     fn remove_file(&mut self, path: &str) -> PosixVfsResult<()> {
-        self.block_on(self.inner.remove_file(path))
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(
+            reserved_bytes,
+            async move { inner.remove_file(&path).await },
+        )
     }
 
     fn remove_dir(&mut self, path: &str) -> PosixVfsResult<()> {
-        self.block_on(self.inner.remove_dir(path))
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move { inner.remove_dir(&path).await })
     }
 
     fn rename(&mut self, old_path: &str, new_path: &str) -> PosixVfsResult<()> {
-        self.block_on(self.inner.rename(old_path, new_path))
+        let inner = Arc::clone(&self.inner);
+        let old_path = old_path.to_owned();
+        let new_path = new_path.to_owned();
+        let reserved_bytes = old_path.len().saturating_add(new_path.len());
+        self.run(reserved_bytes, async move {
+            inner.rename(&old_path, &new_path).await
+        })
     }
 
     fn realpath(&self, path: &str) -> PosixVfsResult<String> {
-        self.block_on(self.inner.realpath(path))
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move { inner.realpath(&path).await })
     }
 
     fn symlink(&mut self, target: &str, link_path: &str) -> PosixVfsResult<()> {
-        self.block_on(self.inner.symlink(target, link_path))
+        let inner = Arc::clone(&self.inner);
+        let target = target.to_owned();
+        let link_path = link_path.to_owned();
+        let reserved_bytes = target.len().saturating_add(link_path.len());
+        self.run(reserved_bytes, async move {
+            inner.symlink(&target, &link_path).await
+        })
     }
 
     fn read_link(&self, path: &str) -> PosixVfsResult<String> {
-        self.block_on(self.inner.readlink(path))
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move { inner.readlink(&path).await })
     }
 
     fn lstat(&self, path: &str) -> PosixVfsResult<VirtualStat> {
-        let stat = self.block_on(self.inner.lstat(path))?;
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        let stat = self.run(reserved_bytes, async move { inner.lstat(&path).await })?;
         Ok(convert_stat(stat, self.device_id))
     }
 
     fn link(&mut self, old_path: &str, new_path: &str) -> PosixVfsResult<()> {
-        self.block_on(self.inner.link(old_path, new_path))
+        let inner = Arc::clone(&self.inner);
+        let old_path = old_path.to_owned();
+        let new_path = new_path.to_owned();
+        let reserved_bytes = old_path.len().saturating_add(new_path.len());
+        self.run(reserved_bytes, async move {
+            inner.link(&old_path, &new_path).await
+        })
     }
 
     fn chmod(&mut self, path: &str, mode: u32) -> PosixVfsResult<()> {
-        self.block_on(self.inner.chmod(path, mode))
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(
+            reserved_bytes,
+            async move { inner.chmod(&path, mode).await },
+        )
     }
 
     fn chown(&mut self, path: &str, uid: u32, gid: u32) -> PosixVfsResult<()> {
-        self.block_on(self.inner.chown(path, uid, gid))
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(
+            reserved_bytes,
+            async move { inner.chown(&path, uid, gid).await },
+        )
     }
 
     fn utimes(&mut self, path: &str, atime_ms: u64, mtime_ms: u64) -> PosixVfsResult<()> {
-        self.block_on(self.inner.utimes(path, atime_ms, mtime_ms))
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move {
+            inner.utimes(&path, atime_ms, mtime_ms).await
+        })
     }
 
     fn truncate(&mut self, path: &str, length: u64) -> PosixVfsResult<()> {
-        self.block_on(self.inner.truncate(path, length))
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len();
+        self.run(reserved_bytes, async move {
+            inner.truncate(&path, length).await
+        })
     }
 
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> PosixVfsResult<Vec<u8>> {
-        self.block_on(self.inner.pread(path, offset, length))
+        let inner = Arc::clone(&self.inner);
+        let path = path.to_owned();
+        let reserved_bytes = path.len().saturating_add(length);
+        self.run(reserved_bytes, async move {
+            inner.pread(&path, offset, length).await
+        })
     }
+}
+
+fn blocking_job_error(error: BlockingJobError) -> PosixVfsError {
+    let code = match error {
+        BlockingJobError::ResourceLimit(_) | BlockingJobError::Capacity { .. } => "EAGAIN",
+        BlockingJobError::ShuttingDown => "ECANCELED",
+        BlockingJobError::TimedOut { .. } => "ETIMEDOUT",
+        BlockingJobError::WorkerDropped => "EIO",
+    };
+    PosixVfsError::new(code, error.to_string())
 }
 
 fn convert_error(error: crate::engine::VfsError) -> PosixVfsError {
@@ -249,6 +399,9 @@ mod tests {
 
     #[test]
     fn mounted_engine_filesystem_bridges_sync_posix_calls() {
+        let runtime =
+            agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+                .expect("create test runtime");
         let fs = ChunkedFs::with_options(
             InMemoryMetadataStore::new(),
             MemoryBlockStore::new(),
@@ -258,7 +411,7 @@ mod tests {
                 ..ChunkedFsOptions::default()
             },
         );
-        let mut mounted = MountedEngineFileSystem::new(fs).expect("create mounted engine fs");
+        let mut mounted = MountedEngineFileSystem::with_runtime_context(fs, runtime.context());
 
         mounted
             .mkdir("/work/nested", true)
@@ -283,5 +436,32 @@ mod tests {
         assert_eq!(stat.mode & 0o777, 0o600);
         assert_eq!(stat.mode & S_IFREG, S_IFREG);
         assert_eq!(stat.size, 5);
+    }
+
+    #[test]
+    fn mounted_engine_filesystem_rejects_waits_on_agentos_runtime_workers() {
+        let runtime =
+            agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+                .expect("create test runtime");
+        let context = runtime.context();
+        let task_context = context.clone();
+        let task = context
+            .spawn(agentos_runtime::TaskClass::Plugin, async move {
+                let fs = ChunkedFs::with_options(
+                    InMemoryMetadataStore::new(),
+                    MemoryBlockStore::new(),
+                    ChunkedFsOptions::default(),
+                );
+                let mut mounted = MountedEngineFileSystem::with_runtime_context(fs, task_context);
+                mounted
+                    .mkdir("/must-not-block", true)
+                    .expect_err("runtime workers must not synchronously wait")
+            })
+            .expect("spawn worker regression");
+        let error = runtime.block_on(task).expect("worker regression join");
+        assert_eq!(error.code(), "EDEADLK");
+        assert!(error
+            .message()
+            .contains("ERR_AGENTOS_VFS_RUNTIME_WORKER_WAIT"));
     }
 }

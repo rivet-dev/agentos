@@ -208,7 +208,7 @@ fn ts_dto_field_names_match_rust_contract_fixture() {
             "VirtualStat",
             "packages/core/src/runtime.ts",
             core_runtime,
-            "export interface VirtualStat { mode: number; size: number; blocks: number; dev: number; rdev: number; isDirectory: boolean; isSymbolicLink: boolean; atimeMs: number; mtimeMs: number; ctimeMs: number; birthtimeMs: number; ino: number; nlink: number; uid: number; gid: number; }",
+            "export interface VirtualStat { mode: number; size: number; sizeExact?: bigint; blocks: number; dev: number; rdev: number; isDirectory: boolean; isSymbolicLink: boolean; atimeMs: number; mtimeMs: number; ctimeMs: number; birthtimeMs: number; ino: number; inoExact?: bigint; nlink: number; nlinkExact?: bigint; uid: number; gid: number; }",
         ),
         (
             "ExecResult",

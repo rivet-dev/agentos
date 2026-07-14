@@ -357,6 +357,7 @@ This page is the map. Each subsystem has its own detailed page in the Advanced a
 - **[Processes](/docs/architecture/processes)**: the virtual process table, `exec()` / `run()`, child processes, and PTYs.
 - **[Filesystem](/docs/architecture/filesystem)**: the per-VM virtual filesystem, overlays, and host-backed mounts.
 - **[Networking](/docs/architecture/networking)**: the virtual socket table, DNS, the allowlist, and guest `fetch()`.
+- **[JavaScript Executor & Socket Reactor](/docs/architecture/javascript-executor)**: how the shared Tokio runtime, V8 executor threads, coalesced readiness, bounded channels, and Node stream backpressure fit together.
 - **[POSIX Syscalls](/docs/architecture/posix-syscalls)**: how WebAssembly guests behave like normal POSIX programs on top of the kernel.
 - **[Compiler Toolchain](/docs/architecture/compiler-toolchain)**: how the shell and coreutils are compiled to WebAssembly and mounted into the VM.
 - **[System Prompt](/docs/system-prompt)**: the context agentOS injects into every agent session.

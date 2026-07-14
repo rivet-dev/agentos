@@ -9,7 +9,7 @@ describe("request payload conversion", () => {
 				type: "authenticate",
 				client_name: "agentos",
 				auth_token: "token",
-				protocol_version: 7,
+				protocol_version: 8,
 				bridge_version: 1,
 			}),
 		).toEqual({
@@ -17,7 +17,7 @@ describe("request payload conversion", () => {
 			val: {
 				clientName: "agentos",
 				authToken: "token",
-				protocolVersion: 7,
+				protocolVersion: 8,
 				bridgeVersion: 1,
 			},
 		});

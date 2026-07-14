@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import common from "@agentos-software/common";
+import pi from "@agentos-software/pi";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
@@ -13,11 +14,9 @@ import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 /**
  * REPRO / REGRESSION: "onSessionUpdate not delivered live mid-turn with Pi".
  *
- * Root cause: the secure-exec stdio loop `await`s the entire `session/prompt`
- * dispatch before flushing any frames, and `acp_extension.rs::session_request`
- * collects every `session/update` into `exchange.events`, returning them only
- * after the turn resolves. A streaming consumer (rivetkit via agentos-core)
- * therefore gets ZERO updates mid-turn and the whole batch at the end.
+ * The old transport awaited the entire `session/prompt` dispatch before
+ * flushing frames and returned collected `session/update` events only after the
+ * turn resolved. This active regression protects the reactor's live event path.
  *
  * Making the window observable: a zero-latency llmock collapses the whole agent
  * turn into one synchronous burst, so "live" and "batched" look identical. To
@@ -69,17 +68,13 @@ function isSessionUpdate(event: TimedEvent): boolean {
 }
 
 describe("REPRO: Pi session/update live delivery", () => {
-	// Known-failing repro for the RivetKit native-plugin liveness bug: session/update
-	// events are batched until session/prompt resolves instead of streaming live. The
-	// fix lives in RivetKit and needs a republish; un-skip once that lands.
-	test.skip("session/update events stream live mid-turn, not batched at prompt resolution", async () => {
+	test("session/update events stream live mid-turn, not batched at prompt resolution", async () => {
 		const workspacePath = "/home/agentos/workspace/tool-verify.txt";
 		const expectedToolResult = "Successfully wrote";
 		const finalText = "tool-verify.txt was created successfully.";
 
 		const events: TimedEvent[] = [];
 		let promptStart = 0;
-		let checkpointEvents = -1; // events seen the instant the 2nd LLM req arrives
 
 		const toolCall: ToolCall = {
 			name: "write",
@@ -98,13 +93,7 @@ describe("REPRO: Pi session/update live delivery", () => {
 			),
 			{
 				match: {
-					predicate: (req) => {
-						const match = isPostToolResultRequest(req, expectedToolResult);
-						if (match && checkpointEvents < 0) {
-							checkpointEvents = events.length;
-						}
-						return match;
-					},
+					predicate: (req) => isPostToolResultRequest(req, expectedToolResult),
 				},
 				response: { content: finalText },
 				// Hold the final response open so there is a real mid-turn window
@@ -117,8 +106,8 @@ describe("REPRO: Pi session/update live delivery", () => {
 		const vm = await AgentOs.create({
 			loopbackExemptPorts: [Number(new URL(url).port)],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			// pi is pre-packed + projected by default; only add WASM commands here.
-			software: [common],
+			// Default software ships no agents; project the Pi agent explicitly.
+			software: [common, pi],
 		});
 
 		let sessionId: string | undefined;
@@ -177,25 +166,6 @@ describe("REPRO: Pi session/update live delivery", () => {
 				(e) => e.t < promptResolved - RESPONSE_LATENCY_MS * 0.4,
 			).length;
 			const gap = promptResolved - firstUpdateT;
-
-			/* eslint-disable no-console */
-			console.log("\n===== onSessionUpdate REPRO DIAGNOSTIC =====");
-			console.log(`injected latency          : ${RESPONSE_LATENCY_MS}ms`);
-			console.log(`prompt resolved at        : ${promptResolved.toFixed(1)}ms`);
-			console.log(
-				`session/update events      : ${updates.length} (of ${events.length} total)`,
-			);
-			console.log(`first update delivered at : ${firstUpdateT.toFixed(1)}ms`);
-			console.log(`updates BEFORE resolution  : ${updatesBeforeResolve}`);
-			console.log(`gap (resolve - firstUpdate): ${gap.toFixed(1)}ms`);
-			console.log(`events at 2nd-LLM-req time : ${checkpointEvents}`);
-			const verdict =
-				gap > RESPONSE_LATENCY_MS * 0.5
-					? "LIVE (FIXED): updates streamed during the mid-turn window"
-					: "BATCHED (BUG): every update arrived only at resolution";
-			console.log(`VERDICT: ${verdict}`);
-			console.log("==================================================\n");
-			/* eslint-enable no-console */
 
 			// The contract: onSessionEvent is live. The tool_call update is
 			// produced before the latency hold, so it must reach the subscriber

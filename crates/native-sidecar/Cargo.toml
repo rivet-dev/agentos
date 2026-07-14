@@ -18,6 +18,7 @@ agentos-bridge = { workspace = true }
 agentos-kernel = { workspace = true }
 agentos-sidecar-protocol = { workspace = true }
 agentos-native-sidecar-core = { workspace = true }
+agentos-runtime = { workspace = true }
 agentos-execution = { workspace = true }
 agentos-vm-config = { workspace = true }
 agentos-vfs = { workspace = true }
@@ -38,7 +39,7 @@ hickory-resolver = "=0.26.0-beta.3"
 jsonwebtoken = "8.3.0"
 log = "0.4"
 md-5 = "0.10"
-nix = { version = "0.29", features = ["fs", "poll", "process", "signal", "socket", "user"] }
+nix = { version = "0.29", features = ["fs", "net", "poll", "process", "signal", "socket", "user"] }
 # `vendored` builds OpenSSL from source → self-contained binary with no
 # system-openssl discovery on any runner (ubuntu/macOS). openssl backs the
 # guest crypto runtime (RSA/EC/DH/AES), so it cannot be a TLS-only stack.
@@ -53,7 +54,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # implementation in the `confine` module of `src/plugins/host_dir.rs`. Plain
 # `openat(2)` is portable across Linux, macOS, and gVisor; `openat2` is
 # deliberately NOT used (see that module for why).
-rustix = { version = "1", features = ["fs"] }
+rustix = { version = "1", features = ["fs", "net"] }
 scrypt = "0.11"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -69,6 +70,7 @@ url = "2"
 vfs = { workspace = true }
 
 [dev-dependencies]
+command-fds = "0.3"
 serde_bare = "0.5"
 tar = "0.4"
 wat = "1.0"

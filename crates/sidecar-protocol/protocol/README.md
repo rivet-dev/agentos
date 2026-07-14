@@ -1,6 +1,10 @@
 # Sidecar BARE Migration Plan
 
-`agentos_sidecar_v1.bare` is the canonical schema for the sidecar wire protocol value carried on native transports. It covers every current `request`, `response`, `event`, `sidecar_request`, and `sidecar_response` frame shape from [`crates/sidecar-protocol/src/protocol.rs`](../src/protocol.rs).
+`agentos_sidecar_v1.bare` is the canonical schema for the sidecar wire protocol
+value carried on native transports. It covers every current `request`,
+`response`, `event`, `sidecar_request`, `sidecar_response`, and typed `control`
+frame shape from
+[`crates/sidecar-protocol/src/protocol.rs`](../src/protocol.rs).
 
 ## Framing
 
@@ -16,7 +20,7 @@ US-083 and US-084 should replace only the payload codec first. They should not r
 The migration keeps the current semantic invariants unchanged across codecs:
 
 - `ProtocolSchema.name` is `agentos-native-sidecar`
-- `ProtocolSchema.version` is `7`
+- `ProtocolSchema.version` is `8`
 - host-originated `request_id` values stay positive
 - sidecar-originated `request_id` values stay negative
 - ownership scope rules and response-correlation rules stay exactly the same

@@ -64,7 +64,11 @@ const WASI_SDK = resolve(
 	REPO_ROOT,
 	"toolchain/c/vendor/wasi-sdk",
 );
-const SIDECAR_BINARY = resolve(REPO_ROOT, "target/debug/agentos-sidecar");
+const SIDECAR_BINARY = resolve(
+	REPO_ROOT,
+	process.env.CARGO_TARGET_DIR ?? "target",
+	"debug/agentos-sidecar",
+);
 
 const SETTLE_MS = 80;
 const WAIT_TIMEOUT_MS = 15_000;
@@ -132,18 +136,16 @@ function materializePtyProbePackage(): string {
 }
 
 function ensureSidecarBuilt(): void {
-	if (!existsSync(SIDECAR_BINARY)) {
-		// Per repo CLAUDE.md: prepare-build MUST precede every cargo invocation.
-		const prep = spawnSync(
-			"node",
-			["scripts/secure-exec-dep.mjs", "prepare-build"],
-			{ cwd: REPO_ROOT, encoding: "utf8" },
-		);
-		if (prep.status !== 0) {
+	const configuredSidecar = process.env.AGENTOS_SIDECAR_BIN;
+	if (configuredSidecar) {
+		if (!existsSync(configuredSidecar)) {
 			throw new Error(
-				["failed prepare-build", prep.stdout, prep.stderr].filter(Boolean).join("\n"),
+				`AGENTOS_SIDECAR_BIN is set to ${configuredSidecar} but the file does not exist`,
 			);
 		}
+		return;
+	}
+	if (!existsSync(SIDECAR_BINARY)) {
 		const build = spawnSync("cargo", ["build", "-q", "-p", "agentos-sidecar"], {
 			cwd: REPO_ROOT,
 			encoding: "utf8",

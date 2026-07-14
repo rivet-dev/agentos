@@ -4,6 +4,7 @@
 
 import "./polyfills/index.js";
 import "./global-exposure.js";
+import "./builtins/readiness.js";
 import "./transport.js";
 import "./builtins/active-handles.js";
 import "./builtins/fs.js";

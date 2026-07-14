@@ -1,3 +1,4 @@
+use crate::bridge::MountPluginContext;
 use agentos_kernel::mount_plugin::{
     FileSystemPluginFactory, OpenFileSystemPluginRequest, PluginError,
 };
@@ -27,14 +28,14 @@ struct ChunkedLocalMountConfig {
 #[derive(Debug)]
 pub(crate) struct ChunkedLocalMountPlugin;
 
-impl<Context> FileSystemPluginFactory<Context> for ChunkedLocalMountPlugin {
+impl<B> FileSystemPluginFactory<MountPluginContext<B>> for ChunkedLocalMountPlugin {
     fn plugin_id(&self) -> &'static str {
         "chunked_local"
     }
 
     fn open(
         &self,
-        request: OpenFileSystemPluginRequest<'_, Context>,
+        request: OpenFileSystemPluginRequest<'_, MountPluginContext<B>>,
     ) -> Result<Box<dyn MountedFileSystem>, PluginError> {
         let config: ChunkedLocalMountConfig = serde_json::from_value(request.config.clone())
             .map_err(|error| PluginError::invalid_input(error.to_string()))?;
@@ -86,6 +87,9 @@ impl<Context> FileSystemPluginFactory<Context> for ChunkedLocalMountPlugin {
                 dir_mode: config.dir_mode.unwrap_or(0o755),
             },
         );
-        Ok(Box::new(MountedEngineFileSystem::new(fs)?))
+        Ok(Box::new(MountedEngineFileSystem::with_runtime_context(
+            fs,
+            request.context.runtime_context.clone(),
+        )))
     }
 }

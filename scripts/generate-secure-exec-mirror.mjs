@@ -50,6 +50,75 @@ function json(value) {
 	return `${JSON.stringify(value, null, "\t")}\n`;
 }
 
+function lockedRootVersion(lockfile, packageName) {
+	const importerStart = lockfile.indexOf("\n  .:\n");
+	const importerEnd = lockfile.indexOf("\n  examples/", importerStart);
+	if (importerStart === -1 || importerEnd === -1) {
+		throw new Error("could not locate the AgentOS root importer in pnpm-lock.yaml");
+	}
+	const importer = lockfile.slice(importerStart, importerEnd);
+	const match = importer.match(
+		new RegExp(
+			`\\n      ${packageName}:\\n(?:        [^\\n]*\\n)*?        version: ([^\\n]+)`,
+		),
+	);
+	if (!match) {
+		throw new Error(`could not locate locked root dependency ${packageName}`);
+	}
+	return match[1];
+}
+
+function writePnpmLock(root, npmShims) {
+	const source = readFileSync(join(AGENTOS_ROOT, "pnpm-lock.yaml"), "utf8");
+	const packagesStart = source.indexOf("\npackages:\n");
+	if (packagesStart === -1) {
+		throw new Error("could not locate package snapshots in pnpm-lock.yaml");
+	}
+	const turboVersion = lockedRootVersion(source, "turbo");
+	const typescriptVersion = lockedRootVersion(source, "typescript");
+	const importers = npmShims
+		.map((spec) => {
+			const packageDir = packageDirFor(spec.shimPackage);
+			const targetPath = join(
+				AGENTOS_ROOT,
+				spec.targetPath.replace(/^agentos\//, ""),
+			);
+			const targetLink = `link:${relative(join(root, packageDir), targetPath)}`;
+			return `  ${packageDir}:
+    dependencies:
+      ${JSON.stringify(spec.targetPackage)}:
+        specifier: ${JSON.stringify(targetLink)}
+        version: ${JSON.stringify(targetLink)}
+    devDependencies:
+      typescript:
+        specifier: ^5.9.2
+        version: ${typescriptVersion}`;
+		})
+		.join("\n\n");
+	write(
+		join(root, "pnpm-lock.yaml"),
+		`lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    devDependencies:
+      turbo:
+        specifier: ^2.5.6
+        version: ${turboVersion}
+      typescript:
+        specifier: ^5.9.2
+        version: ${typescriptVersion}
+
+${importers}
+${source.slice(packagesStart)}`,
+	);
+}
+
 function npmShimExports(targetPackage) {
 	return {
 		".": {
@@ -65,12 +134,14 @@ function writeNpmShim(root, spec) {
 	const packageName = spec.shimPackage;
 	const dir = join(root, packageDirFor(packageName));
 	const target = spec.targetPackage;
+	const browserShim = packageName === "@secure-exec/browser";
 	const targetPath = join(AGENTOS_ROOT, spec.targetPath.replace(/^agentos\//, ""));
 	const targetLink = `link:${relative(dir, targetPath)}`;
 	write(
 		join(dir, "package.json"),
 		json({
 			name: packageName,
+			...(browserShim ? { private: true } : {}),
 			version: "0.0.1",
 			type: "module",
 			license: "Apache-2.0",
@@ -108,7 +179,9 @@ function writeNpmShim(root, spec) {
 	);
 	write(
 		join(dir, "README.md"),
-		`# ${packageName}\n\nCompatibility shim for \`${target}\`.\n`,
+		browserShim
+			? `# ${packageName}\n\nCompatibility shim source for \`${target}\`. Browser runtime support is retained but disabled from default CI and publication pending a dedicated security design.\n`
+			: `# ${packageName}\n\nCompatibility shim for \`${target}\`.\n`,
 	);
 }
 
@@ -120,6 +193,7 @@ function rustDependencyName(spec) {
 
 function writeRustShim(root, spec) {
 	const dir = join(root, crateDirFor(spec.shimPackage));
+	const browserShim = spec.shimPackage === "secure-exec-sidecar-browser";
 	const targetRel = relative(dir, join(AGENTOS_ROOT, spec.targetPath.replace(/^agentos\//, "")));
 	write(
 		join(dir, "Cargo.toml"),
@@ -130,6 +204,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "${spec.shimPackage} compatibility shim for ${spec.targetPackage}"
+${browserShim ? "publish = false" : ""}
 
 [lib]
 name = "${spec.sourceRustIdentifier}"
@@ -154,8 +229,8 @@ function writeRoot(root, npmShims, rustShims) {
 			type: "module",
 			packageManager: "pnpm@10.13.1",
 			scripts: {
-				build: "turbo run build",
-				"check-types": "turbo run check-types",
+				build: "turbo run build --filter='!@secure-exec/browser'",
+				"check-types": "turbo run check-types --filter='!@secure-exec/browser'",
 				test: "pnpm check-types",
 			},
 			devDependencies: {
@@ -212,6 +287,10 @@ license = "Apache-2.0"
 repository = "https://github.com/rivet-dev/secure-exec"
 `,
 	);
+	// Compatibility crates and AgentOS ship in lockstep. Seed the mirror from
+	// the authoritative runtime lock so Cargo cannot independently select a
+	// newer transitive API for path-linked AgentOS crates.
+	write(join(root, "Cargo.lock"), readFileSync(join(AGENTOS_ROOT, "Cargo.lock")));
 	write(
 		join(root, "README.md"),
 		`# secure-exec\n\nCompatibility mirror. Active runtime development moved to the AgentOS runtime packages and crates.\n`,
@@ -247,7 +326,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: pnpm install --frozen-lockfile
       - run: pnpm check-types
-      - run: cargo check --workspace
+      # Browser compatibility source is retained but disabled until its
+      # independent reactor/security design is complete.
+      - run: cargo check --workspace --exclude secure-exec-sidecar-browser
 `,
 	);
 	write(
@@ -305,6 +386,7 @@ function main() {
 	writeRoot(mirrorRoot, npmShims, rustShims);
 	for (const spec of npmShims) writeNpmShim(mirrorRoot, spec);
 	for (const spec of rustShims) writeRustShim(mirrorRoot, spec);
+	writePnpmLock(mirrorRoot, npmShims);
 	console.log(
 		`generated ${npmShims.length} npm shims and ${rustShims.length} Rust shims in ${mirrorRoot}`,
 	);

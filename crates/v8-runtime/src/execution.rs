@@ -1845,11 +1845,13 @@ fn batch_resolve_via_ipc(
     outer.set_index(scope, 0, inner.into());
     let args = serialize_v8_value(scope, outer.into()).ok()?;
 
-    let response = ctx.sync_call("_batchResolveModules", args).ok()??;
-    if response.len() > MAX_MODULE_BATCH_RESOLVE_RESPONSE_BYTES {
+    let response = ctx
+        .sync_call_response("_batchResolveModules", args)
+        .ok()??;
+    if response.payload.len() > MAX_MODULE_BATCH_RESOLVE_RESPONSE_BYTES {
         return None;
     }
-    let val = deserialize_v8_value(scope, &response).ok()?;
+    let val = deserialize_v8_value(scope, &response.payload).ok()?;
 
     // Parse response: array of {resolved, source} or null
     let result_arr = v8::Local::<v8::Array>::try_from(val).ok()?;
@@ -1930,8 +1932,8 @@ fn resolve_module_via_ipc(
         }
     };
 
-    match ctx.sync_call("_resolveModule", args) {
-        Ok(Some(bytes)) => match deserialize_v8_value(scope, &bytes) {
+    match ctx.sync_call_response("_resolveModule", args) {
+        Ok(Some(response)) => match deserialize_v8_value(scope, &response.payload) {
             Ok(val) => {
                 if val.is_string() {
                     Some(val.to_rust_string_lossy(scope))
@@ -1997,9 +1999,9 @@ fn load_module_via_ipc(
         }
     };
 
-    let ipc_result = ctx.sync_call("_loadFile", args);
+    let ipc_result = ctx.sync_call_response("_loadFile", args);
     match ipc_result {
-        Ok(Some(bytes)) => match deserialize_v8_value(scope, &bytes) {
+        Ok(Some(response)) => match deserialize_v8_value(scope, &response.payload) {
             Ok(val) => {
                 if val.is_string() {
                     Some(val.to_rust_string_lossy(scope))
@@ -2050,8 +2052,8 @@ fn lookup_module_format_via_ipc(
         }
     };
 
-    match ctx.sync_call("_moduleFormat", args) {
-        Ok(Some(bytes)) => match deserialize_v8_value(scope, &bytes) {
+    match ctx.sync_call_response("_moduleFormat", args) {
+        Ok(Some(response)) => match deserialize_v8_value(scope, &response.payload) {
             Ok(val) if val.is_string() => match val.to_rust_string_lossy(scope).as_str() {
                 "module" => Some(ResolvedModuleFormat::Module),
                 "commonjs" => Some(ResolvedModuleFormat::Commonjs),
@@ -3482,6 +3484,10 @@ export const file = new File([], "empty.txt");
     #[test]
     fn v8_consolidated_tests() {
         isolate::init_v8_platform();
+        let runtime =
+            agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+                .expect("test process runtime")
+                .context();
 
         // --- Isolate lifecycle (moved from isolate::tests to consolidate V8 tests) ---
         // Create and destroy 3 isolates sequentially without crash
@@ -5205,6 +5211,7 @@ export const file = new File([], "empty.txt");
                         call_id: 1,
                         status: 0,
                         payload: result_v8,
+                        reservation: None,
                     },
                 ),
             ))
@@ -5274,6 +5281,7 @@ export const file = new File([], "empty.txt");
                         call_id: 2,
                         status: 0,
                         payload: r2,
+                        reservation: None,
                     },
                 ),
             ))
@@ -5285,6 +5293,7 @@ export const file = new File([], "empty.txt");
                         call_id: 1,
                         status: 0,
                         payload: r1,
+                        reservation: None,
                     },
                 ),
             ))
@@ -5487,6 +5496,7 @@ export const file = new File([], "empty.txt");
                         call_id: 1,
                         status: 0,
                         payload: r,
+                        reservation: None,
                     },
                 ),
             ))
@@ -5559,6 +5569,7 @@ export const file = new File([], "empty.txt");
                         call_id: 1,
                         status: 0,
                         payload: r,
+                        reservation: None,
                     },
                 ),
             ))
@@ -5646,6 +5657,7 @@ export const file = new File([], "empty.txt");
                         call_id: 1,
                         status: 0,
                         payload: r,
+                        reservation: None,
                     },
                 ),
             ))
@@ -5729,6 +5741,7 @@ export const file = new File([], "empty.txt");
                         call_id: 1,
                         status: 0,
                         payload: r,
+                        reservation: None,
                     },
                 ),
             ))
@@ -5808,6 +5821,7 @@ export const file = new File([], "empty.txt");
                         call_id: 1,
                         status: 0,
                         payload: r,
+                        reservation: None,
                     },
                 ),
             ))
@@ -5879,6 +5893,7 @@ export const file = new File([], "empty.txt");
                         call_id: 1,
                         status: 0,
                         payload: r,
+                        reservation: None,
                     },
                 ),
             ))
@@ -5956,6 +5971,7 @@ export const file = new File([], "empty.txt");
                         call_id: 1,
                         status: 0,
                         payload: r,
+                        reservation: None,
                     },
                 ),
             ))
@@ -5988,8 +6004,9 @@ export const file = new File([], "empty.txt");
             let iso_handle = iso.thread_safe_handle();
 
             // Start a 50ms timeout
-            let mut guard = crate::timeout::TimeoutGuard::new(50, iso_handle, abort_tx)
-                .expect("timeout guard should start");
+            let mut guard =
+                crate::timeout::TimeoutGuard::new(&runtime, None, 50, iso_handle, abort_tx)
+                    .expect("timeout guard should start");
 
             // Run an infinite loop — timeout should terminate it
             let (code, error) = {
@@ -6016,8 +6033,9 @@ export const file = new File([], "empty.txt");
             let iso_handle = iso.thread_safe_handle();
 
             // 5 second timeout — execution completes well before
-            let mut guard = crate::timeout::TimeoutGuard::new(5000, iso_handle, abort_tx)
-                .expect("timeout guard should start");
+            let mut guard =
+                crate::timeout::TimeoutGuard::new(&runtime, None, 5000, iso_handle, abort_tx)
+                    .expect("timeout guard should start");
 
             let (code, error) = {
                 let scope = &mut v8::HandleScope::new(&mut iso);
@@ -6086,8 +6104,9 @@ export const file = new File([], "empty.txt");
             assert_eq!(pending.len(), 1, "should have 1 pending promise");
 
             // Start a 50ms timeout
-            let mut guard = crate::timeout::TimeoutGuard::new(50, iso_handle, abort_tx)
-                .expect("timeout guard should start");
+            let mut guard =
+                crate::timeout::TimeoutGuard::new(&runtime, None, 50, iso_handle, abort_tx)
+                    .expect("timeout guard should start");
 
             // Run event loop — it should be terminated by the timeout
             // (no messages on cmd_rx, so it blocks until abort_rx fires)

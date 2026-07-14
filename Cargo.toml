@@ -16,6 +16,31 @@ members = [
     "crates/native-sidecar",
     "crates/native-sidecar-browser",
     "crates/native-sidecar-core",
+    "crates/runtime",
+    "crates/sidecar-client",
+    "crates/sidecar-protocol",
+    "crates/v8-runtime",
+    "crates/vfs",
+    "crates/vfs-store",
+    "crates/vm-config",
+]
+# Browser support is intentionally retained in-tree but disabled while the
+# unified native sidecar reactor lands. Keep these two crates out of ordinary
+# workspace commands so dormant browser code cannot block native CI.
+default-members = [
+    "crates/agentos-protocol",
+    "crates/agentos-sidecar-core",
+    "crates/agentos-sidecar",
+    "crates/client",
+    "crates/agentos-actor-plugin",
+    "crates/bridge",
+    "crates/build-support",
+    "crates/execution",
+    "crates/kernel",
+    "crates/native-baseline",
+    "crates/native-sidecar",
+    "crates/native-sidecar-core",
+    "crates/runtime",
     "crates/sidecar-client",
     "crates/sidecar-protocol",
     "crates/v8-runtime",
@@ -41,6 +66,7 @@ agentos-native-baseline = { path = "crates/native-baseline", version = "0.0.1" }
 agentos-native-sidecar = { path = "crates/native-sidecar", version = "0.0.1" }
 agentos-native-sidecar-browser = { path = "crates/native-sidecar-browser", version = "0.0.1" }
 agentos-native-sidecar-core = { path = "crates/native-sidecar-core", version = "0.0.1" }
+agentos-runtime = { path = "crates/runtime", version = "0.0.1" }
 agentos-protocol = { path = "crates/agentos-protocol", version = "0.0.1" }
 agentos-sidecar-client = { path = "crates/sidecar-client", version = "0.0.1" }
 agentos-sidecar-core = { path = "crates/agentos-sidecar-core", version = "0.0.1" }

@@ -1,6 +1,11 @@
 {
 	"$schema": "https://turbo.build/schema.json",
-	"globalEnv": ["AGENTOS_SKIP_NATIVE_META_BUILD"],
+	"globalEnv": [
+		"AGENTOS_PLUGIN_BIN",
+		"AGENTOS_SIDECAR_BIN",
+		"AGENTOS_SKIP_NATIVE_META_BUILD"
+	],
+	"globalPassThroughEnv": ["CARGO_TARGET_DIR"],
 	"globalDependencies": [
 		"crates/sidecar-protocol/protocol/**",
 		"packages/build-tools/scripts/compile-sidecar-protocol.mjs"

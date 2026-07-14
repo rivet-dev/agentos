@@ -1,18 +1,18 @@
 use crate::bridge::{build_mount_plugin_registry, MountPluginContext};
 pub(crate) use crate::execution::{
     apply_active_process_default_signal, build_javascript_socket_path_context,
-    canonical_signal_name, dispatch_loopback_http_request, error_code, flush_pending_kernel_stdin,
-    format_tcp_resource, ignore_stale_javascript_sync_rpc_response, javascript_sync_rpc_arg_i32,
-    javascript_sync_rpc_arg_str, javascript_sync_rpc_arg_u32, javascript_sync_rpc_arg_u32_optional,
-    javascript_sync_rpc_arg_u64, javascript_sync_rpc_arg_u64_optional,
-    javascript_sync_rpc_bytes_arg, javascript_sync_rpc_bytes_value, javascript_sync_rpc_encoding,
-    javascript_sync_rpc_error_code, javascript_sync_rpc_may_make_fd_readable,
-    javascript_sync_rpc_option_bool, javascript_sync_rpc_option_u32, kernel_poll_response,
-    kernel_stdin_read_response, mark_execute_exit_event_queued, parse_kernel_poll_args,
-    parse_kernel_stdin_read_args, parse_signal, record_execute_exit_event_queue_wait,
-    record_execute_phase, sanitize_javascript_child_process_internal_bootstrap_env,
-    service_javascript_sync_rpc, vm_network_resource_counts, JavascriptSyncRpcServiceRequest,
-    LoopbackHttpDispatchRequest,
+    canonical_signal_name, dispatch_loopback_http_request_deferred, error_code,
+    flush_pending_kernel_stdin, format_tcp_resource, ignore_stale_javascript_sync_rpc_response,
+    javascript_sync_rpc_arg_i32, javascript_sync_rpc_arg_str, javascript_sync_rpc_arg_u32,
+    javascript_sync_rpc_arg_u32_optional, javascript_sync_rpc_arg_u64,
+    javascript_sync_rpc_arg_u64_optional, javascript_sync_rpc_bytes_arg,
+    javascript_sync_rpc_bytes_value, javascript_sync_rpc_encoding, javascript_sync_rpc_error_code,
+    javascript_sync_rpc_may_make_fd_readable, javascript_sync_rpc_option_bool,
+    javascript_sync_rpc_option_u32, kernel_poll_response, kernel_stdin_read_response,
+    mark_execute_exit_event_queued, parse_kernel_poll_args, parse_kernel_stdin_read_args,
+    parse_signal, record_execute_exit_event_queue_wait, record_execute_phase,
+    sanitize_javascript_child_process_internal_bootstrap_env, service_javascript_sync_rpc,
+    JavascriptSyncRpcServiceRequest, LoopbackHttpDispatchRequest,
 };
 use crate::extension::{
     Extension, ExtensionBufferedProcessOutput, ExtensionContext, ExtensionFuture, ExtensionHost,
@@ -24,16 +24,17 @@ use crate::protocol::{
     CloseStdinRequest, DisposeReason, EventFrame, EventPayload, ExecuteRequest, ExtEnvelope,
     GuestFilesystemCallRequest, GuestFilesystemResultResponse, JavascriptChildProcessSpawnOptions,
     JavascriptChildProcessSpawnRequest, KillProcessRequest, OpenSessionRequest, OwnershipScope,
-    ProcessKilledResponse, ProcessStartedResponse, RequestFrame, RequestId, RequestPayload,
-    ResponseFrame, ResponsePayload, SidecarRequestFrame, SidecarRequestPayload,
+    ProcessKilledResponse, ProcessStartedResponse, RejectedResponse, RequestFrame, RequestId,
+    RequestPayload, ResponseFrame, ResponsePayload, SidecarRequestFrame, SidecarRequestPayload,
     SidecarResponseFrame, SidecarResponsePayload, SidecarResponseTracker,
     SidecarResponseTrackerError, SignalDispositionAction, StdinClosedResponse,
     StdinWrittenResponse, VmLifecycleState, WriteStdinRequest,
 };
 use crate::state::{
     ActiveExecutionEvent, BridgeError, ConnectionState, EventSinkTransport, JavascriptSocketFamily,
-    JavascriptSocketPathContext, ProcessEventEnvelope, SessionState, SharedBridge, SharedEventSink,
-    SharedSidecarRequestClient, SidecarRequestTransport, VmState, EXECUTION_DRIVER_NAME,
+    JavascriptSocketPathContext, ProcessEventEnvelope, QuarantinedVmGeneration, SessionState,
+    SharedBridge, SharedEventSink, SharedSidecarRequestClient, SidecarRequestTransport, VmState,
+    EXECUTION_DRIVER_NAME,
 };
 use crate::tools::register_host_callbacks;
 use crate::NativeSidecarBridge;
@@ -55,18 +56,19 @@ use agentos_kernel::permissions::{
     NetworkOperation, PermissionDecision,
 };
 use agentos_native_sidecar_core::permissions::{
-    deny_all_policy, environment_permission_capability, evaluate_permissions_policy,
+    deny_all_policy, environment_permission_capability,
+    evaluate_matching_pattern_permission_policy, evaluate_permissions_policy,
     filesystem_permission_capability, network_permission_capability,
     permission_mode_to_kernel_decision,
 };
 use agentos_native_sidecar_core::{
     apply_process_signal_state_update, authenticated_response as shared_authenticated_response,
-    parse_process_signal_state_request, reject as shared_reject, request_dispatch_mode,
-    respond as shared_respond, route_request_payload, session_opened_response,
-    unsupported_host_callback_direction_dispatch, validate_authenticate_versions,
-    vm_lifecycle_event as shared_vm_lifecycle_event, AuthenticateVersionError, RequestDispatchMode,
-    RequestRoute,
+    parse_process_signal_state_request, reject as shared_reject, respond as shared_respond,
+    route_request_payload, session_opened_response, unsupported_host_callback_direction_dispatch,
+    validate_authenticate_versions, vm_lifecycle_event as shared_vm_lifecycle_event,
+    AuthenticateVersionError, RequestRoute,
 };
+use agentos_runtime::metrics::ResourceMetricClass;
 use agentos_vm_config::PermissionsPolicy;
 // root_fs types moved to crate::vm
 use agentos_kernel::vfs::VfsError;
@@ -77,7 +79,7 @@ use std::fmt;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -90,36 +92,39 @@ const INTERNAL_JAVASCRIPT_ENTRYPOINT_ENV_KEYS: &[&str] =
 const INTERNAL_WASM_ENTRYPOINT_ENV_KEYS: &[&str] =
     &["AGENTOS_WASM_MODULE_PATH", "AGENTOS_WASM_MODULE_BASE64"];
 const INTERNAL_PYTHON_ENTRYPOINT_ENV_PREFIXES: &[&str] = &["AGENTOS_PYTHON_"];
-pub(crate) const MAX_PROCESS_EVENT_QUEUE: usize = 10_000;
-pub(crate) const MAX_PENDING_SIDECAR_RESPONSES: usize = 10_000;
-pub(crate) const MAX_OUTBOUND_SIDECAR_REQUESTS: usize = 10_000;
-pub(crate) const MAX_COMPLETED_SIDECAR_RESPONSES: usize = 10_000;
-static BLOCKING_DISPATCH_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-
-fn blocking_dispatch_runtime() -> &'static tokio::runtime::Runtime {
-    BLOCKING_DISPATCH_RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("sidecar blocking dispatch runtime")
-    })
-}
-
-pub(crate) fn process_event_queue_overflow_error() -> SidecarError {
+// The integration fixture includes this module as a child and consumes these
+// default-limit aliases; the standalone lib-test target does not.
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) const MAX_PROCESS_EVENT_QUEUE: usize =
+    agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS;
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) const MAX_PENDING_SIDECAR_RESPONSES: usize =
+    agentos_runtime::DEFAULT_PROTOCOL_MAX_PENDING_RESPONSES;
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) const MAX_OUTBOUND_SIDECAR_REQUESTS: usize =
+    agentos_runtime::DEFAULT_PROTOCOL_MAX_OUTBOUND_REQUESTS;
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) const MAX_COMPLETED_SIDECAR_RESPONSES: usize =
+    agentos_runtime::DEFAULT_PROTOCOL_MAX_COMPLETED_RESPONSES;
+pub(crate) fn process_event_queue_overflow_error(limit: usize) -> SidecarError {
     SidecarError::InvalidState(format!(
-        "process event queue exceeded {MAX_PROCESS_EVENT_QUEUE} pending events"
+        "ERR_AGENTOS_PROCESS_EVENT_LIMIT: process event queue exceeded {limit} pending events; raise runtime.protocol.maxProcessEvents"
     ))
 }
 
-fn sidecar_response_pending_overflow_error() -> SidecarError {
+fn sidecar_response_pending_overflow_error(limit: usize) -> SidecarError {
     SidecarError::InvalidState(format!(
-        "sidecar response tracker exceeded {MAX_PENDING_SIDECAR_RESPONSES} pending responses"
+        "ERR_AGENTOS_PENDING_RESPONSE_LIMIT: sidecar response tracker exceeded {limit} pending responses; raise runtime.protocol.maxPendingResponses"
     ))
 }
 
-fn outbound_sidecar_request_queue_overflow_error() -> SidecarError {
+fn outbound_sidecar_request_queue_overflow_error(limit: usize) -> SidecarError {
     SidecarError::InvalidState(format!(
-        "outbound sidecar request queue exceeded {MAX_OUTBOUND_SIDECAR_REQUESTS} pending requests"
+        "ERR_AGENTOS_OUTBOUND_REQUEST_LIMIT: outbound sidecar request queue exceeded {limit} pending requests; raise runtime.protocol.maxOutboundRequests"
     ))
 }
 
@@ -438,6 +443,86 @@ where
         Err(SidecarError::Execution(message))
     }
 
+    /// Revalidate an authority-expanding network operation against both the
+    /// requested name and the complete DNS answer immediately before use.
+    ///
+    /// The requested resource uses normal policy semantics. For a stored rule
+    /// set, resolved addresses add restrictions only when an address rule
+    /// explicitly matches; this preserves hostname allowlists and literal-IP
+    /// policies. Dynamic bridge policies are asked about every resource.
+    pub(crate) fn require_resolved_network_access(
+        &self,
+        vm_id: &str,
+        op: NetworkOperation,
+        requested_resource: &str,
+        resolved_resources: &[String],
+    ) -> Result<(), SidecarError> {
+        let capability = network_permission_capability(op);
+        let permissions = self
+            .permissions
+            .lock()
+            .map_err(|_| {
+                SidecarError::Bridge(String::from(
+                    "native sidecar permission policy lock poisoned",
+                ))
+            })?
+            .get(vm_id)
+            .cloned();
+
+        let require = |resource: &str, decision: PermissionDecision| {
+            if decision.allow {
+                return Ok(());
+            }
+            let message = match decision.reason.as_deref() {
+                Some(reason) => format!("EACCES: permission denied, {resource}: {reason}"),
+                None => format!("EACCES: permission denied, {resource}"),
+            };
+            Err(SidecarError::Execution(message))
+        };
+
+        if let Some(permissions) = permissions {
+            let requested_mode = evaluate_permissions_policy(
+                &permissions,
+                "network",
+                capability,
+                Some(requested_resource),
+            );
+            require(
+                requested_resource,
+                permission_mode_to_kernel_decision(requested_mode, capability),
+            )?;
+
+            let mut checked = BTreeSet::new();
+            for resource in resolved_resources {
+                if resource == requested_resource || !checked.insert(resource.as_str()) {
+                    continue;
+                }
+                let Some(mode) = evaluate_matching_pattern_permission_policy(
+                    &permissions,
+                    "network",
+                    capability,
+                    Some(resource),
+                ) else {
+                    continue;
+                };
+                require(
+                    resource,
+                    permission_mode_to_kernel_decision(mode, capability),
+                )?;
+            }
+            return Ok(());
+        }
+
+        self.require_network_access(vm_id, op, requested_resource.to_owned())?;
+        let mut checked = BTreeSet::new();
+        for resource in resolved_resources {
+            if resource != requested_resource && checked.insert(resource.as_str()) {
+                self.require_network_access(vm_id, op, resource.clone())?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn set_vm_permissions(
         &self,
         vm_id: &str,
@@ -596,6 +681,10 @@ impl JavascriptSocketPathContext {
                 .tcp_loopback_guest_to_host_ports
                 .keys()
                 .any(|(_, guest_port)| *guest_port == port)
+            || self
+                .udp_loopback_guest_to_host_ports
+                .keys()
+                .any(|(_, guest_port)| *guest_port == port)
     }
 
     pub(crate) fn translate_tcp_loopback_port(
@@ -641,6 +730,8 @@ impl JavascriptSocketPathContext {
 
 pub struct NativeSidecar<B> {
     pub(crate) config: NativeSidecarConfig,
+    pub(crate) runtime_context: Option<agentos_runtime::RuntimeContext>,
+    pub(crate) dns_resolver: agentos_kernel::dns::SharedDnsResolver,
     pub(crate) bridge: SharedBridge<B>,
     pub(crate) mount_plugins: FileSystemPluginRegistry<MountPluginContext<B>>,
     pub(crate) cache_root: PathBuf,
@@ -654,9 +745,19 @@ pub struct NativeSidecar<B> {
     pub(crate) connections: BTreeMap<String, ConnectionState>,
     pub(crate) sessions: BTreeMap<String, SessionState>,
     pub(crate) vms: BTreeMap<String, VmState>,
+    /// Detached generations whose asynchronous ownership has not reconciled.
+    /// The combined active + quarantined generation count is admitted against
+    /// `runtime.resources.maxCapabilities`, keeping this collection bounded.
+    pub(crate) quarantined_vms: BTreeMap<u64, QuarantinedVmGeneration>,
     #[allow(dead_code)]
     pub(crate) process_event_sender: Sender<ProcessEventEnvelope>,
     pub(crate) process_event_receiver: Option<Receiver<ProcessEventEnvelope>>,
+    pub(crate) process_event_notify: Arc<tokio::sync::Notify>,
+    /// The single process-level deadline task that wakes cooperative kernel
+    /// zombie reaping. It is replaced only when a genuinely earlier deadline
+    /// appears; never one task or OS thread per process.
+    pub(crate) kernel_reaper_task: Option<tokio::task::JoinHandle<()>>,
+    pub(crate) kernel_reaper_deadline: Option<Instant>,
     pub(crate) pending_process_events: VecDeque<ProcessEventEnvelope>,
     pub(crate) pending_sidecar_responses: SidecarResponseTracker,
     pub(crate) outbound_sidecar_requests: VecDeque<SidecarRequestFrame>,
@@ -688,6 +789,28 @@ pub(crate) struct ExtensionSessionResources {
     pub(crate) vm_ids: BTreeSet<String>,
 }
 
+struct GuestLimitDiagnostic {
+    scope: &'static str,
+    current_usage: Option<u64>,
+    message: String,
+}
+
+fn guest_limit_diagnostic(limit: &agentos_runtime::accounting::LimitError) -> GuestLimitDiagnostic {
+    if limit.scope.starts_with("vm=") {
+        return GuestLimitDiagnostic {
+            scope: "vm",
+            current_usage: Some(u64::try_from(limit.used).unwrap_or(u64::MAX)),
+            message: limit.to_string(),
+        };
+    }
+
+    GuestLimitDiagnostic {
+        scope: "process",
+        current_usage: None,
+        message: crate::state::guest_limit_message(limit),
+    }
+}
+
 impl<B> fmt::Debug for NativeSidecar<B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NativeSidecar")
@@ -699,6 +822,7 @@ impl<B> fmt::Debug for NativeSidecar<B> {
             .field("connection_count", &self.connections.len())
             .field("session_count", &self.sessions.len())
             .field("vm_count", &self.vms.len())
+            .field("quarantined_vm_count", &self.quarantined_vms.len())
             .field("extension_session_count", &self.extension_sessions.len())
             .field(
                 "extension_process_output_buffer_count",
@@ -718,11 +842,25 @@ where
     }
 
     pub fn with_config(bridge: B, config: NativeSidecarConfig) -> Result<Self, SidecarError> {
+        let runtime_context = agentos_runtime::SidecarRuntime::process(&config.runtime)
+            .map_err(|error| SidecarError::InvalidState(error.to_string()))?
+            .context();
+        Self::with_runtime_context(bridge, config, runtime_context)
+    }
+
+    fn with_runtime_context(
+        bridge: B,
+        config: NativeSidecarConfig,
+        runtime_context: agentos_runtime::RuntimeContext,
+    ) -> Result<Self, SidecarError> {
         if matches!(config.expected_auth_token.as_deref(), Some("")) {
             return Err(SidecarError::InvalidState(String::from(
                 "native sidecar expected_auth_token must not be empty",
             )));
         }
+        let dns_resolver: agentos_kernel::dns::SharedDnsResolver = Arc::new(
+            agentos_kernel::dns::HickoryDnsResolver::with_runtime(runtime_context.clone()),
+        );
 
         let cache_root = config.compile_cache_root.clone().unwrap_or_else(|| {
             std::env::temp_dir().join(format!(
@@ -740,16 +878,27 @@ where
 
         let bridge = SharedBridge::new(bridge);
         let mount_plugins = build_mount_plugin_registry::<B>()?;
-        let (process_event_sender, process_event_receiver) = channel(MAX_PROCESS_EVENT_QUEUE);
+        let protocol_limits = config.runtime.protocol.clone();
+        let (process_event_sender, process_event_receiver) =
+            channel(protocol_limits.max_process_events);
+        let process_event_notify = Arc::new(tokio::sync::Notify::new());
+        let mut javascript_engine = JavascriptExecutionEngine::new(runtime_context.clone());
+        javascript_engine.set_event_notify(Some(Arc::clone(&process_event_notify)));
+        let mut python_engine = PythonExecutionEngine::new(runtime_context.clone());
+        python_engine.set_event_notify(Some(Arc::clone(&process_event_notify)));
+        let mut wasm_engine = WasmExecutionEngine::new(runtime_context.clone());
+        wasm_engine.set_event_notify(Some(Arc::clone(&process_event_notify)));
 
         Ok(Self {
             config,
+            runtime_context: Some(runtime_context),
+            dns_resolver,
             bridge,
             mount_plugins,
             cache_root,
-            javascript_engine: JavascriptExecutionEngine::default(),
-            python_engine: PythonExecutionEngine::default(),
-            wasm_engine: WasmExecutionEngine::default(),
+            javascript_engine,
+            python_engine,
+            wasm_engine,
             next_connection_id: 0,
             next_session_id: 0,
             next_vm_id: 0,
@@ -757,8 +906,12 @@ where
             connections: BTreeMap::new(),
             sessions: BTreeMap::new(),
             vms: BTreeMap::new(),
+            quarantined_vms: BTreeMap::new(),
             process_event_sender,
             process_event_receiver: Some(process_event_receiver),
+            process_event_notify,
+            kernel_reaper_task: None,
+            kernel_reaper_deadline: None,
             pending_process_events: VecDeque::new(),
             pending_sidecar_responses: SidecarResponseTracker::default(),
             outbound_sidecar_requests: VecDeque::new(),
@@ -766,11 +919,11 @@ where
             completed_sidecar_response_order: VecDeque::new(),
             completed_sidecar_responses_gauge: register_queue(
                 TrackedLimit::CompletedSidecarResponses,
-                MAX_COMPLETED_SIDECAR_RESPONSES,
+                protocol_limits.max_completed_responses,
             ),
             pending_process_events_gauge: register_queue(
                 TrackedLimit::PendingProcessEvents,
-                MAX_PROCESS_EVENT_QUEUE,
+                protocol_limits.max_process_events,
             ),
             pending_process_event_bytes_gauge: register_queue(
                 TrackedLimit::PendingProcessEventBytes,
@@ -778,11 +931,11 @@ where
             ),
             pending_sidecar_responses_gauge: register_queue(
                 TrackedLimit::PendingSidecarResponses,
-                MAX_PENDING_SIDECAR_RESPONSES,
+                protocol_limits.max_pending_responses,
             ),
             outbound_sidecar_requests_gauge: register_queue(
                 TrackedLimit::OutboundSidecarRequests,
-                MAX_OUTBOUND_SIDECAR_REQUESTS,
+                protocol_limits.max_outbound_requests,
             ),
             sidecar_requests: SharedSidecarRequestClient::default(),
             event_sink: SharedEventSink::default(),
@@ -801,6 +954,19 @@ where
         extensions: Vec<Box<dyn Extension>>,
     ) -> Result<Self, SidecarError> {
         let mut sidecar = Self::with_config(bridge, config)?;
+        for extension in extensions {
+            sidecar.register_extension(extension)?;
+        }
+        Ok(sidecar)
+    }
+
+    pub fn with_config_extensions_and_runtime(
+        bridge: B,
+        config: NativeSidecarConfig,
+        extensions: Vec<Box<dyn Extension>>,
+        runtime_context: agentos_runtime::RuntimeContext,
+    ) -> Result<Self, SidecarError> {
+        let mut sidecar = Self::with_runtime_context(bridge, config, runtime_context)?;
         for extension in extensions {
             sidecar.register_extension(extension)?;
         }
@@ -847,6 +1013,67 @@ where
         }
     }
 
+    pub(crate) fn reap_reconciled_quarantined_vms(&mut self) {
+        let before = self.quarantined_vms.len();
+        let mut reaped = Vec::new();
+        self.quarantined_vms.retain(|generation, quarantined| {
+            if quarantined.can_reap() {
+                reaped.push((*generation, quarantined.vm_id.clone()));
+                false
+            } else {
+                true
+            }
+        });
+        for (generation, vm_id) in reaped {
+            eprintln!("INFO_AGENTOS_VM_QUARANTINE_REAPED: vm_id={vm_id} generation={generation}");
+        }
+        if self.quarantined_vms.len() != before {
+            self.observe_active_vm_generations();
+        }
+    }
+
+    pub(crate) fn observe_active_vm_generations(&self) {
+        if let Some(runtime_context) = self.runtime_context.as_ref() {
+            runtime_context.metrics().observe_resource(
+                ResourceMetricClass::ActiveVms,
+                self.vms.len().saturating_add(self.quarantined_vms.len()),
+            );
+        }
+    }
+
+    pub(crate) fn ensure_vm_generation_capacity(&self) -> Result<(), SidecarError> {
+        let limit = self.config.runtime.resources.max_capabilities;
+        let used = self.vms.len().saturating_add(self.quarantined_vms.len());
+        if used >= limit {
+            return Err(SidecarError::InvalidState(format!(
+                "ERR_AGENTOS_VM_GENERATION_LIMIT: tracked={used} limit={limit}; raise runtime.resources.maxCapabilities"
+            )));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn retain_quarantined_vm(
+        &mut self,
+        quarantined: QuarantinedVmGeneration,
+    ) -> Result<(), SidecarError> {
+        let generation = quarantined.generation;
+        if self.quarantined_vms.contains_key(&generation) {
+            return Err(SidecarError::Conflict(format!(
+                "ERR_AGENTOS_VM_GENERATION_DUPLICATE: generation={generation} is already quarantined"
+            )));
+        }
+        let limit = self.config.runtime.resources.max_capabilities;
+        if self.quarantined_vms.len() >= limit {
+            return Err(SidecarError::InvalidState(format!(
+                "ERR_AGENTOS_VM_QUARANTINE_LIMIT: quarantined={} limit={limit}; raise runtime.resources.maxCapabilities",
+                self.quarantined_vms.len()
+            )));
+        }
+        self.quarantined_vms.insert(generation, quarantined);
+        self.observe_active_vm_generations();
+        Ok(())
+    }
+
     pub(crate) fn capture_extension_process_output_event(
         &mut self,
         vm_id: &str,
@@ -869,7 +1096,9 @@ where
                 true
             }
             ActiveExecutionEvent::JavascriptSyncRpcRequest(_)
+            | ActiveExecutionEvent::JavascriptSyncRpcCompletion(_)
             | ActiveExecutionEvent::PythonVfsRpcRequest(_)
+            | ActiveExecutionEvent::PythonSocketConnectCompletion(_)
             | ActiveExecutionEvent::SignalState { .. }
             | ActiveExecutionEvent::Exited(_) => false,
         }
@@ -1053,6 +1282,9 @@ where
             .map_err(|(error, _envelope)| error)
     }
 
+    // Preserve the rejected envelope so callers can requeue it without losing
+    // its retained-byte reservation or delivery ordering.
+    #[allow(clippy::result_large_err)]
     pub(crate) fn try_queue_pending_process_event(
         &mut self,
         envelope: ProcessEventEnvelope,
@@ -1082,15 +1314,20 @@ where
     }
 
     pub(crate) fn pending_process_event_capacity(&self) -> usize {
-        MAX_PROCESS_EVENT_QUEUE.saturating_sub(self.pending_process_events.len())
+        self.config
+            .runtime
+            .protocol
+            .max_process_events
+            .saturating_sub(self.pending_process_events.len())
     }
 
     pub(crate) fn check_pending_process_event_capacity(
         &self,
         envelope: &ProcessEventEnvelope,
     ) -> Result<(), SidecarError> {
-        if self.pending_process_events.len() >= MAX_PROCESS_EVENT_QUEUE {
-            return Err(process_event_queue_overflow_error());
+        let global_limit = self.config.runtime.protocol.max_process_events;
+        if self.pending_process_events.len() >= global_limit {
+            return Err(process_event_queue_overflow_error(global_limit));
         }
         let defaults = agentos_native_sidecar_core::limits::ProcessLimits::default();
         let limits = self
@@ -1141,17 +1378,17 @@ where
         request: RequestFrame,
     ) -> Result<DispatchResult, SidecarError> {
         let inside_runtime = tokio::runtime::Handle::try_current().is_ok();
-        if request_dispatch_mode(&request) == RequestDispatchMode::Async && !inside_runtime {
-            return blocking_dispatch_runtime().block_on(self.dispatch(request));
+        if !inside_runtime {
+            let handle = self.process_runtime_handle()?;
+            return handle.block_on(self.dispatch(request));
         }
 
         let mut future = std::pin::pin!(self.dispatch(request));
         match poll_future_once(future.as_mut()) {
             Some(result) => result,
-            None if inside_runtime => Err(SidecarError::InvalidState(String::from(
+            None => Err(SidecarError::InvalidState(String::from(
                 "dispatch_blocking cannot wait for an async sidecar request inside a Tokio runtime; use dispatch().await",
             ))),
-            None => blocking_dispatch_runtime().block_on(future),
         }
     }
 
@@ -1169,7 +1406,8 @@ where
         ownership: &OwnershipScope,
         timeout: Duration,
     ) -> Result<Option<EventFrame>, SidecarError> {
-        blocking_dispatch_runtime().block_on(self.poll_event(ownership, timeout))
+        let handle = self.process_runtime_handle()?;
+        handle.block_on(self.poll_event(ownership, timeout))
     }
 
     pub fn poll_event_wire_blocking(
@@ -1189,14 +1427,16 @@ where
         connection_id: &str,
         session_id: &str,
     ) -> Result<Vec<EventFrame>, SidecarError> {
-        blocking_dispatch_runtime().block_on(self.close_session(connection_id, session_id))
+        let handle = self.process_runtime_handle()?;
+        handle.block_on(self.close_session(connection_id, session_id))
     }
 
     pub fn remove_connection_blocking(
         &mut self,
         connection_id: &str,
     ) -> Result<Vec<EventFrame>, SidecarError> {
-        blocking_dispatch_runtime().block_on(self.remove_connection(connection_id))
+        let handle = self.process_runtime_handle()?;
+        handle.block_on(self.remove_connection(connection_id))
     }
 
     pub fn dispose_vm_internal_blocking(
@@ -1206,26 +1446,59 @@ where
         vm_id: &str,
         reason: DisposeReason,
     ) -> Result<Vec<EventFrame>, SidecarError> {
-        blocking_dispatch_runtime().block_on(self.dispose_vm_internal(
-            connection_id,
-            session_id,
-            vm_id,
-            reason,
-        ))
+        let handle = self.process_runtime_handle()?;
+        handle.block_on(self.dispose_vm_internal(connection_id, session_id, vm_id, reason))
+    }
+
+    fn process_runtime_handle(&self) -> Result<tokio::runtime::Handle, SidecarError> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            return Err(SidecarError::InvalidState(String::from(
+                "blocking sidecar API cannot run on a Tokio worker; use the async API",
+            )));
+        }
+        self.runtime_context
+            .as_ref()
+            .map(|context| context.handle().clone())
+            .ok_or_else(|| {
+                SidecarError::InvalidState(String::from(
+                    "blocking sidecar API requires the process RuntimeContext; construct with with_config_extensions_and_runtime or use the async API",
+                ))
+            })
     }
 
     pub async fn dispatch(
         &mut self,
         request: RequestFrame,
     ) -> Result<DispatchResult, SidecarError> {
+        self.reap_reconciled_quarantined_vms();
         if let Err(error) = self.ensure_request_within_frame_limit(&request) {
             return Ok(DispatchResult {
-                response: self.reject(&request, error_code(&error), &error.to_string()),
+                response: self.reject_error(&request, &error),
                 events: Vec::new(),
             });
         }
 
-        let result = match route_request_payload(&request) {
+        let route = route_request_payload(&request);
+        if !matches!(&route, RequestRoute::DisposeVm(_)) {
+            if let OwnershipScope::VmOwnership(ownership) = &request.ownership {
+                if let Some(report) = self
+                    .vms
+                    .get(&ownership.vm_id)
+                    .and_then(|vm| vm.runtime_context.terminal_failure())
+                {
+                    let error = SidecarError::Execution(format!(
+                        "ERR_AGENTOS_VM_TASK_FAILED: vm_id={} class={:?} owner={} reason={:?}; dispose and recreate this VM generation",
+                        ownership.vm_id, report.class, report.owner, report.reason
+                    ));
+                    return Ok(DispatchResult {
+                        response: self.reject_error(&request, &error),
+                        events: Vec::new(),
+                    });
+                }
+            }
+        }
+
+        let result = match route {
             RequestRoute::Authenticate(payload) => {
                 self.authenticate_connection(&request, payload).await
             }
@@ -1286,7 +1559,7 @@ where
             Ok(dispatch) => Ok(dispatch),
             Err(error @ SidecarError::Io(_)) => Err(error),
             Err(error) => Ok(DispatchResult {
-                response: self.reject(&request, error_code(&error), &error.to_string()),
+                response: self.reject_error(&request, &error),
                 events: Vec::new(),
             }),
         }
@@ -1356,7 +1629,11 @@ where
         timeout: Duration,
     ) -> Result<Option<EventFrame>, SidecarError> {
         let deadline = Instant::now() + timeout;
+        let process_event_notify = Arc::clone(&self.process_event_notify);
         loop {
+            // Register before probing durable queues so a producer racing the
+            // probe cannot lose its edge between the empty check and await.
+            let notified = process_event_notify.notified();
             if let Some(index) = self
                 .pending_process_events
                 .iter()
@@ -1366,14 +1643,19 @@ where
                     continue;
                 };
                 self.observe_pending_process_event_depth();
-                if let Some(frame) = self.handle_process_event_envelope(envelope)? {
+                if let Some(frame) = self.handle_process_event_envelope(envelope).await? {
                     return Ok(Some(frame));
                 }
                 continue;
             }
 
-            if !timeout.is_zero() {
-                let _ = self.pump_process_events(ownership).await?;
+            if !timeout.is_zero() && self.pump_process_events(ownership).await? {
+                // The pump moves execution events into durable sidecar queues.
+                // Re-probe those queues before waiting for another edge: the
+                // notification that brought us here may be the only edge for
+                // this event, and waiting now would strand it until unrelated
+                // later activity.
+                continue;
             }
 
             let queued_envelopes = {
@@ -1387,7 +1669,9 @@ where
                         if receiver.is_empty() {
                             break;
                         }
-                        return Err(process_event_queue_overflow_error());
+                        return Err(process_event_queue_overflow_error(
+                            self.config.runtime.protocol.max_process_events,
+                        ));
                     }
                     match receiver.try_recv() {
                         Ok(envelope) => queued.push(envelope),
@@ -1410,7 +1694,7 @@ where
             }
 
             if let Some(envelope) = matching_envelope {
-                if let Some(frame) = self.handle_process_event_envelope(envelope)? {
+                if let Some(frame) = self.handle_process_event_envelope(envelope).await? {
                     return Ok(Some(frame));
                 }
                 continue;
@@ -1421,11 +1705,14 @@ where
             }
 
             let remaining = deadline.saturating_duration_since(Instant::now());
-            time::sleep(remaining.min(Duration::from_millis(10))).await;
+            tokio::select! {
+                _ = notified => {}
+                _ = time::sleep(remaining) => return Ok(None),
+            }
         }
     }
 
-    pub(crate) fn handle_process_event_envelope(
+    pub(crate) async fn handle_process_event_envelope(
         &mut self,
         envelope: ProcessEventEnvelope,
     ) -> Result<Option<EventFrame>, SidecarError> {
@@ -1464,7 +1751,9 @@ where
             record_execute_phase("process_exit_trailing_pending_scan", phase_start.elapsed());
             if !trailing.is_empty() {
                 if self.pending_process_event_capacity() < trailing.len() {
-                    return Err(process_event_queue_overflow_error());
+                    return Err(process_event_queue_overflow_error(
+                        self.config.runtime.protocol.max_process_events,
+                    ));
                 }
                 let emit_now = if self.pending_process_event_capacity() == trailing.len() {
                     Some(trailing.remove(0))
@@ -1491,7 +1780,9 @@ where
                 }
                 record_execute_phase("process_exit_trailing_requeue", phase_start.elapsed());
                 if let Some(event) = emit_now {
-                    let result = self.handle_execution_event(&vm_id, &process_id, event);
+                    let result = self
+                        .handle_execution_event(&vm_id, &process_id, event)
+                        .await;
                     record_execute_phase(
                         "process_exit_event_handle_envelope_total",
                         handle_start.elapsed(),
@@ -1506,7 +1797,9 @@ where
             }
         }
 
-        let result = self.handle_execution_event(&vm_id, &process_id, event);
+        let result = self
+            .handle_execution_event(&vm_id, &process_id, event)
+            .await;
         if is_exit_event {
             record_execute_phase(
                 "process_exit_event_handle_envelope_total",
@@ -1824,7 +2117,10 @@ where
     ) -> Result<Option<crate::execution::JavascriptSyncRpcServiceResponse>, SidecarError> {
         let requested_timeout_ms = match request.method.as_str() {
             "__kernel_stdin_read" => parse_kernel_stdin_read_args(request)?.1,
-            _ => u64::try_from(parse_kernel_poll_args(request)?.1).unwrap_or(0),
+            _ => {
+                let timeout_ms = parse_kernel_poll_args(request)?.1;
+                (timeout_ms >= 0).then_some(timeout_ms as u64)
+            }
         };
         let now = Instant::now();
 
@@ -1848,7 +2144,7 @@ where
         let kernel_pid = process.kernel_pid;
         let deadline = match &process.deferred_kernel_wait_rpc {
             Some((parked, parked_deadline)) if parked.id == request.id => *parked_deadline,
-            _ => now + Duration::from_millis(requested_timeout_ms),
+            _ => requested_timeout_ms.map(|timeout_ms| now + Duration::from_millis(timeout_ms)),
         };
         let probe = match request.method.as_str() {
             "__kernel_stdin_read" => {
@@ -1874,50 +2170,66 @@ where
             "__kernel_stdin_read" => !probe.is_null(),
             _ => probe.get("readyCount").and_then(Value::as_u64).unwrap_or(0) > 0,
         };
-        if ready || requested_timeout_ms == 0 || now >= deadline {
+        if ready
+            || requested_timeout_ms == Some(0)
+            || deadline.is_some_and(|deadline| now >= deadline)
+        {
             process.deferred_kernel_wait_rpc = None;
             return Ok(Some(probe.into()));
         }
 
         let connection_id = vm.connection_id.clone();
         let session_id = vm.session_id.clone();
-        let remaining = deadline.saturating_duration_since(now);
+        let runtime = vm.runtime_context.clone();
+        let remaining = deadline.map(|deadline| deadline.saturating_duration_since(now));
         let sender = self.process_event_sender.clone();
+        let event_notify = Arc::clone(&self.process_event_notify);
         let waiter_request = request.clone();
         let envelope_vm_id = vm_id.to_owned();
         let envelope_process_id = process_id.to_owned();
-        let spawned = std::thread::Builder::new()
-            .name(String::from("kernel-wait-rpc"))
-            .spawn(move || {
-                // Wake on any kernel poll-state change or the deadline; either
-                // way requeue exactly once — the handler re-probes and either
-                // replies or re-parks.
-                let _ = wait_handle.wait_for_change(generation, Some(remaining));
-                let _ = sender.blocking_send(ProcessEventEnvelope {
+        runtime
+            .spawn(agentos_runtime::TaskClass::Vm, async move {
+            // Wake on any kernel poll-state change or the deadline; either way
+            // requeue exactly once. The handler re-probes and either replies or
+            // re-parks without dedicating an OS thread to this wait.
+            if let Some(remaining) = remaining {
+                tokio::select! {
+                    _ = wait_handle.wait_for_change_async(generation) => {}
+                    _ = tokio::time::sleep(remaining) => {}
+                }
+            } else {
+                wait_handle.wait_for_change_async(generation).await;
+            }
+            if sender
+                .send(ProcessEventEnvelope {
                     connection_id,
                     session_id,
                     vm_id: envelope_vm_id,
                     process_id: envelope_process_id,
                     event: ActiveExecutionEvent::JavascriptSyncRpcRequest(waiter_request),
-                });
-            });
+                })
+                .await
+                .is_err()
+            {
+                eprintln!(
+                    "ERR_AGENTOS_PROCESS_EVENT_CHANNEL_CLOSED: deferred kernel wait completion could not be delivered"
+                );
+            } else {
+                event_notify.notify_one();
+            }
+            })
+            .map_err(SidecarError::from)?;
         let Some(vm) = self.vms.get_mut(vm_id) else {
             return Ok(None);
         };
         let Some(process) = vm.active_processes.get_mut(process_id) else {
             return Ok(None);
         };
-        if spawned.is_err() {
-            // Degrade to pre-deferral behavior: reply not-ready now and let the
-            // guest re-issue its bounded wait.
-            process.deferred_kernel_wait_rpc = None;
-            return Ok(Some(probe.into()));
-        }
         process.deferred_kernel_wait_rpc = Some((request.clone(), deadline));
         Ok(None)
     }
 
-    pub(crate) fn handle_javascript_sync_rpc_request(
+    pub(crate) async fn handle_javascript_sync_rpc_request(
         &mut self,
         vm_id: &str,
         process_id: &str,
@@ -1948,6 +2260,7 @@ where
                     let (payload, _) =
                         parse_javascript_child_process_spawn_request(vm, &request.args)?;
                     self.spawn_javascript_child_process(vm_id, process_id, payload)
+                        .await
                         .map(Into::into)
                 }
                 "child_process.spawn_sync" => {
@@ -1962,8 +2275,8 @@ where
                     };
                     let (payload, max_buffer) =
                         parse_javascript_child_process_spawn_request(vm, &request.args)?;
-                    self.spawn_javascript_child_process_sync(vm_id, process_id, payload, max_buffer)
-                        .map(Into::into)
+                    self.defer_javascript_child_process_sync(vm_id, process_id, payload, max_buffer)
+                        .await
                 }
                 "child_process.poll" => {
                     let child_process_id = javascript_sync_rpc_arg_str(
@@ -1978,6 +2291,7 @@ where
                     )?
                     .unwrap_or_default();
                     self.poll_javascript_child_process(vm_id, process_id, child_process_id, wait_ms)
+                        .await
                         .map(Into::into)
                 }
                 "child_process.write_stdin" => {
@@ -2258,7 +2572,6 @@ where
                         );
                         return Ok(());
                     };
-                    let resource_limits = vm.kernel.resource_limits().clone();
                     let socket_paths = build_javascript_socket_path_context(vm)?;
                     let target_is_current =
                         [JavascriptSocketFamily::Ipv4, JavascriptSocketFamily::Ipv6]
@@ -2278,6 +2591,7 @@ where
                         )));
                     }
                     let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
+                    let capabilities = vm.capabilities.clone();
                     let Some(target_process) = vm.active_processes.get_mut(&payload.process_id)
                     else {
                         return Err(SidecarError::InvalidState(format!(
@@ -2285,7 +2599,7 @@ where
                             payload.process_id
                         )));
                     };
-                    dispatch_loopback_http_request(LoopbackHttpDispatchRequest {
+                    dispatch_loopback_http_request_deferred(LoopbackHttpDispatchRequest {
                         bridge: &self.bridge,
                         vm_id,
                         dns: &vm.dns,
@@ -2293,12 +2607,10 @@ where
                         kernel: &mut vm.kernel,
                         kernel_readiness,
                         process: target_process,
-                        resource_limits: &resource_limits,
                         server_id: payload.server_id,
                         request_json: &payload.request,
+                        capabilities,
                     })
-                    .map(Value::String)
-                    .map(Into::into)
                 }
                 "__kernel_stdio_write"
                     if self
@@ -2342,10 +2654,9 @@ where
                         );
                         return Ok(());
                     };
-                    let resource_limits = vm.kernel.resource_limits().clone();
-                    let network_counts = vm_network_resource_counts(vm);
                     let socket_paths = build_javascript_socket_path_context(vm)?;
                     let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
+                    let capabilities = vm.capabilities.clone();
                     let Some(process) = vm.active_processes.get_mut(process_id) else {
                         log_stale_process_event(
                             &self.bridge,
@@ -2364,11 +2675,88 @@ where
                         kernel_readiness,
                         process,
                         sync_request: &request,
-                        resource_limits: &resource_limits,
-                        network_counts,
+                        capabilities,
                     })
+                    .await
                 }
             };
+
+        let response = match response {
+            Ok(crate::execution::JavascriptSyncRpcServiceResponse::Deferred {
+                receiver,
+                timeout,
+                task_class,
+            }) => {
+                let Some(vm) = self.vms.get(vm_id) else {
+                    log_stale_process_event(
+                        &self.bridge,
+                        vm_id,
+                        process_id,
+                        "deferred sync RPC response admission",
+                    );
+                    return Ok(());
+                };
+                let runtime = vm.runtime_context.clone();
+                let connection_id = vm.connection_id.clone();
+                let session_id = vm.session_id.clone();
+                let sender = self.process_event_sender.clone();
+                let event_notify = Arc::clone(&self.process_event_notify);
+                let envelope_vm_id = vm_id.to_owned();
+                let envelope_process_id = process_id.to_owned();
+                let request_id = request.id;
+                let method = request.method.clone();
+                runtime
+                .spawn(task_class, async move {
+                    let receive = async {
+                        receiver.await.unwrap_or_else(|_| {
+                            Err(crate::state::DeferredRpcError {
+                                code: String::from(
+                                    "ERR_AGENTOS_DEFERRED_RPC_RESPONSE_CHANNEL_CLOSED",
+                                ),
+                                message: format!(
+                                    "deferred sync RPC response channel closed for {method}"
+                                ),
+                            })
+                        })
+                    };
+                    let result = match timeout {
+                        Some(timeout) => match tokio::time::timeout(timeout, receive).await {
+                            Ok(result) => result,
+                            Err(_) => Err(crate::state::DeferredRpcError {
+                                code: String::from("ERR_AGENTOS_DEFERRED_RPC_TIMEOUT"),
+                                message: format!(
+                                    "{method} exceeded limits.reactor.operationDeadlineMs ({} ms); raise that limit for slower peers",
+                                    timeout.as_millis()
+                                ),
+                            }),
+                        },
+                        None => receive.await,
+                    };
+                    if sender
+                        .send(ProcessEventEnvelope {
+                            connection_id,
+                            session_id,
+                            vm_id: envelope_vm_id,
+                            process_id: envelope_process_id,
+                            event: ActiveExecutionEvent::JavascriptSyncRpcCompletion(
+                                crate::state::JavascriptSyncRpcCompletion { request_id, result },
+                            ),
+                        })
+                        .await
+                        .is_err()
+                    {
+                        eprintln!(
+                            "ERR_AGENTOS_PROCESS_EVENT_CHANNEL_CLOSED: deferred sync RPC completion could not be delivered"
+                        );
+                    } else {
+                        event_notify.notify_one();
+                    }
+                })
+                .map_err(SidecarError::from)?;
+                return Ok(());
+            }
+            other => other,
+        };
 
         if response.is_ok() && javascript_sync_rpc_may_make_fd_readable(&request) {
             if let Some(vm) = self.vms.get_mut(vm_id) {
@@ -2549,6 +2937,22 @@ where
         vm_id: &str,
     ) -> Result<(), SidecarError> {
         self.require_owned_session(connection_id, session_id)?;
+        if let Some(quarantined) = self.quarantined_vms.values().find(|quarantined| {
+            quarantined.vm_id == vm_id
+                && quarantined.connection_id == connection_id
+                && quarantined.session_id == session_id
+        }) {
+            let snapshot = quarantined.reconciliation_snapshot();
+            return Err(SidecarError::InvalidState(format!(
+                "ERR_AGENTOS_VM_QUARANTINED: vm_id={vm_id} generation={} reason={:?} active_tasks={} outstanding_capabilities={} ledger_zero={} integrity_ok={}",
+                quarantined.generation,
+                quarantined.reason,
+                snapshot.active_tasks,
+                snapshot.outstanding_capabilities,
+                snapshot.ledger_zero,
+                snapshot.integrity_ok
+            )));
+        }
         let vm = self
             .vms
             .get(vm_id)
@@ -2618,7 +3022,9 @@ where
                     if receiver.is_empty() {
                         break;
                     }
-                    return Err(process_event_queue_overflow_error());
+                    return Err(process_event_queue_overflow_error(
+                        self.config.runtime.protocol.max_process_events,
+                    ));
                 }
                 let envelope = match receiver.try_recv() {
                     Ok(envelope) => envelope,
@@ -2692,16 +3098,97 @@ where
         shared_reject(request, code, message)
     }
 
+    fn reject_error(&self, request: &RequestFrame, error: &SidecarError) -> ResponseFrame {
+        let SidecarError::ResourceLimit(limit) = error else {
+            return self.reject(request, error_code(error), &error.to_string());
+        };
+        use agentos_runtime::accounting::ResourceClass;
+
+        // A child VM ledger can fail because its process parent is full. Do not
+        // return that parent ledger's exact occupancy to an untrusted guest:
+        // it would be a cross-VM resource-usage oracle. VM-local usage remains
+        // useful and safe to report; process pressure is identified by scope,
+        // limit and configuration path without the aggregate `used` value.
+        let guest_limit = guest_limit_diagnostic(limit);
+
+        let vm_id = match &request.ownership {
+            OwnershipScope::VmOwnership(owner) => Some(owner.vm_id.clone()),
+            OwnershipScope::ConnectionOwnership(_) | OwnershipScope::SessionOwnership(_) => None,
+        };
+        let session_generation = vm_id
+            .as_ref()
+            .and_then(|vm_id| self.vms.get(vm_id))
+            .map(|vm| vm.generation);
+        let unit = match limit.resource {
+            ResourceClass::BufferedBytes
+            | ResourceClass::HandleCommandBytes
+            | ResourceClass::BridgeRequestBytes
+            | ResourceClass::BridgeResponseBytes
+            | ResourceClass::AsyncCompletionBytes
+            | ResourceClass::UdpBytes
+            | ResourceClass::TlsBytes
+            | ResourceClass::ExecutorBytes
+            | ResourceClass::Http2BufferedBytes
+            | ResourceClass::Http2HeaderBytes
+            | ResourceClass::Http2DataBytes
+            | ResourceClass::Http2CommandBytes
+            | ResourceClass::Http2EventBytes => "bytes",
+            ResourceClass::Tasks => "tasks",
+            ResourceClass::Timers => "timers",
+            ResourceClass::Connections | ResourceClass::Http2Connections => "connections",
+            ResourceClass::Http2Streams => "streams",
+            ResourceClass::ExecutorSlots => "workers",
+            ResourceClass::Capabilities
+            | ResourceClass::ReadyHandles
+            | ResourceClass::Sockets
+            | ResourceClass::Datagrams
+            | ResourceClass::HandleCommands
+            | ResourceClass::BridgeCalls
+            | ResourceClass::AsyncCompletions
+            | ResourceClass::UdpDatagrams
+            | ResourceClass::Http2Commands
+            | ResourceClass::Http2Events => "items",
+        };
+        let errno = match limit.resource {
+            ResourceClass::Capabilities | ResourceClass::Sockets => "EMFILE",
+            _ => "ENOBUFS",
+        };
+        self.respond(
+            request,
+            ResponsePayload::Rejected(RejectedResponse {
+                code: String::from("ERR_AGENTOS_RESOURCE_LIMIT"),
+                message: guest_limit.message,
+                limit_name: Some(limit.resource.name().to_owned()),
+                configured_limit: Some(u64::try_from(limit.limit).unwrap_or(u64::MAX)),
+                current_usage: guest_limit.current_usage,
+                requested: Some(u64::try_from(limit.requested).unwrap_or(u64::MAX)),
+                unit: Some(unit.to_owned()),
+                scope: Some(String::from(guest_limit.scope)),
+                vm_id,
+                session_generation,
+                capability_id: None,
+                operation: None,
+                configuration_path: Some(limit.config_path.clone()),
+                retryable: Some(false),
+                errno: Some(errno.to_owned()),
+            }),
+        )
+    }
+
     pub fn queue_sidecar_request(
         &mut self,
         ownership: OwnershipScope,
         payload: SidecarRequestPayload,
     ) -> Result<RequestId, SidecarError> {
-        if self.outbound_sidecar_requests.len() >= MAX_OUTBOUND_SIDECAR_REQUESTS {
-            return Err(outbound_sidecar_request_queue_overflow_error());
+        let outbound_limit = self.config.runtime.protocol.max_outbound_requests;
+        if self.outbound_sidecar_requests.len() >= outbound_limit {
+            return Err(outbound_sidecar_request_queue_overflow_error(
+                outbound_limit,
+            ));
         }
-        if self.pending_sidecar_responses.pending_count() >= MAX_PENDING_SIDECAR_RESPONSES {
-            return Err(sidecar_response_pending_overflow_error());
+        let pending_limit = self.config.runtime.protocol.max_pending_responses;
+        if self.pending_sidecar_responses.pending_count() >= pending_limit {
+            return Err(sidecar_response_pending_overflow_error(pending_limit));
         }
         let request_id = self.allocate_sidecar_request_id();
         let request = SidecarRequestFrame::new(request_id, ownership, payload);
@@ -2775,7 +3262,8 @@ where
             .insert(response.request_id, response);
         self.completed_sidecar_responses_gauge
             .observe_depth(self.completed_sidecar_responses.len());
-        while self.completed_sidecar_responses.len() > MAX_COMPLETED_SIDECAR_RESPONSES {
+        let completed_limit = self.config.runtime.protocol.max_completed_responses;
+        while self.completed_sidecar_responses.len() > completed_limit {
             match self.completed_sidecar_response_order.pop_front() {
                 // Only a response that was never retrieved is a real loss; an id
                 // already taken via take_sidecar_response leaves a stale order
@@ -2783,10 +3271,12 @@ where
                 Some(evicted) => {
                     if self.completed_sidecar_responses.remove(&evicted).is_some() {
                         tracing::warn!(
+                            code = "WARN_AGENTOS_COMPLETED_RESPONSE_LIMIT",
                             queue = "completed_sidecar_responses",
                             evicted_request_id = evicted,
-                            capacity = MAX_COMPLETED_SIDECAR_RESPONSES,
-                            "dropping an unretrieved completed sidecar response to stay within cap; the host can no longer fetch it (response lost)"
+                            capacity = completed_limit,
+                            configuration_path = "runtime.protocol.maxCompletedResponses",
+                            "dropping an unretrieved completed sidecar response to stay within configured cap; raise runtime.protocol.maxCompletedResponses to retain more completions (response lost)"
                         );
                         self.completed_sidecar_responses_gauge
                             .observe_depth(self.completed_sidecar_responses.len());
@@ -2860,6 +3350,14 @@ where
             .encode(&frame)
             .map(|_| ())
             .map_err(|error| SidecarError::FrameTooLarge(error.to_string()))
+    }
+}
+
+impl<B> Drop for NativeSidecar<B> {
+    fn drop(&mut self) {
+        if let Some(task) = self.kernel_reaper_task.take() {
+            task.abort();
+        }
     }
 }
 
@@ -3093,7 +3591,11 @@ where
             self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
             let key = (vm_id.clone(), process_id.clone());
             let deadline = Instant::now() + timeout;
+            let process_event_notify = Arc::clone(&self.process_event_notify);
             loop {
+                // Register before probing the durable process-event queues so
+                // an arrival racing this turn cannot be lost before the await.
+                let notified = process_event_notify.notified();
                 self.pump_process_events(&ownership).await?;
                 while let Some(envelope) =
                     self.take_matching_process_event_envelope(&vm_id, &process_id)?
@@ -3116,7 +3618,10 @@ where
                     break;
                 }
                 let remaining = deadline.saturating_duration_since(Instant::now());
-                time::sleep(remaining.min(Duration::from_millis(10))).await;
+                tokio::select! {
+                    _ = notified => {}
+                    _ = time::sleep(remaining) => break,
+                }
             }
             self.bind_extension_process_resource(
                 ownership,
@@ -3239,7 +3744,25 @@ pub(crate) fn emit_security_audit_event<B>(
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
-    let _ = emit_structured_event(bridge, vm_id, name, fields);
+    emit_structured_event_or_stderr(bridge, vm_id, name, fields);
+}
+
+pub(crate) fn emit_structured_event_or_stderr<B>(
+    bridge: &SharedBridge<B>,
+    vm_id: &str,
+    name: &str,
+    fields: BTreeMap<String, String>,
+) where
+    B: NativeSidecarBridge + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    if let Err(error) = emit_structured_event(bridge, vm_id, name, fields) {
+        // This fallback must remain independent of bridge telemetry: routing
+        // the failure through the same bridge can recurse or hide it again.
+        eprintln!(
+            "ERR_AGENTOS_STRUCTURED_EVENT: vm_id={vm_id} event={name} delivery failed: {error}"
+        );
+    }
 }
 
 /// Build a wire `EventFrame` carrying a `StructuredEvent` (name + string-map
@@ -3661,6 +4184,43 @@ mod structured_event_frame_tests {
             }
             other => panic!("expected connection ownership, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod guest_limit_diagnostic_tests {
+    use super::guest_limit_diagnostic;
+    use agentos_runtime::accounting::{LimitError, ResourceClass};
+
+    fn limit(scope: &str, used: usize) -> LimitError {
+        LimitError {
+            scope: scope.to_owned(),
+            resource: ResourceClass::AsyncCompletions,
+            used,
+            requested: 1,
+            limit: 8,
+            config_path: String::from("runtime.resources.maxAsyncCompletions"),
+        }
+    }
+
+    #[test]
+    fn vm_limit_reports_only_the_requesting_vm_usage() {
+        let diagnostic = guest_limit_diagnostic(&limit("vm=vm-1 generation=7", 6));
+        assert_eq!(diagnostic.scope, "vm");
+        assert_eq!(diagnostic.current_usage, Some(6));
+        assert!(diagnostic.message.contains("used=6"));
+    }
+
+    #[test]
+    fn process_limit_hides_cross_vm_aggregate_usage() {
+        let diagnostic = guest_limit_diagnostic(&limit("sidecar-process", 7));
+        assert_eq!(diagnostic.scope, "process");
+        assert_eq!(diagnostic.current_usage, None);
+        assert!(!diagnostic.message.contains("used=7"));
+        assert!(diagnostic.message.contains("requested=1 limit=8"));
+        assert!(diagnostic
+            .message
+            .contains("runtime.resources.maxAsyncCompletions"));
     }
 }
 

@@ -30,9 +30,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: |
           if grep -qE '^[[:space:]]*-[[:space:]]*website[[:space:]]*$' pnpm-workspace.yaml; then
-            npx turbo build --filter='!@agentos/website'
+            npx turbo build --filter='!@agentos/website' --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-playground'
           else
-            npx turbo build
+            npx turbo build --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-playground'
           fi
       - run: pnpm --dir scripts/publish run check-types
       - run: pnpm --dir scripts/publish test
@@ -40,10 +40,14 @@ jobs:
       - run: node scripts/check-rust-package-metadata.mjs
       - run: node --test scripts/check-agentos-client-protocol-compat.test.mjs
       - run: node scripts/check-agentos-client-protocol-compat.mjs
+      - run: node --test scripts/generate-secure-exec-mirror.test.mjs
       - run: node --test scripts/verify-fixed-versions.test.mjs
       - run: node scripts/verify-fixed-versions.mjs
       - run: pnpm check-layout
-      - run: cargo fmt --check
+      # cargo-fmt ignores workspace.default-members at a virtual workspace
+      # root, so route through the non-browser selector instead.
+      - run: node --test scripts/check-rustfmt.test.mjs
+      - run: node scripts/check-rustfmt.mjs
       - run: pnpm check-types
       - run: pnpm lint
         continue-on-error: true
@@ -100,8 +104,8 @@ jobs:
           rm -rf website/vendor/theme && mkdir -p website/vendor
           cp -r /tmp/docs-theme/packages/theme website/vendor/theme
       - run: pnpm install --frozen-lockfile
-      - name: Install Playwright Chromium
-        run: pnpm --dir packages/browser exec playwright install --with-deps chromium
+      # Browser support is retained in-tree but disabled during the unified
+      # native sidecar reactor migration, so it must not gate native CI.
       - uses: actions/download-artifact@v4
         with:
           name: wasm-commands
@@ -109,13 +113,13 @@ jobs:
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
       - run: |
           if grep -qE '^[[:space:]]*-[[:space:]]*website[[:space:]]*$' pnpm-workspace.yaml; then
-            npx turbo build --filter='!@agentos/website'
+            npx turbo build --filter='!@agentos/website' --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-playground'
           else
-            npx turbo build
+            npx turbo build --filter='!@rivet-dev/agentos-browser' --filter='!@rivet-dev/agentos-runtime-browser' --filter='!@rivet-dev/agentos-playground'
           fi
       - name: Verify complete coreutils runtime package
         run: pnpm --filter @agentos-software/coreutils build:runtime
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --exclude agentos-sidecar-browser --exclude agentos-native-sidecar-browser --all-targets -- -D warnings
       - run: cargo test -p agentos-protocol -- --test-threads=1
       - run: cargo test -p agentos-sidecar -- --test-threads=1
       - run: cargo test -p agentos-client -- --test-threads=1

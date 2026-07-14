@@ -10,6 +10,7 @@ use crate::runtime_support::{
     NODE_DISABLE_COMPILE_CACHE_ENV, NODE_FROZEN_TIME_ENV,
 };
 use crate::v8_runtime;
+use agentos_runtime::RuntimeContext;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -19,8 +20,8 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::{Duration, Instant};
+use tokio::sync::Notify;
 const NODE_ALLOW_PROCESS_BINDINGS_ENV: &str = "AGENTOS_ALLOW_PROCESS_BINDINGS";
 const NODE_GUEST_PATH_MAPPINGS_ENV: &str = "AGENTOS_GUEST_PATH_MAPPINGS";
 const NODE_SYNC_RPC_DATA_BYTES_ENV: &str = "AGENTOS_NODE_SYNC_RPC_DATA_BYTES";
@@ -134,6 +135,9 @@ pub struct PythonVfsRpcRequest {
     pub env: BTreeMap<String, String>,
     pub shell: bool,
     pub max_buffer: Option<usize>,
+    /// Maximum time one socket receive operation may wait for shared
+    /// readiness. `Some(0)` preserves nonblocking socket behavior.
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -249,6 +253,8 @@ struct PythonVfsBridgeRequestWire {
     shell: bool,
     #[serde(default, rename = "maxBuffer")]
     max_buffer: Option<usize>,
+    #[serde(default, rename = "timeoutMs")]
+    timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -287,6 +293,10 @@ pub struct PythonExecutionLimits {
     pub max_old_space_mb: Option<usize>,
     /// VFS sync-RPC wait ceiling in ms. `None` keeps the engine default.
     pub vfs_rpc_timeout_ms: Option<u64>,
+    /// VM readiness work bound forwarded unchanged to the Pyodide V8 runner.
+    pub reactor_work_quantum: Option<usize>,
+    /// Per-call host bridge deadline forwarded unchanged to the Pyodide V8 runner.
+    pub bridge_call_timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -324,6 +334,7 @@ pub struct PythonExecutionResult {
 #[derive(Debug)]
 pub enum PythonExecutionError {
     MissingContext(String),
+    InvalidLimit(String),
     VmMismatch {
         expected: String,
         found: String,
@@ -358,6 +369,7 @@ impl fmt::Display for PythonExecutionError {
             Self::MissingContext(context_id) => {
                 write!(f, "unknown guest Python context: {context_id}")
             }
+            Self::InvalidLimit(message) => write!(f, "invalid Python limit: {message}"),
             Self::VmMismatch { expected, found } => {
                 write!(
                     f,
@@ -439,15 +451,34 @@ fn ensure_pyodide_available() -> Result<(), PythonExecutionError> {
 
 #[derive(Debug)]
 pub struct PythonExecution {
+    runtime: RuntimeContext,
     execution_id: String,
     child_pid: u32,
     inner: JavascriptExecution,
     pyodide_dist_path: PathBuf,
-    pending_vfs_rpc: Arc<Mutex<Option<PendingVfsRpcState>>>,
+    pending_vfs_rpc: Arc<Mutex<Option<PendingVfsRpc>>>,
     v8_session: crate::v8_host::V8SessionHandle,
     output_buffer_max_bytes: usize,
     execution_timeout: Option<Duration>,
     vfs_rpc_timeout: Duration,
+}
+
+/// Cloneable response lane for a pending Python VFS RPC.
+///
+/// Socket operations complete on the shared Tokio runtime after the sidecar
+/// dispatcher has returned to its event loop.  Keeping only the pending-RPC
+/// state and V8 session handle here lets those tasks reply directly without
+/// parking the dispatcher or borrowing the process table across an await.
+#[derive(Debug, Clone)]
+pub struct PythonVfsRpcResponder {
+    pending_vfs_rpc: Arc<Mutex<Option<PendingVfsRpc>>>,
+    v8_session: crate::v8_host::V8SessionHandle,
+}
+
+#[derive(Debug)]
+struct PendingVfsRpc {
+    state: PendingVfsRpcState,
+    timeout_abort: Option<tokio::task::AbortHandle>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -464,6 +495,13 @@ enum PendingVfsRpcResolution {
 }
 
 impl PythonExecution {
+    pub fn vfs_rpc_responder(&self) -> PythonVfsRpcResponder {
+        PythonVfsRpcResponder {
+            pending_vfs_rpc: Arc::clone(&self.pending_vfs_rpc),
+            v8_session: self.v8_session.clone(),
+        }
+    }
+
     pub fn execution_id(&self) -> &str {
         &self.execution_id
     }
@@ -518,14 +556,302 @@ impl PythonExecution {
         id: u64,
         payload: PythonVfsRpcResponsePayload,
     ) -> Result<(), PythonExecutionError> {
-        match self.clear_pending_vfs_rpc(id)? {
+        self.vfs_rpc_responder().respond_success(id, payload)
+    }
+
+    pub fn respond_vfs_rpc_error(
+        &mut self,
+        id: u64,
+        code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Result<(), PythonExecutionError> {
+        self.vfs_rpc_responder().respond_error(id, code, message)
+    }
+
+    pub fn respond_javascript_sync_rpc_success(
+        &mut self,
+        id: u64,
+        result: Value,
+    ) -> Result<(), PythonExecutionError> {
+        self.inner
+            .respond_sync_rpc_success(id, result)
+            .map_err(map_javascript_error)
+    }
+
+    pub fn claim_javascript_sync_rpc_response(
+        &mut self,
+        id: u64,
+    ) -> Result<bool, PythonExecutionError> {
+        self.inner
+            .claim_sync_rpc_response(id)
+            .map_err(map_javascript_error)
+    }
+
+    pub fn respond_claimed_javascript_sync_rpc_success(
+        &mut self,
+        id: u64,
+        result: Value,
+    ) -> Result<(), PythonExecutionError> {
+        self.inner
+            .respond_claimed_sync_rpc_success(id, result)
+            .map_err(map_javascript_error)
+    }
+
+    pub fn respond_javascript_sync_rpc_error(
+        &mut self,
+        id: u64,
+        code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Result<(), PythonExecutionError> {
+        self.inner
+            .respond_sync_rpc_error(id, code, message)
+            .map_err(map_javascript_error)
+    }
+
+    pub fn respond_claimed_javascript_sync_rpc_error(
+        &mut self,
+        id: u64,
+        code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Result<(), PythonExecutionError> {
+        self.inner
+            .respond_claimed_sync_rpc_error(id, code, message)
+            .map_err(map_javascript_error)
+    }
+
+    pub async fn poll_event(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<PythonExecutionEvent>, PythonExecutionError> {
+        self.poll_event_until(Some(timeout)).await
+    }
+
+    pub fn try_poll_event(&mut self) -> Result<Option<PythonExecutionEvent>, PythonExecutionError> {
+        loop {
+            let Some(event) = self.inner.try_poll_event().map_err(map_javascript_error)? else {
+                return Ok(None);
+            };
+            if let Some(event) = self.translate_javascript_event(event)? {
+                return Ok(Some(event));
+            }
+        }
+    }
+
+    async fn poll_event_until(
+        &mut self,
+        timeout: Option<Duration>,
+    ) -> Result<Option<PythonExecutionEvent>, PythonExecutionError> {
+        let started = Instant::now();
+        loop {
+            let remaining = timeout.map(|timeout| {
+                if timeout.is_zero() {
+                    Duration::ZERO
+                } else {
+                    timeout.saturating_sub(started.elapsed())
+                }
+            });
+            match self
+                .inner
+                .poll_event_until(remaining)
+                .await
+                .map_err(map_javascript_error)?
+            {
+                Some(event) => {
+                    if let Some(event) = self.translate_javascript_event(event)? {
+                        return Ok(Some(event));
+                    }
+                }
+                None => return Ok(None),
+            }
+        }
+    }
+
+    /// Service a module-resolution JS sync RPC host-directly via the underlying
+    /// JS execution's translator. For consumers driving `poll_event_blocking`
+    /// manually without a kernel/service loop.
+    pub fn try_service_standalone_module_sync_rpc(
+        &mut self,
+        request: &JavascriptSyncRpcRequest,
+    ) -> Result<bool, PythonExecutionError> {
+        self.inner
+            .try_service_standalone_module_sync_rpc(request)
+            .map_err(map_javascript_error)
+    }
+
+    pub fn poll_event_blocking(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<PythonExecutionEvent>, PythonExecutionError> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match self
+                .inner
+                .poll_event_blocking(remaining)
+                .map_err(map_javascript_error)?
+            {
+                Some(event) => {
+                    if let Some(event) = self.translate_javascript_event(event)? {
+                        return Ok(Some(event));
+                    }
+                }
+                None => {
+                    if Instant::now() >= deadline {
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+    }
+
+    fn next_event_blocking(&mut self) -> Result<PythonExecutionEvent, PythonExecutionError> {
+        loop {
+            let event = self
+                .inner
+                .next_event_blocking()
+                .map_err(map_javascript_error)?;
+            if let Some(event) = self.translate_javascript_event(event)? {
+                return Ok(event);
+            }
+        }
+    }
+
+    pub fn wait(
+        mut self,
+        timeout: Option<Duration>,
+    ) -> Result<PythonExecutionResult, PythonExecutionError> {
+        self.close_stdin()?;
+
+        let mut stdout = PythonOutputBuffer::new(self.output_buffer_max_bytes);
+        let mut stderr = PythonOutputBuffer::new(self.output_buffer_max_bytes);
+        let started = Instant::now();
+        let timeout = match (timeout, self.execution_timeout) {
+            (Some(requested), Some(configured)) => Some(requested.min(configured)),
+            (Some(requested), None) => Some(requested),
+            (None, Some(configured)) => Some(configured),
+            (None, None) => None,
+        };
+        loop {
+            let poll_timeout = python_wait_remaining(timeout, started);
+            let event = match poll_timeout {
+                Some(timeout) => self.poll_event_blocking(timeout)?,
+                None => Some(self.next_event_blocking()?),
+            };
+
+            match event {
+                Some(PythonExecutionEvent::Stdout(chunk)) => stdout.extend(&chunk),
+                Some(PythonExecutionEvent::Stderr(chunk)) => stderr.extend(&chunk),
+                Some(PythonExecutionEvent::JavascriptSyncRpcRequest(request)) => {
+                    // Module-resolution sync RPCs are serviced host-directly via
+                    // the JS execution's own translator (the standalone Python
+                    // wait loop runs without a kernel/service loop).
+                    if self
+                        .inner
+                        .try_service_standalone_module_sync_rpc(&request)
+                        .map_err(map_javascript_error)?
+                    {
+                        continue;
+                    }
+                    if let Some((code, message)) = python_javascript_sync_rpc_error(&request) {
+                        self.inner
+                            .respond_sync_rpc_error(request.id, code, message)
+                            .map_err(map_javascript_error)?;
+                        continue;
+                    }
+                    return Err(PythonExecutionError::RpcResponse(format!(
+                        "guest Python execution requires servicing pending JavaScript sync RPC request {} {} {:?}",
+                        request.id, request.method, request.args
+                    )));
+                }
+                Some(PythonExecutionEvent::VfsRpcRequest(request)) => {
+                    return Err(PythonExecutionError::PendingVfsRpcRequest(request.id));
+                }
+                Some(PythonExecutionEvent::Exited(exit_code)) => {
+                    return Ok(PythonExecutionResult {
+                        execution_id: self.execution_id.clone(),
+                        exit_code,
+                        stdout: stdout.into_inner(),
+                        stderr: stderr.into_inner(),
+                    });
+                }
+                None => {}
+            }
+
+            if let Some(limit) = timeout {
+                if started.elapsed() >= limit {
+                    self.kill()?;
+                    return Err(PythonExecutionError::TimedOut(limit));
+                }
+            }
+        }
+    }
+
+    fn translate_javascript_event(
+        &mut self,
+        event: JavascriptExecutionEvent,
+    ) -> Result<Option<PythonExecutionEvent>, PythonExecutionError> {
+        match event {
+            JavascriptExecutionEvent::Stdout(chunk) => {
+                Ok(Some(PythonExecutionEvent::Stdout(chunk)))
+            }
+            JavascriptExecutionEvent::Stderr(chunk) => {
+                Ok(Some(PythonExecutionEvent::Stderr(chunk)))
+            }
+            JavascriptExecutionEvent::Exited(code) => Ok(Some(PythonExecutionEvent::Exited(code))),
+            JavascriptExecutionEvent::SignalState { .. } => Ok(None),
+            JavascriptExecutionEvent::SyncRpcRequest(request) => {
+                if request.method == "_pythonRpc" {
+                    let request = parse_python_bridge_sync_rpc_request(&request)?;
+                    set_pending_vfs_rpc_state(&self.pending_vfs_rpc, request.id)?;
+                    spawn_python_vfs_rpc_timeout(
+                        &self.runtime,
+                        request.id,
+                        self.vfs_rpc_timeout,
+                        self.pending_vfs_rpc.clone(),
+                        self.v8_session.clone(),
+                    )?;
+                    Ok(Some(PythonExecutionEvent::VfsRpcRequest(Box::new(request))))
+                } else {
+                    if self.try_service_standalone_module_sync_rpc(&request)? {
+                        return Ok(None);
+                    }
+                    if let Some(action) =
+                        python_javascript_sync_rpc_action(&self.pyodide_dist_path, &request)?
+                    {
+                        respond_python_javascript_sync_rpc_action(
+                            &mut self.inner,
+                            request.id,
+                            action,
+                        )?;
+                        Ok(None)
+                    } else {
+                        Ok(Some(PythonExecutionEvent::JavascriptSyncRpcRequest(
+                            request,
+                        )))
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn python_wait_remaining(timeout: Option<Duration>, started: Instant) -> Option<Duration> {
+    timeout.map(|limit| limit.saturating_sub(started.elapsed()))
+}
+
+impl PythonVfsRpcResponder {
+    pub fn respond_success(
+        &self,
+        id: u64,
+        payload: PythonVfsRpcResponsePayload,
+    ) -> Result<(), PythonExecutionError> {
+        match clear_pending_vfs_rpc(&self.pending_vfs_rpc, id)? {
             PendingVfsRpcResolution::Pending => {}
-            PendingVfsRpcResolution::TimedOut => {
+            PendingVfsRpcResolution::TimedOut | PendingVfsRpcResolution::Missing => {
                 return Err(PythonExecutionError::RpcResponse(format!(
                     "VFS RPC request {id} is no longer pending"
                 )));
             }
-            PendingVfsRpcResolution::Missing => {}
         }
 
         let result = match payload {
@@ -602,307 +928,87 @@ impl PythonExecution {
             }),
         };
 
-        self.inner
-            .respond_sync_rpc_success(id, result)
-            .map_err(map_javascript_error)
+        let payload = v8_runtime::json_to_cbor_payload(&result)
+            .map_err(|error| PythonExecutionError::RpcResponse(error.to_string()))?;
+        self.v8_session
+            .send_bridge_response(id, 0, payload)
+            .map_err(|error| PythonExecutionError::RpcResponse(error.to_string()))
     }
 
-    pub fn respond_vfs_rpc_error(
-        &mut self,
+    pub fn respond_error(
+        &self,
         id: u64,
         code: impl Into<String>,
         message: impl Into<String>,
     ) -> Result<(), PythonExecutionError> {
-        match self.clear_pending_vfs_rpc(id)? {
+        match clear_pending_vfs_rpc(&self.pending_vfs_rpc, id)? {
             PendingVfsRpcResolution::Pending => {}
-            PendingVfsRpcResolution::TimedOut => {
+            PendingVfsRpcResolution::TimedOut | PendingVfsRpcResolution::Missing => {
                 return Err(PythonExecutionError::RpcResponse(format!(
                     "VFS RPC request {id} is no longer pending"
                 )));
             }
-            PendingVfsRpcResolution::Missing => {}
         }
 
-        self.inner
-            .respond_sync_rpc_error(id, code, message)
-            .map_err(map_javascript_error)
+        let error = format!("{}: {}", code.into(), message.into());
+        self.v8_session
+            .send_bridge_response(id, 1, error.into_bytes())
+            .map_err(|error| PythonExecutionError::RpcResponse(error.to_string()))
     }
+}
 
-    pub fn respond_javascript_sync_rpc_success(
-        &mut self,
-        id: u64,
-        result: Value,
-    ) -> Result<(), PythonExecutionError> {
-        self.inner
-            .respond_sync_rpc_success(id, result)
-            .map_err(map_javascript_error)
-    }
-
-    pub fn claim_javascript_sync_rpc_response(
-        &mut self,
-        id: u64,
-    ) -> Result<bool, PythonExecutionError> {
-        self.inner
-            .claim_sync_rpc_response(id)
-            .map_err(map_javascript_error)
-    }
-
-    pub fn respond_claimed_javascript_sync_rpc_success(
-        &mut self,
-        id: u64,
-        result: Value,
-    ) -> Result<(), PythonExecutionError> {
-        self.inner
-            .respond_claimed_sync_rpc_success(id, result)
-            .map_err(map_javascript_error)
-    }
-
-    pub fn respond_javascript_sync_rpc_error(
-        &mut self,
-        id: u64,
-        code: impl Into<String>,
-        message: impl Into<String>,
-    ) -> Result<(), PythonExecutionError> {
-        self.inner
-            .respond_sync_rpc_error(id, code, message)
-            .map_err(map_javascript_error)
-    }
-
-    pub fn respond_claimed_javascript_sync_rpc_error(
-        &mut self,
-        id: u64,
-        code: impl Into<String>,
-        message: impl Into<String>,
-    ) -> Result<(), PythonExecutionError> {
-        self.inner
-            .respond_claimed_sync_rpc_error(id, code, message)
-            .map_err(map_javascript_error)
-    }
-
-    pub async fn poll_event(
-        &mut self,
-        timeout: Duration,
-    ) -> Result<Option<PythonExecutionEvent>, PythonExecutionError> {
-        let started = Instant::now();
-        loop {
-            let remaining = if timeout.is_zero() {
-                Duration::ZERO
-            } else {
-                timeout.saturating_sub(started.elapsed())
-            };
-            match self
-                .inner
-                .poll_event(remaining)
-                .await
-                .map_err(map_javascript_error)?
-            {
-                Some(event) => {
-                    if let Some(event) = self.translate_javascript_event(event)? {
-                        return Ok(Some(event));
-                    }
-                }
-                None => return Ok(None),
-            }
+fn clear_pending_vfs_rpc(
+    pending_vfs_rpc: &Arc<Mutex<Option<PendingVfsRpc>>>,
+    id: u64,
+) -> Result<PendingVfsRpcResolution, PythonExecutionError> {
+    let mut pending = pending_vfs_rpc
+        .lock()
+        .map_err(|_| PythonExecutionError::EventChannelClosed)?;
+    let resolution = match pending.as_ref().map(|rpc| rpc.state) {
+        Some(PendingVfsRpcState::Pending(current)) if current == id => {
+            PendingVfsRpcResolution::Pending
+        }
+        Some(PendingVfsRpcState::TimedOut(current)) if current == id => {
+            PendingVfsRpcResolution::TimedOut
+        }
+        _ => return Ok(PendingVfsRpcResolution::Missing),
+    };
+    if let Some(rpc) = pending.take() {
+        if let Some(timeout_abort) = rpc.timeout_abort {
+            timeout_abort.abort();
         }
     }
+    Ok(resolution)
+}
 
-    /// Service a module-resolution JS sync RPC host-directly via the underlying
-    /// JS execution's translator. For consumers driving `poll_event_blocking`
-    /// manually without a kernel/service loop.
-    pub fn try_service_standalone_module_sync_rpc(
-        &mut self,
-        request: &JavascriptSyncRpcRequest,
-    ) -> Result<bool, PythonExecutionError> {
-        self.inner
-            .try_service_standalone_module_sync_rpc(request)
-            .map_err(map_javascript_error)
-    }
-
-    pub fn poll_event_blocking(
-        &mut self,
-        timeout: Duration,
-    ) -> Result<Option<PythonExecutionEvent>, PythonExecutionError> {
-        let deadline = Instant::now() + timeout;
-        loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            match self
-                .inner
-                .poll_event_blocking(remaining)
-                .map_err(map_javascript_error)?
-            {
-                Some(event) => {
-                    if let Some(event) = self.translate_javascript_event(event)? {
-                        return Ok(Some(event));
-                    }
-                }
-                None => {
-                    if Instant::now() >= deadline {
-                        return Ok(None);
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn wait(
-        mut self,
-        timeout: Option<Duration>,
-    ) -> Result<PythonExecutionResult, PythonExecutionError> {
-        self.close_stdin()?;
-
-        let mut stdout = PythonOutputBuffer::new(self.output_buffer_max_bytes);
-        let mut stderr = PythonOutputBuffer::new(self.output_buffer_max_bytes);
-        let started = Instant::now();
-        let timeout = match (timeout, self.execution_timeout) {
-            (Some(requested), Some(configured)) => Some(requested.min(configured)),
-            (Some(requested), None) => Some(requested),
-            (None, Some(configured)) => Some(configured),
-            (None, None) => None,
-        };
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("python wait runtime");
-
-        loop {
-            let poll_timeout = timeout
-                .map(|limit| {
-                    let elapsed = started.elapsed();
-                    if elapsed >= limit {
-                        Duration::ZERO
-                    } else {
-                        limit.saturating_sub(elapsed).min(Duration::from_millis(50))
-                    }
-                })
-                .unwrap_or_else(|| Duration::from_millis(50));
-
-            let event = runtime.block_on(self.poll_event(poll_timeout))?;
-
-            match event {
-                Some(PythonExecutionEvent::Stdout(chunk)) => stdout.extend(&chunk),
-                Some(PythonExecutionEvent::Stderr(chunk)) => stderr.extend(&chunk),
-                Some(PythonExecutionEvent::JavascriptSyncRpcRequest(request)) => {
-                    // Module-resolution sync RPCs are serviced host-directly via
-                    // the JS execution's own translator (the standalone Python
-                    // wait loop runs without a kernel/service loop).
-                    if self
-                        .inner
-                        .try_service_standalone_module_sync_rpc(&request)
-                        .map_err(map_javascript_error)?
-                    {
-                        continue;
-                    }
-                    if let Some((code, message)) = python_javascript_sync_rpc_error(&request) {
-                        self.inner
-                            .respond_sync_rpc_error(request.id, code, message)
-                            .map_err(map_javascript_error)?;
-                        continue;
-                    }
-                    return Err(PythonExecutionError::RpcResponse(format!(
-                        "guest Python execution requires servicing pending JavaScript sync RPC request {} {} {:?}",
-                        request.id, request.method, request.args
-                    )));
-                }
-                Some(PythonExecutionEvent::VfsRpcRequest(request)) => {
-                    return Err(PythonExecutionError::PendingVfsRpcRequest(request.id));
-                }
-                Some(PythonExecutionEvent::Exited(exit_code)) => {
-                    return Ok(PythonExecutionResult {
-                        execution_id: self.execution_id.clone(),
-                        exit_code,
-                        stdout: stdout.into_inner(),
-                        stderr: stderr.into_inner(),
-                    });
-                }
-                None => {}
-            }
-
-            if let Some(limit) = timeout {
-                if started.elapsed() >= limit {
-                    self.kill()?;
-                    return Err(PythonExecutionError::TimedOut(limit));
-                }
-            }
-        }
-    }
-
-    fn clear_pending_vfs_rpc(
-        &self,
-        id: u64,
-    ) -> Result<PendingVfsRpcResolution, PythonExecutionError> {
-        let mut pending = self
-            .pending_vfs_rpc
-            .lock()
-            .map_err(|_| PythonExecutionError::EventChannelClosed)?;
-        match *pending {
-            Some(PendingVfsRpcState::Pending(current)) if current == id => {
-                *pending = None;
-                Ok(PendingVfsRpcResolution::Pending)
-            }
-            Some(PendingVfsRpcState::TimedOut(current)) if current == id => {
-                Ok(PendingVfsRpcResolution::TimedOut)
-            }
-            _ => Ok(PendingVfsRpcResolution::Missing),
-        }
-    }
-
-    fn translate_javascript_event(
-        &mut self,
-        event: JavascriptExecutionEvent,
-    ) -> Result<Option<PythonExecutionEvent>, PythonExecutionError> {
-        match event {
-            JavascriptExecutionEvent::Stdout(chunk) => {
-                Ok(Some(PythonExecutionEvent::Stdout(chunk)))
-            }
-            JavascriptExecutionEvent::Stderr(chunk) => {
-                Ok(Some(PythonExecutionEvent::Stderr(chunk)))
-            }
-            JavascriptExecutionEvent::Exited(code) => Ok(Some(PythonExecutionEvent::Exited(code))),
-            JavascriptExecutionEvent::SignalState { .. } => Ok(None),
-            JavascriptExecutionEvent::SyncRpcRequest(request) => {
-                if request.method == "_pythonRpc" {
-                    let request = parse_python_bridge_sync_rpc_request(&request)?;
-                    set_pending_vfs_rpc_state(&self.pending_vfs_rpc, request.id)?;
-                    spawn_python_vfs_rpc_timeout(
-                        request.id,
-                        self.vfs_rpc_timeout,
-                        self.pending_vfs_rpc.clone(),
-                        self.v8_session.clone(),
-                    );
-                    Ok(Some(PythonExecutionEvent::VfsRpcRequest(Box::new(request))))
-                } else {
-                    if self.try_service_standalone_module_sync_rpc(&request)? {
-                        return Ok(None);
-                    }
-                    if let Some(action) =
-                        python_javascript_sync_rpc_action(&self.pyodide_dist_path, &request)?
-                    {
-                        respond_python_javascript_sync_rpc_action(
-                            &mut self.inner,
-                            request.id,
-                            action,
-                        )?;
-                        Ok(None)
-                    } else {
-                        Ok(Some(PythonExecutionEvent::JavascriptSyncRpcRequest(
-                            request,
-                        )))
-                    }
-                }
-            }
-        }
+fn cancel_pending_vfs_rpc(pending_vfs_rpc: &Arc<Mutex<Option<PendingVfsRpc>>>) {
+    let pending = pending_vfs_rpc
+        .lock()
+        .map(|mut pending| pending.take())
+        .unwrap_or_else(|poisoned| {
+            eprintln!("ERR_AGENTOS_PYTHON_VFS_RPC_STATE_POISONED: cancelling pending timeout");
+            poisoned.into_inner().take()
+        });
+    if let Some(timeout_abort) = pending.and_then(|rpc| rpc.timeout_abort) {
+        timeout_abort.abort();
     }
 }
 
 impl Drop for PythonExecution {
     fn drop(&mut self) {
-        let _ = self.close_stdin();
-        let _ = self.inner.terminate();
+        cancel_pending_vfs_rpc(&self.pending_vfs_rpc);
+        if let Err(error) = self.close_stdin() {
+            eprintln!("ERR_AGENTOS_PYTHON_STDIN_CLOSE: {error}");
+        }
+        if let Err(error) = self.inner.terminate() {
+            eprintln!("ERR_AGENTOS_PYTHON_TERMINATE: {error}");
+        }
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PythonExecutionEngine {
+    runtime: Option<RuntimeContext>,
     next_context_id: usize,
     next_execution_id: usize,
     contexts: BTreeMap<String, PythonContext>,
@@ -911,15 +1017,91 @@ pub struct PythonExecutionEngine {
     javascript_engine: JavascriptExecutionEngine,
 }
 
+impl Default for PythonExecutionEngine {
+    fn default() -> Self {
+        let runtime = default_python_test_runtime_context();
+        let javascript_engine = runtime
+            .as_ref()
+            .map_or_else(JavascriptExecutionEngine::default, |runtime| {
+                JavascriptExecutionEngine::new(runtime.clone())
+            });
+        Self {
+            runtime,
+            next_context_id: 0,
+            next_execution_id: 0,
+            contexts: BTreeMap::new(),
+            import_caches: BTreeMap::new(),
+            javascript_context_ids: BTreeMap::new(),
+            javascript_engine,
+        }
+    }
+}
+
+#[cfg(test)]
+fn default_python_test_runtime_context() -> Option<RuntimeContext> {
+    agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+        .ok()
+        .map(agentos_runtime::SidecarRuntime::context)
+}
+
+#[cfg(not(test))]
+fn default_python_test_runtime_context() -> Option<RuntimeContext> {
+    None
+}
+
 impl PythonExecutionEngine {
+    pub fn new(runtime: RuntimeContext) -> Self {
+        Self {
+            runtime: Some(runtime.clone()),
+            next_context_id: 0,
+            next_execution_id: 0,
+            contexts: BTreeMap::new(),
+            import_caches: BTreeMap::new(),
+            javascript_context_ids: BTreeMap::new(),
+            javascript_engine: JavascriptExecutionEngine::new(runtime),
+        }
+    }
+
+    pub fn set_runtime_context(&mut self, runtime: RuntimeContext) {
+        self.javascript_engine.set_runtime_context(runtime.clone());
+        self.runtime = Some(runtime);
+    }
+
+    fn runtime_context(&self) -> Result<&RuntimeContext, PythonExecutionError> {
+        self.runtime.as_ref().ok_or_else(|| {
+            PythonExecutionError::Spawn(std::io::Error::other(
+                "ERR_AGENTOS_RUNTIME_NOT_INJECTED: PythonExecutionEngine requires a process RuntimeContext; construct it with PythonExecutionEngine::new(runtime)",
+            ))
+        })
+    }
+
+    pub fn set_event_notify(&mut self, notify: Option<Arc<Notify>>) {
+        self.javascript_engine.set_event_notify(notify);
+    }
+
     pub fn bundled_pyodide_dist_path_for_vm(
         &mut self,
         vm_id: &str,
     ) -> Result<PathBuf, PythonExecutionError> {
         ensure_pyodide_available()?;
+        let runtime = self.runtime_context()?.clone();
         let import_cache = self.import_caches.entry(vm_id.to_owned()).or_default();
         import_cache
-            .ensure_materialized()
+            .ensure_materialized_with_runtime(&runtime)
+            .map_err(PythonExecutionError::PrepareRuntime)?;
+        Ok(import_cache.pyodide_dist_path().to_path_buf())
+    }
+
+    pub async fn bundled_pyodide_dist_path_for_vm_async(
+        &mut self,
+        vm_id: &str,
+        runtime: &RuntimeContext,
+    ) -> Result<PathBuf, PythonExecutionError> {
+        ensure_pyodide_available()?;
+        let import_cache = self.import_caches.entry(vm_id.to_owned()).or_default();
+        import_cache
+            .ensure_materialized_with_timeout_and_runtime_async(runtime, PYTHON_PREWARM_TIMEOUT)
+            .await
             .map_err(PythonExecutionError::PrepareRuntime)?;
         Ok(import_cache.pyodide_dist_path().to_path_buf())
     }
@@ -972,19 +1154,30 @@ impl PythonExecutionEngine {
         &mut self,
         request: StartPythonExecutionRequest,
     ) -> Result<PythonExecution, PythonExecutionError> {
-        self.create_execution(request, false)
+        let runtime = self.runtime_context()?.clone();
+        self.create_execution_with_runtime(request, runtime, false)
     }
 
     pub fn prepare_execution(
         &mut self,
         request: StartPythonExecutionRequest,
     ) -> Result<PythonExecution, PythonExecutionError> {
-        self.create_execution(request, true)
+        let runtime = self.runtime_context()?.clone();
+        self.create_execution_with_runtime(request, runtime, true)
     }
 
-    fn create_execution(
+    pub fn start_execution_with_runtime(
         &mut self,
         request: StartPythonExecutionRequest,
+        runtime: RuntimeContext,
+    ) -> Result<PythonExecution, PythonExecutionError> {
+        self.create_execution_with_runtime(request, runtime, false)
+    }
+
+    fn create_execution_with_runtime(
+        &mut self,
+        request: StartPythonExecutionRequest,
+        runtime: RuntimeContext,
         defer_execute: bool,
     ) -> Result<PythonExecution, PythonExecutionError> {
         ensure_pyodide_available()?;
@@ -1010,7 +1203,7 @@ impl PythonExecutionEngine {
         let warmup_metrics = {
             let import_cache = self.import_caches.entry(context.vm_id.clone()).or_default();
             import_cache
-                .ensure_materialized()
+                .ensure_materialized_with_runtime(&runtime)
                 .map_err(PythonExecutionError::PrepareRuntime)?;
             prewarm_python_path(
                 import_cache,
@@ -1019,9 +1212,96 @@ impl PythonExecutionEngine {
                 &context,
                 &request,
                 frozen_time_ms,
+                &runtime,
             )?
         };
 
+        self.finish_start_execution(
+            request,
+            runtime,
+            &context,
+            javascript_context_id,
+            frozen_time_ms,
+            warmup_metrics,
+            defer_execute,
+        )
+    }
+
+    /// Start Python from an async sidecar dispatch without parking a trusted
+    /// Tokio worker during import-cache materialization or V8 prewarm.
+    pub async fn start_execution_with_runtime_async(
+        &mut self,
+        request: StartPythonExecutionRequest,
+        runtime: RuntimeContext,
+    ) -> Result<PythonExecution, PythonExecutionError> {
+        ensure_pyodide_available()?;
+        let context = self
+            .contexts
+            .get(&request.context_id)
+            .cloned()
+            .ok_or_else(|| PythonExecutionError::MissingContext(request.context_id.clone()))?;
+
+        if context.vm_id != request.vm_id {
+            return Err(PythonExecutionError::VmMismatch {
+                expected: context.vm_id,
+                found: request.vm_id,
+            });
+        }
+
+        let frozen_time_ms = frozen_time_ms();
+        let javascript_context =
+            self.javascript_engine
+                .create_context(CreateJavascriptContextRequest {
+                    vm_id: request.vm_id.clone(),
+                    bootstrap_module: None,
+                    compile_cache_root: None,
+                });
+        let javascript_context_id = javascript_context.context_id.clone();
+        self.javascript_context_ids
+            .insert(context.context_id.clone(), javascript_context_id.clone());
+        let warmup_metrics = {
+            let import_cache = self.import_caches.entry(context.vm_id.clone()).or_default();
+            import_cache
+                .ensure_materialized_with_timeout_and_runtime_async(
+                    &runtime,
+                    PYTHON_PREWARM_TIMEOUT,
+                )
+                .await
+                .map_err(PythonExecutionError::PrepareRuntime)?;
+            prewarm_python_path_async(
+                import_cache,
+                &mut self.javascript_engine,
+                &javascript_context_id,
+                &context,
+                &request,
+                frozen_time_ms,
+                &runtime,
+            )
+            .await?
+        };
+
+        self.finish_start_execution(
+            request,
+            runtime,
+            &context,
+            javascript_context_id,
+            frozen_time_ms,
+            warmup_metrics,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish_start_execution(
+        &mut self,
+        request: StartPythonExecutionRequest,
+        runtime: RuntimeContext,
+        context: &PythonContext,
+        javascript_context_id: String,
+        frozen_time_ms: u128,
+        warmup_metrics: Option<Vec<u8>>,
+        defer_execute: bool,
+    ) -> Result<PythonExecution, PythonExecutionError> {
         self.next_execution_id += 1;
         let execution_id = format!("exec-{}", self.next_execution_id);
         let import_cache = self
@@ -1032,9 +1312,10 @@ impl PythonExecutionEngine {
             resolved_pyodide_dist_path(&context.pyodide_dist_path, &request.cwd);
         let javascript_execution = start_python_javascript_execution(
             &mut self.javascript_engine,
+            &runtime,
             import_cache,
             &javascript_context_id,
-            &context,
+            context,
             &request,
             PythonJavascriptExecutionOptions {
                 frozen_time_ms,
@@ -1047,6 +1328,7 @@ impl PythonExecutionEngine {
         let vfs_rpc_timeout = python_vfs_rpc_timeout(&request);
 
         Ok(PythonExecution {
+            runtime,
             execution_id,
             child_pid: javascript_execution.child_pid(),
             v8_session: javascript_execution.v8_session_handle(),
@@ -1069,13 +1351,28 @@ impl PythonExecutionEngine {
 }
 
 fn set_pending_vfs_rpc_state(
-    pending_vfs_rpc: &Arc<Mutex<Option<PendingVfsRpcState>>>,
+    pending_vfs_rpc: &Arc<Mutex<Option<PendingVfsRpc>>>,
     id: u64,
 ) -> Result<(), PythonExecutionError> {
     let mut pending = pending_vfs_rpc
         .lock()
         .map_err(|_| PythonExecutionError::EventChannelClosed)?;
-    *pending = Some(PendingVfsRpcState::Pending(id));
+    if let Some(PendingVfsRpc {
+        state: PendingVfsRpcState::Pending(current),
+        ..
+    }) = pending.as_ref()
+    {
+        return Err(PythonExecutionError::PendingVfsRpcRequest(*current));
+    }
+    if let Some(previous) = pending.take() {
+        if let Some(timeout_abort) = previous.timeout_abort {
+            timeout_abort.abort();
+        }
+    }
+    *pending = Some(PendingVfsRpc {
+        state: PendingVfsRpcState::Pending(id),
+        timeout_abort: None,
+    });
     Ok(())
 }
 
@@ -1085,6 +1382,9 @@ fn map_javascript_error(error: JavascriptExecutionError) -> PythonExecutionError
             std::io::ErrorKind::InvalidInput,
             "guest Python bootstrap requires a JavaScript entrypoint",
         )),
+        JavascriptExecutionError::InvalidLimit(message) => {
+            PythonExecutionError::InvalidLimit(message)
+        }
         JavascriptExecutionError::MissingContext(context_id) => {
             PythonExecutionError::MissingContext(context_id)
         }
@@ -1124,6 +1424,7 @@ struct PythonJavascriptExecutionOptions<'a> {
 
 fn start_python_javascript_execution(
     javascript_engine: &mut JavascriptExecutionEngine,
+    runtime: &RuntimeContext,
     import_cache: &NodeImportCache,
     javascript_context_id: &str,
     context: &PythonContext,
@@ -1146,11 +1447,7 @@ fn start_python_javascript_execution(
     // `maxOldSpaceMb` knob) and sync-RPC wait ceiling ride the typed runner
     // limits, not env — the JS engine reads them from `limits`, not `AGENTOS_*`.
     let max_old_space_mb = python_max_old_space_mb(request);
-    let runner_limits = JavascriptExecutionLimits {
-        v8_heap_limit_mb: (max_old_space_mb > 0).then_some(max_old_space_mb as u32),
-        sync_rpc_wait_timeout_ms: Some(PYTHON_SYNC_RPC_WAIT_TIMEOUT_MS),
-        ..JavascriptExecutionLimits::default()
-    };
+    let runner_limits = python_runner_javascript_limits(&request.limits, max_old_space_mb);
 
     let javascript_request = StartJavascriptExecutionRequest {
         vm_id: request.vm_id.clone(),
@@ -1167,11 +1464,24 @@ fn start_python_javascript_execution(
         inline_code: Some(inline_code),
     };
     if options.defer_execute {
-        javascript_engine.prepare_execution(javascript_request)
+        javascript_engine.prepare_execution_with_runtime(javascript_request, runtime.clone())
     } else {
-        javascript_engine.start_execution(javascript_request)
+        javascript_engine.start_execution_with_runtime(javascript_request, runtime.clone())
     }
     .map_err(map_javascript_error)
+}
+
+fn python_runner_javascript_limits(
+    limits: &PythonExecutionLimits,
+    max_old_space_mb: usize,
+) -> JavascriptExecutionLimits {
+    JavascriptExecutionLimits {
+        v8_heap_limit_mb: (max_old_space_mb > 0).then_some(max_old_space_mb as u32),
+        sync_rpc_wait_timeout_ms: Some(PYTHON_SYNC_RPC_WAIT_TIMEOUT_MS),
+        reactor_work_quantum: limits.reactor_work_quantum,
+        bridge_call_timeout_ms: limits.bridge_call_timeout_ms,
+        ..JavascriptExecutionLimits::default()
+    }
 }
 
 fn build_python_internal_env(
@@ -1401,6 +1711,7 @@ fn parse_python_bridge_sync_rpc_request(
         env: wire.env,
         shell: wire.shell,
         max_buffer: wire.max_buffer,
+        timeout_ms: wire.timeout_ms,
     })
 }
 
@@ -1468,27 +1779,57 @@ fn python_vfs_rpc_timeout(request: &StartPythonExecutionRequest) -> Duration {
 }
 
 fn spawn_python_vfs_rpc_timeout(
+    runtime: &RuntimeContext,
     id: u64,
     timeout: Duration,
-    pending: Arc<Mutex<Option<PendingVfsRpcState>>>,
+    pending: Arc<Mutex<Option<PendingVfsRpc>>>,
     v8_session: crate::v8_host::V8SessionHandle,
-) {
-    thread::spawn(move || {
-        thread::sleep(timeout);
-        let should_timeout = match pending.lock() {
-            Ok(mut guard) if *guard == Some(PendingVfsRpcState::Pending(id)) => {
-                *guard = Some(PendingVfsRpcState::TimedOut(id));
-                true
+) -> Result<(), PythonExecutionError> {
+    let cancellation = runtime.clone();
+    let pending_for_task = Arc::clone(&pending);
+    let handle = runtime
+        .spawn(agentos_runtime::TaskClass::Timer, async move {
+            tokio::select! {
+                _ = tokio::time::sleep(timeout) => {}
+                _ = cancellation.admission_closed() => {
+                    let mut guard = pending_for_task.lock().unwrap_or_else(|poisoned| {
+                        eprintln!(
+                            "ERR_AGENTOS_PYTHON_VFS_RPC_STATE_POISONED: recovering request {id} during runtime shutdown"
+                        );
+                        poisoned.into_inner()
+                    });
+                    if guard.as_ref().map(|rpc| rpc.state)
+                        == Some(PendingVfsRpcState::Pending(id))
+                    {
+                        *guard = None;
+                    }
+                    return;
+                }
             }
-            Ok(_) => false,
-            Err(_) => false,
-        };
+
+        let mut guard = pending_for_task.lock().unwrap_or_else(|poisoned| {
+            eprintln!(
+                "ERR_AGENTOS_PYTHON_VFS_RPC_STATE_POISONED: recovering request {id} while delivering its timeout"
+            );
+            poisoned.into_inner()
+        });
+        let should_timeout =
+            if guard.as_ref().map(|rpc| rpc.state) == Some(PendingVfsRpcState::Pending(id)) {
+                *guard = Some(PendingVfsRpc {
+                    state: PendingVfsRpcState::TimedOut(id),
+                    timeout_abort: None,
+                });
+                true
+            } else {
+                false
+            };
+        drop(guard);
 
         if !should_timeout {
             return;
         }
 
-        let _ = v8_session.send_bridge_response(
+        if let Err(error) = v8_session.send_bridge_response(
             id,
             1,
             format!(
@@ -1496,12 +1837,135 @@ fn spawn_python_vfs_rpc_timeout(
                 timeout.as_millis()
             )
             .into_bytes(),
-        );
-    });
+        ) {
+            eprintln!(
+                "ERR_AGENTOS_PYTHON_VFS_RPC_TIMEOUT_DELIVERY: could not deliver timeout for request {id}: {error}"
+            );
+        }
+        })
+        .map_err(|error| {
+            PythonExecutionError::RpcResponse(format!(
+                "could not arm Python VFS RPC timeout for request {id}: {error}"
+            ))
+        })?;
+
+    let timeout_abort = handle.abort_handle();
+    let mut guard = pending
+        .lock()
+        .map_err(|_| PythonExecutionError::EventChannelClosed)?;
+    if let Some(rpc) = guard.as_mut() {
+        if rpc.state == PendingVfsRpcState::Pending(id) {
+            rpc.timeout_abort = Some(timeout_abort);
+            return Ok(());
+        }
+    }
+    timeout_abort.abort();
+    Ok(())
 }
 
 fn resolved_pyodide_dist_path(path: &Path, cwd: &Path) -> PathBuf {
     resolve_execution_path(path, cwd)
+}
+
+#[derive(Default)]
+struct PythonPrewarmOutput {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    sync_rpc_log: Vec<String>,
+}
+
+fn handle_python_prewarm_event(
+    prewarm_execution: &mut JavascriptExecution,
+    context: &PythonContext,
+    request: &StartPythonExecutionRequest,
+    event: Option<JavascriptExecutionEvent>,
+    output: &mut PythonPrewarmOutput,
+) -> Result<Option<PythonExecutionResult>, PythonExecutionError> {
+    match event {
+        Some(JavascriptExecutionEvent::Stdout(chunk)) => output.stdout.extend(chunk),
+        Some(JavascriptExecutionEvent::Stderr(chunk)) => output.stderr.extend(chunk),
+        Some(JavascriptExecutionEvent::Exited(exit_code)) => {
+            return Ok(Some(PythonExecutionResult {
+                execution_id: String::from("python-prewarm"),
+                exit_code,
+                stdout: std::mem::take(&mut output.stdout),
+                stderr: std::mem::take(&mut output.stderr),
+            }));
+        }
+        Some(JavascriptExecutionEvent::SignalState { .. }) => {}
+        Some(JavascriptExecutionEvent::SyncRpcRequest(sync_request)) => {
+            output.sync_rpc_log.push(format!(
+                "{} {} {:?}",
+                sync_request.id, sync_request.method, sync_request.args
+            ));
+            // The Python runner module imports node builtins and the pyodide
+            // ESM entry; module-resolution sync RPCs are serviced host-directly
+            // because this prewarm has no kernel/service-loop consumer.
+            if prewarm_execution
+                .try_service_standalone_module_sync_rpc(&sync_request)
+                .map_err(map_javascript_error)?
+            {
+                output
+                    .sync_rpc_log
+                    .push(format!("responded {} (module)", sync_request.id));
+                return Ok(None);
+            }
+            let pyodide_dist_path =
+                resolved_pyodide_dist_path(&context.pyodide_dist_path, &request.cwd);
+            if let Some(action) =
+                python_javascript_sync_rpc_action(&pyodide_dist_path, &sync_request)?
+            {
+                respond_python_javascript_sync_rpc_action(
+                    prewarm_execution,
+                    sync_request.id,
+                    action,
+                )?;
+                output
+                    .sync_rpc_log
+                    .push(format!("responded {}", sync_request.id));
+                return Ok(None);
+            }
+            if let Some((code, message)) = python_javascript_sync_rpc_error(&sync_request) {
+                prewarm_execution
+                    .respond_sync_rpc_error(sync_request.id, code, message)
+                    .map_err(map_javascript_error)?;
+                output
+                    .sync_rpc_log
+                    .push(format!("errored {}", sync_request.id));
+                return Ok(None);
+            }
+            if sync_request.method == "_pythonRpc" {
+                let request = parse_python_bridge_sync_rpc_request(&sync_request)?;
+                return Err(PythonExecutionError::WarmupFailed {
+                    exit_code: 1,
+                    stderr: format!(
+                        "unexpected Python prewarm VFS RPC request {} {} {:?}",
+                        request.id, request.path, request.method
+                    ),
+                });
+            }
+            return Err(PythonExecutionError::WarmupFailed {
+                exit_code: 1,
+                stderr: format!(
+                    "unexpected Python prewarm JavaScript sync RPC request {} {} {:?}",
+                    sync_request.id, sync_request.method, sync_request.args
+                ),
+            });
+        }
+        None => {
+            return Err(PythonExecutionError::WarmupFailed {
+                exit_code: 1,
+                stderr: format!(
+                    "python prewarm timed out after {}s\nstdout:\n{}\nstderr:\n{}\nsync rpc:\n{}",
+                    PYTHON_PREWARM_TIMEOUT.as_secs(),
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr),
+                    output.sync_rpc_log.join("\n"),
+                ),
+            });
+        }
+    }
+    Ok(None)
 }
 
 fn prewarm_python_path(
@@ -1511,6 +1975,7 @@ fn prewarm_python_path(
     context: &PythonContext,
     request: &StartPythonExecutionRequest,
     frozen_time_ms: u128,
+    runtime: &RuntimeContext,
 ) -> Result<Option<Vec<u8>>, PythonExecutionError> {
     let debug_enabled = python_warmup_metrics_enabled(request);
     let marker_contents = warmup_marker_contents(import_cache, context, request);
@@ -1525,6 +1990,7 @@ fn prewarm_python_path(
     let started = Instant::now();
     let mut prewarm_execution = start_python_javascript_execution(
         javascript_engine,
+        runtime,
         import_cache,
         javascript_context_id,
         context,
@@ -1536,92 +2002,102 @@ fn prewarm_python_path(
             defer_execute: false,
         },
     )?;
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let mut sync_rpc_log = Vec::new();
+    let mut output = PythonPrewarmOutput::default();
     let result = loop {
-        match prewarm_execution
+        let event = prewarm_execution
             .poll_event_blocking(PYTHON_PREWARM_TIMEOUT)
-            .map_err(map_javascript_error)?
-        {
-            Some(JavascriptExecutionEvent::Stdout(chunk)) => stdout.extend(chunk),
-            Some(JavascriptExecutionEvent::Stderr(chunk)) => stderr.extend(chunk),
-            Some(JavascriptExecutionEvent::Exited(exit_code)) => {
-                break PythonExecutionResult {
-                    execution_id: String::from("python-prewarm"),
-                    exit_code,
-                    stdout,
-                    stderr,
-                };
-            }
-            Some(JavascriptExecutionEvent::SignalState { .. }) => {}
-            Some(JavascriptExecutionEvent::SyncRpcRequest(sync_request)) => {
-                sync_rpc_log.push(format!(
-                    "{} {} {:?}",
-                    sync_request.id, sync_request.method, sync_request.args
-                ));
-                // The Python runner module imports node builtins and the pyodide
-                // ESM entry; module-resolution sync RPCs are now serviced
-                // host-directly here (the prewarm has no kernel/service loop),
-                // using the execution's own translator (with pyodide path
-                // mappings) so the runner module loader resolves correctly.
-                if prewarm_execution
-                    .try_service_standalone_module_sync_rpc(&sync_request)
-                    .map_err(map_javascript_error)?
-                {
-                    sync_rpc_log.push(format!("responded {} (module)", sync_request.id));
-                    continue;
-                }
-                let pyodide_dist_path =
-                    resolved_pyodide_dist_path(&context.pyodide_dist_path, &request.cwd);
-                if let Some(action) =
-                    python_javascript_sync_rpc_action(&pyodide_dist_path, &sync_request)?
-                {
-                    respond_python_javascript_sync_rpc_action(
-                        &mut prewarm_execution,
-                        sync_request.id,
-                        action,
-                    )?;
-                    sync_rpc_log.push(format!("responded {}", sync_request.id));
-                    continue;
-                }
-                if let Some((code, message)) = python_javascript_sync_rpc_error(&sync_request) {
-                    prewarm_execution
-                        .respond_sync_rpc_error(sync_request.id, code, message)
-                        .map_err(map_javascript_error)?;
-                    sync_rpc_log.push(format!("errored {}", sync_request.id));
-                    continue;
-                }
-                if sync_request.method == "_pythonRpc" {
-                    let request = parse_python_bridge_sync_rpc_request(&sync_request)?;
-                    return Err(PythonExecutionError::WarmupFailed {
-                        exit_code: 1,
-                        stderr: format!(
-                            "unexpected Python prewarm VFS RPC request {} {} {:?}",
-                            request.id, request.path, request.method
-                        ),
-                    });
-                }
-                return Err(PythonExecutionError::WarmupFailed {
-                    exit_code: 1,
-                    stderr: format!(
-                        "unexpected Python prewarm JavaScript sync RPC request {} {} {:?}",
-                        sync_request.id, sync_request.method, sync_request.args
-                    ),
-                });
-            }
-            None => {
-                return Err(PythonExecutionError::WarmupFailed {
-                    exit_code: 1,
-                    stderr: format!(
-                        "python prewarm timed out after {}s\nstdout:\n{}\nstderr:\n{}\nsync rpc:\n{}",
-                        PYTHON_PREWARM_TIMEOUT.as_secs(),
-                        String::from_utf8_lossy(&stdout),
-                        String::from_utf8_lossy(&stderr),
-                        sync_rpc_log.join("\n"),
-                    ),
-                });
-            }
+            .map_err(map_javascript_error)?;
+        if let Some(result) = handle_python_prewarm_event(
+            &mut prewarm_execution,
+            context,
+            request,
+            event,
+            &mut output,
+        )? {
+            break result;
+        }
+    };
+    let duration_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    if result.exit_code != 0 {
+        return Err(PythonExecutionError::WarmupFailed {
+            exit_code: result.exit_code,
+            stderr: String::from_utf8_lossy(&result.stderr).into_owned(),
+        });
+    }
+
+    if marker_exists {
+        return Ok(warmup_metrics_line(
+            debug_enabled,
+            false,
+            "cached",
+            0.0,
+            import_cache,
+            context,
+            request,
+        ));
+    }
+
+    fs::write(&marker_path, marker_contents).map_err(PythonExecutionError::PrepareWarmPath)?;
+    Ok(warmup_metrics_line(
+        debug_enabled,
+        true,
+        "executed",
+        duration_ms,
+        import_cache,
+        context,
+        request,
+    ))
+}
+
+async fn prewarm_python_path_async(
+    import_cache: &NodeImportCache,
+    javascript_engine: &mut JavascriptExecutionEngine,
+    javascript_context_id: &str,
+    context: &PythonContext,
+    request: &StartPythonExecutionRequest,
+    frozen_time_ms: u128,
+    runtime: &RuntimeContext,
+) -> Result<Option<Vec<u8>>, PythonExecutionError> {
+    let debug_enabled = python_warmup_metrics_enabled(request);
+    let marker_contents = warmup_marker_contents(import_cache, context, request);
+    let marker_path = warmup_marker_path(
+        import_cache.prewarm_marker_dir(),
+        "python-runner-prewarm",
+        PYTHON_WARMUP_MARKER_VERSION,
+        &marker_contents,
+    );
+    let marker_exists = marker_path.exists();
+
+    let started = Instant::now();
+    let mut prewarm_execution = start_python_javascript_execution(
+        javascript_engine,
+        runtime,
+        import_cache,
+        javascript_context_id,
+        context,
+        request,
+        PythonJavascriptExecutionOptions {
+            frozen_time_ms,
+            prewarm_only: true,
+            warmup_metrics: None,
+            defer_execute: false,
+        },
+    )?;
+    let mut output = PythonPrewarmOutput::default();
+    let result = loop {
+        let event = prewarm_execution
+            .poll_event(PYTHON_PREWARM_TIMEOUT)
+            .await
+            .map_err(map_javascript_error)?;
+        if let Some(result) = handle_python_prewarm_event(
+            &mut prewarm_execution,
+            context,
+            request,
+            event,
+            &mut output,
+        )? {
+            break result;
         }
     };
     let duration_ms = started.elapsed().as_secs_f64() * 1000.0;
@@ -2163,13 +2639,31 @@ fn warmup_metrics_line(
 #[cfg(test)]
 mod tests {
     use super::{
-        python_managed_path_kind, CreatePythonContextRequest, PythonExecutionEngine,
-        PythonManagedPathKind, PYODIDE_CACHE_GUEST_ROOT, PYODIDE_GUEST_ROOT,
+        clear_pending_vfs_rpc, python_managed_path_kind, python_runner_javascript_limits,
+        python_wait_remaining, CreatePythonContextRequest, PendingVfsRpc, PendingVfsRpcResolution,
+        PendingVfsRpcState, PythonExecutionEngine, PythonExecutionLimits, PythonManagedPathKind,
+        PYODIDE_CACHE_GUEST_ROOT, PYODIDE_GUEST_ROOT,
     };
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
     use tempfile::tempdir;
+
+    #[test]
+    fn python_runner_forwards_vm_reactor_limits_to_javascript() {
+        let limits = PythonExecutionLimits {
+            reactor_work_quantum: Some(23),
+            bridge_call_timeout_ms: Some(54_321),
+            ..PythonExecutionLimits::default()
+        };
+        let javascript = python_runner_javascript_limits(&limits, 256);
+
+        assert_eq!(javascript.v8_heap_limit_mb, Some(256));
+        assert_eq!(javascript.reactor_work_quantum, Some(23));
+        assert_eq!(javascript.bridge_call_timeout_ms, Some(54_321));
+    }
 
     #[test]
     fn dispose_context_reclaims_python_and_nested_javascript_metadata() {
@@ -2194,6 +2688,41 @@ mod tests {
             ),
             baseline
         );
+    }
+
+    #[test]
+    fn idle_wait_uses_readiness_instead_of_turn_polling() {
+        let started = Instant::now();
+        assert_eq!(python_wait_remaining(None, started), None);
+
+        let remaining = python_wait_remaining(Some(Duration::from_secs(1)), started)
+            .expect("finite wait keeps one deadline");
+        assert!(remaining > Duration::from_millis(900));
+        assert!(remaining <= Duration::from_secs(1));
+    }
+
+    #[test]
+    fn stale_python_vfs_completion_has_no_pending_waiter() {
+        let pending = Arc::new(Mutex::new(None));
+
+        assert_eq!(
+            clear_pending_vfs_rpc(&pending, 41).expect("inspect pending request"),
+            PendingVfsRpcResolution::Missing
+        );
+    }
+
+    #[test]
+    fn timed_out_python_vfs_completion_is_consumed_as_stale() {
+        let pending = Arc::new(Mutex::new(Some(PendingVfsRpc {
+            state: PendingVfsRpcState::TimedOut(42),
+            timeout_abort: None,
+        })));
+
+        assert_eq!(
+            clear_pending_vfs_rpc(&pending, 42).expect("clear timed-out request"),
+            PendingVfsRpcResolution::TimedOut
+        );
+        assert!(pending.lock().expect("pending request lock").is_none());
     }
 
     #[test]

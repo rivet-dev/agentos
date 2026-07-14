@@ -1,9 +1,9 @@
+import { fromGeneratedExtEnvelope, type LiveExtEnvelope } from "./ext.js";
 import {
 	fromGeneratedRootFilesystemEntry,
 	type LiveRootFilesystemEntry,
 	type LiveRootFilesystemEntryEncoding,
 } from "./filesystem.js";
-import { fromGeneratedExtEnvelope, type LiveExtEnvelope } from "./ext.js";
 import type * as protocol from "./generated-protocol.js";
 import { bigIntToSafeNumber } from "./numbers.js";
 import {
@@ -240,6 +240,19 @@ export type LiveResponsePayload =
 			type: "rejected";
 			code: string;
 			message: string;
+			limit_name: string | null;
+			configured_limit: number | null;
+			current_usage: number | null;
+			requested: number | null;
+			unit: string | null;
+			scope: string | null;
+			vm_id: string | null;
+			session_generation: number | null;
+			capability_id: number | null;
+			operation: string | null;
+			configuration_path: string | null;
+			retryable: boolean | null;
+			errno: string | null;
 	  }
 	| {
 			type: "ext_result";
@@ -277,23 +290,19 @@ export function fromGeneratedResponsePayload(
 				type: "vm_configured",
 				applied_mounts: payload.val.appliedMounts,
 				applied_software: payload.val.appliedSoftware,
-				projected_commands: payload.val.projectedCommands.map(
-					(command) => ({
-						name: command.name,
-						guest_path: command.guestPath,
-					}),
-				),
+				projected_commands: payload.val.projectedCommands.map((command) => ({
+					name: command.name,
+					guest_path: command.guestPath,
+				})),
 				agents: payload.val.agents.map(fromGeneratedAgentosProjectedAgent),
 			};
 		case "PackageLinkedResponse":
 			return {
 				type: "package_linked",
-				projected_commands: payload.val.projectedCommands.map(
-					(command) => ({
-						name: command.name,
-						guest_path: command.guestPath,
-					}),
-				),
+				projected_commands: payload.val.projectedCommands.map((command) => ({
+					name: command.name,
+					guest_path: command.guestPath,
+				})),
 				agents: payload.val.agents.map(fromGeneratedAgentosProjectedAgent),
 			};
 		case "ProvidedCommandsResponse":
@@ -453,7 +462,10 @@ export function fromGeneratedResponsePayload(
 				queue_snapshots: payload.val.queueSnapshots.map((queue) => ({
 					name: queue.name,
 					category: queue.category,
-					depth: bigIntToSafeNumber(queue.depth, "resource_snapshot.queue.depth"),
+					depth: bigIntToSafeNumber(
+						queue.depth,
+						"resource_snapshot.queue.depth",
+					),
 					high_water: bigIntToSafeNumber(
 						queue.highWater,
 						"resource_snapshot.queue.high_water",
@@ -543,6 +555,46 @@ export function fromGeneratedResponsePayload(
 				type: "rejected",
 				code: payload.val.code,
 				message: payload.val.message,
+				limit_name: payload.val.limitName,
+				configured_limit:
+					payload.val.configuredLimit === null
+						? null
+						: bigIntToSafeNumber(
+								payload.val.configuredLimit,
+								"rejected.configured_limit",
+							),
+				current_usage:
+					payload.val.currentUsage === null
+						? null
+						: bigIntToSafeNumber(
+								payload.val.currentUsage,
+								"rejected.current_usage",
+							),
+				requested:
+					payload.val.requested === null
+						? null
+						: bigIntToSafeNumber(payload.val.requested, "rejected.requested"),
+				unit: payload.val.unit,
+				scope: payload.val.scope,
+				vm_id: payload.val.vmId,
+				session_generation:
+					payload.val.sessionGeneration === null
+						? null
+						: bigIntToSafeNumber(
+								payload.val.sessionGeneration,
+								"rejected.session_generation",
+							),
+				capability_id:
+					payload.val.capabilityId === null
+						? null
+						: bigIntToSafeNumber(
+								payload.val.capabilityId,
+								"rejected.capability_id",
+							),
+				operation: payload.val.operation,
+				configuration_path: payload.val.configurationPath,
+				retryable: payload.val.retryable,
+				errno: payload.val.errno,
 			};
 		case "VmFetchResponse":
 			return {

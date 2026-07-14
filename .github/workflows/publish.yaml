@@ -311,8 +311,12 @@ jobs:
         env:
           AGENTOS_SKIP_NATIVE_META_BUILD: "1"
         run: |
+          # Browser support is retained in-tree but intentionally disabled until
+          # it has a reactor/security design independent of the native sidecar.
           npx turbo build \
             --filter='!@rivet-dev/agentos-plugin' \
+            --filter='!@rivet-dev/agentos-browser' \
+            --filter='!@rivet-dev/agentos-runtime-browser' \
             --filter='!@rivet-dev/agentos-playground' \
             --filter='!./examples/*' \
             --filter='!./examples/quickstart/*'

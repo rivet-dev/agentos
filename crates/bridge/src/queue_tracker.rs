@@ -21,8 +21,11 @@
 //!   registered queue for debugging or a status endpoint.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, RecvError, SendError, SyncSender, TrySendError};
+use std::sync::mpsc::{
+    Receiver, RecvError, RecvTimeoutError, SendError, SyncSender, TryRecvError, TrySendError,
+};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::time::Duration;
 
 /// Fill fraction (percent of capacity) at or above which a queue is considered
 /// "near full" and emits a warning. Edge-triggered so a steadily-full queue logs
@@ -537,6 +540,18 @@ impl<T> TrackedReceiver<T> {
         self.gauge.record_dequeue();
         Ok(value)
     }
+
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> {
+        let value = self.inner.recv_timeout(timeout)?;
+        self.gauge.record_dequeue();
+        Ok(value)
+    }
+
+    pub fn try_recv(&self) -> Result<T, TryRecvError> {
+        let value = self.inner.try_recv()?;
+        self.gauge.record_dequeue();
+        Ok(value)
+    }
 }
 
 /// Create a bounded `std::sync::mpsc` sync-channel whose depth is tracked by a
@@ -560,6 +575,11 @@ pub fn tracked_sync_channel<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn warning_handler_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn gauge_tracks_depth_and_high_water() {
@@ -647,6 +667,9 @@ mod tests {
 
     #[test]
     fn warning_sink_fires_once_per_crossing() {
+        let _handler_guard = warning_handler_test_lock()
+            .lock()
+            .expect("warning-handler test lock");
         let captured: Arc<Mutex<Vec<LimitWarning>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&captured);
         // The handler is global; filter by our unique name so a gauge from a
@@ -676,6 +699,9 @@ mod tests {
 
     #[test]
     fn exhausted_warning_sink_fires_immediately() {
+        let _handler_guard = warning_handler_test_lock()
+            .lock()
+            .expect("warning-handler test lock");
         let captured: Arc<Mutex<Vec<LimitWarning>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&captured);
         set_limit_warning_handler(Box::new(move |warning| {

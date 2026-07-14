@@ -3,19 +3,25 @@
 const http = require("http");
 const fetch = require("node-fetch");
 
+function sendJson(res, value) {
+	const body = JSON.stringify(value);
+	res.writeHead(200, {
+		"Content-Type": "application/json",
+		"Content-Length": Buffer.byteLength(body),
+	});
+	res.end(body);
+}
+
 const server = http.createServer((req, res) => {
 	if (req.method === "GET" && req.url === "/hello") {
-		res.writeHead(200, { "Content-Type": "application/json" });
-		res.end(JSON.stringify({ message: "hello" }));
+		sendJson(res, { message: "hello" });
 	} else if (req.method === "GET" && req.url === "/users/42") {
-		res.writeHead(200, { "Content-Type": "application/json" });
-		res.end(JSON.stringify({ id: "42", name: "test-user" }));
+		sendJson(res, { id: "42", name: "test-user" });
 	} else if (req.method === "POST" && req.url === "/data") {
 		let body = "";
 		req.on("data", (chunk) => (body += chunk));
 		req.on("end", () => {
-			res.writeHead(200, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ method: "POST", received: JSON.parse(body) }));
+			sendJson(res, { method: "POST", received: JSON.parse(body) });
 		});
 	} else {
 		res.writeHead(404);

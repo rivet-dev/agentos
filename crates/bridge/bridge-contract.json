@@ -231,6 +231,7 @@
 				"_networkHttp2SessionGoawayRaw",
 				"_networkHttp2SessionCloseRaw",
 				"_networkHttp2SessionDestroyRaw",
+				"_networkHttp2ServerCloseRaw",
 				"_networkHttp2ServerPollRaw",
 				"_networkHttp2SessionPollRaw",
 				"_networkHttp2StreamRespondRaw",
@@ -253,10 +254,9 @@
 				"_netSocketConnectRaw",
 				"_netSocketPollRaw",
 				"_netSocketReadRaw",
+				"_netSocketSetReadInterestRaw",
 				"_netSocketSetNoDelayRaw",
 				"_netSocketSetKeepAliveRaw",
-				"_netSocketWriteRaw",
-				"_netSocketEndRaw",
 				"_netSocketDestroyRaw",
 				"_netSocketUpgradeTlsRaw",
 				"_netSocketGetTlsClientHelloRaw",
@@ -272,8 +272,12 @@
 				"_dgramSocketBindRaw",
 				"_dgramSocketRecvRaw",
 				"_dgramSocketSendRaw",
+				"_dgramSocketConnectRaw",
+				"_dgramSocketDisconnectRaw",
+				"_dgramSocketRemoteAddressRaw",
 				"_dgramSocketCloseRaw",
 				"_dgramSocketAddressRaw",
+				"_dgramSocketSetOptionRaw",
 				"_dgramSocketSetBufferSizeRaw",
 				"_dgramSocketGetBufferSizeRaw",
 				"_sqliteConstantsRaw",
@@ -298,6 +302,20 @@
 				"_kernelIsattyRaw",
 				"_kernelTtySizeRaw",
 				"_ptySetRawMode"
+			]
+		},
+		{
+			"convention": "async",
+			"argumentTypes": [
+				"...args: unknown[]"
+			],
+			"returnType": "unknown",
+			"names": [
+				"_kernelPoll",
+				"_netSocketWriteRaw",
+				"_netSocketEndRaw",
+				"_netSocketUpgradeTlsAsyncRaw",
+				"_netServerCloseRaw"
 			]
 		},
 		{
@@ -372,14 +390,46 @@
 				"_networkHttpServerListenRaw",
 				"_networkHttpServerCloseRaw",
 				"_networkHttpServerWaitRaw",
-				"_networkHttp2ServerCloseRaw",
 				"_networkHttp2ServerWaitRaw",
 				"_networkHttp2SessionWaitRaw",
-				"_netSocketWaitConnectRaw",
-				"_netServerCloseRaw"
+				"_netSocketWaitConnectRaw"
 			]
 		}
 	],
+	"responseMaxBytes": {
+		"_log": 4096,
+		"_error": 4096,
+		"_benchNoop": 65536,
+		"_benchNetTcpMetricsResetRaw": 65536,
+		"_benchNetTcpMetricsSnapshotRaw": 65536,
+		"_loadPolyfill": 4194304,
+		"_resolveModule": 65536,
+		"_resolveModuleSync": 65536,
+		"_loadFile": 16777216,
+		"_loadFileSync": 16777216,
+		"_moduleFormat": 4096,
+		"_batchResolveModules": 16777216,
+		"_fsReadFile": 16777216,
+		"_fsReadFileBinary": 16777216,
+		"_fsReadFileAsync": 16777216,
+		"_fsReadFileBinaryAsync": 16777216,
+		"_fsReadDir": 4194304,
+		"_fsReadDirAsync": 4194304,
+		"_childProcessPoll": 1048576,
+		"_childProcessSpawnSync": 16777216,
+		"_netSocketReadRaw": 524288,
+		"_dgramSocketRecvRaw": 131072,
+		"_sqliteDatabaseExecRaw": 16777216,
+		"_sqliteDatabaseQueryRaw": 16777216,
+		"_sqliteStatementGetRaw": 16777216,
+		"_sqliteStatementAllRaw": 16777216,
+		"_dynamicImport": 16777216,
+		"_scheduleTimer": 4096,
+		"_pythonRpc": 16777216,
+		"_pythonStdinRead": 1048576,
+		"_kernelStdinReadRaw": 1048576,
+		"_kernelStdinRead": 1048576
+	},
 	"dispatch": {
 		"_batchResolveModules": {
 			"method": "__batch_resolve_modules",
@@ -529,8 +579,16 @@
 			"method": "dgram.close",
 			"translateArgs": false
 		},
+		"_dgramSocketConnectRaw": {
+			"method": "dgram.connect",
+			"translateArgs": false
+		},
 		"_dgramSocketCreateRaw": {
 			"method": "dgram.createSocket",
+			"translateArgs": false
+		},
+		"_dgramSocketDisconnectRaw": {
+			"method": "dgram.disconnect",
 			"translateArgs": false
 		},
 		"_dgramSocketGetBufferSizeRaw": {
@@ -541,12 +599,20 @@
 			"method": "dgram.poll",
 			"translateArgs": false
 		},
+		"_dgramSocketRemoteAddressRaw": {
+			"method": "dgram.remoteAddress",
+			"translateArgs": false
+		},
 		"_dgramSocketSendRaw": {
 			"method": "dgram.send",
 			"translateArgs": false
 		},
 		"_dgramSocketSetBufferSizeRaw": {
 			"method": "dgram.setBufferSize",
+			"translateArgs": false
+		},
+		"_dgramSocketSetOptionRaw": {
+			"method": "dgram.setOption",
 			"translateArgs": false
 		},
 		"_error": {
@@ -725,6 +791,10 @@
 			"method": "__kernel_poll",
 			"translateArgs": false
 		},
+		"_kernelPoll": {
+			"method": "__kernel_poll",
+			"translateArgs": false
+		},
 		"_kernelStdinRead": {
 			"method": "__kernel_stdin_read",
 			"translateArgs": false
@@ -817,6 +887,10 @@
 			"method": "net.socket_read",
 			"translateArgs": false
 		},
+		"_netSocketSetReadInterestRaw": {
+			"method": "net.socket_set_read_interest",
+			"translateArgs": false
+		},
 		"_netSocketSetKeepAliveRaw": {
 			"method": "net.socket_set_keep_alive",
 			"translateArgs": false
@@ -830,6 +904,10 @@
 			"translateArgs": false
 		},
 		"_netSocketUpgradeTlsRaw": {
+			"method": "net.socket_upgrade_tls",
+			"translateArgs": false
+		},
+		"_netSocketUpgradeTlsAsyncRaw": {
 			"method": "net.socket_upgrade_tls",
 			"translateArgs": false
 		},

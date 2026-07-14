@@ -501,6 +501,7 @@ fn legacy_limits_config(
             metadata,
             "limits.js_runtime.event_payload_limit_bytes",
         ),
+        max_timers: legacy_u64(metadata, "limits.js_runtime.max_timers"),
         v8_ipc_max_frame_bytes: legacy_u64(metadata, "limits.js_runtime.v8_ipc_max_frame_bytes"),
     };
     let python = agentos_vm_config::PythonLimitsConfig {
@@ -533,8 +534,12 @@ fn legacy_limits_config(
     };
 
     let config = agentos_vm_config::VmLimitsConfig {
+        reactor: None,
         resources: legacy_has_resource_limits(&resources).then_some(resources),
         http: http.max_fetch_response_bytes.is_some().then_some(http),
+        udp: None,
+        tls: None,
+        http2: None,
         tools: legacy_has_tool_limits(&tools).then_some(tools),
         plugins: legacy_has_plugin_limits(&plugins).then_some(plugins),
         acp: legacy_has_acp_limits(&acp).then_some(acp),
@@ -620,6 +625,7 @@ fn legacy_has_js_runtime_limits(config: &agentos_vm_config::JsRuntimeLimitsConfi
         || config.captured_output_limit_bytes.is_some()
         || config.stdin_buffer_limit_bytes.is_some()
         || config.event_payload_limit_bytes.is_some()
+        || config.max_timers.is_some()
         || config.v8_ipc_max_frame_bytes.is_some()
 }
 
@@ -679,7 +685,7 @@ impl crate::generated_protocol::v1::OwnershipScope {
 }
 
 pub const PROTOCOL_NAME: &str = "agentos-native-sidecar";
-pub const PROTOCOL_VERSION: u16 = 7;
+pub const PROTOCOL_VERSION: u16 = 8;
 // 16 MiB: large enough to carry a trusted-client CreateVm config that inlines an
 // entire base-filesystem snapshot, while still bounding a single frame.
 pub const DEFAULT_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
@@ -952,7 +958,8 @@ pub fn request_frame_to_compat(
         crate::protocol::ProtocolFrame::Response(_)
         | crate::protocol::ProtocolFrame::Event(_)
         | crate::protocol::ProtocolFrame::SidecarRequest(_)
-        | crate::protocol::ProtocolFrame::SidecarResponse(_) => {
+        | crate::protocol::ProtocolFrame::SidecarResponse(_)
+        | crate::protocol::ProtocolFrame::Control(_) => {
             Err(ProtocolCodecError::DeserializeFailure(String::from(
                 "wire request frame converted to non-request compatibility frame",
             )))
@@ -980,7 +987,8 @@ pub fn request_payload_to_compat(
         crate::protocol::ProtocolFrame::Response(_)
         | crate::protocol::ProtocolFrame::Event(_)
         | crate::protocol::ProtocolFrame::SidecarRequest(_)
-        | crate::protocol::ProtocolFrame::SidecarResponse(_) => {
+        | crate::protocol::ProtocolFrame::SidecarResponse(_)
+        | crate::protocol::ProtocolFrame::Control(_) => {
             Err(ProtocolCodecError::DeserializeFailure(String::from(
                 "wire request payload converted to non-request compatibility frame",
             )))
@@ -999,7 +1007,8 @@ pub fn response_payload_from_compat(
         ProtocolFrame::RequestFrame(_)
         | ProtocolFrame::EventFrame(_)
         | ProtocolFrame::SidecarRequestFrame(_)
-        | ProtocolFrame::SidecarResponseFrame(_) => Err(ProtocolCodecError::SerializeFailure(
+        | ProtocolFrame::SidecarResponseFrame(_)
+        | ProtocolFrame::ControlFrame(_) => Err(ProtocolCodecError::SerializeFailure(
             String::from("compatibility response payload converted to non-response wire frame"),
         )),
     }
@@ -1015,7 +1024,8 @@ pub fn event_frame_from_compat(
         ProtocolFrame::RequestFrame(_)
         | ProtocolFrame::ResponseFrame(_)
         | ProtocolFrame::SidecarRequestFrame(_)
-        | ProtocolFrame::SidecarResponseFrame(_) => Err(ProtocolCodecError::SerializeFailure(
+        | ProtocolFrame::SidecarResponseFrame(_)
+        | ProtocolFrame::ControlFrame(_) => Err(ProtocolCodecError::SerializeFailure(
             String::from("compatibility event converted to non-event wire frame"),
         )),
     }
@@ -1029,7 +1039,8 @@ pub fn event_frame_to_compat(
         crate::protocol::ProtocolFrame::Request(_)
         | crate::protocol::ProtocolFrame::Response(_)
         | crate::protocol::ProtocolFrame::SidecarRequest(_)
-        | crate::protocol::ProtocolFrame::SidecarResponse(_) => {
+        | crate::protocol::ProtocolFrame::SidecarResponse(_)
+        | crate::protocol::ProtocolFrame::Control(_) => {
             Err(ProtocolCodecError::DeserializeFailure(String::from(
                 "wire event converted to non-event compatibility frame",
             )))
@@ -1047,7 +1058,8 @@ pub fn sidecar_request_frame_from_compat(
         ProtocolFrame::RequestFrame(_)
         | ProtocolFrame::ResponseFrame(_)
         | ProtocolFrame::EventFrame(_)
-        | ProtocolFrame::SidecarResponseFrame(_) => {
+        | ProtocolFrame::SidecarResponseFrame(_)
+        | ProtocolFrame::ControlFrame(_) => {
             Err(ProtocolCodecError::SerializeFailure(String::from(
                 "compatibility sidecar request converted to non-sidecar-request wire frame",
             )))
@@ -1071,7 +1083,8 @@ pub fn sidecar_request_payload_to_compat(
         crate::protocol::ProtocolFrame::Request(_)
         | crate::protocol::ProtocolFrame::Response(_)
         | crate::protocol::ProtocolFrame::Event(_)
-        | crate::protocol::ProtocolFrame::SidecarResponse(_) => {
+        | crate::protocol::ProtocolFrame::SidecarResponse(_)
+        | crate::protocol::ProtocolFrame::Control(_) => {
             Err(ProtocolCodecError::DeserializeFailure(String::from(
                 "wire sidecar request payload converted to non-sidecar-request compatibility frame",
             )))
@@ -1089,7 +1102,8 @@ pub fn sidecar_response_frame_to_compat(
         crate::protocol::ProtocolFrame::Request(_)
         | crate::protocol::ProtocolFrame::Response(_)
         | crate::protocol::ProtocolFrame::Event(_)
-        | crate::protocol::ProtocolFrame::SidecarRequest(_) => {
+        | crate::protocol::ProtocolFrame::SidecarRequest(_)
+        | crate::protocol::ProtocolFrame::Control(_) => {
             Err(ProtocolCodecError::DeserializeFailure(String::from(
                 "wire sidecar response converted to non-sidecar-response compatibility frame",
             )))
@@ -1107,7 +1121,8 @@ pub fn sidecar_response_frame_from_compat(
         ProtocolFrame::RequestFrame(_)
         | ProtocolFrame::ResponseFrame(_)
         | ProtocolFrame::EventFrame(_)
-        | ProtocolFrame::SidecarRequestFrame(_) => {
+        | ProtocolFrame::SidecarRequestFrame(_)
+        | ProtocolFrame::ControlFrame(_) => {
             Err(ProtocolCodecError::SerializeFailure(String::from(
                 "compatibility sidecar response converted to non-sidecar-response wire frame",
             )))
@@ -1125,7 +1140,8 @@ pub fn dispatch_result_from_compat(
         ProtocolFrame::RequestFrame(_)
         | ProtocolFrame::EventFrame(_)
         | ProtocolFrame::SidecarRequestFrame(_)
-        | ProtocolFrame::SidecarResponseFrame(_) => {
+        | ProtocolFrame::SidecarResponseFrame(_)
+        | ProtocolFrame::ControlFrame(_) => {
             return Err(ProtocolCodecError::SerializeFailure(String::from(
                 "compatibility dispatch response converted to non-response wire frame",
             )));
@@ -1143,11 +1159,10 @@ pub fn dispatch_result_from_compat(
                 ProtocolFrame::RequestFrame(_)
                 | ProtocolFrame::ResponseFrame(_)
                 | ProtocolFrame::SidecarRequestFrame(_)
-                | ProtocolFrame::SidecarResponseFrame(_) => {
-                    Err(ProtocolCodecError::SerializeFailure(String::from(
-                        "compatibility dispatch event converted to non-event wire frame",
-                    )))
-                }
+                | ProtocolFrame::SidecarResponseFrame(_)
+                | ProtocolFrame::ControlFrame(_) => Err(ProtocolCodecError::SerializeFailure(
+                    String::from("compatibility dispatch event converted to non-event wire frame"),
+                )),
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1174,6 +1189,7 @@ fn validate_frame(frame: &ProtocolFrame) -> Result<(), ProtocolCodecError> {
             validate_schema(&frame.schema)?;
             validate_request_id(frame.request_id)
         }
+        ProtocolFrame::ControlFrame(frame) => validate_schema(&frame.schema),
     }
 }
 

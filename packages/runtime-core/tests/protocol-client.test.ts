@@ -1,16 +1,17 @@
-import { PassThrough } from "node:stream";
+import { Duplex, PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import type { FrameTransport } from "../src/frame-stream.js";
 import { encodeLengthPrefixedPayload } from "../src/framing.js";
+import { SidecarProtocolClient } from "../src/protocol-client.js";
 import {
 	encodeProtocolFramePayload,
+	type LiveEventFrame,
 	type LiveProtocolFrame,
 	type LiveResponseFrame,
-	type LiveEventFrame,
 	type LiveSidecarRequestFrame,
 } from "../src/protocol-frames.js";
-import { SidecarProtocolClient } from "../src/protocol-client.js";
 import { SIDECAR_PROTOCOL_SCHEMA } from "../src/protocol-schema.js";
+import { SidecarRejectedError } from "../src/sidecar-errors.js";
 
 const ownership = {
 	scope: "connection" as const,
@@ -20,14 +21,34 @@ const ownership = {
 function createClient() {
 	const stdin = new PassThrough();
 	const stdout = new PassThrough();
+	const control = new TestControlStream();
 	const client = new SidecarProtocolClient({
 		stdin,
 		stdout,
+		control,
 		eventBufferCapacity: 8,
 		payloadCodec: "json",
 		stderrText: () => "stderr",
 	});
-	return { stdin, stdout, client };
+	return { stdin, stdout, control, client };
+}
+
+class TestControlStream extends Duplex {
+	readonly written = new PassThrough();
+
+	_read(): void {}
+
+	_write(
+		chunk: Buffer | string,
+		encoding: BufferEncoding,
+		callback: (error?: Error | null) => void,
+	): void {
+		this.written.write(chunk, encoding, callback);
+	}
+
+	receive(bytes: Uint8Array): void {
+		this.push(bytes);
+	}
 }
 
 class MemoryFrameTransport
@@ -39,13 +60,17 @@ class MemoryFrameTransport
 {
 	readonly writes: LiveProtocolFrame[] = [];
 	private readonly frameListeners = new Set<
-		(frame: LiveResponseFrame | LiveEventFrame | LiveSidecarRequestFrame) => void
+		(
+			frame: LiveResponseFrame | LiveEventFrame | LiveSidecarRequestFrame,
+		) => void
 	>();
 	private readonly errorListeners = new Set<(error: Error) => void>();
 	private readonly endListeners = new Set<() => void>();
 
 	onFrame(
-		handler: (frame: LiveResponseFrame | LiveEventFrame | LiveSidecarRequestFrame) => void,
+		handler: (
+			frame: LiveResponseFrame | LiveEventFrame | LiveSidecarRequestFrame,
+		) => void,
 	): () => void {
 		this.frameListeners.add(handler);
 		return () => {
@@ -71,7 +96,9 @@ class MemoryFrameTransport
 		this.writes.push(frame);
 	}
 
-	emitFrame(frame: LiveResponseFrame | LiveEventFrame | LiveSidecarRequestFrame): void {
+	emitFrame(
+		frame: LiveResponseFrame | LiveEventFrame | LiveSidecarRequestFrame,
+	): void {
 		for (const listener of this.frameListeners) {
 			listener(frame);
 		}
@@ -95,15 +122,76 @@ function readWrittenFrame(stdin: PassThrough): Promise<unknown> {
 	});
 }
 
-function writeIncomingFrame(stdout: PassThrough, frame: LiveProtocolFrame): void {
+function writeIncomingFrame(
+	stdout: PassThrough,
+	frame: LiveProtocolFrame,
+): void {
 	stdout.write(
 		encodeLengthPrefixedPayload(encodeProtocolFramePayload(frame, "json")),
 	);
 }
 
+function writeIncomingControlFrame(
+	control: TestControlStream,
+	frame: LiveProtocolFrame,
+): void {
+	control.receive(
+		encodeLengthPrefixedPayload(encodeProtocolFramePayload(frame, "json")),
+	);
+}
+
 describe("sidecar protocol client", () => {
+	it("preserves structured resource-limit rejection metadata", async () => {
+		const frameTransport = new MemoryFrameTransport();
+		const client = new SidecarProtocolClient({
+			frameTransport,
+			eventBufferCapacity: 2,
+			payloadCodec: "json",
+		});
+		const response = client.sendRequest({
+			ownership,
+			payload: { type: "create_layer" },
+		});
+		await expect.poll(() => frameTransport.writes.length).toBe(1);
+		frameTransport.emitFrame({
+			frame_type: "response",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			request_id: 1,
+			ownership,
+			payload: {
+				type: "rejected",
+				code: "ERR_AGENTOS_RESOURCE_LIMIT",
+				message: "handle command bytes exceeded",
+				limit_name: "handleCommandBytes",
+				configured_limit: 4096,
+				current_usage: 3072,
+				requested: 2048,
+				unit: "bytes",
+				scope: "vm",
+				vm_id: "vm-1",
+				session_generation: 3,
+				capability_id: 11,
+				operation: "socket.write",
+				configuration_path: "limits.reactor.maxHandleCommandBytes",
+				retryable: true,
+				errno: "EAGAIN",
+			},
+		});
+
+		const error = await response.catch((cause: unknown) => cause);
+		expect(error).toBeInstanceOf(SidecarRejectedError);
+		expect((error as SidecarRejectedError).detail).toMatchObject({
+			limit_name: "handleCommandBytes",
+			configured_limit: 4096,
+			configuration_path: "limits.reactor.maxHandleCommandBytes",
+			retryable: true,
+			errno: "EAGAIN",
+		});
+		client.dispose();
+	});
+
 	it("sends host request frames and correlates responses", async () => {
-		const { stdin, stdout, client } = createClient();
+		const { stdin, control, client } = createClient();
 		const written = readWrittenFrame(stdin);
 
 		const response = client.sendRequest({
@@ -117,7 +205,7 @@ describe("sidecar protocol client", () => {
 			payload: { type: "create_layer" },
 		});
 
-		writeIncomingFrame(stdout, {
+		writeIncomingControlFrame(control, {
 			frame_type: "response",
 			schema: SIDECAR_PROTOCOL_SCHEMA,
 			request_id: 1,
@@ -318,15 +406,15 @@ describe("sidecar protocol client", () => {
 	});
 
 	it("writes sidecar request handler responses", async () => {
-		const { stdin, stdout, client } = createClient();
-		const written = readWrittenFrame(stdin);
+		const { control, client } = createClient();
+		const written = readWrittenFrame(control.written);
 		client.setSidecarRequestHandler(async () => ({
 			type: "host_callback_result",
 			invocation_id: "invocation",
 			result: { ok: true },
 		}));
 
-		writeIncomingFrame(stdout, {
+		writeIncomingControlFrame(control, {
 			frame_type: "sidecar_request",
 			schema: SIDECAR_PROTOCOL_SCHEMA,
 			request_id: 7,
@@ -349,6 +437,106 @@ describe("sidecar protocol client", () => {
 				result: { ok: true },
 			},
 		});
+		client.dispose();
+	});
+
+	it("writes typed shutdown control on fd3 without touching fd0", async () => {
+		const { stdin, control, client } = createClient();
+		const written = readWrittenFrame(control.written);
+
+		await client.shutdown("test complete");
+
+		await expect(written).resolves.toEqual({
+			frame_type: "control",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			payload: { type: "shutdown", reason: "test complete" },
+		});
+		expect(stdin.readableLength).toBe(0);
+		client.dispose();
+	});
+
+	it("rejects response frames arriving on the ordinary event lane", async () => {
+		const { stdout, client } = createClient();
+		const response = client.sendRequest({
+			ownership,
+			payload: { type: "create_layer" },
+		});
+
+		writeIncomingFrame(stdout, {
+			frame_type: "response",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			request_id: 1,
+			ownership,
+			payload: { type: "layer_created", layer_id: "wrong-lane" },
+		});
+
+		await expect(response).rejects.toThrow(
+			"sidecar frame response is not valid on the ordinary protocol lane",
+		);
+		client.dispose();
+	});
+
+	it("rejects application events arriving on the control lane", async () => {
+		const { stdout, control, client } = createClient();
+		let deliveredEvents = 0;
+		client.onEvent(() => {
+			deliveredEvents += 1;
+		});
+		const event = client.waitForEvent({ type: "vm_lifecycle" });
+
+		writeIncomingControlFrame(control, {
+			frame_type: "event",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			ownership,
+			payload: { type: "vm_lifecycle", state: "ready" },
+		});
+
+		await expect(event).rejects.toThrow(
+			"sidecar frame event is not valid on the control protocol lane",
+		);
+		writeIncomingFrame(stdout, {
+			frame_type: "event",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			ownership,
+			payload: { type: "vm_lifecycle", state: "ready" },
+		});
+		expect(deliveredEvents).toBe(0);
+		client.dispose();
+	});
+
+	it("accepts control-lane heartbeats without exposing them", async () => {
+		const { stdout, control, client } = createClient();
+		const event = client.waitForEvent({ type: "vm_lifecycle" });
+
+		writeIncomingControlFrame(control, {
+			frame_type: "event",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			ownership,
+			payload: { type: "structured", name: "heartbeat", detail: {} },
+		});
+		writeIncomingFrame(stdout, {
+			frame_type: "event",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			ownership,
+			payload: { type: "vm_lifecycle", state: "ready" },
+		});
+
+		await expect(event).resolves.toMatchObject({
+			payload: { type: "vm_lifecycle", state: "ready" },
+		});
+		client.dispose();
+	});
+
+	it("treats control lane EOF as terminal for ordinary requests", async () => {
+		const { control, client } = createClient();
+		const response = client.sendRequest({
+			ownership,
+			payload: { type: "create_layer" },
+		});
+
+		control.push(null);
+
+		await expect(response).rejects.toThrow("sidecar protocol stream ended");
 		client.dispose();
 	});
 });

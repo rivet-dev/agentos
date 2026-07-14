@@ -250,6 +250,7 @@ fn create_snapshot_inner_in_process(
     }
 
     init_v8_platform();
+    crate::isolate::prepare_current_thread();
 
     crate::isolate::with_isolate_lifecycle_lock(|| {
         let mut isolate = v8::Isolate::snapshot_creator(Some(external_refs()), None);
@@ -577,6 +578,7 @@ where
     B: std::ops::Deref<Target = [u8]> + std::borrow::Borrow<[u8]> + 'static,
 {
     init_v8_platform();
+    crate::isolate::prepare_current_thread();
 
     // `None` applies the bounded-by-default cap (`DEFAULT_HEAP_LIMIT_MB`), same as
     // the fresh-isolate path — a snapshot-restored isolate is never unbounded.
@@ -767,6 +769,7 @@ pub fn snapshot_cache_key(bridge_code: &str, userland_code: Option<&str>) -> Sna
 }
 
 #[doc(hidden)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn run_snapshot_consolidated_checks() {
     fn eval(isolate: &mut v8::OwnedIsolate, code: &str) -> String {
         let scope = &mut v8::HandleScope::new(isolate);
@@ -1037,10 +1040,10 @@ pub fn run_snapshot_consolidated_checks() {
         // Create minimal BridgeCallContext (sync call will fail but we
         // test that the FunctionTemplate dispatches without crash)
         let (event_tx, _event_rx) =
-            crossbeam_channel::unbounded::<crate::session::RuntimeEventEnvelope>();
-        let (_cmd_tx, _cmd_rx) = crossbeam_channel::unbounded::<crate::session::SessionCommand>();
+            crossbeam_channel::bounded::<crate::session::RuntimeEventEnvelope>(16);
+        let (_cmd_tx, _cmd_rx) = crossbeam_channel::bounded::<crate::session::SessionCommand>(1);
         let call_id_router: crate::host_call::CallIdRouter =
-            Arc::new(Mutex::new(std::collections::HashMap::new()));
+            Arc::new(crate::host_call::BridgeCallRegistry::with_default_limit());
 
         let receiver = crate::host_call::ReaderBridgeResponseReceiver::new(Box::new(
             std::io::Cursor::new(Vec::<u8>::new()),
@@ -1424,9 +1427,9 @@ pub fn run_snapshot_consolidated_checks() {
 
         // Create BridgeCallContext (sync calls will fail but we verify dispatch)
         let (event_tx, _event_rx) =
-            crossbeam_channel::unbounded::<crate::session::RuntimeEventEnvelope>();
+            crossbeam_channel::bounded::<crate::session::RuntimeEventEnvelope>(16);
         let call_id_router: crate::host_call::CallIdRouter =
-            Arc::new(Mutex::new(std::collections::HashMap::new()));
+            Arc::new(crate::host_call::BridgeCallRegistry::with_default_limit());
         let receiver = crate::host_call::ReaderBridgeResponseReceiver::new(Box::new(
             std::io::Cursor::new(Vec::<u8>::new()),
         ));

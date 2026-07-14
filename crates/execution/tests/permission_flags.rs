@@ -1,10 +1,12 @@
 #![cfg(unix)]
 
+mod support;
+
 use agentos_execution::{
     CreateJavascriptContextRequest, CreatePythonContextRequest, CreateWasmContextRequest,
-    JavascriptExecutionEngine, PythonExecutionEngine, PythonExecutionEvent, PythonExecutionLimits,
-    StartJavascriptExecutionRequest, StartPythonExecutionRequest, StartWasmExecutionRequest,
-    WasmExecutionEngine, WasmExecutionLimits, WasmPermissionTier,
+    PythonExecutionEvent, PythonExecutionLimits, StartJavascriptExecutionRequest,
+    StartPythonExecutionRequest, StartWasmExecutionRequest, WasmExecutionLimits,
+    WasmPermissionTier,
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -88,7 +90,7 @@ fn node_permission_flags_allow_workers_for_internal_javascript_loader_runtime() 
     fs::create_dir_all(&js_cwd).expect("create js cwd");
     fs::write(js_cwd.join("entry.mjs"), "console.log('ignored');").expect("write js entry");
 
-    let mut js_engine = JavascriptExecutionEngine::default();
+    let mut js_engine = support::javascript_engine();
     let context = js_engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -152,7 +154,7 @@ fn node_permission_flags_only_propagate_nested_child_capabilities_when_parent_ex
     fs::create_dir_all(&js_cwd).expect("create js cwd");
     fs::write(js_cwd.join("entry.mjs"), "console.log('ignored');").expect("write js entry");
 
-    let mut js_engine = JavascriptExecutionEngine::default();
+    let mut js_engine = support::javascript_engine();
     let context = js_engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -244,7 +246,7 @@ export async function loadPyodide() {
         fs::write(pyodide_dir.join(asset), []).expect("write pyodide runtime fixture");
     }
 
-    let mut python_engine = PythonExecutionEngine::default();
+    let mut python_engine = support::python_engine();
     let context = python_engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
@@ -328,7 +330,7 @@ fn wasm_execution_applies_runtime_memory_and_fuel_limits_inside_v8_runtime() {
     fs::create_dir_all(&wasm_cwd).expect("create wasm cwd");
     fs::write(wasm_cwd.join("guest.wasm"), wasm_noop_module()).expect("write wasm module");
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -366,7 +368,7 @@ fn wasm_permission_tiers_do_not_fall_back_to_host_node_binary() {
     write_fake_node_binary(&fake_node_path, &log_path);
     let _node_binary = EnvVarGuard::set("AGENTOS_NODE_BINARY", &fake_node_path);
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let tiers = [
         WasmPermissionTier::Isolated,
         WasmPermissionTier::ReadOnly,

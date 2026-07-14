@@ -3,7 +3,9 @@
 const http = require("http");
 const axios = require("axios");
 
-const client = axios.create({ adapter: "fetch" });
+// Require Axios's Node transport so this fixture exercises the guest http shim,
+// socket lifecycle, and reactor backpressure rather than global fetch/Undici.
+const client = axios.create({ adapter: "http" });
 
 const server = http.createServer((req, res) => {
 	if (req.method === "GET" && req.url === "/hello") {

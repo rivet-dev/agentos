@@ -20,15 +20,16 @@ const root = process.cwd();
 // or generated.
 const found = execSync(
 	[
-		"find . -name package.json",
-		'-not -path "*/node_modules/*"',
-		'-not -path "*/dist/*"',
-		'-not -path "*/.astro/*"',
-		'-not -path "*/.cache/*"',
-		'-not -path "*/.turbo/*"',
-		'-not -path "*/vendor/*"',
-		'-not -path "./packages/runtime-core/tests/integration/projects/*"',
-		'-not -path "./crates/execution/assets/undici-shims/*"',
+		"find .",
+		"\\(",
+		"-type d",
+		"\\(",
+		'-name node_modules -o -name dist -o -name .astro -o -name .cache -o -name .turbo -o -name vendor -o -name target -o -name .git -o -name .jj',
+		'-o -path "./packages/runtime-core/tests/integration/projects"',
+		'-o -path "./crates/execution/assets/undici-shims"',
+		"\\)",
+		"\\)",
+		"-prune -o -name package.json -print",
 	].join(" "),
 	{ encoding: "utf8", cwd: root },
 )

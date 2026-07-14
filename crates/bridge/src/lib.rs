@@ -543,6 +543,8 @@ pub struct BridgeContract {
     pub version: u32,
     pub groups: Vec<BridgeContractGroup>,
     #[serde(default)]
+    pub response_max_bytes: BTreeMap<String, usize>,
+    #[serde(default)]
     pub dispatch: BTreeMap<String, BridgeDispatchTarget>,
 }
 
@@ -618,6 +620,27 @@ mod tests {
     }
 
     #[test]
+    fn bridge_contract_response_declarations_are_bounded_declared_methods() {
+        let contract = bridge_contract();
+        let names: std::collections::BTreeSet<_> = contract
+            .groups
+            .iter()
+            .flat_map(|group| group.names.iter())
+            .collect();
+        for (name, maximum) in &contract.response_max_bytes {
+            assert!(
+                names.contains(name),
+                "bridge response declaration {name} must name a declared method"
+            );
+            assert!(*maximum > 0, "bridge response declaration must be nonzero");
+            assert!(
+                *maximum <= 64 * 1024 * 1024,
+                "bridge response declaration must fit the V8 frame cap"
+            );
+        }
+    }
+
+    #[test]
     fn bridge_contract_lists_each_convention() {
         let contract = bridge_contract();
         for convention in [
@@ -675,6 +698,17 @@ mod tests {
             "\"module\" | \"commonjs\" | \"json\" | null"
         );
         assert_eq!(format_group.names, vec!["_moduleFormat"]);
+    }
+
+    #[test]
+    fn bridge_contract_keeps_listener_close_off_the_synchronous_lane() {
+        let close_group = bridge_contract()
+            .groups
+            .iter()
+            .find(|group| group.names.iter().any(|name| name == "_netServerCloseRaw"))
+            .expect("listener close bridge group");
+
+        assert_eq!(close_group.convention, BridgeCallConvention::Async);
     }
 
     #[test]

@@ -1,12 +1,30 @@
+use std::os::fd::{FromRawFd, OwnedFd};
+
+use nix::fcntl::{fcntl, FcntlArg};
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+const CONTROL_FD: i32 = 3;
 
 fn main() {
     init_tracing();
     tracing::info!(target: "agentos_native_sidecar::perf", "sidecar process started");
-    if let Err(error) =
-        agentos_native_sidecar::stdio::run_with_extensions(agentos_sidecar_wrapper::extensions())
-    {
+    if let Err(error) = fcntl(CONTROL_FD, FcntlArg::F_GETFD) {
+        tracing::error!(
+            ?error,
+            fd = CONTROL_FD,
+            "missing inherited sidecar response/control descriptor"
+        );
+        std::process::exit(1);
+    }
+    // SAFETY: the process launch contract reserves fd 3 for the inherited
+    // response/control socket and transfers its sole ownership to this binary.
+    // The fcntl probe above establishes that the descriptor is open.
+    let control_fd = unsafe { OwnedFd::from_raw_fd(CONTROL_FD) };
+    if let Err(error) = agentos_native_sidecar::stdio::run_with_extensions(
+        agentos_sidecar_wrapper::extensions(),
+        control_fd,
+    ) {
         tracing::error!(?error, "agentos-sidecar startup failed");
         std::process::exit(1);
     }

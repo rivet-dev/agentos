@@ -2,6 +2,7 @@ use crate::{
     CreateJavascriptContextRequest, JavascriptExecutionEngine, JavascriptExecutionError,
     StartJavascriptExecutionRequest,
 };
+use agentos_runtime::RuntimeContext;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::env;
@@ -1480,6 +1481,7 @@ impl From<JavascriptExecutionError> for JavascriptBenchmarkError {
 }
 
 pub fn run_javascript_benchmarks(
+    runtime: &RuntimeContext,
     config: &JavascriptBenchmarkConfig,
 ) -> Result<JavascriptBenchmarkReport, JavascriptBenchmarkError> {
     validate_benchmark_config(config)?;
@@ -1487,12 +1489,12 @@ pub fn run_javascript_benchmarks(
     let repo_root = workspace_root()?;
     let host = benchmark_host()?;
     let workspace = BenchmarkWorkspace::create(&repo_root)?;
-    let transport_rtt = measure_transport_rtt(&workspace, config)?;
+    let transport_rtt = measure_transport_rtt(runtime, &workspace, config)?;
 
     let mut scenarios = Vec::new();
 
     for scenario in benchmark_scenarios() {
-        scenarios.push(run_scenario(&workspace, config, scenario)?);
+        scenarios.push(run_scenario(runtime, &workspace, config, scenario)?);
     }
 
     Ok(JavascriptBenchmarkReport {
@@ -1965,6 +1967,7 @@ impl StoredBenchmarkScenarioReport {
 }
 
 pub fn run_javascript_benchmarks_with_recovery(
+    runtime: &RuntimeContext,
     config: &JavascriptBenchmarkConfig,
     baseline_path: Option<&Path>,
 ) -> Result<JavascriptBenchmarkRunOutput, JavascriptBenchmarkError> {
@@ -1979,8 +1982,8 @@ pub fn run_javascript_benchmarks_with_recovery(
         &repo_root,
         &host,
         &artifact_dir,
-        || measure_transport_rtt(&workspace, config),
-        |scenario| run_scenario(&workspace, config, scenario),
+        || measure_transport_rtt(runtime, &workspace, config),
+        |scenario| run_scenario(runtime, &workspace, config, scenario),
     )?;
     let comparison = baseline_path
         .map(|path| report.compare_to_baseline_path(path))
@@ -2341,6 +2344,7 @@ fn benchmark_scenarios() -> [ScenarioDefinition; 21] {
 }
 
 fn run_scenario(
+    runtime: &RuntimeContext,
     workspace: &BenchmarkWorkspace,
     config: &JavascriptBenchmarkConfig,
     scenario: ScenarioDefinition,
@@ -2353,13 +2357,14 @@ fn run_scenario(
         EngineReuseStrategy::FreshPerSample => None,
         EngineReuseStrategy::SharedAcrossScenario
         | EngineReuseStrategy::SharedContextAcrossScenario => {
-            Some(JavascriptExecutionEngine::default())
+            Some(JavascriptExecutionEngine::new(runtime.clone()))
         }
     };
     let mut shared_context = None;
 
     if scenario.compile_cache == CompileCacheStrategy::Primed {
         run_sample(
+            runtime,
             workspace,
             &scenario,
             Some(compile_cache_root.clone()),
@@ -2370,6 +2375,7 @@ fn run_scenario(
 
     for _ in 0..config.warmup_iterations {
         run_sample(
+            runtime,
             workspace,
             &scenario,
             compile_cache_root_for_strategy(scenario.compile_cache, &compile_cache_root),
@@ -2391,6 +2397,7 @@ fn run_scenario(
 
     for _ in 0..config.iterations {
         let sample = run_sample(
+            runtime,
             workspace,
             &scenario,
             compile_cache_root_for_strategy(scenario.compile_cache, &compile_cache_root),
@@ -2475,6 +2482,7 @@ fn compile_cache_root_for_strategy(strategy: CompileCacheStrategy, root: &Path) 
 }
 
 fn run_sample(
+    runtime: &RuntimeContext,
     workspace: &BenchmarkWorkspace,
     scenario: &ScenarioDefinition,
     compile_cache_root: Option<PathBuf>,
@@ -2483,6 +2491,7 @@ fn run_sample(
 ) -> Result<SampleMeasurement, JavascriptBenchmarkError> {
     match scenario.runtime {
         ScenarioRuntime::NativeExecution => run_native_sample(
+            runtime,
             workspace,
             scenario,
             compile_cache_root,
@@ -2494,13 +2503,14 @@ fn run_sample(
 }
 
 fn run_native_sample(
+    runtime: &RuntimeContext,
     workspace: &BenchmarkWorkspace,
     scenario: &ScenarioDefinition,
     compile_cache_root: Option<PathBuf>,
     shared_engine: Option<&mut JavascriptExecutionEngine>,
     shared_context: &mut Option<crate::JavascriptContext>,
 ) -> Result<SampleMeasurement, JavascriptBenchmarkError> {
-    let mut fresh_engine = JavascriptExecutionEngine::default();
+    let mut fresh_engine = JavascriptExecutionEngine::new(runtime.clone());
     let engine = shared_engine.unwrap_or(&mut fresh_engine);
     let context_started_at = Instant::now();
     let (context, context_setup_ms) = match scenario.engine_reuse {
@@ -2647,10 +2657,11 @@ fn scenario_env(
 }
 
 fn measure_transport_rtt(
+    runtime: &RuntimeContext,
     workspace: &BenchmarkWorkspace,
     config: &JavascriptBenchmarkConfig,
 ) -> Result<Vec<BenchmarkTransportRttReport>, JavascriptBenchmarkError> {
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = JavascriptExecutionEngine::new(runtime.clone());
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-transport"),
         bootstrap_module: None,

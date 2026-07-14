@@ -404,8 +404,8 @@ impl AgentOs {
             .context("guest filesystem call failed")?;
         match response {
             wire::ResponsePayload::GuestFilesystemResultResponse(result) => Ok(result),
-            wire::ResponsePayload::RejectedResponse(wire::RejectedResponse { code, message }) => {
-                Err(ClientError::Kernel { code, message }.into())
+            wire::ResponsePayload::RejectedResponse(rejected) => {
+                Err(ClientError::from_rejection(rejected).into())
             }
             other => Err(anyhow::anyhow!(
                 "unexpected response to guest filesystem call: {other:?}"
@@ -779,8 +779,8 @@ impl AgentOs {
             .context("snapshot root filesystem failed")?;
         let snapshot = match response {
             wire::ResponsePayload::RootFilesystemSnapshotResponse(snapshot) => snapshot,
-            wire::ResponsePayload::RejectedResponse(wire::RejectedResponse { code, message }) => {
-                return Err(ClientError::Kernel { code, message }.into());
+            wire::ResponsePayload::RejectedResponse(rejected) => {
+                return Err(ClientError::from_rejection(rejected).into());
             }
             other => {
                 return Err(anyhow::anyhow!(

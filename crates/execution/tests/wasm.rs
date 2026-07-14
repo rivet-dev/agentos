@@ -1,3 +1,5 @@
+mod support;
+
 use agentos_execution::wasm::{
     NativeBinaryFormat, WASM_MAX_FUEL_ENV, WASM_MAX_MEMORY_BYTES_ENV, WASM_MAX_STACK_BYTES_ENV,
 };
@@ -220,6 +222,8 @@ fn wasm_limits_from_env(env: &BTreeMap<String, String>) -> WasmExecutionLimits {
         max_sockets: None,
         max_blocking_read_ms: None,
         runner_heap_limit_mb: None,
+        reactor_work_quantum: None,
+        bridge_call_timeout_ms: None,
     }
 }
 
@@ -925,7 +929,7 @@ fn encode_varuint(mut value: u64) -> Vec<u8> {
 }
 
 fn wasm_contexts_preserve_vm_and_module_configuration() {
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -946,7 +950,7 @@ fn wasm_execution_stays_inside_v8_runtime_without_host_node_launches() {
 
     write_fixture(&temp.path().join("guest.wasm"), &wasm_stdout_module());
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -978,7 +982,7 @@ fn wasm_execution_runs_guest_module_through_v8() {
     let temp = tempdir().expect("create temp dir");
     write_fixture(&temp.path().join("guest.wasm"), &wasm_stdout_module());
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1050,7 +1054,7 @@ fn wasm_spawn_action_decoder_enforces_typed_limits_with_e2big() {
     for (name, module, limits, expected_stderr) in cases {
         let temp = tempdir().expect("create temp dir");
         write_fixture(&temp.path().join("guest.wasm"), &module);
-        let mut engine = WasmExecutionEngine::default();
+        let mut engine = support::wasm_engine();
         let context = engine.create_context(CreateWasmContextRequest {
             vm_id: String::from("vm-wasm"),
             module_path: Some(String::from("./guest.wasm")),
@@ -1086,7 +1090,7 @@ fn wasm_getrlimit_nofile_reports_typed_fd_limit() {
         &temp.path().join("guest.wasm"),
         &wasm_getrlimit_nofile_module(37),
     );
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1119,7 +1123,7 @@ fn wasm_snapshot_runner_block_round_trips_twice() {
         &wasm_stdout_chunks_module(&["hello\n"]),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1184,7 +1188,7 @@ fn wasm_snapshot_runner_warm_worker_pool_hits() {
         &wasm_stdout_chunks_module(&["pool-hit\n"]),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1221,7 +1225,7 @@ fn wasm_snapshot_runner_warm_worker_pool_disabled_falls_back() {
         &wasm_stdout_chunks_module(&["pool-disabled\n"]),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1249,7 +1253,7 @@ fn wasm_snapshot_runner_warm_hint_mismatch_falls_back() {
         &wasm_stdout_chunks_module(&["mismatch\n"]),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1292,7 +1296,7 @@ fn wasm_snapshot_runner_off_fallback_matches_inline() {
         &wasm_stdout_chunks_module(&["hello\n"]),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1323,7 +1327,7 @@ fn wasm_module_bytes_cache_invalidates_when_file_changes() {
     let module_path = temp.path().join("guest.wasm");
     write_fixture(&module_path, &wasm_stdout_chunks_module(&["first\n"]));
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1366,7 +1370,7 @@ fn wasm_execution_supports_fd_fdstat_set_flags() {
         &wasm_fdstat_set_flags_module(),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1399,7 +1403,7 @@ fn wasm_execution_ignores_guest_overrides_for_internal_node_env() {
     write_fixture(&temp.path().join("guest.wasm"), &wasm_stdout_module());
     write_fixture(&temp.path().join("evil.wasm"), &wasm_override_module());
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1432,7 +1436,7 @@ fn wasm_execution_freezes_wasi_clock_time() {
     let temp = tempdir().expect("create temp dir");
     write_fixture(&temp.path().join("guest.wasm"), &wasm_timing_module());
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1453,7 +1457,7 @@ fn wasm_execution_freezes_wasi_clock_time() {
 }
 
 fn wasm_execution_rejects_vm_mismatch() {
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1483,7 +1487,7 @@ fn wasm_execution_streams_exit_event() {
     let temp = tempdir().expect("create temp dir");
     write_fixture(&temp.path().join("guest.wasm"), &wasm_stdout_module());
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1537,7 +1541,7 @@ fn wasm_execution_can_route_stdio_through_kernel_sync_rpc() {
     let temp = tempdir().expect("create temp dir");
     write_fixture(&temp.path().join("guest.wasm"), &wasm_stdout_module());
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1594,7 +1598,7 @@ fn wasm_execution_reads_streaming_stdin_via_kernel_bridge() {
     let temp = tempdir().expect("create temp dir");
     write_fixture(&temp.path().join("guest.wasm"), &wasm_stdin_echo_module());
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1636,7 +1640,7 @@ fn wasm_execution_poll_oneoff_uses_kernel_poll_for_multiple_fds() {
     let temp = tempdir().expect("create temp dir");
     write_fixture(&temp.path().join("guest.wasm"), &wasm_poll_oneoff_module());
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1702,7 +1706,7 @@ fn wasm_execution_emits_signal_state_from_control_channel() {
     let temp = tempdir().expect("create temp dir");
     write_fixture(&temp.path().join("guest.wasm"), &wasm_signal_state_module());
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1773,7 +1777,7 @@ fn wasm_execution_preserves_stdout_when_signal_state_marker_shares_stdout_chunk(
         &wasm_signal_state_line_stdout_module(),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1840,7 +1844,7 @@ fn wasm_execution_reassembles_split_signal_state_marker_across_stdout_chunks() {
         &wasm_split_signal_state_line_stdout_module(),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1907,7 +1911,7 @@ fn wasm_read_only_tier_blocks_workspace_writes_but_read_write_allows_them() {
     let temp = tempdir().expect("create temp dir");
     write_fixture(&temp.path().join("guest.wasm"), &wasm_write_file_module());
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let read_only_context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1963,7 +1967,7 @@ fn wasm_read_only_tier_returns_rofs_for_write_open() {
         &wasm_expect_write_open_errno_module(69),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -1996,7 +2000,7 @@ fn wasm_execution_rejects_path_open_escape_outside_preopen() {
         &wasm_escape_preopen_module(),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -2026,7 +2030,7 @@ fn wasm_execution_allows_path_open_for_nested_paths_inside_preopen() {
         &wasm_write_nested_file_module(),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -2056,7 +2060,7 @@ fn wasm_full_tier_exposes_host_process_imports_but_read_write_does_not() {
     let temp = tempdir().expect("create temp dir");
     write_fixture(&temp.path().join("guest.wasm"), &wasm_signal_state_module());
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let full_context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -2103,7 +2107,7 @@ fn wasm_execution_reuses_shared_warmup_path_across_contexts() {
     let temp = tempdir().expect("create temp dir");
     write_fixture(&temp.path().join("guest.wasm"), &wasm_stdout_module());
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let first_context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -2164,7 +2168,7 @@ fn wasm_execution_rewarms_when_symlink_target_changes_with_same_size_module() {
     write_fixture(&temp.path().join("evil.wasm"), &wasm_override_module());
     symlink("./good.wasm", &stable_link).expect("create initial wasm symlink");
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let first_context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -2216,7 +2220,7 @@ fn wasm_warmup_metrics_encode_emoji_module_paths_as_json() {
     let module_name = "guest-😀.wasm";
     write_fixture(&temp.path().join(module_name), &wasm_stdout_module());
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(format!("./{module_name}")),
@@ -2248,7 +2252,7 @@ fn wasm_execution_times_out_when_fuel_budget_is_exhausted() {
         &wasm_infinite_loop_module(),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -2280,7 +2284,7 @@ fn wasm_execution_poll_path_times_out_when_fuel_budget_is_exhausted() {
         &wasm_infinite_loop_module(),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -2342,7 +2346,7 @@ fn wasm_execution_allows_prewarm_timeout_to_differ_from_execution_timeout() {
         &wasm_infinite_loop_module(),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -2374,7 +2378,7 @@ fn wasm_execution_rejects_modules_whose_memory_cap_exceeds_limit() {
         &wasm_memory_capped_module(),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -2412,7 +2416,7 @@ fn wasm_execution_enforces_runtime_memory_growth_limit_for_modules_without_decla
         &wasm_memory_grow_until_runtime_limit_module(),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -2445,7 +2449,7 @@ fn wasm_execution_rejects_modules_that_exceed_parser_file_size_cap() {
     file.set_len(256_u64 * 1024 * 1024 + 1)
         .expect("sparsely size oversize wasm file");
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -2487,7 +2491,7 @@ fn wasm_execution_rejects_modules_with_too_many_import_entries() {
         &raw_wasm_module(2, &import_section),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -2527,7 +2531,7 @@ fn wasm_execution_rejects_modules_with_too_many_memory_entries() {
         &raw_wasm_module(5, &encode_varuint(1_025)),
     );
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -2569,7 +2573,7 @@ fn wasm_execution_rejects_varuints_that_exceed_parser_iteration_cap() {
     bytes.push(0x00);
     write_fixture(&temp.path().join("guest.wasm"), &bytes);
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./guest.wasm")),
@@ -2635,7 +2639,7 @@ fi\n";
     permissions.set_mode(0o755);
     fs::set_permissions(&shim_path, permissions).expect("chmod shell-shim");
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(shim_path.to_string_lossy().into_owned()),
@@ -2700,7 +2704,7 @@ fn wasm_execution_rejects_random_non_wasm_bytes_with_typed_error() {
     let module_path = temp.path().join("not-really.wasm");
     fs::write(&module_path, b"hello world, definitely not wasm\n").expect("write non-wasm fixture");
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(String::from("./not-really.wasm")),
@@ -2765,7 +2769,7 @@ fn wasm_execution_rejects_native_binary_headers_with_explicit_error() {
         let module_path = temp.path().join(file_name);
         fs::write(&module_path, header).expect("write native-binary fixture");
 
-        let mut engine = WasmExecutionEngine::default();
+        let mut engine = support::wasm_engine();
         let context = engine.create_context(CreateWasmContextRequest {
             vm_id: String::from("vm-wasm"),
             module_path: Some(format!("./{file_name}")),
@@ -2861,7 +2865,7 @@ fn run_wasm_execution_with_watchdog(
         };
         write_fixture(&temp.path().join("guest.wasm"), &module_bytes);
 
-        let mut engine = WasmExecutionEngine::default();
+        let mut engine = support::wasm_engine();
         let context = engine.create_context(CreateWasmContextRequest {
             vm_id: String::from("vm-wasm"),
             module_path: Some(String::from("./guest.wasm")),
@@ -3018,7 +3022,7 @@ fn wasi_testsuite_subset_runs_on_native_shared_runner() {
         let temp = tempdir().expect("create temp dir");
         write_fixture(&temp.path().join("guest.wasm"), &wasm);
 
-        let mut engine = WasmExecutionEngine::default();
+        let mut engine = support::wasm_engine();
         let context = engine.create_context(CreateWasmContextRequest {
             vm_id: String::from("vm-wasm"),
             module_path: Some(String::from("./guest.wasm")),

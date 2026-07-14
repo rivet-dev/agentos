@@ -463,6 +463,9 @@ pub struct KernelVm<F> {
     terminated: bool,
 }
 
+// Cleanup spans every independently owned kernel resource table. Keeping the
+// tables explicit makes teardown ordering visible at the call sites.
+#[allow(clippy::too_many_arguments)]
 fn cleanup_process_resources(
     fd_tables: &Mutex<FdTableManager>,
     file_locks: &FileLockManager,
@@ -1749,6 +1752,14 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.processes.zombie_timer_count()
     }
 
+    pub fn reap_due_zombies(&self) {
+        self.processes.reap_due_zombies();
+    }
+
+    pub fn next_zombie_reap_deadline(&self) -> Option<std::time::Instant> {
+        self.processes.next_zombie_reap_deadline()
+    }
+
     pub fn spawn_process(
         &mut self,
         command: &str,
@@ -1916,6 +1927,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     /// plumbing descriptors that are stored in the process FD table as an
     /// implementation detail. Those descriptors are never part of the guest's
     /// Linux-visible FD set; all guest descriptors still obey FD_CLOEXEC.
+    #[allow(clippy::too_many_arguments)]
     pub fn exec_process_retaining_internal_fds(
         &mut self,
         requester_driver: &str,
@@ -2144,6 +2156,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn register_process(
         &mut self,
         driver_name: String,
@@ -2365,8 +2378,33 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         // PID 0 is reserved for description-owned sockets. Process cleanup
         // must not tear them down while another process or ancillary message
         // still retains the open file description.
-        let first_socket = self.sockets.allocate(0, spec).id();
-        let second_socket = self.sockets.allocate(0, spec).id();
+        let first_socket = match self.sockets.allocate(0, spec) {
+            Ok(socket) => socket.id(),
+            Err(error) => {
+                let mut tables = lock_or_recover(&self.fd_tables);
+                if let Some(table) = tables.get_mut(pid) {
+                    table.close(first_fd);
+                    table.close(second_fd);
+                }
+                return Err(error.into());
+            }
+        };
+        let second_socket = match self.sockets.allocate(0, spec) {
+            Ok(socket) => socket.id(),
+            Err(error) => {
+                if let Err(cleanup_error) = self.sockets.remove(first_socket) {
+                    eprintln!(
+                        "[agentos] failed to roll back first socketpair socket {first_socket}: {cleanup_error}"
+                    );
+                }
+                let mut tables = lock_or_recover(&self.fd_tables);
+                if let Some(table) = tables.get_mut(pid) {
+                    table.close(first_fd);
+                    table.close(second_fd);
+                }
+                return Err(error.into());
+            }
+        };
         if let Err(error) = self.sockets.connect_pair(first_socket, second_socket) {
             for socket_id in [first_socket, second_socket] {
                 if let Err(cleanup_error) = self.sockets.remove(socket_id) {
@@ -2639,6 +2677,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         Ok(written)
     }
 
+    // recvmsg(2) exposes independent buffer, rights, and flag controls; keep
+    // that syscall-shaped surface explicit for parity with the guest ABI.
+    #[allow(clippy::too_many_arguments)]
     pub fn fd_socket_recvmsg(
         &mut self,
         requester_driver: &str,
@@ -2821,9 +2862,24 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     ) -> KernelResult<SocketId> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
-        self.resources
-            .check_socket_allocation(&self.resource_snapshot())?;
-        Ok(self.sockets.allocate(pid, spec).id())
+        // Native sidecars admit socket/connection counts through the shared
+        // capability registry. Retain the legacy snapshot admission only for
+        // kernel consumers that have not injected that ledger (including the
+        // browser build).
+        if !self.sockets.has_resource_ledger() {
+            self.resources
+                .check_socket_allocation(&self.resource_snapshot())?;
+        }
+        Ok(self.sockets.allocate(pid, spec)?.id())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_socket_resource_ledger(
+        &mut self,
+        resources: Arc<agentos_runtime::accounting::ResourceLedger>,
+    ) -> KernelResult<()> {
+        self.sockets.set_resource_ledger(resources)?;
+        Ok(())
     }
 
     pub fn set_socket_readiness_sink<S>(&mut self, sink: Option<S>)
@@ -2969,13 +3025,15 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             )));
         }
 
-        let snapshot = self.resource_snapshot();
-        self.resources.check_socket_allocation(&snapshot)?;
-        self.resources.check_socket_state_transition(
-            &snapshot,
-            SocketState::Created,
-            SocketState::Connected,
-        )?;
+        if !self.sockets.has_resource_ledger() {
+            let snapshot = self.resource_snapshot();
+            self.resources.check_socket_allocation(&snapshot)?;
+            self.resources.check_socket_state_transition(
+                &snapshot,
+                SocketState::Created,
+                SocketState::Connected,
+            )?;
+        }
 
         let socket_id = self.sockets.accept(listener_socket_id)?.id();
         self.poll_notifier.notify();
@@ -3006,15 +3064,17 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         })?;
         self.assert_driver_owns(requester_driver, peer.owner_pid())?;
 
-        let mut snapshot = self.resource_snapshot();
-        for current_state in [existing.state(), peer.state()] {
-            self.resources.check_socket_state_transition(
-                &snapshot,
-                current_state,
-                SocketState::Connected,
-            )?;
-            if !current_state.counts_as_connection() {
-                snapshot.socket_connections = snapshot.socket_connections.saturating_add(1);
+        if !self.sockets.has_resource_ledger() {
+            let mut snapshot = self.resource_snapshot();
+            for current_state in [existing.state(), peer.state()] {
+                self.resources.check_socket_state_transition(
+                    &snapshot,
+                    current_state,
+                    SocketState::Connected,
+                )?;
+                if !current_state.counts_as_connection() {
+                    snapshot.socket_connections = snapshot.socket_connections.saturating_add(1);
+                }
             }
         }
 
@@ -3052,16 +3112,18 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 )
             })?;
 
-        let mut snapshot = self.resource_snapshot();
-        self.resources.check_socket_allocation(&snapshot)?;
-        for current_state in [existing.state(), SocketState::Created] {
-            self.resources.check_socket_state_transition(
-                &snapshot,
-                current_state,
-                SocketState::Connected,
-            )?;
-            if !current_state.counts_as_connection() {
-                snapshot.socket_connections = snapshot.socket_connections.saturating_add(1);
+        if !self.sockets.has_resource_ledger() {
+            let mut snapshot = self.resource_snapshot();
+            self.resources.check_socket_allocation(&snapshot)?;
+            for current_state in [existing.state(), SocketState::Created] {
+                self.resources.check_socket_state_transition(
+                    &snapshot,
+                    current_state,
+                    SocketState::Connected,
+                )?;
+                if !current_state.counts_as_connection() {
+                    snapshot.socket_connections = snapshot.socket_connections.saturating_add(1);
+                }
             }
         }
 
@@ -3114,16 +3176,18 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 )
             })?;
 
-        let mut snapshot = self.resource_snapshot();
-        self.resources.check_socket_allocation(&snapshot)?;
-        for current_state in [existing.state(), SocketState::Created] {
-            self.resources.check_socket_state_transition(
-                &snapshot,
-                current_state,
-                SocketState::Connected,
-            )?;
-            if !current_state.counts_as_connection() {
-                snapshot.socket_connections = snapshot.socket_connections.saturating_add(1);
+        if !self.sockets.has_resource_ledger() {
+            let mut snapshot = self.resource_snapshot();
+            self.resources.check_socket_allocation(&snapshot)?;
+            for current_state in [existing.state(), SocketState::Created] {
+                self.resources.check_socket_state_transition(
+                    &snapshot,
+                    current_state,
+                    SocketState::Connected,
+                )?;
+                if !current_state.counts_as_connection() {
+                    snapshot.socket_connections = snapshot.socket_connections.saturating_add(1);
+                }
             }
         }
 
@@ -3169,8 +3233,10 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
 
         self.sockets
             .check_send_to_bound_udp_socket(socket_id, target_address.clone())?;
-        self.resources
-            .check_socket_datagram_enqueue(&self.resource_snapshot(), data.len())?;
+        if !self.sockets.has_resource_ledger() {
+            self.resources
+                .check_socket_datagram_enqueue(&self.resource_snapshot(), data.len())?;
+        }
         let written = self
             .sockets
             .send_to_bound_udp_socket(socket_id, target_address, data)?;
@@ -3178,6 +3244,66 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             self.poll_notifier.notify();
         }
         Ok(written)
+    }
+
+    pub fn socket_connect_udp_loopback(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        socket_id: SocketId,
+        target_address: InetSocketAddress,
+    ) -> KernelResult<()> {
+        self.assert_not_terminated()?;
+        self.assert_driver_owns(requester_driver, pid)?;
+        let existing = self
+            .sockets
+            .get(socket_id)
+            .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
+        if existing.owner_pid() != pid {
+            return Err(KernelError::permission_denied(format!(
+                "process {pid} does not own socket {socket_id}"
+            )));
+        }
+        if existing.spec().socket_type != SocketType::Datagram
+            || existing.state() != SocketState::Bound
+            || existing.local_address().is_none()
+        {
+            return Err(KernelError::new(
+                "EINVAL",
+                format!("UDP socket {socket_id} must be bound before connect"),
+            ));
+        }
+        check_network_access(
+            &self.vm_id,
+            &self.permissions,
+            NetworkOperation::Http,
+            &format_tcp_resource(target_address.host(), target_address.port()),
+        )?;
+        self.check_loopback_port_allowed(existing.spec(), &target_address, "UDP loopback connect")?;
+        self.sockets
+            .connect_bound_udp_socket(socket_id, target_address)?;
+        Ok(())
+    }
+
+    pub fn socket_disconnect_udp(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        socket_id: SocketId,
+    ) -> KernelResult<()> {
+        self.assert_not_terminated()?;
+        self.assert_driver_owns(requester_driver, pid)?;
+        let existing = self
+            .sockets
+            .get(socket_id)
+            .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
+        if existing.owner_pid() != pid {
+            return Err(KernelError::permission_denied(format!(
+                "process {pid} does not own socket {socket_id}"
+            )));
+        }
+        self.sockets.disconnect_bound_udp_socket(socket_id)?;
+        Ok(())
     }
 
     fn check_loopback_port_allowed(
@@ -3222,6 +3348,32 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         }
 
         let result = self.sockets.recv_datagram(socket_id, max_bytes)?;
+        if result.is_some() {
+            self.poll_notifier.notify();
+        }
+        Ok(result)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn socket_recv_datagram_charged(
+        &mut self,
+        requester_driver: &str,
+        pid: u32,
+        socket_id: SocketId,
+        max_bytes: usize,
+    ) -> KernelResult<Option<crate::socket_table::ChargedReceivedDatagram>> {
+        self.assert_not_terminated()?;
+        self.assert_driver_owns(requester_driver, pid)?;
+        let existing = self
+            .sockets
+            .get(socket_id)
+            .ok_or_else(|| KernelError::new("ENOENT", format!("no such socket {socket_id}")))?;
+        if existing.owner_pid() != pid {
+            return Err(KernelError::permission_denied(format!(
+                "process {pid} does not own socket {socket_id}"
+            )));
+        }
+        let result = self.sockets.recv_datagram_charged(socket_id, max_bytes)?;
         if result.is_some() {
             self.poll_notifier.notify();
         }
@@ -3323,11 +3475,13 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             )));
         }
 
-        self.resources.check_socket_state_transition(
-            &self.resource_snapshot(),
-            existing.state(),
-            state,
-        )?;
+        if !self.sockets.has_resource_ledger() {
+            self.resources.check_socket_state_transition(
+                &self.resource_snapshot(),
+                existing.state(),
+                state,
+            )?;
+        }
         self.sockets.update_state(socket_id, state)?;
         self.poll_notifier.notify();
         Ok(())
@@ -3353,8 +3507,10 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         }
 
         self.sockets.check_write(socket_id)?;
-        self.resources
-            .check_socket_buffer_growth(&self.resource_snapshot(), data.len())?;
+        if !self.sockets.has_resource_ledger() {
+            self.resources
+                .check_socket_buffer_growth(&self.resource_snapshot(), data.len())?;
+        }
         let written = self.sockets.write(socket_id, data)?;
         if written > 0 {
             self.poll_notifier.notify();
@@ -4306,6 +4462,8 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         Ok(())
     }
 
+    // The explicit range and query fields mirror the guest fcntl lock shape.
+    #[allow(clippy::too_many_arguments)]
     pub fn fd_record_lock(
         &self,
         requester_driver: &str,
@@ -4884,13 +5042,11 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     }
 
     fn validate_fd_open_flags(&mut self, pid: u32, path: &str, flags: u32) -> KernelResult<()> {
-        if flags & O_DIRECTORY != 0 {
-            if flags & O_CREAT != 0 {
-                return Err(KernelError::new(
-                    "EINVAL",
-                    format!("O_DIRECTORY and O_CREAT cannot be combined for '{path}'"),
-                ));
-            }
+        if flags & O_DIRECTORY != 0 && flags & O_CREAT != 0 {
+            return Err(KernelError::new(
+                "EINVAL",
+                format!("O_DIRECTORY and O_CREAT cannot be combined for '{path}'"),
+            ));
         }
 
         if let Some(existing_fd) = parse_dev_fd_path(path)? {
@@ -4916,13 +5072,11 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                     format!("symbolic link not followed, open '{path}'"),
                 ));
             }
-            if flags & O_DIRECTORY != 0 {
-                if filetype != FILETYPE_DIRECTORY {
-                    return Err(KernelError::new(
-                        "ENOTDIR",
-                        format!("not a directory, open '{path}'"),
-                    ));
-                }
+            if flags & O_DIRECTORY != 0 && filetype != FILETYPE_DIRECTORY {
+                return Err(KernelError::new(
+                    "ENOTDIR",
+                    format!("not a directory, open '{path}'"),
+                ));
             }
             return Ok(());
         }
@@ -4949,7 +5103,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 }
                 Ok(_) => {}
                 Err(error) if error.code() == "ENOENT" && flags & O_CREAT != 0 => {}
-                Err(error) => return Err(error.into()),
+                Err(error) => return Err(error),
             }
         }
 
@@ -5170,6 +5324,13 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     }
 
     fn socket_pollout_has_resource_capacity(&self, socket: &SocketRecord) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.sockets.has_resource_ledger() {
+            return self.sockets.buffered_byte_capacity_available()
+                && (socket.spec().socket_type != SocketType::Datagram
+                    || self.sockets.datagram_capacity_available());
+        }
+
         let snapshot = self.resource_snapshot();
         if self
             .resources

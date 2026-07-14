@@ -103,7 +103,24 @@ Object.defineProperty(process, "stdin", {
 
 type SessionManagerLike = {
 	inMemory(cwd?: string): unknown;
+	continueRecent(cwd: string, sessionDir: string): unknown;
 };
+
+/**
+ * Use Pi's persistent session log only when the embedder explicitly supplies
+ * a directory. The default remains in-memory, while a restarted ACP adapter
+ * can resume the most recent JSONL session when PI_SESSION_DIR is configured.
+ */
+export function resolveSessionManager(
+	SessionManager: SessionManagerLike,
+	cwd: string,
+	env: Record<string, string | undefined> = process.env,
+): unknown {
+	const sessionDir = env.PI_SESSION_DIR?.trim();
+	return sessionDir
+		? SessionManager.continueRecent(cwd, sessionDir)
+		: SessionManager.inMemory(cwd);
+}
 
 type ModelLike = {
 	id: string;
@@ -240,6 +257,7 @@ type PiSdkRuntime = {
 		agentDir?: string;
 		settingsManager?: SettingsManagerInstanceLike;
 		appendSystemPrompt?: string;
+		appendSystemPromptOverride?: (base: string[]) => string[];
 		extensionFactories?: ExtensionFactoryLike[];
 		noExtensions?: boolean;
 	}) => MinimalResourceLoaderLike;
@@ -856,7 +874,12 @@ export class PiSdkAgent implements Agent {
 						agentDir,
 						noExtensions: true,
 						extensionFactories,
-						...(appendSystemPrompt ? { appendSystemPrompt } : {}),
+						// AgentOS passes the injected OS instructions as literal text. The
+						// upstream appendSystemPrompt option also accepts a file path and
+						// probes with existsSync(), so use the literal override hook here.
+						...(appendSystemPrompt
+							? { appendSystemPromptOverride: () => [appendSystemPrompt] }
+							: {}),
 					})
 				: new MinimalResourceLoader({
 						...(appendSystemPrompt ? { appendSystemPrompt } : {}),
@@ -873,7 +896,7 @@ export class PiSdkAgent implements Agent {
 		const { session } = await __trace.span("createAgentSession", () =>
 			createAgentSession({
 				cwd: params.cwd,
-				sessionManager: SessionManager.inMemory(params.cwd),
+				sessionManager: resolveSessionManager(SessionManager, params.cwd),
 				resourceLoader,
 				tools: this.wrapTools(
 					createCodingTools(params.cwd, {

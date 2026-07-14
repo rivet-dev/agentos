@@ -237,7 +237,7 @@ pub(crate) async fn handle_fs_call(
             symlink_entry(
                 host,
                 required_string(args, "target")?,
-                required_string(args, "path")?,
+                required_string(args, "linkPath")?,
             )
             .await?;
             Ok(None)

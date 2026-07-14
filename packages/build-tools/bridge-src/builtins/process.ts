@@ -120,7 +120,16 @@ var _signalNamesByNumber = Object.fromEntries(
 
 var _ignoredSelfSignals = /* @__PURE__ */ new Set(["SIGWINCH", "SIGCHLD", "SIGCONT", "SIGURG"]);
 
-var _trackedProcessSignalEvents = /* @__PURE__ */ new Set(["SIGHUP", "SIGINT", "SIGTERM", "SIGWINCH", "SIGCHLD"]);
+var _trackedProcessSignalEvents = /* @__PURE__ */ new Set([
+  "SIGHUP",
+  "SIGINT",
+  "SIGUSR1",
+  "SIGALRM",
+  "SIGTERM",
+  "SIGCHLD",
+  "SIGCONT",
+  "SIGWINCH"
+]);
 
 function _resolveSignal(signal) {
   if (signal === void 0 || signal === null) return 15;

@@ -193,7 +193,7 @@ function ensureLiveStdinStarted() {
         if (typeof _kernelStdinRead === "undefined") {
           break;
         }
-        const next = await _kernelStdinRead.apply(void 0, [65536, 100], {
+        const next = await _kernelStdinRead.apply(void 0, [65536, null], {
           result: { promise: true }
         });
         if (next?.done) {
@@ -224,7 +224,7 @@ function stdinDispatch(eventType, payload) {
   if (eventType !== "stdin" || getStdinEnded()) {
     return;
   }
-  let chunk;
+  let chunk: string;
   let binary = false;
   if (payload && typeof payload === "object" && typeof payload.dataBase64 === "string") {
     const bytes = import_buffer2.Buffer.from(payload.dataBase64, "base64");

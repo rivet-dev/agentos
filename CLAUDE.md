@@ -124,6 +124,48 @@ custom host-syscall imports. Treat that target as **native POSIX**;
   Linux-deviating behavior in the package, its wrapper, or its test — chase it
   down into whichever runtime layer owns it and make that layer match Linux.
 
+## JavaScript Networking Architecture
+
+- The migration target is Node.js's evented networking invariants:
+  sidecar-owned nonblocking I/O, readiness-driven bounded work, real `Duplex`
+  backpressure, active-handle liveness, and fair scheduling. Do not reproduce
+  Node's trust boundary by exposing descriptors to the guest.
+- New or migrated TCP, Unix, UDP, listener, TLS, and HTTP/2 code must use the
+  process's single Tokio runtime, shared by all VMs and subsystems with a fixed
+  worker count. Do not create subsystem- or VM-owned Tokio runtimes,
+  per-socket/per-session I/O threads, unbounded I/O queues, recurring I/O
+  polling timers, or one event per packet/chunk. Existing instances are
+  migration debt governed by the phase exit gates in the linked specification,
+  not patterns to preserve.
+- Guest V8/Node execution is not a Tokio task. Run synchronous, thread-affine,
+  untrusted guest execution on a separate bounded executor so it cannot block a
+  trusted sidecar runtime worker. Unavoidable blocking host work must use
+  bounded admission and fixed workers, not another Tokio runtime.
+- Keep V8's process-global platform topology explicit: one process-lifetime
+  owner and a fixed four-worker background pool. Do not pass zero to V8's
+  default-platform worker count, because that makes the thread census depend on
+  host CPU count.
+- New readiness paths must use coalesced level state: durable bounded sidecar
+  state, at most one queued wake per execution session, and application reads
+  stopped when `Readable.push()` returns false until `_read()` resumes them.
+- The bridge migration must route responses directly to their registered call
+  waiter and replace blocking session-command admission. Its completed state
+  never makes a synchronous call scan, consume, or defer unrelated session
+  events while waiting for its response.
+- Native process transport uses three strict physical lanes: fd 0 for host
+  `RequestFrame` ingress, stdout for non-heartbeat `EventFrame` egress, and the
+  required inherited full-duplex fd 3 for responses, sidecar requests,
+  heartbeats, callback results, and typed shutdown control. Never multiplex a
+  registered response or termination behind ordinary frames.
+- Signal delivery must use the bounded/coalesced session broker and must never
+  spawn an OS thread per delivered signal. Embedded V8, standalone WASM, and
+  Python must share sidecar reactor capabilities rather than own parallel
+  networking implementations. Browser runtime sources remain in-tree but are
+  disabled from default builds, CI, and publication until a separate design is
+  approved.
+- The architecture and migration contract are specified in
+  `docs/design/unified-sidecar-runtime.md`.
+
 ## Publishing
 
 - `scripts/publish` is the source of truth for npm/crates discovery, version

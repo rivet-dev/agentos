@@ -34,7 +34,6 @@ const SESSION_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 // dispatch, so this wait loop becomes the cooperative VM I/O pump. Keep it at
 // the same cadence as secure-exec's outer event pump so adapter fetches and
 // process output keep moving mid-turn.
-const ACP_JSON_RPC_POLL_INTERVAL: Duration = Duration::from_micros(250);
 const ACP_CANCEL_METHOD: &str = "session/cancel";
 /// Transcript-continuation preamble prepended (once) to the first prompt after a
 /// fallback resume. Lossy-but-universal floor: the agent is handed a *pointer* to
@@ -1807,14 +1806,23 @@ async fn send_json_rpc_request(
                     notifications,
                 });
             }
+            let stderr_tail: String = adapter_stderr
+                .chars()
+                .rev()
+                .take(4000)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
             return Err(SidecarError::InvalidState(format!(
-                "timed out waiting for ACP response id={response_id}; {cancel_status}"
+                "timed out waiting for ACP response id={response_id}; {cancel_status}; recent_activity={recent_activity:?}; adapter_stderr={stderr_tail:?}"
             )));
         }
         let remaining = deadline.saturating_duration_since(now);
-        let event = ctx
-            .poll_event_wire(remaining.min(ACP_JSON_RPC_POLL_INTERVAL))
-            .await?;
+        // `poll_event_wire` already waits on the execution event receiver. Use
+        // the real request deadline so output/exit wakes this task directly;
+        // a sub-millisecond timeout loop only burns runtime turns while idle.
+        let event = ctx.poll_event_wire(remaining).await?;
         let Some(event) = event else {
             continue;
         };
@@ -2204,11 +2212,7 @@ async fn wait_for_process_exit(
             return false;
         }
         let Ok(event) = ctx
-            .poll_event_wire(
-                deadline
-                    .saturating_duration_since(now)
-                    .min(Duration::from_millis(50)),
-            )
+            .poll_event_wire(deadline.saturating_duration_since(now))
             .await
         else {
             return false;
@@ -3047,6 +3051,7 @@ fn error_response(error: SidecarError) -> AcpResponse {
 
 fn error_code(error: &SidecarError) -> String {
     let code = match error {
+        SidecarError::ResourceLimit(_) => "resource_limit",
         SidecarError::InvalidState(_) => "invalid_state",
         SidecarError::ProtocolVersionMismatch(_) => "protocol_version_mismatch",
         SidecarError::BridgeVersionMismatch(_) => "bridge_version_mismatch",

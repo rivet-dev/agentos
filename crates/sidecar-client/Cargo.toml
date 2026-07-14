@@ -13,5 +13,8 @@ futures = "0.3"
 parking_lot = "0.12"
 scc = "2"
 thiserror = "2"
-tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
 tracing = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+command-fds = { version = "0.3", features = ["tokio"] }

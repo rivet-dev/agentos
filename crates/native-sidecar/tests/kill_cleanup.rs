@@ -103,7 +103,7 @@ fn kill_process_terminates_running_guest_execution() {
         &vm_id,
         "proc-hang",
     );
-    assert_ne!(exit_code, 0);
+    assert_eq!(exit_code, 143);
 
     let rerun = cwd.join("rerun.mjs");
     write_fixture(&rerun, "console.log('rerun-ok');\n");
@@ -128,6 +128,48 @@ fn kill_process_terminates_running_guest_execution() {
     assert_eq!(stdout, "rerun-ok\n");
     assert!(stderr.is_empty());
     assert_eq!(rerun_exit, 0);
+
+    // Exercise the Execute -> immediate SIGTERM admission race repeatedly on
+    // one warm VM. The signal must not overtake Execute and get discarded by
+    // the session's pre-execution readiness branch.
+    for attempt in 0..8 {
+        let process_id = format!("proc-immediate-term-{attempt}");
+        execute_wire(
+            &mut sidecar,
+            7 + attempt * 2,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            &process_id,
+            GuestRuntimeKind::JavaScript,
+            &entry,
+            Vec::new(),
+        );
+
+        let kill = sidecar
+            .dispatch_wire_blocking(wire_request(
+                8 + attempt * 2,
+                wire_vm(&connection_id, &session_id, &vm_id),
+                RequestPayload::KillProcessRequest(KillProcessRequest {
+                    process_id: process_id.clone(),
+                    signal: String::from("SIGTERM"),
+                }),
+            ))
+            .expect("immediately kill guest process");
+        assert!(matches!(
+            kill.response.payload,
+            ResponsePayload::ProcessKilledResponse(_)
+        ));
+
+        let exit_code = wait_for_process_exit(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            &process_id,
+        );
+        assert_eq!(exit_code, 143, "immediate SIGTERM attempt {attempt}");
+    }
 }
 
 fn sigkill_synthesizes_exit_for_shared_v8_guest_execution() {

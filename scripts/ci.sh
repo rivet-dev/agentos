@@ -34,6 +34,7 @@ run_step node scripts/check-rust-package-metadata.mjs
 run_step node --test scripts/check-agentos-client-protocol-compat.test.mjs
 run_step node scripts/check-agentos-client-protocol-compat.mjs
 run_step pnpm check-layout
+run_step node --test scripts/generate-secure-exec-mirror.test.mjs
 if [[ -f scripts/check-registry-test-runtime-boundary.test.mjs ]]; then
 	run_step node --test scripts/check-registry-test-runtime-boundary.test.mjs
 	run_step node scripts/check-registry-test-runtime-boundary.mjs
@@ -42,11 +43,15 @@ if [[ -f scripts/check-registry-software-split.test.mjs ]]; then
 	run_step node --test scripts/check-registry-software-split.test.mjs
 	run_step node scripts/check-registry-software-split.mjs
 fi
-run_step cargo fmt --check
-run_step cargo clippy --workspace --all-targets -- -D warnings
+# cargo-fmt ignores workspace.default-members at a virtual workspace root, so
+# use the shared selector to keep retained browser sources out of native CI.
+run_step node --test scripts/check-rustfmt.test.mjs
+run_step node scripts/check-rustfmt.mjs
+# Browser support is retained in-tree but disabled during the unified native
+# sidecar reactor migration, so it must not gate native CI.
+run_step cargo clippy --workspace --exclude agentos-sidecar-browser --exclude agentos-native-sidecar-browser --all-targets -- -D warnings
 run_step cargo test -p agentos-protocol -- --test-threads=1
 run_step cargo test -p agentos-sidecar -- --test-threads=1
-run_step cargo test -p agentos-sidecar-browser -- --test-threads=1
 run_step cargo test -p agentos-client -- --test-threads=1
 run_step pnpm check-types
 run_step pnpm lint

@@ -1,3 +1,5 @@
+mod support;
+
 use agentos_execution::{
     CreatePythonContextRequest, PythonExecutionEngine, PythonExecutionEvent,
     StartPythonExecutionRequest,
@@ -12,7 +14,7 @@ use tempfile::tempdir;
 const PYTHON_WARMUP_METRICS_PREFIX: &str = "__AGENTOS_PYTHON_WARMUP_METRICS__:";
 
 fn setup_engine() -> (PythonExecutionEngine, String, PathBuf) {
-    let mut engine = PythonExecutionEngine::default();
+    let mut engine = support::python_engine();
     let pyodide_dir = engine
         .bundled_pyodide_dist_path_for_vm("vm-python")
         .expect("materialize bundled pyodide");

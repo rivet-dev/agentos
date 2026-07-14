@@ -1,6 +1,7 @@
 //! V8 isolate runtime manager backed by the embedded V8 runtime.
 
 use crate::v8_ipc::{self, BinaryFrame};
+use agentos_runtime::RuntimeContext;
 use agentos_v8_runtime::embedded_runtime::{spawn_embedded_runtime_ipc, EmbeddedRuntimeHandle};
 use serde_json::Value;
 use std::io::{self, BufReader, Read, Write};
@@ -16,8 +17,8 @@ pub struct V8Runtime {
 
 impl V8Runtime {
     /// Spawn the embedded V8 runtime and connect over IPC.
-    pub fn spawn() -> io::Result<Self> {
-        let (stream, runtime) = spawn_embedded_runtime_ipc(None)?;
+    pub fn spawn(runtime_context: &RuntimeContext) -> io::Result<Self> {
+        let (stream, runtime) = spawn_embedded_runtime_ipc(None, runtime_context.clone())?;
         let writer = stream.try_clone()?;
         let reader = BufReader::new(stream);
 

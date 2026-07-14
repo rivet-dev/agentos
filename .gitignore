@@ -64,6 +64,7 @@ registry/software/*/agentos-package.meta.json
 registry/.last-publish-hash
 registry/software/*/.last-publish-hash
 registry/.build-markers/
+registry/.cache/
 
 # Ralph agent artifacts
 scripts/ralph/archive/

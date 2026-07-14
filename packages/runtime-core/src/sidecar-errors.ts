@@ -2,6 +2,38 @@ function formatSidecarStderrSuffix(stderr: string): string {
 	return stderr ? `\nstderr:\n${stderr}` : "";
 }
 
+export interface SidecarRejectionDetail {
+	code: string;
+	message: string;
+	limit_name: string | null;
+	configured_limit: number | null;
+	current_usage: number | null;
+	requested: number | null;
+	unit: string | null;
+	scope: string | null;
+	vm_id: string | null;
+	session_generation: number | null;
+	capability_id: number | null;
+	operation: string | null;
+	configuration_path: string | null;
+	retryable: boolean | null;
+	errno: string | null;
+}
+
+export class SidecarRejectedError extends Error {
+	readonly requestId: number;
+	readonly detail: SidecarRejectionDetail;
+
+	constructor(requestId: number, detail: SidecarRejectionDetail) {
+		super(
+			`sidecar rejected request ${requestId}: ${detail.code}: ${detail.message}`,
+		);
+		this.name = "SidecarRejectedError";
+		this.requestId = requestId;
+		this.detail = detail;
+	}
+}
+
 export class SidecarProcessExited extends Error {
 	readonly exitCode: number | null;
 	readonly signal: string | null;

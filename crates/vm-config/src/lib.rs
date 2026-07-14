@@ -9,7 +9,7 @@ use ts_rs::TS;
 /// public `NodeRuntime.create(...)` option changes the generated VM config.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 #[derive(Default)]
 pub struct CreateVmConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -97,7 +97,7 @@ impl CreateVmConfig {
 /// emulation (`platform = node`).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub struct JsRuntimeConfig {
     /// Which host environment to emulate for guest JS. Default `node`.
     #[serde(default)]
@@ -149,7 +149,7 @@ impl JsRuntimeConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 #[derive(Default)]
 pub enum JsRuntimePlatform {
     /// Full Node.js host surface (process/Buffer/require, `node:*`, npm
@@ -167,7 +167,7 @@ pub enum JsRuntimePlatform {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 #[derive(Default)]
 pub enum JsModuleResolution {
     /// node_modules ancestor-walk + exports/imports/conditions + realpath. Default.
@@ -245,7 +245,7 @@ fn is_known_node_builtin(name: &str) -> bool {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub struct RootFilesystemConfig {
     #[serde(default)]
     pub mode: RootFilesystemMode,
@@ -290,7 +290,7 @@ impl RootFilesystemConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 #[derive(Default)]
 pub enum RootFilesystemMode {
     #[default]
@@ -300,7 +300,7 @@ pub enum RootFilesystemMode {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "camelCase")]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub enum RootFilesystemLowerDescriptor {
     Snapshot {
         #[serde(default)]
@@ -311,7 +311,7 @@ pub enum RootFilesystemLowerDescriptor {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub struct RootFilesystemEntry {
     pub path: String,
     pub kind: RootFilesystemEntryKind,
@@ -378,7 +378,7 @@ impl RootFilesystemEntry {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub enum RootFilesystemEntryKind {
     File,
     Directory,
@@ -387,7 +387,7 @@ pub enum RootFilesystemEntryKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub enum RootFilesystemEntryEncoding {
     Utf8,
     Base64,
@@ -395,7 +395,7 @@ pub enum RootFilesystemEntryEncoding {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub struct NativeRootFilesystemConfig {
     pub plugin: MountPluginDescriptor,
     #[serde(default, rename = "readOnly")]
@@ -413,7 +413,7 @@ impl NativeRootFilesystemConfig {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub struct MountPluginDescriptor {
     pub id: String,
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
@@ -423,7 +423,7 @@ pub struct MountPluginDescriptor {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub enum PermissionMode {
     Allow,
     Ask,
@@ -432,7 +432,7 @@ pub enum PermissionMode {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(untagged)]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub enum FsPermissionScope {
     Mode(PermissionMode),
     Rules(FsPermissionRuleSet),
@@ -440,7 +440,7 @@ pub enum FsPermissionScope {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(untagged)]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub enum PatternPermissionScope {
     Mode(PermissionMode),
     Rules(PatternPermissionRuleSet),
@@ -448,7 +448,7 @@ pub enum PatternPermissionScope {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub struct FsPermissionRuleSet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -459,7 +459,7 @@ pub struct FsPermissionRuleSet {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub struct PatternPermissionRuleSet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -470,7 +470,7 @@ pub struct PatternPermissionRuleSet {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub struct FsPermissionRule {
     pub mode: PermissionMode,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -481,7 +481,7 @@ pub struct FsPermissionRule {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub struct PatternPermissionRule {
     pub mode: PermissionMode,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -492,7 +492,7 @@ pub struct PatternPermissionRule {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub struct PermissionsPolicy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -520,14 +520,26 @@ pub struct PermissionsPolicy {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub struct VmLimitsConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reactor: Option<ReactorLimitsConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub resources: Option<ResourceLimitsConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub http: Option<HttpLimitsConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub udp: Option<UdpLimitsConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tls: Option<TlsLimitsConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub http2: Option<Http2LimitsConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub tools: Option<ToolLimitsConfig>,
@@ -553,6 +565,104 @@ pub struct VmLimitsConfig {
 
 impl VmLimitsConfig {
     fn validate(&self, max_frame_bytes: usize) -> Result<(), VmConfigError> {
+        if let Some(reactor) = &self.reactor {
+            validate_nonzero_options([
+                ("limits.reactor.maxCapabilities", reactor.max_capabilities),
+                ("limits.reactor.maxReadyHandles", reactor.max_ready_handles),
+                ("limits.reactor.maxTasks", reactor.max_tasks),
+                ("limits.reactor.workQuantum", reactor.work_quantum),
+                ("limits.reactor.byteQuantum", reactor.byte_quantum),
+                (
+                    "limits.reactor.maxHandleCommands",
+                    reactor.max_handle_commands,
+                ),
+                (
+                    "limits.reactor.maxHandleCommandBytes",
+                    reactor.max_handle_command_bytes,
+                ),
+                ("limits.reactor.maxBridgeCalls", reactor.max_bridge_calls),
+                (
+                    "limits.reactor.maxBridgeRequestBytes",
+                    reactor.max_bridge_request_bytes,
+                ),
+                (
+                    "limits.reactor.maxBridgeResponseBytes",
+                    reactor.max_bridge_response_bytes,
+                ),
+                (
+                    "limits.reactor.maxAsyncCompletions",
+                    reactor.max_async_completions,
+                ),
+                (
+                    "limits.reactor.maxAsyncCompletionBytes",
+                    reactor.max_async_completion_bytes,
+                ),
+                ("limits.reactor.maxBlockingJobs", reactor.max_blocking_jobs),
+                (
+                    "limits.reactor.maxBlockingBytes",
+                    reactor.max_blocking_bytes,
+                ),
+                (
+                    "limits.reactor.perHandleOperationQuantum",
+                    reactor.per_handle_operation_quantum,
+                ),
+                ("limits.reactor.acceptQuantum", reactor.accept_quantum),
+                ("limits.reactor.datagramQuantum", reactor.datagram_quantum),
+                (
+                    "limits.reactor.completionQuantum",
+                    reactor.completion_quantum,
+                ),
+                ("limits.reactor.signalQuantum", reactor.signal_quantum),
+                (
+                    "limits.reactor.shutdownDeadlineMs",
+                    reactor.shutdown_deadline_ms,
+                ),
+                (
+                    "limits.reactor.operationDeadlineMs",
+                    reactor.operation_deadline_ms,
+                ),
+            ])?;
+            validate_optional_parent(
+                "limits.reactor.maxCapabilities",
+                reactor.max_capabilities,
+                "limits.reactor.maxReadyHandles",
+                reactor.max_ready_handles,
+            )?;
+            validate_optional_parent(
+                "limits.reactor.perHandleOperationQuantum",
+                reactor.per_handle_operation_quantum,
+                "limits.reactor.maxHandleCommands",
+                reactor.max_handle_commands,
+            )?;
+            validate_optional_parent(
+                "limits.reactor.acceptQuantum",
+                reactor.accept_quantum,
+                "limits.reactor.maxCapabilities",
+                reactor.max_capabilities,
+            )?;
+            validate_optional_parent(
+                "limits.reactor.completionQuantum",
+                reactor.completion_quantum,
+                "limits.reactor.maxAsyncCompletions",
+                reactor.max_async_completions,
+            )?;
+            if let Some(max_bridge_request_bytes) = reactor.max_bridge_request_bytes {
+                if max_bridge_request_bytes > max_frame_bytes as u64 {
+                    return Err(VmConfigError::new(format!(
+                        "limits.reactor.maxBridgeRequestBytes ({max_bridge_request_bytes}) must \
+                         be <= the sidecar wire frame cap ({max_frame_bytes})"
+                    )));
+                }
+            }
+            if let Some(max_bridge_response_bytes) = reactor.max_bridge_response_bytes {
+                if max_bridge_response_bytes > max_frame_bytes as u64 {
+                    return Err(VmConfigError::new(format!(
+                        "limits.reactor.maxBridgeResponseBytes ({max_bridge_response_bytes}) must \
+                         be <= the sidecar wire frame cap ({max_frame_bytes})"
+                    )));
+                }
+            }
+        }
         if let Some(http) = &self.http {
             if let Some(max_fetch_response_bytes) = http.max_fetch_response_bytes {
                 if max_fetch_response_bytes == 0 {
@@ -567,6 +677,135 @@ impl VmLimitsConfig {
                 }
             }
         }
+        if let Some(udp) = &self.udp {
+            validate_nonzero_options([
+                (
+                    "limits.udp.maxBufferedDatagrams",
+                    udp.max_buffered_datagrams,
+                ),
+                ("limits.udp.maxBufferedBytes", udp.max_buffered_bytes),
+            ])?;
+        }
+        if let Some(tls) = &self.tls {
+            validate_nonzero_options([("limits.tls.maxBufferedBytes", tls.max_buffered_bytes)])?;
+        }
+        if let Some(http2) = &self.http2 {
+            validate_nonzero_options([
+                ("limits.http2.maxConnections", http2.max_connections),
+                ("limits.http2.maxStreams", http2.max_streams),
+                (
+                    "limits.http2.maxStreamsPerConnection",
+                    http2.max_streams_per_connection,
+                ),
+                ("limits.http2.maxBufferedBytes", http2.max_buffered_bytes),
+                ("limits.http2.maxHeaderBytes", http2.max_header_bytes),
+                ("limits.http2.maxDataBytes", http2.max_data_bytes),
+                (
+                    "limits.http2.maxPendingCommands",
+                    http2.max_pending_commands,
+                ),
+                (
+                    "limits.http2.maxPendingCommandBytes",
+                    http2.max_pending_command_bytes,
+                ),
+                ("limits.http2.maxPendingEvents", http2.max_pending_events),
+                (
+                    "limits.http2.maxPendingEventBytes",
+                    http2.max_pending_event_bytes,
+                ),
+            ])?;
+            validate_optional_parent(
+                "limits.http2.maxStreamsPerConnection",
+                http2.max_streams_per_connection,
+                "limits.http2.maxStreams",
+                http2.max_streams,
+            )?;
+            for (path, value) in [
+                ("limits.http2.maxHeaderBytes", http2.max_header_bytes),
+                ("limits.http2.maxDataBytes", http2.max_data_bytes),
+                (
+                    "limits.http2.maxPendingCommandBytes",
+                    http2.max_pending_command_bytes,
+                ),
+                (
+                    "limits.http2.maxPendingEventBytes",
+                    http2.max_pending_event_bytes,
+                ),
+            ] {
+                validate_optional_parent(
+                    path,
+                    value,
+                    "limits.http2.maxBufferedBytes",
+                    http2.max_buffered_bytes,
+                )?;
+            }
+        }
+        if let Some(resources) = &self.resources {
+            let aggregate_socket_bytes = resources.max_socket_buffered_bytes;
+            for (path, value) in [
+                (
+                    "limits.reactor.maxHandleCommandBytes",
+                    self.reactor
+                        .as_ref()
+                        .and_then(|limits| limits.max_handle_command_bytes),
+                ),
+                (
+                    "limits.http.maxFetchResponseBytes",
+                    self.http
+                        .as_ref()
+                        .and_then(|limits| limits.max_fetch_response_bytes),
+                ),
+                (
+                    "limits.udp.maxBufferedBytes",
+                    self.udp
+                        .as_ref()
+                        .and_then(|limits| limits.max_buffered_bytes),
+                ),
+                (
+                    "limits.tls.maxBufferedBytes",
+                    self.tls
+                        .as_ref()
+                        .and_then(|limits| limits.max_buffered_bytes),
+                ),
+                (
+                    "limits.http2.maxBufferedBytes",
+                    self.http2
+                        .as_ref()
+                        .and_then(|limits| limits.max_buffered_bytes),
+                ),
+            ] {
+                validate_optional_parent(
+                    path,
+                    value,
+                    "limits.resources.maxSocketBufferedBytes",
+                    aggregate_socket_bytes,
+                )?;
+            }
+            validate_optional_parent(
+                "limits.udp.maxBufferedDatagrams",
+                self.udp
+                    .as_ref()
+                    .and_then(|limits| limits.max_buffered_datagrams),
+                "limits.resources.maxSocketDatagramQueueLen",
+                resources.max_socket_datagram_queue_len,
+            )?;
+            validate_optional_parent(
+                "limits.http2.maxConnections",
+                self.http2
+                    .as_ref()
+                    .and_then(|limits| limits.max_connections),
+                "limits.resources.maxConnections",
+                resources.max_connections,
+            )?;
+        }
+        if let (Some(reactor), Some(udp)) = (&self.reactor, &self.udp) {
+            validate_optional_parent(
+                "limits.reactor.datagramQuantum",
+                reactor.datagram_quantum,
+                "limits.udp.maxBufferedDatagrams",
+                udp.max_buffered_datagrams,
+            )?;
+        }
         if let Some(tools) = &self.tools {
             if let (Some(default), Some(max)) =
                 (tools.default_tool_timeout_ms, tools.max_tool_timeout_ms)
@@ -578,15 +817,47 @@ impl VmLimitsConfig {
                 }
             }
         }
+        if let Some(js_runtime) = &self.js_runtime {
+            validate_nonzero_options([("limits.jsRuntime.maxTimers", js_runtime.max_timers)])?;
+        }
         Ok(())
     }
+}
+
+fn validate_nonzero_options<const N: usize>(
+    values: [(&str, Option<u64>); N],
+) -> Result<(), VmConfigError> {
+    for (path, value) in values {
+        if value == Some(0) {
+            return Err(VmConfigError::new(format!(
+                "{path} must be greater than zero"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_optional_parent(
+    child_path: &str,
+    child: Option<u64>,
+    parent_path: &str,
+    parent: Option<u64>,
+) -> Result<(), VmConfigError> {
+    if let (Some(child), Some(parent)) = (child, parent) {
+        if child > parent {
+            return Err(VmConfigError::new(format!(
+                "{child_path} ({child}) must be <= {parent_path} ({parent})"
+            )));
+        }
+    }
+    Ok(())
 }
 
 macro_rules! limits_struct {
     ($name:ident { $($field:ident),* $(,)? }) => {
         #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
         #[serde(rename_all = "camelCase", deny_unknown_fields)]
-        #[ts(export, export_to = "../../../packages/core/src/generated/")]
+        #[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
         pub struct $name {
             $(
                 #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -623,8 +894,52 @@ limits_struct!(ResourceLimitsConfig {
     max_wasm_stack_bytes,
 });
 
+limits_struct!(ReactorLimitsConfig {
+    max_capabilities,
+    max_ready_handles,
+    max_tasks,
+    work_quantum,
+    byte_quantum,
+    max_handle_commands,
+    max_handle_command_bytes,
+    max_bridge_calls,
+    max_bridge_request_bytes,
+    max_bridge_response_bytes,
+    max_async_completions,
+    max_async_completion_bytes,
+    max_blocking_jobs,
+    max_blocking_bytes,
+    per_handle_operation_quantum,
+    accept_quantum,
+    datagram_quantum,
+    completion_quantum,
+    signal_quantum,
+    shutdown_deadline_ms,
+    operation_deadline_ms,
+});
+
 limits_struct!(HttpLimitsConfig {
     max_fetch_response_bytes,
+});
+
+limits_struct!(UdpLimitsConfig {
+    max_buffered_datagrams,
+    max_buffered_bytes,
+});
+
+limits_struct!(TlsLimitsConfig { max_buffered_bytes });
+
+limits_struct!(Http2LimitsConfig {
+    max_connections,
+    max_streams,
+    max_streams_per_connection,
+    max_buffered_bytes,
+    max_header_bytes,
+    max_data_bytes,
+    max_pending_commands,
+    max_pending_command_bytes,
+    max_pending_events,
+    max_pending_event_bytes,
 });
 
 limits_struct!(ToolLimitsConfig {
@@ -657,6 +972,7 @@ limits_struct!(JsRuntimeLimitsConfig {
     captured_output_limit_bytes,
     stdin_buffer_limit_bytes,
     event_payload_limit_bytes,
+    max_timers,
     v8_ipc_max_frame_bytes,
 });
 
@@ -685,7 +1001,7 @@ limits_struct!(ProcessLimitsConfig {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub struct VmDnsConfig {
     #[serde(default, rename = "nameServers", skip_serializing_if = "Vec::is_empty")]
     pub name_servers: Vec<String>,
@@ -718,7 +1034,7 @@ impl VmDnsConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(export, export_to = "../../../packages/core/src/generated/")]
+#[ts(export, export_to = "../../../packages/runtime-core/src/generated/")]
 pub struct VmListenPolicyConfig {
     #[serde(default, rename = "portMin", skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -838,6 +1154,136 @@ mod tests {
             ..CreateVmConfig::default()
         };
         assert!(config.validate(1024).is_err());
+    }
+
+    #[test]
+    fn canonical_reactor_and_protocol_limits_round_trip() {
+        let config: CreateVmConfig = serde_json::from_value(serde_json::json!({
+            "limits": {
+                "resources": {
+                    "maxConnections": 16,
+                    "maxSocketBufferedBytes": 8192,
+                    "maxSocketDatagramQueueLen": 128
+                },
+                "reactor": {
+                    "maxCapabilities": 128,
+                    "maxReadyHandles": 256,
+                    "maxTasks": 512,
+                    "workQuantum": 32,
+                    "byteQuantum": 4096,
+                    "maxHandleCommands": 64,
+                    "maxHandleCommandBytes": 1024,
+                    "maxBridgeCalls": 32,
+                    "maxBridgeResponseBytes": 4096,
+                    "maxAsyncCompletions": 64,
+                    "maxAsyncCompletionBytes": 2048,
+                    "maxBlockingJobs": 32,
+                    "maxBlockingBytes": 4096,
+                    "perHandleOperationQuantum": 8,
+                    "acceptQuantum": 16,
+                    "datagramQuantum": 8,
+                    "completionQuantum": 16,
+                    "signalQuantum": 16,
+                    "shutdownDeadlineMs": 5000,
+                    "operationDeadlineMs": 30000
+                },
+                "http": { "maxFetchResponseBytes": 4096 },
+                "udp": {
+                    "maxBufferedDatagrams": 64,
+                    "maxBufferedBytes": 4096
+                },
+                "tls": { "maxBufferedBytes": 2048 },
+                "http2": {
+                    "maxConnections": 8,
+                    "maxStreams": 64,
+                    "maxStreamsPerConnection": 16,
+                    "maxBufferedBytes": 8192,
+                    "maxHeaderBytes": 1024,
+                    "maxDataBytes": 4096,
+                    "maxPendingCommands": 32,
+                    "maxPendingCommandBytes": 1024,
+                    "maxPendingEvents": 32,
+                    "maxPendingEventBytes": 2048
+                }
+            }
+        }))
+        .expect("decode canonical limits");
+        config.validate(16 * 1024).expect("valid relationships");
+
+        let json = serde_json::to_string(&config).expect("serialize canonical limits");
+        let decoded: CreateVmConfig = serde_json::from_str(&json).expect("decode round trip");
+        assert_eq!(decoded, config);
+        assert!(json.contains("maxHandleCommandBytes"));
+        assert!(json.contains("maxBufferedDatagrams"));
+        assert!(json.contains("maxStreamsPerConnection"));
+        assert!(json.contains("shutdownDeadlineMs"));
+    }
+
+    #[test]
+    fn canonical_limits_reject_zero_and_invalid_parent_relationships() {
+        let cases = [
+            (
+                serde_json::json!({
+                    "reactor": { "maxHandleCommands": 0 }
+                }),
+                "limits.reactor.maxHandleCommands",
+            ),
+            (
+                serde_json::json!({
+                    "reactor": { "maxBlockingJobs": 0 }
+                }),
+                "limits.reactor.maxBlockingJobs",
+            ),
+            (
+                serde_json::json!({
+                    "udp": { "maxBufferedBytes": 0 }
+                }),
+                "limits.udp.maxBufferedBytes",
+            ),
+            (
+                serde_json::json!({
+                    "reactor": { "maxCapabilities": 8, "maxReadyHandles": 4 }
+                }),
+                "limits.reactor.maxCapabilities",
+            ),
+            (
+                serde_json::json!({
+                    "resources": { "maxSocketBufferedBytes": 1024 },
+                    "tls": { "maxBufferedBytes": 2048 }
+                }),
+                "limits.tls.maxBufferedBytes",
+            ),
+            (
+                serde_json::json!({
+                    "http2": {
+                        "maxBufferedBytes": 1024,
+                        "maxPendingEventBytes": 2048
+                    }
+                }),
+                "limits.http2.maxPendingEventBytes",
+            ),
+            (
+                serde_json::json!({
+                    "resources": { "maxSocketDatagramQueueLen": 16 },
+                    "udp": { "maxBufferedDatagrams": 32 }
+                }),
+                "limits.udp.maxBufferedDatagrams",
+            ),
+        ];
+
+        for (limits, expected_path) in cases {
+            let config: CreateVmConfig = serde_json::from_value(serde_json::json!({
+                "limits": limits
+            }))
+            .expect("decode invalid relationship fixture");
+            let error = config
+                .validate(16 * 1024)
+                .expect_err("invalid relationship must fail");
+            assert!(
+                error.to_string().contains(expected_path),
+                "expected {expected_path} in {error}"
+            );
+        }
     }
 
     fn js_runtime_config(value: serde_json::Value) -> Result<CreateVmConfig, serde_json::Error> {

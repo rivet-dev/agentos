@@ -66,7 +66,7 @@ async function dispatchAcpRequest(
 	try {
 		await client.dispatchSidecarRequest({
 			frame_type: "sidecar_request",
-			schema: { name: "agentos-native-sidecar", version: 7 },
+			schema: { name: "agentos-native-sidecar", version: 8 },
 			request_id: -101,
 			ownership: {
 				scope: "vm",

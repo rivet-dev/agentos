@@ -1,6 +1,8 @@
 use crate::fd_table::TransferredFd;
 use crate::poll::{PollEvents, POLLERR, POLLHUP, POLLIN, POLLOUT};
 use crate::vfs::normalize_path;
+#[cfg(not(target_arch = "wasm32"))]
+use agentos_runtime::accounting::{Reservation, ResourceClass, ResourceLedger};
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
@@ -415,6 +417,33 @@ impl ReceivedDatagram {
     }
 }
 
+/// Native sidecar handoff that transfers the kernel queue's exact resource
+/// ownership with the datagram. Standalone callers may keep using
+/// `recv_datagram`, whose boundary releases queue ownership immediately.
+#[cfg(not(target_arch = "wasm32"))]
+pub type DatagramReservations = (Reservation, Reservation, Reservation, Reservation);
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+pub struct ChargedReceivedDatagram {
+    datagram: ReceivedDatagram,
+    reservations: Option<DatagramReservations>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ChargedReceivedDatagram {
+    pub fn into_parts(
+        self,
+    ) -> (
+        Option<InetSocketAddress>,
+        Vec<u8>,
+        Option<DatagramReservations>,
+    ) {
+        let (source_address, payload) = self.datagram.into_parts();
+        (source_address, payload, self.reservations)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SocketTableSnapshot {
     pub sockets: usize,
@@ -513,6 +542,34 @@ impl SocketTableError {
             message: message.into(),
         }
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn resource_limit(error: agentos_runtime::accounting::LimitError) -> Self {
+        Self {
+            code: "EAGAIN",
+            message: error.to_string(),
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn accounting_invariant(message: impl Into<String>) -> Self {
+        Self {
+            code: "EIO",
+            message: format!(
+                "ERR_AGENTOS_RESOURCE_ACCOUNTING_INVARIANT: {}",
+                message.into()
+            ),
+        }
+    }
+
+    fn id_exhausted() -> Self {
+        Self {
+            code: "EMFILE",
+            message: String::from(
+                "ERR_AGENTOS_SOCKET_ID_EXHAUSTED: VM kernel socket id space exhausted",
+            ),
+        }
+    }
 }
 
 impl fmt::Display for SocketTableError {
@@ -532,6 +589,23 @@ struct SocketTableState {
     bound_unix_streams: BTreeMap<String, SocketId>,
     multicast_groups: BTreeMap<SocketMulticastMembership, BTreeSet<SocketId>>,
     next_socket_id: SocketId,
+    #[cfg(not(target_arch = "wasm32"))]
+    retained_resources: BTreeMap<SocketId, RetainedSocketResources>,
+}
+
+/// Exact ownership for bytes and datagrams retained by one kernel socket.
+///
+/// Socket and connection count reservations intentionally live in the shared
+/// capability registry. Keeping only queue storage here avoids charging the
+/// same kernel-backed capability twice while still making queue admission and
+/// mutation one operation.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Default)]
+struct RetainedSocketResources {
+    buffered_bytes: VecDeque<Reservation>,
+    datagrams: VecDeque<Reservation>,
+    udp_bytes: VecDeque<Reservation>,
+    udp_datagrams: VecDeque<Reservation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -732,6 +806,8 @@ struct QueuedDatagram {
 struct SocketTableInner {
     state: Mutex<SocketTableState>,
     readiness_sink: Mutex<Option<SocketReadinessSink>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    resource_ledger: Mutex<Option<Arc<ResourceLedger>>>,
 }
 
 impl Default for SocketTableInner {
@@ -739,6 +815,8 @@ impl Default for SocketTableInner {
         Self {
             state: Mutex::new(SocketTableState::default()),
             readiness_sink: Mutex::new(None),
+            #[cfg(not(target_arch = "wasm32"))]
+            resource_ledger: Mutex::new(None),
         }
     }
 }
@@ -761,6 +839,95 @@ impl SocketTable {
         Self::default()
     }
 
+    /// Install the VM ledger before any socket is created. The table owns
+    /// reservations only for data physically retained in kernel queues.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_resource_ledger(&self, ledger: Arc<ResourceLedger>) -> SocketResult<()> {
+        let table = lock_or_recover(&self.inner.state);
+        if !table.sockets.is_empty() {
+            return Err(SocketTableError::invalid_argument(
+                "socket resource ledger must be installed before socket creation",
+            ));
+        }
+        let mut target = lock_or_recover(&self.inner.resource_ledger);
+        if let Some(current) = target.as_ref() {
+            if Arc::ptr_eq(current, &ledger) {
+                return Ok(());
+            }
+            return Err(SocketTableError::invalid_argument(
+                "socket resource ledger is already installed",
+            ));
+        }
+        *target = Some(ledger);
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn has_resource_ledger(&self) -> bool {
+        lock_or_recover(&self.inner.resource_ledger).is_some()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub const fn has_resource_ledger(&self) -> bool {
+        false
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn resource_ledger(&self) -> Option<Arc<ResourceLedger>> {
+        lock_or_recover(&self.inner.resource_ledger).clone()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn buffered_byte_capacity_available(&self) -> bool {
+        self.resource_ledger()
+            .is_none_or(|ledger| ledger.capacity_available(ResourceClass::BufferedBytes, 1))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn datagram_capacity_available(&self) -> bool {
+        self.resource_ledger().is_none_or(|ledger| {
+            ledger.capacity_available(ResourceClass::Datagrams, 1)
+                && ledger.capacity_available(ResourceClass::UdpDatagrams, 1)
+        })
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn reserve_buffered_bytes(&self, amount: usize) -> SocketResult<Option<Reservation>> {
+        if amount == 0 {
+            return Ok(None);
+        }
+        self.resource_ledger()
+            .map(|ledger| {
+                ledger
+                    .reserve(ResourceClass::BufferedBytes, amount)
+                    .map_err(SocketTableError::resource_limit)
+            })
+            .transpose()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn reserve_datagram(
+        &self,
+        amount: usize,
+    ) -> SocketResult<Option<(Reservation, Reservation, Reservation, Reservation)>> {
+        let Some(ledger) = self.resource_ledger() else {
+            return Ok(None);
+        };
+        let bytes = ledger
+            .reserve(ResourceClass::BufferedBytes, amount)
+            .map_err(SocketTableError::resource_limit)?;
+        let datagram = ledger
+            .reserve(ResourceClass::Datagrams, 1)
+            .map_err(SocketTableError::resource_limit)?;
+        let udp_bytes = ledger
+            .reserve(ResourceClass::UdpBytes, amount)
+            .map_err(SocketTableError::resource_limit)?;
+        let udp_datagram = ledger
+            .reserve(ResourceClass::UdpDatagrams, 1)
+            .map_err(SocketTableError::resource_limit)?;
+        Ok(Some((bytes, datagram, udp_bytes, udp_datagram)))
+    }
+
     pub fn set_readiness_sink<F>(&self, sink: Option<F>)
     where
         F: Fn(SocketReadiness) + Send + Sync + 'static,
@@ -779,7 +946,7 @@ impl SocketTable {
         }
     }
 
-    pub fn allocate(&self, owner_pid: u32, spec: SocketSpec) -> SocketRecord {
+    pub fn allocate(&self, owner_pid: u32, spec: SocketSpec) -> SocketResult<SocketRecord> {
         self.allocate_with_state(owner_pid, spec, SocketState::Created)
     }
 
@@ -788,9 +955,9 @@ impl SocketTable {
         owner_pid: u32,
         spec: SocketSpec,
         state: SocketState,
-    ) -> SocketRecord {
+    ) -> SocketResult<SocketRecord> {
         let mut table = lock_or_recover(&self.inner.state);
-        let socket_id = next_socket_id(&mut table);
+        let socket_id = next_socket_id(&mut table)?;
         let record = SocketRecord {
             id: socket_id,
             owner_pid,
@@ -810,7 +977,7 @@ impl SocketTable {
             .entry(owner_pid)
             .or_default()
             .insert(socket_id);
-        record
+        Ok(record)
     }
 
     pub fn get(&self, socket_id: SocketId) -> Option<SocketRecord> {
@@ -1186,10 +1353,10 @@ impl SocketTable {
 
     pub fn accept(&self, listener_socket_id: SocketId) -> SocketResult<SocketRecord> {
         let mut table = lock_or_recover(&self.inner.state);
-        let (owner_pid, spec, local_address, local_unix_path, pending) = {
+        let (owner_pid, spec, local_address, local_unix_path, needs_socket_id) = {
             let record = table
                 .sockets
-                .get_mut(&listener_socket_id)
+                .get(&listener_socket_id)
                 .ok_or_else(|| SocketTableError::not_found(listener_socket_id))?;
 
             if record.state != SocketState::Listening {
@@ -1198,12 +1365,12 @@ impl SocketTable {
                 )));
             }
 
-            let listener_state = record.listener_state.as_mut().ok_or_else(|| {
+            let listener_state = record.listener_state.as_ref().ok_or_else(|| {
                 SocketTableError::invalid_argument(format!(
                     "socket {listener_socket_id} has no listener state"
                 ))
             })?;
-            let pending = listener_state.pending_accepts.pop_front().ok_or_else(|| {
+            let pending = listener_state.pending_accepts.front().ok_or_else(|| {
                 SocketTableError::would_block(format!(
                     "listener {listener_socket_id} has no pending connections"
                 ))
@@ -1214,9 +1381,25 @@ impl SocketTable {
                 record.spec,
                 record.local_address.clone(),
                 record.local_unix_path.clone(),
-                pending,
+                pending.accepted_socket_id.is_none(),
             )
         };
+        // External pending connections need a new kernel identity. Reserve it
+        // before removing the backlog entry so exhaustion is a retryable,
+        // non-destructive accept failure.
+        let new_socket_id = needs_socket_id
+            .then(|| next_socket_id(&mut table))
+            .transpose()?;
+        let pending = table
+            .sockets
+            .get_mut(&listener_socket_id)
+            .and_then(|record| record.listener_state.as_mut())
+            .and_then(|listener| listener.pending_accepts.pop_front())
+            .ok_or_else(|| {
+                SocketTableError::accounting_invariant(format!(
+                    "listener {listener_socket_id} lost a pending accept during allocation"
+                ))
+            })?;
 
         if let Some(accepted_socket_id) = pending.accepted_socket_id {
             return table
@@ -1226,7 +1409,11 @@ impl SocketTable {
                 .ok_or_else(|| SocketTableError::not_found(accepted_socket_id));
         }
 
-        let socket_id = next_socket_id(&mut table);
+        let socket_id = new_socket_id.ok_or_else(|| {
+            SocketTableError::accounting_invariant(format!(
+                "listener {listener_socket_id} accepted an external connection without an id"
+            ))
+        })?;
         let record = SocketRecord {
             id: socket_id,
             owner_pid,
@@ -1343,7 +1530,7 @@ impl SocketTable {
             let mut accept_was_empty = false;
             let result = (|| {
                 // Validate the listener and confirm backlog capacity BEFORE consuming a
-                // socket id. The id counter is monotonic (saturating_add) and never
+                // socket id. The id counter is monotonic and never
                 // reclaims, so allocating an id before this check leaks one on every
                 // rejected connect (for example when the backlog is full).
                 {
@@ -1366,7 +1553,7 @@ impl SocketTable {
                 }
 
                 // Capacity confirmed: only now is it safe to consume a socket id.
-                let accepted_socket_id = next_socket_id(&mut table);
+                let accepted_socket_id = next_socket_id(&mut table)?;
                 let listener = table
                     .sockets
                     .get_mut(&listener_socket_id)
@@ -1480,7 +1667,7 @@ impl SocketTable {
             let mut accept_was_empty = false;
             let result = (|| {
                 // Validate the listener and confirm backlog capacity BEFORE consuming a
-                // socket id. The id counter is monotonic (saturating_add) and never
+                // socket id. The id counter is monotonic and never
                 // reclaims, so allocating an id before this check leaks one on every
                 // rejected connect (for example when the backlog is full).
                 {
@@ -1503,7 +1690,7 @@ impl SocketTable {
                 }
 
                 // Capacity confirmed: only now is it safe to consume a socket id.
-                let accepted_socket_id = next_socket_id(&mut table);
+                let accepted_socket_id = next_socket_id(&mut table)?;
                 let listener = table
                     .sockets
                     .get_mut(&listener_socket_id)
@@ -1594,6 +1781,13 @@ impl SocketTable {
                 .cloned()
                 .ok_or_else(|| SocketTableError::not_found(socket_id))?;
             validate_bound_udp_sender(&sender)?;
+            let source_address = sender.local_address.as_ref().map(|source| {
+                if source.host() == "0.0.0.0" || source.host() == "::" {
+                    InetSocketAddress::new(target_address.host(), source.port())
+                } else {
+                    source.clone()
+                }
+            });
 
             let receiver_socket_id = lookup_bound_inet_datagram_socket_in_table(
                 &table.bound_inet_datagrams,
@@ -1612,16 +1806,38 @@ impl SocketTable {
                 .ok_or_else(|| SocketTableError::not_found(receiver_socket_id))?;
             validate_bound_udp_receiver(receiver)?;
 
+            // A connected UDP socket only admits datagrams from its selected
+            // peer. The sender still observes a successful datagram send, as
+            // it would when the network drops a packet before delivery.
+            if receiver.peer_address.is_some()
+                && receiver.peer_address.as_ref() != source_address.as_ref()
+            {
+                return Ok(data.len());
+            }
+
             let datagram_state = receiver.datagram_state.as_mut().ok_or_else(|| {
                 SocketTableError::invalid_argument(format!(
                     "socket {receiver_socket_id} does not support datagrams"
                 ))
             })?;
+            #[cfg(not(target_arch = "wasm32"))]
+            let retained = self.reserve_datagram(data.len())?;
             let was_empty = datagram_state.recv_queue.is_empty();
             datagram_state.recv_queue.push_back(QueuedDatagram {
-                source_address: sender.local_address.clone(),
+                source_address,
                 payload: data.to_vec(),
             });
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some((bytes, datagram, udp_bytes, udp_datagram)) = retained {
+                let resources = table
+                    .retained_resources
+                    .entry(receiver_socket_id)
+                    .or_default();
+                resources.buffered_bytes.push_back(bytes);
+                resources.datagrams.push_back(datagram);
+                resources.udp_bytes.push_back(udp_bytes);
+                resources.udp_datagrams.push_back(udp_datagram);
+            }
             was_empty.then_some(SocketReadiness {
                 socket_id: receiver_socket_id,
                 kind: SocketReadinessKind::Data,
@@ -1629,6 +1845,60 @@ impl SocketTable {
         };
         self.emit_readiness(readiness);
         Ok(data.len())
+    }
+
+    pub fn connect_bound_udp_socket(
+        &self,
+        socket_id: SocketId,
+        peer_address: InetSocketAddress,
+    ) -> SocketResult<()> {
+        let mut table = lock_or_recover(&self.inner.state);
+        let socket = table
+            .sockets
+            .get_mut(&socket_id)
+            .ok_or_else(|| SocketTableError::not_found(socket_id))?;
+        validate_bound_udp_sender(socket)?;
+        if socket.peer_address.is_some() {
+            return Err(SocketTableError::invalid_argument(format!(
+                "UDP socket {socket_id} is already connected"
+            )));
+        }
+        socket.peer_address = Some(normalize_inet_address(peer_address));
+        Ok(())
+    }
+
+    pub fn disconnect_bound_udp_socket(&self, socket_id: SocketId) -> SocketResult<()> {
+        let mut table = lock_or_recover(&self.inner.state);
+        let socket = table
+            .sockets
+            .get_mut(&socket_id)
+            .ok_or_else(|| SocketTableError::not_found(socket_id))?;
+        validate_bound_udp_sender(socket)?;
+        if socket.peer_address.take().is_none() {
+            return Err(SocketTableError::not_connected(format!(
+                "UDP socket {socket_id} is not connected"
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn send_connected_udp_socket(
+        &self,
+        socket_id: SocketId,
+        data: &[u8],
+    ) -> SocketResult<usize> {
+        let peer_address = {
+            let table = lock_or_recover(&self.inner.state);
+            let socket = table
+                .sockets
+                .get(&socket_id)
+                .ok_or_else(|| SocketTableError::not_found(socket_id))?;
+            validate_bound_udp_sender(socket)?;
+            socket.peer_address.clone().ok_or_else(|| {
+                SocketTableError::not_connected(format!("UDP socket {socket_id} is not connected"))
+            })?
+        };
+        self.send_to_bound_udp_socket(socket_id, peer_address, data)
     }
 
     pub fn check_send_to_bound_udp_socket(
@@ -1668,13 +1938,90 @@ impl SocketTable {
         socket_id: SocketId,
         max_bytes: usize,
     ) -> SocketResult<Option<ReceivedDatagram>> {
+        let (datagram, reservations) = self.recv_datagram_inner(socket_id, max_bytes)?;
+        drop(reservations);
+        Ok(datagram)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn recv_datagram_charged(
+        &self,
+        socket_id: SocketId,
+        max_bytes: usize,
+    ) -> SocketResult<Option<ChargedReceivedDatagram>> {
+        let (datagram, reservations) = self.recv_datagram_inner(socket_id, max_bytes)?;
+        Ok(datagram.map(|datagram| ChargedReceivedDatagram {
+            datagram,
+            reservations,
+        }))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn recv_datagram_inner(
+        &self,
+        socket_id: SocketId,
+        max_bytes: usize,
+    ) -> SocketResult<(Option<ReceivedDatagram>, Option<DatagramReservations>)> {
+        let mut table = lock_or_recover(&self.inner.state);
+        let record = table
+            .sockets
+            .get(&socket_id)
+            .ok_or_else(|| SocketTableError::not_found(socket_id))?;
+        validate_bound_udp_receiver(record)?;
+        let datagram_state = record.datagram_state.as_ref().ok_or_else(|| {
+            SocketTableError::invalid_argument(format!(
+                "socket {socket_id} does not support datagrams"
+            ))
+        })?;
+        if datagram_state.recv_queue.is_empty() {
+            return Err(SocketTableError::would_block(format!(
+                "socket {socket_id} has no queued datagrams"
+            )));
+        }
+        // Validate and transfer accounting ownership before removing the
+        // payload. An internal ownership mismatch must not silently discard a
+        // guest datagram and leave the queue/accountant out of sync.
+        let reservations = if self.has_resource_ledger() {
+            Some(take_retained_datagram(&mut table, socket_id)?)
+        } else {
+            None
+        };
+        let datagram = table
+            .sockets
+            .get_mut(&socket_id)
+            .and_then(|record| record.datagram_state.as_mut())
+            .and_then(|state| state.recv_queue.pop_front())
+            .ok_or_else(|| {
+                SocketTableError::accounting_invariant(format!(
+                    "socket {socket_id} lost a datagram during charged transfer"
+                ))
+            })?;
+        let mut payload = datagram.payload;
+        // Truncate in place so the original backing allocation and its full
+        // byte reservation move together. Copying a prefix here would require
+        // a second reservation until the source allocation was released.
+        payload.truncate(max_bytes);
+        Ok((
+            Some(ReceivedDatagram {
+                source_address: datagram.source_address,
+                payload,
+            }),
+            reservations,
+        ))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn recv_datagram_inner(
+        &self,
+        socket_id: SocketId,
+        max_bytes: usize,
+    ) -> SocketResult<(Option<ReceivedDatagram>, Option<()>)> {
         let mut table = lock_or_recover(&self.inner.state);
         let record = table
             .sockets
             .get_mut(&socket_id)
             .ok_or_else(|| SocketTableError::not_found(socket_id))?;
         validate_bound_udp_receiver(record)?;
-
         let datagram_state = record.datagram_state.as_mut().ok_or_else(|| {
             SocketTableError::invalid_argument(format!(
                 "socket {socket_id} does not support datagrams"
@@ -1685,16 +2032,15 @@ impl SocketTable {
                 "socket {socket_id} has no queued datagrams"
             )));
         };
-
-        let payload = if datagram.payload.len() > max_bytes {
-            datagram.payload[..max_bytes].to_vec()
-        } else {
-            datagram.payload
-        };
-        Ok(Some(ReceivedDatagram {
-            source_address: datagram.source_address,
-            payload,
-        }))
+        let mut payload = datagram.payload;
+        payload.truncate(max_bytes);
+        Ok((
+            Some(ReceivedDatagram {
+                source_address: datagram.source_address,
+                payload,
+            }),
+            None,
+        ))
     }
 
     pub fn poll(&self, socket_id: SocketId, requested: PollEvents) -> SocketResult<PollEvents> {
@@ -1794,8 +2140,19 @@ impl SocketTable {
                 )));
             }
 
+            #[cfg(not(target_arch = "wasm32"))]
+            let retained = self.reserve_buffered_bytes(data.len())?;
             let was_empty = !peer_connection.has_buffered_data();
             peer_connection.push_recv(data, Vec::new());
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(retained) = retained {
+                table
+                    .retained_resources
+                    .entry(peer_socket_id)
+                    .or_default()
+                    .buffered_bytes
+                    .push_back(retained);
+            }
             (was_empty && !data.is_empty()).then_some(SocketReadiness {
                 socket_id: peer_socket_id,
                 kind: SocketReadinessKind::Data,
@@ -1941,9 +2298,15 @@ impl SocketTable {
             let connection = record.connection_state.as_mut().ok_or_else(|| {
                 SocketTableError::not_connected(format!("socket {socket_id} is not connected"))
             })?;
-            return Ok(
-                connection.read_recv(max_bytes, record.spec.socket_type != SocketType::Stream)
-            );
+            let result =
+                connection.read_recv(max_bytes, record.spec.socket_type != SocketType::Stream);
+            #[cfg(not(target_arch = "wasm32"))]
+            if self.has_resource_ledger() {
+                if let Some(read) = result.as_ref() {
+                    release_retained_bytes(&mut table, socket_id, read.len())?;
+                }
+            }
+            return Ok(result);
         }
 
         let peer_open = connection
@@ -2037,6 +2400,8 @@ impl SocketTable {
 
         if matches!(how, SocketShutdown::Read | SocketShutdown::Both) {
             connection.clear_recv();
+            #[cfg(not(target_arch = "wasm32"))]
+            release_all_retained_bytes(&mut table, socket_id);
             connection.read_shutdown = true;
         }
         if matches!(how, SocketShutdown::Write | SocketShutdown::Both) {
@@ -2110,6 +2475,135 @@ impl SocketTable {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn release_retained_bytes(
+    table: &mut SocketTableState,
+    socket_id: SocketId,
+    mut amount: usize,
+) -> SocketResult<()> {
+    if amount == 0 {
+        return Ok(());
+    }
+    let resources = table
+        .retained_resources
+        .get_mut(&socket_id)
+        .ok_or_else(|| {
+            SocketTableError::accounting_invariant(format!(
+                "socket {socket_id} released {amount} unowned buffered bytes"
+            ))
+        })?;
+    let owned = resources
+        .buffered_bytes
+        .iter()
+        .try_fold(0usize, |total, reservation| {
+            total.checked_add(reservation.amount())
+        })
+        .ok_or_else(|| {
+            SocketTableError::accounting_invariant(format!(
+                "socket {socket_id} buffered-byte ownership overflowed"
+            ))
+        })?;
+    if owned < amount {
+        return Err(SocketTableError::accounting_invariant(format!(
+            "socket {socket_id} released {amount} buffered bytes but owns only {owned}"
+        )));
+    }
+    while amount > 0 {
+        let reservation = resources.buffered_bytes.front_mut().ok_or_else(|| {
+            SocketTableError::accounting_invariant(format!(
+                "socket {socket_id} released more buffered bytes than it owns"
+            ))
+        })?;
+        if reservation.amount() <= amount {
+            amount -= reservation.amount();
+            resources.buffered_bytes.pop_front();
+        } else {
+            let released = reservation.split(amount).ok_or_else(|| {
+                SocketTableError::accounting_invariant(format!(
+                    "socket {socket_id} could not split its buffered-byte reservation"
+                ))
+            })?;
+            drop(released);
+            amount = 0;
+        }
+    }
+    if resources.buffered_bytes.is_empty()
+        && resources.datagrams.is_empty()
+        && resources.udp_bytes.is_empty()
+        && resources.udp_datagrams.is_empty()
+    {
+        table.retained_resources.remove(&socket_id);
+    }
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn take_retained_datagram(
+    table: &mut SocketTableState,
+    socket_id: SocketId,
+) -> SocketResult<(Reservation, Reservation, Reservation, Reservation)> {
+    let resources = table
+        .retained_resources
+        .get_mut(&socket_id)
+        .ok_or_else(|| {
+            SocketTableError::accounting_invariant(format!(
+                "socket {socket_id} transferred an unowned datagram"
+            ))
+        })?;
+    if resources.buffered_bytes.is_empty()
+        || resources.datagrams.is_empty()
+        || resources.udp_bytes.is_empty()
+        || resources.udp_datagrams.is_empty()
+    {
+        return Err(SocketTableError::accounting_invariant(format!(
+            "socket {socket_id} has incomplete datagram ownership"
+        )));
+    }
+    let bytes = resources.buffered_bytes.pop_front().ok_or_else(|| {
+        SocketTableError::accounting_invariant(format!(
+            "socket {socket_id} transferred a datagram without buffered-byte ownership"
+        ))
+    })?;
+    let datagram = resources.datagrams.pop_front().ok_or_else(|| {
+        SocketTableError::accounting_invariant(format!(
+            "socket {socket_id} transferred more datagrams than it owns"
+        ))
+    })?;
+    let udp_bytes = resources.udp_bytes.pop_front().ok_or_else(|| {
+        SocketTableError::accounting_invariant(format!(
+            "socket {socket_id} transferred a datagram without UDP-byte ownership"
+        ))
+    })?;
+    let udp_datagram = resources.udp_datagrams.pop_front().ok_or_else(|| {
+        SocketTableError::accounting_invariant(format!(
+            "socket {socket_id} transferred more UDP datagrams than it owns"
+        ))
+    })?;
+    if resources.buffered_bytes.is_empty()
+        && resources.datagrams.is_empty()
+        && resources.udp_bytes.is_empty()
+        && resources.udp_datagrams.is_empty()
+    {
+        table.retained_resources.remove(&socket_id);
+    }
+    Ok((bytes, datagram, udp_bytes, udp_datagram))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn release_all_retained_bytes(table: &mut SocketTableState, socket_id: SocketId) {
+    let remove_entry = if let Some(resources) = table.retained_resources.get_mut(&socket_id) {
+        resources.buffered_bytes.clear();
+        resources.datagrams.is_empty()
+            && resources.udp_bytes.is_empty()
+            && resources.udp_datagrams.is_empty()
+    } else {
+        false
+    };
+    if remove_entry {
+        table.retained_resources.remove(&socket_id);
+    }
+}
+
 fn datagram_queue_bytes(queue: &VecDeque<QueuedDatagram>) -> usize {
     queue
         .iter()
@@ -2117,13 +2611,16 @@ fn datagram_queue_bytes(queue: &VecDeque<QueuedDatagram>) -> usize {
         .sum::<usize>()
 }
 
-fn next_socket_id(table: &mut SocketTableState) -> SocketId {
+fn next_socket_id(table: &mut SocketTableState) -> SocketResult<SocketId> {
     if table.next_socket_id == 0 {
         table.next_socket_id = 1;
     }
     let socket_id = table.next_socket_id;
-    table.next_socket_id = table.next_socket_id.saturating_add(1);
-    socket_id
+    table.next_socket_id = table
+        .next_socket_id
+        .checked_add(1)
+        .ok_or_else(SocketTableError::id_exhausted)?;
+    Ok(socket_id)
 }
 
 fn validate_state_transition(current: SocketState, next: SocketState) -> SocketResult<()> {
@@ -2505,6 +3002,8 @@ fn inet_datagram_bind_shares_port(requested: &SocketRecord, existing: &SocketRec
 
 fn remove_socket(table: &mut SocketTableState, socket_id: SocketId) -> Option<SocketRecord> {
     let record = table.sockets.remove(&socket_id)?;
+    #[cfg(not(target_arch = "wasm32"))]
+    table.retained_resources.remove(&socket_id);
     unregister_bound_socket(table, &record);
     unregister_multicast_memberships(table, &record);
     if let Some(listener_state) = record.listener_state.as_ref() {
@@ -2614,6 +3113,8 @@ fn lock_or_recover<'a, T>(mutex: &'a Mutex<T>) -> MutexGuard<'a, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_arch = "wasm32"))]
+    use agentos_runtime::accounting::{ResourceLimit, ResourceUsage};
 
     /// Reads the monotonic socket-id counter without advancing it, so a test can
     /// observe whether a code path consumed an id.
@@ -2622,25 +3123,80 @@ mod tests {
     }
 
     #[test]
+    fn exhausted_socket_ids_fail_without_reusing_a_live_identity() {
+        let table = SocketTable::new();
+        lock_or_recover(&table.inner.state).next_socket_id = u64::MAX;
+
+        let error = table
+            .allocate(1, SocketSpec::tcp())
+            .expect_err("exhausted id space must reject allocation");
+
+        assert_eq!(error.code(), "EMFILE");
+        assert!(error
+            .to_string()
+            .contains("ERR_AGENTOS_SOCKET_ID_EXHAUSTED"));
+        assert_eq!(table.snapshot().sockets, 0);
+    }
+
+    #[test]
+    fn exhausted_accept_preserves_the_pending_connection() {
+        let table = SocketTable::new();
+        let listener = table
+            .allocate(1, SocketSpec::tcp())
+            .expect("allocate listener");
+        let address = InetSocketAddress::new("127.0.0.1", 43001);
+        table
+            .bind_inet(listener.id(), address)
+            .expect("bind listener");
+        table.listen(listener.id(), 1).expect("listen");
+        table
+            .enqueue_incoming_tcp_connection(
+                listener.id(),
+                InetSocketAddress::new("127.0.0.1", 43002),
+            )
+            .expect("queue incoming connection");
+        lock_or_recover(&table.inner.state).next_socket_id = u64::MAX;
+
+        let error = table
+            .accept(listener.id())
+            .expect_err("exhausted id space must reject accept");
+
+        assert_eq!(error.code(), "EMFILE");
+        assert_eq!(
+            table
+                .get(listener.id())
+                .expect("listener remains live")
+                .pending_accept_count(),
+            1
+        );
+    }
+
+    #[test]
     fn full_backlog_unix_connect_does_not_consume_socket_id() {
         let table = SocketTable::new();
         let path = "/tmp/leak-test/server.sock";
 
-        let listener = table.allocate(1, SocketSpec::unix_stream());
+        let listener = table
+            .allocate(1, SocketSpec::unix_stream())
+            .expect("allocate listener");
         table
             .bind_unix(listener.id, path)
             .expect("bind unix listener");
         table.listen(listener.id, 1).expect("listen with backlog 1");
 
         // Fill the only backlog slot with one pending connection.
-        let first = table.allocate(2, SocketSpec::unix_stream());
+        let first = table
+            .allocate(2, SocketSpec::unix_stream())
+            .expect("allocate first client");
         table
             .connect_to_bound_unix_stream(first.id, path)
             .expect("first connect fills the backlog");
 
         // A second connect must be rejected because the backlog is full, and it
         // must NOT consume a socket id (the counter is monotonic and never reclaims).
-        let second = table.allocate(2, SocketSpec::unix_stream());
+        let second = table
+            .allocate(2, SocketSpec::unix_stream())
+            .expect("allocate second client");
         let before = peek_next_socket_id(&table);
         let error = table
             .connect_to_bound_unix_stream(second.id, path)
@@ -2659,21 +3215,27 @@ mod tests {
         let table = SocketTable::new();
         let target = InetSocketAddress::new("127.0.0.1", 49222);
 
-        let listener = table.allocate(1, SocketSpec::tcp());
+        let listener = table
+            .allocate(1, SocketSpec::tcp())
+            .expect("allocate listener");
         table
             .bind_inet(listener.id, target.clone())
             .expect("bind inet listener");
         table.listen(listener.id, 1).expect("listen with backlog 1");
 
         // Fill the only backlog slot with one pending connection.
-        let first = table.allocate(2, SocketSpec::tcp());
+        let first = table
+            .allocate(2, SocketSpec::tcp())
+            .expect("allocate first client");
         table
             .connect_to_bound_inet_stream(first.id, target.clone())
             .expect("first connect fills the backlog");
 
         // A second connect must be rejected because the backlog is full, and it
         // must NOT consume a socket id (the counter is monotonic and never reclaims).
-        let second = table.allocate(2, SocketSpec::tcp());
+        let second = table
+            .allocate(2, SocketSpec::tcp())
+            .expect("allocate second client");
         let before = peek_next_socket_id(&table);
         let error = table
             .connect_to_bound_inet_stream(second.id, target)
@@ -2685,5 +3247,403 @@ mod tests {
             before, after,
             "full-backlog inet connect leaked a socket id (counter advanced from {before} to {after})"
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn test_resource_ledger(buffered_bytes: usize, datagrams: usize) -> Arc<ResourceLedger> {
+        Arc::new(ResourceLedger::root(
+            "test-vm",
+            [
+                (
+                    ResourceClass::BufferedBytes,
+                    ResourceLimit::new(buffered_bytes, "test.maxBufferedBytes"),
+                ),
+                (
+                    ResourceClass::Datagrams,
+                    ResourceLimit::new(datagrams, "test.maxDatagrams"),
+                ),
+                (
+                    ResourceClass::UdpBytes,
+                    ResourceLimit::new(buffered_bytes, "limits.udp.maxBufferedBytes"),
+                ),
+                (
+                    ResourceClass::UdpDatagrams,
+                    ResourceLimit::new(datagrams, "limits.udp.maxBufferedDatagrams"),
+                ),
+            ],
+        ))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn usage(ledger: &ResourceLedger, class: ResourceClass) -> ResourceUsage {
+        ledger.usage(class)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn stream_queue_reservations_follow_write_read_shutdown_and_close() {
+        let table = SocketTable::new();
+        let ledger = test_resource_ledger(5, 1);
+        table
+            .set_resource_ledger(Arc::clone(&ledger))
+            .expect("install resource ledger");
+
+        let writer = table
+            .allocate(1, SocketSpec::tcp())
+            .expect("allocate writer");
+        let reader = table
+            .allocate(2, SocketSpec::tcp())
+            .expect("allocate reader");
+        table
+            .connect_pair(writer.id(), reader.id())
+            .expect("connect stream pair");
+
+        // Socket and connection counts belong to CapabilityRegistry, not the
+        // kernel queue owner.
+        assert_eq!(usage(&ledger, ResourceClass::Sockets).used, 0);
+        assert_eq!(usage(&ledger, ResourceClass::Connections).used, 0);
+
+        table.write(writer.id(), b"12345").expect("fill queue");
+        assert_eq!(usage(&ledger, ResourceClass::BufferedBytes).used, 5);
+        assert!(!table.buffered_byte_capacity_available());
+        let error = table
+            .write(writer.id(), b"6")
+            .expect_err("write beyond retained-byte limit must fail");
+        assert_eq!(error.code(), "EAGAIN");
+        assert_eq!(table.snapshot().buffered_bytes, 5);
+        assert_eq!(usage(&ledger, ResourceClass::BufferedBytes).used, 5);
+
+        assert_eq!(
+            table.read(reader.id(), 2).expect("partial read"),
+            Some(b"12".to_vec())
+        );
+        assert_eq!(usage(&ledger, ResourceClass::BufferedBytes).used, 3);
+        assert!(table.buffered_byte_capacity_available());
+
+        table
+            .shutdown(reader.id(), SocketShutdown::Read)
+            .expect("discard unread queue");
+        assert_eq!(usage(&ledger, ResourceClass::BufferedBytes).used, 0);
+
+        table.remove(writer.id()).expect("close writer");
+        table.remove(reader.id()).expect("close reader");
+        assert!(ledger.is_zero());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn retained_byte_mismatch_fails_before_releasing_owned_capacity() {
+        let table = SocketTable::new();
+        let ledger = test_resource_ledger(8, 1);
+        table
+            .set_resource_ledger(Arc::clone(&ledger))
+            .expect("install resource ledger");
+        let writer = table
+            .allocate(1, SocketSpec::tcp())
+            .expect("allocate writer");
+        let reader = table
+            .allocate(2, SocketSpec::tcp())
+            .expect("allocate reader");
+        table
+            .connect_pair(writer.id(), reader.id())
+            .expect("connect stream pair");
+        table.write(writer.id(), b"abc").expect("queue bytes");
+
+        let mut state = lock_or_recover(&table.inner.state);
+        let error = release_retained_bytes(&mut state, reader.id(), 4)
+            .expect_err("over-release must fail atomically");
+        assert_eq!(error.code(), "EIO");
+        assert_eq!(
+            state
+                .retained_resources
+                .get(&reader.id())
+                .expect("retained ownership")
+                .buffered_bytes
+                .front()
+                .expect("byte reservation")
+                .amount(),
+            3
+        );
+        drop(state);
+        assert_eq!(usage(&ledger, ResourceClass::BufferedBytes).used, 3);
+        assert_eq!(table.snapshot().buffered_bytes, 3);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn datagram_reservations_are_atomic_and_release_full_truncated_payload() {
+        let table = SocketTable::new();
+        let ledger = test_resource_ledger(8, 1);
+        table
+            .set_resource_ledger(Arc::clone(&ledger))
+            .expect("install resource ledger");
+
+        let sender = table
+            .allocate(1, SocketSpec::udp())
+            .expect("allocate sender");
+        let receiver = table
+            .allocate(2, SocketSpec::udp())
+            .expect("allocate receiver");
+        let sender_address = InetSocketAddress::new("127.0.0.1", 41001);
+        let receiver_address = InetSocketAddress::new("127.0.0.1", 41002);
+        table
+            .bind_inet(sender.id(), sender_address)
+            .expect("bind sender");
+        table
+            .bind_inet(receiver.id(), receiver_address.clone())
+            .expect("bind receiver");
+
+        table
+            .send_to_bound_udp_socket(sender.id(), receiver_address.clone(), b"abc")
+            .expect("enqueue datagram");
+        assert_eq!(usage(&ledger, ResourceClass::BufferedBytes).used, 3);
+        assert_eq!(usage(&ledger, ResourceClass::Datagrams).used, 1);
+        assert_eq!(usage(&ledger, ResourceClass::UdpBytes).used, 3);
+        assert_eq!(usage(&ledger, ResourceClass::UdpDatagrams).used, 1);
+        assert!(!table.datagram_capacity_available());
+
+        let error = table
+            .send_to_bound_udp_socket(sender.id(), receiver_address.clone(), b"def")
+            .expect_err("second datagram must fail atomically");
+        assert_eq!(error.code(), "EAGAIN");
+        assert_eq!(table.snapshot().datagram_queue_len, 1);
+        assert_eq!(usage(&ledger, ResourceClass::BufferedBytes).used, 3);
+        assert_eq!(usage(&ledger, ResourceClass::Datagrams).used, 1);
+        assert_eq!(usage(&ledger, ResourceClass::UdpBytes).used, 3);
+        assert_eq!(usage(&ledger, ResourceClass::UdpDatagrams).used, 1);
+
+        let received = table
+            .recv_datagram(receiver.id(), 1)
+            .expect("receive datagram")
+            .expect("queued datagram");
+        assert_eq!(received.payload(), b"a");
+        assert_eq!(usage(&ledger, ResourceClass::BufferedBytes).used, 0);
+        assert_eq!(usage(&ledger, ResourceClass::Datagrams).used, 0);
+        assert_eq!(usage(&ledger, ResourceClass::UdpBytes).used, 0);
+        assert_eq!(usage(&ledger, ResourceClass::UdpDatagrams).used, 0);
+
+        table
+            .send_to_bound_udp_socket(sender.id(), receiver_address.clone(), b"charged")
+            .expect("enqueue charged handoff");
+        let charged = table
+            .recv_datagram_charged(receiver.id(), 1)
+            .expect("charged receive")
+            .expect("charged datagram");
+        assert_eq!(usage(&ledger, ResourceClass::BufferedBytes).used, 7);
+        assert_eq!(usage(&ledger, ResourceClass::Datagrams).used, 1);
+        assert_eq!(usage(&ledger, ResourceClass::UdpBytes).used, 7);
+        assert_eq!(usage(&ledger, ResourceClass::UdpDatagrams).used, 1);
+        let error = table
+            .send_to_bound_udp_socket(sender.id(), receiver_address.clone(), b"blocked")
+            .expect_err("guest-bound datagram ownership must retain the count permit");
+        assert_eq!(error.code(), "EAGAIN");
+        let (_, payload, reservations) = charged.into_parts();
+        assert_eq!(payload, b"c");
+        let (bytes, datagram, udp_bytes, udp_datagram) = reservations.expect("charged ownership");
+        assert_eq!(bytes.amount(), 7);
+        assert_eq!(datagram.amount(), 1);
+        assert_eq!(udp_bytes.amount(), 7);
+        assert_eq!(udp_datagram.amount(), 1);
+        drop((bytes, datagram, udp_bytes, udp_datagram));
+        assert_eq!(usage(&ledger, ResourceClass::BufferedBytes).used, 0);
+        assert_eq!(usage(&ledger, ResourceClass::Datagrams).used, 0);
+        assert_eq!(usage(&ledger, ResourceClass::UdpBytes).used, 0);
+        assert_eq!(usage(&ledger, ResourceClass::UdpDatagrams).used, 0);
+
+        table
+            .send_to_bound_udp_socket(sender.id(), receiver_address, b"queued")
+            .expect("enqueue replacement datagram");
+        table.remove(receiver.id()).expect("close queued receiver");
+        assert_eq!(usage(&ledger, ResourceClass::BufferedBytes).used, 0);
+        assert_eq!(usage(&ledger, ResourceClass::Datagrams).used, 0);
+        assert_eq!(usage(&ledger, ResourceClass::UdpBytes).used, 0);
+        assert_eq!(usage(&ledger, ResourceClass::UdpDatagrams).used, 0);
+        table.remove(sender.id()).expect("close sender");
+        assert!(ledger.is_zero());
+    }
+
+    #[test]
+    fn connected_udp_filters_non_peer_datagrams_and_disconnect_restores_delivery() {
+        let table = SocketTable::new();
+        let allowed_sender = table
+            .allocate(1, SocketSpec::udp())
+            .expect("allocate allowed sender");
+        let other_sender = table
+            .allocate(2, SocketSpec::udp())
+            .expect("allocate other sender");
+        let receiver = table
+            .allocate(3, SocketSpec::udp())
+            .expect("allocate receiver");
+        let allowed_address = InetSocketAddress::new("127.0.0.1", 41101);
+        let other_address = InetSocketAddress::new("127.0.0.1", 41102);
+        let receiver_address = InetSocketAddress::new("127.0.0.1", 41103);
+        table
+            .bind_inet(allowed_sender.id(), allowed_address.clone())
+            .expect("bind allowed sender");
+        table
+            .bind_inet(other_sender.id(), other_address)
+            .expect("bind other sender");
+        table
+            .bind_inet(receiver.id(), receiver_address.clone())
+            .expect("bind receiver");
+
+        table
+            .connect_bound_udp_socket(receiver.id(), allowed_address.clone())
+            .expect("connect receiver to allowed peer");
+        assert_eq!(
+            table
+                .get(receiver.id())
+                .expect("connected receiver")
+                .peer_address(),
+            Some(&allowed_address)
+        );
+
+        assert_eq!(
+            table
+                .send_to_bound_udp_socket(other_sender.id(), receiver_address.clone(), b"drop")
+                .expect("non-peer send still succeeds"),
+            4
+        );
+        assert_eq!(
+            table
+                .recv_datagram(receiver.id(), usize::MAX)
+                .expect_err("connected receiver must filter another peer")
+                .code(),
+            "EAGAIN"
+        );
+
+        table
+            .send_to_bound_udp_socket(allowed_sender.id(), receiver_address.clone(), b"allowed")
+            .expect("send from connected peer");
+        let received = table
+            .recv_datagram(receiver.id(), usize::MAX)
+            .expect("receive from connected peer")
+            .expect("connected datagram");
+        assert_eq!(received.payload(), b"allowed");
+        assert_eq!(received.source_address(), Some(&allowed_address));
+
+        table
+            .send_connected_udp_socket(receiver.id(), b"reply")
+            .expect("send through connected peer state");
+        let reply = table
+            .recv_datagram(allowed_sender.id(), usize::MAX)
+            .expect("receive connected reply")
+            .expect("connected reply datagram");
+        assert_eq!(reply.payload(), b"reply");
+        assert_eq!(reply.source_address(), Some(&receiver_address));
+
+        table
+            .disconnect_bound_udp_socket(receiver.id())
+            .expect("disconnect receiver");
+        assert!(table
+            .get(receiver.id())
+            .expect("disconnected receiver")
+            .peer_address()
+            .is_none());
+        table
+            .send_to_bound_udp_socket(other_sender.id(), receiver_address, b"accepted")
+            .expect("send after disconnect");
+        assert_eq!(
+            table
+                .recv_datagram(receiver.id(), usize::MAX)
+                .expect("receive after disconnect")
+                .expect("disconnected datagram")
+                .payload(),
+            b"accepted"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn incomplete_datagram_ownership_does_not_discard_payload() {
+        let table = SocketTable::new();
+        let ledger = test_resource_ledger(8, 1);
+        table
+            .set_resource_ledger(Arc::clone(&ledger))
+            .expect("install resource ledger");
+        let sender = table
+            .allocate(1, SocketSpec::udp())
+            .expect("allocate sender");
+        let receiver = table
+            .allocate(2, SocketSpec::udp())
+            .expect("allocate receiver");
+        let sender_address = InetSocketAddress::new("127.0.0.1", 42001);
+        let receiver_address = InetSocketAddress::new("127.0.0.1", 42002);
+        table
+            .bind_inet(sender.id(), sender_address)
+            .expect("bind sender");
+        table
+            .bind_inet(receiver.id(), receiver_address.clone())
+            .expect("bind receiver");
+        table
+            .send_to_bound_udp_socket(sender.id(), receiver_address, b"abc")
+            .expect("queue datagram");
+
+        // Simulate an internal ownership defect. Receiving must report it
+        // without losing the guest-visible payload.
+        let missing = lock_or_recover(&table.inner.state)
+            .retained_resources
+            .get_mut(&receiver.id())
+            .expect("retained ownership")
+            .udp_datagrams
+            .pop_front()
+            .expect("UDP datagram reservation");
+        drop(missing);
+        let error = table
+            .recv_datagram(receiver.id(), usize::MAX)
+            .expect_err("incomplete ownership must fail");
+        assert_eq!(error.code(), "EIO");
+        assert_eq!(table.snapshot().datagram_queue_len, 1);
+        assert_eq!(table.snapshot().buffered_bytes, 3);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn retained_queue_admission_charges_the_process_parent_atomically() {
+        let process = Arc::new(ResourceLedger::root(
+            "process",
+            [(
+                ResourceClass::BufferedBytes,
+                ResourceLimit::new(3, "runtime.resources.maxBufferedBytes"),
+            )],
+        ));
+        let vm = Arc::new(ResourceLedger::child(
+            "vm",
+            [(
+                ResourceClass::BufferedBytes,
+                ResourceLimit::new(5, "limits.resources.maxSocketBufferedBytes"),
+            )],
+            Arc::clone(&process),
+        ));
+        let table = SocketTable::new();
+        table
+            .set_resource_ledger(Arc::clone(&vm))
+            .expect("install child ledger");
+        let writer = table
+            .allocate(1, SocketSpec::tcp())
+            .expect("allocate writer");
+        let reader = table
+            .allocate(2, SocketSpec::tcp())
+            .expect("allocate reader");
+        table
+            .connect_pair(writer.id(), reader.id())
+            .expect("connect stream pair");
+
+        let error = table
+            .write(writer.id(), b"1234")
+            .expect_err("process aggregate must reject before queue mutation");
+        assert_eq!(error.code(), "EAGAIN");
+        assert_eq!(table.snapshot().buffered_bytes, 0);
+        assert_eq!(usage(&process, ResourceClass::BufferedBytes).used, 0);
+        assert_eq!(usage(&vm, ResourceClass::BufferedBytes).used, 0);
+
+        table
+            .write(writer.id(), b"123")
+            .expect("write within aggregate limit");
+        assert_eq!(usage(&process, ResourceClass::BufferedBytes).used, 3);
+        assert_eq!(usage(&vm, ResourceClass::BufferedBytes).used, 3);
+        table.read(reader.id(), 3).expect("drain retained bytes");
+        assert_eq!(usage(&process, ResourceClass::BufferedBytes).used, 0);
+        assert_eq!(usage(&vm, ResourceClass::BufferedBytes).used, 0);
     }
 }

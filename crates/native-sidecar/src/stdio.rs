@@ -7,7 +7,7 @@ use crate::{
     EventSinkTransport, Extension, ExtensionInterruptRequest, NativeSidecar, NativeSidecarConfig,
     SidecarError, SidecarRequestTransport,
 };
-use agentos_bridge::queue_tracker::{tracked_sync_channel, TrackedLimit, TrackedSyncSender};
+use agentos_bridge::queue_tracker::TrackedLimit;
 use agentos_bridge::{
     BridgeTypes, ChmodRequest, ClockBridge, ClockRequest, CommandPermissionRequest,
     CreateDirRequest, CreateJavascriptContextRequest, CreateWasmContextRequest, DiagnosticRecord,
@@ -24,29 +24,24 @@ use agentos_bridge::{
 use agentos_native_sidecar_core::{
     generated_wire_blocking_extension_interrupt, BlockingExtensionInterrupt,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
+use std::os::fd::OwnedFd;
 use std::os::unix::fs::{symlink as create_symlink, MetadataExt, PermissionsExt};
+use std::os::unix::net::UnixStream as StdUnixStream;
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
-use tokio::sync::{
-    mpsc::{channel, unbounded_channel, Receiver},
-    Notify,
-};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::Notify;
 use tokio::time;
 
-// Guest sync fs/module RPCs are serviced by `pump_process_events` on this timer,
-// so a blocked guest call waits up to one interval before the host even sees it.
-// At 5ms this dominated per-call latency (~5ms/stat); 250us cuts it ~11x (stat
-// 7.5s -> ~0.65s over 1500 ops) and the sub-ms tokio timer is honored. Idle
-// pumps are cheap no-ops (try_recv + zero-timeout poll), so the higher cadence
-// costs negligible CPU when no guest is issuing RPCs.
-const EVENT_PUMP_INTERVAL: Duration = Duration::from_micros(250);
 // Cadence of sidecar→host heartbeat frames. The host treats sustained inbound
 // silence (several missed beats) as a dead or wedged sidecar and tears the
 // process down, so this is a fixed protocol constant, not a tunable. Emitted
@@ -58,13 +53,597 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 // them at its frame layer without routing by ownership, so a fixed synthetic
 // id is correct even before any client authenticates.
 const HEARTBEAT_CONNECTION_ID: &str = "sidecar-transport";
-const MAX_STDIN_FRAME_QUEUE: usize = 128;
 const MAX_EVENT_READY_QUEUE: usize = 1;
-// Defense-in-depth headroom for the host-bound frame queue: a burst of output
-// frames from a busy turn should be buffered, so the writer only backpressures
-// when the host genuinely stops reading stdout rather than on every spike.
-const MAX_STDOUT_FRAME_QUEUE: usize = 4096;
+const MAX_SHUTDOWN_QUEUE: usize = 1;
+const MAX_TRANSPORT_ERROR_QUEUE: usize = 4;
 const MAX_LIMIT_WARNING_QUEUE: usize = 128;
+const STDIO_INGRESS_LIMIT_ERROR_CODE: &str = "ERR_AGENTOS_STDIO_INGRESS_LIMIT";
+const STDIO_CONTROL_LIMIT_ERROR_CODE: &str = "ERR_AGENTOS_STDIO_CONTROL_LIMIT";
+const PENDING_RESPONSE_COUNT_ERROR_CODE: &str = "ERR_AGENTOS_STDIO_PENDING_RESPONSE_COUNT_LIMIT";
+const PENDING_RESPONSE_BYTES_ERROR_CODE: &str = "ERR_AGENTOS_STDIO_PENDING_RESPONSE_BYTE_LIMIT";
+const PENDING_RESPONSE_COUNT_CONFIG_PATH: &str = "runtime.protocol.maxPendingResponses";
+const PENDING_RESPONSE_BYTES_CONFIG_PATH: &str = "runtime.protocol.maxPendingResponseBytes";
+
+#[derive(Clone, Copy, Debug)]
+struct ProtocolBudgetConfig {
+    max_frames: usize,
+    max_bytes: usize,
+    frame_path: &'static str,
+    byte_path: &'static str,
+    label: &'static str,
+    metric: agentos_runtime::metrics::ChannelMetricClass,
+}
+
+#[derive(Debug, Default)]
+struct ProtocolBudgetState {
+    frames: usize,
+    bytes: usize,
+    warned: bool,
+}
+
+#[derive(Clone, Debug)]
+struct ProtocolBudget {
+    config: ProtocolBudgetConfig,
+    state: Arc<Mutex<ProtocolBudgetState>>,
+    changed: Arc<Condvar>,
+    metrics: agentos_runtime::metrics::RuntimeMetrics,
+}
+
+#[derive(Clone, Debug)]
+struct ProtocolLimitError {
+    code: &'static str,
+    path: &'static str,
+    label: &'static str,
+    used: usize,
+    requested: usize,
+    limit: usize,
+    unit: &'static str,
+}
+
+impl fmt::Display for ProtocolLimitError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{}: {} used={} requested={} limit={} {}; raise {}",
+            self.code, self.label, self.used, self.requested, self.limit, self.unit, self.path
+        )
+    }
+}
+
+#[derive(Debug)]
+struct ProtocolReservation {
+    budget: ProtocolBudget,
+    frames: usize,
+    bytes: usize,
+}
+
+impl ProtocolReservation {
+    fn shrink_bytes(&mut self, retained_bytes: usize) {
+        assert!(
+            retained_bytes <= self.bytes,
+            "protocol reservation can only shrink"
+        );
+        let released = self.bytes - retained_bytes;
+        if released == 0 {
+            return;
+        }
+        let mut state = self.budget.state.lock().unwrap_or_else(|poisoned| {
+            eprintln!(
+                "ERR_AGENTOS_PROTOCOL_BUDGET_POISONED: recovering {} budget during resize",
+                self.budget.config.label
+            );
+            poisoned.into_inner()
+        });
+        if state.bytes < released {
+            eprintln!(
+                "ERR_AGENTOS_PROTOCOL_ACCOUNTING_UNDERFLOW: {} resize bytes={}/{}",
+                self.budget.config.label, state.bytes, released,
+            );
+            state.bytes = 0;
+        } else {
+            state.bytes -= released;
+        }
+        self.bytes = retained_bytes;
+        drop(state);
+        self.budget.changed.notify_all();
+    }
+}
+
+impl ProtocolBudget {
+    fn new(
+        config: ProtocolBudgetConfig,
+        metrics: agentos_runtime::metrics::RuntimeMetrics,
+    ) -> Self {
+        Self {
+            config,
+            state: Arc::new(Mutex::new(ProtocolBudgetState::default())),
+            changed: Arc::new(Condvar::new()),
+            metrics,
+        }
+    }
+
+    fn reserve(&self, bytes: usize) -> Result<ProtocolReservation, ProtocolLimitError> {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| {
+            eprintln!(
+                "ERR_AGENTOS_PROTOCOL_BUDGET_POISONED: recovering {} budget",
+                self.config.label
+            );
+            poisoned.into_inner()
+        });
+        let next_frames = state.frames.checked_add(1).ok_or(ProtocolLimitError {
+            code: "ERR_AGENTOS_PROTOCOL_FRAME_LIMIT",
+            path: self.config.frame_path,
+            label: self.config.label,
+            used: state.frames,
+            requested: 1,
+            limit: self.config.max_frames,
+            unit: "frames",
+        })?;
+        if next_frames > self.config.max_frames {
+            return Err(ProtocolLimitError {
+                code: "ERR_AGENTOS_PROTOCOL_FRAME_LIMIT",
+                path: self.config.frame_path,
+                label: self.config.label,
+                used: state.frames,
+                requested: 1,
+                limit: self.config.max_frames,
+                unit: "frames",
+            });
+        }
+        let next_bytes = state.bytes.checked_add(bytes).ok_or(ProtocolLimitError {
+            code: "ERR_AGENTOS_PROTOCOL_BYTE_LIMIT",
+            path: self.config.byte_path,
+            label: self.config.label,
+            used: state.bytes,
+            requested: bytes,
+            limit: self.config.max_bytes,
+            unit: "bytes",
+        })?;
+        if next_bytes > self.config.max_bytes {
+            return Err(ProtocolLimitError {
+                code: "ERR_AGENTOS_PROTOCOL_BYTE_LIMIT",
+                path: self.config.byte_path,
+                label: self.config.label,
+                used: state.bytes,
+                requested: bytes,
+                limit: self.config.max_bytes,
+                unit: "bytes",
+            });
+        }
+        state.frames = next_frames;
+        state.bytes = next_bytes;
+        self.metrics
+            .observe_channel(self.config.metric, state.frames, state.bytes);
+        let fill = state
+            .frames
+            .saturating_mul(100)
+            .checked_div(self.config.max_frames)
+            .unwrap_or(0)
+            .max(
+                state
+                    .bytes
+                    .saturating_mul(100)
+                    .checked_div(self.config.max_bytes)
+                    .unwrap_or(0),
+            );
+        if fill >= 80 && !state.warned {
+            state.warned = true;
+            eprintln!(
+                "ERR_AGENTOS_PROTOCOL_NEAR_LIMIT: {} frames={}/{} bytes={}/{}; raise {} or {}",
+                self.config.label,
+                state.frames,
+                self.config.max_frames,
+                state.bytes,
+                self.config.max_bytes,
+                self.config.frame_path,
+                self.config.byte_path,
+            );
+        }
+        drop(state);
+        Ok(ProtocolReservation {
+            budget: self.clone(),
+            frames: 1,
+            bytes,
+        })
+    }
+
+    fn reserve_until(
+        &self,
+        bytes: usize,
+        deadline: Option<Instant>,
+    ) -> Result<ProtocolReservation, ProtocolLimitError> {
+        if bytes > self.config.max_bytes {
+            return self.reserve(bytes);
+        }
+        loop {
+            match self.reserve(bytes) {
+                Ok(reservation) => return Ok(reservation),
+                Err(error) => {
+                    let state = self.state.lock().unwrap_or_else(|poisoned| {
+                        eprintln!(
+                            "ERR_AGENTOS_PROTOCOL_BUDGET_POISONED: recovering {} budget while waiting",
+                            self.config.label
+                        );
+                        poisoned.into_inner()
+                    });
+                    if state.frames < self.config.max_frames
+                        && state.bytes.saturating_add(bytes) <= self.config.max_bytes
+                    {
+                        drop(state);
+                        continue;
+                    }
+                    match deadline {
+                        Some(deadline) => {
+                            let remaining = deadline.saturating_duration_since(Instant::now());
+                            if remaining.is_zero() {
+                                return Err(error);
+                            }
+                            let (_state, timeout) = self
+                                .changed
+                                .wait_timeout(state, remaining)
+                                .unwrap_or_else(|poisoned| {
+                                    eprintln!(
+                                        "ERR_AGENTOS_PROTOCOL_BUDGET_POISONED: recovering {} budget after timed wait",
+                                        self.config.label
+                                    );
+                                    poisoned.into_inner()
+                                });
+                            if timeout.timed_out() {
+                                return Err(error);
+                            }
+                        }
+                        None => {
+                            drop(self.changed.wait(state).unwrap_or_else(|poisoned| {
+                                eprintln!(
+                                    "ERR_AGENTOS_PROTOCOL_BUDGET_POISONED: recovering {} budget after wait",
+                                    self.config.label
+                                );
+                                poisoned.into_inner()
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Drop for ProtocolReservation {
+    fn drop(&mut self) {
+        let mut state = self.budget.state.lock().unwrap_or_else(|poisoned| {
+            eprintln!(
+                "ERR_AGENTOS_PROTOCOL_BUDGET_POISONED: recovering {} budget during release",
+                self.budget.config.label
+            );
+            poisoned.into_inner()
+        });
+        if state.frames < self.frames || state.bytes < self.bytes {
+            eprintln!(
+                "ERR_AGENTOS_PROTOCOL_ACCOUNTING_UNDERFLOW: {} frames={}/{} bytes={}/{}",
+                self.budget.config.label, state.frames, self.frames, state.bytes, self.bytes,
+            );
+            state.frames = state.frames.saturating_sub(self.frames);
+            state.bytes = state.bytes.saturating_sub(self.bytes);
+        } else {
+            state.frames -= self.frames;
+            state.bytes -= self.bytes;
+        }
+        let fill = state
+            .frames
+            .saturating_mul(100)
+            .checked_div(self.budget.config.max_frames)
+            .unwrap_or(0)
+            .max(
+                state
+                    .bytes
+                    .saturating_mul(100)
+                    .checked_div(self.budget.config.max_bytes)
+                    .unwrap_or(0),
+            );
+        if fill < 50 {
+            state.warned = false;
+        }
+        drop(state);
+        self.budget.changed.notify_all();
+    }
+}
+
+#[derive(Debug)]
+struct AccountedProtocolFrame {
+    frame: ProtocolFrame,
+    _reservation: ProtocolReservation,
+}
+
+#[derive(Debug)]
+struct DecodedProtocolFrame {
+    frame: ProtocolFrame,
+    encoded_bytes: usize,
+}
+
+#[derive(Debug)]
+struct EncodedProtocolFrame {
+    bytes: Vec<u8>,
+    _reservation: ProtocolReservation,
+}
+
+#[derive(Debug)]
+struct ProtocolOutputQueueState {
+    ordinary: VecDeque<EncodedProtocolFrame>,
+    control: VecDeque<EncodedProtocolFrame>,
+    open: bool,
+}
+
+#[derive(Debug)]
+struct ProtocolOutputQueue {
+    ordinary_capacity: usize,
+    control_capacity: usize,
+    state: Mutex<ProtocolOutputQueueState>,
+    available: Condvar,
+    control_available: Notify,
+}
+
+impl ProtocolOutputQueue {
+    fn new(ordinary_capacity: usize, control_capacity: usize) -> Self {
+        Self {
+            ordinary_capacity,
+            control_capacity,
+            state: Mutex::new(ProtocolOutputQueueState {
+                ordinary: VecDeque::new(),
+                control: VecDeque::new(),
+                open: true,
+            }),
+            available: Condvar::new(),
+            control_available: Notify::new(),
+        }
+    }
+
+    fn enqueue(
+        &self,
+        control: bool,
+        frame: EncodedProtocolFrame,
+    ) -> Result<(), ProtocolTrySendError> {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| {
+            eprintln!("ERR_AGENTOS_PROTOCOL_OUTPUT_QUEUE_POISONED: recovering output queue");
+            poisoned.into_inner()
+        });
+        if !state.open {
+            return Err(ProtocolTrySendError::Disconnected);
+        }
+        let (queue, capacity) = if control {
+            (&mut state.control, self.control_capacity)
+        } else {
+            (&mut state.ordinary, self.ordinary_capacity)
+        };
+        if queue.len() >= capacity {
+            return Err(ProtocolTrySendError::Full);
+        }
+        queue.push_back(frame);
+        drop(state);
+        if control {
+            self.control_available.notify_one();
+        } else {
+            self.available.notify_one();
+        }
+        Ok(())
+    }
+
+    fn recv_ordinary(&self) -> Option<EncodedProtocolFrame> {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| {
+            eprintln!("ERR_AGENTOS_PROTOCOL_OUTPUT_QUEUE_POISONED: recovering output queue");
+            poisoned.into_inner()
+        });
+        loop {
+            if let Some(frame) = state.ordinary.pop_front() {
+                return Some(frame);
+            }
+            if !state.open {
+                return None;
+            }
+            state = self.available.wait(state).unwrap_or_else(|poisoned| {
+                eprintln!(
+                    "ERR_AGENTOS_PROTOCOL_OUTPUT_QUEUE_POISONED: recovering output queue after wait"
+                );
+                poisoned.into_inner()
+            });
+        }
+    }
+
+    async fn recv_control(&self) -> Option<EncodedProtocolFrame> {
+        loop {
+            let notified = self.control_available.notified();
+            {
+                let mut state = self.state.lock().unwrap_or_else(|poisoned| {
+                    eprintln!(
+                        "ERR_AGENTOS_PROTOCOL_OUTPUT_QUEUE_POISONED: recovering control output queue"
+                    );
+                    poisoned.into_inner()
+                });
+                if let Some(frame) = state.control.pop_front() {
+                    return Some(frame);
+                }
+                if !state.open {
+                    return None;
+                }
+            }
+            notified.await;
+        }
+    }
+
+    fn close(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| {
+            eprintln!("ERR_AGENTOS_PROTOCOL_OUTPUT_QUEUE_POISONED: recovering output queue");
+            poisoned.into_inner()
+        });
+        state.open = false;
+        drop(state);
+        self.available.notify_all();
+        self.control_available.notify_waiters();
+    }
+}
+
+#[derive(Clone)]
+struct ProtocolFrameWriter {
+    output: Arc<ProtocolOutputQueue>,
+    codec: WireFrameCodec,
+    ordinary_budget: ProtocolBudget,
+    control_budget: ProtocolBudget,
+}
+
+#[derive(Debug)]
+enum ProtocolTrySendError {
+    Full,
+    Disconnected,
+    Rejected(io::Error),
+}
+
+impl ProtocolFrameWriter {
+    fn encode_with_reservation(
+        &self,
+        frame: ProtocolFrame,
+        mut reservation: ProtocolReservation,
+    ) -> Result<EncodedProtocolFrame, io::Error> {
+        let bytes = self
+            .codec
+            .encode(&frame)
+            .map_err(wire_protocol_error)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+        reservation.shrink_bytes(bytes.len());
+        Ok(EncodedProtocolFrame {
+            bytes,
+            _reservation: reservation,
+        })
+    }
+
+    fn prepare(
+        &self,
+        frame: ProtocolFrame,
+        budget: &ProtocolBudget,
+    ) -> Result<EncodedProtocolFrame, io::Error> {
+        let maximum_encoded_bytes = self.codec.max_frame_bytes().saturating_add(4);
+        let reservation = budget
+            .reserve(maximum_encoded_bytes)
+            .map_err(|error| io::Error::new(io::ErrorKind::WouldBlock, error.to_string()))?;
+        self.encode_with_reservation(frame, reservation)
+    }
+
+    fn prepare_until(
+        &self,
+        frame: ProtocolFrame,
+        budget: &ProtocolBudget,
+        deadline: Option<Instant>,
+    ) -> Result<EncodedProtocolFrame, io::Error> {
+        let maximum_encoded_bytes = self.codec.max_frame_bytes().saturating_add(4);
+        let reservation = budget
+            .reserve_until(maximum_encoded_bytes, deadline)
+            .map_err(|error| io::Error::new(io::ErrorKind::WouldBlock, error.to_string()))?;
+        self.encode_with_reservation(frame, reservation)
+    }
+
+    fn is_control(frame: &ProtocolFrame) -> Result<bool, io::Error> {
+        match frame {
+            ProtocolFrame::EventFrame(event) => Ok(matches!(
+                &event.payload,
+                wire::EventPayload::StructuredEvent(event) if event.name == "heartbeat"
+            )),
+            ProtocolFrame::ResponseFrame(_) | ProtocolFrame::SidecarRequestFrame(_) => Ok(true),
+            ProtocolFrame::RequestFrame(_)
+            | ProtocolFrame::SidecarResponseFrame(_)
+            | ProtocolFrame::ControlFrame(_) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "ERR_AGENTOS_PROTOCOL_WRONG_LANE: sidecar cannot write {} frame",
+                    frame_kind(frame)
+                ),
+            )),
+        }
+    }
+
+    fn send(&self, frame: ProtocolFrame) -> Result<(), io::Error> {
+        let control = Self::is_control(&frame)?;
+        let encoded = if control {
+            self.prepare_until(frame, &self.control_budget, None)?
+        } else {
+            self.prepare_until(frame, &self.ordinary_budget, None)?
+        };
+        self.output
+            .enqueue(control, encoded)
+            .map_err(|error| match error {
+                ProtocolTrySendError::Full => io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "stdout queue remained full after admission",
+                ),
+                ProtocolTrySendError::Disconnected => {
+                    io::Error::new(io::ErrorKind::BrokenPipe, "stdout writer disconnected")
+                }
+                ProtocolTrySendError::Rejected(error) => error,
+            })
+    }
+
+    fn send_until(&self, frame: ProtocolFrame, deadline: Instant) -> Result<(), io::Error> {
+        let control = Self::is_control(&frame)?;
+        let encoded = if control {
+            self.prepare_until(frame, &self.control_budget, Some(deadline))?
+        } else {
+            self.prepare_until(frame, &self.ordinary_budget, Some(deadline))?
+        };
+        self.output
+            .enqueue(control, encoded)
+            .map_err(|error| match error {
+                ProtocolTrySendError::Full => io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "stdout queue remained full after admission",
+                ),
+                ProtocolTrySendError::Disconnected => {
+                    io::Error::new(io::ErrorKind::BrokenPipe, "stdout writer disconnected")
+                }
+                ProtocolTrySendError::Rejected(error) => error,
+            })
+    }
+
+    fn try_send(&self, frame: ProtocolFrame) -> Result<(), ProtocolTrySendError> {
+        let control = Self::is_control(&frame).map_err(ProtocolTrySendError::Rejected)?;
+        let encoded = if control {
+            self.prepare(frame, &self.control_budget)
+                .map_err(ProtocolTrySendError::Rejected)?
+        } else {
+            self.prepare(frame, &self.ordinary_budget)
+                .map_err(ProtocolTrySendError::Rejected)?
+        };
+        self.output.enqueue(control, encoded)
+    }
+}
+
+fn validate_protocol_transport_config(
+    protocol: &agentos_runtime::RuntimeProtocolConfig,
+    max_frame_bytes: usize,
+) -> Result<(), io::Error> {
+    for (path, bytes) in [
+        (
+            "runtime.protocol.maxIngressBytes",
+            protocol.max_ingress_bytes,
+        ),
+        (
+            "runtime.protocol.maxControlBytes",
+            protocol.max_control_bytes,
+        ),
+        ("runtime.protocol.maxEgressBytes", protocol.max_egress_bytes),
+        (
+            "runtime.protocol.maxPendingResponseBytes",
+            protocol.max_pending_response_bytes,
+        ),
+    ] {
+        let required = max_frame_bytes.saturating_add(4);
+        if bytes < required {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "ERR_AGENTOS_PROTOCOL_CONFIG: {path}={bytes} must be at least max_encoded_frame_bytes={required} so one legal frame remains admissible"
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
 
 #[cfg(test)]
 fn request_frame(
@@ -120,137 +699,273 @@ fn wire_protocol_error(error: ProtocolCodecError) -> SidecarError {
     SidecarError::InvalidState(format!("invalid generated wire protocol frame: {error}"))
 }
 
-pub fn run() -> Result<(), Box<dyn Error>> {
-    run_with_extensions(Vec::new())
+pub fn run(control_fd: OwnedFd) -> Result<(), Box<dyn Error>> {
+    run_with_extensions(Vec::new(), control_fd)
 }
 
-pub fn run_with_extensions(extensions: Vec<Box<dyn Extension>>) -> Result<(), Box<dyn Error>> {
-    // Initialize the embedded V8 runtime + platform now, on the long-lived main
-    // thread, so it is never first-initialized on a transient worker thread (e.g. a
-    // VM-create snapshot pre-warm thread that then exits — which corrupts V8's
-    // platform and wedges later isolate creation). Best-effort.
-    if let Err(error) = agentos_execution::v8_host::ensure_runtime_initialized() {
-        eprintln!("embedded V8 runtime init failed at startup: {error}");
-    }
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?
-        .block_on(run_async(extensions))
-}
-
-async fn run_async(extensions: Vec<Box<dyn Extension>>) -> Result<(), Box<dyn Error>> {
+pub fn run_with_extensions(
+    extensions: Vec<Box<dyn Extension>>,
+    control_fd: OwnedFd,
+) -> Result<(), Box<dyn Error>> {
     let config = NativeSidecarConfig {
         compile_cache_root: Some(default_compile_cache_root()),
         ..NativeSidecarConfig::default()
     };
-    let codec = WireFrameCodec::new(config.max_frame_bytes);
-    let mut sidecar =
-        NativeSidecar::with_config_and_extensions(LocalBridge::default(), config, extensions)?;
+    let runtime = agentos_runtime::SidecarRuntime::process(&config.runtime)?;
+    let runtime_context = runtime.context();
+    // Initialize the embedded V8 runtime + platform now, on the long-lived main
+    // thread, so it is never first-initialized on a transient worker thread (e.g. a
+    // VM-create snapshot pre-warm thread that then exits — which corrupts V8's
+    // platform and wedges later isolate creation). Best-effort.
+    if let Err(error) = agentos_execution::v8_host::ensure_runtime_initialized(&runtime_context) {
+        eprintln!("embedded V8 runtime init failed at startup: {error}");
+    }
+    runtime.block_on(run_async(extensions, config, runtime_context, control_fd))
+}
+
+async fn run_async(
+    extensions: Vec<Box<dyn Extension>>,
+    config: NativeSidecarConfig,
+    runtime_context: agentos_runtime::RuntimeContext,
+    control_fd: OwnedFd,
+) -> Result<(), Box<dyn Error>> {
+    let callback_limits = FrameSidecarRequestLimits::from_config(&config);
+    let protocol = config.runtime.protocol.clone();
+    let max_frame_bytes = config.max_frame_bytes;
+    validate_protocol_transport_config(&protocol, max_frame_bytes)?;
+    let codec = WireFrameCodec::new(max_frame_bytes);
+    let control_stream = inherited_control_stream(control_fd)?;
+    let (mut control_reader, mut control_writer) = control_stream.into_split();
+    let metrics = runtime_context.metrics().clone();
+    let ingress_budget = ProtocolBudget::new(
+        ProtocolBudgetConfig {
+            max_frames: protocol.max_ingress_frames,
+            max_bytes: protocol.max_ingress_bytes,
+            frame_path: "runtime.protocol.maxIngressFrames",
+            byte_path: "runtime.protocol.maxIngressBytes",
+            label: "stdio ordinary ingress",
+            metric: agentos_runtime::metrics::ChannelMetricClass::StdioIngress,
+        },
+        metrics.clone(),
+    );
+    let control_ingress_budget = ProtocolBudget::new(
+        ProtocolBudgetConfig {
+            max_frames: protocol.max_control_frames,
+            max_bytes: protocol.max_control_bytes,
+            frame_path: "runtime.protocol.maxControlFrames",
+            byte_path: "runtime.protocol.maxControlBytes",
+            label: "stdio response/control ingress",
+            metric: agentos_runtime::metrics::ChannelMetricClass::StdioIngress,
+        },
+        metrics,
+    );
+    let mut sidecar = NativeSidecar::with_config_extensions_and_runtime(
+        LocalBridge::default(),
+        config,
+        extensions,
+        runtime_context.clone(),
+    )?;
     let mut active_sessions = BTreeSet::<SessionScope>::new();
     let mut active_connections = BTreeSet::<String>::new();
     let (stdin_tx, mut stdin_rx) =
-        channel::<Result<Option<ProtocolFrame>, String>>(MAX_STDIN_FRAME_QUEUE);
+        channel::<Result<Option<AccountedProtocolFrame>, String>>(protocol.max_ingress_frames);
+    let (stdin_control_tx, mut stdin_control_rx) =
+        channel::<AccountedProtocolFrame>(protocol.max_control_frames);
+    let (shutdown_tx, mut shutdown_rx) = channel::<wire::ControlFrame>(MAX_SHUTDOWN_QUEUE);
     let stdin_gauge = agentos_bridge::queue_tracker::register_queue(
         TrackedLimit::SidecarStdinFrames,
-        MAX_STDIN_FRAME_QUEUE,
+        protocol.max_ingress_frames,
     );
     let (event_ready_tx, mut event_ready_rx) = channel::<()>(MAX_EVENT_READY_QUEUE);
-    let (write_tx, write_rx) = tracked_sync_channel::<ProtocolFrame>(
-        TrackedLimit::SidecarStdoutFrames,
-        MAX_STDOUT_FRAME_QUEUE,
+    let ordinary_egress_budget = ProtocolBudget::new(
+        ProtocolBudgetConfig {
+            max_frames: protocol.max_egress_frames,
+            max_bytes: protocol.max_egress_bytes,
+            frame_path: "runtime.protocol.maxEgressFrames",
+            byte_path: "runtime.protocol.maxEgressBytes",
+            label: "stdio ordinary egress",
+            metric: agentos_runtime::metrics::ChannelMetricClass::StdioEgress,
+        },
+        runtime_context.metrics().clone(),
     );
-    let (write_error_tx, mut write_error_rx) = unbounded_channel::<String>();
+    let control_egress_budget = ProtocolBudget::new(
+        ProtocolBudgetConfig {
+            max_frames: protocol.max_control_frames,
+            max_bytes: protocol.max_control_bytes,
+            frame_path: "runtime.protocol.maxControlFrames",
+            byte_path: "runtime.protocol.maxControlBytes",
+            label: "stdio response/control egress",
+            metric: agentos_runtime::metrics::ChannelMetricClass::StdioEgress,
+        },
+        runtime_context.metrics().clone(),
+    );
+    let output_queue = Arc::new(ProtocolOutputQueue::new(
+        protocol.max_egress_frames,
+        protocol.max_control_frames,
+    ));
+    let frame_writer = ProtocolFrameWriter {
+        output: Arc::clone(&output_queue),
+        codec: codec.clone(),
+        ordinary_budget: ordinary_egress_budget,
+        control_budget: control_egress_budget,
+    };
+    let (write_error_tx, mut write_error_rx) = channel::<String>(MAX_TRANSPORT_ERROR_QUEUE);
 
     // Forward limit-registry near-capacity warnings to the host: the global sink
     // fires (edge-triggered, from arbitrary threads) into this channel, and the
     // event loop below drains it and emits a `StructuredEvent` (name
     // "limit_warning"). Keep the host-visible warning path bounded too: a
     // broken consumer must not turn observability into an unbounded heap sink.
+    // The callback must never block an arbitrary producer, so it uses bounded
+    // nonblocking admission and logs an explicit host-visible drop.
     let (limit_warning_tx, mut limit_warning_rx) =
         channel::<agentos_bridge::queue_tracker::LimitWarning>(MAX_LIMIT_WARNING_QUEUE);
     agentos_bridge::queue_tracker::set_limit_warning_handler(Box::new(move |warning| {
         if let Err(error) = limit_warning_tx.try_send(warning.clone()) {
-            eprintln!("failed to enqueue AgentOS limit warning: {error}");
+            eprintln!(
+                "ERR_AGENTOS_LIMIT_WARNING_QUEUE: could not enqueue limit warning {}: {error}",
+                warning.name.as_str()
+            );
         }
     }));
-    let callback_transport = Arc::new(FrameSidecarRequestTransport::new(write_tx.clone()));
+    let callback_transport = Arc::new(FrameSidecarRequestTransport::new(
+        frame_writer.clone(),
+        callback_limits,
+    ));
     sidecar.set_sidecar_request_transport(callback_transport.clone());
     // Live event sink: lets an extension stream `session/update` (and other)
     // events to stdout mid-dispatch instead of batching them until the request
-    // resolves. Shares the same outbound `write_tx` channel as the batch path, so
+    // resolves. Shares the same bounded frame writer as the batch path, so
     // ordering and backpressure are identical.
-    let event_transport = Arc::new(FrameEventTransport::new(write_tx.clone()));
+    let event_transport = Arc::new(FrameEventTransport::new(frame_writer.clone()));
     sidecar.set_event_transport(event_transport);
-    let mut event_pump = time::interval(EVENT_PUMP_INTERVAL);
-    let process_event_notify = Arc::new(Notify::new());
-    sidecar
-        .javascript_engine
-        .set_event_notify(Some(process_event_notify.clone()));
-    let writer_codec = codec.clone();
+    // Every execution backend and deferred sidecar producer shares this
+    // process-level edge. Durable bounded queues retain the data; the notify is
+    // only a coalesced prompt to drain them, so no recurring session poll is
+    // needed.
+    let process_event_notify = Arc::clone(&sidecar.process_event_notify);
     let reader_codec = codec.clone();
+    let reader_frame_writer = frame_writer.clone();
     let writer_error_tx = write_error_tx.clone();
+    // AGENTOS_THREAD_SITE: constant-stdio-writer
     thread::spawn(move || {
         let mut writer = io::BufWriter::new(io::stdout());
-        while let Ok(frame) = write_rx.recv() {
-            if let Err(error) = write_frame(&writer_codec, &mut writer, &frame) {
-                let _ = writer_error_tx.send(error.to_string());
+        while let Some(frame) = output_queue.recv_ordinary() {
+            if let Err(error) = write_encoded_frame(&mut writer, &frame.bytes) {
+                if let Err(send_error) = writer_error_tx.try_send(error.to_string()) {
+                    eprintln!(
+                        "ERR_AGENTOS_TRANSPORT_ERROR_QUEUE: could not enqueue stdout writer error: {send_error}"
+                    );
+                }
+                output_queue.close();
                 break;
             }
         }
     });
-    spawn_heartbeat_thread(write_tx.clone(), HEARTBEAT_INTERVAL);
+    let control_output_queue = Arc::clone(&frame_writer.output);
+    let control_write_error_tx = write_error_tx.clone();
+    runtime_context.spawn(agentos_runtime::TaskClass::Runtime, async move {
+        while let Some(frame) = control_output_queue.recv_control().await {
+            let result = async {
+                control_writer.write_all(&frame.bytes).await?;
+                control_writer.flush().await
+            }
+            .await;
+            if let Err(error) = result {
+                if let Err(send_error) = control_write_error_tx.try_send(error.to_string()) {
+                    eprintln!(
+                        "ERR_AGENTOS_TRANSPORT_ERROR_QUEUE: could not enqueue control writer error: {send_error}"
+                    );
+                }
+                control_output_queue.close();
+                break;
+            }
+        }
+    })?;
+    let _heartbeat_task =
+        spawn_heartbeat_task(&runtime_context, frame_writer.clone(), HEARTBEAT_INTERVAL)?;
 
+    // AGENTOS_THREAD_SITE: constant-stdio-reader
     thread::spawn({
-        let callback_transport = callback_transport.clone();
         let read_error_tx = write_error_tx.clone();
         move || {
             let mut stdin = io::stdin();
             loop {
                 let frame = match read_frame(&reader_codec, &mut stdin) {
-                    Ok(Some(ProtocolFrame::SidecarResponseFrame(response))) => {
-                        if callback_transport.accept_response(response.clone()) {
-                            continue;
+                    Ok(Some(frame)) => frame,
+                    Ok(None) => break,
+                    Err(error) => {
+                        if let Err(send_error) = read_error_tx.try_send(error.to_string()) {
+                            eprintln!(
+                                "ERR_AGENTOS_TRANSPORT_ERROR_QUEUE: could not enqueue stdin reader error: {send_error}"
+                            );
                         }
-                        Ok(Some(ProtocolFrame::SidecarResponseFrame(response)))
-                    }
-                    Ok(Some(frame)) => Ok(Some(frame)),
-                    other => other,
-                }
-                .map_err(|error: Box<dyn Error>| error.to_string());
-                let should_stop = matches!(frame, Ok(None) | Err(_));
-                match enqueue_stdin_frame(&stdin_tx, frame) {
-                    Ok(()) => {
-                        // Sample inbound queue depth so the centralized tracker
-                        // can warn before host requests back up on the sidecar.
-                        stdin_gauge.observe_depth(
-                            stdin_tx.max_capacity().saturating_sub(stdin_tx.capacity()),
-                        );
-                    }
-                    Err(StdinFrameQueueError::Full(message)) => {
-                        let _ = read_error_tx.send(message);
                         break;
                     }
-                    Err(StdinFrameQueueError::Closed) => break,
-                }
-                if should_stop {
+                };
+                if matches!(
+                    route_decoded_stdin_frame(
+                        frame,
+                        &stdin_tx,
+                        &reader_frame_writer,
+                        &ingress_budget,
+                    ),
+                    StdinReaderFlow::Stop
+                ) {
                     break;
                 }
+                // Sample inbound queue depth so the centralized tracker can warn
+                // before host requests back up on the sidecar.
+                stdin_gauge
+                    .observe_depth(stdin_tx.max_capacity().saturating_sub(stdin_tx.capacity()));
             }
         }
     });
+    let control_reader_codec = codec.clone();
+    let control_reader_transport = callback_transport.clone();
+    let control_read_error_tx = write_error_tx.clone();
+    runtime_context.spawn(agentos_runtime::TaskClass::Runtime, async move {
+        loop {
+            let frame = match read_frame_async(&control_reader_codec, &mut control_reader).await {
+                Ok(Some(frame)) => frame,
+                Ok(None) => {
+                    let _ = control_read_error_tx
+                        .try_send(String::from("response/control stream closed"));
+                    break;
+                }
+                Err(error) => {
+                    let _ = control_read_error_tx.try_send(error.to_string());
+                    break;
+                }
+            };
+            if matches!(
+                route_decoded_control_frame(
+                    frame,
+                    &control_reader_transport,
+                    &stdin_control_tx,
+                    &shutdown_tx,
+                    &control_ingress_budget,
+                ),
+                StdinReaderFlow::Stop
+            ) {
+                break;
+            }
+        }
+    })?;
 
-    flush_sidecar_requests(&mut sidecar, &write_tx)?;
-    let mut pending_frame: Option<ProtocolFrame> = None;
+    flush_sidecar_requests(&mut sidecar, &frame_writer)?;
+    let mut pending_frame: Option<AccountedProtocolFrame> = None;
     let mut limit_warning_closed = false;
+    let mut stdin_closed = false;
 
-    loop {
+    'protocol: loop {
         if let Some(frame) = pending_frame.take() {
             handle_protocol_frame(
                 frame,
                 &mut sidecar,
                 &mut stdin_rx,
                 &mut pending_frame,
-                &write_tx,
+                &frame_writer,
                 &mut active_sessions,
                 &mut active_connections,
             )
@@ -258,23 +973,63 @@ async fn run_async(extensions: Vec<Box<dyn Extension>>) -> Result<(), Box<dyn Er
             continue;
         }
 
+        if stdin_closed {
+            break;
+        }
+
         tokio::select! {
-            maybe_frame = stdin_rx.recv() => {
-                let Some(frame) = maybe_frame else {
-                    break;
+            biased;
+            maybe_shutdown = shutdown_rx.recv() => {
+                let Some(control) = maybe_shutdown else {
+                    break 'protocol;
                 };
-                let Some(frame) = frame.map_err(io::Error::other)? else {
-                    break;
-                };
-                handle_protocol_frame(
-                    frame,
-                    &mut sidecar,
-                    &mut stdin_rx,
-                    &mut pending_frame,
-                    &write_tx,
-                    &mut active_sessions,
-                    &mut active_connections,
-                ).await?;
+                match control.payload {
+                    wire::ControlPayload::ShutdownControl(shutdown) => {
+                        tracing::debug!(reason = %shutdown.reason, "host requested sidecar shutdown");
+                        break 'protocol;
+                    }
+                }
+            }
+            maybe_control = stdin_control_rx.recv() => {
+                match maybe_control {
+                    Some(frame) => {
+                        handle_protocol_frame(
+                            frame,
+                            &mut sidecar,
+                            &mut stdin_rx,
+                            &mut pending_frame,
+                            &frame_writer,
+                            &mut active_sessions,
+                            &mut active_connections,
+                        ).await?;
+                    }
+                    None => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "response/control stream closed",
+                        ).into());
+                    }
+                }
+            }
+            maybe_frame = stdin_rx.recv(), if !stdin_closed => {
+                match maybe_frame {
+                    Some(frame) => {
+                        let Some(frame) = frame.map_err(io::Error::other)? else {
+                            stdin_closed = true;
+                            continue;
+                        };
+                        handle_protocol_frame(
+                            frame,
+                            &mut sidecar,
+                            &mut stdin_rx,
+                            &mut pending_frame,
+                            &frame_writer,
+                            &mut active_sessions,
+                            &mut active_connections,
+                        ).await?;
+                    }
+                    None => stdin_closed = true,
+                }
             }
             maybe_warning = limit_warning_rx.recv(), if !limit_warning_closed => {
                 match maybe_warning {
@@ -302,7 +1057,7 @@ async fn run_async(extensions: Vec<Box<dyn Extension>>) -> Result<(), Box<dyn Er
                                 "limit_warning",
                                 detail,
                             )?;
-                            send_output_frame(&write_tx, ProtocolFrame::EventFrame(frame))?;
+                            send_output_frame(&frame_writer, ProtocolFrame::EventFrame(frame))?;
                         }
                     }
                     None => {
@@ -325,7 +1080,7 @@ async fn run_async(extensions: Vec<Box<dyn Extension>>) -> Result<(), Box<dyn Er
                             .poll_event_wire(&session.ownership_scope(), Duration::ZERO)
                             .await?
                         {
-                            send_output_frame(&write_tx, ProtocolFrame::EventFrame(frame))?;
+                            send_output_frame(&frame_writer, ProtocolFrame::EventFrame(frame))?;
                             emitted_frame = true;
                         }
                     }
@@ -334,23 +1089,25 @@ async fn run_async(extensions: Vec<Box<dyn Extension>>) -> Result<(), Box<dyn Er
                         break;
                     }
                 }
-                flush_sidecar_requests(&mut sidecar, &write_tx)?;
+                flush_sidecar_requests(&mut sidecar, &frame_writer)?;
             }
             _ = process_event_notify.notified() => {
                 for session in active_sessions.iter().cloned().collect::<Vec<_>>() {
                     if sidecar.pump_process_events(&session.compat_ownership_scope()).await? {
-                        let _ = event_ready_tx.try_send(());
+                        match event_ready_tx.try_send(()) {
+                            Ok(())
+                            | Err(tokio::sync::mpsc::error::TrySendError::Full(())) => {}
+                            Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::BrokenPipe,
+                                    "event-ready wake receiver closed",
+                                )
+                                .into());
+                            }
+                        }
                     }
                 }
-                flush_sidecar_requests(&mut sidecar, &write_tx)?;
-            }
-            _ = event_pump.tick() => {
-                for session in active_sessions.iter().cloned().collect::<Vec<_>>() {
-                    if sidecar.pump_process_events(&session.compat_ownership_scope()).await? {
-                        let _ = event_ready_tx.try_send(());
-                    }
-                }
-                flush_sidecar_requests(&mut sidecar, &write_tx)?;
+                flush_sidecar_requests(&mut sidecar, &frame_writer)?;
             }
             maybe_write_error = write_error_rx.recv() => {
                 if let Some(error) = maybe_write_error {
@@ -365,14 +1122,18 @@ async fn run_async(extensions: Vec<Box<dyn Extension>>) -> Result<(), Box<dyn Er
 }
 
 async fn handle_protocol_frame(
-    frame: ProtocolFrame,
+    accounted_frame: AccountedProtocolFrame,
     sidecar: &mut NativeSidecar<LocalBridge>,
-    stdin_rx: &mut Receiver<Result<Option<ProtocolFrame>, String>>,
-    pending_frame: &mut Option<ProtocolFrame>,
-    write_tx: &TrackedSyncSender<ProtocolFrame>,
+    stdin_rx: &mut Receiver<Result<Option<AccountedProtocolFrame>, String>>,
+    pending_frame: &mut Option<AccountedProtocolFrame>,
+    write_tx: &ProtocolFrameWriter,
     active_sessions: &mut BTreeSet<SessionScope>,
     active_connections: &mut BTreeSet<String>,
 ) -> Result<(), Box<dyn Error>> {
+    let AccountedProtocolFrame {
+        frame,
+        _reservation,
+    } = accounted_frame;
     match frame {
         ProtocolFrame::RequestFrame(request) => {
             let (dispatch, extra_responses) =
@@ -430,8 +1191,8 @@ fn untrack_disposed_sessions(
 async fn dispatch_with_prompt_interrupt(
     sidecar: &mut NativeSidecar<LocalBridge>,
     request: RequestFrame,
-    stdin_rx: &mut Receiver<Result<Option<ProtocolFrame>, String>>,
-    pending_frame: &mut Option<ProtocolFrame>,
+    stdin_rx: &mut Receiver<Result<Option<AccountedProtocolFrame>, String>>,
+    pending_frame: &mut Option<AccountedProtocolFrame>,
 ) -> Result<(WireDispatchResult, Vec<ResponseFrame>), Box<dyn Error>> {
     let Some(blocking_request) = blocking_extension_request(sidecar, &request) else {
         return Ok((sidecar.dispatch_wire(request).await?, Vec::new()));
@@ -443,7 +1204,7 @@ async fn dispatch_with_prompt_interrupt(
         maybe_frame = stdin_rx.recv() => {
             let frame = decode_stdin_frame(maybe_frame)?;
             if let Some(frame) = frame {
-                if let Some(interrupt) = extension_interrupt_response(&blocking_request, &request, &frame) {
+                if let Some(interrupt) = extension_interrupt_response(&blocking_request, &request, &frame.frame) {
                     drop(dispatch);
                     let mut extra_responses = Vec::new();
                     if let Some(response) = interrupt.interrupting_response {
@@ -461,8 +1222,8 @@ async fn dispatch_with_prompt_interrupt(
 }
 
 fn decode_stdin_frame(
-    maybe_frame: Option<Result<Option<ProtocolFrame>, String>>,
-) -> Result<Option<ProtocolFrame>, Box<dyn Error>> {
+    maybe_frame: Option<Result<Option<AccountedProtocolFrame>, String>>,
+) -> Result<Option<AccountedProtocolFrame>, Box<dyn Error>> {
     let Some(frame) = maybe_frame else {
         return Ok(None);
     };
@@ -549,7 +1310,8 @@ fn extension_interrupt_response(
         ProtocolFrame::ResponseFrame(_)
         | ProtocolFrame::EventFrame(_)
         | ProtocolFrame::SidecarRequestFrame(_)
-        | ProtocolFrame::SidecarResponseFrame(_) => None,
+        | ProtocolFrame::SidecarResponseFrame(_)
+        | ProtocolFrame::ControlFrame(_) => None,
     }
 }
 
@@ -608,7 +1370,7 @@ fn track_session_state(
 fn read_frame(
     codec: &WireFrameCodec,
     reader: &mut impl Read,
-) -> Result<Option<ProtocolFrame>, Box<dyn Error>> {
+) -> Result<Option<DecodedProtocolFrame>, Box<dyn Error>> {
     let mut prefix = [0u8; 4];
     match reader.read_exact(&mut prefix) {
         Ok(()) => {}
@@ -632,18 +1394,52 @@ fn read_frame(
     bytes.resize(total_len, 0);
     reader.read_exact(&mut bytes[prefix.len()..])?;
 
-    Ok(Some(codec.decode(&bytes)?))
+    Ok(Some(DecodedProtocolFrame {
+        frame: codec.decode(&bytes)?,
+        encoded_bytes: total_len,
+    }))
 }
 
-fn write_frame(
+fn inherited_control_stream(fd: OwnedFd) -> Result<tokio::net::UnixStream, io::Error> {
+    let stream = StdUnixStream::from(fd);
+    stream.set_nonblocking(true)?;
+    tokio::net::UnixStream::from_std(stream)
+}
+
+async fn read_frame_async(
     codec: &WireFrameCodec,
-    writer: &mut impl Write,
-    frame: &ProtocolFrame,
-) -> Result<(), Box<dyn Error>> {
-    let bytes = codec.encode(frame)?;
-    writer.write_all(&bytes)?;
-    writer.flush()?;
-    Ok(())
+    reader: &mut (impl AsyncRead + Unpin),
+) -> Result<Option<DecodedProtocolFrame>, Box<dyn Error + Send + Sync>> {
+    let mut prefix = [0u8; 4];
+    match reader.read_exact(&mut prefix).await {
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(error) => return Err(error.into()),
+    }
+
+    let declared_len = u32::from_be_bytes(prefix) as usize;
+    if declared_len > codec.max_frame_bytes() {
+        return Err(ProtocolCodecError::FrameTooLarge {
+            size: declared_len,
+            max: codec.max_frame_bytes(),
+        }
+        .into());
+    }
+    let total_len = prefix.len().saturating_add(declared_len);
+    let mut bytes = Vec::with_capacity(total_len);
+    bytes.extend_from_slice(&prefix);
+    bytes.resize(total_len, 0);
+    reader.read_exact(&mut bytes[prefix.len()..]).await?;
+
+    Ok(Some(DecodedProtocolFrame {
+        frame: codec.decode(&bytes)?,
+        encoded_bytes: total_len,
+    }))
+}
+
+fn write_encoded_frame(writer: &mut impl Write, bytes: &[u8]) -> Result<(), io::Error> {
+    writer.write_all(bytes)?;
+    writer.flush()
 }
 
 fn frame_kind(frame: &ProtocolFrame) -> &'static str {
@@ -653,30 +1449,204 @@ fn frame_kind(frame: &ProtocolFrame) -> &'static str {
         ProtocolFrame::EventFrame(_) => "event",
         ProtocolFrame::SidecarRequestFrame(_) => "sidecar_request",
         ProtocolFrame::SidecarResponseFrame(_) => "sidecar_response",
+        ProtocolFrame::ControlFrame(_) => "control",
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StdinReaderFlow {
+    Continue,
+    Stop,
+}
+
+fn route_decoded_stdin_frame(
+    decoded: DecodedProtocolFrame,
+    ordinary_sender: &Sender<Result<Option<AccountedProtocolFrame>, String>>,
+    overload_writer: &ProtocolFrameWriter,
+    ingress_budget: &ProtocolBudget,
+) -> StdinReaderFlow {
+    let DecodedProtocolFrame {
+        frame,
+        encoded_bytes,
+    } = decoded;
+    if !matches!(frame, ProtocolFrame::RequestFrame(_)) {
+        eprintln!(
+            "ERR_AGENTOS_PROTOCOL_WRONG_LANE: expected request on ordinary stdin, received {}",
+            frame_kind(&frame)
+        );
+        return StdinReaderFlow::Stop;
+    }
+
+    let reservation = match ingress_budget.reserve(encoded_bytes) {
+        Ok(reservation) => reservation,
+        Err(error) => {
+            return reject_stdin_ingress_frame(frame, error, overload_writer);
+        }
+    };
+    match enqueue_stdin_frame(
+        ordinary_sender,
+        Ok(Some(AccountedProtocolFrame {
+            frame,
+            _reservation: reservation,
+        })),
+    ) {
+        Ok(()) => StdinReaderFlow::Continue,
+        Err(StdinFrameQueueError::Closed) => StdinReaderFlow::Stop,
+        Err(StdinFrameQueueError::Full(frame)) => {
+            let Ok(Some(frame)) = *frame else {
+                eprintln!(
+                    "{STDIO_INGRESS_LIMIT_ERROR_CODE}: stdin request queue exceeded \
+                     {} frames; raise {}",
+                    ingress_budget.config.max_frames, ingress_budget.config.frame_path,
+                );
+                return StdinReaderFlow::Continue;
+            };
+            let error = ProtocolLimitError {
+                code: "ERR_AGENTOS_PROTOCOL_FRAME_LIMIT",
+                path: ingress_budget.config.frame_path,
+                label: ingress_budget.config.label,
+                used: ingress_budget.config.max_frames,
+                requested: 1,
+                limit: ingress_budget.config.max_frames,
+                unit: "frames",
+            };
+            reject_stdin_ingress_frame(frame.frame, error, overload_writer)
+        }
+    }
+}
+
+fn route_decoded_control_frame(
+    decoded: DecodedProtocolFrame,
+    callback_transport: &FrameSidecarRequestTransport,
+    control_sender: &Sender<AccountedProtocolFrame>,
+    shutdown_sender: &Sender<wire::ControlFrame>,
+    control_budget: &ProtocolBudget,
+) -> StdinReaderFlow {
+    let DecodedProtocolFrame {
+        frame,
+        encoded_bytes,
+    } = decoded;
+    let ProtocolFrame::SidecarResponseFrame(response) = frame else {
+        if let ProtocolFrame::ControlFrame(control) = frame {
+            return match shutdown_sender.try_send(control) {
+                Ok(()) => StdinReaderFlow::Continue,
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    // Shutdown is durable once queued. Coalesce duplicates
+                    // rather than allowing them to consume the response budget.
+                    StdinReaderFlow::Continue
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => StdinReaderFlow::Stop,
+            };
+        }
+        eprintln!(
+            "ERR_AGENTOS_PROTOCOL_WRONG_LANE: expected sidecar_response or control on response/control stream, received {}",
+            frame_kind(&frame)
+        );
+        return StdinReaderFlow::Stop;
+    };
+    let response = match callback_transport.accept_response(response) {
+        Ok(()) => return StdinReaderFlow::Continue,
+        Err(response) => *response,
+    };
+    let request_id = response.request_id;
+    let reservation = match control_budget.reserve(encoded_bytes) {
+        Ok(reservation) => reservation,
+        Err(error) => {
+            eprintln!(
+                "{STDIO_CONTROL_LIMIT_ERROR_CODE}: {error}; dropping unmatched response request_id={request_id}"
+            );
+            return StdinReaderFlow::Continue;
+        }
+    };
+    match control_sender.try_send(AccountedProtocolFrame {
+        frame: ProtocolFrame::SidecarResponseFrame(response),
+        _reservation: reservation,
+    }) {
+        Ok(()) => StdinReaderFlow::Continue,
+        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+            eprintln!(
+                "{STDIO_CONTROL_LIMIT_ERROR_CODE}: sidecar response control queue exceeded \
+                 {} frames; raise {}; dropping unmatched response request_id={request_id}",
+                control_budget.config.max_frames, control_budget.config.frame_path,
+            );
+            StdinReaderFlow::Continue
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => StdinReaderFlow::Stop,
+    }
+}
+
+fn reject_stdin_ingress_frame(
+    frame: ProtocolFrame,
+    error: ProtocolLimitError,
+    overload_writer: &ProtocolFrameWriter,
+) -> StdinReaderFlow {
+    let ProtocolFrame::RequestFrame(request) = frame else {
+        eprintln!(
+            "{STDIO_INGRESS_LIMIT_ERROR_CODE}: {error}; dropping unexpected {} frame",
+            frame_kind(&frame)
+        );
+        return StdinReaderFlow::Continue;
+    };
+    let rejection = ProtocolFrame::ResponseFrame(response_frame(
+        request.request_id,
+        request.ownership,
+        ResponsePayload::RejectedResponse(wire::RejectedResponse {
+            code: error.code.to_owned(),
+            message: format!("{error}; retry after the current request backlog drains"),
+            limit_name: Some(error.label.to_owned()),
+            configured_limit: Some(u64::try_from(error.limit).unwrap_or(u64::MAX)),
+            current_usage: Some(u64::try_from(error.used).unwrap_or(u64::MAX)),
+            requested: Some(u64::try_from(error.requested).unwrap_or(u64::MAX)),
+            unit: Some(error.unit.to_owned()),
+            scope: Some(String::from("process")),
+            vm_id: None,
+            session_generation: None,
+            capability_id: None,
+            operation: Some(String::from("stdio.requestAdmission")),
+            configuration_path: Some(error.path.to_owned()),
+            retryable: Some(true),
+            errno: Some(String::from("EAGAIN")),
+        }),
+    ));
+    match overload_writer.try_send(rejection) {
+        Ok(()) => StdinReaderFlow::Continue,
+        Err(ProtocolTrySendError::Full) => {
+            eprintln!(
+                "{STDIO_INGRESS_LIMIT_ERROR_CODE}: reserved control egress queue is full; dropping rejection"
+            );
+            StdinReaderFlow::Continue
+        }
+        Err(ProtocolTrySendError::Disconnected) => StdinReaderFlow::Stop,
+        Err(ProtocolTrySendError::Rejected(error)) => {
+            eprintln!(
+                "{STDIO_INGRESS_LIMIT_ERROR_CODE}: could not encode/admit overload rejection: {error}"
+            );
+            StdinReaderFlow::Continue
+        }
+    }
+}
+
+#[derive(Debug)]
 enum StdinFrameQueueError {
-    Full(String),
+    Full(Box<Result<Option<AccountedProtocolFrame>, String>>),
     Closed,
 }
 
 fn enqueue_stdin_frame(
-    sender: &tokio::sync::mpsc::Sender<Result<Option<ProtocolFrame>, String>>,
-    frame: Result<Option<ProtocolFrame>, String>,
+    sender: &tokio::sync::mpsc::Sender<Result<Option<AccountedProtocolFrame>, String>>,
+    frame: Result<Option<AccountedProtocolFrame>, String>,
 ) -> Result<(), StdinFrameQueueError> {
     sender.try_send(frame).map_err(|error| match error {
-        tokio::sync::mpsc::error::TrySendError::Full(_) => StdinFrameQueueError::Full(format!(
-            "stdin frame queue exceeded {MAX_STDIN_FRAME_QUEUE} pending frames"
-        )),
+        tokio::sync::mpsc::error::TrySendError::Full(frame) => {
+            StdinFrameQueueError::Full(Box::new(frame))
+        }
         tokio::sync::mpsc::error::TrySendError::Closed(_) => StdinFrameQueueError::Closed,
     })
 }
 
 fn flush_sidecar_requests(
     sidecar: &mut NativeSidecar<LocalBridge>,
-    writer: &TrackedSyncSender<ProtocolFrame>,
+    writer: &ProtocolFrameWriter,
 ) -> Result<(), Box<dyn Error>> {
     while let Some(request) = sidecar.pop_wire_sidecar_request()? {
         send_output_frame(writer, ProtocolFrame::SidecarRequestFrame(request))?;
@@ -684,10 +1654,7 @@ fn flush_sidecar_requests(
     Ok(())
 }
 
-fn send_output_frame(
-    writer: &TrackedSyncSender<ProtocolFrame>,
-    frame: ProtocolFrame,
-) -> Result<(), io::Error> {
+fn send_output_frame(writer: &ProtocolFrameWriter, frame: ProtocolFrame) -> Result<(), io::Error> {
     // Apply backpressure rather than killing the sidecar when the host reads
     // stdout slowly. A full queue means the dedicated writer thread is blocked on
     // the stdout pipe (the host has not drained it yet) — a transient, recoverable
@@ -698,42 +1665,61 @@ fn send_output_frame(
     // and the guest. It never deadlocks: the writer thread runs independently, and
     // if it dies (real broken pipe) the receiver is dropped and `send` returns
     // `Disconnected`, which we still surface as a terminal `BrokenPipe`.
-    writer.send(frame).map_err(|_disconnected| {
-        io::Error::new(io::ErrorKind::BrokenPipe, "stdout writer disconnected")
-    })
+    writer.send(frame)
 }
 
 /// Emit a connection-scoped `StructuredEvent { name: "heartbeat" }` frame every
 /// `interval` for as long as the stdout writer is alive. This is the host's
 /// liveness signal: it resets the host's silence watchdog, so a host that sees
 /// no frames at all for several intervals can conclude the sidecar process is
-/// dead or wedged rather than merely busy. Runs on its own thread with a clone
-/// of the outbound frame channel so beats are independent of the dispatch loop.
-fn spawn_heartbeat_thread(write_tx: TrackedSyncSender<ProtocolFrame>, interval: Duration) {
-    thread::spawn(move || loop {
-        thread::sleep(interval);
-        let frame = match crate::service::structured_event_frame(
-            HEARTBEAT_CONNECTION_ID,
-            "heartbeat",
-            std::collections::HashMap::new(),
-        ) {
-            Ok(frame) => frame,
-            Err(error) => {
-                // Unreachable for a fixed name/empty detail; if it ever fires,
-                // stop loudly instead of spinning on a broken encoder.
-                tracing::error!(
-                    target: "agentos_native_sidecar::stdio",
-                    %error,
-                    "failed to encode heartbeat frame; stopping heartbeat thread",
-                );
-                return;
+/// dead or wedged rather than merely busy. Runs on the process SidecarRuntime.
+fn spawn_heartbeat_task(
+    runtime: &agentos_runtime::RuntimeContext,
+    write_tx: ProtocolFrameWriter,
+    interval: Duration,
+) -> Result<tokio::task::JoinHandle<()>, agentos_runtime::TaskSpawnError> {
+    runtime.spawn(agentos_runtime::TaskClass::Runtime, async move {
+        let mut ticker = time::interval(interval);
+        ticker.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+        // The old thread slept before its first heartbeat; retain that ordering.
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            let frame = match crate::service::structured_event_frame(
+                HEARTBEAT_CONNECTION_ID,
+                "heartbeat",
+                std::collections::HashMap::new(),
+            ) {
+                Ok(frame) => frame,
+                Err(error) => {
+                    // Unreachable for a fixed name/empty detail; if it ever fires,
+                    // stop loudly instead of spinning on a broken encoder.
+                    tracing::error!(
+                        target: "agentos_native_sidecar::stdio",
+                        %error,
+                        "failed to encode heartbeat frame; stopping heartbeat task",
+                    );
+                    return;
+                }
+            };
+            match write_tx.try_send(ProtocolFrame::EventFrame(frame)) {
+                Ok(()) => {}
+                Err(ProtocolTrySendError::Full) => {
+                    // A full outbound lane means the host already has pending
+                    // sidecar traffic, which itself satisfies liveness.
+                }
+                Err(ProtocolTrySendError::Disconnected) => return,
+                Err(ProtocolTrySendError::Rejected(error)) => {
+                    tracing::error!(
+                        target: "agentos_native_sidecar::stdio",
+                        %error,
+                        "failed to admit heartbeat frame; stopping heartbeat task",
+                    );
+                    return;
+                }
             }
-        };
-        if send_output_frame(&write_tx, ProtocolFrame::EventFrame(frame)).is_err() {
-            // Writer thread gone — the sidecar is shutting down. Normal exit.
-            return;
         }
-    });
+    })
 }
 
 fn default_compile_cache_root() -> PathBuf {
@@ -755,15 +1741,80 @@ mod tests {
 
     const TEST_EXTENSION_NAMESPACE: &str = "dev.rivet.secure-exec.test.blocking";
 
-    #[test]
-    fn heartbeat_thread_emits_periodic_structured_heartbeat_frames() {
-        let (write_tx, write_rx) =
-            tracked_sync_channel::<ProtocolFrame>(TrackedLimit::SidecarStdoutFrames, 16);
-        spawn_heartbeat_thread(write_tx, Duration::from_millis(5));
+    fn test_protocol_budget(
+        max_frames: usize,
+        max_bytes: usize,
+        label: &'static str,
+    ) -> ProtocolBudget {
+        ProtocolBudget::new(
+            ProtocolBudgetConfig {
+                max_frames,
+                max_bytes,
+                frame_path: "runtime.protocol.maxIngressFrames",
+                byte_path: "runtime.protocol.maxIngressBytes",
+                label,
+                metric: agentos_runtime::metrics::ChannelMetricClass::StdioIngress,
+            },
+            agentos_runtime::metrics::RuntimeMetrics::new(),
+        )
+    }
+
+    fn test_decoded_frame(frame: ProtocolFrame) -> DecodedProtocolFrame {
+        DecodedProtocolFrame {
+            frame,
+            encoded_bytes: 1,
+        }
+    }
+
+    fn test_accounted_frame(
+        frame: ProtocolFrame,
+        budget: &ProtocolBudget,
+    ) -> AccountedProtocolFrame {
+        AccountedProtocolFrame {
+            frame,
+            _reservation: budget.reserve(1).expect("test frame reservation"),
+        }
+    }
+
+    fn test_frame_writer(capacity: usize) -> (ProtocolFrameWriter, Arc<ProtocolOutputQueue>) {
+        let codec = WireFrameCodec::new(4096);
+        let output = Arc::new(ProtocolOutputQueue::new(capacity, capacity));
+        let max_bytes = capacity.saturating_mul(codec.max_frame_bytes().saturating_add(4));
+        (
+            ProtocolFrameWriter {
+                output: Arc::clone(&output),
+                codec,
+                ordinary_budget: test_protocol_budget(capacity, max_bytes, "test ordinary egress"),
+                control_budget: test_protocol_budget(capacity, max_bytes, "test control egress"),
+            },
+            output,
+        )
+    }
+
+    fn decode_test_output(frame: EncodedProtocolFrame) -> ProtocolFrame {
+        WireFrameCodec::new(4096)
+            .decode(&frame.bytes)
+            .expect("decode test output frame")
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn heartbeat_task_emits_periodic_structured_heartbeat_frames() {
+        let (write_tx, write_rx) = test_frame_writer(16);
+        let runtime =
+            agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+                .expect("initialize heartbeat test process runtime")
+                .context();
+        let _heartbeat_task = spawn_heartbeat_task(&runtime, write_tx, Duration::from_millis(5))
+            .expect("heartbeat task admission");
 
         // Two beats prove the emitter is periodic, not one-shot.
         for beat in 0..2 {
-            let frame = write_rx.recv().expect("heartbeat frame");
+            let frame = decode_test_output(
+                write_rx
+                    .recv_control()
+                    .await
+                    .expect("heartbeat control frame"),
+            );
             let ProtocolFrame::EventFrame(event) = frame else {
                 panic!("expected event frame for beat {beat}, got {frame:?}");
             };
@@ -792,11 +1843,80 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn partial_control_frame_is_rejected_from_its_prefix_before_body_allocation() {
+        let codec = WireFrameCodec::new(16);
+        let (mut host, mut sidecar) = tokio::io::duplex(8);
+        host.write_all(&32_u32.to_be_bytes())
+            .await
+            .expect("write oversized control prefix");
+
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            read_frame_async(&codec, &mut sidecar),
+        )
+        .await
+        .expect("prefix classification must not wait for an oversized body")
+        .expect_err("oversized control frame should fail");
+        assert!(error.to_string().contains("limit is 16"));
+    }
+
+    #[test]
+    fn protocol_lanes_reject_misrouted_frames() {
+        let transport = test_callback_transport(FrameSidecarRequestLimits {
+            max_pending_responses: 4,
+            max_pending_response_bytes: 4096,
+            max_frame_bytes: 4096,
+        });
+        let ingress_budget = test_protocol_budget(4, 4096, "test ordinary ingress");
+        let control_budget = test_protocol_budget(4, 4096, "test control ingress");
+        let (ordinary_tx, _ordinary_rx) =
+            channel::<Result<Option<AccountedProtocolFrame>, String>>(4);
+        let (control_tx, _control_rx) = channel::<AccountedProtocolFrame>(4);
+        let (shutdown_tx, _shutdown_rx) = channel::<wire::ControlFrame>(1);
+        let (overload_tx, _overload_rx) = test_frame_writer(4);
+
+        assert_eq!(
+            route_decoded_stdin_frame(
+                test_decoded_frame(ProtocolFrame::SidecarResponseFrame(test_sidecar_response(
+                    -1,
+                    b"wrong-lane",
+                ))),
+                &ordinary_tx,
+                &overload_tx,
+                &ingress_budget,
+            ),
+            StdinReaderFlow::Stop,
+        );
+
+        let request = ProtocolFrame::RequestFrame(request_frame(
+            1,
+            connection_ownership("wrong-control-lane"),
+            RequestPayload::AuthenticateRequest(AuthenticateRequest {
+                client_name: String::from("wrong-lane"),
+                auth_token: String::from("token"),
+                protocol_version: wire::PROTOCOL_VERSION,
+                bridge_version: agentos_bridge::bridge_contract().version,
+            }),
+        ));
+        assert_eq!(
+            route_decoded_control_frame(
+                test_decoded_frame(request),
+                &transport,
+                &control_tx,
+                &shutdown_tx,
+                &control_budget,
+            ),
+            StdinReaderFlow::Stop,
+        );
+    }
+
     #[test]
     fn stdio_work_queues_are_bounded() {
+        let capacity = agentos_runtime::DEFAULT_PROTOCOL_MAX_INGRESS_FRAMES;
         let (stdin_tx, _stdin_rx) =
-            channel::<Result<Option<ProtocolFrame>, String>>(MAX_STDIN_FRAME_QUEUE);
-        for _ in 0..MAX_STDIN_FRAME_QUEUE {
+            channel::<Result<Option<AccountedProtocolFrame>, String>>(capacity);
+        for _ in 0..capacity {
             enqueue_stdin_frame(&stdin_tx, Ok(None))
                 .expect("stdin frame queue should accept capacity");
         }
@@ -815,6 +1935,292 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn protocol_budget_enforces_count_and_bytes_and_releases_exactly() {
+        let count_budget = test_protocol_budget(1, 8, "test count budget");
+        let first = count_budget.reserve(4).expect("first frame fits");
+        let error = count_budget
+            .reserve(1)
+            .expect_err("second frame exceeds count capacity");
+        assert_eq!(error.code, "ERR_AGENTOS_PROTOCOL_FRAME_LIMIT");
+        assert_eq!(error.path, "runtime.protocol.maxIngressFrames");
+        drop(first);
+        drop(count_budget.reserve(8).expect("released slot is reusable"));
+
+        let byte_budget = test_protocol_budget(2, 8, "test byte budget");
+        let first = byte_budget.reserve(5).expect("first byte charge fits");
+        let error = byte_budget
+            .reserve(4)
+            .expect_err("aggregate byte capacity must be enforced");
+        assert_eq!(error.code, "ERR_AGENTOS_PROTOCOL_BYTE_LIMIT");
+        assert_eq!(error.path, "runtime.protocol.maxIngressBytes");
+        drop(first);
+        drop(byte_budget.reserve(8).expect("released bytes are reusable"));
+    }
+
+    #[tokio::test]
+    async fn protocol_output_queue_physically_separates_control_and_events() {
+        let (writer, output) = test_frame_writer(4);
+        let event = crate::service::structured_event_frame(
+            "conn-priority",
+            "ordinary",
+            std::collections::HashMap::new(),
+        )
+        .expect("event frame");
+        writer
+            .send(ProtocolFrame::EventFrame(event))
+            .expect("queue ordinary event");
+        writer
+            .send(ProtocolFrame::ResponseFrame(response_frame(
+                77,
+                connection_ownership("conn-priority"),
+                ResponsePayload::RejectedResponse(wire::RejectedResponse {
+                    code: String::from("TEST"),
+                    message: String::from("control"),
+                    limit_name: None,
+                    configured_limit: None,
+                    current_usage: None,
+                    requested: None,
+                    unit: None,
+                    scope: None,
+                    vm_id: None,
+                    session_generation: None,
+                    capability_id: None,
+                    operation: None,
+                    configuration_path: None,
+                    retryable: None,
+                    errno: None,
+                }),
+            )))
+            .expect("queue control response");
+
+        let first = decode_test_output(
+            output
+                .recv_control()
+                .await
+                .expect("response/control output"),
+        );
+        assert!(matches!(first, ProtocolFrame::ResponseFrame(_)));
+        let second = decode_test_output(output.recv_ordinary().expect("ordinary event output"));
+        assert!(matches!(second, ProtocolFrame::EventFrame(_)));
+    }
+
+    fn test_callback_transport(limits: FrameSidecarRequestLimits) -> FrameSidecarRequestTransport {
+        let (write_tx, _write_rx) = test_frame_writer(4);
+        FrameSidecarRequestTransport::new(write_tx, limits)
+    }
+
+    fn test_sidecar_response(request_id: RequestId, payload: &[u8]) -> SidecarResponseFrame {
+        SidecarResponseFrame {
+            schema: wire::protocol_schema(),
+            request_id,
+            ownership: connection_ownership("conn-callback"),
+            payload: wire::SidecarResponsePayload::ExtEnvelope(ExtEnvelope {
+                namespace: String::from("dev.agentos.test.callback"),
+                payload: payload.to_vec(),
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn ordinary_ingress_saturation_preserves_later_direct_response_progress() {
+        let transport = test_callback_transport(FrameSidecarRequestLimits {
+            max_pending_responses: 4,
+            max_pending_response_bytes: 4096,
+            max_frame_bytes: 4096,
+        });
+        let callback_rx = transport
+            .register_waiter(-7)
+            .expect("callback waiter should be admitted");
+        assert_eq!(transport.pending_usage(), (1, 0));
+        let ingress_budget = test_protocol_budget(4, 4096, "test ordinary ingress");
+        let control_budget = test_protocol_budget(4, 4096, "test control ingress");
+        let (ordinary_tx, mut ordinary_rx) =
+            channel::<Result<Option<AccountedProtocolFrame>, String>>(1);
+        let (control_tx, mut control_rx) = channel::<AccountedProtocolFrame>(1);
+        let (shutdown_tx, mut shutdown_rx) = channel::<wire::ControlFrame>(1);
+        let (overload_tx, overload_rx) = test_frame_writer(4);
+
+        let queued = ProtocolFrame::RequestFrame(request_frame(
+            1,
+            connection_ownership("conn-callback"),
+            RequestPayload::AuthenticateRequest(AuthenticateRequest {
+                client_name: String::from("queued"),
+                auth_token: String::from("token"),
+                protocol_version: wire::PROTOCOL_VERSION,
+                bridge_version: agentos_bridge::bridge_contract().version,
+            }),
+        ));
+        ordinary_tx
+            .try_send(Ok(Some(test_accounted_frame(queued, &ingress_budget))))
+            .expect("fill ordinary request lane");
+
+        let overflow = ProtocolFrame::RequestFrame(request_frame(
+            2,
+            connection_ownership("conn-callback"),
+            RequestPayload::AuthenticateRequest(AuthenticateRequest {
+                client_name: String::from("overflow"),
+                auth_token: String::from("token"),
+                protocol_version: wire::PROTOCOL_VERSION,
+                bridge_version: agentos_bridge::bridge_contract().version,
+            }),
+        ));
+        assert_eq!(
+            route_decoded_stdin_frame(
+                test_decoded_frame(overflow),
+                &ordinary_tx,
+                &overload_tx,
+                &ingress_budget,
+            ),
+            StdinReaderFlow::Continue,
+            "ordinary saturation must not terminate the reader"
+        );
+        let ProtocolFrame::ResponseFrame(rejection) = decode_test_output(
+            overload_rx
+                .recv_control()
+                .await
+                .expect("overload request should receive an isolated rejection"),
+        ) else {
+            panic!("expected overload rejection response");
+        };
+        let ResponsePayload::RejectedResponse(rejection) = rejection.payload else {
+            panic!("expected typed rejected response");
+        };
+        assert_eq!(rejection.code, "ERR_AGENTOS_PROTOCOL_FRAME_LIMIT");
+        assert_eq!(
+            rejection.configuration_path.as_deref(),
+            Some("runtime.protocol.maxIngressFrames")
+        );
+
+        assert_eq!(
+            route_decoded_control_frame(
+                test_decoded_frame(ProtocolFrame::SidecarResponseFrame(test_sidecar_response(
+                    -7, b"settled"
+                ))),
+                &transport,
+                &control_tx,
+                &shutdown_tx,
+                &control_budget,
+            ),
+            StdinReaderFlow::Continue,
+        );
+        let delivery = callback_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("direct response should bypass the full ordinary lane")
+            .expect("direct response should fit the byte budget");
+        assert_eq!(delivery.response.request_id, -7);
+        let (pending_count, pending_bytes) = transport.pending_usage();
+        assert_eq!(pending_count, 1);
+        assert!(pending_bytes > 0 && pending_bytes <= 4096);
+        assert!(control_rx.try_recv().is_err());
+
+        assert_eq!(
+            route_decoded_control_frame(
+                test_decoded_frame(ProtocolFrame::SidecarResponseFrame(test_sidecar_response(
+                    99, b"legacy"
+                ))),
+                &transport,
+                &control_tx,
+                &shutdown_tx,
+                &control_budget,
+            ),
+            StdinReaderFlow::Continue,
+        );
+        assert_eq!(
+            route_decoded_control_frame(
+                test_decoded_frame(ProtocolFrame::ControlFrame(wire::ControlFrame {
+                    schema: wire::protocol_schema(),
+                    payload: wire::ControlPayload::ShutdownControl(wire::ShutdownControl {
+                        reason: String::from("saturated control lane"),
+                    }),
+                })),
+                &transport,
+                &control_tx,
+                &shutdown_tx,
+                &control_budget,
+            ),
+            StdinReaderFlow::Continue,
+            "shutdown must bypass the full unmatched-response lane",
+        );
+        assert!(matches!(
+            shutdown_rx.try_recv(),
+            Ok(wire::ControlFrame {
+                payload: wire::ControlPayload::ShutdownControl(wire::ShutdownControl { reason }),
+                ..
+            }) if reason == "saturated control lane"
+        ));
+        let AccountedProtocolFrame {
+            frame: ProtocolFrame::SidecarResponseFrame(control_response),
+            ..
+        } = control_rx
+            .try_recv()
+            .expect("unmatched response should enter the control lane")
+        else {
+            panic!("expected sidecar response on the control lane");
+        };
+        assert_eq!(control_response.request_id, 99);
+        assert!(
+            ordinary_rx.try_recv().is_ok(),
+            "queued request remains intact"
+        );
+        drop(delivery);
+        assert_eq!(transport.pending_usage(), (0, 0));
+    }
+
+    #[test]
+    fn callback_waiter_count_limit_is_typed_and_releases_on_cancel() {
+        let transport = test_callback_transport(FrameSidecarRequestLimits {
+            max_pending_responses: 1,
+            max_pending_response_bytes: 4096,
+            max_frame_bytes: 4096,
+        });
+        let _first = transport
+            .register_waiter(-1)
+            .expect("first waiter should fit");
+        let error = transport
+            .register_waiter(-2)
+            .expect_err("second waiter should exceed the count limit");
+        let message = error.to_string();
+        assert!(message.contains(PENDING_RESPONSE_COUNT_ERROR_CODE));
+        assert!(message.contains(PENDING_RESPONSE_COUNT_CONFIG_PATH));
+        assert_eq!(transport.pending_usage(), (1, 0));
+
+        transport.cancel_waiter(-1).expect("cancel first waiter");
+        assert_eq!(transport.pending_usage(), (0, 0));
+        let _second = transport
+            .register_waiter(-2)
+            .expect("released count reservation should be reusable");
+    }
+
+    #[test]
+    fn callback_response_byte_limit_settles_waiter_with_typed_error_and_releases() {
+        let transport = test_callback_transport(FrameSidecarRequestLimits {
+            max_pending_responses: 2,
+            max_pending_response_bytes: 1,
+            max_frame_bytes: 4096,
+        });
+        let receiver = transport
+            .register_waiter(-3)
+            .expect("waiter count should fit without pre-reserving maximum response bytes");
+        assert_eq!(transport.pending_usage(), (1, 0));
+
+        transport
+            .accept_response(test_sidecar_response(-3, b"larger than one byte"))
+            .expect("registered response should route directly");
+        let error = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("waiter should be settled")
+            .expect_err("actual response bytes must enforce the aggregate limit");
+        let message = error.to_string();
+        assert!(message.contains(PENDING_RESPONSE_BYTES_ERROR_CODE));
+        assert!(message.contains(PENDING_RESPONSE_BYTES_CONFIG_PATH));
+        assert_eq!(transport.pending_usage(), (0, 0));
+        let _second_receiver = transport
+            .register_waiter(-4)
+            .expect("released count reservation should be reusable");
+        assert_eq!(transport.pending_usage(), (1, 0));
+    }
+
     // Regression: a full stdout frame queue must apply backpressure (block the
     // producer until the writer drains a slot), NOT tear the sidecar down. The
     // old `try_send` turned a slow host reader into a `BrokenPipe` error that
@@ -824,16 +2230,12 @@ mod tests {
     #[test]
     fn stdout_frame_queue_applies_backpressure_instead_of_crashing() {
         let queue_frame = |request_id: RequestId| {
-            ProtocolFrame::RequestFrame(request_frame(
-                request_id,
-                connection_ownership("conn-queue"),
-                RequestPayload::AuthenticateRequest(AuthenticateRequest {
-                    client_name: String::from("queue-test"),
-                    auth_token: String::from("token"),
-                    protocol_version: wire::PROTOCOL_VERSION,
-                    bridge_version: agentos_bridge::bridge_contract().version,
-                }),
-            ))
+            let mut detail = std::collections::HashMap::new();
+            detail.insert(String::from("request_id"), request_id.to_string());
+            ProtocolFrame::EventFrame(
+                crate::service::structured_event_frame("conn-queue", "queue-test", detail)
+                    .expect("queue event"),
+            )
         };
 
         // Small fixed capacity (independent of the production constant) with a
@@ -842,21 +2244,22 @@ mod tests {
         // (capacity + 1)th frame; backpressure accepts all of them.
         let queue_cap = 8usize;
         let total_frames = queue_cap * 3;
-        let (stdout_tx, stdout_rx) =
-            tracked_sync_channel::<ProtocolFrame>(TrackedLimit::SidecarStdoutFrames, queue_cap);
+        let (stdout_tx, stdout_rx) = test_frame_writer(queue_cap);
+        let drainer_rx = Arc::clone(&stdout_rx);
         let drainer = std::thread::spawn(move || {
             let mut drained = 0usize;
-            while stdout_rx.recv().is_ok() {
+            while drainer_rx.recv_ordinary().is_some() {
                 drained += 1;
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
             drained
         });
 
-        for request_id in 0..total_frames {
+        for request_id in 1..=total_frames {
             send_output_frame(&stdout_tx, queue_frame(request_id as RequestId))
                 .expect("backpressured stdout queue must accept frames, not crash");
         }
+        stdout_rx.close();
         drop(stdout_tx);
         let drained = drainer.join().expect("drainer thread panicked");
         assert_eq!(
@@ -866,10 +2269,9 @@ mod tests {
 
         // When the writer (receiver) is gone, overflow is genuinely terminal and
         // still surfaces as a BrokenPipe error rather than blocking forever.
-        let (closed_tx, closed_rx) =
-            tracked_sync_channel::<ProtocolFrame>(TrackedLimit::SidecarStdoutFrames, queue_cap);
-        drop(closed_rx);
-        let error = send_output_frame(&closed_tx, queue_frame(0))
+        let (closed_tx, closed_rx) = test_frame_writer(queue_cap);
+        closed_rx.close();
+        let error = send_output_frame(&closed_tx, queue_frame(1))
             .expect_err("send to a dropped writer must error");
         assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
     }
@@ -927,7 +2329,8 @@ mod tests {
             .expect("decode bare frame")
             .expect("frame present");
 
-        assert_eq!(decoded, frame);
+        assert_eq!(decoded.frame, frame);
+        assert!(decoded.encoded_bytes > 4);
     }
 
     #[test]
@@ -1418,11 +2821,11 @@ impl SessionScope {
 /// queue parks the producer until the writer thread drains stdout rather than
 /// tearing down the process.
 struct FrameEventTransport {
-    writer: TrackedSyncSender<ProtocolFrame>,
+    writer: ProtocolFrameWriter,
 }
 
 impl FrameEventTransport {
-    fn new(writer: TrackedSyncSender<ProtocolFrame>) -> Self {
+    fn new(writer: ProtocolFrameWriter) -> Self {
         Self { writer }
     }
 }
@@ -1434,32 +2837,213 @@ impl EventSinkTransport for FrameEventTransport {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct FrameSidecarRequestLimits {
+    max_pending_responses: usize,
+    max_pending_response_bytes: usize,
+    max_frame_bytes: usize,
+}
+
+impl FrameSidecarRequestLimits {
+    fn from_config(config: &NativeSidecarConfig) -> Self {
+        Self {
+            max_pending_responses: config.runtime.protocol.max_pending_responses,
+            max_pending_response_bytes: config.runtime.protocol.max_pending_response_bytes,
+            max_frame_bytes: config.max_frame_bytes,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct PendingResponseReservation {
+    counter: Arc<AtomicUsize>,
+    amount: usize,
+}
+
+impl Drop for PendingResponseReservation {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(self.amount, Ordering::AcqRel);
+    }
+}
+
+#[derive(Debug)]
+struct PendingSidecarResponse {
+    response: SidecarResponseFrame,
+    _count_reservation: PendingResponseReservation,
+    _byte_reservation: PendingResponseReservation,
+}
+
+type PendingSidecarResponseResult = Result<PendingSidecarResponse, SidecarError>;
+
+struct PendingSidecarResponseTarget {
+    sender: mpsc::SyncSender<PendingSidecarResponseResult>,
+    count_reservation: PendingResponseReservation,
+}
+
 struct FrameSidecarRequestTransport {
-    writer: TrackedSyncSender<ProtocolFrame>,
-    pending: Arc<Mutex<BTreeMap<RequestId, mpsc::SyncSender<SidecarResponseFrame>>>>,
+    writer: ProtocolFrameWriter,
+    pending: Arc<Mutex<BTreeMap<RequestId, PendingSidecarResponseTarget>>>,
+    pending_count: Arc<AtomicUsize>,
+    pending_response_bytes: Arc<AtomicUsize>,
+    limits: FrameSidecarRequestLimits,
 }
 
 impl FrameSidecarRequestTransport {
-    fn new(writer: TrackedSyncSender<ProtocolFrame>) -> Self {
+    fn new(writer: ProtocolFrameWriter, limits: FrameSidecarRequestLimits) -> Self {
         Self {
             writer,
             pending: Arc::new(Mutex::new(BTreeMap::new())),
+            pending_count: Arc::new(AtomicUsize::new(0)),
+            pending_response_bytes: Arc::new(AtomicUsize::new(0)),
+            limits,
         }
     }
 
-    fn accept_response(&self, response: SidecarResponseFrame) -> bool {
-        let sender = {
+    fn reserve(
+        counter: &Arc<AtomicUsize>,
+        amount: usize,
+        limit: usize,
+        code: &'static str,
+        config_path: &'static str,
+        resource_name: &'static str,
+    ) -> Result<PendingResponseReservation, SidecarError> {
+        let mut observed = counter.load(Ordering::Acquire);
+        loop {
+            let Some(next) = observed.checked_add(amount) else {
+                return Err(SidecarError::Bridge(format!(
+                    "{code}: {resource_name} reservation overflowed usize; limit={limit}; raise {config_path}"
+                )));
+            };
+            if next > limit {
+                return Err(SidecarError::Bridge(format!(
+                    "{code}: {resource_name} would reach {next}, exceeding limit {limit}; raise {config_path}"
+                )));
+            }
+            match counter.compare_exchange_weak(observed, next, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => {
+                    return Ok(PendingResponseReservation {
+                        counter: Arc::clone(counter),
+                        amount,
+                    });
+                }
+                Err(current) => observed = current,
+            }
+        }
+    }
+
+    fn register_waiter(
+        &self,
+        request_id: RequestId,
+    ) -> Result<mpsc::Receiver<PendingSidecarResponseResult>, SidecarError> {
+        let mut pending = self.pending.lock().map_err(|_| {
+            SidecarError::Bridge(String::from("sidecar callback waiter map lock poisoned"))
+        })?;
+        if pending.contains_key(&request_id) {
+            return Err(SidecarError::Bridge(format!(
+                "duplicate sidecar callback request id {request_id}"
+            )));
+        }
+        let count_reservation = Self::reserve(
+            &self.pending_count,
+            1,
+            self.limits.max_pending_responses,
+            PENDING_RESPONSE_COUNT_ERROR_CODE,
+            PENDING_RESPONSE_COUNT_CONFIG_PATH,
+            "pending sidecar response count",
+        )?;
+        let (sender, receiver) = mpsc::sync_channel(1);
+        pending.insert(
+            request_id,
+            PendingSidecarResponseTarget {
+                sender,
+                count_reservation,
+            },
+        );
+        Ok(receiver)
+    }
+
+    fn cancel_waiter(&self, request_id: RequestId) -> Result<(), SidecarError> {
+        self.pending
+            .lock()
+            .map_err(|_| {
+                SidecarError::Bridge(String::from("sidecar callback waiter map lock poisoned"))
+            })?
+            .remove(&request_id);
+        Ok(())
+    }
+
+    /// Settle a registered synchronous callback without touching either stdin
+    /// dispatch lane. `Err(response)` means this is an unmatched legacy
+    /// response and the reader must route it through the bounded control lane.
+    fn accept_response(
+        &self,
+        response: SidecarResponseFrame,
+    ) -> Result<(), Box<SidecarResponseFrame>> {
+        let request_id = response.request_id;
+        let target = {
             let mut pending = match self.pending.lock() {
                 Ok(pending) => pending,
-                Err(_) => return false,
+                Err(_) => {
+                    eprintln!("sidecar callback waiter map lock poisoned");
+                    return Err(Box::new(response));
+                }
             };
             pending.remove(&response.request_id)
         };
-        let Some(sender) = sender else {
-            return false;
+        let Some(target) = target else {
+            return Err(Box::new(response));
         };
-        let _ = sender.send(response);
-        true
+
+        let PendingSidecarResponseTarget {
+            sender,
+            count_reservation,
+        } = target;
+        let response_bytes = WireFrameCodec::new(self.limits.max_frame_bytes)
+            .encode(&ProtocolFrame::SidecarResponseFrame(response.clone()))
+            // The four-byte framing prefix is consumed by the decoder and is
+            // not part of retained decoded-response state.
+            .map(|bytes| bytes.len().saturating_sub(4))
+            .map_err(wire_protocol_error);
+        let delivery = response_bytes.and_then(|response_bytes| {
+            let byte_reservation = Self::reserve(
+                &self.pending_response_bytes,
+                response_bytes,
+                self.limits.max_pending_response_bytes,
+                PENDING_RESPONSE_BYTES_ERROR_CODE,
+                PENDING_RESPONSE_BYTES_CONFIG_PATH,
+                "pending sidecar response bytes",
+            )?;
+            Ok(PendingSidecarResponse {
+                response,
+                _count_reservation: count_reservation,
+                _byte_reservation: byte_reservation,
+            })
+        });
+
+        // A registered waiter owns a capacity-one channel and this is its only
+        // producer, so try_send cannot block the stdio reader. A timed-out
+        // receiver simply drops the response and both reservations here.
+        match sender.try_send(delivery) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(_)) => eprintln!(
+                "sidecar callback response channel unexpectedly full for request_id={request_id}"
+            ),
+            Err(mpsc::TrySendError::Disconnected(_)) => tracing::debug!(
+                target: "agentos_native_sidecar::stdio",
+                request_id,
+                "sidecar callback response arrived after its waiter disconnected",
+            ),
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn pending_usage(&self) -> (usize, usize) {
+        (
+            self.pending_count.load(Ordering::Acquire),
+            self.pending_response_bytes.load(Ordering::Acquire),
+        )
     }
 }
 
@@ -1471,57 +3055,35 @@ impl SidecarRequestTransport for FrameSidecarRequestTransport {
     ) -> Result<crate::protocol::SidecarResponseFrame, SidecarError> {
         let request =
             wire::sidecar_request_frame_from_compat(request).map_err(wire_protocol_error)?;
-        let (sender, receiver) = mpsc::sync_channel(1);
-        self.pending
-            .lock()
-            .map_err(|_| {
-                SidecarError::Bridge(String::from("sidecar callback waiter map lock poisoned"))
-            })?
-            .insert(request.request_id, sender);
-        // Bound the request-frame WRITE by the caller's deadline. The shared
-        // `send_output_frame` blocks (correct backpressure for the fire-and-forget
-        // event/response paths), but this request path has a `timeout` that the
-        // response wait below already honors — so a stalled host stdout must not
-        // make the *send* block past it. Poll try_send until a slot frees or the
-        // deadline passes.
+        let receiver = self.register_waiter(request.request_id)?;
+        // Bound the request-frame write by the caller's deadline. The protocol
+        // budget's condition variable wakes this producer when the writer
+        // releases count/byte capacity; no recurring transport poll is needed.
         let write_deadline = Instant::now() + timeout;
-        let mut frame = ProtocolFrame::SidecarRequestFrame(request.clone());
-        let write_result = loop {
-            match self.writer.try_send(frame) {
-                Ok(()) => break Ok(()),
-                Err(mpsc::TrySendError::Disconnected(_)) => {
-                    break Err(String::from("stdout writer disconnected"));
-                }
-                Err(mpsc::TrySendError::Full(returned)) => {
-                    if Instant::now() >= write_deadline {
-                        break Err(format!(
-                            "timed out writing sidecar request frame after {}s",
-                            timeout.as_secs()
-                        ));
-                    }
-                    frame = returned;
-                    thread::sleep(Duration::from_millis(1));
-                }
-            }
-        };
+        let write_result = self
+            .writer
+            .send_until(
+                ProtocolFrame::SidecarRequestFrame(request.clone()),
+                write_deadline,
+            )
+            .map_err(|error| error.to_string());
         if let Err(message) = write_result {
-            let _ = self
-                .pending
-                .lock()
-                .map(|mut pending| pending.remove(&request.request_id));
+            if let Err(error) = self.cancel_waiter(request.request_id) {
+                eprintln!("failed to cancel sidecar response waiter after write failure: {error}");
+            }
             return Err(SidecarError::Io(format!(
                 "failed to write sidecar request frame: {message}"
             )));
         }
-        match receiver.recv_timeout(timeout) {
-            Ok(response) => {
-                wire::sidecar_response_frame_to_compat(response).map_err(wire_protocol_error)
-            }
+        let response_timeout = write_deadline.saturating_duration_since(Instant::now());
+        match receiver.recv_timeout(response_timeout) {
+            Ok(Ok(response)) => wire::sidecar_response_frame_to_compat(response.response)
+                .map_err(wire_protocol_error),
+            Ok(Err(error)) => Err(error),
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                let _ = self
-                    .pending
-                    .lock()
-                    .map(|mut pending| pending.remove(&request.request_id));
+                if let Err(error) = self.cancel_waiter(request.request_id) {
+                    eprintln!("failed to cancel timed-out sidecar response waiter: {error}");
+                }
                 Err(SidecarError::Io(format!(
                     "timed out waiting for sidecar response after {}s",
                     timeout.as_secs()

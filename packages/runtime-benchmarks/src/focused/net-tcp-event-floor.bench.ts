@@ -7,11 +7,16 @@
  */
 
 import net from "node:net";
-import { createBenchSidecar, createBenchVm, type BenchVm } from "../lib/vm.js";
 import type { SidecarProcess } from "@rivet-dev/agentos-runtime-core";
 import { getHardware, printTable, round, stats } from "../lib/perf-utils.js";
+import { type BenchVm, createBenchSidecar, createBenchVm } from "../lib/vm.js";
 
-type Workload = "connectClose" | "echoOnce" | "burstWritesEchoOnce" | "pingPong" | "concurrentConnect";
+type Workload =
+	| "connectClose"
+	| "echoOnce"
+	| "burstWritesEchoOnce"
+	| "pingPong"
+	| "concurrentConnect";
 type ReplyMode = "none" | "echoOnceAfterAllBytes" | "echoEachWrite";
 type WriteCadence = "none" | "burstSameTick" | "awaitReplyEachWrite";
 type CostAxis =
@@ -67,7 +72,6 @@ interface NetTcpRowResult extends NetTcpRow {
 	sidecarNetTrace?: Record<string, number>;
 	derivedGuestBridgeTrace?: {
 		rawPollSentinels: number;
-		sentinelDelayFloorMs: number;
 		readRawPerDataEvent?: number;
 		acceptRawPerConnection?: number;
 		writeRawPerUserWrite?: number;
@@ -441,7 +445,6 @@ function parseArgs(): {
 	warmup: number;
 	rows: NetTcpRow[];
 	netBridgeTrace: boolean;
-	netPollDelayMs?: number;
 } {
 	const value = (name: string) =>
 		process.argv.find((arg) => arg.startsWith(`--${name}=`))?.split("=")[1];
@@ -451,8 +454,6 @@ function parseArgs(): {
 		process.argv.includes("--net-bridge-trace") ||
 		value("net-bridge-trace") === "1" ||
 		value("net-bridge-trace") === "true";
-	const netPollDelayValue = value("net-poll-delay-ms");
-	const netPollDelayMs = netPollDelayValue === undefined ? undefined : Number(netPollDelayValue);
 	const selected = value("rows") ?? value("cases");
 	const rows = selected
 		? selected
@@ -461,15 +462,12 @@ function parseArgs(): {
 				.filter(Boolean)
 				.map(rowForId)
 		: defaultRows();
-	if (
-		iterations < 1 ||
-		warmup < 0 ||
-		rows.length === 0 ||
-		(netPollDelayMs !== undefined && (!Number.isFinite(netPollDelayMs) || netPollDelayMs < 0))
-	) {
-		throw new Error("invalid args; expected --iterations>=1 --warmup>=0 --rows=<row ids>");
+	if (iterations < 1 || warmup < 0 || rows.length === 0) {
+		throw new Error(
+			"invalid args; expected --iterations>=1 --warmup>=0 --rows=<row ids>",
+		);
 	}
-	return { iterations, warmup, rows, netBridgeTrace, netPollDelayMs };
+	return { iterations, warmup, rows, netBridgeTrace };
 }
 
 function rowForId(id: string): NetTcpRow {
@@ -487,10 +485,23 @@ function rowForId(id: string): NetTcpRow {
 		connections,
 		writeCount,
 		bytesPerWrite,
-		replyMode: workload === "pingPong" ? "echoEachWrite" : writeCount === 0 ? "none" : "echoOnceAfterAllBytes",
-		writeCadence: workload === "pingPong" ? "awaitReplyEachWrite" : writeCount === 0 ? "none" : "burstSameTick",
+		replyMode:
+			workload === "pingPong"
+				? "echoEachWrite"
+				: writeCount === 0
+					? "none"
+					: "echoOnceAfterAllBytes",
+		writeCadence:
+			workload === "pingPong"
+				? "awaitReplyEachWrite"
+				: writeCount === 0
+					? "none"
+					: "burstSameTick",
 		costAxis: inferCostAxis(workload, connections, writeCount, bytesPerWrite),
-		completionSemantics: workload === "concurrentConnect" ? "listener_close_after_accept" : "client_close",
+		completionSemantics:
+			workload === "concurrentConnect"
+				? "listener_close_after_accept"
+				: "client_close",
 	};
 }
 
@@ -500,12 +511,16 @@ function inferCostAxis(
 	writeCount: number,
 	bytesPerWrite: number,
 ): CostAxis {
-	if (workload === "connectClose") return connections === 1 ? "broad" : "connect_accept";
-	if (workload === "concurrentConnect") return connections === 4 ? "broad" : "concurrency";
+	if (workload === "connectClose")
+		return connections === 1 ? "broad" : "connect_accept";
+	if (workload === "concurrentConnect")
+		return connections === 4 ? "broad" : "concurrency";
 	if (workload === "pingPong") return "event_cadence";
 	if (connections > 1) return "concurrency";
 	if (writeCount > 1) return "write_count";
-	return bytesPerWrite === 5 || bytesPerWrite === 65_536 ? "broad" : "payload_copy";
+	return bytesPerWrite === 5 || bytesPerWrite === 65_536
+		? "broad"
+		: "payload_copy";
 }
 
 function expectedOps(row: NetTcpRow): NetTcpRowResult["expectedOps"] {
@@ -515,7 +530,11 @@ function expectedOps(row: NetTcpRow): NetTcpRowResult["expectedOps"] {
 		acceptEvents: row.connections,
 		writeCalls,
 		expectedReadEvents:
-			row.replyMode === "none" ? 0 : row.replyMode === "echoEachWrite" ? writeCalls : row.connections,
+			row.replyMode === "none"
+				? 0
+				: row.replyMode === "echoEachWrite"
+					? writeCalls
+					: row.connections,
 		closeEvents: row.connections,
 	};
 }
@@ -542,7 +561,8 @@ function runConnectClose(row: NetTcpRow): Promise<void> {
 		server.on("error", reject);
 		server.listen(0, "127.0.0.1", () => {
 			const address = server.address();
-			if (!address || typeof address === "string") return reject(new Error("missing address"));
+			if (!address || typeof address === "string")
+				return reject(new Error("missing address"));
 			for (let i = 0; i < row.connections; i++) {
 				const socket = net.connect(address.port, "127.0.0.1");
 				socket.on("error", reject);
@@ -570,7 +590,8 @@ function runConcurrentConnect(row: NetTcpRow): Promise<void> {
 		server.on("error", reject);
 		server.listen(0, "127.0.0.1", () => {
 			const address = server.address();
-			if (!address || typeof address === "string") return reject(new Error("missing address"));
+			if (!address || typeof address === "string")
+				return reject(new Error("missing address"));
 			const payload = rowPayload(row);
 			for (let i = 0; i < row.connections; i++) {
 				const socket = net.connect(address.port, "127.0.0.1");
@@ -612,7 +633,8 @@ function runEcho(row: NetTcpRow): Promise<void> {
 		server.on("error", reject);
 		server.listen(0, "127.0.0.1", () => {
 			const address = server.address();
-			if (!address || typeof address === "string") return reject(new Error("missing address"));
+			if (!address || typeof address === "string")
+				return reject(new Error("missing address"));
 			for (let i = 0; i < row.connections; i++) {
 				const socket = net.connect(address.port, "127.0.0.1");
 				let replies = 0;
@@ -646,11 +668,19 @@ function runEcho(row: NetTcpRow): Promise<void> {
 				socket.on("error", reject);
 				socket.on("close", () => {
 					if (row.replyMode !== "none" && received !== expectedBytes) {
-						reject(new Error(`short echo: expected ${expectedBytes}, got ${received}`));
+						reject(
+							new Error(
+								`short echo: expected ${expectedBytes}, got ${received}`,
+							),
+						);
 						return;
 					}
 					if (row.replyMode === "echoEachWrite" && replies < row.writeCount) {
-						reject(new Error(`short pingpong: expected ${row.writeCount}, got ${replies}`));
+						reject(
+							new Error(
+								`short pingpong: expected ${row.writeCount}, got ${replies}`,
+							),
+						);
 						return;
 					}
 					finishClient();
@@ -660,7 +690,11 @@ function runEcho(row: NetTcpRow): Promise<void> {
 	});
 }
 
-async function runNode(row: NetTcpRow, iterations: number, warmup: number): Promise<number[]> {
+async function runNode(
+	row: NetTcpRow,
+	iterations: number,
+	warmup: number,
+): Promise<number[]> {
 	const samples: number[] = [];
 	for (let i = 0; i < warmup + iterations; i++) {
 		const start = performance.now();
@@ -683,8 +717,11 @@ async function runGuest(
 	iterations: number,
 	warmup: number,
 	netBridgeTrace: boolean,
-	netPollDelayMs?: number,
-): Promise<{ samples: number[]; bridgeTrace?: Record<string, number>; sidecarNetTrace?: Record<string, number> }> {
+): Promise<{
+	samples: number[];
+	bridgeTrace?: Record<string, number>;
+	sidecarNetTrace?: Record<string, number>;
+}> {
 	const scriptPath = `/tmp/net-tcp-event-floor-${row.id}-${Date.now()}-${Math.random()
 		.toString(16)
 		.slice(2)}.mjs`;
@@ -696,7 +733,6 @@ const warmup = Number(process.env.BENCH_WARMUP || 5);
 const samples = [];
 const bridgeTrace = ${netBridgeTrace ? "globalThis.__agentOSNetBridgeMetrics" : "undefined"};
 bridgeTrace?.enable?.();
-${netPollDelayMs === undefined ? "" : `bridgeTrace?.setPollDelayMs?.(${JSON.stringify(Math.trunc(netPollDelayMs))});`}
 const __name = (target, _name) => target;
 ${rowPayload.toString()}
 ${runConnectClose.toString()}
@@ -712,9 +748,6 @@ for (let i = 0; i < warmup + iterations; i++) {
   if (i >= warmup) samples.push(ms);
 }
 const bridgeSnapshot = bridgeTrace?.snapshot?.();
-if (bridgeSnapshot && typeof bridgeTrace?.pollDelayMs === "function") {
-  bridgeSnapshot.pollDelayMs = bridgeTrace.pollDelayMs();
-}
 const sidecarNetTrace = bridgeSnapshot?.sidecarNetTrace;
 if (bridgeSnapshot && Object.prototype.hasOwnProperty.call(bridgeSnapshot, "sidecarNetTrace")) {
   delete bridgeSnapshot.sidecarNetTrace;
@@ -741,7 +774,10 @@ process.stdout.write(JSON.stringify({ samples, bridgeTrace: bridgeSnapshot, side
 		},
 	});
 	const code = await vm.waitProcess(proc.pid);
-	if (code !== 0) throw new Error(`guest net-tcp-event-floor ${row.id} exited ${code}\n${stderr}`);
+	if (code !== 0)
+		throw new Error(
+			`guest net-tcp-event-floor ${row.id} exited ${code}\n${stderr}`,
+		);
 	return JSON.parse(stdout);
 }
 
@@ -755,15 +791,22 @@ function classifySummary(rows: NetTcpRowResult[]) {
 	const ping16 = byId.get("pingpong_16x1");
 	const concurrent4 = byId.get("concurrent_4x1");
 	if (echo1 && echo64k) {
-		evidence.push(`payload delta echo_1x64k-echo_1x1=${round(echo64k.guest.p50 - echo1.guest.p50)}ms`);
+		evidence.push(
+			`payload delta echo_1x64k-echo_1x1=${round(echo64k.guest.p50 - echo1.guest.p50)}ms`,
+		);
 	}
 	if (echo64k && burst64) {
-		evidence.push(`write-count delta burst_64x1_echo_once-echo_1x64k=${round(burst64.guest.p50 - echo64k.guest.p50)}ms`);
+		evidence.push(
+			`write-count delta burst_64x1_echo_once-echo_1x64k=${round(burst64.guest.p50 - echo64k.guest.p50)}ms`,
+		);
 	}
 	if (burst16 && ping16) {
-		evidence.push(`cadence delta pingpong_16x1-burst_16x1_echo_once=${round(ping16.guest.p50 - burst16.guest.p50)}ms`);
+		evidence.push(
+			`cadence delta pingpong_16x1-burst_16x1_echo_once=${round(ping16.guest.p50 - burst16.guest.p50)}ms`,
+		);
 	}
-	if (concurrent4) evidence.push(`concurrent_4x1 guest p50=${concurrent4.guest.p50}ms`);
+	if (concurrent4)
+		evidence.push(`concurrent_4x1 guest p50=${concurrent4.guest.p50}ms`);
 	const likelyDominantCost =
 		ping16 && burst16 && ping16.guest.p50 > burst16.guest.p50 * 1.5
 			? "poll/event-cadence"
@@ -775,17 +818,24 @@ function classifySummary(rows: NetTcpRowResult[]) {
 	return {
 		likelyDominantCost,
 		evidence,
-		reproducesBroadRows: ["connect_close_1", "echo_1x5", "echo_1x64k", "burst_16x1_echo_once", "concurrent_4x1"].every((id) =>
-			byId.has(id),
-		),
+		reproducesBroadRows: [
+			"connect_close_1",
+			"echo_1x5",
+			"echo_1x64k",
+			"burst_16x1_echo_once",
+			"concurrent_4x1",
+		].every((id) => byId.has(id)),
 	};
 }
 
-function deriveGuestBridgeTrace(trace: Record<string, number> | undefined, measuredIterations = 1) {
+function deriveGuestBridgeTrace(
+	trace: Record<string, number> | undefined,
+	measuredIterations = 1,
+) {
 	if (!trace) return undefined;
 	const iterationCount = Math.max(1, measuredIterations);
-	const pollDelayMs = trace.pollDelayMs ?? 10;
-	const rawPollSentinels = (trace.readTimeoutSentinels ?? 0) + (trace.acceptTimeoutSentinels ?? 0);
+	const rawPollSentinels =
+		(trace.readTimeoutSentinels ?? 0) + (trace.acceptTimeoutSentinels ?? 0);
 	const readRawCalls = trace.readRawCalls ?? 0;
 	const writeRawCalls = trace.writeRawCalls ?? 0;
 	const readBase64DecodeCalls = trace.readBase64DecodeCalls ?? 0;
@@ -798,15 +848,18 @@ function deriveGuestBridgeTrace(trace: Record<string, number> | undefined, measu
 	const peerWakeFound = trace.peerWakeFound ?? 0;
 	const readWakeAttempts = trace.readWakeAttempts ?? 0;
 	const readWakeNoTimer = trace.readWakeNoTimer ?? 0;
-	const readFirstPumpAfterNoTimerWakeCalls = trace.readFirstPumpAfterNoTimerWakeCalls ?? 0;
+	const readFirstPumpAfterNoTimerWakeCalls =
+		trace.readFirstPumpAfterNoTimerWakeCalls ?? 0;
 	const readFirstPumpResults =
 		(trace.readFirstPumpResultData ?? 0) +
 		(trace.readFirstPumpResultEnd ?? 0) +
 		(trace.readFirstPumpResultTimeout ?? 0);
-	const readFirstPumpScheduleCandidates = trace.readFirstPumpScheduleCandidates ?? 0;
+	const readFirstPumpScheduleCandidates =
+		trace.readFirstPumpScheduleCandidates ?? 0;
 	const readFirstPumpScheduleQueued = trace.readFirstPumpScheduleQueued ?? 0;
 	const readFirstPumpScheduleRuns = trace.readFirstPumpScheduleRuns ?? 0;
-	const readFirstPumpSchedulePumpCalls = trace.readFirstPumpSchedulePumpCalls ?? 0;
+	const readFirstPumpSchedulePumpCalls =
+		trace.readFirstPumpSchedulePumpCalls ?? 0;
 	const readFirstPumpScheduleResults =
 		(trace.readFirstPumpScheduleResultData ?? 0) +
 		(trace.readFirstPumpScheduleResultTimeout ?? 0) +
@@ -814,7 +867,8 @@ function deriveGuestBridgeTrace(trace: Record<string, number> | undefined, measu
 	const acceptWakeSocketScans = trace.acceptWakeSocketScans ?? 0;
 	const acceptWakeAttempts = trace.acceptWakeAttempts ?? 0;
 	const acceptWakeNoTimer = trace.acceptWakeNoTimer ?? 0;
-	const acceptFirstPumpAfterNoTimerWakeCalls = trace.acceptFirstPumpAfterNoTimerWakeCalls ?? 0;
+	const acceptFirstPumpAfterNoTimerWakeCalls =
+		trace.acceptFirstPumpAfterNoTimerWakeCalls ?? 0;
 	const acceptFirstPumpResults =
 		(trace.acceptFirstPumpResultConnection ?? 0) +
 		(trace.acceptFirstPumpResultTimeout ?? 0) +
@@ -825,254 +879,521 @@ function deriveGuestBridgeTrace(trace: Record<string, number> | undefined, measu
 	const acceptPollTimerFires = trace.acceptPollTimerFires ?? 0;
 	const readMacrotaskYields = trace.readMacrotaskYields ?? 0;
 	const queueReadablePayloads = trace.queueReadablePayloads ?? 0;
-	const queueReadableImmediateReadCalls = trace.queueReadableImmediateReadCalls ?? 0;
+	const queueReadableImmediateReadCalls =
+		trace.queueReadableImmediateReadCalls ?? 0;
 	const socketReadableEmits = trace.socketReadableEmits ?? 0;
 	const socketDataEmits = trace.socketDataEmits ?? 0;
-	const postDeliveryProbeCalls = trace.readPostDeliveryProbeCalls ?? trace.readPostDeliveryNextRawCalls ?? 0;
+	const postDeliveryProbeCalls =
+		trace.readPostDeliveryProbeCalls ?? trace.readPostDeliveryNextRawCalls ?? 0;
 	const userWriteDuringDataEmitCalls = trace.userWriteDuringDataEmitCalls ?? 0;
 	const flushCalls = trace.flushCalls ?? 0;
 	const readEventWakeups = trace.readEventWakeups ?? 0;
 	const acceptEventWakeups = trace.acceptEventWakeups ?? 0;
 	return {
 		rawPollSentinels,
-		pollDelayMs,
-		sentinelDelayFloorMs: rawPollSentinels * pollDelayMs,
 		readRawPerDataEvent:
-			trace.readDataEvents > 0 ? round(readRawCalls / trace.readDataEvents) : undefined,
+			trace.readDataEvents > 0
+				? round(readRawCalls / trace.readDataEvents)
+				: undefined,
 		acceptRawPerConnection:
-			trace.acceptConnections > 0 ? round((trace.acceptRawCalls ?? 0) / trace.acceptConnections) : undefined,
+			trace.acceptConnections > 0
+				? round((trace.acceptRawCalls ?? 0) / trace.acceptConnections)
+				: undefined,
 		writeRawPerUserWrite:
-			trace.userWriteCalls > 0 ? round(writeRawCalls / trace.userWriteCalls) : undefined,
-		avgReadRawElapsedUs: readRawCalls > 0 ? round((trace.readRawElapsedUs ?? 0) / readRawCalls) : undefined,
-		avgWriteRawElapsedUs: writeRawCalls > 0 ? round((trace.writeRawElapsedUs ?? 0) / writeRawCalls) : undefined,
+			trace.userWriteCalls > 0
+				? round(writeRawCalls / trace.userWriteCalls)
+				: undefined,
+		avgReadRawElapsedUs:
+			readRawCalls > 0
+				? round((trace.readRawElapsedUs ?? 0) / readRawCalls)
+				: undefined,
+		avgWriteRawElapsedUs:
+			writeRawCalls > 0
+				? round((trace.writeRawElapsedUs ?? 0) / writeRawCalls)
+				: undefined,
 		avgReadBase64DecodeUs:
-			readBase64DecodeCalls > 0 ? round((trace.readBase64DecodeUs ?? 0) / readBase64DecodeCalls) : undefined,
+			readBase64DecodeCalls > 0
+				? round((trace.readBase64DecodeUs ?? 0) / readBase64DecodeCalls)
+				: undefined,
 		avgWriteBase64EncodeUs:
-			writeBase64EncodeCalls > 0 ? round((trace.writeBase64EncodeUs ?? 0) / writeBase64EncodeCalls) : undefined,
+			writeBase64EncodeCalls > 0
+				? round((trace.writeBase64EncodeUs ?? 0) / writeBase64EncodeCalls)
+				: undefined,
 		readBase64DecodeUsPerKiB:
-			readBase64DecodeBytes > 0 ? round((trace.readBase64DecodeUs ?? 0) / (readBase64DecodeBytes / 1024)) : undefined,
+			readBase64DecodeBytes > 0
+				? round(
+						(trace.readBase64DecodeUs ?? 0) / (readBase64DecodeBytes / 1024),
+					)
+				: undefined,
 		writeBase64EncodeUsPerKiB:
-			writeBase64EncodeBytes > 0 ? round((trace.writeBase64EncodeUs ?? 0) / (writeBase64EncodeBytes / 1024)) : undefined,
+			writeBase64EncodeBytes > 0
+				? round(
+						(trace.writeBase64EncodeUs ?? 0) / (writeBase64EncodeBytes / 1024),
+					)
+				: undefined,
 		avgReadPayloadMaterializeUs:
 			readPayloadMaterializeCalls > 0
-				? round((trace.readPayloadMaterializeUs ?? 0) / readPayloadMaterializeCalls)
+				? round(
+						(trace.readPayloadMaterializeUs ?? 0) / readPayloadMaterializeCalls,
+					)
 				: undefined,
 		readPayloadMaterializeUsPerKiB:
 			readPayloadMaterializeBytes > 0
-				? round((trace.readPayloadMaterializeUs ?? 0) / (readPayloadMaterializeBytes / 1024))
+				? round(
+						(trace.readPayloadMaterializeUs ?? 0) /
+							(readPayloadMaterializeBytes / 1024),
+					)
 				: undefined,
-		peerWakeFoundRatio: peerWakeScans > 0 ? round(peerWakeFound / peerWakeScans) : undefined,
-		peerWakeMissRatio: peerWakeScans > 0 ? round((trace.peerWakeMiss ?? 0) / peerWakeScans) : undefined,
+		peerWakeFoundRatio:
+			peerWakeScans > 0 ? round(peerWakeFound / peerWakeScans) : undefined,
+		peerWakeMissRatio:
+			peerWakeScans > 0
+				? round((trace.peerWakeMiss ?? 0) / peerWakeScans)
+				: undefined,
 		readWakeWakeupRatio:
-			readWakeAttempts > 0 ? round((trace.readEventWakeups ?? 0) / readWakeAttempts) : undefined,
+			readWakeAttempts > 0
+				? round((trace.readEventWakeups ?? 0) / readWakeAttempts)
+				: undefined,
 		readWakeNoTimerRatio:
-			readWakeAttempts > 0 ? round(readWakeNoTimer / readWakeAttempts) : undefined,
+			readWakeAttempts > 0
+				? round(readWakeNoTimer / readWakeAttempts)
+				: undefined,
 		readWakeAlreadyRunningRatio:
-			readWakeAttempts > 0 ? round((trace.readWakeAlreadyRunning ?? 0) / readWakeAttempts) : undefined,
+			readWakeAttempts > 0
+				? round((trace.readWakeAlreadyRunning ?? 0) / readWakeAttempts)
+				: undefined,
 		readWakeNoTimerBeforeFirstPumpRatio:
-			readWakeNoTimer > 0 ? round((trace.readWakeNoTimerBeforeFirstPump ?? 0) / readWakeNoTimer) : undefined,
+			readWakeNoTimer > 0
+				? round((trace.readWakeNoTimerBeforeFirstPump ?? 0) / readWakeNoTimer)
+				: undefined,
 		readWakeNoTimerAfterFirstPumpRatio:
-			readWakeNoTimer > 0 ? round((trace.readWakeNoTimerAfterFirstPump ?? 0) / readWakeNoTimer) : undefined,
+			readWakeNoTimer > 0
+				? round((trace.readWakeNoTimerAfterFirstPump ?? 0) / readWakeNoTimer)
+				: undefined,
 		readWakeNoTimerConnectedRatio:
-			readWakeNoTimer > 0 ? round((trace.readWakeNoTimerConnected ?? 0) / readWakeNoTimer) : undefined,
+			readWakeNoTimer > 0
+				? round((trace.readWakeNoTimerConnected ?? 0) / readWakeNoTimer)
+				: undefined,
 		readWakeNoTimerConnectingRatio:
-			readWakeNoTimer > 0 ? round((trace.readWakeNoTimerConnecting ?? 0) / readWakeNoTimer) : undefined,
+			readWakeNoTimer > 0
+				? round((trace.readWakeNoTimerConnecting ?? 0) / readWakeNoTimer)
+				: undefined,
 		readWakeNoTimerRefedRatio:
-			readWakeNoTimer > 0 ? round((trace.readWakeNoTimerRefed ?? 0) / readWakeNoTimer) : undefined,
+			readWakeNoTimer > 0
+				? round((trace.readWakeNoTimerRefed ?? 0) / readWakeNoTimer)
+				: undefined,
 		readWakeNoTimerDataListenerRatio:
-			readWakeNoTimer > 0 ? round((trace.readWakeNoTimerHasDataListener ?? 0) / readWakeNoTimer) : undefined,
+			readWakeNoTimer > 0
+				? round((trace.readWakeNoTimerHasDataListener ?? 0) / readWakeNoTimer)
+				: undefined,
 		readWakeNoTimerReadableListenerRatio:
-			readWakeNoTimer > 0 ? round((trace.readWakeNoTimerHasReadableListener ?? 0) / readWakeNoTimer) : undefined,
+			readWakeNoTimer > 0
+				? round(
+						(trace.readWakeNoTimerHasReadableListener ?? 0) / readWakeNoTimer,
+					)
+				: undefined,
 		readWakeNoTimerPendingWriteFlushRatio:
-			readWakeNoTimer > 0 ? round((trace.readWakeNoTimerPendingWriteFlush ?? 0) / readWakeNoTimer) : undefined,
+			readWakeNoTimer > 0
+				? round((trace.readWakeNoTimerPendingWriteFlush ?? 0) / readWakeNoTimer)
+				: undefined,
 		readWakeNoTimerPendingWriteBytesPerIteration:
-			readWakeNoTimer > 0 ? round((trace.readWakeNoTimerPendingWriteBytes ?? 0) / iterationCount) : undefined,
+			readWakeNoTimer > 0
+				? round((trace.readWakeNoTimerPendingWriteBytes ?? 0) / iterationCount)
+				: undefined,
 		avgReadFirstPumpAfterNoTimerWakeUs:
 			readFirstPumpAfterNoTimerWakeCalls > 0
-				? round((trace.readFirstPumpAfterNoTimerWakeUs ?? 0) / readFirstPumpAfterNoTimerWakeCalls)
+				? round(
+						(trace.readFirstPumpAfterNoTimerWakeUs ?? 0) /
+							readFirstPumpAfterNoTimerWakeCalls,
+					)
 				: undefined,
 		readFirstPumpAfterNoTimerWakeMsPerIteration:
 			readFirstPumpAfterNoTimerWakeCalls > 0
-				? round((trace.readFirstPumpAfterNoTimerWakeUs ?? 0) / 1000 / iterationCount)
+				? round(
+						(trace.readFirstPumpAfterNoTimerWakeUs ?? 0) /
+							1000 /
+							iterationCount,
+					)
 				: undefined,
 		readFirstPumpOriginConnectWaitRatio:
-			trace.readPumpRuns > 0 ? round((trace.readFirstPumpOriginConnectWait ?? 0) / trace.readPumpRuns) : undefined,
+			trace.readPumpRuns > 0
+				? round(
+						(trace.readFirstPumpOriginConnectWait ?? 0) / trace.readPumpRuns,
+					)
+				: undefined,
 		readFirstPumpOriginAcceptedHandleRatio:
-			trace.readPumpRuns > 0 ? round((trace.readFirstPumpOriginAcceptedHandle ?? 0) / trace.readPumpRuns) : undefined,
+			trace.readPumpRuns > 0
+				? round(
+						(trace.readFirstPumpOriginAcceptedHandle ?? 0) / trace.readPumpRuns,
+					)
+				: undefined,
 		readFirstPumpOriginEventWakeRatio:
-			trace.readPumpRuns > 0 ? round((trace.readFirstPumpOriginEventWake ?? 0) / trace.readPumpRuns) : undefined,
+			trace.readPumpRuns > 0
+				? round((trace.readFirstPumpOriginEventWake ?? 0) / trace.readPumpRuns)
+				: undefined,
 		readFirstPumpOriginTimerRatio:
-			trace.readPumpRuns > 0 ? round((trace.readFirstPumpOriginTimer ?? 0) / trace.readPumpRuns) : undefined,
+			trace.readPumpRuns > 0
+				? round((trace.readFirstPumpOriginTimer ?? 0) / trace.readPumpRuns)
+				: undefined,
 		readFirstPumpOriginRefRatio:
-			trace.readPumpRuns > 0 ? round((trace.readFirstPumpOriginRef ?? 0) / trace.readPumpRuns) : undefined,
+			trace.readPumpRuns > 0
+				? round((trace.readFirstPumpOriginRef ?? 0) / trace.readPumpRuns)
+				: undefined,
 		readFirstPumpOriginTlsRatio:
-			trace.readPumpRuns > 0 ? round((trace.readFirstPumpOriginTls ?? 0) / trace.readPumpRuns) : undefined,
+			trace.readPumpRuns > 0
+				? round((trace.readFirstPumpOriginTls ?? 0) / trace.readPumpRuns)
+				: undefined,
 		readFirstPumpOriginUnknownRatio:
-			trace.readPumpRuns > 0 ? round((trace.readFirstPumpOriginUnknown ?? 0) / trace.readPumpRuns) : undefined,
+			trace.readPumpRuns > 0
+				? round((trace.readFirstPumpOriginUnknown ?? 0) / trace.readPumpRuns)
+				: undefined,
 		readFirstPumpResultDataRatio:
-			readFirstPumpResults > 0 ? round((trace.readFirstPumpResultData ?? 0) / readFirstPumpResults) : undefined,
+			readFirstPumpResults > 0
+				? round((trace.readFirstPumpResultData ?? 0) / readFirstPumpResults)
+				: undefined,
 		readFirstPumpResultEndRatio:
-			readFirstPumpResults > 0 ? round((trace.readFirstPumpResultEnd ?? 0) / readFirstPumpResults) : undefined,
+			readFirstPumpResults > 0
+				? round((trace.readFirstPumpResultEnd ?? 0) / readFirstPumpResults)
+				: undefined,
 		readFirstPumpResultTimeoutRatio:
-			readFirstPumpResults > 0 ? round((trace.readFirstPumpResultTimeout ?? 0) / readFirstPumpResults) : undefined,
+			readFirstPumpResults > 0
+				? round((trace.readFirstPumpResultTimeout ?? 0) / readFirstPumpResults)
+				: undefined,
 		readFirstPumpScheduleQueueRatio:
-			readFirstPumpScheduleCandidates > 0 ? round(readFirstPumpScheduleQueued / readFirstPumpScheduleCandidates) : undefined,
+			readFirstPumpScheduleCandidates > 0
+				? round(readFirstPumpScheduleQueued / readFirstPumpScheduleCandidates)
+				: undefined,
 		readFirstPumpScheduleRunRatio:
-			readFirstPumpScheduleQueued > 0 ? round(readFirstPumpScheduleRuns / readFirstPumpScheduleQueued) : undefined,
+			readFirstPumpScheduleQueued > 0
+				? round(readFirstPumpScheduleRuns / readFirstPumpScheduleQueued)
+				: undefined,
 		readFirstPumpSchedulePumpCallRatio:
-			readFirstPumpScheduleRuns > 0 ? round(readFirstPumpSchedulePumpCalls / readFirstPumpScheduleRuns) : undefined,
+			readFirstPumpScheduleRuns > 0
+				? round(readFirstPumpSchedulePumpCalls / readFirstPumpScheduleRuns)
+				: undefined,
 		readFirstPumpScheduleSkipPumpStartedRatio:
 			readFirstPumpScheduleRuns > 0
-				? round((trace.readFirstPumpScheduleSkipPumpStarted ?? 0) / readFirstPumpScheduleRuns)
+				? round(
+						(trace.readFirstPumpScheduleSkipPumpStarted ?? 0) /
+							readFirstPumpScheduleRuns,
+					)
 				: undefined,
 		avgReadFirstPumpScheduleQueuedToRunUs:
 			readFirstPumpScheduleRuns > 0
-				? round((trace.readFirstPumpScheduleQueuedToRunUs ?? 0) / readFirstPumpScheduleRuns)
+				? round(
+						(trace.readFirstPumpScheduleQueuedToRunUs ?? 0) /
+							readFirstPumpScheduleRuns,
+					)
 				: undefined,
 		readFirstPumpScheduleQueuedToRunMsPerIteration:
 			readFirstPumpScheduleRuns > 0
-				? round((trace.readFirstPumpScheduleQueuedToRunUs ?? 0) / 1000 / iterationCount)
+				? round(
+						(trace.readFirstPumpScheduleQueuedToRunUs ?? 0) /
+							1000 /
+							iterationCount,
+					)
 				: undefined,
 		avgReadFirstPumpScheduleQueuedToPumpStartUs:
 			readFirstPumpSchedulePumpCalls > 0
-				? round((trace.readFirstPumpScheduleQueuedToPumpStartUs ?? 0) / readFirstPumpSchedulePumpCalls)
+				? round(
+						(trace.readFirstPumpScheduleQueuedToPumpStartUs ?? 0) /
+							readFirstPumpSchedulePumpCalls,
+					)
 				: undefined,
 		readFirstPumpScheduleQueuedToPumpStartMsPerIteration:
 			readFirstPumpSchedulePumpCalls > 0
-				? round((trace.readFirstPumpScheduleQueuedToPumpStartUs ?? 0) / 1000 / iterationCount)
+				? round(
+						(trace.readFirstPumpScheduleQueuedToPumpStartUs ?? 0) /
+							1000 /
+							iterationCount,
+					)
 				: undefined,
 		readFirstPumpScheduleResultDataRatio:
 			readFirstPumpScheduleResults > 0
-				? round((trace.readFirstPumpScheduleResultData ?? 0) / readFirstPumpScheduleResults)
+				? round(
+						(trace.readFirstPumpScheduleResultData ?? 0) /
+							readFirstPumpScheduleResults,
+					)
 				: undefined,
 		readFirstPumpScheduleResultTimeoutRatio:
 			readFirstPumpScheduleResults > 0
-				? round((trace.readFirstPumpScheduleResultTimeout ?? 0) / readFirstPumpScheduleResults)
+				? round(
+						(trace.readFirstPumpScheduleResultTimeout ?? 0) /
+							readFirstPumpScheduleResults,
+					)
 				: undefined,
 		acceptWakeSocketFoundRatio:
-			acceptWakeSocketScans > 0 ? round((trace.acceptWakeSocketFound ?? 0) / acceptWakeSocketScans) : undefined,
+			acceptWakeSocketScans > 0
+				? round((trace.acceptWakeSocketFound ?? 0) / acceptWakeSocketScans)
+				: undefined,
 		acceptWakeWakeupRatio:
-			acceptWakeAttempts > 0 ? round((trace.acceptEventWakeups ?? 0) / acceptWakeAttempts) : undefined,
+			acceptWakeAttempts > 0
+				? round((trace.acceptEventWakeups ?? 0) / acceptWakeAttempts)
+				: undefined,
 		acceptWakeNoTimerRatio:
-			acceptWakeAttempts > 0 ? round(acceptWakeNoTimer / acceptWakeAttempts) : undefined,
+			acceptWakeAttempts > 0
+				? round(acceptWakeNoTimer / acceptWakeAttempts)
+				: undefined,
 		acceptWakeNoTimerBeforeFirstPumpRatio:
-			acceptWakeNoTimer > 0 ? round((trace.acceptWakeNoTimerBeforeFirstPump ?? 0) / acceptWakeNoTimer) : undefined,
+			acceptWakeNoTimer > 0
+				? round(
+						(trace.acceptWakeNoTimerBeforeFirstPump ?? 0) / acceptWakeNoTimer,
+					)
+				: undefined,
 		acceptWakeNoTimerAfterFirstPumpRatio:
-			acceptWakeNoTimer > 0 ? round((trace.acceptWakeNoTimerAfterFirstPump ?? 0) / acceptWakeNoTimer) : undefined,
+			acceptWakeNoTimer > 0
+				? round(
+						(trace.acceptWakeNoTimerAfterFirstPump ?? 0) / acceptWakeNoTimer,
+					)
+				: undefined,
 		acceptWakeNoTimerLoopRunningRatio:
-			acceptWakeNoTimer > 0 ? round((trace.acceptWakeNoTimerLoopRunning ?? 0) / acceptWakeNoTimer) : undefined,
+			acceptWakeNoTimer > 0
+				? round((trace.acceptWakeNoTimerLoopRunning ?? 0) / acceptWakeNoTimer)
+				: undefined,
 		acceptWakeNoTimerLoopActiveRatio:
-			acceptWakeNoTimer > 0 ? round((trace.acceptWakeNoTimerLoopActive ?? 0) / acceptWakeNoTimer) : undefined,
+			acceptWakeNoTimer > 0
+				? round((trace.acceptWakeNoTimerLoopActive ?? 0) / acceptWakeNoTimer)
+				: undefined,
 		acceptWakeNoTimerRefedRatio:
-			acceptWakeNoTimer > 0 ? round((trace.acceptWakeNoTimerRefed ?? 0) / acceptWakeNoTimer) : undefined,
+			acceptWakeNoTimer > 0
+				? round((trace.acceptWakeNoTimerRefed ?? 0) / acceptWakeNoTimer)
+				: undefined,
 		acceptWakeNoTimerConnectionsPerWake:
-			acceptWakeNoTimer > 0 ? round((trace.acceptWakeNoTimerConnections ?? 0) / acceptWakeNoTimer) : undefined,
+			acceptWakeNoTimer > 0
+				? round((trace.acceptWakeNoTimerConnections ?? 0) / acceptWakeNoTimer)
+				: undefined,
 		avgAcceptFirstPumpAfterNoTimerWakeUs:
 			acceptFirstPumpAfterNoTimerWakeCalls > 0
-				? round((trace.acceptFirstPumpAfterNoTimerWakeUs ?? 0) / acceptFirstPumpAfterNoTimerWakeCalls)
+				? round(
+						(trace.acceptFirstPumpAfterNoTimerWakeUs ?? 0) /
+							acceptFirstPumpAfterNoTimerWakeCalls,
+					)
 				: undefined,
 		acceptFirstPumpAfterNoTimerWakeMsPerIteration:
 			acceptFirstPumpAfterNoTimerWakeCalls > 0
-				? round((trace.acceptFirstPumpAfterNoTimerWakeUs ?? 0) / 1000 / iterationCount)
+				? round(
+						(trace.acceptFirstPumpAfterNoTimerWakeUs ?? 0) /
+							1000 /
+							iterationCount,
+					)
 				: undefined,
 		acceptFirstPumpOriginListenRatio:
-			trace.acceptPumpRuns > 0 ? round((trace.acceptFirstPumpOriginListen ?? 0) / trace.acceptPumpRuns) : undefined,
+			trace.acceptPumpRuns > 0
+				? round((trace.acceptFirstPumpOriginListen ?? 0) / trace.acceptPumpRuns)
+				: undefined,
 		acceptFirstPumpOriginEventWakeRatio:
-			trace.acceptPumpRuns > 0 ? round((trace.acceptFirstPumpOriginEventWake ?? 0) / trace.acceptPumpRuns) : undefined,
+			trace.acceptPumpRuns > 0
+				? round(
+						(trace.acceptFirstPumpOriginEventWake ?? 0) / trace.acceptPumpRuns,
+					)
+				: undefined,
 		acceptFirstPumpOriginTimerRatio:
-			trace.acceptPumpRuns > 0 ? round((trace.acceptFirstPumpOriginTimer ?? 0) / trace.acceptPumpRuns) : undefined,
+			trace.acceptPumpRuns > 0
+				? round((trace.acceptFirstPumpOriginTimer ?? 0) / trace.acceptPumpRuns)
+				: undefined,
 		acceptFirstPumpOriginRefRatio:
-			trace.acceptPumpRuns > 0 ? round((trace.acceptFirstPumpOriginRef ?? 0) / trace.acceptPumpRuns) : undefined,
+			trace.acceptPumpRuns > 0
+				? round((trace.acceptFirstPumpOriginRef ?? 0) / trace.acceptPumpRuns)
+				: undefined,
 		acceptFirstPumpOriginUnknownRatio:
-			trace.acceptPumpRuns > 0 ? round((trace.acceptFirstPumpOriginUnknown ?? 0) / trace.acceptPumpRuns) : undefined,
+			trace.acceptPumpRuns > 0
+				? round(
+						(trace.acceptFirstPumpOriginUnknown ?? 0) / trace.acceptPumpRuns,
+					)
+				: undefined,
 		acceptFirstPumpResultConnectionRatio:
 			acceptFirstPumpResults > 0
-				? round((trace.acceptFirstPumpResultConnection ?? 0) / acceptFirstPumpResults)
+				? round(
+						(trace.acceptFirstPumpResultConnection ?? 0) /
+							acceptFirstPumpResults,
+					)
 				: undefined,
 		acceptFirstPumpResultTimeoutRatio:
-			acceptFirstPumpResults > 0 ? round((trace.acceptFirstPumpResultTimeout ?? 0) / acceptFirstPumpResults) : undefined,
+			acceptFirstPumpResults > 0
+				? round(
+						(trace.acceptFirstPumpResultTimeout ?? 0) / acceptFirstPumpResults,
+					)
+				: undefined,
 		acceptFirstPumpResultEmptyRatio:
-			acceptFirstPumpResults > 0 ? round((trace.acceptFirstPumpResultEmpty ?? 0) / acceptFirstPumpResults) : undefined,
+			acceptFirstPumpResults > 0
+				? round(
+						(trace.acceptFirstPumpResultEmpty ?? 0) / acceptFirstPumpResults,
+					)
+				: undefined,
 		avgAcceptRawElapsedUs:
-			acceptRawCalls > 0 ? round((trace.acceptRawElapsedUs ?? 0) / acceptRawCalls) : undefined,
-			avgAcceptJsonParseUs:
-				acceptConnections > 0 ? round((trace.acceptJsonParseUs ?? 0) / acceptConnections) : undefined,
-			avgAcceptOnConnectionUs:
-				acceptConnections > 0 ? round((trace.acceptOnConnectionUs ?? 0) / acceptConnections) : undefined,
-			avgReadMacrotaskYieldUs:
-				readMacrotaskYields > 0 ? round((trace.readMacrotaskYieldElapsedUs ?? 0) / readMacrotaskYields) : undefined,
-			readMacrotaskYieldMsPerIteration:
-				readMacrotaskYields > 0 ? round((trace.readMacrotaskYieldElapsedUs ?? 0) / 1000 / iterationCount) : undefined,
-			avgReadPollTimerFireLagUs:
-				readPollTimerFires > 0 ? round((trace.readPollTimerFireLagUs ?? 0) / readPollTimerFires) : undefined,
-			readPollTimerFireLagMsPerIteration:
-				readPollTimerFires > 0 ? round((trace.readPollTimerFireLagUs ?? 0) / 1000 / iterationCount) : undefined,
-			avgAcceptPollTimerFireLagUs:
-				acceptPollTimerFires > 0 ? round((trace.acceptPollTimerFireLagUs ?? 0) / acceptPollTimerFires) : undefined,
-			acceptPollTimerFireLagMsPerIteration:
-				acceptPollTimerFires > 0 ? round((trace.acceptPollTimerFireLagUs ?? 0) / 1000 / iterationCount) : undefined,
-			avgQueueReadablePayloadUs:
-				queueReadablePayloads > 0 ? round((trace.queueReadablePayloadElapsedUs ?? 0) / queueReadablePayloads) : undefined,
-			queueReadablePayloadMsPerIteration:
-				queueReadablePayloads > 0 ? round((trace.queueReadablePayloadElapsedUs ?? 0) / 1000 / iterationCount) : undefined,
-			avgQueueReadableImmediateReadUs:
-				queueReadableImmediateReadCalls > 0
-					? round((trace.queueReadableImmediateReadUs ?? 0) / queueReadableImmediateReadCalls)
-					: undefined,
-			avgSocketReadableEmitUs:
-				socketReadableEmits > 0 ? round((trace.socketReadableEmitUs ?? 0) / socketReadableEmits) : undefined,
-			socketReadableEmitMsPerIteration:
-				socketReadableEmits > 0 ? round((trace.socketReadableEmitUs ?? 0) / 1000 / iterationCount) : undefined,
-			avgSocketDataEmitUs:
-				socketDataEmits > 0 ? round((trace.socketDataEmitUs ?? 0) / socketDataEmits) : undefined,
-			socketDataEmitMsPerIteration:
-				socketDataEmits > 0 ? round((trace.socketDataEmitUs ?? 0) / 1000 / iterationCount) : undefined,
-			postDeliveryProbeSentinelRatio:
-				postDeliveryProbeCalls > 0
-					? round((trace.readPostDeliveryProbeTimeoutSentinels ?? trace.readPostDeliveryNextRawTimeoutSentinels ?? 0) / postDeliveryProbeCalls)
-					: undefined,
-			postDeliveryProbeDataRatio:
-				postDeliveryProbeCalls > 0
-					? round((trace.readPostDeliveryProbeDataEvents ?? trace.readPostDeliveryNextRawDataEvents ?? 0) / postDeliveryProbeCalls)
-					: undefined,
-			avgPostDeliveryToProbeStartUs:
-				postDeliveryProbeCalls > 0 ? round((trace.readPostDeliveryToProbeStartUs ?? 0) / postDeliveryProbeCalls) : undefined,
-			postDeliveryProbeMsPerIteration:
-				postDeliveryProbeCalls > 0 ? round((trace.readPostDeliveryProbeElapsedUs ?? 0) / 1000 / iterationCount) : undefined,
-			postDeliveryPendingWriteFlushRatio:
-				postDeliveryProbeCalls > 0 ? round((trace.readPostDeliveryPendingWriteFlushes ?? 0) / postDeliveryProbeCalls) : undefined,
-			postDeliveryPendingWriteBytesPerIteration:
-				postDeliveryProbeCalls > 0 ? round((trace.readPostDeliveryPendingWriteBytes ?? 0) / iterationCount) : undefined,
-			avgDataEmitStartToUserWriteUs:
-				userWriteDuringDataEmitCalls > 0
-					? round((trace.dataEmitStartToUserWriteUs ?? 0) / userWriteDuringDataEmitCalls)
-					: undefined,
-			dataEmitStartToUserWriteMsPerIteration:
-				userWriteDuringDataEmitCalls > 0 ? round((trace.dataEmitStartToUserWriteUs ?? 0) / 1000 / iterationCount) : undefined,
-			avgDataEmitEndToUserWriteUs:
-				trace.dataEmitEndToUserWriteUs > 0 && trace.userWriteCalls > userWriteDuringDataEmitCalls
-					? round((trace.dataEmitEndToUserWriteUs ?? 0) / (trace.userWriteCalls - userWriteDuringDataEmitCalls))
-					: undefined,
-			dataEmitEndToUserWriteMsPerIteration:
-				trace.dataEmitEndToUserWriteUs > 0 ? round((trace.dataEmitEndToUserWriteUs ?? 0) / 1000 / iterationCount) : undefined,
-			avgWriteQueuedToFlushStartUs:
-				flushCalls > 0 ? round((trace.writeQueuedToFlushStartUs ?? 0) / flushCalls) : undefined,
-			writeQueuedToFlushStartMsPerIteration:
-				flushCalls > 0 ? round((trace.writeQueuedToFlushStartUs ?? 0) / 1000 / iterationCount) : undefined,
-			avgWriteFlushQueuedToRawUs:
-				flushCalls > 0 ? round((trace.writeFlushQueuedToRawUs ?? 0) / flushCalls) : undefined,
-			writeFlushQueuedToRawMsPerIteration:
-				flushCalls > 0 ? round((trace.writeFlushQueuedToRawUs ?? 0) / 1000 / iterationCount) : undefined,
-			avgReadWakeQueuedToPumpStartUs:
-				readEventWakeups > 0 ? round((trace.readWakeQueuedToPumpStartUs ?? 0) / readEventWakeups) : undefined,
-			readWakeQueuedToPumpStartMsPerIteration:
-				readEventWakeups > 0 ? round((trace.readWakeQueuedToPumpStartUs ?? 0) / 1000 / iterationCount) : undefined,
-			avgAcceptWakeQueuedToPumpStartUs:
-				acceptEventWakeups > 0 ? round((trace.acceptWakeQueuedToPumpStartUs ?? 0) / acceptEventWakeups) : undefined,
-			acceptWakeQueuedToPumpStartMsPerIteration:
-				acceptEventWakeups > 0 ? round((trace.acceptWakeQueuedToPumpStartUs ?? 0) / 1000 / iterationCount) : undefined,
-		};
-	}
+			acceptRawCalls > 0
+				? round((trace.acceptRawElapsedUs ?? 0) / acceptRawCalls)
+				: undefined,
+		avgAcceptJsonParseUs:
+			acceptConnections > 0
+				? round((trace.acceptJsonParseUs ?? 0) / acceptConnections)
+				: undefined,
+		avgAcceptOnConnectionUs:
+			acceptConnections > 0
+				? round((trace.acceptOnConnectionUs ?? 0) / acceptConnections)
+				: undefined,
+		avgReadMacrotaskYieldUs:
+			readMacrotaskYields > 0
+				? round((trace.readMacrotaskYieldElapsedUs ?? 0) / readMacrotaskYields)
+				: undefined,
+		readMacrotaskYieldMsPerIteration:
+			readMacrotaskYields > 0
+				? round(
+						(trace.readMacrotaskYieldElapsedUs ?? 0) / 1000 / iterationCount,
+					)
+				: undefined,
+		avgReadPollTimerFireLagUs:
+			readPollTimerFires > 0
+				? round((trace.readPollTimerFireLagUs ?? 0) / readPollTimerFires)
+				: undefined,
+		readPollTimerFireLagMsPerIteration:
+			readPollTimerFires > 0
+				? round((trace.readPollTimerFireLagUs ?? 0) / 1000 / iterationCount)
+				: undefined,
+		avgAcceptPollTimerFireLagUs:
+			acceptPollTimerFires > 0
+				? round((trace.acceptPollTimerFireLagUs ?? 0) / acceptPollTimerFires)
+				: undefined,
+		acceptPollTimerFireLagMsPerIteration:
+			acceptPollTimerFires > 0
+				? round((trace.acceptPollTimerFireLagUs ?? 0) / 1000 / iterationCount)
+				: undefined,
+		avgQueueReadablePayloadUs:
+			queueReadablePayloads > 0
+				? round(
+						(trace.queueReadablePayloadElapsedUs ?? 0) / queueReadablePayloads,
+					)
+				: undefined,
+		queueReadablePayloadMsPerIteration:
+			queueReadablePayloads > 0
+				? round(
+						(trace.queueReadablePayloadElapsedUs ?? 0) / 1000 / iterationCount,
+					)
+				: undefined,
+		avgQueueReadableImmediateReadUs:
+			queueReadableImmediateReadCalls > 0
+				? round(
+						(trace.queueReadableImmediateReadUs ?? 0) /
+							queueReadableImmediateReadCalls,
+					)
+				: undefined,
+		avgSocketReadableEmitUs:
+			socketReadableEmits > 0
+				? round((trace.socketReadableEmitUs ?? 0) / socketReadableEmits)
+				: undefined,
+		socketReadableEmitMsPerIteration:
+			socketReadableEmits > 0
+				? round((trace.socketReadableEmitUs ?? 0) / 1000 / iterationCount)
+				: undefined,
+		avgSocketDataEmitUs:
+			socketDataEmits > 0
+				? round((trace.socketDataEmitUs ?? 0) / socketDataEmits)
+				: undefined,
+		socketDataEmitMsPerIteration:
+			socketDataEmits > 0
+				? round((trace.socketDataEmitUs ?? 0) / 1000 / iterationCount)
+				: undefined,
+		postDeliveryProbeSentinelRatio:
+			postDeliveryProbeCalls > 0
+				? round(
+						(trace.readPostDeliveryProbeTimeoutSentinels ??
+							trace.readPostDeliveryNextRawTimeoutSentinels ??
+							0) / postDeliveryProbeCalls,
+					)
+				: undefined,
+		postDeliveryProbeDataRatio:
+			postDeliveryProbeCalls > 0
+				? round(
+						(trace.readPostDeliveryProbeDataEvents ??
+							trace.readPostDeliveryNextRawDataEvents ??
+							0) / postDeliveryProbeCalls,
+					)
+				: undefined,
+		avgPostDeliveryToProbeStartUs:
+			postDeliveryProbeCalls > 0
+				? round(
+						(trace.readPostDeliveryToProbeStartUs ?? 0) /
+							postDeliveryProbeCalls,
+					)
+				: undefined,
+		postDeliveryProbeMsPerIteration:
+			postDeliveryProbeCalls > 0
+				? round(
+						(trace.readPostDeliveryProbeElapsedUs ?? 0) / 1000 / iterationCount,
+					)
+				: undefined,
+		postDeliveryPendingWriteFlushRatio:
+			postDeliveryProbeCalls > 0
+				? round(
+						(trace.readPostDeliveryPendingWriteFlushes ?? 0) /
+							postDeliveryProbeCalls,
+					)
+				: undefined,
+		postDeliveryPendingWriteBytesPerIteration:
+			postDeliveryProbeCalls > 0
+				? round((trace.readPostDeliveryPendingWriteBytes ?? 0) / iterationCount)
+				: undefined,
+		avgDataEmitStartToUserWriteUs:
+			userWriteDuringDataEmitCalls > 0
+				? round(
+						(trace.dataEmitStartToUserWriteUs ?? 0) /
+							userWriteDuringDataEmitCalls,
+					)
+				: undefined,
+		dataEmitStartToUserWriteMsPerIteration:
+			userWriteDuringDataEmitCalls > 0
+				? round((trace.dataEmitStartToUserWriteUs ?? 0) / 1000 / iterationCount)
+				: undefined,
+		avgDataEmitEndToUserWriteUs:
+			trace.dataEmitEndToUserWriteUs > 0 &&
+			trace.userWriteCalls > userWriteDuringDataEmitCalls
+				? round(
+						(trace.dataEmitEndToUserWriteUs ?? 0) /
+							(trace.userWriteCalls - userWriteDuringDataEmitCalls),
+					)
+				: undefined,
+		dataEmitEndToUserWriteMsPerIteration:
+			trace.dataEmitEndToUserWriteUs > 0
+				? round((trace.dataEmitEndToUserWriteUs ?? 0) / 1000 / iterationCount)
+				: undefined,
+		avgWriteQueuedToFlushStartUs:
+			flushCalls > 0
+				? round((trace.writeQueuedToFlushStartUs ?? 0) / flushCalls)
+				: undefined,
+		writeQueuedToFlushStartMsPerIteration:
+			flushCalls > 0
+				? round((trace.writeQueuedToFlushStartUs ?? 0) / 1000 / iterationCount)
+				: undefined,
+		avgWriteFlushQueuedToRawUs:
+			flushCalls > 0
+				? round((trace.writeFlushQueuedToRawUs ?? 0) / flushCalls)
+				: undefined,
+		writeFlushQueuedToRawMsPerIteration:
+			flushCalls > 0
+				? round((trace.writeFlushQueuedToRawUs ?? 0) / 1000 / iterationCount)
+				: undefined,
+		avgReadWakeQueuedToPumpStartUs:
+			readEventWakeups > 0
+				? round((trace.readWakeQueuedToPumpStartUs ?? 0) / readEventWakeups)
+				: undefined,
+		readWakeQueuedToPumpStartMsPerIteration:
+			readEventWakeups > 0
+				? round(
+						(trace.readWakeQueuedToPumpStartUs ?? 0) / 1000 / iterationCount,
+					)
+				: undefined,
+		avgAcceptWakeQueuedToPumpStartUs:
+			acceptEventWakeups > 0
+				? round((trace.acceptWakeQueuedToPumpStartUs ?? 0) / acceptEventWakeups)
+				: undefined,
+		acceptWakeQueuedToPumpStartMsPerIteration:
+			acceptEventWakeups > 0
+				? round(
+						(trace.acceptWakeQueuedToPumpStartUs ?? 0) / 1000 / iterationCount,
+					)
+				: undefined,
+	};
+}
 
 function deriveSidecarNetTrace(trace: Record<string, number> | undefined) {
 	if (!trace) return undefined;
@@ -1088,33 +1409,61 @@ function deriveSidecarNetTrace(trace: Record<string, number> | undefined) {
 	const socketWriteBytes = trace.socketWriteBytes ?? 0;
 	return {
 		kernelPollEmptyRatio:
-			kernelPollTargets > 0 ? round((trace.kernelPollEmpty ?? 0) / kernelPollTargets) : undefined,
+			kernelPollTargets > 0
+				? round((trace.kernelPollEmpty ?? 0) / kernelPollTargets)
+				: undefined,
 		socketReadDataHitRatio:
-			socketReadCalls > 0 ? round(socketReadDataEvents / socketReadCalls) : undefined,
+			socketReadCalls > 0
+				? round(socketReadDataEvents / socketReadCalls)
+				: undefined,
 		acceptConnectionHitRatio:
-			serverAcceptCalls > 0 ? round((trace.serverAcceptConnections ?? 0) / serverAcceptCalls) : undefined,
+			serverAcceptCalls > 0
+				? round((trace.serverAcceptConnections ?? 0) / serverAcceptCalls)
+				: undefined,
 		avgKernelPollElapsedUs:
-			kernelPollTargets > 0 ? round((trace.kernelPollElapsedUs ?? 0) / kernelPollTargets) : undefined,
+			kernelPollTargets > 0
+				? round((trace.kernelPollElapsedUs ?? 0) / kernelPollTargets)
+				: undefined,
 		avgKernelPollWaitUs:
-			kernelPollTargets > 0 ? round((trace.kernelPollWaitUs ?? 0) / kernelPollTargets) : undefined,
+			kernelPollTargets > 0
+				? round((trace.kernelPollWaitUs ?? 0) / kernelPollTargets)
+				: undefined,
 		avgSocketReadKernelUs:
-			socketReadDataEvents > 0 ? round((trace.socketReadKernelUs ?? 0) / socketReadDataEvents) : undefined,
+			socketReadDataEvents > 0
+				? round((trace.socketReadKernelUs ?? 0) / socketReadDataEvents)
+				: undefined,
 		avgSocketWriteKernelUs:
-			socketWriteCalls > 0 ? round((trace.socketWriteKernelUs ?? 0) / socketWriteCalls) : undefined,
+			socketWriteCalls > 0
+				? round((trace.socketWriteKernelUs ?? 0) / socketWriteCalls)
+				: undefined,
 		avgSocketReadRecordCloneUs:
 			socketReadRecordCloneCalls > 0
-				? round((trace.socketReadRecordCloneUs ?? 0) / socketReadRecordCloneCalls)
+				? round(
+						(trace.socketReadRecordCloneUs ?? 0) / socketReadRecordCloneCalls,
+					)
 				: undefined,
 		avgSocketReadRecvCopyUs:
-			socketReadRecvCalls > 0 ? round((trace.socketReadRecvCopyUs ?? 0) / socketReadRecvCalls) : undefined,
+			socketReadRecvCalls > 0
+				? round((trace.socketReadRecvCopyUs ?? 0) / socketReadRecvCalls)
+				: undefined,
 		avgSocketReadRecvChunks:
-			socketReadRecvCalls > 0 ? round((trace.socketReadRecvChunks ?? 0) / socketReadRecvCalls) : undefined,
+			socketReadRecvCalls > 0
+				? round((trace.socketReadRecvChunks ?? 0) / socketReadRecvCalls)
+				: undefined,
 		socketReadKernelUsPerKiB:
-			socketReadBytes > 0 ? round((trace.socketReadKernelUs ?? 0) / (socketReadBytes / 1024)) : undefined,
+			socketReadBytes > 0
+				? round((trace.socketReadKernelUs ?? 0) / (socketReadBytes / 1024))
+				: undefined,
 		socketWriteKernelUsPerKiB:
-			socketWriteBytes > 0 ? round((trace.socketWriteKernelUs ?? 0) / (socketWriteBytes / 1024)) : undefined,
+			socketWriteBytes > 0
+				? round((trace.socketWriteKernelUs ?? 0) / (socketWriteBytes / 1024))
+				: undefined,
 		socketReadRecvCopyUsPerKiB:
-			socketReadRecvBytes > 0 ? round((trace.socketReadRecvCopyUs ?? 0) / (socketReadRecvBytes / 1024)) : undefined,
+			socketReadRecvBytes > 0
+				? round(
+						(trace.socketReadRecvCopyUs ?? 0) / (socketReadRecvBytes / 1024),
+					)
+				: undefined,
 	};
 }
 
@@ -1124,12 +1473,17 @@ async function runCase(
 	warmup: number,
 	sidecar: SidecarProcess,
 	netBridgeTrace: boolean,
-	netPollDelayMs?: number,
 ): Promise<NetTcpRowResult> {
 	const nodeMs = await runNode(row, iterations, warmup);
 	const vm = await createVm(sidecar);
 	try {
-		const guestRun = await runGuest(vm, row, iterations, warmup, netBridgeTrace, netPollDelayMs);
+		const guestRun = await runGuest(
+			vm,
+			row,
+			iterations,
+			warmup,
+			netBridgeTrace,
+		);
 		const guestMs = guestRun.samples;
 		const node = stats(nodeMs);
 		const guest = stats(guestMs);
@@ -1145,12 +1499,17 @@ async function runCase(
 			guestVsNodeRatio: round(guest.p50 / node.p50),
 			guestMinusNodeMs: round(guest.p50 - node.p50),
 			guestMsPerConnection: round(guest.p50 / row.connections),
-			guestMsPerWrite: ops.writeCalls > 0 ? round(guest.p50 / ops.writeCalls) : undefined,
-			guestMsPerKiB: totalBytes > 0 ? round(guest.p50 / (totalBytes / 1024)) : undefined,
+			guestMsPerWrite:
+				ops.writeCalls > 0 ? round(guest.p50 / ops.writeCalls) : undefined,
+			guestMsPerKiB:
+				totalBytes > 0 ? round(guest.p50 / (totalBytes / 1024)) : undefined,
 			incrementalGuestMsFromSingleWrite: singleWrite,
 			guestBridgeTrace: guestRun.bridgeTrace,
 			sidecarNetTrace: guestRun.sidecarNetTrace,
-				derivedGuestBridgeTrace: deriveGuestBridgeTrace(guestRun.bridgeTrace, guestMs.length),
+			derivedGuestBridgeTrace: deriveGuestBridgeTrace(
+				guestRun.bridgeTrace,
+				guestMs.length,
+			),
 			derivedSidecarNetTrace: deriveSidecarNetTrace(guestRun.sidecarNetTrace),
 			raw: { nodeMs, guestMs },
 		};
@@ -1163,32 +1522,48 @@ function addIncrementalFields(rows: NetTcpRowResult[]): void {
 	const single = rows.find((row) => row.id === "echo_1x1");
 	const byId = new Map(rows.map((row) => [row.id, row]));
 	for (const row of rows) {
-		if (single && row.bytesPerWrite === 1 && row.writeCount > 1 && row.connections === 1) {
-			row.incrementalGuestMsFromSingleWrite = round(row.guest.p50 - single.guest.p50);
+		if (
+			single &&
+			row.bytesPerWrite === 1 &&
+			row.writeCount > 1 &&
+			row.connections === 1
+		) {
+			row.incrementalGuestMsFromSingleWrite = round(
+				row.guest.p50 - single.guest.p50,
+			);
 		}
 		if (row.compareAgainst) {
 			const baseline = byId.get(row.compareAgainst);
 			if (baseline) {
-				row.compareAgainstGuestDeltaMs = round(row.guest.p50 - baseline.guest.p50);
+				row.compareAgainstGuestDeltaMs = round(
+					row.guest.p50 - baseline.guest.p50,
+				);
 			}
 		}
 	}
 }
 
 async function main(): Promise<void> {
-	const { iterations, warmup, rows, netBridgeTrace, netPollDelayMs } = parseArgs();
+	const { iterations, warmup, rows, netBridgeTrace } = parseArgs();
 	const hardware = getHardware();
 	console.error("=== Net TCP Event Floor Benchmark ===");
 	console.error(`CPU: ${hardware.cpu}`);
 	console.error(`RAM: ${hardware.ram} | Node: ${hardware.node}`);
-	console.error(`Iterations: ${iterations} (+ ${warmup} warmup), rows: ${rows.map((r) => r.id).join(",")}`);
+	console.error(
+		`Iterations: ${iterations} (+ ${warmup} warmup), rows: ${rows.map((r) => r.id).join(",")}`,
+	);
 	if (netBridgeTrace) console.error("Guest net bridge tracing: enabled");
-	if (netPollDelayMs !== undefined) console.error(`Guest net bridge poll delay: ${Math.trunc(netPollDelayMs)}ms`);
 	const sidecar = await createBenchSidecar();
 	try {
 		const results: NetTcpRowResult[] = [];
 		for (const row of rows) {
-			const result = await runCase(row, iterations, warmup, sidecar, netBridgeTrace, netPollDelayMs);
+			const result = await runCase(
+				row,
+				iterations,
+				warmup,
+				sidecar,
+				netBridgeTrace,
+			);
 			results.push(result);
 			console.error(
 				`  row=${row.id}: node.p50=${result.node.p50}ms guest.p50=${result.guest.p50}ms ratio=${result.guestVsNodeRatio}x`,
@@ -1249,13 +1624,14 @@ async function main(): Promise<void> {
 		console.log(
 			JSON.stringify(
 				{
-					benchmark: netBridgeTrace ? "net-tcp-cadence-trace" : "net-tcp-event-floor",
+					benchmark: netBridgeTrace
+						? "net-tcp-cadence-trace"
+						: "net-tcp-event-floor",
 					generatedAt: new Date().toISOString(),
 					hardware,
 					iterations,
 					warmup,
 					netBridgeTrace,
-					netPollDelayMs: netPollDelayMs === undefined ? undefined : Math.trunc(netPollDelayMs),
 					rows: results,
 					summary,
 				},

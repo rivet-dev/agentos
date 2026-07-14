@@ -9,7 +9,7 @@ describe("protocol schema", () => {
 		expect(
 			validateSidecarProtocolSchema({
 				name: "agentos-native-sidecar",
-				version: 7,
+				version: 8,
 			}),
 		).toBe(SIDECAR_PROTOCOL_SCHEMA);
 	});

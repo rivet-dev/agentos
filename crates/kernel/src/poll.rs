@@ -1,4 +1,5 @@
 use crate::socket_table::SocketId;
+use event_listener::Event;
 use std::ops::{BitOr, BitOrAssign};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
@@ -139,6 +140,14 @@ impl PollWaitHandle {
     pub fn wait_for_change(&self, observed: u64, timeout: Option<Duration>) -> bool {
         self.notifier.wait_for_change(observed, timeout)
     }
+
+    /// Yield until the generation moves past `observed` without occupying an
+    /// OS thread. The returned future is runtime-neutral; the sidecar may await
+    /// it on its one process-owned executor while browser-free kernel users may
+    /// use any compatible executor.
+    pub async fn wait_for_change_async(&self, observed: u64) -> bool {
+        self.notifier.wait_for_change_async(observed).await
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -150,13 +159,17 @@ pub(crate) struct PollNotifier {
 struct PollNotifierInner {
     generation: Mutex<u64>,
     waiters: Condvar,
+    async_waiters: Event,
 }
 
 impl PollNotifier {
     pub(crate) fn notify(&self) {
-        let mut generation = lock_or_recover(&self.inner.generation);
-        *generation = generation.wrapping_add(1);
+        {
+            let mut generation = lock_or_recover(&self.inner.generation);
+            *generation = generation.wrapping_add(1);
+        }
         self.inner.waiters.notify_all();
+        self.inner.async_waiters.notify(usize::MAX);
     }
 
     pub(crate) fn snapshot(&self) -> u64 {
@@ -196,6 +209,21 @@ impl PollNotifier {
             }
             if wait_result.timed_out() {
                 return false;
+            }
+        }
+    }
+
+    pub(crate) async fn wait_for_change_async(&self, observed: u64) -> bool {
+        loop {
+            // Register before checking the generation so a notification that
+            // races this check is retained by the listener rather than lost.
+            let listener = self.inner.async_waiters.listen();
+            if self.snapshot() != observed {
+                return true;
+            }
+            listener.await;
+            if self.snapshot() != observed {
+                return true;
             }
         }
     }

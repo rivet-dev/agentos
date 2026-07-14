@@ -5,12 +5,18 @@ const { WebSocket, WebSocketServer } = require("ws");
 async function main() {
 	const serverEvents = [];
 	const clientEvents = [];
+	const serverCloseEvents = [];
 
 	// Start server on random port
 	const wss = new WebSocketServer({ port: 0 });
 
 	wss.on("connection", (ws) => {
 		serverEvents.push("connection");
+		serverCloseEvents.push(
+			new Promise((resolve) => {
+				ws.once("close", resolve);
+			}),
+		);
 
 		ws.on("message", (data, isBinary) => {
 			serverEvents.push(isBinary ? "binary-message" : "text-message");
@@ -29,6 +35,7 @@ async function main() {
 	try {
 		const textEcho = await new Promise((resolve, reject) => {
 			const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+			let echo;
 
 			ws.on("open", () => {
 				clientEvents.push("open");
@@ -37,22 +44,27 @@ async function main() {
 
 			ws.on("message", (data) => {
 				clientEvents.push("text-message");
+				echo = data.toString();
 				ws.close();
-				resolve(data.toString());
 			});
 
 			ws.on("close", () => {
 				clientEvents.push("text-close");
+				if (echo === undefined) {
+					reject(new Error("text socket closed before echo"));
+					return;
+				}
+				resolve(echo);
 			});
 
 			ws.on("error", reject);
 		});
 
-		// Wait briefly for server close event
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		await serverCloseEvents[0];
 
 		const binaryEcho = await new Promise((resolve, reject) => {
 			const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+			let echo;
 
 			ws.on("open", () => {
 				clientEvents.push("binary-open");
@@ -61,22 +73,26 @@ async function main() {
 
 			ws.on("message", (data, isBinary) => {
 				clientEvents.push("binary-message");
-				ws.close();
-				resolve({
+				echo = {
 					isBinary,
 					hex: Buffer.from(data).toString("hex"),
-				});
+				};
+				ws.close();
 			});
 
 			ws.on("close", () => {
 				clientEvents.push("binary-close");
+				if (echo === undefined) {
+					reject(new Error("binary socket closed before echo"));
+					return;
+				}
+				resolve(echo);
 			});
 
 			ws.on("error", reject);
 		});
 
-		// Wait briefly for server close event
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		await serverCloseEvents[1];
 
 		const result = {
 			textEcho,

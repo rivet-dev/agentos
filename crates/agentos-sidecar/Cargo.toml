@@ -18,6 +18,7 @@ agentos-protocol = { workspace = true }
 serde_json = "1.0"
 serde_bare = "0.5"
 agentos-native-sidecar = { workspace = true }
+nix = { version = "0.29", features = ["fs"] }
 tokio = { version = "1", features = ["sync", "time", "macros"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }

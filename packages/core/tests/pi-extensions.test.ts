@@ -1,3 +1,6 @@
+import { resolve } from "node:path";
+import common from "@agentos-software/common";
+import pi from "@agentos-software/pi";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 import {
@@ -5,11 +8,9 @@ import {
 	startLlmock,
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
+import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 
-// Pi ships PRE-PACKED as an `/opt/agentos` package and is projected by default
-// (run `pnpm pack:agents` first), so this test needs no `software: [pi]` mount
-// and no host node_modules access — `createSession("pi")` resolves the packaged
-// adapter via `/opt/agentos/bin/pi-sdk-acp`.
+const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 const HOME_DIR = "/home/agentos";
 const WORKSPACE_DIR = `${HOME_DIR}/workspace`;
 const PI_AGENT_DIR = `${HOME_DIR}/.pi/agent`;
@@ -32,6 +33,8 @@ function requestIncludesExtensionMarker(req: unknown): boolean {
 async function createPiVm(mockUrl: string): Promise<AgentOs> {
 	return AgentOs.create({
 		loopbackExemptPorts: [Number(new URL(mockUrl).port)],
+		mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
+		software: [common, pi],
 	});
 }
 

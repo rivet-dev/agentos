@@ -14,7 +14,9 @@ describe("stdio sidecar process monitor", () => {
 			stderr: "boom",
 		});
 
-		expect(error.message).toBe("sidecar process exited with code 7\nstderr:\nboom");
+		expect(error.message).toBe(
+			"sidecar process exited with code 7\nstderr:\nboom",
+		);
 		expect(error.exitCode).toBe(7);
 		expect(error.signal).toBeNull();
 		expect(error.stderr).toBe("boom");
@@ -33,6 +35,7 @@ describe("stdio sidecar process monitor", () => {
 			stdin: new PassThrough(),
 			stdout: new PassThrough(),
 			stderr: new PassThrough(),
+			stdio: [null, null, null, new PassThrough()],
 			exitCode: null,
 			signalCode: null,
 			on() {

@@ -1,6 +1,6 @@
 //! Architecture / boundary guards (CI hardening, item #2).
 //!
-//! This is a *chokepoint lint*: it scans the secure-exec Rust source tree and
+//! This is a *chokepoint lint*: it scans the AgentOS Rust source tree and
 //! FAILS if a security-sensitive host API ("banned API") appears OUTSIDE an
 //! explicit allowlist of sanctioned modules. The goal is to keep host access
 //! funnelled through a small, reviewable set of files so that a NEW use of
@@ -36,7 +36,7 @@
 //!   `benches/` directories, and inline `#[cfg(test)]` modules are excluded
 //!   from the scan (they are not production host-access surface).
 //! * `crates/execution/src/benchmark.rs`, `crates/execution/src/bin/`, and
-//!   `crates/agentos-native-baseline/` hold benchmarking/dev tooling and are excluded
+//!   `crates/native-baseline/` hold benchmarking/dev tooling and are excluded
 //!   for the same reason.
 //!
 //! If you are adding a genuinely new sanctioned chokepoint, add its
@@ -47,7 +47,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-/// Repo root = `<root>/crates/sidecar` -> up two levels.
+/// Repo root = `<root>/crates/native-sidecar` -> up two levels.
 fn repo_root() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest
@@ -55,6 +55,42 @@ fn repo_root() -> PathBuf {
         .and_then(Path::parent)
         .expect("sidecar crate should live two levels under the repo root")
         .to_path_buf()
+}
+
+#[test]
+fn unix_listener_close_is_lossless_and_acknowledged() {
+    let root = repo_root();
+    let unix =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/network/unix.rs"))
+            .expect("read Unix reactor source");
+    let rpc =
+        std::fs::read_to_string(root.join("crates/native-sidecar/src/execution/javascript/rpc.rs"))
+            .expect("read JavaScript RPC source");
+    let compact_unix: String = unix
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let compact_rpc: String = rpc
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_unix.contains("self.close_notify.notify_one();")
+            && compact_unix.contains("self.close_completion")
+            && !compact_unix.contains("self.close_notify.notify_waiters()"),
+        "Unix listener close must retain a notification permit between acceptor select points"
+    );
+    assert!(
+        compact_unix.contains("UnixListenerTaskCompletion(Some(close_complete))")
+            && compact_unix.contains("completion.send(())"),
+        "the Unix listener owner must acknowledge every terminal path after dropping its FD"
+    );
+    assert!(
+        compact_rpc.contains("tokio::time::timeout(operation_deadline,close_completion).await")
+            && compact_rpc.contains("JavascriptSyncRpcServiceResponse::Deferred"),
+        "the listener close bridge response must await bounded owner-task completion"
+    );
 }
 
 /// Every production Rust source file under `crates/*/src/`, repo-relative,
@@ -109,7 +145,11 @@ fn is_excluded_file(rel: &Path) -> bool {
         || s.ends_with("v8_bridge_build.rs")
         // Benchmarking / dev tooling, not production host-access surface.
         || s == "crates/execution/src/benchmark.rs"
-        || s.starts_with("crates/agentos-native-baseline/")
+        || s.starts_with("crates/native-baseline/")
+        // Browser support is intentionally retained but disabled; dormant
+        // browser sources must not gate the native reactor migration.
+        || s.starts_with("crates/native-sidecar-browser/")
+        || s.starts_with("crates/agentos-sidecar-browser/")
         || s.contains("/src/bin/")
 }
 
@@ -150,7 +190,10 @@ impl CfgTestTracker {
             return true;
         }
 
-        if trimmed.starts_with("#[cfg(test)]") {
+        if trimmed.starts_with("#[cfg(")
+            && trimmed.contains("test")
+            && !trimmed.contains("not(test)")
+        {
             self.pending_cfg_test = true;
             return false;
         }
@@ -160,22 +203,19 @@ impl CfgTestTracker {
                 // Attributes/blank lines may sit between #[cfg(test)] and the item.
                 return false;
             }
-            // The attribute applies to the next item. Only a `mod ... { ... }`
-            // creates a test *region* we must skip wholesale; a `#[cfg(test)]`
-            // on a `use` / `fn` / `const` is a single item and gets matched
-            // line-by-line, so we still skip just that line below.
+            // The attribute applies to the next item. Any braced item (module,
+            // function, impl, etc.) creates a test-only region that must be
+            // skipped wholesale; otherwise a production audit would count
+            // fixture thread/runtime/channel sites inside cfg(test) functions.
             self.pending_cfg_test = false;
-            if trimmed.starts_with("mod ")
-                || trimmed.starts_with("pub mod ")
-                || trimmed.starts_with("pub(crate) mod ")
-                || trimmed.starts_with("pub(super) mod ")
-            {
-                // Enter test module; balance braces starting from this line.
+            if count_open(line) > count_close(line) {
                 self.depth = count_open(line).saturating_sub(count_close(line));
-                if self.depth == 0 {
-                    // Single-line `mod x;` declaration (no body) -- nothing to skip.
-                }
                 return true;
+            }
+            if !trimmed.ends_with(';') {
+                // Multi-line item header: keep consuming test-only lines until
+                // its opening brace appears.
+                self.pending_cfg_test = true;
             }
             // A single `#[cfg(test)]` item (use/fn/const/static). Skip this line.
             return true;
@@ -208,7 +248,6 @@ fn line_matches(line: &str, needles: &[&str]) -> bool {
 /// Run the chokepoint scan for one banned class and return offending
 /// `path:line: text` strings that are NOT in the allowlist.
 fn scan_class(root: &Path, files: &[PathBuf], class: &BannedClass) -> Vec<String> {
-    let allow: BTreeSet<&str> = class.allowlist.iter().copied().collect();
     let mut violations = Vec::new();
 
     for rel in files {
@@ -216,7 +255,14 @@ fn scan_class(root: &Path, files: &[PathBuf], class: &BannedClass) -> Vec<String
             continue;
         }
         let rel_str = rel.to_string_lossy().replace('\\', "/");
-        let allowed = allow.contains(rel_str.as_str());
+        let allowed = class.allowlist.iter().any(|entry| {
+            entry
+                .strip_suffix('/')
+                .map_or(rel_str == *entry, |directory| {
+                    rel_str.starts_with(directory)
+                        && rel_str.as_bytes().get(directory.len()) == Some(&b'/')
+                })
+        });
         let abs = root.join(rel);
         let content =
             std::fs::read_to_string(&abs).unwrap_or_else(|err| panic!("read {abs:?}: {err}"));
@@ -256,23 +302,31 @@ const FS_ALLOW: &[&str] = &[
     // `openat2`, running identically on Linux, macOS, and gVisor). It replaced
     // the deleted macOS-only `macos_fs.rs` cap-std fallback; see the `confine`
     // module docs for why `openat2` was removed.
-    "crates/sidecar/src/filesystem.rs",
-    "crates/sidecar/src/plugins/host_dir.rs",
-    "crates/sidecar/src/plugins/module_access.rs",
+    "crates/native-sidecar/src/filesystem.rs",
+    "crates/native-sidecar/src/plugins/host_dir.rs",
+    "crates/native-sidecar/src/plugins/module_access.rs",
     // agentOS package projection: the sidecar is the host-side TCB that reads a
     // trusted, client-configured package's tar + `agentos-package.json` from the
     // host to build the read-only `/opt/agentos` granular mounts (no extraction,
     // no on-disk symlink farm). Same sanctioned read-only host-source boundary as
     // filesystem.rs/host_dir.rs.
-    "crates/sidecar/src/package_projection.rs",
-    "crates/sidecar/src/stdio.rs",
-    "crates/sidecar/src/state.rs",
-    "crates/sidecar/src/vm.rs",
-    "crates/sidecar/src/service.rs",
-    "crates/sidecar/src/execution.rs",
-    "crates/sidecar/src/plugins/chunked_local.rs",
-    "crates/agentos-vfs/src/local/file_block_store.rs",
-    "crates/agentos-vfs/src/local/sqlite_metadata_store.rs",
+    "crates/native-sidecar/src/package_projection.rs",
+    "crates/native-sidecar/src/stdio.rs",
+    "crates/native-sidecar/src/state.rs",
+    "crates/native-sidecar/src/vm.rs",
+    "crates/native-sidecar/src/service.rs",
+    "crates/native-sidecar/src/execution/",
+    "crates/native-sidecar/src/plugins/chunked_local.rs",
+    "crates/vfs-store/src/local/file_block_store.rs",
+    "crates/vfs-store/src/local/sqlite_metadata_store.rs",
+    // Package-format tooling reads and writes caller-selected host artifacts;
+    // it never handles guest paths at runtime.
+    "crates/vfs/src/package_format/mod.rs",
+    "crates/vfs/src/package_format/pack.rs",
+    // Host plugin configuration reads trusted package manifests before a VM exists.
+    "crates/agentos-actor-plugin/src/config.rs",
+    // ACP trace output is an operator-selected host diagnostic sink.
+    "crates/agentos-sidecar/src/acp_extension.rs",
     // Tar-backed read-only VFS: mmaps the trusted, client-configured package
     // tar from the host and serves member byte ranges without extracting.
     // Same sanctioned read-only host-source boundary as host_dir.rs (the tar is
@@ -309,24 +363,27 @@ const NET_ALLOW: &[&str] = &[
     // Shared IP classifier only; no host sockets are opened here.
     "crates/kernel/src/network_policy.rs",
     // Shared socket-address formatting only; no host sockets are opened here.
-    "crates/sidecar-core/src/net.rs",
+    "crates/native-sidecar-core/src/net.rs",
     "crates/kernel/src/socket_table.rs",
     "crates/kernel/src/kernel.rs",
     // sidecar host-net chokepoint + bootstrap
-    "crates/sidecar/src/execution.rs",
-    "crates/sidecar/src/state.rs",
-    "crates/sidecar/src/vm.rs",
+    "crates/native-sidecar/src/execution/",
+    "crates/native-sidecar/src/state.rs",
+    "crates/native-sidecar/src/vm.rs",
+    // Required inherited fd-3 response/control IPC stream; no external egress.
+    "crates/native-sidecar/src/stdio.rs",
     // host-backed storage / agent plugins (network egress)
-    "crates/sidecar/src/plugins/s3_common.rs",
-    "crates/agentos-vfs/src/s3/block_store.rs",
-    "crates/agentos-vfs/src/s3/object_backend.rs",
-    "crates/sidecar/src/plugins/google_drive.rs",
-    "crates/sidecar/src/plugins/sandbox_agent.rs",
+    "crates/native-sidecar/src/plugins/s3_common.rs",
+    "crates/vfs-store/src/s3/block_store.rs",
+    "crates/vfs-store/src/s3/object_backend.rs",
+    "crates/native-sidecar/src/plugins/google_drive.rs",
+    "crates/native-sidecar/src/plugins/sandbox_agent.rs",
     // embedded runtime IPC socketpair (not external egress)
     "crates/v8-runtime/src/embedded_runtime.rs",
+    "crates/execution/src/v8_host.rs",
     "crates/execution/src/v8_runtime.rs",
     // client spawns + connects to the sidecar helper
-    "crates/agentos-sidecar-client/src/transport.rs",
+    "crates/sidecar-client/src/transport.rs",
 ];
 
 /// process: OS subprocess creation.
@@ -335,7 +392,7 @@ const NET_ALLOW: &[&str] = &[
 /// own sidecar helper binary. Guest "process" spawns go through the kernel
 /// `CommandDriver` registry and never reach `Command::new`.
 const PROCESS_ALLOW: &[&str] = &[
-    "crates/agentos-sidecar-client/src/transport.rs",
+    "crates/sidecar-client/src/transport.rs",
     // V8 snapshot builder re-execs secure-exec's OWN binary as a helper
     // (SNAPSHOT_HELPER_ENV) so snapshot creation runs in a clean process.
     // Host-side bootstrap only; no guest-controlled input picks the program.
@@ -349,7 +406,11 @@ const PROCESS_ALLOW: &[&str] = &[
 /// selection, subprocess re-exec markers, local-endpoint test escape hatch)
 /// before a VM exists.
 const ENV_ALLOW: &[&str] = &[
-    "crates/agentos-sidecar-client/src/transport.rs",
+    "crates/sidecar-client/src/transport.rs",
+    "crates/client/src/sidecar.rs",
+    "crates/agentos-actor-plugin/src/lib.rs",
+    "crates/agentos-sidecar/src/acp_extension.rs",
+    "crates/agentos-sidecar/src/main.rs",
     "crates/execution/src/host_node.rs",
     // Node import cache reads an operator timeout knob before materializing
     // host-side runtime assets for VM startup.
@@ -357,12 +418,12 @@ const ENV_ALLOW: &[&str] = &[
     // Host-side perf phase diagnostics toggles, read from operator env and not
     // guest-reachable.
     "crates/execution/src/javascript.rs",
-    "crates/sidecar/src/filesystem.rs",
+    "crates/native-sidecar/src/filesystem.rs",
     "crates/v8-runtime/src/bridge.rs",
-    "crates/sidecar/src/execution.rs",
-    "crates/sidecar/src/plugins/s3_common.rs",
+    "crates/native-sidecar/src/execution/",
+    "crates/native-sidecar/src/plugins/s3_common.rs",
     // Host-process startup log-level knob, read before any VM exists.
-    "crates/sidecar/src/main.rs",
+    "crates/native-sidecar/src/main.rs",
     // Host-side V8 diagnostics toggles (module-trace + sync-RPC latency
     // profiling + snapshot-bundle path), read at runtime init from operator
     // env. Not guest-reachable.
@@ -371,7 +432,6 @@ const ENV_ALLOW: &[&str] = &[
     "crates/v8-runtime/src/snapshot.rs",
     // Browser sidecar reads a test-only vm.fetch timeout override (bucket 1:
     // process-wide test/debug knob, native-only); not VM policy.
-    "crates/sidecar-browser/src/service.rs",
     // Warm-isolate pool sizing knob (AGENTOS_V8_WARM_ISOLATES), read at
     // executor init from operator env. Not guest-reachable.
     "crates/execution/src/v8_host.rs",
@@ -458,7 +518,7 @@ fn assert_green(root: &Path, files: &[PathBuf], class: BannedClass) {
         "\n\nChokepoint lint ({}) found {} host-API use(s) OUTSIDE the sanctioned \
 allowlist.\nEither route the access through an existing chokepoint, or -- if this \
 is a genuinely new sanctioned boundary -- add the file to the `{}` allowlist in \
-crates/sidecar/tests/architecture_guards.rs with a justifying comment.\n\n{}\n",
+crates/native-sidecar/tests/architecture_guards.rs with a justifying comment.\n\n{}\n",
         class.name,
         violations.len(),
         match class.name {
@@ -515,7 +575,13 @@ fn lint_scans_real_sources_and_allowlist_paths_exist() {
     let mut missing = Vec::new();
     for class in [FS_ALLOW, NET_ALLOW, PROCESS_ALLOW, ENV_ALLOW] {
         for rel in class {
-            if !root.join(rel).is_file() {
+            let path = root.join(rel);
+            let exists = if rel.ends_with('/') {
+                path.is_dir()
+            } else {
+                path.is_file()
+            };
+            if !exists {
                 missing.push(rel.to_string());
             }
         }
@@ -529,74 +595,1013 @@ fn lint_scans_real_sources_and_allowlist_paths_exist() {
 }
 
 // ---------------------------------------------------------------------------
-// Dependency-boundary guard: no secure-exec crate may depend on an
-// agent / ACP / session crate. secure-exec must remain free of Agent OS
-// concerns (ACP, agent adapters, sessions).
+// Runtime topology and lower-layer dependency guards.
 // ---------------------------------------------------------------------------
 
-#[test]
-fn no_secure_exec_crate_depends_on_agent_acp_session() {
-    let root = repo_root();
-    let crates_dir = root.join("crates");
-    let banned_dep_markers = ["agent", "acp", "session"];
-
-    let mut violations = Vec::new();
-    let mut crate_dirs: Vec<PathBuf> = std::fs::read_dir(&crates_dir)
-        .expect("crates/ exists")
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.is_dir())
-        .collect();
-    crate_dirs.sort();
-
-    for crate_dir in crate_dirs {
-        let manifest = crate_dir.join("Cargo.toml");
-        if !manifest.is_file() {
+fn dependency_keys(manifest: &Path) -> BTreeSet<String> {
+    let text = std::fs::read_to_string(manifest)
+        .unwrap_or_else(|error| panic!("read {manifest:?}: {error}"));
+    let mut dependencies = BTreeSet::new();
+    let mut in_dependencies = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.starts_with('[') {
+            in_dependencies = line.contains("dependencies");
             continue;
         }
-        let text = std::fs::read_to_string(&manifest)
-            .unwrap_or_else(|err| panic!("read {manifest:?}: {err}"));
-        let mut in_deps = false;
-        for raw in text.lines() {
-            let line = raw.trim();
-            if line.starts_with('[') {
-                // Any table whose name mentions "dependencies" is a dep table.
-                in_deps = line.contains("dependencies");
+        if !in_dependencies || line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let key = line
+            .split(['=', ' ', '\t'])
+            .next()
+            .unwrap_or("")
+            .trim_matches('"');
+        if !key.is_empty() {
+            dependencies.insert(key.to_owned());
+        }
+    }
+    dependencies
+}
+
+#[test]
+fn generic_runtime_layers_do_not_depend_on_product_or_acp_layers() {
+    let root = repo_root();
+    let lower_layers = [
+        "runtime",
+        "kernel",
+        "vfs",
+        "vfs-store",
+        "v8-runtime",
+        "execution",
+    ];
+    let forbidden = [
+        "agentos-protocol",
+        "agentos-sidecar-core",
+        "agentos-sidecar",
+        "agentos-client",
+        "agentos-actor-plugin",
+    ];
+    let mut violations = Vec::new();
+    for crate_dir in lower_layers {
+        let manifest = root.join("crates").join(crate_dir).join("Cargo.toml");
+        let dependencies = dependency_keys(&manifest);
+        for dependency in forbidden {
+            if dependencies.contains(dependency) {
+                violations.push(format!("crates/{crate_dir}: {dependency}"));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "generic runtime layers depend on product/ACP layers:\n{}",
+        violations.join("\n")
+    );
+}
+
+fn native_reactor_source_files(root: &Path) -> Vec<PathBuf> {
+    production_source_files(root)
+        .into_iter()
+        .filter(|path| {
+            let path = path.to_string_lossy();
+            [
+                "crates/bridge/",
+                "crates/execution/",
+                "crates/kernel/",
+                "crates/native-sidecar/",
+                "crates/native-sidecar-core/",
+                "crates/runtime/",
+                "crates/sidecar-protocol/",
+                "crates/v8-runtime/",
+                "crates/vfs/",
+                "crates/vfs-store/",
+                "crates/vm-config/",
+            ]
+            .iter()
+            .any(|prefix| path.starts_with(prefix))
+        })
+        .collect()
+}
+
+fn native_execution_source_files(root: &Path) -> Vec<PathBuf> {
+    production_source_files(root)
+        .into_iter()
+        .filter(|path| path.starts_with("crates/native-sidecar/src/execution"))
+        .collect()
+}
+
+fn native_execution_source(root: &Path) -> String {
+    native_execution_source_files(root)
+        .into_iter()
+        .map(|path| {
+            std::fs::read_to_string(root.join(&path))
+                .unwrap_or_else(|error| panic!("read {path:?}: {error}"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn native_execution_is_split_by_domain() {
+    let root = repo_root();
+    let expected = [
+        "crates/native-sidecar/src/execution/mod.rs",
+        "crates/native-sidecar/src/execution/coordinator.rs",
+        "crates/native-sidecar/src/execution/launch.rs",
+        "crates/native-sidecar/src/execution/process.rs",
+        "crates/native-sidecar/src/execution/process_events.rs",
+        "crates/native-sidecar/src/execution/child_process.rs",
+        "crates/native-sidecar/src/execution/signals.rs",
+        "crates/native-sidecar/src/execution/stdio.rs",
+        "crates/native-sidecar/src/execution/network/mod.rs",
+        "crates/native-sidecar/src/execution/network/tcp.rs",
+        "crates/native-sidecar/src/execution/network/unix.rs",
+        "crates/native-sidecar/src/execution/network/udp.rs",
+        "crates/native-sidecar/src/execution/network/tls.rs",
+        "crates/native-sidecar/src/execution/network/http2.rs",
+        "crates/native-sidecar/src/execution/network/dns.rs",
+        "crates/native-sidecar/src/execution/javascript/mod.rs",
+        "crates/native-sidecar/src/execution/javascript/rpc.rs",
+        "crates/native-sidecar/src/execution/javascript/crypto.rs",
+        "crates/native-sidecar/src/execution/javascript/sqlite.rs",
+        "crates/native-sidecar/src/execution/javascript/http.rs",
+        "crates/native-sidecar/src/execution/python/mod.rs",
+        "crates/native-sidecar/src/execution/python/rpc.rs",
+        "crates/native-sidecar/src/execution/python/sockets.rs",
+        "crates/native-sidecar/src/execution/python/subprocess.rs",
+    ];
+
+    for path in expected {
+        assert!(root.join(path).is_file(), "missing execution module {path}");
+    }
+    assert!(
+        !root.join("crates/native-sidecar/src/execution.rs").exists(),
+        "the monolithic execution.rs must not be restored"
+    );
+}
+
+fn production_matches(root: &Path, files: &[PathBuf], needles: &[&str]) -> Vec<String> {
+    let mut matches = Vec::new();
+    for rel in files {
+        if is_excluded_file(rel) {
+            continue;
+        }
+        let content = std::fs::read_to_string(root.join(rel))
+            .unwrap_or_else(|error| panic!("read {rel:?}: {error}"));
+        let mut tracker = CfgTestTracker::new();
+        for (index, raw) in content.lines().enumerate() {
+            if tracker.in_test(raw) {
                 continue;
             }
-            if !in_deps || line.is_empty() || line.starts_with('#') {
+            let code = strip_line_comment(raw);
+            if needles.iter().any(|needle| code.contains(needle)) {
+                matches.push(format!("{}:{}: {}", rel.display(), index + 1, raw.trim()));
+            }
+        }
+    }
+    matches
+}
+
+#[test]
+fn native_sidecar_dependency_closure_has_one_tokio_runtime_builder() {
+    let root = repo_root();
+    let files = native_reactor_source_files(&root);
+    let builders = production_matches(
+        &root,
+        &files,
+        &[
+            "Builder::new_multi_thread()",
+            "Builder::new_current_thread()",
+        ],
+    );
+    assert_eq!(
+        builders.len(),
+        1,
+        "expected exactly one production Tokio runtime builder:\n{}",
+        builders.join("\n")
+    );
+    assert!(
+        builders[0].starts_with("crates/runtime/src/lib.rs:"),
+        "the one runtime builder must be process-owned: {}",
+        builders[0]
+    );
+}
+
+#[test]
+fn production_subsystems_use_injected_runtime_contexts() {
+    let root = repo_root();
+    let files = native_reactor_source_files(&root)
+        .into_iter()
+        .filter(|path| path != Path::new("crates/runtime/src/lib.rs"))
+        .collect::<Vec<_>>();
+    let violations = production_matches(&root, &files, &["SidecarRuntime::process_context("]);
+    assert!(
+        violations.is_empty(),
+        "production subsystems must receive an injected VM/process RuntimeContext:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn native_reactor_never_uses_tokios_elastic_blocking_pool() {
+    let root = repo_root();
+    let files = native_reactor_source_files(&root);
+    let violations = production_matches(
+        &root,
+        &files,
+        &[
+            "tokio::task::spawn_blocking",
+            "spawn_blocking(",
+            "block_in_place(",
+        ],
+    );
+    assert!(
+        violations.is_empty(),
+        "blocking work must use the fixed, byte-admitted sidecar executor:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn native_execution_dispatch_never_blocks_on_completion_or_polling() {
+    let root = repo_root();
+    let files = native_execution_source_files(&root);
+    let violations = production_matches(
+        &root,
+        &files,
+        &[
+            "recv_timeout(",
+            "mpsc::sync_channel(",
+            ".wait_timeout(",
+            ".poll_event_blocking(",
+            "thread::sleep(",
+            "std::thread::sleep(",
+        ],
+    );
+    assert!(
+        violations.is_empty(),
+        "native dispatch must defer async completions and wait on reactor readiness; it may not block or poll:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn top_level_python_start_uses_the_async_runtime_adapter() {
+    let path = repo_root().join("crates/native-sidecar/src/execution/launch.rs");
+    let source =
+        std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {path:?}: {error}"));
+    assert!(
+        source.contains(
+            ".python_engine\n                    .start_execution_with_runtime_async("
+        ),
+        "top-level Python startup must await cache materialization and prewarm instead of blocking a Tokio worker"
+    );
+    assert!(
+        source.contains(".bundled_pyodide_dist_path_for_vm_async(&vm_id, &vm.runtime_context)"),
+        "top-level Pyodide cache materialization must not run synchronously before the async Python start"
+    );
+}
+
+#[test]
+fn nested_child_start_never_blocks_the_shared_runtime_worker() {
+    let source = native_execution_source(&repo_root());
+
+    assert!(
+        source.contains("pub(crate) async fn spawn_javascript_child_process("),
+        "root child startup must be an async sidecar dispatch path"
+    );
+    assert!(
+        source.contains("async fn spawn_descendant_javascript_child_process("),
+        "descendant child startup must be an async sidecar dispatch path"
+    );
+    assert!(
+        source
+            .matches(".start_execution_with_runtime_async(")
+            .count()
+            >= 6,
+        "top-level plus root/descendant Python and WASM startup must use async runtime adapters"
+    );
+    assert!(
+        !source.contains(".start_execution_with_runtime(\n                            StartPythonExecutionRequest")
+            && !source.contains(
+                ".start_execution_with_runtime(\n                            StartWasmExecutionRequest",
+            ),
+        "Python/WASM child startup must not synchronously prewarm on a Tokio worker"
+    );
+}
+
+#[test]
+fn reactor_readiness_never_uses_the_ordinary_stream_event_lane() {
+    let root = repo_root();
+    let mut files = native_execution_source_files(&root);
+    files.extend([
+        PathBuf::from("crates/native-sidecar/src/vm.rs"),
+        PathBuf::from("crates/execution/src/javascript.rs"),
+    ]);
+    let violations = production_matches(
+        &root,
+        &files,
+        &[
+            "send_stream_event(\"net_socket\"",
+            "send_stream_event(\"signal\"",
+            "send_javascript_stream_event(\"signal\"",
+            "send_stream_event(\"timer\"",
+        ],
+    );
+    assert!(
+        violations.is_empty(),
+        "socket, protocol, signal, and timer readiness must update durable broker state and publish one coalesced wake; it may not enqueue ordinary per-event messages:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn javascript_tcp_receive_path_is_event_driven() {
+    let root = repo_root();
+    for (relative_path, legacy_poll_markers) in [
+        (
+            "packages/build-tools/bridge-src/builtins/net.ts",
+            &[
+                "_netSocketPollRaw",
+                "NET_BRIDGE_POLL_DELAY_MS",
+                "netBridgePollDelay",
+                "setPollDelayMs",
+                "scheduleSocketPoll",
+                "scheduleServerPoll",
+                "net.poll",
+                "net.server_poll",
+            ][..],
+        ),
+        (
+            "packages/build-tools/bridge-src/builtins/network.ts",
+            &["NET_BRIDGE_POLL_DELAY_MS", "netBridgePollDelay"][..],
+        ),
+        (
+            "packages/runtime-benchmarks/src/focused/net-tcp-event-floor.bench.ts",
+            &["net-poll-delay-ms", "setPollDelayMs", "pollDelayMs"][..],
+        ),
+        (
+            "crates/execution/src/node_import_cache.rs",
+            &[
+                "NODE_EXECUTION_RUNNER_SOURCE",
+                "root_dir.join(\"runner.mjs\")",
+                "createRpcBackedNetModule",
+                "scheduleSocketPoll",
+                "scheduleServerPoll",
+                "net.poll",
+                "net.server_poll",
+            ][..],
+        ),
+    ] {
+        let path = root.join(relative_path);
+        let source =
+            std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {path:?}: {error}"));
+        for legacy_poll_marker in legacy_poll_markers {
+            assert!(
+                !source.contains(legacy_poll_marker),
+                "JavaScript TCP sockets and listeners must consume coalesced sidecar readiness, not a recurring synchronous poll bridge ({legacy_poll_marker}) in {relative_path}"
+            );
+        }
+    }
+}
+
+#[test]
+fn native_reactor_has_no_unbounded_channels_or_per_io_thread_names() {
+    let root = repo_root();
+    let files = native_reactor_source_files(&root);
+    let violations = production_matches(
+        &root,
+        &files,
+        &[
+            "unbounded_channel",
+            "crossbeam_channel::unbounded",
+            "tcp-socket-reader",
+            "unix-socket-reader",
+            "kernel-wait-rpc",
+            "signal-delivery-thread",
+            "http2-runtime-thread",
+            "EVENT_PUMP_INTERVAL",
+            "remaining.min(Duration::from_millis(10))",
+        ],
+    );
+    assert!(
+        violations.is_empty(),
+        "native reactor contains forbidden unbounded/thread-per-I/O patterns:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn native_reactor_tasks_enter_through_task_supervision() {
+    let root = repo_root();
+    let files = native_reactor_source_files(&root)
+        .into_iter()
+        // This is the sole implementation of the supervised spawn API. Its
+        // Handle::spawn calls run only after TaskSupervisor admission.
+        .filter(|path| path != Path::new("crates/runtime/src/lib.rs"))
+        .collect::<Vec<_>>();
+    let violations = production_matches(
+        &root,
+        &files,
+        &[
+            "tokio::spawn(",
+            "tokio::task::spawn(",
+            "Handle::current().spawn(",
+            ".handle().spawn(",
+            ".handle.spawn(",
+        ],
+    );
+    assert!(
+        violations.is_empty(),
+        "native reactor tasks must enter through RuntimeContext's supervised spawn API:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn v8_platform_worker_pool_has_a_reviewed_fixed_bound() {
+    let root = repo_root();
+    let path = root.join("crates/v8-runtime/src/isolate.rs");
+    let source =
+        std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {path:?}: {error}"));
+    assert!(
+        source.contains("const V8_PLATFORM_WORKER_THREADS: u32 = 4;")
+            && source.contains("v8::new_default_platform(V8_PLATFORM_WORKER_THREADS, false)"),
+        "V8's internal platform workers must use the reviewed fixed four-thread bound"
+    );
+}
+
+#[test]
+fn production_threads_match_the_reviewed_topology_manifest() {
+    const MANIFEST: &[(&str, &str)] = &[
+        ("blocking-executor-worker", "crates/runtime/src/lib.rs"),
+        (
+            "constant-v8-platform-owner",
+            "crates/v8-runtime/src/isolate.rs",
+        ),
+        (
+            "embedded-v8-dispatch",
+            "crates/v8-runtime/src/embedded_runtime.rs",
+        ),
+        (
+            "embedded-v8-writer",
+            "crates/v8-runtime/src/embedded_runtime.rs",
+        ),
+        ("bounded-v8-warm-worker", "crates/v8-runtime/src/session.rs"),
+        (
+            "admitted-v8-session-executor",
+            "crates/v8-runtime/src/session.rs",
+        ),
+        (
+            "serialized-v8-maintenance",
+            "crates/execution/src/v8_host.rs",
+        ),
+        (
+            "constant-stdio-writer",
+            "crates/native-sidecar/src/stdio.rs",
+        ),
+        (
+            "constant-stdio-reader",
+            "crates/native-sidecar/src/stdio.rs",
+        ),
+    ];
+
+    let root = repo_root();
+    let mut observed = BTreeSet::new();
+    let mut unmarked = Vec::new();
+    // This census covers every production crate, not only the reactor's
+    // dependency closure. ACP/session or client-side support code runs in the
+    // same sidecar process and may not introduce an unreviewed OS thread either.
+    for rel in production_source_files(&root) {
+        if is_excluded_file(&rel) {
+            continue;
+        }
+        let content = std::fs::read_to_string(root.join(&rel))
+            .unwrap_or_else(|error| panic!("read {rel:?}: {error}"));
+        let lines = content.lines().collect::<Vec<_>>();
+        let mut tracker = CfgTestTracker::new();
+        for (index, raw) in lines.iter().enumerate() {
+            if tracker.in_test(raw) {
                 continue;
             }
-            // Dependency key is the token before `=` or whitespace.
-            let key = line
-                .split(['=', ' ', '\t'])
-                .next()
-                .unwrap_or("")
-                .trim_matches('"')
-                .to_ascii_lowercase();
-            if key.is_empty() {
+            let code = strip_line_comment(raw);
+            if ![
+                "thread::spawn(",
+                "std::thread::spawn(",
+                "thread::Builder::new()",
+                "std::thread::Builder::new()",
+            ]
+            .iter()
+            .any(|needle| code.contains(needle))
+            {
                 continue;
             }
-            // Only consider secure-exec / agentos style crate names, and skip
-            // false positives like "tokio" containing none of the markers.
-            for marker in banned_dep_markers {
-                if key.contains(marker) {
-                    violations.push(format!(
-                        "{}: depends on banned crate `{}`",
-                        manifest
-                            .strip_prefix(&root)
-                            .unwrap_or(&manifest)
-                            .to_string_lossy(),
-                        key
-                    ));
+            let marker = lines[index.saturating_sub(3)..index]
+                .iter()
+                .rev()
+                .find_map(|line| line.split("AGENTOS_THREAD_SITE: ").nth(1))
+                .map(str::trim);
+            match marker {
+                Some(marker) => {
+                    observed.insert((marker.to_owned(), rel.to_string_lossy().replace('\\', "/")));
                 }
+                None => unmarked.push(format!("{}:{}: {}", rel.display(), index + 1, raw.trim())),
             }
         }
     }
 
     assert!(
-        violations.is_empty(),
-        "\n\nsecure-exec crates must not depend on agent/acp/session crates \
-(Agent OS owns those). Offending dependencies:\n\n{}\n",
-        violations.join("\n")
+        unmarked.is_empty(),
+        "production OS thread sites must carry a reviewed AGENTOS_THREAD_SITE marker:\n{}",
+        unmarked.join("\n")
+    );
+    let expected = MANIFEST
+        .iter()
+        .map(|(marker, path)| ((*marker).to_owned(), (*path).to_owned()))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        observed, expected,
+        "production thread topology changed without updating the reviewed manifest"
+    );
+}
+
+#[test]
+fn javascript_dgram_receive_path_is_event_driven() {
+    let path = repo_root().join("packages/build-tools/bridge-src/builtins/dgram.ts");
+    let source =
+        std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {path:?}: {error}"));
+    for legacy_poll_marker in ["_receivePollTimer", "NET_BRIDGE_POLL_DELAY_MS"] {
+        assert!(
+            !source.contains(legacy_poll_marker),
+            "JavaScript dgram receive must wait for coalesced sidecar readiness, not recurring polling ({legacy_poll_marker})"
+        );
+    }
+}
+
+#[test]
+fn javascript_http2_receive_path_is_event_driven() {
+    let path = repo_root().join("packages/build-tools/bridge-src/builtins/http2.ts");
+    let source =
+        std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {path:?}: {error}"));
+    for legacy_poll_marker in ["fallbackTimer", "setTimeout(tick"] {
+        assert!(
+            !source.contains(legacy_poll_marker),
+            "JavaScript HTTP/2 receive must wait for coalesced sidecar readiness, not recurring polling ({legacy_poll_marker})"
+        );
+    }
+}
+
+#[test]
+fn protocol_and_abort_delivery_have_no_recurring_poll_timer() {
+    let root = repo_root();
+    for (relative_path, forbidden) in [
+        (
+            "crates/agentos-sidecar/src/acp_extension.rs",
+            &["ACP_JSON_RPC_POLL_INTERVAL", "remaining.min(ACP_"][..],
+        ),
+        (
+            "crates/native-sidecar/src/stdio.rs",
+            &["write_rx.recv_timeout(Duration::from_millis(5))"][..],
+        ),
+        (
+            "packages/build-tools/bridge-src/builtins/http.ts",
+            &["_startAbortSignalPoll", "_signalPollTimer"][..],
+        ),
+        (
+            "packages/build-tools/bridge-src/builtins/fs.ts",
+            &[
+                "setTimeout(attemptKernelStdinRead",
+                "setTimeout(attemptRead",
+                "_kernelStdinRead.apply(void 0, [length, 100]",
+            ][..],
+        ),
+        (
+            "packages/build-tools/bridge-src/builtins/stdin.ts",
+            &["_kernelStdinRead.apply(void 0, [65536, 100]"][..],
+        ),
+    ] {
+        let path = root.join(relative_path);
+        let source =
+            std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {path:?}: {error}"));
+        for marker in forbidden {
+            assert!(
+                !source.contains(marker),
+                "protocol/abort delivery must wait on a direct event notification, not recurring polling ({marker}) in {relative_path}"
+            );
+        }
+    }
+}
+
+#[test]
+fn standalone_wasm_wait_has_no_recurring_adapter_poll() {
+    let path = repo_root().join("crates/execution/src/wasm.rs");
+    let source =
+        std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {path:?}: {error}"));
+    for marker in [
+        "self.poll_event_blocking(Duration::from_millis(50))",
+        "Sample elapsed budget each poll",
+    ] {
+        assert!(
+            !source.contains(marker),
+            "standalone WASM waits must block on readiness with one deadline-aware wait, not a recurring adapter poll ({marker})"
+        );
+    }
+    assert!(
+        source.contains("fn wait_event_blocking("),
+        "standalone WASM wait must retain its direct readiness/deadline wait helper"
+    );
+}
+
+#[test]
+fn browser_sources_are_retained_but_disabled_from_native_build_and_publish_gates() {
+    let root = repo_root();
+    for relative_path in [
+        "crates/agentos-sidecar-browser/src",
+        "crates/native-sidecar-browser/src",
+        "packages/browser/src",
+        "packages/runtime-browser/src",
+    ] {
+        assert!(
+            root.join(relative_path).is_dir(),
+            "browser migration source must remain retained at {relative_path}"
+        );
+    }
+
+    let workspace =
+        std::fs::read_to_string(root.join("Cargo.toml")).expect("read workspace Cargo.toml");
+    let default_members = workspace
+        .split("default-members = [")
+        .nth(1)
+        .and_then(|tail| tail.split(']').next())
+        .expect("workspace must declare default-members while browser is disabled");
+    for browser_crate in [
+        "crates/agentos-sidecar-browser",
+        "crates/native-sidecar-browser",
+    ] {
+        assert!(
+            workspace.contains(&format!("\"{browser_crate}\"")),
+            "retained browser crate must remain a workspace member: {browser_crate}"
+        );
+        assert!(
+            !default_members.contains(browser_crate),
+            "disabled browser crate entered Cargo default-members: {browser_crate}"
+        );
+        let manifest = std::fs::read_to_string(root.join(browser_crate).join("Cargo.toml"))
+            .unwrap_or_else(|error| panic!("read {browser_crate}/Cargo.toml: {error}"));
+        assert!(
+            manifest
+                .lines()
+                .any(|line| line.trim() == "publish = false"),
+            "disabled browser crate must not be publishable: {browser_crate}"
+        );
+    }
+
+    for browser_package in ["packages/browser", "packages/runtime-browser"] {
+        let manifest = std::fs::read_to_string(root.join(browser_package).join("package.json"))
+            .unwrap_or_else(|error| panic!("read {browser_package}/package.json: {error}"));
+        assert!(
+            manifest.contains("\"private\": true"),
+            "disabled browser package must remain private: {browser_package}"
+        );
+    }
+
+    let publish_discovery =
+        std::fs::read_to_string(root.join("scripts/publish/src/lib/packages.ts"))
+            .expect("read npm publish discovery");
+    for package in [
+        "@rivet-dev/agentos-browser",
+        "@rivet-dev/agentos-runtime-browser",
+    ] {
+        assert!(
+            publish_discovery.contains(&format!("\"{package}\"")),
+            "disabled browser package must remain explicitly denied by publish discovery: {package}"
+        );
+    }
+
+    for relative_path in [
+        "package.json",
+        ".github/workflows/ci.yml",
+        ".github/workflows/publish.yaml",
+    ] {
+        let source = std::fs::read_to_string(root.join(relative_path))
+            .unwrap_or_else(|error| panic!("read {relative_path}: {error}"));
+        for package in [
+            "!@rivet-dev/agentos-browser",
+            "!@rivet-dev/agentos-runtime-browser",
+        ] {
+            assert!(
+                source.contains(package),
+                "{relative_path} must explicitly filter disabled package {package}"
+            );
+        }
+    }
+
+    for relative_path in [
+        ".github/workflows/ci.yml",
+        ".github/workflows/ci-nightly.yml",
+        "scripts/ci.sh",
+    ] {
+        let source = std::fs::read_to_string(root.join(relative_path))
+            .unwrap_or_else(|error| panic!("read {relative_path}: {error}"));
+        for browser_crate in ["agentos-sidecar-browser", "agentos-native-sidecar-browser"] {
+            assert!(
+                source.contains(&format!("--exclude {browser_crate}")),
+                "{relative_path} must exclude disabled Rust crate {browser_crate}"
+            );
+        }
+    }
+
+    let mirror_generator =
+        std::fs::read_to_string(root.join("scripts/generate-secure-exec-mirror.mjs"))
+            .expect("read compatibility mirror generator");
+    assert!(
+        mirror_generator.contains("browserShim ? { private: true } : {}")
+            && mirror_generator.contains("browserShim ? \"publish = false\" : \"\""),
+        "generated browser compatibility shims must remain private and unpublishable"
+    );
+    for relative_path in [".github/workflows/ci.yml", "scripts/ci.sh"] {
+        let source = std::fs::read_to_string(root.join(relative_path))
+            .unwrap_or_else(|error| panic!("read {relative_path}: {error}"));
+        assert!(
+            source.contains("node --test scripts/generate-secure-exec-mirror.test.mjs"),
+            "{relative_path} must enforce compatibility-mirror reproducibility"
+        );
+    }
+}
+
+#[test]
+fn nightly_runs_explicit_churn_and_multi_vm_soak_gates() {
+    let nightly = std::fs::read_to_string(repo_root().join(".github/workflows/ci-nightly.yml"))
+        .expect("read nightly workflow");
+    for test_name in [
+        "multi_vm_generation_soak_has_no_accounting_or_scheduler_drift",
+        "multi_vm_protocol_faults_reconcile_shared_runtime_soak",
+    ] {
+        assert!(
+            nightly.contains(test_name),
+            "nightly workflow must invoke ignored closure gate {test_name}"
+        );
+    }
+    assert!(
+        nightly.matches("--ignored").count() >= 2,
+        "nightly workflow must explicitly opt into both expensive closure gates"
+    );
+}
+
+#[test]
+fn javascript_child_process_receive_path_is_event_driven() {
+    let root = repo_root();
+    for (relative_path, legacy_poll_markers) in [
+        (
+            "packages/build-tools/bridge-src/builtins/child-process.ts",
+            &[
+                "_childProcessPoll",
+                "scheduleChildProcessPoll",
+                "pumpDetachedChildBootstrap",
+            ][..],
+        ),
+        (
+            "crates/execution/src/node_import_cache.rs",
+            &["scheduleSyntheticChildPoll", "child_process.poll"][..],
+        ),
+    ] {
+        let path = root.join(relative_path);
+        let source =
+            std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {path:?}: {error}"));
+        for legacy_poll_marker in legacy_poll_markers {
+            assert!(
+                !source.contains(legacy_poll_marker),
+                "JavaScript child_process output and exit must arrive through bounded/coalesced sidecar events, not a recurring synchronous poll bridge ({legacy_poll_marker}) in {relative_path}"
+            );
+        }
+    }
+}
+
+#[test]
+fn reactor_completion_paths_do_not_silently_drop_settlement() {
+    let root = repo_root();
+    let native_execution = native_execution_source(&root);
+    for marker in ["let _ = respond_to.send", "let _ = pending.respond_to.send"] {
+        assert!(
+            !native_execution.contains(marker),
+            "reactor completion/control settlement must classify stale/coalesced delivery or log it; found {marker:?} in native execution modules"
+        );
+    }
+    for (relative_path, forbidden) in [
+        (
+            "crates/v8-runtime/src/session.rs",
+            &[
+                "limits.javascript.sessionCommandQueue",
+                "runtime.protocol.maxEgressFrames",
+                "let _ = entry.shutdown_tx.try_send",
+            ][..],
+        ),
+        (
+            "crates/execution/src/javascript.rs",
+            &[
+                "let _ = v8_session.send_bridge_response",
+                "let _ = self.v8_session.send_stream_event",
+            ][..],
+        ),
+    ] {
+        let path = root.join(relative_path);
+        let source =
+            std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {path:?}: {error}"));
+        for marker in forbidden {
+            assert!(
+                !source.contains(marker),
+                "reactor completion/control settlement must classify stale/coalesced delivery or log it; found {marker:?} in {relative_path}"
+            );
+        }
+    }
+}
+
+#[test]
+fn structured_audit_delivery_failures_have_a_non_recursive_stderr_fallback() {
+    let root = repo_root();
+    let service_source = std::fs::read_to_string(root.join("crates/native-sidecar/src/service.rs"))
+        .expect("read native-sidecar service source");
+    assert!(
+        !service_source.contains("let _ = emit_structured_event("),
+        "structured audit failures must not be silently discarded in service.rs"
+    );
+    assert!(
+        !native_execution_source(&root).contains("let _ = emit_structured_event("),
+        "structured audit failures must not be silently discarded in native execution modules"
+    );
+    let service = std::fs::read_to_string(root.join("crates/native-sidecar/src/service.rs"))
+        .expect("read native-sidecar service source");
+    let fallback = service
+        .split("fn emit_structured_event_or_stderr")
+        .nth(1)
+        .and_then(|tail| tail.split("pub(crate) fn structured_event_frame").next())
+        .expect("locate structured-event stderr fallback");
+    assert!(fallback.contains("eprintln!"));
+    assert!(fallback.contains("ERR_AGENTOS_STRUCTURED_EVENT"));
+    assert!(
+        !fallback.contains("emit_log"),
+        "telemetry failure fallback must not recurse through bridge telemetry"
+    );
+}
+
+#[test]
+fn python_native_tcp_connect_is_deferred_through_the_shared_runtime() {
+    let source = std::fs::read_to_string(
+        repo_root().join("crates/native-sidecar/src/execution/python/sockets.rs"),
+    )
+    .expect("read native-sidecar Python sockets source");
+    let socket_connect_arm = source
+        .split("PythonVfsRpcMethod::SocketConnect =>")
+        .nth(1)
+        .and_then(|tail| tail.split("PythonVfsRpcMethod::SocketSend =>").next())
+        .expect("locate Python SocketConnect arm");
+    assert!(
+        socket_connect_arm.contains("defer_python_native_tcp_connect"),
+        "Python external TCP connect must leave the dispatcher as deferred shared-runtime work"
+    );
+    assert!(
+        socket_connect_arm.contains("connect_kernel_loopback"),
+        "VM-local kernel connect may remain immediate only through its explicit nonblocking path"
+    );
+    assert!(
+        !socket_connect_arm.contains("ActiveTcpSocket::connect("),
+        "Python SocketConnect must not reach the synchronous native TCP constructor"
+    );
+
+    let deferred_connect = source
+        .split("fn defer_python_native_tcp_connect")
+        .nth(1)
+        .and_then(|tail| tail.split("fn python_socket_async_context").next())
+        .expect("locate deferred Python TCP connect helper");
+    for required in [
+        "tokio::net::TcpStream::connect",
+        "ProcessEventEnvelope",
+        "PythonSocketConnectCompletion",
+    ] {
+        assert!(
+            deferred_connect.contains(required),
+            "deferred Python TCP connect is missing {required}"
+        );
+    }
+    assert!(
+        !deferred_connect.contains("connect_timeout"),
+        "deferred Python TCP connect must not call a blocking std socket API"
+    );
+}
+
+#[test]
+fn native_udp_has_one_descriptor_owner_and_no_readiness_clone() {
+    let execution = std::fs::read_to_string(
+        repo_root().join("crates/native-sidecar/src/execution/network/udp.rs"),
+    )
+    .expect("read native-sidecar UDP source");
+    let state = std::fs::read_to_string(repo_root().join("crates/native-sidecar/src/state.rs"))
+        .expect("read native-sidecar state source");
+    let owner_task = execution
+        .split("struct NativeUdpOwnerTask")
+        .nth(1)
+        .and_then(|tail| tail.split("async fn run_native_udp_owner").next())
+        .expect("locate native UDP task ownership record");
+    for required in [
+        "socket: tokio::net::UdpSocket",
+        "commands: TokioReceiver<NativeUdpCommand>",
+        "registration: NativeUdpOwnerRegistration",
+    ] {
+        assert!(
+            owner_task.contains(required),
+            "UDP task ownership record is missing {required}"
+        );
+    }
+    let owner = execution
+        .split("async fn run_native_udp_owner")
+        .nth(1)
+        .and_then(|tail| tail.split("fn spawn_native_udp_owner").next())
+        .expect("locate native UDP owner task");
+
+    for required in [
+        "receive_queue",
+        "reserve_udp_receive_buffer",
+        "resources.capacity_changed()",
+        "socket.try_recv_from",
+        "limits.datagram_quantum.min(limits.operation_quantum)",
+        "tokio::task::yield_now().await",
+    ] {
+        assert!(owner.contains(required), "UDP owner is missing {required}");
+    }
+    let spawn = execution
+        .split("fn spawn_native_udp_owner")
+        .nth(1)
+        .and_then(|tail| tail.split("impl ActiveUdpSocket").next())
+        .expect("locate native UDP owner registration");
+    for required in [
+        "tokio::net::UdpSocket::from_std(socket)",
+        "registration.limits.max_handle_commands.max(1)",
+        "tokio_channel(capacity)",
+        "TaskClass::Udp",
+    ] {
+        assert!(
+            spawn.contains(required),
+            "UDP owner spawn is missing {required}"
+        );
+    }
+    assert!(
+        execution.contains("if !wake_pending.swap(true, Ordering::AcqRel)")
+            && execution.contains("push_socket_event(event_pusher, event)"),
+        "native UDP readiness must coalesce to one pending cross-boundary wake"
+    );
+    let udp_impl = execution
+        .split("impl ActiveUdpSocket")
+        .nth(1)
+        .expect("locate ActiveUdpSocket implementation");
+    assert!(
+        !execution.contains("spawn_native_udp_readiness") && !udp_impl.contains("try_clone()"),
+        "native UDP must not split readiness and I/O across descriptor clones"
+    );
+    let active_udp = state
+        .split("pub(crate) struct ActiveUdpSocket")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split(
+                "// ---------------------------------------------------------------------------",
+            )
+            .next()
+        })
+        .expect("locate ActiveUdpSocket");
+    assert!(
+        active_udp.contains("native_commands: Option<TokioSender<NativeUdpCommand>>")
+            && !active_udp.contains("UdpSocket"),
+        "the process registry must retain only the owner mailbox, never a native descriptor"
+    );
+
+    let connect = udp_impl
+        .split("fn connect<B>")
+        .nth(1)
+        .and_then(|tail| tail.split("fn disconnect").next())
+        .expect("locate UDP connect implementation");
+    let kernel_branch = connect
+        .split("if use_kernel_loopback")
+        .nth(1)
+        .and_then(|tail| tail.split("self.submit_native_value_command").next())
+        .expect("locate VM-local UDP connect branch");
+    assert!(
+        kernel_branch.contains("socket_connect_udp_loopback")
+            && kernel_branch.contains("kernel_connected_remote_addr")
+            && kernel_branch.contains("ActiveUdpValueResult::Immediate")
+            && !kernel_branch.contains("ensure_native_owner"),
+        "VM-local connected UDP must remain taskless and must not activate the native owner"
+    );
+
+    let kernel = std::fs::read_to_string(repo_root().join("crates/kernel/src/kernel.rs"))
+        .expect("read kernel source");
+    let kernel_connect = kernel
+        .split("pub fn socket_connect_udp_loopback")
+        .nth(1)
+        .and_then(|tail| tail.split("pub fn socket_disconnect_udp").next())
+        .expect("locate kernel UDP connect implementation");
+    assert!(
+        kernel_connect.contains("connect_bound_udp_socket")
+            && !kernel_connect.contains("tokio::")
+            && !kernel_connect.contains("spawn"),
+        "kernel UDP connect must be table state only, with no task or runtime"
     );
 }

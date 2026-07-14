@@ -726,6 +726,19 @@ type PersistenceFlushedResponse struct {
 type RejectedResponse struct {
   code: str
   message: str
+  limitName: optional<str>
+  configuredLimit: optional<u64>
+  currentUsage: optional<u64>
+  requested: optional<u64>
+  unit: optional<str>
+  scope: optional<str>
+  vmId: optional<str>
+  sessionGeneration: optional<u64>
+  capabilityId: optional<u64>
+  operation: optional<str>
+  configurationPath: optional<str>
+  retryable: optional<bool>
+  errno: optional<str>
 }
 
 type VmFetchResponse struct {
@@ -876,10 +889,24 @@ type SidecarResponseFrame struct {
   payload: SidecarResponsePayload
 }
 
+type ShutdownControl struct {
+  reason: str
+}
+
+type ControlPayload union {
+  ShutdownControl
+}
+
+type ControlFrame struct {
+  schema: ProtocolSchema
+  payload: ControlPayload
+}
+
 type ProtocolFrame union {
   RequestFrame |
   ResponseFrame |
   EventFrame |
   SidecarRequestFrame |
-  SidecarResponseFrame
+  SidecarResponseFrame |
+  ControlFrame
 }

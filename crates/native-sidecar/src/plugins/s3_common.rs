@@ -4,7 +4,6 @@ use aws_credential_types::Credentials;
 use aws_sdk_s3::config::Builder as S3ConfigBuilder;
 use aws_sdk_s3::Client as S3Client;
 use serde::Deserialize;
-use tokio::runtime::Runtime;
 use url::Url;
 
 pub(crate) const DEFAULT_REGION: &str = "us-east-1";
@@ -38,29 +37,19 @@ pub(crate) fn create_s3_client(
     let endpoint = endpoint
         .map(|endpoint| normalize_s3_endpoint(&endpoint))
         .transpose()?;
-    let shared_config = std::thread::spawn(move || -> Result<_, PluginError> {
-        let runtime = Runtime::new()
-            .map_err(|error| PluginError::unsupported(format!("create tokio runtime: {error}")))?;
-
-        Ok(runtime.block_on(async move {
-            let mut loader = aws_config::defaults(BehaviorVersion::latest())
-                .region(aws_sdk_s3::config::Region::new(region));
-            if let Some(credentials) = credentials {
-                loader = loader.credentials_provider(Credentials::new(
-                    credentials.access_key_id,
-                    credentials.secret_access_key,
-                    None,
-                    None,
-                    "secure-exec-s3-plugin",
-                ));
-            }
-            loader.load().await
-        }))
-    })
-    .join()
-    .map_err(|_| PluginError::unsupported("s3 runtime thread panicked"))??;
-
-    let mut builder = S3ConfigBuilder::from(&shared_config).force_path_style(true);
+    let mut builder = S3ConfigBuilder::new()
+        .behavior_version(BehaviorVersion::latest())
+        .region(aws_sdk_s3::config::Region::new(region))
+        .force_path_style(true);
+    if let Some(credentials) = credentials {
+        builder = builder.credentials_provider(Credentials::new(
+            credentials.access_key_id,
+            credentials.secret_access_key,
+            None,
+            None,
+            "agentos-s3-plugin",
+        ));
+    }
     if let Some(endpoint) = endpoint {
         builder = builder.endpoint_url(endpoint);
     }

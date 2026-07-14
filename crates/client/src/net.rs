@@ -130,8 +130,8 @@ impl AgentOs {
 
         let response_json = match response {
             wire::ResponsePayload::VmFetchResponse(result) => result.response_json,
-            wire::ResponsePayload::RejectedResponse(wire::RejectedResponse { code, message }) => {
-                return Err(ClientError::Kernel { code, message }.into());
+            wire::ResponsePayload::RejectedResponse(rejected) => {
+                return Err(ClientError::from_rejection(rejected).into());
             }
             other => {
                 return Err(

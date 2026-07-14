@@ -1,15 +1,12 @@
-import {
-	type ChildProcessWithoutNullStreams,
-	spawn,
-} from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import type { Duplex } from "node:stream";
+
 export {
 	SidecarProcessError,
 	SidecarProcessExited,
 } from "./sidecar-errors.js";
-import {
-	SidecarProcessError,
-	SidecarProcessExited,
-} from "./sidecar-errors.js";
+
+import { SidecarProcessError, SidecarProcessExited } from "./sidecar-errors.js";
 
 export interface StdioSidecarProcessSpawnOptions {
 	command: string;
@@ -19,12 +16,18 @@ export interface StdioSidecarProcessSpawnOptions {
 
 export class StdioSidecarProcess {
 	readonly child: ChildProcessWithoutNullStreams;
+	readonly control: Duplex;
 	private readonly stderrChunks: Buffer[] = [];
-	private readonly exitListeners = new Set<(error: SidecarProcessExited) => void>();
-	private readonly errorListeners = new Set<(error: SidecarProcessError) => void>();
+	private readonly exitListeners = new Set<
+		(error: SidecarProcessExited) => void
+	>();
+	private readonly errorListeners = new Set<
+		(error: SidecarProcessError) => void
+	>();
 
-	private constructor(child: ChildProcessWithoutNullStreams) {
+	private constructor(child: ChildProcessWithoutNullStreams, control: Duplex) {
 		this.child = child;
+		this.control = control;
 		this.child.stderr.on("data", (chunk: Buffer | string) => {
 			this.stderrChunks.push(
 				typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk),
@@ -54,18 +57,26 @@ export class StdioSidecarProcess {
 	}
 
 	static spawn(options: StdioSidecarProcessSpawnOptions): StdioSidecarProcess {
-		return new StdioSidecarProcess(
-			spawn(options.command, options.args ?? [], {
-				cwd: options.cwd,
-				stdio: ["pipe", "pipe", "pipe"],
-			}),
-		);
+		const child = spawn(options.command, options.args ?? [], {
+			cwd: options.cwd,
+			stdio: ["pipe", "pipe", "pipe", "pipe"],
+		}) as unknown as ChildProcessWithoutNullStreams;
+		try {
+			return new StdioSidecarProcess(child, requireControlStream(child));
+		} catch (error) {
+			child.kill("SIGKILL");
+			throw error;
+		}
 	}
 
 	static fromChild(
 		child: ChildProcessWithoutNullStreams,
+		control?: Duplex,
 	): StdioSidecarProcess {
-		return new StdioSidecarProcess(child);
+		return new StdioSidecarProcess(
+			child,
+			control ?? requireControlStream(child),
+		);
 	}
 
 	onExit(handler: (error: SidecarProcessExited) => void): () => void {
@@ -128,4 +139,17 @@ export class StdioSidecarProcess {
 			}, timeoutMs);
 		});
 	}
+}
+
+function requireControlStream(child: ChildProcessWithoutNullStreams): Duplex {
+	const stream = child.stdio[3];
+	if (
+		!stream ||
+		typeof (stream as Duplex).write !== "function" ||
+		typeof (stream as Duplex).on !== "function" ||
+		typeof (stream as Duplex).read !== "function"
+	) {
+		throw new Error("sidecar process did not expose a full-duplex fd 3");
+	}
+	return stream as Duplex;
 }

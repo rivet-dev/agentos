@@ -1,6 +1,8 @@
+mod support;
+
 use agentos_execution::{
     javascript::ModuleResolutionTestHarness, CreateJavascriptContextRequest,
-    JavascriptExecutionEngine, JavascriptExecutionResult, StartJavascriptExecutionRequest,
+    JavascriptExecutionResult, StartJavascriptExecutionRequest,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -68,7 +70,7 @@ fn run_guest_result(
     entrypoint: &str,
     env: BTreeMap<String, String>,
 ) -> JavascriptExecutionResult {
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,

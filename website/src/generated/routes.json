@@ -192,6 +192,10 @@
       "title": "Filesystem",
       "description": "Internals of the kernel VFS: the overlay/mount/root engines, how guest fs syscalls are routed and confined, WASM preopens, and mount confinement against symlink and .. escapes."
     },
+    "/docs/docs/architecture/javascript-executor": {
+      "title": "JavaScript Executor & Socket Reactor",
+      "description": "How the process-wide Tokio runtime, bounded socket tasks, durable readiness state, capacity-one VM wakes, and thread-affine V8 executor cooperate without running guest JavaScript on Tokio."
+    },
     "/docs/docs/architecture/limits-and-observability": {
       "title": "Limits & Observability",
       "description": "How agentOS bounds resources, applies backpressure, warns before a limit is hit, and surfaces it all to the host."

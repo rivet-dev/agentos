@@ -322,10 +322,10 @@ impl MemBridgeFs {
                     .ok_or_else(|| "EINVAL missing target".to_string())?
                     .to_string();
                 let link_path = args
-                    .get("path")
+                    .get("linkPath")
                     .and_then(Value::as_str)
                     .map(Self::normalize)
-                    .ok_or_else(|| "EINVAL missing path".to_string())?;
+                    .ok_or_else(|| "EINVAL missing linkPath".to_string())?;
                 entries.insert(
                     link_path,
                     MemEntry {
@@ -518,6 +518,18 @@ async fn native_root_mount_files_visible_to_wasm_commands() {
         wc.stdout
     );
 
+    // A command spawned by the guest shell must retain the same mounted root.
+    let sh_absolute = os
+        .exec("sh -c 'cat /workspace/data.txt'", ExecOptions::default())
+        .await
+        .expect("exec sh absolute cat");
+    assert_eq!(
+        sh_absolute.exit_code, 0,
+        "sh absolute cat should exit 0 (stderr: {:?})",
+        sh_absolute.stderr
+    );
+    assert_eq!(sh_absolute.stdout.trim_end(), "hello-bridge-root");
+
     // Shell traversal into the mounted root must work too.
     let sh = os
         .exec(
@@ -532,6 +544,25 @@ async fn native_root_mount_files_visible_to_wasm_commands() {
         sh.stderr
     );
     assert_eq!(sh.stdout.trim_end(), "hello-bridge-root");
+
+    let relative_write = os
+        .exec(
+            "sh -c 'cd /workspace && echo relative-write > relative.txt'",
+            ExecOptions::default(),
+        )
+        .await
+        .expect("exec relative guest write");
+    assert_eq!(
+        relative_write.exit_code, 0,
+        "relative guest write should exit 0 (stderr: {:?})",
+        relative_write.stderr
+    );
+    assert_eq!(
+        os.read_file("/workspace/relative.txt")
+            .await
+            .expect("host read of relative guest write"),
+        b"relative-write\n"
+    );
 
     // Guest writes must round-trip back to the host view as well.
     let write = os

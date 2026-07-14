@@ -1,6 +1,7 @@
 use agentos_execution::benchmark::{
     run_javascript_benchmarks_with_recovery, JavascriptBenchmarkConfig,
 };
+use agentos_runtime::{RuntimeConfig, SidecarRuntime};
 use std::path::PathBuf;
 
 struct CliConfig {
@@ -9,8 +10,16 @@ struct CliConfig {
 }
 
 fn main() {
+    let runtime = match SidecarRuntime::process(&RuntimeConfig::default()) {
+        Ok(runtime) => runtime.context(),
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
     match parse_config(std::env::args().skip(1)) {
         Ok(cli_config) => match run_javascript_benchmarks_with_recovery(
+            &runtime,
             &cli_config.benchmark,
             cli_config.baseline_path.as_deref(),
         ) {

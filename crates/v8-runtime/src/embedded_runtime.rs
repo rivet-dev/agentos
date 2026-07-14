@@ -4,39 +4,44 @@ use std::io::{self, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use crate::host_call::{
-    record_sync_bridge_host_phase, record_sync_bridge_response_channel_send_start, CallIdRouter,
-};
+use crate::host_call::{record_sync_bridge_host_phase, BridgeCallRegistry, CallIdRouter};
 use crate::ipc_binary::BinaryFrame;
+#[cfg(test)]
+use crate::runtime_protocol::RuntimeEvent;
 use crate::runtime_protocol::{
     validate_bridge_response_status, BridgeResponse, ModuleReaderHandle, RuntimeCommand,
-    RuntimeEvent, SessionMessage, StreamEvent,
+    SessionMessage, StreamEvent,
 };
-use crate::session::{RuntimeEventEnvelope, SessionCommand, SessionManager};
+use crate::session::{
+    runtime_event_output_channel, RuntimeEventEnvelope, RuntimeEventOutputReceiver,
+    RuntimeEventOutputSender, SessionCommand, SessionManager,
+};
 use crate::snapshot::SnapshotCache;
 use crate::{bridge, isolate};
+use agentos_runtime::accounting::ResourceClass;
 
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
-const SESSION_OUTPUT_CHANNEL_CAPACITY: usize = 1024;
+#[cfg(test)]
+const TEST_SESSION_OUTPUT_CHANNEL_CAPACITY: usize = 1024;
 
 pub struct EmbeddedV8Runtime {
     session_mgr: Arc<Mutex<SessionManager>>,
     session_outputs: Arc<Mutex<HashMap<String, SessionOutput>>>,
     snapshot_cache: Arc<SnapshotCache>,
     alive: Arc<AtomicBool>,
-    dispatch_shutdown_tx: crossbeam_channel::Sender<()>,
-    dispatch_thread: Mutex<Option<thread::JoinHandle<()>>>,
     next_output_generation: AtomicU64,
+    runtime: agentos_runtime::RuntimeContext,
+    executor_teardown_timeout: Duration,
 }
 
 #[derive(Clone)]
 struct SessionOutput {
     generation: u64,
-    sender: mpsc::SyncSender<RuntimeEvent>,
+    sender: RuntimeEventOutputSender,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +51,10 @@ pub struct EmbeddedV8SessionOutputRegistration {
 }
 
 impl EmbeddedV8Runtime {
-    pub fn new(max_concurrency: Option<usize>) -> io::Result<Self> {
+    pub fn new(
+        max_concurrency: Option<usize>,
+        runtime: agentos_runtime::RuntimeContext,
+    ) -> io::Result<Self> {
         bridge::init_codec();
         bridge::acquire_embedded_cbor_codec();
         isolate::init_v8_platform();
@@ -54,53 +62,27 @@ impl EmbeddedV8Runtime {
         // Keep bridge-only, agent-SDK, and wasm-runner userland variants warm
         // without immediately evicting each other.
         let snapshot_cache = Arc::new(SnapshotCache::new(8));
-        let (event_tx, event_rx) = crossbeam_channel::bounded::<RuntimeEventEnvelope>(1024);
-        let (dispatch_shutdown_tx, dispatch_shutdown_rx) = crossbeam_channel::bounded::<()>(1);
-        let call_id_router: CallIdRouter = Arc::new(Mutex::new(HashMap::new()));
+        let call_id_router: CallIdRouter = Arc::new(BridgeCallRegistry::with_default_limit());
+        let configured_max_concurrency = runtime.max_active_vm_executors();
+        let executor_teardown_timeout = runtime.vm_executor_teardown_timeout();
         let session_mgr = Arc::new(Mutex::new(SessionManager::new(
-            max_concurrency.unwrap_or_else(default_max_concurrency),
-            event_tx,
+            max_concurrency.unwrap_or(configured_max_concurrency),
+            crate::session::RuntimeEventSender::closed(),
             call_id_router,
             Arc::clone(&snapshot_cache),
+            runtime.clone(),
         )));
         let session_outputs = Arc::new(Mutex::new(HashMap::new()));
         let alive = Arc::new(AtomicBool::new(true));
-        let alive_for_thread = Arc::clone(&alive);
-        let session_outputs_for_thread = Arc::clone(&session_outputs);
-        let session_mgr_for_thread = Arc::clone(&session_mgr);
-
-        let dispatch_thread = thread::Builder::new()
-            .name(String::from("agentos-v8-runtime-dispatch"))
-            .spawn(move || {
-                loop {
-                    crossbeam_channel::select! {
-                        recv(event_rx) -> event => {
-                            let Ok(event) = event else {
-                                break;
-                            };
-                            route_outbound_event(
-                                event,
-                                &session_outputs_for_thread,
-                                &session_mgr_for_thread,
-                            );
-                        }
-                        recv(dispatch_shutdown_rx) -> _ => {
-                            break;
-                        }
-                    }
-                }
-                alive_for_thread.store(false, Ordering::Release);
-            })
-            .inspect_err(|_| bridge::release_embedded_cbor_codec())?;
 
         Ok(Self {
             session_mgr,
             session_outputs,
             snapshot_cache,
             alive,
-            dispatch_shutdown_tx,
-            dispatch_thread: Mutex::new(Some(dispatch_thread)),
             next_output_generation: AtomicU64::new(1),
+            runtime,
+            executor_teardown_timeout,
         })
     }
 
@@ -130,7 +112,7 @@ impl EmbeddedV8Runtime {
             .pre_warm_workers(bridge_code, userland_code, heap_limit_mb, count);
     }
 
-    pub fn register_session(&self, session_id: &str) -> io::Result<mpsc::Receiver<RuntimeEvent>> {
+    pub fn register_session(&self, session_id: &str) -> io::Result<RuntimeEventOutputReceiver> {
         self.register_session_with_output_registration(session_id)
             .map(|(receiver, _registration)| receiver)
     }
@@ -139,21 +121,40 @@ impl EmbeddedV8Runtime {
         &self,
         session_id: &str,
     ) -> io::Result<(
-        mpsc::Receiver<RuntimeEvent>,
+        RuntimeEventOutputReceiver,
         EmbeddedV8SessionOutputRegistration,
     )> {
-        self.register_session_with_capacity(session_id, SESSION_OUTPUT_CHANNEL_CAPACITY)
+        self.register_session_with_runtime(session_id, &self.runtime)
+    }
+
+    pub fn register_session_with_runtime(
+        &self,
+        session_id: &str,
+        runtime: &agentos_runtime::RuntimeContext,
+    ) -> io::Result<(
+        RuntimeEventOutputReceiver,
+        EmbeddedV8SessionOutputRegistration,
+    )> {
+        let capacity = crate::session::configured_resource_capacity(
+            runtime,
+            ResourceClass::AsyncCompletions,
+            "limits.reactor.maxAsyncCompletions",
+            "runtime.resources.maxAsyncCompletions",
+        )
+        .map_err(other_io_error)?;
+        self.register_session_with_capacity(session_id, capacity, Arc::clone(runtime.resources()))
     }
 
     fn register_session_with_capacity(
         &self,
         session_id: &str,
         capacity: usize,
+        resources: Arc<agentos_runtime::accounting::ResourceLedger>,
     ) -> io::Result<(
-        mpsc::Receiver<RuntimeEvent>,
+        RuntimeEventOutputReceiver,
         EmbeddedV8SessionOutputRegistration,
     )> {
-        let (sender, receiver) = mpsc::sync_channel(capacity);
+        let (sender, receiver) = runtime_event_output_channel(capacity, resources);
         let mut outputs = self
             .session_outputs
             .lock()
@@ -186,37 +187,47 @@ impl EmbeddedV8Runtime {
         &self,
         registration: &EmbeddedV8SessionOutputRegistration,
     ) -> io::Result<bool> {
-        if !remove_session_output_if_current(
-            &self.session_outputs,
-            &registration.session_id,
-            registration.generation,
-        ) {
+        let output_is_current = self
+            .session_outputs
+            .lock()
+            .expect("embedded runtime session outputs lock poisoned")
+            .get(&registration.session_id)
+            .is_some_and(|output| output.generation == registration.generation);
+        if !output_is_current {
             return Ok(false);
         }
 
-        let shutdown = {
+        let detached = {
             let mut mgr = self
                 .session_mgr
                 .lock()
                 .expect("session manager lock poisoned");
-            mgr.begin_destroy_session_if_output_generation(
+            mgr.detach_session_if_output_generation(
                 &registration.session_id,
                 registration.generation,
             )
             .map_err(other_io_error)?
         };
-        match shutdown {
-            Some(shutdown) => {
-                shutdown.finish();
-                Ok(true)
-            }
-            None => Ok(false),
+        if detached {
+            remove_session_output_if_current(
+                &self.session_outputs,
+                &registration.session_id,
+                registration.generation,
+            );
         }
+        Ok(detached)
     }
 
     pub fn session_handle(self: &Arc<Self>, session_id: String) -> EmbeddedV8SessionHandle {
+        let output_generation = self
+            .session_outputs
+            .lock()
+            .expect("embedded runtime session outputs lock poisoned")
+            .get(&session_id)
+            .map(|output| output.generation);
         EmbeddedV8SessionHandle {
             session_id,
+            output_generation,
             runtime: Arc::clone(self),
         }
     }
@@ -230,28 +241,110 @@ impl EmbeddedV8Runtime {
                 wall_clock_limit_ms,
                 warm_hint,
             } => {
-                let output_generation = self
+                let output = self
                     .session_outputs
                     .lock()
                     .expect("embedded runtime session outputs lock poisoned")
                     .get(&session_id)
-                    .map(|output| output.generation);
+                    .cloned();
+                let output_generation = output.as_ref().map(|output| output.generation);
+                let event_tx = output.map(|output| {
+                    crate::session::RuntimeEventSender::direct(output.generation, output.sender)
+                });
                 let mut mgr = self
                     .session_mgr
                     .lock()
                     .expect("session manager lock poisoned");
-                mgr.create_session_with_output_generation(
+                mgr.create_session_with_output_generation_and_sender(
                     session_id,
                     heap_limit_mb,
                     cpu_time_limit_ms,
                     wall_clock_limit_ms,
                     output_generation,
                     warm_hint,
+                    event_tx,
                 )
                 .map_err(other_io_error)
             }
             command => dispatch_runtime_command(&self.session_mgr, &self.snapshot_cache, command),
         }
+    }
+
+    fn settle_bridge_response(
+        &self,
+        session_id: &str,
+        output_generation: Option<u64>,
+        response: BridgeResponse,
+    ) -> io::Result<()> {
+        let registry = {
+            let mgr = self
+                .session_mgr
+                .lock()
+                .expect("session manager lock poisoned");
+            Arc::clone(mgr.call_id_router())
+        };
+        let phase_start = Instant::now();
+        let result = registry
+            .settle(session_id, output_generation, response)
+            .map_err(other_io_error);
+        record_sync_bridge_host_phase(
+            "sync_rpc_dispatch",
+            "direct_response_settlement",
+            phase_start.elapsed(),
+        );
+        result
+    }
+
+    /// Dispatch an in-process create-session command with the VM-scoped runtime
+    /// that owns guest work. Serialized IPC commands cannot carry this trusted
+    /// host capability and continue to use the manager's process context.
+    pub fn dispatch_create_session_with_runtime(
+        &self,
+        command: RuntimeCommand,
+        session_runtime: agentos_runtime::RuntimeContext,
+        ready_batch_handle_limit: usize,
+        bridge_call_timeout: std::time::Duration,
+    ) -> io::Result<()> {
+        let RuntimeCommand::CreateSession {
+            session_id,
+            heap_limit_mb,
+            cpu_time_limit_ms,
+            wall_clock_limit_ms,
+            warm_hint,
+        } = command
+        else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "dispatch_create_session_with_runtime requires CreateSession",
+            ));
+        };
+
+        let output = self
+            .session_outputs
+            .lock()
+            .expect("embedded runtime session outputs lock poisoned")
+            .get(&session_id)
+            .cloned();
+        let output_generation = output.as_ref().map(|output| output.generation);
+        let event_tx = output.map(|output| {
+            crate::session::RuntimeEventSender::direct(output.generation, output.sender)
+        });
+        self.session_mgr
+            .lock()
+            .expect("session manager lock poisoned")
+            .create_session_with_output_generation_sender_and_runtime(
+                session_id,
+                heap_limit_mb,
+                cpu_time_limit_ms,
+                wall_clock_limit_ms,
+                output_generation,
+                warm_hint,
+                event_tx,
+                session_runtime,
+                ready_batch_handle_limit,
+                bridge_call_timeout,
+            )
+            .map_err(other_io_error)
     }
 
     pub fn session_count(&self) -> usize {
@@ -271,20 +364,46 @@ impl EmbeddedV8Runtime {
 
 impl Drop for EmbeddedV8Runtime {
     fn drop(&mut self) {
+        self.alive.store(false, Ordering::Release);
         let session_handles = self
             .session_mgr
             .lock()
             .map(|mut mgr| mgr.take_session_shutdown_handles())
             .unwrap_or_default();
-        for handle in session_handles {
-            let _ = handle.join();
+        let deadline = Instant::now() + self.executor_teardown_timeout;
+        let mut session_handles = session_handles;
+        while !session_handles.is_empty() {
+            let mut pending = Vec::with_capacity(session_handles.len());
+            for handle in session_handles {
+                if !handle.is_finished() {
+                    pending.push(handle);
+                    continue;
+                }
+                if handle.join().is_err() {
+                    eprintln!(
+                        "ERR_AGENTOS_VM_EXECUTOR_PANIC: executor panicked during runtime shutdown"
+                    );
+                }
+            }
+            session_handles = pending;
+            if session_handles.is_empty() {
+                break;
+            }
+            if Instant::now() >= deadline {
+                eprintln!(
+                    "FATAL_AGENTOS_VM_EXECUTOR_SHUTDOWN_TIMEOUT: {} executor(s) survived the {}ms process deadline; raise runtime.executor.teardownTimeoutMs",
+                    session_handles.len(),
+                    self.executor_teardown_timeout.as_millis()
+                );
+                // A live untrusted executor may not be detached while the
+                // process continues. Process shutdown is the final containment
+                // boundary when cooperative V8 termination fails.
+                std::process::abort();
+            }
+            thread::sleep(Duration::from_millis(5));
         }
         if let Ok(mut outputs) = self.session_outputs.lock() {
             outputs.clear();
-        }
-        let _ = self.dispatch_shutdown_tx.try_send(());
-        if let Some(handle) = self.dispatch_thread.get_mut().ok().and_then(Option::take) {
-            let _ = handle.join();
         }
         bridge::release_embedded_cbor_codec();
     }
@@ -292,6 +411,7 @@ impl Drop for EmbeddedV8Runtime {
 
 pub struct EmbeddedV8SessionHandle {
     session_id: String,
+    output_generation: Option<u64>,
     runtime: Arc<EmbeddedV8Runtime>,
 }
 
@@ -332,14 +452,16 @@ impl EmbeddedV8SessionHandle {
         payload: Vec<u8>,
     ) -> io::Result<()> {
         validate_bridge_response_status(status)?;
-        self.runtime.dispatch(RuntimeCommand::SendToSession {
-            session_id: self.session_id.clone(),
-            message: SessionMessage::BridgeResponse(BridgeResponse {
+        self.runtime.settle_bridge_response(
+            &self.session_id,
+            self.output_generation,
+            BridgeResponse {
                 call_id,
                 status,
                 payload,
-            }),
-        })
+                reservation: None,
+            },
+        )
     }
 
     pub fn send_stream_event(&self, event_type: &str, payload: Vec<u8>) -> io::Result<()> {
@@ -349,6 +471,67 @@ impl EmbeddedV8SessionHandle {
                 event_type: event_type.to_owned(),
                 payload,
             }),
+        })
+    }
+
+    pub fn publish_readiness(
+        &self,
+        capability_id: u64,
+        capability_generation: u64,
+        flags: agentos_runtime::readiness::ReadyFlags,
+    ) -> io::Result<()> {
+        self.runtime.dispatch(RuntimeCommand::PublishReadiness {
+            session_id: self.session_id.clone(),
+            capability_id,
+            capability_generation,
+            flags,
+        })
+    }
+
+    pub fn remove_readiness(
+        &self,
+        capability_id: u64,
+        capability_generation: u64,
+    ) -> io::Result<()> {
+        self.runtime.dispatch(RuntimeCommand::RemoveReadiness {
+            session_id: self.session_id.clone(),
+            capability_id,
+            capability_generation,
+        })
+    }
+
+    pub fn set_application_read_interest(
+        &self,
+        capability_id: u64,
+        capability_generation: u64,
+        enabled: bool,
+    ) -> io::Result<()> {
+        self.runtime
+            .session_mgr
+            .lock()
+            .expect("session manager lock poisoned")
+            .set_application_read_interest(
+                &self.session_id,
+                capability_id,
+                capability_generation,
+                enabled,
+            )
+            .map_err(other_io_error)
+    }
+
+    pub fn publish_signal(&self, signal: i32) -> io::Result<()> {
+        self.runtime
+            .session_mgr
+            .lock()
+            .expect("session manager lock poisoned")
+            .publish_signal(&self.session_id, signal)
+            .map_err(other_io_error)
+    }
+
+    pub fn publish_timer(&self, timer_id: u64) -> io::Result<()> {
+        self.runtime.dispatch(RuntimeCommand::PublishTimer {
+            session_id: self.session_id.clone(),
+            timer_id,
         })
     }
 
@@ -386,10 +569,23 @@ impl EmbeddedV8SessionHandle {
     }
 
     pub fn destroy(&self) -> io::Result<()> {
-        self.runtime.unregister_session(&self.session_id);
-        self.runtime.dispatch(RuntimeCommand::DestroySession {
+        // Keep the output lane registered while the session executor joins so
+        // terminal results and lifecycle diagnostics can drain. Removing it
+        // first closes the receiver underneath the executor. Generation-check
+        // the final removal so a concurrently reused session ID keeps its lane.
+        let result = self.runtime.dispatch(RuntimeCommand::DestroySession {
             session_id: self.session_id.clone(),
-        })
+        });
+        if let Some(generation) = self.output_generation {
+            remove_session_output_if_current(
+                &self.runtime.session_outputs,
+                &self.session_id,
+                generation,
+            );
+        } else {
+            self.runtime.unregister_session(&self.session_id);
+        }
+        result
     }
 
     pub fn session_id(&self) -> &str {
@@ -411,12 +607,15 @@ impl Clone for EmbeddedV8SessionHandle {
     fn clone(&self) -> Self {
         Self {
             session_id: self.session_id.clone(),
+            output_generation: self.output_generation,
             runtime: Arc::clone(&self.runtime),
         }
     }
 }
 
-pub fn shared_embedded_runtime() -> io::Result<Arc<EmbeddedV8Runtime>> {
+pub fn shared_embedded_runtime(
+    runtime: agentos_runtime::RuntimeContext,
+) -> io::Result<Arc<EmbeddedV8Runtime>> {
     static SHARED_RUNTIME: OnceLock<Mutex<Weak<EmbeddedV8Runtime>>> = OnceLock::new();
 
     let shared_slot = SHARED_RUNTIME.get_or_init(|| Mutex::new(Weak::new()));
@@ -427,7 +626,7 @@ pub fn shared_embedded_runtime() -> io::Result<Arc<EmbeddedV8Runtime>> {
         return Ok(shared);
     }
 
-    let shared = Arc::new(EmbeddedV8Runtime::new(None)?);
+    let shared = Arc::new(EmbeddedV8Runtime::new(None, runtime)?);
     *shared_guard = Arc::downgrade(&shared);
     Ok(shared)
 }
@@ -473,6 +672,7 @@ impl Drop for EmbeddedRuntimeHandle {
 
 pub fn spawn_embedded_runtime_ipc(
     max_concurrency: Option<usize>,
+    runtime: agentos_runtime::RuntimeContext,
 ) -> io::Result<(UnixStream, EmbeddedRuntimeHandle)> {
     bridge::init_codec();
     bridge::acquire_embedded_cbor_codec();
@@ -482,12 +682,13 @@ pub fn spawn_embedded_runtime_ipc(
     let shutdown_stream = host_stream.try_clone()?;
     let alive = Arc::new(AtomicBool::new(true));
     let alive_for_thread = Arc::clone(&alive);
-    let max_concurrency = max_concurrency.unwrap_or_else(default_max_concurrency);
+    let max_concurrency = max_concurrency.unwrap_or_else(|| runtime.max_active_vm_executors());
 
+    // AGENTOS_THREAD_SITE: embedded-v8-dispatch
     let join_handle = thread::Builder::new()
         .name(String::from("agentos-v8-runtime"))
         .spawn(move || {
-            run_embedded_runtime(runtime_stream, max_concurrency);
+            run_embedded_runtime(runtime_stream, max_concurrency, runtime);
             alive_for_thread.store(false, Ordering::Release);
         })
         .inspect_err(|_| bridge::release_embedded_cbor_codec())?;
@@ -503,13 +704,11 @@ pub fn spawn_embedded_runtime_ipc(
     ))
 }
 
-fn default_max_concurrency() -> usize {
-    thread::available_parallelism()
-        .map(|count| count.get())
-        .unwrap_or(4)
-}
-
-fn run_embedded_runtime(stream: UnixStream, max_concurrency: usize) {
+fn run_embedded_runtime(
+    stream: UnixStream,
+    max_concurrency: usize,
+    runtime: agentos_runtime::RuntimeContext,
+) {
     // Keep bridge-only, agent-SDK, and wasm-runner userland variants warm
     // without immediately evicting each other.
     let snapshot_cache = Arc::new(SnapshotCache::new(8));
@@ -520,10 +719,23 @@ fn run_embedded_runtime(stream: UnixStream, max_concurrency: usize) {
             return;
         }
     };
-    let (event_tx, event_rx) = crossbeam_channel::bounded::<RuntimeEventEnvelope>(1024);
-    let call_id_router: CallIdRouter = Arc::new(Mutex::new(HashMap::new()));
+    let output_capacity = match crate::session::configured_resource_capacity(
+        &runtime,
+        ResourceClass::AsyncCompletions,
+        "limits.reactor.maxAsyncCompletions",
+        "runtime.resources.maxAsyncCompletions",
+    ) {
+        Ok(capacity) => capacity,
+        Err(error) => {
+            eprintln!("{error}");
+            return;
+        }
+    };
+    let (event_tx, event_rx) = crossbeam_channel::bounded::<RuntimeEventEnvelope>(output_capacity);
+    let call_id_router: CallIdRouter = Arc::new(BridgeCallRegistry::with_default_limit());
     let connection_id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
 
+    // AGENTOS_THREAD_SITE: embedded-v8-writer
     let writer_handle = match thread::Builder::new()
         .name(format!("v8-ipc-writer-{connection_id}"))
         .spawn(move || ipc_writer_thread(event_rx, writer_stream))
@@ -540,6 +752,7 @@ fn run_embedded_runtime(stream: UnixStream, max_concurrency: usize) {
         event_tx,
         call_id_router,
         Arc::clone(&snapshot_cache),
+        runtime,
     )));
 
     handle_connection(stream, connection_id, session_mgr, snapshot_cache);
@@ -605,12 +818,15 @@ fn handle_connection(
         }
     }
 
-    let shutdowns = {
+    {
         let mut mgr = session_mgr.lock().expect("session manager lock poisoned");
-        mgr.begin_destroy_sessions(session_ids)
-    };
-    for shutdown in shutdowns {
-        shutdown.finish();
+        for session_id in session_ids {
+            if let Err(error) = mgr.detach_session(&session_id) {
+                eprintln!(
+                    "ERR_AGENTOS_VM_EXECUTOR_QUARANTINE: failed to detach session {session_id}: {error}"
+                );
+            }
+        }
     }
 }
 
@@ -638,15 +854,11 @@ fn dispatch_runtime_command(
             )
             .map_err(other_io_error)
         }
-        RuntimeCommand::DestroySession { session_id } => {
-            let shutdown = {
-                let mut mgr = session_mgr.lock().expect("session manager lock poisoned");
-                mgr.begin_destroy_session(&session_id)
-                    .map_err(other_io_error)?
-            };
-            shutdown.finish();
-            Ok(())
-        }
+        RuntimeCommand::DestroySession { session_id } => session_mgr
+            .lock()
+            .expect("session manager lock poisoned")
+            .detach_session(&session_id)
+            .map_err(other_io_error),
         RuntimeCommand::PauseSession { session_id } => {
             let mgr = session_mgr.lock().expect("session manager lock poisoned");
             mgr.pause_session(&session_id).map_err(other_io_error)
@@ -659,74 +871,95 @@ fn dispatch_runtime_command(
             session_id,
             message,
         } => {
-            // Resolve the sender and apply terminate side effects under the
-            // lock, then send after releasing it so a full session command
-            // channel cannot block the manager mutex.
-            let is_bridge_response = matches!(&message, SessionMessage::BridgeResponse(_));
-            let sender = {
-                let mgr = session_mgr.lock().expect("session manager lock poisoned");
-                let routed_session_id = match &message {
-                    SessionMessage::BridgeResponse(response) => {
-                        let phase_start = Instant::now();
-                        let routed_session_id = mgr
-                            .call_id_router()
-                            .lock()
-                            .expect("call_id router lock poisoned")
-                            .remove(&response.call_id)
-                            .unwrap_or(session_id);
-                        record_sync_bridge_host_phase(
-                            "sync_rpc_dispatch",
-                            "dispatch_route_lookup",
-                            phase_start.elapsed(),
-                        );
-                        routed_session_id
-                    }
-                    SessionMessage::InjectGlobals { .. }
-                    | SessionMessage::Execute { .. }
-                    | SessionMessage::StreamEvent(_)
-                    | SessionMessage::TerminateExecution => session_id,
-                };
-                let phase_start = Instant::now();
-                let sender = mgr
-                    .session_command_sender(&routed_session_id, &message)
-                    .map_err(other_io_error)?;
-                if is_bridge_response {
+            let message = match message {
+                SessionMessage::BridgeResponse(response) => {
+                    let (registry, output_generation) = {
+                        let mgr = session_mgr.lock().expect("session manager lock poisoned");
+                        (
+                            Arc::clone(mgr.call_id_router()),
+                            mgr.session_output_generation(&session_id),
+                        )
+                    };
+                    let phase_start = Instant::now();
+                    let result = registry
+                        .settle(&session_id, output_generation, response)
+                        .map(|_| ())
+                        .map_err(other_io_error);
                     record_sync_bridge_host_phase(
                         "sync_rpc_dispatch",
-                        "dispatch_sender_lookup",
+                        "direct_response_settlement",
                         phase_start.elapsed(),
                     );
+                    return result;
                 }
-                sender
+                message => message,
             };
-            if let SessionMessage::BridgeResponse(response) = &message {
-                record_sync_bridge_response_channel_send_start(response.call_id);
-            }
-            let phase_start = Instant::now();
-            let result = sender
-                .send(SessionCommand::Message(message))
-                .map_err(|e| other_io_error(format!("session thread disconnected: {}", e)));
-            if is_bridge_response {
+
+            {
+                let mgr = session_mgr.lock().expect("session manager lock poisoned");
+                let phase_start = Instant::now();
+                let result = mgr
+                    .try_send_to_session(&session_id, message)
+                    .map_err(other_io_error);
                 record_sync_bridge_host_phase(
-                    "sync_rpc_dispatch",
-                    "dispatch_channel_send",
+                    "session_dispatch",
+                    "nonblocking_command_admission",
                     phase_start.elapsed(),
                 );
+                result
             }
-            result
         }
+        RuntimeCommand::PublishReadiness {
+            session_id,
+            capability_id,
+            capability_generation,
+            flags,
+        } => session_mgr
+            .lock()
+            .expect("session manager lock poisoned")
+            .publish_readiness(&session_id, capability_id, capability_generation, flags)
+            .map_err(other_io_error),
+        RuntimeCommand::RemoveReadiness {
+            session_id,
+            capability_id,
+            capability_generation,
+        } => session_mgr
+            .lock()
+            .expect("session manager lock poisoned")
+            .remove_readiness(&session_id, capability_id, capability_generation)
+            .map_err(other_io_error),
+        RuntimeCommand::PublishSignal { session_id, signal } => session_mgr
+            .lock()
+            .expect("session manager lock poisoned")
+            .publish_signal(&session_id, signal)
+            .map_err(other_io_error),
+        RuntimeCommand::PublishTimer {
+            session_id,
+            timer_id,
+        } => session_mgr
+            .lock()
+            .expect("session manager lock poisoned")
+            .publish_timer(&session_id, timer_id)
+            .map_err(other_io_error),
         RuntimeCommand::SetSessionModuleReader { session_id, reader } => {
             // Resolve the sender under the lock, release, then forward the live
             // reader as a SetModuleReader command to the session thread.
-            let sender = {
+            let (sender, command_capacity) = {
                 let mgr = session_mgr.lock().expect("session manager lock poisoned");
                 mgr.session_sender(&session_id)
-            };
-            let sender = sender.map_err(other_io_error)?;
+            }
+            .map_err(other_io_error)?;
             match reader.take() {
                 Some(reader) => sender
-                    .send(SessionCommand::SetModuleReader(reader))
-                    .map_err(|e| other_io_error(format!("session thread disconnected: {}", e))),
+                    .try_send(SessionCommand::SetModuleReader(reader))
+                    .map_err(|error| match error {
+                        crossbeam_channel::TrySendError::Full(_) => other_io_error(format!(
+                            "ERR_AGENTOS_SESSION_COMMAND_LIMIT: session {session_id} command queue exceeded limit of {command_capacity}; raise limits.reactor.maxHandleCommands"
+                        )),
+                        crossbeam_channel::TrySendError::Disconnected(_) => other_io_error(
+                            format!("session thread disconnected for session {session_id}"),
+                        ),
+                    }),
                 None => Ok(()),
             }
         }
@@ -743,6 +976,7 @@ fn dispatch_runtime_command(
     }
 }
 
+#[cfg(test)]
 fn route_outbound_event(
     envelope: RuntimeEventEnvelope,
     session_outputs: &Arc<Mutex<HashMap<String, SessionOutput>>>,
@@ -772,7 +1006,7 @@ fn route_outbound_event(
 
     match output.sender.try_send(event) {
         Ok(()) => {}
-        Err(mpsc::TrySendError::Full(_)) | Err(mpsc::TrySendError::Disconnected(_)) => {
+        Err(_) => {
             if remove_session_output_if_current(session_outputs, &session_id, output.generation) {
                 return session_mgr
                     .lock()
@@ -785,6 +1019,7 @@ fn route_outbound_event(
     false
 }
 
+#[cfg(test)]
 fn clear_dropped_bridge_call_route(event: &RuntimeEvent, session_mgr: &Arc<Mutex<SessionManager>>) {
     if let RuntimeEvent::BridgeCall { call_id, .. } = event {
         session_mgr
@@ -820,17 +1055,151 @@ fn other_io_error(message: String) -> io::Error {
 mod tests {
     use super::*;
     use crate::runtime_protocol::{BridgeResponse, RuntimeCommand, RuntimeEvent, SessionMessage};
+    use std::process::Command;
     use std::time::Duration;
 
     static EMBEDDED_RUNTIME_CODEC_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn run_isolated_unit_test(env_name: &str, test_name: &str) -> bool {
+        if std::env::var_os(env_name).is_some() {
+            return true;
+        }
+        let output = Command::new(std::env::current_exe().expect("current test binary"))
+            .arg(test_name)
+            .arg("--exact")
+            .arg("--nocapture")
+            .env(env_name, "1")
+            .output()
+            .unwrap_or_else(|error| panic!("spawn isolated test {test_name}: {error}"));
+        assert!(
+            output.status.success(),
+            "isolated test {test_name} failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        false
+    }
+
+    fn test_runtime_context() -> agentos_runtime::RuntimeContext {
+        agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+            .expect("test process runtime")
+            .context()
+    }
+
+    fn test_output_channel(
+        capacity: usize,
+    ) -> (RuntimeEventOutputSender, RuntimeEventOutputReceiver) {
+        let runtime = test_runtime_context();
+        runtime_event_output_channel(capacity, Arc::clone(runtime.resources()))
+    }
+
+    fn output_event(message: &str) -> RuntimeEvent {
+        RuntimeEvent::Log {
+            session_id: String::from("aggregate-test"),
+            channel: 0,
+            message: message.to_owned(),
+        }
+    }
+
+    #[test]
+    fn session_outputs_share_one_vm_completion_limit() {
+        use agentos_runtime::accounting::{ResourceLedger, ResourceLimit};
+
+        let resources = Arc::new(ResourceLedger::root(
+            "v8-output-test-vm",
+            [(
+                ResourceClass::AsyncCompletions,
+                ResourceLimit::new(2, "limits.reactor.maxAsyncCompletions"),
+            )],
+        ));
+        let (first_tx, first_rx) = runtime_event_output_channel(2, Arc::clone(&resources));
+        let (second_tx, second_rx) = runtime_event_output_channel(2, Arc::clone(&resources));
+
+        first_tx
+            .try_send(output_event("first"))
+            .expect("first session output admission");
+        second_tx
+            .try_send(output_event("second"))
+            .expect("second session output admission");
+        assert_eq!(resources.usage(ResourceClass::AsyncCompletions).used, 2);
+
+        let error = first_tx
+            .try_send(output_event("overflow"))
+            .expect_err("aggregate VM limit must span both session lanes");
+        assert!(error.contains("limits.reactor.maxAsyncCompletions"));
+
+        first_rx.try_recv().expect("release one output reservation");
+        second_tx
+            .try_send(output_event("replacement"))
+            .expect("released slot can be used by another session lane");
+        drop(first_rx);
+        drop(second_rx);
+        assert_eq!(
+            resources.usage(ResourceClass::AsyncCompletions).used,
+            0,
+            "session output teardown must release queued completion reservations"
+        );
+
+        let (disconnected_tx, disconnected_rx) =
+            runtime_event_output_channel(1, Arc::clone(&resources));
+        drop(disconnected_rx);
+        disconnected_tx
+            .try_send(output_event("disconnected"))
+            .expect_err("disconnected output must reject insertion");
+        assert_eq!(
+            resources.usage(ResourceClass::AsyncCompletions).used,
+            0,
+            "failed insertion must release its reservation"
+        );
+    }
+
+    #[test]
+    fn embedded_runtime_uses_configured_executor_and_output_bounds() {
+        if !run_isolated_unit_test(
+            "AGENTOS_V8_CONFIGURED_EMBEDDED_RUNTIME_SUBPROCESS",
+            "embedded_runtime::tests::embedded_runtime_uses_configured_executor_and_output_bounds",
+        ) {
+            return;
+        }
+        let _codec_guard = EMBEDDED_RUNTIME_CODEC_TEST_LOCK
+            .lock()
+            .expect("embedded runtime codec test lock poisoned");
+        let mut config = agentos_runtime::RuntimeConfig {
+            max_active_vm_executors: 2,
+            vm_executor_teardown_timeout_ms: 31,
+            ..agentos_runtime::RuntimeConfig::default()
+        };
+        config.resources.max_async_completions = 3;
+        let runtime_context = agentos_runtime::SidecarRuntime::process(&config)
+            .expect("configured process runtime")
+            .context();
+        let runtime = EmbeddedV8Runtime::new(None, runtime_context.clone())
+            .expect("configured embedded runtime");
+
+        assert_eq!(
+            runtime
+                .session_mgr
+                .lock()
+                .expect("session manager")
+                .max_concurrency(),
+            2
+        );
+        assert_eq!(runtime.executor_teardown_timeout, Duration::from_millis(31));
+        let (_receiver, registration) = runtime
+            .register_session_with_runtime("configured-output", &runtime_context)
+            .expect("register configured output lane");
+        let outputs = runtime.session_outputs.lock().expect("session outputs");
+        assert_eq!(outputs[&registration.session_id].sender.capacity(), Some(3));
+    }
 
     #[test]
     fn embedded_runtime_handle_reports_liveness_and_shutdown() {
         let _codec_guard = EMBEDDED_RUNTIME_CODEC_TEST_LOCK
             .lock()
             .expect("embedded runtime codec test lock poisoned");
-        let (_stream, handle) =
-            spawn_embedded_runtime_ipc(Some(1)).expect("spawn embedded runtime");
+        let (_stream, handle) = spawn_embedded_runtime_ipc(Some(1), test_runtime_context())
+            .expect("spawn embedded runtime");
         assert!(
             handle.is_alive(),
             "embedded runtime should be alive after spawn"
@@ -847,11 +1216,83 @@ mod tests {
         let _codec_guard = EMBEDDED_RUNTIME_CODEC_TEST_LOCK
             .lock()
             .expect("embedded runtime codec test lock poisoned");
-        let first = shared_embedded_runtime().expect("shared embedded runtime");
-        let second = shared_embedded_runtime().expect("shared embedded runtime");
+        let first =
+            shared_embedded_runtime(test_runtime_context()).expect("shared embedded runtime");
+        let second =
+            shared_embedded_runtime(test_runtime_context()).expect("shared embedded runtime");
         assert!(
             Arc::ptr_eq(&first, &second),
             "shared_embedded_runtime() should reuse the same runtime instance"
+        );
+    }
+
+    #[test]
+    fn in_process_session_creation_preserves_vm_resource_scope() {
+        let _codec_guard = EMBEDDED_RUNTIME_CODEC_TEST_LOCK
+            .lock()
+            .expect("embedded runtime codec test lock poisoned");
+        let process = test_runtime_context();
+        let vm_resources = Arc::new(agentos_runtime::accounting::ResourceLedger::child(
+            "embedded-runtime-vm",
+            [
+                (
+                    agentos_runtime::accounting::ResourceClass::BridgeCalls,
+                    agentos_runtime::accounting::ResourceLimit::new(
+                        1,
+                        "limits.reactor.maxBridgeCalls",
+                    ),
+                ),
+                (
+                    agentos_runtime::accounting::ResourceClass::HandleCommands,
+                    agentos_runtime::accounting::ResourceLimit::new(
+                        2,
+                        "limits.reactor.maxHandleCommands",
+                    ),
+                ),
+                (
+                    agentos_runtime::accounting::ResourceClass::ReadyHandles,
+                    agentos_runtime::accounting::ResourceLimit::new(
+                        2,
+                        "limits.reactor.maxReadyHandles",
+                    ),
+                ),
+                (
+                    agentos_runtime::accounting::ResourceClass::Timers,
+                    agentos_runtime::accounting::ResourceLimit::new(
+                        2,
+                        "limits.jsRuntime.maxTimers",
+                    ),
+                ),
+            ],
+            Arc::clone(process.resources()),
+        ));
+        let vm_runtime = process.scoped_for_vm(Arc::clone(&vm_resources), 42);
+        let runtime = EmbeddedV8Runtime::new(Some(1), process).expect("embedded runtime");
+
+        runtime
+            .dispatch_create_session_with_runtime(
+                RuntimeCommand::CreateSession {
+                    session_id: "vm-scoped-session".into(),
+                    heap_limit_mb: None,
+                    cpu_time_limit_ms: None,
+                    wall_clock_limit_ms: None,
+                    warm_hint: None,
+                },
+                vm_runtime,
+                64,
+                std::time::Duration::from_secs(30),
+            )
+            .expect("create VM-scoped session");
+
+        let actual = runtime
+            .session_mgr
+            .lock()
+            .expect("session manager lock poisoned")
+            .session_resources("vm-scoped-session")
+            .expect("session resources");
+        assert!(
+            Arc::ptr_eq(&actual, &vm_resources),
+            "session work must retain the caller's VM ledger"
         );
     }
 
@@ -862,7 +1303,8 @@ mod tests {
             .expect("embedded runtime codec test lock poisoned");
         let codec_before = bridge::is_cbor_codec();
         let alive = {
-            let runtime = EmbeddedV8Runtime::new(Some(1)).expect("embedded runtime");
+            let runtime =
+                EmbeddedV8Runtime::new(Some(1), test_runtime_context()).expect("embedded runtime");
             let alive = Arc::clone(&runtime.alive);
             assert!(
                 bridge::is_cbor_codec(),
@@ -900,15 +1342,17 @@ mod tests {
     }
 
     #[test]
-    fn embedded_runtime_stream_bridge_response_routing_prefers_call_id_router() {
+    fn embedded_runtime_bridge_response_requires_matching_session_generation() {
         let snapshot_cache = Arc::new(SnapshotCache::new(1));
         let (event_tx, _event_rx) = crossbeam_channel::unbounded::<RuntimeEventEnvelope>();
-        let call_id_router: CallIdRouter = Arc::new(Mutex::new(HashMap::new()));
+        let call_id_router: CallIdRouter = Arc::new(BridgeCallRegistry::with_default_limit());
+        let runtime = test_runtime_context();
         let session_mgr = Arc::new(Mutex::new(SessionManager::new(
             1,
             event_tx,
             Arc::clone(&call_id_router),
             Arc::clone(&snapshot_cache),
+            runtime.clone(),
         )));
 
         {
@@ -916,12 +1360,11 @@ mod tests {
             mgr.create_session("stream-target".into(), None, None, None)
                 .expect("create target session");
         }
-        call_id_router
-            .lock()
-            .expect("call_id router")
-            .insert(41, "stream-target".into());
+        let waiter = call_id_router
+            .register_sync(&runtime, 0, 1, 41, "stream-target", None)
+            .expect("register bridge call target");
 
-        dispatch_runtime_command(
+        let error = dispatch_runtime_command(
             &session_mgr,
             &snapshot_cache,
             RuntimeCommand::SendToSession {
@@ -930,19 +1373,38 @@ mod tests {
                     call_id: 41,
                     status: 0,
                     payload: vec![0xAB],
+                    reservation: None,
                 }),
             },
         )
-        .expect("bridge response should route via call_id table");
-
+        .expect_err("wrong-session bridge response must be rejected");
         assert!(
-            call_id_router
-                .lock()
-                .expect("call_id router")
-                .get(&41)
-                .is_none(),
-            "bridge response routing should consume the call_id entry"
+            error
+                .to_string()
+                .contains("ERR_AGENTOS_BRIDGE_STALE_GENERATION"),
+            "wrong-session rejection should be typed: {error}"
         );
+        assert_eq!(call_id_router.pending_len(), 1);
+
+        dispatch_runtime_command(
+            &session_mgr,
+            &snapshot_cache,
+            RuntimeCommand::SendToSession {
+                session_id: "stream-target".into(),
+                message: SessionMessage::BridgeResponse(BridgeResponse {
+                    call_id: 41,
+                    status: 0,
+                    payload: vec![0xAB],
+                    reservation: None,
+                }),
+            },
+        )
+        .expect("matching bridge response should settle directly");
+        assert_eq!(
+            waiter.recv().expect("settled bridge response").payload,
+            vec![0xAB]
+        );
+        assert_eq!(call_id_router.pending_len(), 0);
 
         session_mgr
             .lock()
@@ -956,7 +1418,9 @@ mod tests {
         let _codec_guard = EMBEDDED_RUNTIME_CODEC_TEST_LOCK
             .lock()
             .expect("embedded runtime codec test lock poisoned");
-        let runtime = Arc::new(EmbeddedV8Runtime::new(Some(1)).expect("embedded runtime"));
+        let runtime = Arc::new(
+            EmbeddedV8Runtime::new(Some(1), test_runtime_context()).expect("embedded runtime"),
+        );
         let handle = runtime.session_handle("missing-session".into());
 
         let err = handle
@@ -969,7 +1433,7 @@ mod tests {
 
     #[test]
     fn embedded_runtime_stream_events_preserve_order_per_session() {
-        let (sender, receiver) = mpsc::sync_channel(SESSION_OUTPUT_CHANNEL_CAPACITY);
+        let (sender, receiver) = test_output_channel(TEST_SESSION_OUTPUT_CHANNEL_CAPACITY);
         let session_outputs = Arc::new(Mutex::new(HashMap::from([(
             String::from("stream-order"),
             SessionOutput {
@@ -1024,7 +1488,7 @@ mod tests {
 
     #[test]
     fn embedded_runtime_stream_termination_race_drops_late_events_after_receiver_close() {
-        let (sender, receiver) = mpsc::sync_channel(SESSION_OUTPUT_CHANNEL_CAPACITY);
+        let (sender, receiver) = test_output_channel(TEST_SESSION_OUTPUT_CHANNEL_CAPACITY);
         let session_outputs = Arc::new(Mutex::new(HashMap::from([(
             String::from("stream-race"),
             SessionOutput {
@@ -1061,7 +1525,7 @@ mod tests {
 
     #[test]
     fn embedded_runtime_stream_backpressure_drops_full_session_output() {
-        let (sender, receiver) = mpsc::sync_channel(1);
+        let (sender, receiver) = test_output_channel(1);
         let session_outputs = Arc::new(Mutex::new(HashMap::from([(
             String::from("stream-full"),
             SessionOutput {
@@ -1125,7 +1589,7 @@ mod tests {
 
     #[test]
     fn embedded_runtime_drops_stale_generation_events_for_reused_session_id() {
-        let (sender, receiver) = mpsc::sync_channel(SESSION_OUTPUT_CHANNEL_CAPACITY);
+        let (sender, receiver) = test_output_channel(TEST_SESSION_OUTPUT_CHANNEL_CAPACITY);
         let session_outputs = Arc::new(Mutex::new(HashMap::from([(
             String::from("stream-reused"),
             SessionOutput {
@@ -1134,13 +1598,13 @@ mod tests {
             },
         )])));
         let session_mgr = test_session_manager_with_generation("stream-reused", 2);
-        session_mgr
+        let runtime = test_runtime_context();
+        let _waiter = session_mgr
             .lock()
             .expect("session manager")
             .call_id_router()
-            .lock()
-            .expect("call_id router")
-            .insert(99, "stream-reused".into());
+            .register_sync(&runtime, 0, 1, 99, "stream-reused", Some(1))
+            .expect("register stale bridge call target");
 
         let routed = route_outbound_event(
             runtime_envelope(
@@ -1171,10 +1635,8 @@ mod tests {
                 .lock()
                 .expect("session manager")
                 .call_id_router()
-                .lock()
-                .expect("call_id router")
-                .get(&99)
-                .is_none(),
+                .pending_len()
+                == 0,
             "stale bridge calls should clear their call route"
         );
     }
@@ -1183,13 +1645,13 @@ mod tests {
     fn embedded_runtime_clears_bridge_route_when_output_is_missing() {
         let session_outputs = Arc::new(Mutex::new(HashMap::new()));
         let session_mgr = test_session_manager();
-        session_mgr
+        let runtime = test_runtime_context();
+        let _waiter = session_mgr
             .lock()
             .expect("session manager")
             .call_id_router()
-            .lock()
-            .expect("call_id router")
-            .insert(123, "stream-detached".into());
+            .register_sync(&runtime, 0, 1, 123, "stream-detached", None)
+            .expect("register detached bridge call target");
 
         let routed = route_outbound_event(
             runtime_envelope(
@@ -1211,10 +1673,8 @@ mod tests {
                 .lock()
                 .expect("session manager")
                 .call_id_router()
-                .lock()
-                .expect("call_id router")
-                .get(&123)
-                .is_none(),
+                .pending_len()
+                == 0,
             "bridge calls dropped with no output should clear their call route"
         );
     }
@@ -1224,10 +1684,12 @@ mod tests {
         let _codec_guard = EMBEDDED_RUNTIME_CODEC_TEST_LOCK
             .lock()
             .expect("embedded runtime codec test lock poisoned");
-        let runtime = Arc::new(EmbeddedV8Runtime::new(Some(1)).expect("embedded runtime"));
+        let runtime = Arc::new(
+            EmbeddedV8Runtime::new(Some(1), test_runtime_context()).expect("embedded runtime"),
+        );
         let session_id = "stream-generation-reuse";
         let (_first_receiver, first_registration) = runtime
-            .register_session_with_capacity(session_id, 1)
+            .register_session_with_capacity(session_id, 1, Arc::clone(runtime.runtime.resources()))
             .expect("register first session output");
         runtime
             .dispatch(RuntimeCommand::CreateSession {
@@ -1243,8 +1705,27 @@ mod tests {
             .destroy()
             .expect("destroy first session");
 
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let reconciled = {
+                let mut manager = runtime
+                    .session_mgr
+                    .lock()
+                    .expect("session manager lock poisoned");
+                manager.quarantined_session_count() == 0 && manager.active_slot_count() == 0
+            };
+            if reconciled {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "destroyed generation did not release its quarantined executor permit"
+            );
+            thread::yield_now();
+        }
+
         let (_second_receiver, _second_registration) = runtime
-            .register_session_with_capacity(session_id, 1)
+            .register_session_with_capacity(session_id, 1, Arc::clone(runtime.runtime.resources()))
             .expect("register reused session output");
         runtime
             .dispatch(RuntimeCommand::CreateSession {
@@ -1320,8 +1801,9 @@ mod tests {
         Arc::new(Mutex::new(SessionManager::new(
             1,
             event_tx,
-            Arc::new(Mutex::new(HashMap::new())),
+            Arc::new(BridgeCallRegistry::with_default_limit()),
             Arc::new(SnapshotCache::new(1)),
+            test_runtime_context(),
         )))
     }
 

@@ -34,14 +34,8 @@ fn read_v8_version(lock_path: &Path) -> String {
     panic!("failed to locate v8 version in {}", lock_path.display());
 }
 
-fn find_v8_icu_data(v8_version: &str) -> PathBuf {
+fn find_v8_crate_root(v8_version: &str) -> PathBuf {
     let registry_src = cargo_home().join("registry").join("src");
-    let candidates = [
-        Path::new("third_party/icu/common/icudtl.dat"),
-        Path::new("third_party/icu/flutter_desktop/icudtl.dat"),
-        Path::new("third_party/icu/chromecast_video/icudtl.dat"),
-    ];
-
     let entries = fs::read_dir(&registry_src).unwrap_or_else(|error| {
         panic!(
             "failed to read cargo registry src {}: {}",
@@ -54,19 +48,44 @@ fn find_v8_icu_data(v8_version: &str) -> PathBuf {
         let entry = entry
             .unwrap_or_else(|error| panic!("failed to inspect cargo registry entry: {}", error));
         let crate_root = entry.path().join(format!("v8-{}", v8_version));
-        for relative in candidates {
-            let candidate = crate_root.join(relative);
-            if candidate.exists() {
-                return candidate;
-            }
+        if crate_root.is_dir() {
+            return crate_root;
         }
     }
 
     panic!(
-        "failed to locate ICU data for v8-{} under {}",
+        "failed to locate v8-{} under {}",
         v8_version,
         registry_src.display(),
     );
+}
+
+fn find_v8_icu_data(crate_root: &Path) -> PathBuf {
+    for relative in [
+        Path::new("third_party/icu/common/icudtl.dat"),
+        Path::new("third_party/icu/flutter_desktop/icudtl.dat"),
+        Path::new("third_party/icu/chromecast_video/icudtl.dat"),
+    ] {
+        let candidate = crate_root.join(relative);
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+
+    panic!("failed to locate ICU data under {}", crate_root.display(),);
+}
+
+fn build_v8_thread_support(manifest_dir: &Path, crate_root: &Path) {
+    let source = manifest_dir.join("src/v8_thread_support.cc");
+    let include = crate_root.join("v8/include");
+    println!("cargo:rerun-if-changed={}", source.display());
+    cc::Build::new()
+        .cpp(true)
+        .std("c++20")
+        .warnings(false)
+        .include(include)
+        .file(source)
+        .compile("agentos_v8_thread_support");
 }
 
 fn main() {
@@ -81,7 +100,9 @@ fn main() {
     agentos_build_support::build_v8_bridge(&manifest_dir, &out_dir);
 
     let v8_version = read_v8_version(&lock_path);
-    let icu_data = find_v8_icu_data(&v8_version);
+    let v8_crate_root = find_v8_crate_root(&v8_version);
+    build_v8_thread_support(&manifest_dir, &v8_crate_root);
+    let icu_data = find_v8_icu_data(&v8_crate_root);
     let dest_path = out_dir.join("icudtl.dat");
 
     fs::copy(&icu_data, &dest_path).unwrap_or_else(|error| {

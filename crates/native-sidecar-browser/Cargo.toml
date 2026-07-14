@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Browser-side Secure Exec sidecar scaffold"
+# Browser support is retained for a future migration but intentionally disabled
+# and must not be published while it is outside the unified reactor contract.
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]

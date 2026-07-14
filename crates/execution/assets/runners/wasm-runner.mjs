@@ -533,7 +533,10 @@ const maxSpawnFileActionBytes =
     : 1024 * 1024;
 let warnedSpawnFileActions = false;
 let warnedSpawnFileActionBytes = false;
-const maxStackBytesValue = Number(process.env.AGENTOS_WASM_MAX_STACK_BYTES);
+// This value is injected by the trusted bootstrap from the typed execution
+// limits. The legacy AGENTOS_WASM_MAX_STACK_BYTES guest env key is scrubbed so
+// guest code cannot raise its own limit or forge limit-attribution diagnostics.
+const maxStackBytesValue = Number(process.env.AGENTOS_INTERNAL_WASM_MAX_STACK_BYTES);
 const maxStackBytes =
   Number.isFinite(maxStackBytesValue) && maxStackBytesValue > 0
     ? Math.floor(maxStackBytesValue)
@@ -611,7 +614,7 @@ const unixConnectTimeoutMs = maxBlockingReadMs ?? 30_000;
 
 // A guest can drive WebAssembly into never-returning recursion. V8's default
 // native stack guard already traps that as a generic `RangeError`, but the
-// operator-configured `AGENTOS_WASM_MAX_STACK_BYTES` budget was previously
+// operator-configured typed stack budget was previously
 // never consulted, so the cap was dead. When a stack byte budget is set, treat
 // a stack-exhaustion trap as enforcement of THAT budget: terminate the guest
 // nonzero and attribute the failure to the configured limit instead of leaking
@@ -2854,7 +2857,14 @@ function releaseFdHandle(handle) {
       delegateManagedFdClose(handle.targetFd);
     }
     if (handle.refCount === 0 && handle.open && typeof handle.ioFd === 'number') {
-      fsModule.closeSync(handle.ioFd);
+      try {
+        fsModule.closeSync(handle.ioFd);
+      } catch (error) {
+        writeStream(
+          process.stderr,
+          `agentos: failed to close delegated fd ${handle.ioFd}: ${formatError(error)}\n`,
+        );
+      }
       handle.ioFd = null;
     }
     return;
@@ -3098,7 +3108,11 @@ function retainSpawnOutputHandle(fd) {
   }
 
   const handle = lookupFdHandle(numericFd);
-  if (handle?.kind !== 'guest-file' && handle?.kind !== 'passthrough') {
+  if (
+    handle?.kind !== 'guest-file' &&
+    handle?.kind !== 'passthrough' &&
+    handle?.kind !== 'kernel-fd'
+  ) {
     return null;
   }
 
@@ -3612,6 +3626,22 @@ function routeChunkToFd(fd, bytes) {
       return;
     }
     writeSync(numericFd, bytes);
+    return;
+  }
+
+  if (handle.kind === 'kernel-fd') {
+    const chunk = Buffer.from(bytes ?? []);
+    let offset = 0;
+    while (offset < chunk.length) {
+      const written = Number(callSyncRpc('process.fd_write', [
+        Number(handle.targetFd) >>> 0,
+        chunk.subarray(offset),
+      ]));
+      if (!Number.isSafeInteger(written) || written <= 0 || written > chunk.length - offset) {
+        throw new Error(`invalid kernel fd write result ${String(written)}`);
+      }
+      offset += written;
+    }
     return;
   }
 

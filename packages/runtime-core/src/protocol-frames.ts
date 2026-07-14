@@ -1,36 +1,36 @@
 import { toExactUint8Array } from "./bytes.js";
 import {
-	decodeJsonFramePayload,
-	encodeJsonFramePayload,
-	type TransportPayloadCodec,
-} from "./frame-payload-codec.js";
-import type { ClassifiedFrame } from "./frame-rpc.js";
-import {
 	errorSidecarResponsePayload,
 	fromGeneratedSidecarRequestPayload,
 	isMatchingSidecarResponsePayload,
-	toGeneratedSidecarResponsePayload,
 	type LiveSidecarRequestPayload,
 	type LiveSidecarResponsePayload,
+	toGeneratedSidecarResponsePayload,
 } from "./callbacks.js";
 import {
 	fromGeneratedEventPayload,
 	type LiveSidecarEventPayload,
 } from "./event-buffer.js";
+import {
+	decodeJsonFramePayload,
+	encodeJsonFramePayload,
+	type TransportPayloadCodec,
+} from "./frame-payload-codec.js";
+import type { ClassifiedFrame } from "./frame-rpc.js";
 import * as protocol from "./generated-protocol.js";
 import { bigIntToSafeNumber } from "./numbers.js";
 import {
 	fromGeneratedOwnershipScope,
-	toGeneratedOwnershipScope,
 	type LiveOwnershipScope,
+	toGeneratedOwnershipScope,
 } from "./ownership.js";
 import {
 	SIDECAR_PROTOCOL_SCHEMA,
 	validateSidecarProtocolSchema,
 } from "./protocol-schema.js";
 import {
-	toGeneratedRequestPayload,
 	type LiveRequestPayload,
+	toGeneratedRequestPayload,
 } from "./request-payloads.js";
 import {
 	fromGeneratedResponsePayload,
@@ -76,12 +76,24 @@ export interface LiveSidecarResponseFrame {
 	payload: LiveSidecarResponsePayload;
 }
 
+export type LiveControlPayload = {
+	type: "shutdown";
+	reason: string;
+};
+
+export interface LiveControlFrame {
+	frame_type: "control";
+	schema: typeof SIDECAR_PROTOCOL_SCHEMA;
+	payload: LiveControlPayload;
+}
+
 export type LiveProtocolFrame =
 	| LiveRequestFrame
 	| LiveResponseFrame
 	| LiveEventFrame
 	| LiveSidecarRequestFrame
-	| LiveSidecarResponseFrame;
+	| LiveSidecarResponseFrame
+	| LiveControlFrame;
 
 export type LiveSidecarWrittenProtocolFrame =
 	| LiveResponseFrame
@@ -126,6 +138,14 @@ export class HostProtocolFrameFactory {
 			request_id: input.request.request_id,
 			ownership: input.request.ownership,
 			payload: input.payload,
+		};
+	}
+
+	createControlFrame(payload: LiveControlPayload): LiveControlFrame {
+		return {
+			frame_type: "control",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			payload,
 		};
 	}
 }
@@ -174,6 +194,14 @@ export function toGeneratedProtocolFrame(
 					requestId: BigInt(frame.request_id),
 					ownership: toGeneratedOwnershipScope(frame.ownership),
 					payload: toGeneratedSidecarResponsePayload(frame.payload),
+				},
+			};
+		case "control":
+			return {
+				tag: "ControlFrame",
+				val: {
+					schema: frame.schema,
+					payload: toGeneratedControlPayload(frame.payload),
 				},
 			};
 		case "response":
@@ -269,7 +297,20 @@ export function fromGeneratedSidecarWrittenProtocolFrame(
 			};
 		case "RequestFrame":
 		case "SidecarResponseFrame":
+		case "ControlFrame":
 			throw new Error(`unsupported BARE protocol frame tag: ${frame.tag}`);
+	}
+}
+
+export function toGeneratedControlPayload(
+	payload: LiveControlPayload,
+): protocol.ControlPayload {
+	switch (payload.type) {
+		case "shutdown":
+			return {
+				tag: "ShutdownControl",
+				val: { reason: payload.reason },
+			};
 	}
 }
 

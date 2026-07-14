@@ -3,12 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::ops::{BitOr, BitOrAssign};
-use std::sync::atomic::{AtomicUsize, Ordering};
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::WaitTimeoutResult;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
-#[cfg(not(target_arch = "wasm32"))]
-use std::thread;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -352,14 +347,11 @@ enum WaitSelector {
 
 struct ZombieReaper {
     state: Mutex<ZombieReaperState>,
-    wake: Condvar,
-    thread_spawns: AtomicUsize,
 }
 
 #[derive(Default)]
 struct ZombieReaperState {
     deadlines: BTreeMap<u32, Instant>,
-    shutdown: bool,
 }
 
 struct ProcessTableState {
@@ -386,15 +378,11 @@ impl Default for ProcessTable {
     fn default() -> Self {
         let reaper = Arc::new(ZombieReaper::default());
         Self {
-            inner: {
-                let inner = Arc::new(ProcessTableInner {
-                    state: Mutex::new(ProcessTableState::default()),
-                    waiters: Condvar::new(),
-                    reaper,
-                });
-                start_zombie_reaper(Arc::downgrade(&inner), Arc::clone(&inner.reaper));
-                inner
-            },
+            inner: Arc::new(ProcessTableInner {
+                state: Mutex::new(ProcessTableState::default()),
+                waiters: Condvar::new(),
+                reaper,
+            }),
         }
     }
 }
@@ -445,6 +433,9 @@ impl ProcessTable {
             .expect("inheriting a process group cannot fail")
     }
 
+    // Registration keeps the process image, context, driver, and requested
+    // group explicit so ownership validation happens at one boundary.
+    #[allow(clippy::too_many_arguments)]
     pub fn register_with_process_group(
         &self,
         pid: u32,
@@ -525,6 +516,7 @@ impl ProcessTable {
     }
 
     pub fn get(&self, pid: u32) -> Option<ProcessEntry> {
+        self.reap_due_zombies();
         self.inner
             .lock_state()
             .entries
@@ -569,22 +561,26 @@ impl ProcessTable {
         self.inner.reaper.scheduled_count()
     }
 
+    /// Earliest cooperative zombie-reap deadline. Runtime adapters compare the
+    /// exact instant when deciding whether their one process-level timer must
+    /// be replaced; deriving a fresh duration on every pump would make the same
+    /// deadline appear to move and cause cancellation churn.
+    pub fn next_zombie_reap_deadline(&self) -> Option<Instant> {
+        self.inner.reaper.next_deadline()
+    }
+
     /// Cooperatively reap any zombies whose TTL deadline has elapsed.
     ///
-    /// On native this is a cheap no-op fast path (the background thread does the
-    /// reaping); on wasm32 there is no reaper thread, so process-table
-    /// operations drive reaping through this instead.
+    /// The kernel owns deadlines but no scheduler or worker. Runtime adapters
+    /// call this from their bounded timer/event turn.
     pub fn reap_due_zombies(&self) {
         while let Some(pid) = self.inner.reaper.take_due_pid_now() {
             reap_due_pid(&self.inner, &self.inner.reaper, pid);
         }
     }
 
-    pub fn zombie_reaper_thread_spawn_count(&self) -> usize {
-        self.inner.reaper.thread_spawn_count()
-    }
-
     pub fn running_count(&self) -> usize {
+        self.reap_due_zombies();
         self.inner
             .lock_state()
             .entries
@@ -852,6 +848,7 @@ impl ProcessTable {
     }
 
     pub fn list_processes(&self) -> BTreeMap<u32, ProcessInfo> {
+        self.reap_due_zombies();
         self.inner
             .lock_state()
             .entries
@@ -1392,32 +1389,8 @@ fn is_waitable_event(event: ProcessWaitEvent, flags: WaitPidFlags) -> bool {
     }
 }
 
-// On native, the zombie reaper runs on a background thread that blocks on a
-// condvar until the next TTL deadline. wasm32 is single-threaded with no
-// blocking primitives, so there the reaper is driven cooperatively via
-// `ProcessTable::reap_due_zombies` from process-table operations instead.
-#[cfg(not(target_arch = "wasm32"))]
-fn start_zombie_reaper(inner: Weak<ProcessTableInner>, reaper: Arc<ZombieReaper>) {
-    reaper.thread_spawns.fetch_add(1, Ordering::SeqCst);
-    thread::spawn(move || loop {
-        let Some(pid) = reaper.take_next_due_pid() else {
-            return;
-        };
-
-        let Some(inner) = inner.upgrade() else {
-            return;
-        };
-
-        reap_due_pid(&inner, &reaper, pid);
-    });
-}
-
-#[cfg(target_arch = "wasm32")]
-fn start_zombie_reaper(_inner: Weak<ProcessTableInner>, _reaper: Arc<ZombieReaper>) {}
-
-/// Reap a single due zombie pid (shared by the native reaper thread and the
-/// cooperative wasm drain). Removes the entry if it is an unparented zombie,
-/// otherwise reschedules it for a later TTL pass.
+/// Reap a single due zombie pid. The kernel remains runtime-neutral: the
+/// sidecar drives this cooperatively from its process event turn.
 fn reap_due_pid(inner: &ProcessTableInner, reaper: &ZombieReaper, pid: u32) {
     let mut state = inner.lock_state();
     let should_reap = state
@@ -1475,8 +1448,6 @@ impl Default for ZombieReaper {
     fn default() -> Self {
         Self {
             state: Mutex::new(ZombieReaperState::default()),
-            wake: Condvar::new(),
-            thread_spawns: AtomicUsize::new(0),
         }
     }
 }
@@ -1485,83 +1456,32 @@ impl ZombieReaper {
     fn schedule(&self, pid: u32, ttl: Duration) {
         let mut state = lock_or_recover(&self.state);
         state.deadlines.insert(pid, Instant::now() + ttl);
-        drop(state);
-        self.wake.notify_all();
     }
 
     fn cancel(&self, pid: u32) {
-        let mut state = lock_or_recover(&self.state);
-        let removed = state.deadlines.remove(&pid).is_some();
-        drop(state);
-        if removed {
-            self.wake.notify_all();
-        }
+        lock_or_recover(&self.state).deadlines.remove(&pid);
     }
 
     fn clear(&self) {
-        let mut state = lock_or_recover(&self.state);
-        let changed = !state.deadlines.is_empty();
-        state.deadlines.clear();
-        drop(state);
-        if changed {
-            self.wake.notify_all();
-        }
-    }
-
-    fn shutdown(&self) {
-        let mut state = lock_or_recover(&self.state);
-        state.shutdown = true;
-        drop(state);
-        self.wake.notify_all();
+        lock_or_recover(&self.state).deadlines.clear();
     }
 
     fn scheduled_count(&self) -> usize {
         lock_or_recover(&self.state).deadlines.len()
     }
 
-    fn thread_spawn_count(&self) -> usize {
-        self.thread_spawns.load(Ordering::SeqCst)
+    fn next_deadline(&self) -> Option<Instant> {
+        lock_or_recover(&self.state)
+            .deadlines
+            .values()
+            .min()
+            .copied()
     }
 
-    // Blocking variant used only by the native reaper thread.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn take_next_due_pid(&self) -> Option<u32> {
-        let mut state = lock_or_recover(&self.state);
-        loop {
-            if state.shutdown {
-                return None;
-            }
-
-            let Some((pid, deadline)) = state
-                .deadlines
-                .iter()
-                .min_by_key(|(_, deadline)| **deadline)
-                .map(|(&pid, &deadline)| (pid, deadline))
-            else {
-                state = wait_or_recover(&self.wake, state);
-                continue;
-            };
-
-            let now = Instant::now();
-            if deadline <= now {
-                state.deadlines.remove(&pid);
-                return Some(pid);
-            }
-
-            let timeout = deadline.saturating_duration_since(now);
-            let (next_state, _) = wait_timeout_or_recover(&self.wake, state, timeout);
-            state = next_state;
-        }
-    }
-
-    /// Non-blocking variant of [`take_next_due_pid`]: returns a pid whose TTL
-    /// deadline has already elapsed, or `None` immediately. Used by the
-    /// cooperative wasm reaper, which cannot block.
+    /// Return one due pid without blocking. Runtime adapters drain this method
+    /// through `ProcessTable::reap_due_zombies`.
     fn take_due_pid_now(&self) -> Option<u32> {
         let mut state = lock_or_recover(&self.state);
-        if state.shutdown {
-            return None;
-        }
         let now = Instant::now();
         let due = state
             .deadlines
@@ -1576,12 +1496,6 @@ impl ZombieReaper {
     }
 }
 
-impl Drop for ProcessTableInner {
-    fn drop(&mut self) {
-        self.reaper.shutdown();
-    }
-}
-
 fn lock_or_recover<'a, T>(mutex: &'a Mutex<T>) -> MutexGuard<'a, T> {
     match mutex.lock() {
         Ok(guard) => guard,
@@ -1592,18 +1506,6 @@ fn lock_or_recover<'a, T>(mutex: &'a Mutex<T>) -> MutexGuard<'a, T> {
 fn wait_or_recover<'a, T>(condvar: &Condvar, guard: MutexGuard<'a, T>) -> MutexGuard<'a, T> {
     match condvar.wait(guard) {
         Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn wait_timeout_or_recover<'a, T>(
-    condvar: &Condvar,
-    guard: MutexGuard<'a, T>,
-    timeout: Duration,
-) -> (MutexGuard<'a, T>, WaitTimeoutResult) {
-    match condvar.wait_timeout(guard, timeout) {
-        Ok(result) => result,
         Err(poisoned) => poisoned.into_inner(),
     }
 }

@@ -14,6 +14,7 @@ var O_CREAT = 64;
 var O_EXCL = 128;
 var O_TRUNC = 512;
 var O_APPEND = 1024;
+var KERNEL_POLLIN = 1;
 var Stats = class {
   dev;
   ino;
@@ -2153,6 +2154,10 @@ function hasBridgeSyncFn(name) {
   const fn = getBridgeSyncFn(name);
   return typeof fn === "function" || !!(fn && (typeof fn.applySync === "function" || typeof fn.applySyncPromise === "function"));
 }
+function hasBridgeAsyncFn(name) {
+  const fn = getBridgeSyncFn(name);
+  return typeof fn === "function" || !!(fn && typeof fn.apply === "function");
+}
 function createBridgeAsyncFacade(name) {
   return {
     apply(_thisArg, args) {
@@ -2230,6 +2235,7 @@ var _processCpuUsage = createBridgeSyncFacade("process.cpuUsage");
 var _processResourceUsage = createBridgeSyncFacade("process.resourceUsage");
 var _processVersions = createBridgeSyncFacade("process.versions");
 var _kernelPollRaw = createBridgeSyncFacade("_kernelPollRaw");
+var _kernelPoll = createBridgeAsyncFacade("_kernelPoll");
 var _kernelIsattyRaw = createBridgeSyncFacade("_kernelIsattyRaw");
 var _kernelTtySizeRaw = createBridgeSyncFacade("_kernelTtySizeRaw");
 function decodeBridgeJson(value) {
@@ -2308,34 +2314,18 @@ function decodeRawReaddirEntries(entries, dirPath, withFileTypes) {
 }
 async function fsReadFileAsync(path, options) {
   validateEncodingOption(options);
-  const rawPath = typeof path === "number" ? _fdGetPath.applySync(void 0, [normalizeFdInteger(path)]) : normalizePathLike(path);
-  if (!rawPath) throw createFsError("EBADF", "EBADF: bad file descriptor", "read");
-  const pathStr = rawPath;
-  const encoding = typeof options === "string" ? options : options?.encoding;
+  if (typeof path === "number") {
+    return new FileHandle(normalizeFdInteger(path)).readFile(options);
+  }
+
+  const rawPath = normalizePathLike(path);
+  const handle = new FileHandle(fs.openSync(rawPath, "r"));
   try {
-    if (encoding) {
-      return await _fsAsync.readFile.apply(void 0, [pathStr, encoding]);
+    return await handle.readFile(options);
+  } finally {
+    if (!handle.closed) {
+      await handle.close();
     }
-    const base64Content = await _fsAsync.readFileBinary.apply(void 0, [pathStr]);
-    return import_buffer.Buffer.from(base64Content, "base64");
-  } catch (err) {
-    if (bridgeErrorCode(err) === "ENOENT") {
-      throw createFsError(
-        "ENOENT",
-        `ENOENT: no such file or directory, open '${rawPath}'`,
-        "open",
-        rawPath
-      );
-    }
-    if (bridgeErrorCode(err) === "EACCES") {
-      throw createFsError(
-        "EACCES",
-        `EACCES: permission denied, open '${rawPath}'`,
-        "open",
-        rawPath
-      );
-    }
-    throw err;
   }
 }
 async function fsWriteFileAsync(file, data, options) {
@@ -2766,7 +2756,14 @@ var fs = {
     ) {
       return true;
     }
-    return _fs.exists.applySyncPromise(void 0, [pathStr]);
+    // Node's existsSync() is deliberately non-throwing for filesystem lookup
+    // failures (including ENAMETOOLONG). Consumers commonly probe either a
+    // literal value or a path, so preserve that contract across the bridge.
+    try {
+      return Boolean(_fs.exists.applySyncPromise(void 0, [pathStr]));
+    } catch {
+      return false;
+    }
   },
   statSync(path, _options) {
     const rawPath = normalizePathLike(path);
@@ -3169,13 +3166,11 @@ var fs = {
       options = void 0;
     }
     if (callback) {
-      normalizePathLike(path);
-      validateEncodingOption(options);
-      try {
-        callback(null, fs.readFileSync(path, options));
-      } catch (e) {
-        callback(e);
-      }
+      validateCallback(callback);
+      fsReadFileAsync(path, options).then(
+        (data) => callback(null, data),
+        (error) => callback(error)
+      );
     } else {
       return Promise.resolve(fs.readFileSync(path, options));
     }
@@ -3480,12 +3475,11 @@ var fs = {
       const cb = callback;
       if (fd === 0 && (position === null || position === void 0) && typeof _kernelStdinRead !== "undefined") {
         const target = new Uint8Array(buffer.buffer, buffer.byteOffset + offset, length);
-        const attemptKernelStdinRead = () => {
-          _kernelStdinRead.apply(void 0, [length, 100], {
-            result: { promise: true }
-          }).then((next) => {
+        _kernelStdinRead.apply(void 0, [length, null], {
+          result: { promise: true }
+        }).then((next) => {
             if (next == null) {
-              setTimeout(attemptKernelStdinRead, 1);
+              queueMicrotask(() => cb(createFsError("EAGAIN", "EAGAIN: stdin readiness wait returned without data", "read")));
               return;
             }
             if (next?.done) {
@@ -3494,7 +3488,7 @@ var fs = {
             }
             const dataBase64 = String(next?.dataBase64 ?? "");
             if (!dataBase64) {
-              setTimeout(attemptKernelStdinRead, 1);
+              queueMicrotask(() => cb(createFsError("EAGAIN", "EAGAIN: stdin readiness wait returned an empty payload", "read")));
               return;
             }
             const bytes = import_buffer.Buffer.from(dataBase64, "base64");
@@ -3504,8 +3498,6 @@ var fs = {
           }, (error) => {
             queueMicrotask(() => cb(error));
           });
-        };
-        attemptKernelStdinRead();
         return;
       }
       const attemptRead = () => {
@@ -3514,8 +3506,11 @@ var fs = {
           queueMicrotask(() => cb(null, bytesRead, buffer));
         } catch (e) {
           const msg = e?.message ?? String(e);
-          if (msg.includes("EAGAIN")) {
-            setTimeout(attemptRead, 1);
+          if (msg.includes("EAGAIN") && hasBridgeAsyncFn("_kernelPoll")) {
+            _kernelPoll.apply(void 0, [[{ fd, events: KERNEL_POLLIN }], null]).then(
+              () => attemptRead(),
+              (error) => queueMicrotask(() => cb(error))
+            );
             return;
           }
           queueMicrotask(() => cb(e));

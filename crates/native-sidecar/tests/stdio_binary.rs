@@ -2,10 +2,12 @@ mod support;
 
 use agentos_native_sidecar::wire::{self, *};
 use base64::Engine;
+use command_fds::{CommandFdExt, FdMapping};
 use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
+use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -42,27 +44,27 @@ fn declared_frame_payload_len(prefix: &[u8; 4], codec: &WireFrameCodec) -> usize
     declared
 }
 
-fn read_frame(stdout: &mut ChildStdout, codec: &WireFrameCodec) -> ProtocolFrame {
+fn read_frame(reader: &mut impl Read, codec: &WireFrameCodec) -> ProtocolFrame {
     let mut prefix = [0u8; 4];
-    stdout.read_exact(&mut prefix).expect("read length prefix");
+    reader.read_exact(&mut prefix).expect("read length prefix");
     let declared = declared_frame_payload_len(&prefix, codec);
     let mut bytes = Vec::with_capacity(4 + declared);
     bytes.extend_from_slice(&prefix);
     bytes.resize(4 + declared, 0);
-    stdout
+    reader
         .read_exact(&mut bytes[4..])
         .expect("read framed payload");
     codec.decode(&bytes).expect("decode frame")
 }
 
 fn recv_response(
-    stdout: &mut ChildStdout,
+    control: &mut UnixStream,
     codec: &WireFrameCodec,
     request_id: RequestId,
     events: &mut Vec<EventPayload>,
 ) -> ResponseFrame {
     loop {
-        match read_frame(stdout, codec) {
+        match read_frame(control, codec) {
             ProtocolFrame::ResponseFrame(response) if response.request_id == request_id => {
                 return response;
             }
@@ -73,29 +75,43 @@ fn recv_response(
 }
 
 fn send_sidecar_response(
-    stdin: &mut ChildStdin,
+    control: &mut UnixStream,
     codec: &WireFrameCodec,
     response: SidecarResponseFrame,
 ) {
     let encoded = codec
         .encode(&ProtocolFrame::SidecarResponseFrame(response))
         .expect("encode sidecar response");
-    stdin
+    control
         .write_all(&encoded)
         .expect("write sidecar response frame");
-    stdin.flush().expect("flush sidecar response frame");
+    control.flush().expect("flush sidecar response frame");
+}
+
+fn send_shutdown(control: &mut UnixStream, codec: &WireFrameCodec, reason: &str) {
+    let encoded = codec
+        .encode(&ProtocolFrame::ControlFrame(ControlFrame {
+            schema: wire::protocol_schema(),
+            payload: ControlPayload::ShutdownControl(ShutdownControl {
+                reason: reason.to_owned(),
+            }),
+        }))
+        .expect("encode shutdown control frame");
+    control
+        .write_all(&encoded)
+        .expect("write shutdown control frame");
+    control.flush().expect("flush shutdown control frame");
 }
 
 fn recv_response_with_sidecar_handler(
-    stdin: &mut ChildStdin,
-    stdout: &mut ChildStdout,
+    control: &mut UnixStream,
     codec: &WireFrameCodec,
     request_id: RequestId,
     events: &mut Vec<EventPayload>,
     mut handle: impl FnMut(&SidecarRequestFrame) -> SidecarResponsePayload,
 ) -> ResponseFrame {
     loop {
-        match read_frame(stdout, codec) {
+        match read_frame(control, codec) {
             ProtocolFrame::ResponseFrame(response) if response.request_id == request_id => {
                 return response;
             }
@@ -103,7 +119,7 @@ fn recv_response_with_sidecar_handler(
             ProtocolFrame::SidecarRequestFrame(request) => {
                 let payload = handle(&request);
                 send_sidecar_response(
-                    stdin,
+                    control,
                     codec,
                     SidecarResponseFrame {
                         schema: wire::protocol_schema(),
@@ -251,16 +267,36 @@ fn collect_vm_lifecycle_states(
     states
 }
 
-fn spawn_sidecar_binary() -> (Child, ChildStdin, ChildStdout) {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_agentos-native-sidecar"))
+fn spawn_sidecar_binary() -> (Child, ChildStdin, ChildStdout, UnixStream) {
+    let (control, child_control) = UnixStream::pair().expect("create control socketpair");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_agentos-native-sidecar"));
+    command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn native sidecar binary");
+        .fd_mappings(vec![FdMapping {
+            parent_fd: child_control.into(),
+            child_fd: 3,
+        }])
+        .expect("map control socket to fd 3");
+    let mut child = command.spawn().expect("spawn native sidecar binary");
     let stdin = child.stdin.take().expect("capture sidecar stdin");
     let stdout = child.stdout.take().expect("capture sidecar stdout");
-    (child, stdin, stdout)
+    (child, stdin, stdout, control)
+}
+
+fn wait_for_child(child: &mut Child) -> std::process::ExitStatus {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().expect("poll sidecar child") {
+            return status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for sidecar child"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn write_script(root: &Path) {
@@ -301,11 +337,31 @@ fn stdio_binary_test_helpers_bound_frame_and_stream_buffers() {
 }
 
 #[test]
+fn closing_either_required_ingress_stream_is_terminal() {
+    let (mut ordinary_child, ordinary_stdin, _ordinary_stdout, _ordinary_control) =
+        spawn_sidecar_binary();
+    drop(ordinary_stdin);
+    assert!(
+        wait_for_child(&mut ordinary_child).success(),
+        "ordinary EOF should gracefully terminate the sidecar"
+    );
+
+    let (mut control_child, control_stdin, _control_stdout, control) = spawn_sidecar_binary();
+    drop(control);
+    let status = wait_for_child(&mut control_child);
+    drop(control_stdin);
+    assert!(
+        !status.success(),
+        "unexpected response/control EOF should fail the sidecar"
+    );
+}
+
+#[test]
 fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
     let temp = temp_dir("stdio-binary");
     write_script(&temp);
 
-    let (mut child, mut stdin, mut stdout) = spawn_sidecar_binary();
+    let (mut child, mut stdin, mut stdout, mut control) = spawn_sidecar_binary();
     let codec = WireFrameCodec::default();
     let mut buffered_events = Vec::new();
 
@@ -323,7 +379,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             }),
         ),
     );
-    let authenticated = recv_response(&mut stdout, &codec, 1, &mut buffered_events);
+    let authenticated = recv_response(&mut control, &codec, 1, &mut buffered_events);
     let connection_id = match authenticated.payload {
         ResponsePayload::AuthenticatedResponse(response) => response.connection_id,
         other => panic!("unexpected authenticate response: {other:?}"),
@@ -343,7 +399,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             }),
         ),
     );
-    let session_opened = recv_response(&mut stdout, &codec, 2, &mut buffered_events);
+    let session_opened = recv_response(&mut control, &codec, 2, &mut buffered_events);
     let session_id = match session_opened.payload {
         ResponsePayload::SessionOpenedResponse(response) => response.session_id,
         other => panic!("unexpected open-session response: {other:?}"),
@@ -363,7 +419,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             )),
         ),
     );
-    let created = recv_response(&mut stdout, &codec, 3, &mut buffered_events);
+    let created = recv_response(&mut control, &codec, 3, &mut buffered_events);
     let vm_id = match created.payload {
         ResponsePayload::VmCreatedResponse(response) => response.vm_id,
         other => panic!("unexpected create-vm response: {other:?}"),
@@ -399,7 +455,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             }),
         ),
     );
-    let mkdir = recv_response(&mut stdout, &codec, 4, &mut buffered_events);
+    let mkdir = recv_response(&mut control, &codec, 4, &mut buffered_events);
     match mkdir.payload {
         ResponsePayload::GuestFilesystemResultResponse(response) => {
             assert_eq!(response.path, "/workspace");
@@ -433,7 +489,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             }),
         ),
     );
-    let write = recv_response(&mut stdout, &codec, 5, &mut buffered_events);
+    let write = recv_response(&mut control, &codec, 5, &mut buffered_events);
     match write.payload {
         ResponsePayload::GuestFilesystemResultResponse(response) => {
             assert_eq!(response.path, "/workspace/note.txt");
@@ -467,7 +523,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             }),
         ),
     );
-    let read = recv_response(&mut stdout, &codec, 6, &mut buffered_events);
+    let read = recv_response(&mut control, &codec, 6, &mut buffered_events);
     match read.payload {
         ResponsePayload::GuestFilesystemResultResponse(response) => {
             assert_eq!(response.content.as_deref(), Some("stdio-sidecar-fs"));
@@ -500,7 +556,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             }),
         ),
     );
-    let symlink = recv_response(&mut stdout, &codec, 7, &mut buffered_events);
+    let symlink = recv_response(&mut control, &codec, 7, &mut buffered_events);
     match symlink.payload {
         ResponsePayload::GuestFilesystemResultResponse(response) => {
             assert_eq!(response.operation, GuestFilesystemOperation::Symlink);
@@ -534,7 +590,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             }),
         ),
     );
-    let realpath = recv_response(&mut stdout, &codec, 8, &mut buffered_events);
+    let realpath = recv_response(&mut control, &codec, 8, &mut buffered_events);
     match realpath.payload {
         ResponsePayload::GuestFilesystemResultResponse(response) => {
             assert_eq!(response.operation, GuestFilesystemOperation::Realpath);
@@ -568,7 +624,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             }),
         ),
     );
-    let link = recv_response(&mut stdout, &codec, 9, &mut buffered_events);
+    let link = recv_response(&mut control, &codec, 9, &mut buffered_events);
     match link.payload {
         ResponsePayload::GuestFilesystemResultResponse(response) => {
             assert_eq!(response.operation, GuestFilesystemOperation::Link);
@@ -602,7 +658,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             }),
         ),
     );
-    let truncate = recv_response(&mut stdout, &codec, 10, &mut buffered_events);
+    let truncate = recv_response(&mut control, &codec, 10, &mut buffered_events);
     match truncate.payload {
         ResponsePayload::GuestFilesystemResultResponse(response) => {
             assert_eq!(response.operation, GuestFilesystemOperation::Truncate);
@@ -636,7 +692,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             }),
         ),
     );
-    let utimes = recv_response(&mut stdout, &codec, 11, &mut buffered_events);
+    let utimes = recv_response(&mut control, &codec, 11, &mut buffered_events);
     match utimes.payload {
         ResponsePayload::GuestFilesystemResultResponse(response) => {
             assert_eq!(response.operation, GuestFilesystemOperation::Utimes);
@@ -670,7 +726,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             }),
         ),
     );
-    let stat = recv_response(&mut stdout, &codec, 12, &mut buffered_events);
+    let stat = recv_response(&mut control, &codec, 12, &mut buffered_events);
     match stat.payload {
         ResponsePayload::GuestFilesystemResultResponse(response) => {
             let stat = response.stat.expect("stat payload");
@@ -691,7 +747,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             RequestPayload::SnapshotRootFilesystemRequest,
         ),
     );
-    let snapshot = recv_response(&mut stdout, &codec, 13, &mut buffered_events);
+    let snapshot = recv_response(&mut control, &codec, 13, &mut buffered_events);
     match snapshot.payload {
         ResponsePayload::RootFilesystemSnapshotResponse(response) => {
             assert!(response
@@ -720,7 +776,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             }),
         ),
     );
-    let started = recv_response(&mut stdout, &codec, 14, &mut buffered_events);
+    let started = recv_response(&mut control, &codec, 14, &mut buffered_events);
     match started.payload {
         ResponsePayload::ProcessStartedResponse(response) => {
             assert_eq!(response.process_id, "proc-1");
@@ -748,13 +804,13 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             }),
         ),
     );
-    let disposed = recv_response(&mut stdout, &codec, 15, &mut buffered_events);
+    let disposed = recv_response(&mut control, &codec, 15, &mut buffered_events);
     match disposed.payload {
         ResponsePayload::VmDisposedResponse(response) => assert_eq!(response.vm_id, vm_id),
         other => panic!("unexpected dispose response: {other:?}"),
     }
 
-    drop(stdin);
+    send_shutdown(&mut control, &codec, "stdio binary test complete");
     let status = child.wait().expect("wait for sidecar child");
     assert!(status.success(), "sidecar binary exited with {status}");
 }
@@ -764,7 +820,7 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
     let host_root = temp_dir("stdio-binary-host-bridge");
     fs::write(host_root.join("existing.txt"), "host-bridge-ok").expect("seed host file");
 
-    let (mut child, mut stdin, mut stdout) = spawn_sidecar_binary();
+    let (mut child, mut stdin, mut stdout, mut control) = spawn_sidecar_binary();
     let codec = WireFrameCodec::default();
     let mut buffered_events = Vec::new();
 
@@ -782,7 +838,7 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
             }),
         ),
     );
-    let authenticated = recv_response(&mut stdout, &codec, 1, &mut buffered_events);
+    let authenticated = recv_response(&mut control, &codec, 1, &mut buffered_events);
     let connection_id = match authenticated.payload {
         ResponsePayload::AuthenticatedResponse(response) => response.connection_id,
         other => panic!("unexpected authenticate response: {other:?}"),
@@ -802,7 +858,7 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
             }),
         ),
     );
-    let session_opened = recv_response(&mut stdout, &codec, 2, &mut buffered_events);
+    let session_opened = recv_response(&mut control, &codec, 2, &mut buffered_events);
     let session_id = match session_opened.payload {
         ResponsePayload::SessionOpenedResponse(response) => response.session_id,
         other => panic!("unexpected open-session response: {other:?}"),
@@ -822,7 +878,7 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
             )),
         ),
     );
-    let created = recv_response(&mut stdout, &codec, 3, &mut buffered_events);
+    let created = recv_response(&mut control, &codec, 3, &mut buffered_events);
     let vm_id = match created.payload {
         ResponsePayload::VmCreatedResponse(response) => response.vm_id,
         other => panic!("unexpected create-vm response: {other:?}"),
@@ -862,7 +918,7 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
             }),
         ),
     );
-    let configured = recv_response(&mut stdout, &codec, 4, &mut buffered_events);
+    let configured = recv_response(&mut control, &codec, 4, &mut buffered_events);
     match configured.payload {
         ResponsePayload::VmConfiguredResponse(response) => {
             // 1 = just the client mount. With no packages configured there are no
@@ -900,8 +956,7 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
         ),
     );
     let read = recv_response_with_sidecar_handler(
-        &mut stdin,
-        &mut stdout,
+        &mut control,
         &codec,
         5,
         &mut buffered_events,
@@ -974,8 +1029,7 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
         ),
     );
     let write = recv_response_with_sidecar_handler(
-        &mut stdin,
-        &mut stdout,
+        &mut control,
         &codec,
         6,
         &mut buffered_events,
@@ -1070,9 +1124,9 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
             }),
         ),
     );
+    let mut ordinary_frame_blocked = false;
     let disposed = recv_response_with_sidecar_handler(
-        &mut stdin,
-        &mut stdout,
+        &mut control,
         &codec,
         7,
         &mut buffered_events,
@@ -1081,6 +1135,20 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
                 panic!("expected js_bridge_call payload during dispose");
             };
             assert_eq!(call.mount_id, "mount-1");
+            if !ordinary_frame_blocked {
+                // Leave a legal-size ordinary frame incomplete ahead of any
+                // later fd0 bytes. The callback reply and its DisposeVm
+                // response must still make progress on the independent fd3
+                // response/control stream.
+                stdin
+                    .write_all(&64_u32.to_be_bytes())
+                    .expect("write incomplete ordinary frame prefix");
+                stdin
+                    .write_all(b"partial")
+                    .expect("write incomplete ordinary frame body");
+                stdin.flush().expect("flush incomplete ordinary frame");
+                ordinary_frame_blocked = true;
+            }
             js_bridge_root_response(call)
                 .unwrap_or_else(|| panic!("unexpected js bridge dispose callback: {call:?}"))
         },
@@ -1090,7 +1158,7 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
         other => panic!("unexpected dispose response: {other:?}"),
     }
 
-    drop(stdin);
+    send_shutdown(&mut control, &codec, "stdio bridge test complete");
     let status = child.wait().expect("wait for sidecar child");
     assert!(status.success(), "sidecar binary exited with {status}");
 }

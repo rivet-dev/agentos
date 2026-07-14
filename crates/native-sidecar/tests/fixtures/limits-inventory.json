@@ -1,39 +1,107 @@
 [
 	{
-		"name": "MAX_SYMLINK_DEPTH",
-		"path": "packages/build-tools/bridge-src/builtins/fs.ts",
-		"class": "invariant",
-		"rationale": "Linux ELOOP mirror of the kernel invariant."
-	},
-	{
-		"name": "MAX_REALPATH_SYMLINKS",
-		"path": "crates/vfs/src/posix/mount_table.rs",
-		"class": "invariant",
-		"rationale": "ELOOP bound for cross-mount symlink resolution in realpath."
-	},
-	{
-		"name": "MAX_TAR_INDEX_ENTRIES",
-		"path": "crates/vfs/src/posix/tar_fs.rs",
-		"class": "invariant",
-		"rationale": "Caps a malformed tar's member count so the in-memory index cannot exhaust host memory."
-	},
-	{
-		"name": "MAX_TAR_CACHE_ARCHIVES",
-		"path": "crates/vfs/src/posix/tar_fs.rs",
-		"class": "invariant",
-		"rationale": "Bounded, refcounted digest-keyed archive mmap cache; evicts with a warning."
-	},
-	{
-		"name": "MAX_TAR_SYMLINKS",
-		"path": "crates/vfs/src/posix/tar_fs.rs",
-		"class": "invariant",
-		"rationale": "ELOOP bound for symlink resolution within a single tar archive."
-	},
-	{
-		"name": "MAX_AGENTOS_PACKAGE_MOUNTS",
-		"path": "crates/sidecar/src/package_projection.rs",
+		"name": "MAX_ADAPTER_RESTARTS",
+		"path": "crates/agentos-sidecar/src/acp_extension.rs",
 		"class": "policy-deferred",
-		"rationale": "Per-VM cap on granular /opt/agentos leaf mounts; not yet wired to VmLimits."
+		"rationale": "Bounded ACP adapter restart budget; expose through typed ACP policy if operators need to tune it."
+	},
+	{
+		"name": "MAX_SESSION_STDOUT_BUFFER_BYTES",
+		"path": "crates/agentos-sidecar/src/acp_extension.rs",
+		"class": "policy",
+		"rationale": "ACP session stdout accumulation mirrors the configured per-line adapter stdout cap.",
+		"wired": "VmLimits.acp.max_read_line_bytes"
+	},
+	{
+		"name": "ACP_TERMINAL_DEFAULT_OUTPUT_BYTE_LIMIT",
+		"path": "crates/client/src/agent_os.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
+	},
+	{
+		"name": "CLOSED_SESSION_ID_RETENTION_LIMIT",
+		"path": "crates/client/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
+	},
+	{
+		"name": "CLOSED_SHELL_EXIT_CODE_RETENTION_LIMIT",
+		"path": "crates/client/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
+	},
+	{
+		"name": "CRON_JOB_LIMIT",
+		"path": "crates/client/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
+	},
+	{
+		"name": "VM_FETCH_BUFFER_LIMIT_BYTES",
+		"path": "crates/client/src/net.rs",
+		"class": "policy",
+		"rationale": "vm.fetch() HTTP response body cap; must stay <= negotiated frame budget.",
+		"wired": "VmLimits.http.max_fetch_response_bytes"
+	},
+	{
+		"name": "EXEC_OUTPUT_CAPTURE_LIMIT_BYTES",
+		"path": "crates/client/src/process.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
+	},
+	{
+		"name": "OBSERVED_PROCESS_TIME_LIMIT",
+		"path": "crates/client/src/process.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
+	},
+	{
+		"name": "PROCESS_REGISTRY_LIMIT",
+		"path": "crates/client/src/process.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
+	},
+	{
+		"name": "PROCESS_STREAM_CAPACITY",
+		"path": "crates/client/src/process.rs",
+		"class": "invariant",
+		"rationale": "Bounded SDK fan-out channel capacity used for flow control; not a sidecar VM resource policy."
+	},
+	{
+		"name": "PROMPT_DELIVERED_CHUNK_LIMIT",
+		"path": "crates/client/src/session.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
+	},
+	{
+		"name": "PROMPT_TEXT_CAPTURE_LIMIT_BYTES",
+		"path": "crates/client/src/session.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
+	},
+	{
+		"name": "SESSION_PENDING_REQUEST_LIMIT",
+		"path": "crates/client/src/session.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
+	},
+	{
+		"name": "ACP_TERMINAL_LIMIT",
+		"path": "crates/client/src/shell.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
+	},
+	{
+		"name": "SHELL_DATA_CHANNEL_CAPACITY",
+		"path": "crates/client/src/shell.rs",
+		"class": "invariant",
+		"rationale": "Bounded SDK fan-out channel capacity used for flow control; not a sidecar VM resource policy."
+	},
+	{
+		"name": "SHARED_SIDECAR_POOL_LIMIT",
+		"path": "crates/client/src/sidecar.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounded SDK-side retention, registry, or capture limit; expose through client configuration if operators need to tune it."
 	},
 	{
 		"name": "MAX_BENCHMARK_ITERATIONS",
@@ -48,23 +116,32 @@
 		"rationale": "Dev benchmarking harness only."
 	},
 	{
+		"name": "DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS",
+		"path": "crates/execution/src/javascript.rs",
+		"class": "policy",
+		"rationale": "Execution-layer Node import-cache materialization fallback; normal VM executions receive the wired sidecar value.",
+		"wired": "VmLimits.js_runtime.import_cache_materialize_timeout_ms"
+	},
+	{
+		"name": "DEFAULT_V8_CPU_TIME_LIMIT_MS",
+		"path": "crates/execution/src/javascript.rs",
+		"class": "policy",
+		"rationale": "Execution-layer active JavaScript CPU-time fallback; normal VM executions receive the wired sidecar value.",
+		"wired": "VmLimits.js_runtime.cpu_time_limit_ms"
+	},
+	{
+		"name": "DEFAULT_V8_WALL_CLOCK_LIMIT_MS",
+		"path": "crates/execution/src/javascript.rs",
+		"class": "policy",
+		"rationale": "Execution-layer JavaScript wall-clock fallback; zero keeps it disabled unless the wired VM limit overrides it.",
+		"wired": "VmLimits.js_runtime.wall_clock_limit_ms"
+	},
+	{
 		"name": "JAVASCRIPT_CAPTURED_OUTPUT_LIMIT_BYTES",
 		"path": "crates/execution/src/javascript.rs",
 		"class": "policy",
 		"rationale": "Guest JS stdout/stderr capture cap.",
 		"wired": "VmLimits.js_runtime.captured_output_limit_bytes"
-	},
-	{
-		"name": "MAX_TIMER_DELAY_MS",
-		"path": "crates/execution/src/javascript.rs",
-		"class": "invariant",
-		"rationale": "Clamps a guest timer delay to the JS setTimeout ceiling (2^31-1 ms); a leak guard so a timer thread cannot outlive its session by pinning the session Arc, mirroring the standard setTimeout max rather than operator policy."
-	},
-	{
-		"name": "NET_BRIDGE_MAX_RAW_WRITE_BYTES",
-		"path": "packages/build-tools/bridge-src/builtins/net.ts",
-		"class": "invariant",
-		"rationale": "Internal socket bridge flush granularity that preserves backpressure under the wired socket buffered-byte limit; not an operator policy cap."
 	},
 	{
 		"name": "JAVASCRIPT_EVENT_CHANNEL_CAPACITY",
@@ -87,31 +164,29 @@
 		"wired": "VmLimits.js_runtime.stdin_buffer_limit_bytes"
 	},
 	{
+		"name": "MAX_TIMER_ACTIONS_PER_TURN",
+		"path": "crates/execution/src/javascript.rs",
+		"class": "invariant",
+		"rationale": "Bounded timer work quantum per JavaScript pump turn to preserve fairness."
+	},
+	{
+		"name": "MAX_TIMER_DELAY_MS",
+		"path": "crates/execution/src/javascript.rs",
+		"class": "invariant",
+		"rationale": "Clamps a guest timer delay to the JS setTimeout ceiling (2^31-1 ms); a leak guard so a timer thread cannot outlive its session by pinning the session Arc, mirroring the standard setTimeout max rather than operator policy."
+	},
+	{
+		"name": "MAX_TIMERS_PER_EXECUTION",
+		"path": "crates/execution/src/javascript.rs",
+		"class": "policy",
+		"rationale": "Fallback for the configured per-execution JavaScript timer limit.",
+		"wired": "VmLimits.js_runtime.max_timers"
+	},
+	{
 		"name": "NODE_SYNC_RPC_RESPONSE_QUEUE_CAPACITY",
 		"path": "crates/execution/src/javascript.rs",
 		"class": "invariant",
 		"rationale": "Channel shape required by the sync-RPC protocol; flow control, not policy."
-	},
-	{
-		"name": "DEFAULT_V8_CPU_TIME_LIMIT_MS",
-		"path": "crates/execution/src/javascript.rs",
-		"class": "policy",
-		"rationale": "Execution-layer active JavaScript CPU-time fallback; normal VM executions receive the wired sidecar value.",
-		"wired": "VmLimits.js_runtime.cpu_time_limit_ms"
-	},
-	{
-		"name": "DEFAULT_V8_WALL_CLOCK_LIMIT_MS",
-		"path": "crates/execution/src/javascript.rs",
-		"class": "policy",
-		"rationale": "Execution-layer JavaScript wall-clock fallback; zero keeps it disabled unless the wired VM limit overrides it.",
-		"wired": "VmLimits.js_runtime.wall_clock_limit_ms"
-	},
-	{
-		"name": "DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS",
-		"path": "crates/execution/src/javascript.rs",
-		"class": "policy",
-		"rationale": "Execution-layer Node import-cache materialization fallback; normal VM executions receive the wired sidecar value.",
-		"wired": "VmLimits.js_runtime.import_cache_materialize_timeout_ms"
 	},
 	{
 		"name": "DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT",
@@ -148,18 +223,6 @@
 		"wired": "VmLimits.python.vfs_rpc_timeout_ms"
 	},
 	{
-		"name": "PYTHON_SOCKET_MAX_RECV",
-		"path": "crates/sidecar/src/execution.rs",
-		"class": "policy-deferred",
-		"rationale": "Guest Python socket recv request clamp for one synchronous host read; bounded by default, fold into Python/socket VmLimits if operators need to tune it."
-	},
-	{
-		"name": "V8_SESSION_FRAME_CHANNEL_CAPACITY",
-		"path": "crates/execution/src/v8_host.rs",
-		"class": "invariant",
-		"rationale": "In-process channel backpressure."
-	},
-	{
 		"name": "MAX_FRAME_SIZE",
 		"path": "crates/execution/src/v8_ipc.rs",
 		"class": "policy",
@@ -167,18 +230,18 @@
 		"wired": "VmLimits.js_runtime.v8_ipc_max_frame_bytes"
 	},
 	{
-		"name": "DEFAULT_WASM_RUNNER_HEAP_LIMIT_MB",
-		"path": "crates/execution/src/wasm.rs",
-		"class": "policy",
-		"rationale": "Wasm runner V8 heap default (2 GiB, intentionally above the 128 MiB per-guest budget so warmup stops OOMing); normal VM executions use VmLimits.wasm.runner_heap_limit_mb.",
-		"wired": "VmLimits.wasm.runner_heap_limit_mb"
-	},
-	{
 		"name": "DEFAULT_WASM_PREWARM_TIMEOUT_MS",
 		"path": "crates/execution/src/wasm.rs",
 		"class": "policy",
 		"rationale": "WASM prewarm compile-cache timeout.",
 		"wired": "VmLimits.wasm.prewarm_timeout_ms"
+	},
+	{
+		"name": "DEFAULT_WASM_RUNNER_HEAP_LIMIT_MB",
+		"path": "crates/execution/src/wasm.rs",
+		"class": "policy",
+		"rationale": "Wasm runner V8 heap default (2 GiB, intentionally above the 128 MiB per-guest budget so warmup stops OOMing); normal VM executions use VmLimits.wasm.runner_heap_limit_mb.",
+		"wired": "VmLimits.wasm.runner_heap_limit_mb"
 	},
 	{
 		"name": "MAX_SYNC_WASM_PREWARM_MODULE_BYTES",
@@ -219,6 +282,12 @@
 		"wired": "VmLimits.wasm.captured_output_limit_bytes"
 	},
 	{
+		"name": "WASM_MODULE_BYTES_CACHE_CAPACITY",
+		"path": "crates/execution/src/wasm.rs",
+		"class": "invariant",
+		"rationale": "Host-side LRU entry cap for cached wasm module bytes; process-wide cache sizing, not per-VM policy."
+	},
+	{
 		"name": "WASM_SYNC_READ_LIMIT_BYTES",
 		"path": "crates/execution/src/wasm.rs",
 		"class": "policy",
@@ -238,16 +307,28 @@
 		"rationale": "FD table layout fixed at 0-255; max_open_fds is the policy knob above it."
 	},
 	{
+		"name": "DEFAULT_MAX_RECORD_LOCKS",
+		"path": "crates/kernel/src/fd_table.rs",
+		"class": "invariant",
+		"rationale": "Standalone/test fallback only; production derives the record-lock bound from the policy-wired VmLimits.resources.max_open_fds."
+	},
+	{
 		"name": "SHEBANG_LINE_MAX_BYTES",
 		"path": "crates/kernel/src/kernel.rs",
 		"class": "invariant",
 		"rationale": "Shebang parse guard; matches Linux BINPRM_BUF_SIZE-style bound, parser-safety."
 	},
 	{
-		"name": "MAX_SNAPSHOT_DEPTH",
-		"path": "crates/vfs/src/posix/overlay_fs.rs",
+		"name": "MAX_EXEC_INTERPRETER_DEPTH",
+		"path": "crates/kernel/src/kernel.rs",
 		"class": "invariant",
-		"rationale": "Recursion guard against cyclic/abusive layer chains; parser-safety."
+		"rationale": "Linux BINPRM_MAX_RECURSION compatibility limit for nested executable interpreters."
+	},
+	{
+		"name": "MAX_UNIX_SOCKET_SYMLINKS",
+		"path": "crates/kernel/src/kernel.rs",
+		"class": "invariant",
+		"rationale": "Linux ELOOP compatibility limit for Unix-socket path resolution."
 	},
 	{
 		"name": "MAX_PIPE_BUFFER_BYTES",
@@ -299,20 +380,6 @@
 		"class": "policy",
 		"rationale": "Kernel resource policy surface.",
 		"wired": "VmLimits.resources.max_fd_write_bytes"
-	},
-	{
-		"name": "DEFAULT_MAX_FILESYSTEM_BYTES",
-		"path": "crates/vfs/src/posix/usage.rs",
-		"class": "policy",
-		"rationale": "Kernel resource policy surface.",
-		"wired": "VmLimits.resources.max_filesystem_bytes"
-	},
-	{
-		"name": "DEFAULT_MAX_INODE_COUNT",
-		"path": "crates/vfs/src/posix/usage.rs",
-		"class": "policy",
-		"rationale": "Kernel resource policy surface.",
-		"wired": "VmLimits.resources.max_inode_count"
 	},
 	{
 		"name": "DEFAULT_MAX_OPEN_FDS",
@@ -371,11 +438,18 @@
 		"wired": "VmLimits.resources.max_readdir_entries"
 	},
 	{
-		"name": "DEFAULT_MAX_WASM_MEMORY_BYTES",
+		"name": "DEFAULT_MAX_RECURSIVE_FS_DEPTH",
 		"path": "crates/kernel/src/resource_accounting.rs",
 		"class": "policy",
-		"rationale": "Default WASM memory envelope; guests stay bounded unless trusted VM config raises the cap.",
-		"wired": "VmLimits.resources.max_wasm_memory_bytes"
+		"rationale": "Default for the configured recursive filesystem operation bound.",
+		"wired": "ResourceLimits.max_recursive_fs_depth"
+	},
+	{
+		"name": "DEFAULT_MAX_RECURSIVE_FS_ENTRIES",
+		"path": "crates/kernel/src/resource_accounting.rs",
+		"class": "policy",
+		"rationale": "Default for the configured recursive filesystem operation bound.",
+		"wired": "ResourceLimits.max_recursive_fs_entries"
 	},
 	{
 		"name": "DEFAULT_MAX_SOCKET_BUFFERED_BYTES",
@@ -399,362 +473,1145 @@
 		"wired": "VmLimits.resources.max_sockets"
 	},
 	{
-		"name": "MAX_PATH_LENGTH",
-		"path": "crates/vfs/src/posix/vfs.rs",
-		"class": "invariant",
-		"rationale": "Linux PATH_MAX; changing it diverges from Linux."
-	},
-	{
-		"name": "MAX_SYMLINK_DEPTH",
-		"path": "crates/vfs/src/posix/vfs.rs",
-		"class": "invariant",
-		"rationale": "Linux ELOOP resolution limit."
-	},
-	{
-		"name": "MAX_PATH",
-		"path": "crates/vfs/src/engine/types.rs",
-		"class": "invariant",
-		"rationale": "Linux PATH_MAX mirror for engine-backed VFS paths."
-	},
-	{
-		"name": "MAX_SYMLINK_DEPTH",
-		"path": "crates/vfs/src/engine/types.rs",
-		"class": "invariant",
-		"rationale": "Linux ELOOP resolution limit for engine-backed VFS paths."
-	},
-	{
-		"name": "DEFAULT_METADATA_CACHE_ENTRIES",
-		"path": "crates/sidecar/src/plugins/chunked_local.rs",
-		"class": "invariant",
-		"rationale": "In-memory chunk metadata cache size; performance detail, not guest policy."
-	},
-	{
-		"name": "DEFAULT_METADATA_CACHE_ENTRIES",
-		"path": "crates/sidecar/src/plugins/chunked_s3.rs",
-		"class": "invariant",
-		"rationale": "In-memory chunk metadata cache size; performance detail, not guest policy."
-	},
-	{
-		"name": "CONTROL_FRAME_QUEUE_CAPACITY",
-		"path": "crates/agentos-sidecar-client/src/transport.rs",
-		"class": "invariant",
-		"rationale": "Internal backpressure channel capacity."
-	},
-	{
-		"name": "EVENT_CHANNEL_CAPACITY",
-		"path": "crates/agentos-sidecar-client/src/transport.rs",
-		"class": "invariant",
-		"rationale": "Internal backpressure channel capacity."
-	},
-	{
-		"name": "PENDING_REQUEST_LIMIT",
-		"path": "crates/agentos-sidecar-client/src/transport.rs",
-		"class": "invariant",
-		"rationale": "Internal pending-request ring; fails loudly when exceeded."
-	},
-	{
-		"name": "REQUEST_FRAME_QUEUE_CAPACITY",
-		"path": "crates/agentos-sidecar-client/src/transport.rs",
-		"class": "invariant",
-		"rationale": "Internal backpressure channel capacity."
-	},
-	{
-		"name": "DEFAULT_KERNEL_STDIN_READ_MAX_BYTES",
-		"path": "crates/sidecar/src/execution.rs",
-		"class": "invariant",
-		"rationale": "Internal stdin pump chunking; not a guest-visible bound."
-	},
-	{
-		"name": "DEFAULT_KERNEL_STDIN_READ_TIMEOUT_MS",
-		"path": "crates/sidecar/src/execution.rs",
-		"class": "invariant",
-		"rationale": "Internal stdin pump poll interval; not a guest-visible bound."
-	},
-	{
-		"name": "EXITED_PROCESS_SNAPSHOT_RETENTION",
-		"path": "crates/sidecar/src/execution.rs",
-		"class": "invariant",
-		"rationale": "Bounded exited-process snapshot ring for wait/inspect bookkeeping."
-	},
-	{
-		"name": "JAVASCRIPT_NET_POLL_MAX_WAIT",
-		"path": "crates/sidecar/src/execution.rs",
-		"class": "invariant",
-		"rationale": "net.poll sync-RPC wait ceiling; protects the main sync-RPC thread."
-	},
-	{
-		"name": "MAX_JAVASCRIPT_COMMAND_REDIRECT_DEPTH",
-		"path": "crates/sidecar/src/execution.rs",
-		"class": "invariant",
-		"rationale": "Command-resolution recursion guard (symlink/shim chains); safety invariant."
-	},
-	{
-		"name": "MAX_PER_PROCESS_STATE_HANDLES",
-		"path": "crates/sidecar/src/execution.rs",
-		"class": "policy-deferred",
-		"rationale": "Crypto/state handle table cap tunable in principle; low demand, wire later."
-	},
-	{
-		"name": "SQLITE_JS_SAFE_INTEGER_MAX",
-		"path": "crates/sidecar/src/execution.rs",
-		"class": "invariant",
-		"rationale": "JS Number.MAX_SAFE_INTEGER boundary for SQLite integer coercion, not a tunable bound."
-	},
-	{
-		"name": "VM_FETCH_BUFFER_LIMIT_BYTES",
-		"path": "crates/sidecar-core/src/vm_fetch.rs",
+		"name": "DEFAULT_MAX_WASM_MEMORY_BYTES",
+		"path": "crates/kernel/src/resource_accounting.rs",
 		"class": "policy",
-		"rationale": "vm.fetch() HTTP response body cap; must stay <= negotiated frame budget.",
-		"wired": "VmLimits.http.max_fetch_response_bytes"
+		"rationale": "Default WASM memory envelope; guests stay bounded unless trusted VM config raises the cap.",
+		"wired": "VmLimits.resources.max_wasm_memory_bytes"
+	},
+	{
+		"name": "BROWSER_MAX_FRAME_BYTES",
+		"path": "crates/native-sidecar-browser/src/wire_dispatch.rs",
+		"class": "policy-deferred",
+		"rationale": "Browser transport frame cap; fixed host transport limit until browser config exposes it."
+	},
+	{
+		"name": "DEFAULT_READ_MAX_BYTES",
+		"path": "crates/native-sidecar-core/src/guest_net.rs",
+		"class": "policy-deferred",
+		"rationale": "Fallback guest network read cap when the request omits max bytes; wire to request/config if tuning is needed."
+	},
+	{
+		"name": "MAX_POLL_WAIT_MS",
+		"path": "crates/native-sidecar-core/src/guest_net.rs",
+		"class": "invariant",
+		"rationale": "Guest network poll wait clamp; internal scheduling guard."
+	},
+	{
+		"name": "DEFAULT_READ_MAX_BYTES",
+		"path": "crates/native-sidecar-core/src/guest_pty.rs",
+		"class": "policy-deferred",
+		"rationale": "Fallback guest PTY read cap when the request omits max bytes; wire to request/config if tuning is needed."
+	},
+	{
+		"name": "MAX_PTY_READ_WAIT_MS",
+		"path": "crates/native-sidecar-core/src/guest_pty.rs",
+		"class": "invariant",
+		"rationale": "Guest PTY read wait clamp; internal scheduling guard."
+	},
+	{
+		"name": "MAX_VM_LAYERS",
+		"path": "crates/native-sidecar-core/src/layers.rs",
+		"class": "policy-deferred",
+		"rationale": "Layer count cap is operator-meaningful but coupled to layer RPC validation tests; wire later."
 	},
 	{
 		"name": "DEFAULT_ACP_MAX_READ_LINE_BYTES",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "ACP adapter stdout line cap.",
 		"wired": "VmLimits.acp.max_read_line_bytes"
 	},
 	{
 		"name": "DEFAULT_ACP_STDOUT_BUFFER_BYTE_LIMIT",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Pre-session ACP stdout buffer cap.",
 		"wired": "VmLimits.acp.stdout_buffer_byte_limit"
 	},
 	{
+		"name": "DEFAULT_HTTP2_MAX_BUFFERED_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM HTTP/2 resource bound.",
+		"wired": "VmLimits.http2.max_buffered_bytes"
+	},
+	{
+		"name": "DEFAULT_HTTP2_MAX_CONNECTIONS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM HTTP/2 resource bound.",
+		"wired": "VmLimits.http2.max_connections"
+	},
+	{
+		"name": "DEFAULT_HTTP2_MAX_DATA_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM HTTP/2 resource bound.",
+		"wired": "VmLimits.http2.max_data_bytes"
+	},
+	{
+		"name": "DEFAULT_HTTP2_MAX_HEADER_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM HTTP/2 resource bound.",
+		"wired": "VmLimits.http2.max_header_bytes"
+	},
+	{
+		"name": "DEFAULT_HTTP2_MAX_PENDING_COMMAND_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM HTTP/2 resource bound.",
+		"wired": "VmLimits.http2.max_pending_command_bytes"
+	},
+	{
+		"name": "DEFAULT_HTTP2_MAX_PENDING_COMMANDS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM HTTP/2 resource bound.",
+		"wired": "VmLimits.http2.max_pending_commands"
+	},
+	{
+		"name": "DEFAULT_HTTP2_MAX_PENDING_EVENT_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM HTTP/2 resource bound.",
+		"wired": "VmLimits.http2.max_pending_event_bytes"
+	},
+	{
+		"name": "DEFAULT_HTTP2_MAX_PENDING_EVENTS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM HTTP/2 resource bound.",
+		"wired": "VmLimits.http2.max_pending_events"
+	},
+	{
+		"name": "DEFAULT_HTTP2_MAX_STREAMS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM HTTP/2 resource bound.",
+		"wired": "VmLimits.http2.max_streams"
+	},
+	{
+		"name": "DEFAULT_HTTP2_MAX_STREAMS_PER_CONNECTION",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM HTTP/2 resource bound.",
+		"wired": "VmLimits.http2.max_streams_per_connection"
+	},
+	{
 		"name": "DEFAULT_JS_CAPTURED_OUTPUT_LIMIT_BYTES",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Guest JS stdout/stderr capture cap.",
 		"wired": "VmLimits.js_runtime.captured_output_limit_bytes"
 	},
 	{
 		"name": "DEFAULT_JS_EVENT_PAYLOAD_LIMIT_BYTES",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Per-event payload cap for JS event channel.",
 		"wired": "VmLimits.js_runtime.event_payload_limit_bytes"
 	},
 	{
+		"name": "DEFAULT_JS_MAX_TIMERS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM JavaScript timer count.",
+		"wired": "VmLimits.js_runtime.max_timers"
+	},
+	{
 		"name": "DEFAULT_JS_STDIN_BUFFER_LIMIT_BYTES",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Guest JS stdin buffering cap.",
 		"wired": "VmLimits.js_runtime.stdin_buffer_limit_bytes"
 	},
 	{
-		"name": "DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS",
-		"path": "crates/sidecar-core/src/limits.rs",
-		"class": "policy",
-		"rationale": "Node import-cache materialization timeout.",
-		"wired": "VmLimits.js_runtime.import_cache_materialize_timeout_ms"
-	},
-	{
 		"name": "DEFAULT_MAX_FETCH_RESPONSE_BYTES",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Default home for vm.fetch() body cap.",
 		"wired": "VmLimits.http.max_fetch_response_bytes"
 	},
 	{
+		"name": "DEFAULT_PROCESS_MAX_SPAWN_FILE_ACTIONS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM child-process file-action count bound.",
+		"wired": "VmLimits.process.max_spawn_file_actions"
+	},
+	{
+		"name": "DEFAULT_PROCESS_MAX_SPAWN_FILE_ACTION_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM child-process file-action byte bound.",
+		"wired": "VmLimits.process.max_spawn_file_action_bytes"
+	},
+	{
+		"name": "DEFAULT_PROCESS_PENDING_STDIN_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM pending child-stdin byte bound.",
+		"wired": "VmLimits.process.pending_stdin_bytes"
+	},
+	{
+		"name": "DEFAULT_PROCESS_PENDING_EVENT_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM pending process-event byte bound.",
+		"wired": "VmLimits.process.pending_event_bytes"
+	},
+	{
+		"name": "DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Node import-cache materialization timeout.",
+		"wired": "VmLimits.js_runtime.import_cache_materialize_timeout_ms"
+	},
+	{
 		"name": "DEFAULT_PYTHON_EXECUTION_TIMEOUT_MS",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Python execution timeout.",
 		"wired": "VmLimits.python.execution_timeout_ms"
 	},
 	{
 		"name": "DEFAULT_PYTHON_MAX_OLD_SPACE_MB",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Python host JS old-space heap sizing; sidecar default for the wired limit.",
 		"wired": "VmLimits.python.max_old_space_mb"
 	},
 	{
 		"name": "DEFAULT_PYTHON_OUTPUT_BUFFER_MAX_BYTES",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Python output buffer cap.",
 		"wired": "VmLimits.python.output_buffer_max_bytes"
 	},
 	{
 		"name": "DEFAULT_PYTHON_VFS_RPC_TIMEOUT_MS",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Python VFS RPC timeout.",
 		"wired": "VmLimits.python.vfs_rpc_timeout_ms"
 	},
 	{
+		"name": "DEFAULT_REACTOR_MAX_ASYNC_COMPLETION_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM reactor admission bound.",
+		"wired": "VmLimits.reactor.max_async_completion_bytes"
+	},
+	{
+		"name": "DEFAULT_REACTOR_MAX_ASYNC_COMPLETIONS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM reactor admission bound.",
+		"wired": "VmLimits.reactor.max_async_completions"
+	},
+	{
+		"name": "DEFAULT_REACTOR_MAX_BLOCKING_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM reactor admission bound.",
+		"wired": "VmLimits.reactor.max_blocking_bytes"
+	},
+	{
+		"name": "DEFAULT_REACTOR_MAX_BLOCKING_JOBS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM reactor admission bound.",
+		"wired": "VmLimits.reactor.max_blocking_jobs"
+	},
+	{
+		"name": "DEFAULT_REACTOR_MAX_BRIDGE_CALLS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM reactor admission bound.",
+		"wired": "VmLimits.reactor.max_bridge_calls"
+	},
+	{
+		"name": "DEFAULT_REACTOR_MAX_BRIDGE_REQUEST_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM reactor admission bound.",
+		"wired": "VmLimits.reactor.max_bridge_request_bytes"
+	},
+	{
+		"name": "DEFAULT_REACTOR_MAX_BRIDGE_RESPONSE_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM reactor admission bound.",
+		"wired": "VmLimits.reactor.max_bridge_response_bytes"
+	},
+	{
+		"name": "DEFAULT_REACTOR_MAX_CAPABILITIES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM reactor admission bound.",
+		"wired": "VmLimits.reactor.max_capabilities"
+	},
+	{
+		"name": "DEFAULT_REACTOR_MAX_HANDLE_COMMAND_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM reactor admission bound.",
+		"wired": "VmLimits.reactor.max_handle_command_bytes"
+	},
+	{
+		"name": "DEFAULT_REACTOR_MAX_HANDLE_COMMANDS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM reactor admission bound.",
+		"wired": "VmLimits.reactor.max_handle_commands"
+	},
+	{
+		"name": "DEFAULT_REACTOR_MAX_READY_HANDLES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM reactor admission bound.",
+		"wired": "VmLimits.reactor.max_ready_handles"
+	},
+	{
+		"name": "DEFAULT_REACTOR_MAX_TASKS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM reactor admission bound.",
+		"wired": "VmLimits.reactor.max_tasks"
+	},
+	{
+		"name": "DEFAULT_TLS_MAX_BUFFERED_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM TLS buffering bound.",
+		"wired": "VmLimits.tls.max_buffered_bytes"
+	},
+	{
 		"name": "DEFAULT_TOOL_TIMEOUT_MS",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Default tool invocation timeout.",
 		"wired": "VmLimits.tools.default_tool_timeout_ms"
 	},
 	{
-		"name": "DEFAULT_V8_HEAP_LIMIT_MB",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"name": "DEFAULT_UDP_MAX_BUFFERED_BYTES",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Default guest JS V8 heap cap.",
-		"wired": "VmLimits.js_runtime.v8_heap_limit_mb"
+		"rationale": "Default for the configured per-VM UDP buffering bound.",
+		"wired": "VmLimits.udp.max_buffered_bytes"
+	},
+	{
+		"name": "DEFAULT_UDP_MAX_BUFFERED_DATAGRAMS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default for the configured per-VM UDP buffering bound.",
+		"wired": "VmLimits.udp.max_buffered_datagrams"
 	},
 	{
 		"name": "DEFAULT_V8_CPU_TIME_LIMIT_MS",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Default active JavaScript CPU-time budget.",
 		"wired": "VmLimits.js_runtime.cpu_time_limit_ms"
 	},
 	{
-		"name": "DEFAULT_V8_WALL_CLOCK_LIMIT_MS",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"name": "DEFAULT_V8_HEAP_LIMIT_MB",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
-		"rationale": "Default JavaScript wall-clock backstop; zero keeps it disabled.",
-		"wired": "VmLimits.js_runtime.wall_clock_limit_ms"
+		"rationale": "Default guest JS V8 heap cap.",
+		"wired": "VmLimits.js_runtime.v8_heap_limit_mb"
 	},
 	{
 		"name": "DEFAULT_V8_IPC_MAX_FRAME_BYTES",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "V8 IPC codec frame cap.",
 		"wired": "VmLimits.js_runtime.v8_ipc_max_frame_bytes"
 	},
 	{
+		"name": "DEFAULT_V8_WALL_CLOCK_LIMIT_MS",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "policy",
+		"rationale": "Default JavaScript wall-clock backstop; zero keeps it disabled.",
+		"wired": "VmLimits.js_runtime.wall_clock_limit_ms"
+	},
+	{
 		"name": "DEFAULT_WASM_CAPTURED_OUTPUT_LIMIT_BYTES",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "WASM stdout/stderr capture cap.",
 		"wired": "VmLimits.wasm.captured_output_limit_bytes"
 	},
 	{
 		"name": "DEFAULT_WASM_MAX_MODULE_FILE_BYTES",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "WASM module load size.",
 		"wired": "VmLimits.wasm.max_module_file_bytes"
 	},
 	{
 		"name": "DEFAULT_WASM_PREWARM_TIMEOUT_MS",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "WASM compile-cache warmup timeout.",
 		"wired": "VmLimits.wasm.prewarm_timeout_ms"
 	},
 	{
 		"name": "DEFAULT_WASM_RUNNER_HEAP_LIMIT_MB",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "WASM runner V8 heap cap.",
 		"wired": "VmLimits.wasm.runner_heap_limit_mb"
 	},
 	{
 		"name": "DEFAULT_WASM_SYNC_READ_LIMIT_BYTES",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "WASM sync read cap.",
 		"wired": "VmLimits.wasm.sync_read_limit_bytes"
 	},
 	{
+		"name": "FRAME_CAP",
+		"path": "crates/native-sidecar-core/src/limits.rs",
+		"class": "invariant",
+		"rationale": "Test-only protocol frame fixture bound."
+	},
+	{
 		"name": "MAX_PERSISTED_MANIFEST_BYTES",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Mount manifest blob size.",
 		"wired": "VmLimits.plugins.max_persisted_manifest_bytes"
 	},
 	{
 		"name": "MAX_PERSISTED_MANIFEST_FILE_BYTES",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Mount manifest file size.",
 		"wired": "VmLimits.plugins.max_persisted_manifest_file_bytes"
 	},
 	{
 		"name": "MAX_REGISTERED_TOOLKITS",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Toolkit registration capacity.",
 		"wired": "VmLimits.tools.max_registered_toolkits"
 	},
 	{
 		"name": "MAX_REGISTERED_TOOLS_PER_VM",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Tool registration capacity.",
 		"wired": "VmLimits.tools.max_registered_tools_per_vm"
 	},
 	{
 		"name": "MAX_TOOL_EXAMPLE_INPUT_BYTES",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Tool example input size.",
 		"wired": "VmLimits.tools.max_tool_example_input_bytes"
 	},
 	{
 		"name": "MAX_TOOL_EXAMPLES_PER_TOOL",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Tool example count.",
 		"wired": "VmLimits.tools.max_tool_examples_per_tool"
 	},
 	{
 		"name": "MAX_TOOL_SCHEMA_BYTES",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Tool schema payload size.",
 		"wired": "VmLimits.tools.max_tool_schema_bytes"
 	},
 	{
 		"name": "MAX_TOOL_TIMEOUT_MS",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Max tool invocation timeout.",
 		"wired": "VmLimits.tools.max_tool_timeout_ms"
 	},
 	{
 		"name": "MAX_TOOLS_PER_TOOLKIT",
-		"path": "crates/sidecar-core/src/limits.rs",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "policy",
 		"rationale": "Tools-per-toolkit capacity.",
 		"wired": "VmLimits.tools.max_tools_per_toolkit"
 	},
 	{
+		"name": "DEFAULT_TOOL_TIMEOUT_MS",
+		"path": "crates/native-sidecar-core/src/tools.rs",
+		"class": "policy",
+		"rationale": "Tool invocation timeout policy.",
+		"wired": "VmLimits.tools.default_tool_timeout_ms"
+	},
+	{
+		"name": "MAX_REGISTERED_TOOLKITS",
+		"path": "crates/native-sidecar-core/src/tools.rs",
+		"class": "policy",
+		"rationale": "Tool registration capacity policy.",
+		"wired": "VmLimits.tools.max_registered_toolkits"
+	},
+	{
+		"name": "MAX_REGISTERED_TOOLS_PER_VM",
+		"path": "crates/native-sidecar-core/src/tools.rs",
+		"class": "policy",
+		"rationale": "Tool registration capacity policy.",
+		"wired": "VmLimits.tools.max_registered_tools_per_vm"
+	},
+	{
+		"name": "MAX_TOOL_DESCRIPTION_LENGTH",
+		"path": "crates/native-sidecar-core/src/tools.rs",
+		"class": "policy-deferred",
+		"rationale": "Cross-boundary contract with packages/core/src/bindings.ts; both sides must change together."
+	},
+	{
+		"name": "MAX_TOOL_EXAMPLE_INPUT_BYTES",
+		"path": "crates/native-sidecar-core/src/tools.rs",
+		"class": "policy",
+		"rationale": "Example input size policy.",
+		"wired": "VmLimits.tools.max_tool_example_input_bytes"
+	},
+	{
+		"name": "MAX_TOOL_EXAMPLES_PER_TOOL",
+		"path": "crates/native-sidecar-core/src/tools.rs",
+		"class": "policy",
+		"rationale": "Example count policy.",
+		"wired": "VmLimits.tools.max_tool_examples_per_tool"
+	},
+	{
+		"name": "MAX_TOOL_NAME_LENGTH",
+		"path": "crates/native-sidecar-core/src/tools.rs",
+		"class": "policy-deferred",
+		"rationale": "Cross-boundary contract with packages/core/src/bindings.ts; both sides must change together."
+	},
+	{
+		"name": "MAX_TOOL_SCHEMA_BYTES",
+		"path": "crates/native-sidecar-core/src/tools.rs",
+		"class": "policy",
+		"rationale": "Schema payload size policy.",
+		"wired": "VmLimits.tools.max_tool_schema_bytes"
+	},
+	{
+		"name": "MAX_TOOL_SCHEMA_DEPTH",
+		"path": "crates/native-sidecar-core/src/tools.rs",
+		"class": "invariant",
+		"rationale": "JSON recursion guard for schema validation; parser-safety."
+	},
+	{
+		"name": "MAX_TOOL_TIMEOUT_MS",
+		"path": "crates/native-sidecar-core/src/tools.rs",
+		"class": "policy",
+		"rationale": "Tool invocation timeout policy.",
+		"wired": "VmLimits.tools.max_tool_timeout_ms"
+	},
+	{
+		"name": "MAX_TOOLKIT_NAME_LENGTH",
+		"path": "crates/native-sidecar-core/src/tools.rs",
+		"class": "policy-deferred",
+		"rationale": "Cross-boundary contract with packages/core/src/bindings.ts; both sides must change together."
+	},
+	{
+		"name": "MAX_TOOLS_PER_TOOLKIT",
+		"path": "crates/native-sidecar-core/src/tools.rs",
+		"class": "policy",
+		"rationale": "Tool registration capacity policy.",
+		"wired": "VmLimits.tools.max_tools_per_toolkit"
+	},
+	{
+		"name": "VM_FETCH_BUFFER_LIMIT_BYTES",
+		"path": "crates/native-sidecar-core/src/vm_fetch.rs",
+		"class": "policy",
+		"rationale": "vm.fetch() HTTP response body cap; must stay <= negotiated frame budget.",
+		"wired": "VmLimits.http.max_fetch_response_bytes"
+	},
+	{
+		"name": "DEFAULT_KERNEL_STDIN_READ_MAX_BYTES",
+		"path": "crates/native-sidecar/src/execution/mod.rs",
+		"class": "invariant",
+		"rationale": "Internal stdin pump chunking; not a guest-visible bound."
+	},
+	{
+		"name": "DEFAULT_KERNEL_STDIN_READ_TIMEOUT_MS",
+		"path": "crates/native-sidecar/src/execution/mod.rs",
+		"class": "invariant",
+		"rationale": "Internal stdin pump poll interval; not a guest-visible bound."
+	},
+	{
+		"name": "LINUX_GUEST_FD_LIMIT",
+		"path": "crates/native-sidecar/src/execution/child_process.rs",
+		"class": "invariant",
+		"rationale": "Linux RLIMIT_NOFILE ceiling used to reject descriptor numbers that cannot exist in a Linux guest."
+	},
+	{
+		"name": "MAX_SHEBANG_REDIRECTS",
+		"path": "crates/native-sidecar/src/execution/child_process.rs",
+		"class": "invariant",
+		"rationale": "Linux interpreter-recursion compatibility limit for JavaScript child-process shebang redirects."
+	},
+	{
+		"name": "EXITED_PROCESS_SNAPSHOT_RETENTION",
+		"path": "crates/native-sidecar/src/execution/javascript/rpc.rs",
+		"class": "invariant",
+		"rationale": "Bounded exited-process snapshot ring for wait/inspect bookkeeping."
+	},
+	{
+		"name": "JAVASCRIPT_NET_POLL_MAX_WAIT",
+		"path": "crates/native-sidecar/src/execution/javascript/rpc.rs",
+		"class": "invariant",
+		"rationale": "net.poll sync-RPC wait ceiling; protects the main sync-RPC thread."
+	},
+	{
+		"name": "MAX_READDIR_ENTRIES_PER_CALL",
+		"path": "crates/native-sidecar/src/execution/javascript/rpc.rs",
+		"class": "invariant",
+		"rationale": "Internal bridge-response batch granularity; total directory entries remain governed by VmLimits.resources.max_readdir_entries."
+	},
+	{
+		"name": "LINUX_MAX_INTERPRETER_DEPTH",
+		"path": "crates/native-sidecar/src/execution/launch.rs",
+		"class": "invariant",
+		"rationale": "Linux BINPRM_MAX_RECURSION compatibility limit for host-launch interpreter resolution."
+	},
+	{
+		"name": "MAX_JAVASCRIPT_COMMAND_REDIRECT_DEPTH",
+		"path": "crates/native-sidecar/src/execution/launch.rs",
+		"class": "invariant",
+		"rationale": "Command-resolution recursion guard (symlink/shim chains); safety invariant."
+	},
+	{
+		"name": "MAX_SHEBANG_LINE_BYTES",
+		"path": "crates/native-sidecar/src/execution/launch.rs",
+		"class": "invariant",
+		"rationale": "Linux BINPRM_BUF_SIZE-style compatibility bound for JavaScript child-process shebang parsing."
+	},
+	{
+		"name": "MAX_PER_PROCESS_STATE_HANDLES",
+		"path": "crates/native-sidecar/src/execution/mod.rs",
+		"class": "policy-deferred",
+		"rationale": "Crypto/state handle table cap tunable in principle; low demand, wire later."
+	},
+	{
+		"name": "PYTHON_SOCKET_MAX_RECV",
+		"path": "crates/native-sidecar/src/execution/python/sockets.rs",
+		"class": "policy-deferred",
+		"rationale": "Guest Python socket recv request clamp for one synchronous host read; bounded by default, fold into Python/socket VmLimits if operators need to tune it."
+	},
+	{
+		"name": "SQLITE_JS_SAFE_INTEGER_MAX",
+		"path": "crates/native-sidecar/src/execution/javascript/sqlite.rs",
+		"class": "invariant",
+		"rationale": "JS Number.MAX_SAFE_INTEGER boundary for SQLite integer coercion, not a tunable bound."
+	},
+	{
+		"name": "UDP_MAX_DATAGRAM_BYTES",
+		"path": "crates/native-sidecar/src/execution/network/udp.rs",
+		"class": "invariant",
+		"rationale": "UDP payload ceiling imposed by datagram protocol semantics; buffering remains separately policy-bounded."
+	},
+	{
+		"name": "MAX_CROSS_DEVICE_MOVE_DEPTH",
+		"path": "crates/native-sidecar/src/filesystem.rs",
+		"class": "policy-deferred",
+		"rationale": "Host filesystem safety bound; expose through typed filesystem policy if operators need to tune it."
+	},
+	{
+		"name": "MAX_MAPPED_TRUNCATE_BYTES",
+		"path": "crates/native-sidecar/src/filesystem.rs",
+		"class": "policy-deferred",
+		"rationale": "Host filesystem safety bound; expose through typed filesystem policy if operators need to tune it."
+	},
+	{
+		"name": "MAX_AGENTOS_PACKAGE_MOUNTS",
+		"path": "crates/native-sidecar/src/package_projection.rs",
+		"class": "policy-deferred",
+		"rationale": "Per-VM cap on granular /opt/agentos leaf mounts; not yet wired to VmLimits."
+	},
+	{
+		"name": "DEFAULT_METADATA_CACHE_ENTRIES",
+		"path": "crates/native-sidecar/src/plugins/chunked_local.rs",
+		"class": "invariant",
+		"rationale": "In-memory chunk metadata cache size; performance detail, not guest policy."
+	},
+	{
+		"name": "DEFAULT_METADATA_CACHE_ENTRIES",
+		"path": "crates/native-sidecar/src/plugins/chunked_s3.rs",
+		"class": "invariant",
+		"rationale": "In-memory chunk metadata cache size; performance detail, not guest policy."
+	},
+	{
 		"name": "MAX_PERSISTED_MANIFEST_BYTES",
-		"path": "crates/sidecar/src/plugins/google_drive.rs",
+		"path": "crates/native-sidecar/src/plugins/google_drive.rs",
 		"class": "policy",
 		"rationale": "Mount manifest size policy.",
 		"wired": "VmLimits.plugins.max_persisted_manifest_bytes"
 	},
 	{
 		"name": "MAX_PERSISTED_MANIFEST_FILE_BYTES",
-		"path": "crates/sidecar/src/plugins/google_drive.rs",
+		"path": "crates/native-sidecar/src/plugins/google_drive.rs",
 		"class": "policy",
 		"rationale": "Mount manifest file size policy.",
 		"wired": "VmLimits.plugins.max_persisted_manifest_file_bytes"
 	},
 	{
 		"name": "MAX_HOST_DIR_READ_BYTES",
-		"path": "crates/sidecar/src/plugins/host_dir.rs",
+		"path": "crates/native-sidecar/src/plugins/host_dir.rs",
 		"class": "policy",
 		"rationale": "Reads the VM's configured max_pread_bytes resource limit.",
 		"wired": "VmLimits.resources.max_pread_bytes"
 	},
 	{
+		"name": "MAX_SYMLINK_EXPANSIONS",
+		"path": "crates/native-sidecar/src/plugins/host_dir.rs",
+		"class": "invariant",
+		"rationale": "Linux-compatible ELOOP safety bound for symlink expansion."
+	},
+	{
 		"name": "DEFAULT_MAX_FULL_READ_BYTES",
-		"path": "crates/sidecar/src/plugins/sandbox_agent.rs",
+		"path": "crates/native-sidecar/src/plugins/sandbox_agent.rs",
 		"class": "policy-deferred",
 		"rationale": "Better expressed as per-mount config on the sandbox_agent descriptor; defer to a mount-config change."
 	},
 	{
 		"name": "DEFAULT_PROCESS_TIMEOUT_MS",
-		"path": "crates/sidecar/src/plugins/sandbox_agent.rs",
+		"path": "crates/native-sidecar/src/plugins/sandbox_agent.rs",
 		"class": "policy-deferred",
 		"rationale": "Better expressed as per-mount config on the sandbox_agent descriptor; defer to a mount-config change."
 	},
 	{
 		"name": "DEFAULT_TIMEOUT_MS",
-		"path": "crates/sidecar/src/plugins/sandbox_agent.rs",
+		"path": "crates/native-sidecar/src/plugins/sandbox_agent.rs",
 		"class": "policy-deferred",
 		"rationale": "Better expressed as per-mount config on the sandbox_agent descriptor; defer to a mount-config change."
+	},
+	{
+		"name": "MAX_COMPLETED_SIDECAR_RESPONSES",
+		"path": "crates/native-sidecar/src/service.rs",
+		"class": "invariant",
+		"rationale": "Internal queue backpressure guard; fails loudly on overflow."
+	},
+	{
+		"name": "MAX_OUTBOUND_SIDECAR_REQUESTS",
+		"path": "crates/native-sidecar/src/service.rs",
+		"class": "invariant",
+		"rationale": "Internal queue backpressure guard; fails loudly on overflow."
+	},
+	{
+		"name": "MAX_PENDING_SIDECAR_RESPONSES",
+		"path": "crates/native-sidecar/src/service.rs",
+		"class": "invariant",
+		"rationale": "Internal queue backpressure guard; fails loudly on overflow."
+	},
+	{
+		"name": "MAX_PROCESS_EVENT_QUEUE",
+		"path": "crates/native-sidecar/src/service.rs",
+		"class": "invariant",
+		"rationale": "Internal queue backpressure guard; fails loudly on overflow."
+	},
+	{
+		"name": "HOST_REALPATH_MAX_SYMLINK_DEPTH",
+		"path": "crates/native-sidecar/src/state.rs",
+		"class": "invariant",
+		"rationale": "Host realpath ELOOP guard mirroring Linux symlink depth."
+	},
+	{
+		"name": "VM_LISTEN_PORT_MAX_METADATA_KEY",
+		"path": "crates/native-sidecar/src/state.rs",
+		"class": "invariant",
+		"rationale": "Metadata key name string, not a numeric bound."
+	},
+	{
+		"name": "MAX_EVENT_READY_QUEUE",
+		"path": "crates/native-sidecar/src/stdio.rs",
+		"class": "invariant",
+		"rationale": "Stdio pump channel capacity; internal flow control."
+	},
+	{
+		"name": "MAX_LIMIT_WARNING_QUEUE",
+		"path": "crates/native-sidecar/src/stdio.rs",
+		"class": "invariant",
+		"rationale": "Small bounded diagnostic/control queue needed to report transport and limit failures without recursive amplification."
+	},
+	{
+		"name": "MAX_SHUTDOWN_QUEUE",
+		"path": "crates/native-sidecar/src/stdio.rs",
+		"class": "invariant",
+		"rationale": "Capacity-one durable shutdown latch; duplicate typed shutdown frames coalesce without sharing ordinary or response admission."
+	},
+	{
+		"name": "MAX_TRANSPORT_ERROR_QUEUE",
+		"path": "crates/native-sidecar/src/stdio.rs",
+		"class": "invariant",
+		"rationale": "Small bounded diagnostic/control queue needed to report transport and limit failures without recursive amplification."
+	},
+	{
+		"name": "DEFAULT_BLOCKING_JOB_TIMEOUT_MS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide runtime admission or lifecycle bound.",
+		"wired": "RuntimeConfig.blocking_job_timeout_ms"
+	},
+	{
+		"name": "DEFAULT_FAIRNESS_CAPABILITY_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide fairness scheduler bound.",
+		"wired": "RuntimeConfig.fairness.capability_quantum_bytes"
+	},
+	{
+		"name": "DEFAULT_FAIRNESS_MAX_CAPABILITIES_PER_VM",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide fairness scheduler bound.",
+		"wired": "RuntimeConfig.fairness.max_capabilities_per_vm"
+	},
+	{
+		"name": "DEFAULT_FAIRNESS_MAX_VMS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide fairness scheduler bound.",
+		"wired": "RuntimeConfig.fairness.max_vms"
+	},
+	{
+		"name": "DEFAULT_FAIRNESS_VM_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide fairness scheduler bound.",
+		"wired": "RuntimeConfig.fairness.vm_quantum_bytes"
+	},
+	{
+		"name": "DEFAULT_MAX_BLOCKING_JOB_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide runtime admission or lifecycle bound.",
+		"wired": "RuntimeConfig.max_blocking_job_bytes"
+	},
+	{
+		"name": "DEFAULT_MAX_BLOCKING_JOBS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide runtime admission or lifecycle bound.",
+		"wired": "RuntimeConfig.max_blocking_jobs"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_ASYNC_COMPLETION_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.async_completion_bytes"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_ASYNC_COMPLETIONS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.async_completions"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_BRIDGE_CALLS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.bridge_calls"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_BRIDGE_REQUEST_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.bridge_request_bytes"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_BRIDGE_RESPONSE_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.bridge_response_bytes"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_CAPABILITIES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.capabilities"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_CONNECTIONS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.connections"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_DATAGRAMS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.datagrams"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_HANDLE_COMMAND_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.handle_command_bytes"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_HANDLE_COMMANDS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.handle_commands"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_HTTP2_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.http2_bytes"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_HTTP2_COMMAND_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.http2_command_bytes"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_HTTP2_COMMANDS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.http2_commands"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_HTTP2_CONNECTIONS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.http2_connections"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_HTTP2_DATA_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.http2_data_bytes"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_HTTP2_EVENT_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.http2_event_bytes"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_HTTP2_EVENTS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.http2_events"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_HTTP2_HEADER_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.http2_header_bytes"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_HTTP2_STREAMS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.http2_streams"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_READY_HANDLES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.ready_handles"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_SOCKET_BUFFERED_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.socket_buffered_bytes"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_SOCKETS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.sockets"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_TASKS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.tasks"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_TIMERS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.timers"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_TLS_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.tls_bytes"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_UDP_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.udp_bytes"
+	},
+	{
+		"name": "DEFAULT_MAX_PROCESS_UDP_DATAGRAMS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured aggregate sidecar-process resource bound.",
+		"wired": "RuntimeConfig.resources.udp_datagrams"
+	},
+	{
+		"name": "DEFAULT_MAX_QUEUED_BLOCKING_JOBS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide runtime admission or lifecycle bound.",
+		"wired": "RuntimeConfig.max_queued_blocking_jobs"
+	},
+	{
+		"name": "DEFAULT_MAX_TERMINAL_TASK_REPORTS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide runtime admission or lifecycle bound.",
+		"wired": "RuntimeConfig.max_terminal_task_reports"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_COMPLETED_RESPONSES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol queue bound.",
+		"wired": "RuntimeConfig.protocol.max_completed_responses"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_CONTROL_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol queue bound.",
+		"wired": "RuntimeConfig.protocol.max_control_bytes"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_CONTROL_FRAMES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol queue bound.",
+		"wired": "RuntimeConfig.protocol.max_control_frames"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_EGRESS_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol queue bound.",
+		"wired": "RuntimeConfig.protocol.max_egress_bytes"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_EGRESS_FRAMES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol queue bound.",
+		"wired": "RuntimeConfig.protocol.max_egress_frames"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_INGRESS_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol queue bound.",
+		"wired": "RuntimeConfig.protocol.max_ingress_bytes"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_INGRESS_FRAMES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol queue bound.",
+		"wired": "RuntimeConfig.protocol.max_ingress_frames"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_OUTBOUND_REQUESTS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol queue bound.",
+		"wired": "RuntimeConfig.protocol.max_outbound_requests"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_PENDING_RESPONSE_BYTES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol queue bound.",
+		"wired": "RuntimeConfig.protocol.max_pending_response_bytes"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_PENDING_RESPONSES",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol queue bound.",
+		"wired": "RuntimeConfig.protocol.max_pending_responses"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide protocol queue bound.",
+		"wired": "RuntimeConfig.protocol.max_process_events"
+	},
+	{
+		"name": "DEFAULT_VM_EXECUTOR_TEARDOWN_TIMEOUT_MS",
+		"path": "crates/runtime/src/lib.rs",
+		"class": "policy",
+		"rationale": "Default for the configured process-wide runtime admission or lifecycle bound.",
+		"wired": "RuntimeConfig.vm_executor_teardown_timeout_ms"
+	},
+	{
+		"name": "MAX_FALLBACK_MESSAGE_BYTES",
+		"path": "crates/runtime/src/metrics.rs",
+		"class": "invariant",
+		"rationale": "Bounded stderr fallback message size prevents telemetry failure amplification."
+	},
+	{
+		"name": "CONTROL_FRAME_QUEUE_CAPACITY",
+		"path": "crates/sidecar-client/src/transport.rs",
+		"class": "invariant",
+		"rationale": "Internal backpressure channel capacity."
+	},
+	{
+		"name": "EVENT_CHANNEL_CAPACITY",
+		"path": "crates/sidecar-client/src/transport.rs",
+		"class": "invariant",
+		"rationale": "Internal backpressure channel capacity."
+	},
+	{
+		"name": "PENDING_REQUEST_LIMIT",
+		"path": "crates/sidecar-client/src/transport.rs",
+		"class": "invariant",
+		"rationale": "Internal pending-request ring; fails loudly when exceeded."
+	},
+	{
+		"name": "REQUEST_FRAME_QUEUE_CAPACITY",
+		"path": "crates/sidecar-client/src/transport.rs",
+		"class": "invariant",
+		"rationale": "Internal backpressure channel capacity."
 	},
 	{
 		"name": "DEFAULT_COMPLETED_RESPONSE_CAP",
@@ -776,144 +1633,10 @@
 		"rationale": "Wire frame-size cap constant in its owning wire module; protocol-level frame invariant, not a per-VM policy limit."
 	},
 	{
-		"name": "MAX_COMPLETED_SIDECAR_RESPONSES",
-		"path": "crates/sidecar/src/service.rs",
+		"name": "DEFAULT_BRIDGE_RESPONSE_MAX_BYTES",
+		"path": "crates/v8-runtime/src/bridge.rs",
 		"class": "invariant",
-		"rationale": "Internal queue backpressure guard; fails loudly on overflow."
-	},
-	{
-		"name": "MAX_OUTBOUND_SIDECAR_REQUESTS",
-		"path": "crates/sidecar/src/service.rs",
-		"class": "invariant",
-		"rationale": "Internal queue backpressure guard; fails loudly on overflow."
-	},
-	{
-		"name": "MAX_PENDING_SIDECAR_RESPONSES",
-		"path": "crates/sidecar/src/service.rs",
-		"class": "invariant",
-		"rationale": "Internal queue backpressure guard; fails loudly on overflow."
-	},
-	{
-		"name": "MAX_PROCESS_EVENT_QUEUE",
-		"path": "crates/sidecar/src/service.rs",
-		"class": "invariant",
-		"rationale": "Internal queue backpressure guard; fails loudly on overflow."
-	},
-	{
-		"name": "HOST_REALPATH_MAX_SYMLINK_DEPTH",
-		"path": "crates/sidecar/src/state.rs",
-		"class": "invariant",
-		"rationale": "Host realpath ELOOP guard mirroring Linux symlink depth."
-	},
-	{
-		"name": "VM_LISTEN_PORT_MAX_METADATA_KEY",
-		"path": "crates/sidecar/src/state.rs",
-		"class": "invariant",
-		"rationale": "Metadata key name string, not a numeric bound."
-	},
-	{
-		"name": "MAX_EVENT_READY_QUEUE",
-		"path": "crates/sidecar/src/stdio.rs",
-		"class": "invariant",
-		"rationale": "Stdio pump channel capacity; internal flow control."
-	},
-	{
-		"name": "MAX_STDIN_FRAME_QUEUE",
-		"path": "crates/sidecar/src/stdio.rs",
-		"class": "invariant",
-		"rationale": "Stdio pump channel capacity; internal flow control."
-	},
-	{
-		"name": "MAX_STDOUT_FRAME_QUEUE",
-		"path": "crates/sidecar/src/stdio.rs",
-		"class": "invariant",
-		"rationale": "Stdio pump channel capacity; internal flow control."
-	},
-	{
-		"name": "DEFAULT_TOOL_TIMEOUT_MS",
-		"path": "crates/sidecar-core/src/tools.rs",
-		"class": "policy",
-		"rationale": "Tool invocation timeout policy.",
-		"wired": "VmLimits.tools.default_tool_timeout_ms"
-	},
-	{
-		"name": "MAX_REGISTERED_TOOLKITS",
-		"path": "crates/sidecar-core/src/tools.rs",
-		"class": "policy",
-		"rationale": "Tool registration capacity policy.",
-		"wired": "VmLimits.tools.max_registered_toolkits"
-	},
-	{
-		"name": "MAX_REGISTERED_TOOLS_PER_VM",
-		"path": "crates/sidecar-core/src/tools.rs",
-		"class": "policy",
-		"rationale": "Tool registration capacity policy.",
-		"wired": "VmLimits.tools.max_registered_tools_per_vm"
-	},
-	{
-		"name": "MAX_TOOL_DESCRIPTION_LENGTH",
-		"path": "crates/sidecar-core/src/tools.rs",
-		"class": "policy-deferred",
-		"rationale": "Cross-boundary contract with packages/core/src/bindings.ts; both sides must change together."
-	},
-	{
-		"name": "MAX_TOOL_EXAMPLE_INPUT_BYTES",
-		"path": "crates/sidecar-core/src/tools.rs",
-		"class": "policy",
-		"rationale": "Example input size policy.",
-		"wired": "VmLimits.tools.max_tool_example_input_bytes"
-	},
-	{
-		"name": "MAX_TOOL_EXAMPLES_PER_TOOL",
-		"path": "crates/sidecar-core/src/tools.rs",
-		"class": "policy",
-		"rationale": "Example count policy.",
-		"wired": "VmLimits.tools.max_tool_examples_per_tool"
-	},
-	{
-		"name": "MAX_TOOL_NAME_LENGTH",
-		"path": "crates/sidecar-core/src/tools.rs",
-		"class": "policy-deferred",
-		"rationale": "Cross-boundary contract with packages/core/src/bindings.ts; both sides must change together."
-	},
-	{
-		"name": "MAX_TOOL_SCHEMA_BYTES",
-		"path": "crates/sidecar-core/src/tools.rs",
-		"class": "policy",
-		"rationale": "Schema payload size policy.",
-		"wired": "VmLimits.tools.max_tool_schema_bytes"
-	},
-	{
-		"name": "MAX_TOOL_SCHEMA_DEPTH",
-		"path": "crates/sidecar-core/src/tools.rs",
-		"class": "invariant",
-		"rationale": "JSON recursion guard for schema validation; parser-safety."
-	},
-	{
-		"name": "MAX_TOOL_TIMEOUT_MS",
-		"path": "crates/sidecar-core/src/tools.rs",
-		"class": "policy",
-		"rationale": "Tool invocation timeout policy.",
-		"wired": "VmLimits.tools.max_tool_timeout_ms"
-	},
-	{
-		"name": "MAX_TOOLKIT_NAME_LENGTH",
-		"path": "crates/sidecar-core/src/tools.rs",
-		"class": "policy-deferred",
-		"rationale": "Cross-boundary contract with packages/core/src/bindings.ts; both sides must change together."
-	},
-	{
-		"name": "MAX_TOOLS_PER_TOOLKIT",
-		"path": "crates/sidecar-core/src/tools.rs",
-		"class": "policy",
-		"rationale": "Tool registration capacity policy.",
-		"wired": "VmLimits.tools.max_tools_per_toolkit"
-	},
-	{
-		"name": "MAX_VM_LAYERS",
-		"path": "crates/sidecar-core/src/layers.rs",
-		"class": "policy-deferred",
-		"rationale": "Layer count cap is operator-meaningful but coupled to layer RPC validation tests; wire later."
+		"rationale": "Per-method bridge response declaration fallback; aggregate response bytes are separately policy-bounded."
 	},
 	{
 		"name": "MAX_CBOR_BRIDGE_CONTAINER_ITEMS",
@@ -940,10 +1663,10 @@
 		"rationale": "Runtime self-protection cap with typed error code; sized for safety, loud on overflow."
 	},
 	{
-		"name": "SESSION_OUTPUT_CHANNEL_CAPACITY",
+		"name": "TEST_SESSION_OUTPUT_CHANNEL_CAPACITY",
 		"path": "crates/v8-runtime/src/embedded_runtime.rs",
 		"class": "invariant",
-		"rationale": "In-process channel backpressure."
+		"rationale": "Test-only session output channel capacity."
 	},
 	{
 		"name": "MAX_CJS_NAMED_EXPORTS",
@@ -988,11 +1711,25 @@
 		"rationale": "Module resolver parser/amplification hardening; sized as safety ceiling, not a tuning knob."
 	},
 	{
+		"name": "MAX_PENDING_BRIDGE_CALLS",
+		"path": "crates/v8-runtime/src/host_call.rs",
+		"class": "policy",
+		"rationale": "Fallback bridge-call waiter registry bound; sidecar VM paths inject the configured reactor limit.",
+		"wired": "VmLimits.reactor.max_bridge_calls"
+	},
+	{
 		"name": "MAX_FRAME_SIZE",
 		"path": "crates/v8-runtime/src/ipc_binary.rs",
 		"class": "policy",
 		"rationale": "Pair of execution/v8_ipc.rs; feeds the same V8 IPC frame field.",
 		"wired": "VmLimits.js_runtime.v8_ipc_max_frame_bytes"
+	},
+	{
+		"name": "DEFAULT_HEAP_LIMIT_MB",
+		"path": "crates/v8-runtime/src/isolate.rs",
+		"class": "policy",
+		"rationale": "Engine-side default for the wired V8 isolate heap limit (128 MiB, Cloudflare-matching); operator-raisable via the configured jsRuntime heap limit.",
+		"wired": "VmLimits.js_runtime.v8_heap_limit_mb"
 	},
 	{
 		"name": "MAX_UNHANDLED_PROMISE_REJECTIONS",
@@ -1007,22 +1744,10 @@
 		"rationale": "Internal V8 near-heap-limit OOM-guard headroom; runtime self-protection mechanism, not an operator bound."
 	},
 	{
-		"name": "MAX_DEFERRED_SESSION_COMMANDS",
+		"name": "MAX_PROCESS_WARM_WORKERS",
 		"path": "crates/v8-runtime/src/session.rs",
 		"class": "invariant",
-		"rationale": "Session channel backpressure with typed error."
-	},
-	{
-		"name": "MAX_DEFERRED_SYNC_MESSAGES",
-		"path": "crates/v8-runtime/src/session.rs",
-		"class": "invariant",
-		"rationale": "Session channel backpressure with typed error."
-	},
-	{
-		"name": "SESSION_COMMAND_CHANNEL_CAPACITY",
-		"path": "crates/v8-runtime/src/session.rs",
-		"class": "invariant",
-		"rationale": "Session channel backpressure with typed error."
+		"rationale": "Hard process ceiling for warm V8 workers above the operator-selected desired worker count."
 	},
 	{
 		"name": "MAX_SNAPSHOT_BLOB_BYTES",
@@ -1043,82 +1768,132 @@
 		"rationale": "Sanity bound on the client-configured agent-SDK userland snapshot bundle; trusted-config artifact guard, not guest input."
 	},
 	{
-		"name": "DEFAULT_HEAP_LIMIT_MB",
-		"path": "crates/v8-runtime/src/isolate.rs",
-		"class": "policy",
-		"rationale": "Engine-side default for the wired V8 isolate heap limit (128 MiB, Cloudflare-matching); operator-raisable via the configured jsRuntime heap limit.",
-		"wired": "VmLimits.js_runtime.v8_heap_limit_mb"
-	},
-	{
-		"name": "TRAILING_OUTPUT_DRAIN_MAX_MS",
-		"path": "packages/core/src/kernel-proxy.ts",
+		"name": "MAX_PATH",
+		"path": "crates/vfs/src/engine/types.rs",
 		"class": "invariant",
-		"rationale": "Teardown drain heuristic, not a guest-visible bound."
-	},
-	{
-		"name": "DEFAULT_SIDECAR_EVENT_BUFFER_CAPACITY",
-		"path": "packages/core/src/native-client.ts",
-		"class": "policy-deferred",
-		"rationale": "Client-side event buffer default; callers can override native client options."
-	},
-	{
-		"name": "DEFAULT_SIDECAR_FRAME_TIMEOUT_MS",
-		"path": "packages/core/src/native-client.ts",
-		"class": "policy-deferred",
-		"rationale": "Client-side frame timeout default; callers can override native client options."
+		"rationale": "Linux PATH_MAX mirror for engine-backed VFS paths."
 	},
 	{
 		"name": "MAX_SYMLINK_DEPTH",
-		"path": "packages/core/src/test-runtime.ts",
+		"path": "crates/vfs/src/engine/types.rs",
+		"class": "invariant",
+		"rationale": "Linux ELOOP resolution limit for engine-backed VFS paths."
+	},
+	{
+		"name": "MAX_PACK_INDEX_ENTRIES",
+		"path": "crates/vfs/src/package_format/pack.rs",
+		"class": "invariant",
+		"rationale": "Pack-time mirror of the bounded load-side package index invariant."
+	},
+	{
+		"name": "MAX_REALPATH_SYMLINKS",
+		"path": "crates/vfs/src/posix/mount_table.rs",
+		"class": "invariant",
+		"rationale": "ELOOP bound for cross-mount symlink resolution in realpath."
+	},
+	{
+		"name": "MAX_SNAPSHOT_DEPTH",
+		"path": "crates/vfs/src/posix/overlay_fs.rs",
+		"class": "invariant",
+		"rationale": "Recursion guard against cyclic/abusive layer chains; parser-safety."
+	},
+	{
+		"name": "MAX_TAR_CACHE_ARCHIVES",
+		"path": "crates/vfs/src/posix/tar_fs.rs",
+		"class": "invariant",
+		"rationale": "Bounded, refcounted digest-keyed archive mmap cache; evicts with a warning."
+	},
+	{
+		"name": "MAX_TAR_INDEX_ENTRIES",
+		"path": "crates/vfs/src/posix/tar_fs.rs",
+		"class": "invariant",
+		"rationale": "Caps a malformed tar's member count so the in-memory index cannot exhaust host memory."
+	},
+	{
+		"name": "MAX_TAR_SYMLINKS",
+		"path": "crates/vfs/src/posix/tar_fs.rs",
+		"class": "invariant",
+		"rationale": "ELOOP bound for symlink resolution within a single tar archive."
+	},
+	{
+		"name": "DEFAULT_MAX_FILESYSTEM_BYTES",
+		"path": "crates/vfs/src/posix/usage.rs",
+		"class": "policy",
+		"rationale": "Kernel resource policy surface.",
+		"wired": "VmLimits.resources.max_filesystem_bytes"
+	},
+	{
+		"name": "DEFAULT_MAX_INODE_COUNT",
+		"path": "crates/vfs/src/posix/usage.rs",
+		"class": "policy",
+		"rationale": "Kernel resource policy surface.",
+		"wired": "VmLimits.resources.max_inode_count"
+	},
+	{
+		"name": "MAX_PATH_LENGTH",
+		"path": "crates/vfs/src/posix/vfs.rs",
+		"class": "invariant",
+		"rationale": "Linux PATH_MAX; changing it diverges from Linux."
+	},
+	{
+		"name": "MAX_SYMLINK_DEPTH",
+		"path": "crates/vfs/src/posix/vfs.rs",
+		"class": "invariant",
+		"rationale": "Linux ELOOP resolution limit."
+	},
+	{
+		"name": "MAX_SYMLINK_DEPTH",
+		"path": "packages/build-tools/bridge-src/builtins/fs.ts",
 		"class": "invariant",
 		"rationale": "Linux ELOOP mirror of the kernel invariant."
 	},
 	{
-		"name": "BROWSER_MAX_FRAME_BYTES",
-		"path": "crates/sidecar-browser/src/wire_dispatch.rs",
-		"class": "policy-deferred",
-		"rationale": "Browser transport frame cap; fixed host transport limit until browser config exposes it."
-	},
-	{
-		"name": "DEFAULT_READ_MAX_BYTES",
-		"path": "crates/sidecar-core/src/guest_net.rs",
-		"class": "policy-deferred",
-		"rationale": "Fallback guest network read cap when the request omits max bytes; wire to request/config if tuning is needed."
-	},
-	{
-		"name": "MAX_POLL_WAIT_MS",
-		"path": "crates/sidecar-core/src/guest_net.rs",
+		"name": "NET_BRIDGE_MAX_RAW_WRITE_BYTES",
+		"path": "packages/build-tools/bridge-src/builtins/net.ts",
 		"class": "invariant",
-		"rationale": "Guest network poll wait clamp; internal scheduling guard."
+		"rationale": "Internal socket bridge flush granularity that preserves backpressure under the wired socket buffered-byte limit; not an operator policy cap."
 	},
 	{
-		"name": "DEFAULT_READ_MAX_BYTES",
-		"path": "crates/sidecar-core/src/guest_pty.rs",
+		"name": "CLOSED_SESSION_ID_RETENTION_LIMIT",
+		"path": "packages/core/src/agent-os.ts",
 		"class": "policy-deferred",
-		"rationale": "Fallback guest PTY read cap when the request omits max bytes; wire to request/config if tuning is needed."
+		"rationale": "Bounded TypeScript client retention set; expose through client configuration if operators need to tune it."
 	},
 	{
-		"name": "MAX_PTY_READ_WAIT_MS",
-		"path": "crates/sidecar-core/src/guest_pty.rs",
+		"name": "CLOSED_SHELL_ID_RETENTION_LIMIT",
+		"path": "packages/core/src/agent-os.ts",
+		"class": "policy-deferred",
+		"rationale": "Bounded TypeScript client retention set; expose through client configuration if operators need to tune it."
+	},
+	{
+		"name": "MAX_TOOL_DESCRIPTION_LENGTH",
+		"path": "packages/core/src/host-tools.ts",
+		"class": "policy-deferred",
+		"rationale": "Cross-boundary contract with packages/core/src/bindings.ts; both sides must change together."
+	},
+	{
+		"name": "DEFAULT_LIVE_FILESYSTEM_SYNC_MAX_BYTES",
+		"path": "packages/core/src/runtime-compat.ts",
+		"class": "policy",
+		"rationale": "Default byte bound for copying a live compatibility filesystem into the sidecar-backed filesystem.",
+		"wired": "createKernel.maxFilesystemBytes"
+	},
+	{
+		"name": "MAX_SYMLINK_DEPTH",
+		"path": "packages/core/src/runtime-compat.ts",
 		"class": "invariant",
-		"rationale": "Guest PTY read wait clamp; internal scheduling guard."
+		"rationale": "Linux ELOOP mirror of the kernel invariant."
 	},
 	{
-		"name": "DEFAULT_SIDECAR_EVENT_BUFFER_CAPACITY",
-		"path": "packages/core/src/sidecar-process.ts",
-		"class": "policy-deferred",
-		"rationale": "Client-side event buffer default for spawned sidecar processes; callers can override sidecar process options."
-	},
-	{
-		"name": "WASM_MODULE_BYTES_CACHE_CAPACITY",
-		"path": "crates/execution/src/wasm.rs",
+		"name": "TRAILING_OUTPUT_DRAIN_MAX_MS",
+		"path": "packages/core/src/sidecar/rpc-client.ts",
 		"class": "invariant",
-		"rationale": "Host-side LRU entry cap for cached wasm module bytes; process-wide cache sizing, not per-VM policy."
+		"rationale": "Teardown drain heuristic, not a guest-visible bound."
 	},
 	{
-		"name": "MAX_PENDING_KERNEL_STDIN_BYTES",
-		"path": "crates/native-sidecar/src/execution.rs",
-		"class": "policy-deferred",
-		"rationale": "Host-side backlog cap for child stdin awaiting kernel pipe capacity; mirrors resource.max_fd_write_bytes, not yet wired to VmLimits."
+		"name": "DEFAULT_WAIT_TIMEOUT_MS",
+		"path": "packages/core/src/test/terminal-harness.ts",
+		"class": "invariant",
+		"rationale": "Test harness wait timeout only."
 	}
 ]

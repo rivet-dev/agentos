@@ -95,6 +95,38 @@ pub fn evaluate_permissions_policy(
     }
 }
 
+/// Evaluate only rules that explicitly match `resource` in a pattern scope.
+///
+/// This is used for post-resolution network checks. The requested hostname is
+/// evaluated with the ordinary policy (including the rule-set default); each
+/// resolved address then adds a restriction only when a rule explicitly
+/// names that address. A scope-wide mode still applies to every resource.
+pub fn evaluate_matching_pattern_permission_policy(
+    permissions: &vm_config::PermissionsPolicy,
+    domain: &str,
+    capability: &str,
+    resource: Option<&str>,
+) -> Option<vm_config::PermissionMode> {
+    let scope = match domain {
+        "network" => permissions.network.as_ref(),
+        "child_process" => permissions.child_process.as_ref(),
+        "process" => permissions.process.as_ref(),
+        "env" => permissions.env.as_ref(),
+        "binding" => permissions.binding.as_ref(),
+        _ => return None,
+    }?;
+    let operation = capability_operation(capability, domain);
+    match scope {
+        vm_config::PatternPermissionScope::Mode(mode) => Some(*mode),
+        vm_config::PatternPermissionScope::Rules(rules) => rules
+            .rules
+            .iter()
+            .filter(|rule| pattern_rule_matches(rule, operation, resource))
+            .map(|rule| rule.mode)
+            .next_back(),
+    }
+}
+
 fn evaluate_fs_permission_scope(
     scope: Option<&vm_config::FsPermissionScope>,
     operation: &str,
@@ -414,6 +446,46 @@ mod tests {
                 "{domain} should default to deny",
             );
         }
+    }
+
+    #[test]
+    fn matching_pattern_evaluation_ignores_rule_set_default() {
+        let policy = vm_config::PermissionsPolicy {
+            fs: None,
+            network: Some(vm_config::PatternPermissionScope::Rules(
+                vm_config::PatternPermissionRuleSet {
+                    default: Some(vm_config::PermissionMode::Deny),
+                    rules: vec![vm_config::PatternPermissionRule {
+                        mode: vm_config::PermissionMode::Allow,
+                        operations: vec![String::from("http")],
+                        patterns: vec![String::from("203.0.113.*:443")],
+                    }],
+                },
+            )),
+            child_process: None,
+            process: None,
+            env: None,
+            binding: None,
+        };
+
+        assert_eq!(
+            evaluate_matching_pattern_permission_policy(
+                &policy,
+                "network",
+                "network.http",
+                Some("198.51.100.7:443"),
+            ),
+            None,
+        );
+        assert_eq!(
+            evaluate_matching_pattern_permission_policy(
+                &policy,
+                "network",
+                "network.http",
+                Some("203.0.113.9:443"),
+            ),
+            Some(vm_config::PermissionMode::Allow),
+        );
     }
 
     #[test]

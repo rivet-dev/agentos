@@ -1,30 +1,39 @@
 import type { Readable, Writable } from "node:stream";
 import {
+	type LiveSidecarEventSelector,
+	normalizeSidecarEventMatcher,
 	SidecarEventBuffer,
 	SidecarEventBufferOverflow,
-	normalizeSidecarEventMatcher,
 	sidecarEventWaitAbortError,
-	type LiveSidecarEventSelector,
 } from "./event-buffer.js";
 import { FrameRpcTransport } from "./frame-rpc.js";
-import type { FrameTransport } from "./frame-stream.js";
 import {
-	HostProtocolFrameFactory,
+	type FrameTransport,
+	SplitLaneFrameTransport,
+	StdioFrameTransport,
+} from "./frame-stream.js";
+import type { LiveOwnershipScope } from "./ownership.js";
+import {
 	classifySidecarWrittenProtocolFrame,
 	decodeProtocolFramePayload,
 	encodeProtocolFramePayload,
-	resolveSidecarRequestFramePayload,
+	HostProtocolFrameFactory,
+	type LiveControlFrame,
 	type LiveEventFrame,
 	type LiveProtocolFrame,
 	type LiveRequestFrame,
 	type LiveResponseFrame,
 	type LiveSidecarRequestFrame,
 	type LiveSidecarRequestHandler,
+	type LiveSidecarResponseFrame,
 	type ProtocolFramePayloadCodec,
+	resolveSidecarRequestFramePayload,
 } from "./protocol-frames.js";
-import type { LiveOwnershipScope } from "./ownership.js";
 import type { LiveRequestPayload } from "./request-payloads.js";
-import { SidecarSilenceTimeout } from "./sidecar-errors.js";
+import {
+	SidecarRejectedError,
+	SidecarSilenceTimeout,
+} from "./sidecar-errors.js";
 
 /**
  * How long the host tolerates TOTAL inbound silence (no responses, events,
@@ -36,12 +45,19 @@ import { SidecarSilenceTimeout } from "./sidecar-errors.js";
 const DEFAULT_SIDECAR_SILENCE_TIMEOUT_MS = 30_000;
 
 export interface SidecarProtocolClientOptions {
+	/** A combined transport remains supported for embedders and focused tests. */
 	frameTransport?: FrameTransport<
 		LiveResponseFrame | LiveEventFrame | LiveSidecarRequestFrame,
 		LiveProtocolFrame
 	>;
+	ordinaryFrameTransport?: FrameTransport<LiveEventFrame, LiveRequestFrame>;
+	controlFrameTransport?: FrameTransport<
+		LiveResponseFrame | LiveSidecarRequestFrame | LiveEventFrame,
+		LiveSidecarResponseFrame | LiveControlFrame
+	>;
 	stdin?: Writable;
 	stdout?: Readable;
+	control?: Readable & Writable;
 	eventBufferCapacity: number;
 	payloadCodec?: ProtocolFramePayloadCodec;
 	stderrText?: () => string;
@@ -67,7 +83,7 @@ export class SidecarProtocolClient {
 	private readonly hostFrameFactory = new HostProtocolFrameFactory();
 	private readonly frameTransport: FrameRpcTransport<
 		LiveResponseFrame | LiveEventFrame | LiveSidecarRequestFrame,
-		LiveProtocolFrame,
+		LiveRequestFrame | LiveSidecarResponseFrame | LiveControlFrame,
 		LiveResponseFrame,
 		LiveEventFrame,
 		LiveSidecarRequestFrame
@@ -89,14 +105,12 @@ export class SidecarProtocolClient {
 		this.stderrText = options.stderrText ?? (() => "");
 		this.frameTransport = new FrameRpcTransport<
 			LiveResponseFrame | LiveEventFrame | LiveSidecarRequestFrame,
-			LiveProtocolFrame,
+			LiveRequestFrame | LiveSidecarResponseFrame | LiveControlFrame,
 			LiveResponseFrame,
 			LiveEventFrame,
 			LiveSidecarRequestFrame
 		>({
-			frameTransport: options.frameTransport,
-			stdin: options.stdin,
-			stdout: options.stdout,
+			frameTransport: resolveProtocolFrameTransport(options, this.payloadCodec),
 			encodeFrame: (frame) =>
 				encodeProtocolFramePayload(frame, this.payloadCodec),
 			decodeFrame: (payload) =>
@@ -192,17 +206,22 @@ export class SidecarProtocolClient {
 		);
 
 		if (response.payload.type === "rejected") {
-			throw new Error(
-				`sidecar rejected request ${request.request_id}: ${response.payload.code}: ${response.payload.message}`,
-			);
+			throw new SidecarRejectedError(request.request_id, response.payload);
 		}
 		return response;
 	}
 
+	async shutdown(reason: string): Promise<void> {
+		if (this.closedError) {
+			throw this.closedError;
+		}
+		await this.frameTransport.writeFrame(
+			this.hostFrameFactory.createControlFrame({ type: "shutdown", reason }),
+		);
+	}
+
 	async waitForEvent(
-		matcher:
-			| LiveSidecarEventSelector
-			| ((event: LiveEventFrame) => boolean),
+		matcher: LiveSidecarEventSelector | ((event: LiveEventFrame) => boolean),
 		timeoutMs?: number,
 		options?: {
 			signal?: AbortSignal;
@@ -293,7 +312,7 @@ export class SidecarProtocolClient {
 		this.frameTransport.dispose();
 	}
 
-	private async writeFrame(frame: LiveProtocolFrame): Promise<void> {
+	private async writeFrame(frame: LiveSidecarResponseFrame): Promise<void> {
 		await this.frameTransport.writeFrame(frame);
 	}
 
@@ -361,4 +380,135 @@ export class SidecarProtocolClient {
 		}
 		this.eventWaiters.clear();
 	}
+}
+
+function resolveProtocolFrameTransport(
+	options: SidecarProtocolClientOptions,
+	payloadCodec: ProtocolFramePayloadCodec,
+): FrameTransport<
+	LiveResponseFrame | LiveEventFrame | LiveSidecarRequestFrame,
+	LiveRequestFrame | LiveSidecarResponseFrame | LiveControlFrame
+> {
+	const hasSplitTransport =
+		options.ordinaryFrameTransport !== undefined ||
+		options.controlFrameTransport !== undefined;
+	const hasStdio =
+		options.stdin !== undefined ||
+		options.stdout !== undefined ||
+		options.control !== undefined;
+	if (options.frameTransport) {
+		if (hasSplitTransport || hasStdio) {
+			throw new Error(
+				"SidecarProtocolClient frameTransport cannot be combined with split-lane transports or streams",
+			);
+		}
+		return options.frameTransport;
+	}
+
+	let ordinary = options.ordinaryFrameTransport;
+	let control = options.controlFrameTransport;
+	if (hasSplitTransport) {
+		if (!ordinary || !control || hasStdio) {
+			throw new Error(
+				"SidecarProtocolClient requires both ordinaryFrameTransport and controlFrameTransport, without stdio streams",
+			);
+		}
+	} else {
+		if (!options.stdin || !options.stdout || !options.control) {
+			throw new Error(
+				"SidecarProtocolClient requires a combined frameTransport or stdin/stdout/control streams",
+			);
+		}
+		ordinary = new StdioFrameTransport<LiveEventFrame, LiveRequestFrame>({
+			stdin: options.stdin,
+			stdout: options.stdout,
+			encodeFrame: (frame) => encodeProtocolFramePayload(frame, payloadCodec),
+			decodeFrame: (payload) => {
+				const frame = decodeProtocolFramePayload(payload, payloadCodec);
+				validateOrdinaryInboundFrame(frame);
+				return frame;
+			},
+		});
+		control = new StdioFrameTransport<
+			LiveResponseFrame | LiveSidecarRequestFrame | LiveEventFrame,
+			LiveSidecarResponseFrame | LiveControlFrame
+		>({
+			stdin: options.control,
+			stdout: options.control,
+			encodeFrame: (frame) => encodeProtocolFramePayload(frame, payloadCodec),
+			decodeFrame: (payload) => {
+				const frame = decodeProtocolFramePayload(payload, payloadCodec);
+				validateControlInboundFrame(frame);
+				return frame;
+			},
+		});
+	}
+
+	return new SplitLaneFrameTransport({
+		ordinary,
+		control,
+		validateOrdinaryFrame: validateOrdinaryInboundFrame,
+		validateControlFrame: validateControlInboundFrame,
+		selectWriteLane: (frame) => {
+			switch (frame.frame_type) {
+				case "request":
+					return "ordinary";
+				case "sidecar_response":
+				case "control":
+					return "control";
+				default: {
+					const invalidFrame = frame as { frame_type: string };
+					throw new Error(
+						`host frame ${invalidFrame.frame_type} is not valid on either writable protocol lane`,
+					);
+				}
+			}
+		},
+	});
+}
+
+function validateOrdinaryInboundFrame(frame: {
+	frame_type: string;
+	payload?: unknown;
+}): asserts frame is LiveEventFrame {
+	if (frame.frame_type !== "event") {
+		throw new Error(
+			`sidecar frame ${frame.frame_type} is not valid on the ordinary protocol lane`,
+		);
+	}
+	if (isHeartbeatFrame(frame as LiveEventFrame)) {
+		throw new Error(
+			"sidecar heartbeat event is not valid on the ordinary protocol lane",
+		);
+	}
+}
+
+function validateControlInboundFrame(frame: {
+	frame_type: string;
+	payload?: unknown;
+}): asserts frame is
+	| LiveResponseFrame
+	| LiveSidecarRequestFrame
+	| LiveEventFrame {
+	if (
+		frame.frame_type === "response" ||
+		frame.frame_type === "sidecar_request"
+	) {
+		return;
+	}
+	if (
+		frame.frame_type === "event" &&
+		isHeartbeatFrame(frame as LiveEventFrame)
+	) {
+		return;
+	}
+	throw new Error(
+		`sidecar frame ${frame.frame_type} is not valid on the control protocol lane`,
+	);
+}
+
+function isHeartbeatFrame(frame: LiveEventFrame): boolean {
+	return (
+		frame.payload.type === "structured" && frame.payload.name === "heartbeat"
+	);
 }

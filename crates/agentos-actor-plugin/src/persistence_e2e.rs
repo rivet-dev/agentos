@@ -426,6 +426,22 @@ async fn persistence_round_trips_fs_ops_against_real_sqlite() {
             "hard link must carry the original content"
         );
 
+        // The js_bridge wire contract names the destination `linkPath` (the
+        // TypeScript actor and native plugin use the same field).
+        let symlink_path = "/work/hello-symlink.txt";
+        persistence::handle_fs_call(
+            &host,
+            "symlink",
+            &json!({ "target": path, "linkPath": symlink_path }),
+        )
+        .await
+        .expect("symlink");
+        let symlink_target =
+            persistence::handle_fs_call(&host, "readLink", &json!({ "path": symlink_path }))
+                .await
+                .expect("readLink symlink");
+        assert_eq!(symlink_target, Some(json!(path)));
+
         // Truncate must preserve the retained prefix (it used to zero-fill
         // from the metadata-only empty content).
         persistence::handle_fs_call(&host, "truncate", &json!({ "path": path, "len": 5 }))

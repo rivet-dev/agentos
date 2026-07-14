@@ -414,6 +414,14 @@ impl PipeManager {
                 }
             }
 
+            // A zero/expired timeout is a nonblocking readiness probe. Do not
+            // register and immediately remove a waiter: both transitions wake
+            // the process-wide poll notifier and can make a deferred probe
+            // wake itself forever even though no pipe state changed.
+            if waiter_id.is_none() && deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                return Err(PipeError::would_block("pipe read timed out"));
+            }
+
             let id = if let Some(id) = waiter_id {
                 id
             } else {
@@ -682,5 +690,28 @@ fn wait_timeout_or_recover<'a, T>(
     match condvar.wait_timeout(guard, timeout) {
         Ok(result) => result,
         Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_timeout_empty_read_does_not_publish_false_readiness() {
+        let notifier = PollNotifier::default();
+        let manager = PipeManager::with_notifier(notifier.clone());
+        let pipe = manager.create_pipe();
+        let observed = notifier.snapshot();
+
+        let error = manager
+            .read_with_timeout(pipe.read.description.id(), 1, Some(Duration::ZERO))
+            .expect_err("empty nonblocking read must return EAGAIN");
+
+        assert_eq!(error.code(), "EAGAIN");
+        assert_eq!(notifier.snapshot(), observed);
+        let state = lock_or_recover(&manager.inner.state);
+        assert!(state.waiters.is_empty());
+        assert_eq!(state.next_waiter_id, 1);
     }
 }

@@ -30,8 +30,8 @@ pub use javascript::{
 pub use python::{
     CreatePythonContextRequest, PythonContext, PythonExecution, PythonExecutionEngine,
     PythonExecutionError, PythonExecutionEvent, PythonExecutionLimits, PythonExecutionResult,
-    PythonVfsRpcMethod, PythonVfsRpcRequest, PythonVfsRpcResponsePayload, PythonVfsRpcStat,
-    StartPythonExecutionRequest,
+    PythonVfsRpcMethod, PythonVfsRpcRequest, PythonVfsRpcResponder, PythonVfsRpcResponsePayload,
+    PythonVfsRpcStat, StartPythonExecutionRequest,
 };
 pub use signal::{NodeSignalDispositionAction, NodeSignalHandlerRegistration};
 pub use wasm::{

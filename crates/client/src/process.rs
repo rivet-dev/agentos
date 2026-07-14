@@ -611,8 +611,8 @@ impl AgentOs {
             .context("all_processes: GetProcessSnapshot request failed")?;
         let snapshot = match response {
             wire::ResponsePayload::ProcessSnapshotResponse(snapshot) => snapshot,
-            wire::ResponsePayload::RejectedResponse(wire::RejectedResponse { code, message }) => {
-                return Err(ClientError::Kernel { code, message }.into());
+            wire::ResponsePayload::RejectedResponse(rejected) => {
+                return Err(ClientError::from_rejection(rejected).into());
             }
             other => {
                 return Err(ClientError::Sidecar(format!(
@@ -899,8 +899,8 @@ impl AgentOs {
             .await?;
         match response {
             wire::ResponsePayload::ProcessStartedResponse(started) => Ok(started),
-            wire::ResponsePayload::RejectedResponse(wire::RejectedResponse { code, message }) => {
-                Err(ClientError::Kernel { code, message })
+            wire::ResponsePayload::RejectedResponse(rejected) => {
+                Err(ClientError::from_rejection(rejected))
             }
             other => Err(ClientError::Sidecar(format!(
                 "Execute: unexpected response {other:?}"

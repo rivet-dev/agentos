@@ -660,8 +660,8 @@ function createPythonBridgeRpcBridge() {
     socketSendSync(socketId, dataBase64) {
       return JSON.stringify(requestSync('socketSend', { socketId, bodyBase64: dataBase64 }));
     },
-    socketRecvSync(socketId, maxBuffer) {
-      return JSON.stringify(requestSync('socketRecv', { socketId, maxBuffer }));
+    socketRecvSync(socketId, maxBuffer, timeoutMs) {
+      return JSON.stringify(requestSync('socketRecv', { socketId, maxBuffer, timeoutMs }));
     },
     socketCloseSync(socketId) {
       return JSON.stringify(requestSync('socketClose', { socketId }));
@@ -674,8 +674,8 @@ function createPythonBridgeRpcBridge() {
         requestSync('udpSendto', { socketId, hostname: host, port, bodyBase64: dataBase64 }),
       );
     },
-    udpRecvfromSync(socketId, maxBuffer) {
-      return JSON.stringify(requestSync('udpRecvfrom', { socketId, maxBuffer }));
+    udpRecvfromSync(socketId, maxBuffer, timeoutMs) {
+      return JSON.stringify(requestSync('udpRecvfrom', { socketId, maxBuffer, timeoutMs }));
     },
     dispose() {},
   };
@@ -1224,7 +1224,13 @@ class _SecureExecSocket:
             deadline = _agentos_time.monotonic() + self._timeout
         backoff = 0.0
         while True:
-            resp = _agentos_socket_rpc(lambda: recv_fn(int(bufsize)))
+            if self._timeout == 0:
+                wait_ms = 0
+            elif deadline is None:
+                wait_ms = 30000
+            else:
+                wait_ms = max(0, int((deadline - _agentos_time.monotonic()) * 1000))
+            resp = _agentos_socket_rpc(lambda: recv_fn(int(bufsize), wait_ms))
             if resp.get("closed"):
                 return b"", resp
             data = resp.get("dataBase64") or ""
@@ -1245,7 +1251,9 @@ class _SecureExecSocket:
 
     def recv(self, bufsize, flags=0):
         sid = self._ensure_id()
-        data, _ = self._poll(bufsize, lambda n: _agentos_rpc.socketRecvSync(sid, n))
+        data, _ = self._poll(
+            bufsize, lambda n, wait_ms: _agentos_rpc.socketRecvSync(sid, n, wait_ms)
+        )
         return data
 
     def sendto(self, data, *args):
@@ -1262,7 +1270,9 @@ class _SecureExecSocket:
 
     def recvfrom(self, bufsize, flags=0):
         sid = self._ensure_id()
-        data, resp = self._poll(bufsize, lambda n: _agentos_rpc.udpRecvfromSync(sid, n))
+        data, resp = self._poll(
+            bufsize, lambda n, wait_ms: _agentos_rpc.udpRecvfromSync(sid, n, wait_ms)
+        )
         addr = (resp.get("host", ""), int(resp.get("port", 0))) if resp else ("", 0)
         return data, addr
 
@@ -2325,7 +2335,12 @@ function installPythonVfsSitePackages(pyodide) {
   } finally {
     try {
       pyodide.globals.delete('__agentos_vfs_site');
-    } catch {}
+    } catch (error) {
+      writeStream(
+        process.stderr,
+        `agentos: VFS site-packages global cleanup failed: ${formatError(error)}\n`,
+      );
+    }
   }
 }
 
@@ -2374,7 +2389,12 @@ else:
   } finally {
     try {
       pyodide.globals.delete('__agentos_vfs_site');
-    } catch {}
+    } catch (error) {
+      writeStream(
+        process.stderr,
+        `agentos: pip VFS global cleanup failed: ${formatError(error)}\n`,
+      );
+    }
   }
 }
 

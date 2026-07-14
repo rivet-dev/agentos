@@ -36,6 +36,10 @@ export const EXCLUDED = new Set<string>([
 	"@rivet-dev/agentos-dev-shell",
 	"@rivet-dev/agentos-playground",
 	"@rivet-dev/agentos-shell",
+	// Browser support stays in-tree as migration source, but it is outside the
+	// unified sidecar reactor/security contract and must not be published.
+	"@rivet-dev/agentos-browser",
+	"@rivet-dev/agentos-runtime-browser",
 	"secure-exec",
 	"publish",
 ]);

@@ -2,19 +2,28 @@
 
 #[cfg(not(test))]
 use std::collections::BTreeMap;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
-#[cfg(not(test))]
 use std::time::{Duration, Instant};
 
 #[cfg(not(test))]
-use agentos_bridge::queue_tracker::{warn_limit_exhausted, TrackedLimit};
+use agentos_bridge::queue_tracker::warn_limit_exhausted;
+use agentos_bridge::queue_tracker::{register_queue, QueueGauge, TrackedLimit};
 use agentos_bridge::{bridge_contract, BridgeCallConvention};
-use crossbeam_channel::{Receiver, Sender};
+use agentos_runtime::accounting::{Reservation, ResourceClass, ResourceLedger};
+use agentos_runtime::metrics::{ExecutorMetricClass, RuntimeMetrics};
+use agentos_runtime::readiness::{
+    ReadyAcknowledgement, ReadyBatch as RuntimeReadyBatch, ReadyFlags, ReadyObservation, ReadyWake,
+    SessionReadyBroker as RuntimeSessionReadyBroker,
+};
+use agentos_runtime::RuntimeContext;
+use crossbeam_channel::{Receiver, Select, Sender};
 
 use crate::execution;
+#[cfg(test)]
+use crate::host_call::BridgeCallRegistry;
 #[cfg(not(test))]
 use crate::host_call::{BridgeCallContext, ChannelRuntimeEventSender};
 use crate::host_call::{CallIdRouter, SharedCallIdCounter};
@@ -39,6 +48,194 @@ pub enum SessionCommand {
     /// so subsequent module loads on this thread read source directly instead of
     /// round-tripping the bridge. Sent just before an Execute message.
     SetModuleReader(Box<dyn crate::execution::GuestModuleReader>),
+    /// A bounded capability-identity batch drained from the session's
+    /// dedicated readiness lane. Durable data remains in the owning subsystem.
+    ReadyBatch(RuntimeReadyBatch),
+}
+
+#[derive(Debug)]
+struct SessionReadyWakeState {
+    runtime_wake_rx: tokio::sync::mpsc::Receiver<ReadyWake>,
+}
+
+/// VM-scoped adapter from the Tokio broker's capacity-one wake lane to the
+/// thread-affine V8 executor's capacity-one crossbeam lane.
+#[derive(Debug)]
+struct SessionReadiness {
+    generation: u64,
+    max_batch_handles: usize,
+    broker: RuntimeSessionReadyBroker,
+    wakes: Mutex<SessionReadyWakeState>,
+    executor_wake_tx: Sender<ReadyWake>,
+}
+
+impl SessionReadiness {
+    fn new(
+        generation: u64,
+        runtime: &RuntimeContext,
+        max_batch_handles: usize,
+    ) -> Result<(Arc<Self>, Receiver<ReadyWake>), String> {
+        if max_batch_handles == 0 {
+            return Err(String::from(
+                "ERR_AGENTOS_READY_BATCH_LIMIT: limits.reactor.workQuantum must be greater than zero",
+            ));
+        }
+        let (broker, runtime_wake_rx) = RuntimeSessionReadyBroker::new_with_resources(
+            generation,
+            Arc::clone(runtime.resources()),
+            runtime.metrics().clone(),
+        )
+        .map_err(|error| error.to_string())?;
+        let (executor_wake_tx, executor_wake_rx) = crossbeam_channel::bounded(1);
+        Ok((
+            Arc::new(Self {
+                generation,
+                max_batch_handles,
+                broker,
+                wakes: Mutex::new(SessionReadyWakeState { runtime_wake_rx }),
+                executor_wake_tx,
+            }),
+            executor_wake_rx,
+        ))
+    }
+
+    /// Readiness-disabled adapter for the standalone event-loop test seam. It
+    /// has no publication handle; production sessions always use `new` with
+    /// their VM-scoped runtime and configured capability bound.
+    fn disabled(generation: u64) -> Result<(Arc<Self>, Receiver<ReadyWake>), String> {
+        let (broker, runtime_wake_rx) =
+            RuntimeSessionReadyBroker::new(generation, 1).map_err(|error| error.to_string())?;
+        let (executor_wake_tx, executor_wake_rx) = crossbeam_channel::bounded(1);
+        Ok((
+            Arc::new(Self {
+                generation,
+                max_batch_handles: 1,
+                broker,
+                wakes: Mutex::new(SessionReadyWakeState { runtime_wake_rx }),
+                executor_wake_tx,
+            }),
+            executor_wake_rx,
+        ))
+    }
+
+    fn publish(
+        &self,
+        capability_id: u64,
+        capability_generation: u64,
+        flags: ReadyFlags,
+    ) -> Result<(), String> {
+        self.broker
+            .mark_ready(self.generation, capability_id, capability_generation, flags)
+            .map_err(|error| error.to_string())?;
+        let mut state = self.wakes.lock().map_err(|_| {
+            String::from("ERR_AGENTOS_READY_STATE_POISONED: session readiness lock poisoned")
+        })?;
+        self.forward_runtime_wake_locked(&mut state)
+    }
+
+    fn publish_signal(&self, signal: i32) -> Result<(), String> {
+        self.broker
+            .mark_signal_ready(self.generation, signal)
+            .map_err(|error| error.to_string())?;
+        let mut state = self.wakes.lock().map_err(|_| {
+            String::from("ERR_AGENTOS_READY_STATE_POISONED: session readiness lock poisoned")
+        })?;
+        self.forward_runtime_wake_locked(&mut state)
+    }
+
+    fn remove(&self, capability_id: u64, capability_generation: u64) -> Result<(), String> {
+        self.broker
+            .remove_capability(self.generation, capability_id, capability_generation)
+            .map_err(|error| error.to_string())
+    }
+
+    fn set_application_read_interest(
+        &self,
+        capability_id: u64,
+        capability_generation: u64,
+        enabled: bool,
+    ) -> Result<(), String> {
+        self.broker
+            .set_application_read_interest(
+                self.generation,
+                capability_id,
+                capability_generation,
+                enabled,
+            )
+            .map_err(|error| error.to_string())
+    }
+
+    fn publish_timer(&self, timer_id: u64) -> Result<(), String> {
+        self.broker
+            .mark_timer_ready(self.generation, timer_id)
+            .map_err(|error| error.to_string())?;
+        let mut state = self.wakes.lock().map_err(|_| {
+            String::from("ERR_AGENTOS_READY_STATE_POISONED: session readiness lock poisoned")
+        })?;
+        self.forward_runtime_wake_locked(&mut state)
+    }
+
+    fn forward_runtime_wake_locked(&self, state: &mut SessionReadyWakeState) -> Result<(), String> {
+        let wake = match state.runtime_wake_rx.try_recv() {
+            Ok(wake) => wake,
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => return Ok(()),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                return Err(String::from(
+                    "ERR_AGENTOS_READY_WAKE_DISCONNECTED: shared readiness wake source disconnected",
+                ));
+            }
+        };
+        match self.executor_wake_tx.try_send(wake) {
+            Ok(()) => Ok(()),
+            Err(crossbeam_channel::TrySendError::Full(_)) => Err(String::from(
+                "ERR_AGENTOS_READY_WAKE_INVARIANT: executor readiness lane was full for a shared wake",
+            )),
+            Err(crossbeam_channel::TrySendError::Disconnected(_)) => Err(String::from(
+                "ERR_AGENTOS_READY_WAKE_DISCONNECTED: executor readiness consumer disconnected",
+            )),
+        }
+    }
+
+    fn take_batch(&self, wake: ReadyWake) -> Result<RuntimeReadyBatch, String> {
+        self.broker
+            .ready_batch(wake.generation, wake.epoch, self.max_batch_handles)
+            .map_err(|error| error.to_string())
+    }
+
+    fn drain_signals(&self, batch: &RuntimeReadyBatch) -> Result<Vec<i32>, String> {
+        self.broker
+            .drain_signals(batch.generation, batch.epoch, self.max_batch_handles)
+            .map_err(|error| error.to_string())
+    }
+
+    fn drain_timers(&self, batch: &RuntimeReadyBatch) -> Result<Vec<u64>, String> {
+        self.broker
+            .drain_timers(batch.generation, batch.epoch, self.max_batch_handles)
+            .map_err(|error| error.to_string())
+    }
+
+    fn complete_batch(
+        &self,
+        batch: &RuntimeReadyBatch,
+        delivered: &[ReadyObservation],
+    ) -> Result<(), String> {
+        let acknowledgements = delivered
+            .iter()
+            .map(|entry| ReadyAcknowledgement {
+                capability_id: entry.capability_id,
+                capability_generation: entry.capability_generation,
+                observed_revision: entry.revision,
+                clear: entry.flags,
+            })
+            .collect::<Vec<_>>();
+        self.broker
+            .complete_wake(batch.generation, batch.epoch, &acknowledgements)
+            .map_err(|error| error.to_string())?;
+        let mut state = self.wakes.lock().map_err(|_| {
+            String::from("ERR_AGENTOS_READY_STATE_POISONED: session readiness lock poisoned")
+        })?;
+        self.forward_runtime_wake_locked(&mut state)
+    }
 }
 
 #[derive(Default)]
@@ -48,20 +245,21 @@ struct SessionPauseState {
 }
 
 #[derive(Default)]
-pub(crate) struct SessionPauseControl {
+#[doc(hidden)]
+pub struct SessionPauseControl {
     state: Mutex<SessionPauseState>,
     resumed: Condvar,
 }
 
 impl SessionPauseControl {
-    fn pause(&self) {
+    pub(crate) fn pause(&self) {
         self.state
             .lock()
             .expect("session pause lock poisoned")
             .paused = true;
     }
 
-    fn resume(&self) {
+    pub(crate) fn resume(&self) {
         let mut state = self.state.lock().expect("session pause lock poisoned");
         state.paused = false;
         self.resumed.notify_all();
@@ -74,7 +272,7 @@ impl SessionPauseControl {
         self.resumed.notify_all();
     }
 
-    fn wait_while_paused(&self) {
+    pub(crate) fn wait_while_paused(&self) {
         let mut state = self.state.lock().expect("session pause lock poisoned");
         while state.paused && !state.shutdown {
             state = self
@@ -98,8 +296,60 @@ type SharedIsolateHandle = Arc<Mutex<Option<v8::IsolateHandle>>>;
 #[cfg(test)]
 type SharedIsolateHandle = Arc<Mutex<Option<()>>>;
 
-/// Sender for typed runtime events produced by session threads.
-pub type RuntimeEventSender = crossbeam_channel::Sender<RuntimeEventEnvelope>;
+/// Sender for typed runtime events produced by session threads. IPC sessions
+/// share a bounded connection writer lane; in-process sessions write directly
+/// to their own bounded output lane so one backpressured VM cannot stall or
+/// destroy unrelated VMs in a global dispatch thread.
+#[derive(Clone)]
+pub enum RuntimeEventSender {
+    Channel(crossbeam_channel::Sender<RuntimeEventEnvelope>),
+    Closed,
+    Direct {
+        generation: u64,
+        sender: RuntimeEventOutputSender,
+    },
+}
+
+impl RuntimeEventSender {
+    pub fn closed() -> Self {
+        Self::Closed
+    }
+
+    pub fn direct(generation: u64, sender: RuntimeEventOutputSender) -> Self {
+        Self::Direct { generation, sender }
+    }
+
+    pub fn send(&self, envelope: RuntimeEventEnvelope) -> Result<(), String> {
+        match self {
+            Self::Channel(sender) => sender.try_send(envelope).map_err(|error| match error {
+                crossbeam_channel::TrySendError::Full(_) => String::from(
+                    "ERR_AGENTOS_V8_OUTPUT_LIMIT: runtime output lane is full; raise runtime.resources.maxAsyncCompletions",
+                ),
+                crossbeam_channel::TrySendError::Disconnected(_) => String::from(
+                    "ERR_AGENTOS_V8_OUTPUT_DISCONNECTED: runtime output consumer disconnected",
+                ),
+            }),
+            Self::Closed => Err(String::from(
+                "ERR_AGENTOS_V8_OUTPUT_UNREGISTERED: session has no registered output lane",
+            )),
+            Self::Direct { generation, sender } => {
+                if envelope.output_generation != Some(*generation) {
+                    return Err(format!(
+                        "ERR_AGENTOS_STALE_V8_OUTPUT: event generation {:?} does not match registered generation {generation}",
+                        envelope.output_generation
+                    ));
+                }
+                sender.try_send(envelope.event)
+            }
+        }
+    }
+}
+
+impl From<crossbeam_channel::Sender<RuntimeEventEnvelope>> for RuntimeEventSender {
+    fn from(sender: crossbeam_channel::Sender<RuntimeEventEnvelope>) -> Self {
+        Self::Channel(sender)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeEventEnvelope {
@@ -107,14 +357,128 @@ pub struct RuntimeEventEnvelope {
     pub event: RuntimeEvent,
 }
 
+#[derive(Clone)]
+pub struct RuntimeEventOutputSender {
+    inner: flume::Sender<QueuedRuntimeEvent>,
+    resources: Arc<ResourceLedger>,
+    gauge: Arc<QueueGauge>,
+}
+
+pub struct RuntimeEventOutputReceiver {
+    inner: flume::Receiver<QueuedRuntimeEvent>,
+    gauge: Arc<QueueGauge>,
+}
+
+struct QueuedRuntimeEvent {
+    event: RuntimeEvent,
+    _reservation: Reservation,
+}
+
+pub fn runtime_event_output_channel(
+    capacity: usize,
+    resources: Arc<ResourceLedger>,
+) -> (RuntimeEventOutputSender, RuntimeEventOutputReceiver) {
+    let (sender, receiver) = flume::bounded(capacity);
+    let gauge = register_queue(TrackedLimit::V8SessionFrames, capacity);
+    (
+        RuntimeEventOutputSender {
+            inner: sender,
+            resources,
+            gauge: Arc::clone(&gauge),
+        },
+        RuntimeEventOutputReceiver {
+            inner: receiver,
+            gauge,
+        },
+    )
+}
+
+impl RuntimeEventOutputSender {
+    #[cfg(test)]
+    pub(crate) fn capacity(&self) -> Option<usize> {
+        self.inner.capacity()
+    }
+
+    pub fn send(&self, event: RuntimeEvent) -> Result<(), String> {
+        let reservation = self
+            .resources
+            .reserve(ResourceClass::AsyncCompletions, 1)
+            .map_err(|error| error.to_string())?;
+        let result = self
+            .inner
+            .send(QueuedRuntimeEvent {
+                event,
+                _reservation: reservation,
+            })
+            .map_err(|_| {
+                String::from(
+                    "ERR_AGENTOS_V8_OUTPUT_DISCONNECTED: session output consumer disconnected",
+                )
+            });
+        self.gauge.observe_depth(self.inner.len());
+        result
+    }
+
+    pub fn try_send(&self, event: RuntimeEvent) -> Result<(), String> {
+        let reservation = self
+            .resources
+            .reserve(ResourceClass::AsyncCompletions, 1)
+            .map_err(|error| error.to_string())?;
+        let result = self
+            .inner
+            .try_send(QueuedRuntimeEvent {
+                event,
+                _reservation: reservation,
+            })
+            .map_err(|error| match error {
+                flume::TrySendError::Full(_) => String::from(
+                    "ERR_AGENTOS_V8_OUTPUT_LIMIT: session output lane is full; raise limits.reactor.maxAsyncCompletions",
+                ),
+                flume::TrySendError::Disconnected(_) => String::from(
+                    "ERR_AGENTOS_V8_OUTPUT_DISCONNECTED: session output consumer disconnected",
+                ),
+            });
+        self.gauge.observe_depth(self.inner.len());
+        result
+    }
+}
+
+impl RuntimeEventOutputReceiver {
+    pub fn recv(&self) -> Result<RuntimeEvent, flume::RecvError> {
+        let result = self.inner.recv().map(|queued| queued.event);
+        self.gauge.observe_depth(self.inner.len());
+        result
+    }
+
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<RuntimeEvent, flume::RecvTimeoutError> {
+        let result = self.inner.recv_timeout(timeout).map(|queued| queued.event);
+        self.gauge.observe_depth(self.inner.len());
+        result
+    }
+
+    pub fn try_recv(&self) -> Result<RuntimeEvent, flume::TryRecvError> {
+        let result = self.inner.try_recv().map(|queued| queued.event);
+        self.gauge.observe_depth(self.inner.len());
+        result
+    }
+
+    pub async fn recv_async(&self) -> Result<RuntimeEvent, flume::RecvError> {
+        let result = self.inner.recv_async().await.map(|queued| queued.event);
+        self.gauge.observe_depth(self.inner.len());
+        result
+    }
+}
+
+impl Drop for RuntimeEventOutputReceiver {
+    fn drop(&mut self) {
+        while self.inner.try_recv().is_ok() {}
+        self.gauge.observe_depth(self.inner.len());
+    }
+}
+
 const LATE_TERMINATE_EXECUTION_ERROR_CODE: &str = "ERR_LATE_TERMINATE_EXECUTION";
 const LATE_STREAM_EVENT_ERROR_CODE: &str = "ERR_LATE_STREAM_EVENT";
 const LATE_BRIDGE_RESPONSE_ERROR_CODE: &str = "ERR_LATE_BRIDGE_RESPONSE";
-const DEFERRED_COMMAND_LIMIT_ERROR_CODE: &str = "ERR_SESSION_DEFERRED_COMMAND_LIMIT";
-const SESSION_COMMAND_CHANNEL_CAPACITY: usize = 256;
-const MAX_DEFERRED_SESSION_COMMANDS: usize = SESSION_COMMAND_CHANNEL_CAPACITY;
-const MAX_DEFERRED_SYNC_MESSAGES: usize = SESSION_COMMAND_CHANNEL_CAPACITY;
-
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct WarmPoolKey {
     snapshot_key_digest: SnapshotCacheKey,
@@ -130,6 +494,7 @@ struct ParkedWorker {
 struct WarmWorkerPoolState {
     workers: HashMap<WarmPoolKey, Vec<ParkedWorker>>,
     refilling: HashSet<WarmPoolKey>,
+    reserved_workers: usize,
 }
 
 #[derive(Default)]
@@ -142,8 +507,10 @@ struct SessionAssignment {
     cpu_time_limit_ms: Option<u32>,
     wall_clock_limit_ms: Option<u32>,
     rx: Receiver<SessionCommand>,
-    slot_control: SlotControl,
-    max_concurrency: usize,
+    shutdown_rx: Receiver<()>,
+    ready_rx: Receiver<ReadyWake>,
+    ready_broker: Arc<SessionReadiness>,
+    slot_permit: SessionSlotPermit,
     event_tx: RuntimeEventSender,
     call_id_router: CallIdRouter,
     shared_call_id: SharedCallIdCounter,
@@ -153,14 +520,27 @@ struct SessionAssignment {
     pause_control: Arc<SessionPauseControl>,
     session_id: String,
     output_generation: Option<u64>,
+    runtime: RuntimeContext,
+    bridge_call_timeout: Duration,
 }
 
 #[cfg(not(test))]
 struct PrecreatedIsolate {
-    isolate: v8::OwnedIsolate,
-    context: v8::Global<v8::Context>,
+    // Keep both V8 owners optional so `Drop` can enforce the required order:
+    // every Global must be released before its isolate, and isolate destruction
+    // must share the process-wide lifecycle lock with isolate creation.
+    isolate: Option<v8::OwnedIsolate>,
+    context: Option<v8::Global<v8::Context>>,
     bridge_code: String,
     userland_code: String,
+}
+
+#[cfg(not(test))]
+impl Drop for PrecreatedIsolate {
+    fn drop(&mut self) {
+        drop(self.context.take());
+        isolate::drop_isolate(self.isolate.take());
+    }
 }
 
 #[cfg(test)]
@@ -238,7 +618,10 @@ fn warm_worker_capacity_per_key() -> usize {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(2)
+        .min(MAX_PROCESS_WARM_WORKERS)
 }
+
+const MAX_PROCESS_WARM_WORKERS: usize = 4;
 
 fn effective_heap_limit_mb(heap_limit_mb: Option<u32>) -> u32 {
     heap_limit_mb.unwrap_or(crate::isolate::DEFAULT_HEAP_LIMIT_MB)
@@ -274,6 +657,7 @@ impl WarmWorkerPool {
     fn shutdown_handles(&self) -> Vec<thread::JoinHandle<()>> {
         let mut state = self.state.lock().expect("warm worker pool lock poisoned");
         state.refilling.clear();
+        state.reserved_workers = 0;
         state
             .workers
             .drain()
@@ -285,8 +669,10 @@ impl WarmWorkerPool {
             .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn ensure_count(
         self: &Arc<Self>,
+        runtime: RuntimeContext,
         snapshot_cache: Arc<SnapshotCache>,
         slot_control: SlotControl,
         bridge_code: String,
@@ -312,27 +698,25 @@ impl WarmWorkerPool {
 
         let pool = Arc::clone(self);
         let spawn_key = key.clone();
-        let _ = thread::Builder::new()
-            .name(String::from("secure-exec-v8-warm-refill"))
-            .spawn(move || {
-                pool.refill_until(
-                    snapshot_cache,
-                    slot_control,
-                    spawn_key,
-                    bridge_code,
-                    userland_code,
-                    heap_limit_mb,
-                    target_count,
-                );
-            })
-            .map_err(|error| {
-                eprintln!("agentos-v8-runtime: warm worker refill spawn failed: {error}");
-                self.state
-                    .lock()
-                    .expect("warm worker pool lock poisoned")
-                    .refilling
-                    .remove(&key);
-            });
+        let requested_bytes = bridge_code.len().saturating_add(userland_code.len());
+        if let Err(error) = runtime.blocking().submit(requested_bytes, move || {
+            pool.refill_until(
+                snapshot_cache,
+                slot_control,
+                spawn_key,
+                bridge_code,
+                userland_code,
+                heap_limit_mb,
+                target_count,
+            );
+        }) {
+            eprintln!("ERR_AGENTOS_V8_WARM_REFILL: bounded executor rejected refill: {error}");
+            self.state
+                .lock()
+                .expect("warm worker pool lock poisoned")
+                .refilling
+                .remove(&key);
+        }
     }
 
     // Internal pool-refill plumbing; args mirror the parked-worker construction.
@@ -354,24 +738,31 @@ impl WarmWorkerPool {
             }
             let desired = target_count.min(capacity);
             {
-                let state = self.state.lock().expect("warm worker pool lock poisoned");
-                if state.workers.get(&key).map_or(0, Vec::len) >= desired {
+                let mut state = self.state.lock().expect("warm worker pool lock poisoned");
+                let current = state.workers.get(&key).map_or(0, Vec::len);
+                let total = state.workers.values().map(Vec::len).sum::<usize>();
+                if current >= desired
+                    || total.saturating_add(state.reserved_workers) >= MAX_PROCESS_WARM_WORKERS
+                {
                     break;
                 }
+                state.reserved_workers += 1;
             }
 
-            let Some(worker) = spawn_warm_worker(
+            let worker = spawn_warm_worker(
                 Arc::clone(&snapshot_cache),
                 Arc::clone(&slot_control),
                 key.clone(),
                 bridge_code.clone(),
                 userland_code.clone(),
                 heap_limit_mb,
-            ) else {
+            );
+            let mut state = self.state.lock().expect("warm worker pool lock poisoned");
+            state.reserved_workers = state.reserved_workers.saturating_sub(1);
+            let Some(worker) = worker else {
                 break;
             };
 
-            let mut state = self.state.lock().expect("warm worker pool lock poisoned");
             let workers = state.workers.entry(key.clone()).or_default();
             if workers.len() >= desired {
                 drop(worker.assignment_tx);
@@ -408,6 +799,7 @@ fn spawn_warm_worker(
     let (ready_tx, ready_rx) = crossbeam_channel::bounded::<Result<(), String>>(1);
     let worker_bridge_code = bridge_code.clone();
     let worker_userland_code = userland_code.clone();
+    // AGENTOS_THREAD_SITE: bounded-v8-warm-worker
     let join_handle = match thread::Builder::new()
         .name(String::from("secure-exec-v8-warm-worker"))
         .spawn(move || {
@@ -420,13 +812,17 @@ fn spawn_warm_worker(
             );
             match precreated {
                 Ok(precreated) => {
-                    let _ = ready_tx.send(Ok(()));
+                    if ready_tx.send(Ok(())).is_err() {
+                        eprintln!("INFO_AGENTOS_STALE_WARM_WORKER: warm worker requester disconnected before startup completed");
+                    }
                     if let Ok(assignment) = assignment_rx.recv() {
                         session_thread(assignment, Some(precreated));
                     }
                 }
                 Err(error) => {
-                    let _ = ready_tx.send(Err(error));
+                    if ready_tx.send(Err(error)).is_err() {
+                        eprintln!("INFO_AGENTOS_STALE_WARM_WORKER: warm worker requester disconnected before startup failure was delivered");
+                    }
                 }
             }
         }) {
@@ -495,8 +891,8 @@ fn precreate_warm_isolate(
     isolate.set_host_initialize_import_meta_object_callback(execution::import_meta_object_callback);
     let context = isolate::create_context(&mut isolate);
     Ok(PrecreatedIsolate {
-        isolate,
-        context,
+        isolate: Some(isolate),
+        context: Some(context),
         bridge_code,
         userland_code,
     })
@@ -530,12 +926,53 @@ fn normalize_wall_clock_limit_ms(wall_clock_limit_ms: Option<u32>) -> Option<u32
     wall_clock_limit_ms.filter(|limit_ms| *limit_ms > 0)
 }
 
+fn signal_session_shutdown(sender: &Sender<()>, session_id: &str) {
+    match sender.try_send(()) {
+        Ok(()) => {}
+        Err(crossbeam_channel::TrySendError::Full(())) => eprintln!(
+            "INFO_AGENTOS_VM_SHUTDOWN_COALESCED: session={session_id} already has a pending shutdown signal"
+        ),
+        Err(crossbeam_channel::TrySendError::Disconnected(())) => eprintln!(
+            "INFO_AGENTOS_STALE_VM_SHUTDOWN: session={session_id} executor already disconnected"
+        ),
+    }
+}
+
+pub(crate) fn configured_resource_capacity(
+    runtime: &RuntimeContext,
+    resource: ResourceClass,
+    vm_config_path: &'static str,
+    process_config_path: &'static str,
+) -> Result<usize, String> {
+    let config_path = if runtime.vm_generation().is_some() {
+        vm_config_path
+    } else {
+        process_config_path
+    };
+    match runtime.resources().usage(resource).limit {
+        Some(capacity) if capacity > 0 => Ok(capacity),
+        Some(_) => Err(format!(
+            "ERR_AGENTOS_RUNTIME_CONFIG: {config_path} must be greater than zero"
+        )),
+        None => Err(format!(
+            "ERR_AGENTOS_RUNTIME_CONFIG: {config_path} must configure a bounded {} limit",
+            resource.name()
+        )),
+    }
+}
+
 /// Internal entry for a running session
 struct SessionEntry {
     /// Output receiver generation current when this session was created.
     output_generation: Option<u64>,
     /// Channel to send commands to the session thread
     tx: Sender<SessionCommand>,
+    /// Configured bound for this generation's ordinary command lane.
+    command_capacity: usize,
+    /// Dedicated capacity-one control lane. Shutdown must never contend with
+    /// ordinary session commands, because that lane may be full precisely when
+    /// an overloaded session needs to be terminated.
+    shutdown_tx: Sender<()>,
     /// Thread join handle
     join_handle: Option<thread::JoinHandle<()>>,
     /// Thread-safe V8 isolate handle for out-of-band termination.
@@ -544,6 +981,10 @@ struct SessionEntry {
     /// Current execution abort handle used to wake sync bridge waits.
     execution_abort: SharedExecutionAbort,
     pause_control: Arc<SessionPauseControl>,
+    /// Durable socket readiness and its dedicated capacity-one wake lane.
+    ready_broker: Arc<SessionReadiness>,
+    #[cfg(test)]
+    session_resources: Arc<agentos_runtime::accounting::ResourceLedger>,
 }
 
 /// Deferred shutdown work for a session that has already been removed from
@@ -554,6 +995,7 @@ struct SessionEntry {
 /// and the joined thread can be parked on a full event channel send.
 pub struct SessionShutdown {
     session_id: String,
+    output_generation: Option<u64>,
     join_handle: Option<thread::JoinHandle<()>>,
     call_id_router: CallIdRouter,
 }
@@ -561,21 +1003,73 @@ pub struct SessionShutdown {
 impl SessionShutdown {
     pub fn finish(mut self) {
         if let Some(handle) = self.join_handle.take() {
-            let _ = handle.join();
+            if handle.join().is_err() {
+                eprintln!(
+                    "ERR_AGENTOS_VM_EXECUTOR_PANIC: session={} generation={:?}",
+                    self.session_id, self.output_generation
+                );
+            }
         }
         self.call_id_router
-            .lock()
-            .expect("call_id router lock poisoned")
-            .retain(|_, routed_session_id| routed_session_id != &self.session_id);
+            .cancel_session(&self.session_id, self.output_generation);
     }
 }
 
 /// Concurrency slot tracker shared across session threads
 type SlotControl = Arc<(Mutex<usize>, Condvar)>;
 
-/// Shared deferred message queue for non-BridgeResponse frames consumed by
-/// sync bridge calls. The event loop drains these before blocking on the channel.
-pub(crate) type DeferredQueue = Arc<Mutex<VecDeque<SessionMessage>>>;
+/// An admitted V8 executor slot. It is acquired before spawning or assigning
+/// an OS thread and remains owned by that generation until the thread exits.
+/// Detached/stuck generations therefore stay quarantined instead of lending
+/// their capacity to a successor VM.
+struct SessionSlotPermit {
+    control: SlotControl,
+    metrics: RuntimeMetrics,
+}
+
+impl SessionSlotPermit {
+    fn try_acquire(
+        control: &SlotControl,
+        maximum: usize,
+        metrics: RuntimeMetrics,
+    ) -> Result<Self, String> {
+        let (lock, _) = &**control;
+        let mut active = lock
+            .lock()
+            .map_err(|_| String::from("ERR_AGENTOS_VM_EXECUTOR_POISONED: slot lock poisoned"))?;
+        if *active >= maximum {
+            return Err(format!(
+                "ERR_AGENTOS_VM_EXECUTOR_LIMIT: active V8 executors reached limit of {maximum}; raise runtime.executor.maxActiveVms"
+            ));
+        }
+        *active += 1;
+        metrics.observe_executor(ExecutorMetricClass::Vm, *active, 0);
+        Ok(Self {
+            control: Arc::clone(control),
+            metrics,
+        })
+    }
+}
+
+impl Drop for SessionSlotPermit {
+    fn drop(&mut self) {
+        let (lock, cvar) = &*self.control;
+        match lock.lock() {
+            Ok(mut active) if *active > 0 => {
+                *active -= 1;
+                self.metrics
+                    .observe_executor(ExecutorMetricClass::Vm, *active, 0);
+                cvar.notify_all();
+            }
+            Ok(_) => eprintln!(
+                "ERR_AGENTOS_VM_EXECUTOR_ACCOUNTING_UNDERFLOW: executor permit released at zero"
+            ),
+            Err(_) => {
+                eprintln!("ERR_AGENTOS_VM_EXECUTOR_POISONED: executor permit could not be released")
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ExecutionAbortReason {
@@ -605,27 +1099,36 @@ impl Clone for SharedExecutionAbort {
     }
 }
 
-/// Create a new empty deferred queue.
-pub(crate) fn new_deferred_queue() -> DeferredQueue {
-    Arc::new(Mutex::new(VecDeque::new()))
-}
-
 pub(crate) fn new_execution_abort() -> SharedExecutionAbort {
     SharedExecutionAbort(Arc::new(Mutex::new(None)))
 }
 
+#[cfg_attr(test, allow(dead_code))]
 pub(crate) struct ActiveExecutionAbort {
     shared: SharedExecutionAbort,
 }
 
+#[cfg_attr(test, allow(dead_code))]
 impl ActiveExecutionAbort {
     pub(crate) fn arm(shared: &SharedExecutionAbort) -> (Self, crossbeam_channel::Receiver<()>) {
         let (tx, rx) = crossbeam_channel::bounded::<()>(0);
         let mut guard = shared.0.lock().unwrap();
-        *guard = Some(ExecutionAbortState {
-            sender: Some(tx),
-            reason: None,
-        });
+        if let Some(reason) = guard.as_ref().and_then(|state| state.reason) {
+            // Cancellation is durable across the short gap between dequeuing
+            // Execute and arming its waiter. Leave the new receiver
+            // disconnected so the execution observes the already-recorded
+            // terminal reason immediately.
+            drop(tx);
+            *guard = Some(ExecutionAbortState {
+                sender: None,
+                reason: Some(reason),
+            });
+        } else {
+            *guard = Some(ExecutionAbortState {
+                sender: Some(tx),
+                reason: None,
+            });
+        }
         (
             Self {
                 shared: shared.clone(),
@@ -642,9 +1145,26 @@ impl Drop for ActiveExecutionAbort {
 }
 
 pub(crate) fn signal_execution_abort(shared: &SharedExecutionAbort, reason: ExecutionAbortReason) {
-    if let Some(state) = shared.0.lock().unwrap().as_mut() {
+    let mut guard = shared.0.lock().unwrap();
+    if let Some(state) = guard.as_mut() {
         state.reason.get_or_insert(reason);
         state.sender.take();
+    }
+}
+
+fn signal_execution_abort_durable(shared: &SharedExecutionAbort, reason: ExecutionAbortReason) {
+    let mut guard = shared.0.lock().unwrap();
+    if let Some(state) = guard.as_mut() {
+        state.reason.get_or_insert(reason);
+        state.sender.take();
+    } else {
+        // Session teardown is durable even if the execution has not armed its
+        // receiver yet. Ordinary TerminateExecution remains edge-scoped so a
+        // request against an idle reusable session does not poison its next run.
+        *guard = Some(ExecutionAbortState {
+            sender: None,
+            reason: Some(reason),
+        });
     }
 }
 
@@ -662,6 +1182,10 @@ fn execution_abort_reason(shared: &SharedExecutionAbort) -> Option<ExecutionAbor
 /// Each session runs on a dedicated OS thread with its own V8 isolate.
 pub struct SessionManager {
     sessions: HashMap<String, SessionEntry>,
+    /// Detached generations remain owned until their executor exits. The
+    /// thread itself retains the concurrency permit, so a successor cannot
+    /// consume capacity that is still running untrusted code.
+    quarantined: Vec<QuarantinedSession>,
     max_concurrency: usize,
     slot_control: SlotControl,
     /// Typed runtime event sender shared across session threads.
@@ -675,25 +1199,46 @@ pub struct SessionManager {
     snapshot_cache: Arc<SnapshotCache>,
     /// Ready-to-claim isolate workers keyed by snapshot digest and heap cap.
     warm_pool: Arc<WarmWorkerPool>,
+    /// Process-owned scheduler and bounded blocking executor, injected when the
+    /// session manager is constructed rather than discovered during refill.
+    runtime: RuntimeContext,
+    executor_teardown_timeout: Duration,
+}
+
+struct QuarantinedSession {
+    session_id: String,
+    output_generation: Option<u64>,
+    join_handle: thread::JoinHandle<()>,
+    quarantined_at: Instant,
+    deadline_reported: bool,
 }
 
 impl SessionManager {
     pub fn new(
         max_concurrency: usize,
-        event_tx: RuntimeEventSender,
+        event_tx: impl Into<RuntimeEventSender>,
         call_id_router: CallIdRouter,
         snapshot_cache: Arc<SnapshotCache>,
+        runtime: RuntimeContext,
     ) -> Self {
         SessionManager {
             sessions: HashMap::new(),
+            quarantined: Vec::new(),
             max_concurrency,
             slot_control: Arc::new((Mutex::new(0), Condvar::new())),
-            event_tx,
+            event_tx: event_tx.into(),
             call_id_router,
             shared_call_id: Arc::new(AtomicU64::new(1)),
             snapshot_cache,
             warm_pool: Arc::new(WarmWorkerPool::default()),
+            executor_teardown_timeout: runtime.vm_executor_teardown_timeout(),
+            runtime,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn max_concurrency(&self) -> usize {
+        self.max_concurrency
     }
 
     /// Get the snapshot cache for pre-warming from WarmSnapshot messages.
@@ -710,6 +1255,7 @@ impl SessionManager {
         count: usize,
     ) {
         self.warm_pool.ensure_count(
+            self.runtime.clone(),
             Arc::clone(&self.snapshot_cache),
             Arc::clone(&self.slot_control),
             bridge_code,
@@ -720,8 +1266,8 @@ impl SessionManager {
     }
 
     /// Create a new session.
-    /// Spawns a dedicated thread with a V8 isolate. If max concurrency is
-    /// reached, the session thread will block until a slot becomes available.
+    /// Spawns a dedicated admitted thread with a V8 isolate. Admission happens
+    /// before thread creation; overload returns a typed limit error.
     pub fn create_session(
         &mut self,
         session_id: String,
@@ -748,24 +1294,107 @@ impl SessionManager {
         output_generation: Option<u64>,
         warm_hint: Option<WarmSessionHint>,
     ) -> Result<(), String> {
+        self.create_session_with_output_generation_and_sender(
+            session_id,
+            heap_limit_mb,
+            cpu_time_limit_ms,
+            wall_clock_limit_ms,
+            output_generation,
+            warm_hint,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_session_with_output_generation_and_sender(
+        &mut self,
+        session_id: String,
+        heap_limit_mb: Option<u32>,
+        cpu_time_limit_ms: Option<u32>,
+        wall_clock_limit_ms: Option<u32>,
+        output_generation: Option<u64>,
+        warm_hint: Option<WarmSessionHint>,
+        event_tx: Option<RuntimeEventSender>,
+    ) -> Result<(), String> {
+        // Serialized/standalone sessions do not carry VM reactor policy. Keep
+        // their historical ceiling; sidecar VM sessions must call the explicit
+        // `_and_runtime` path with `limits.reactor.workQuantum`.
+        let ready_batch_handle_limit = configured_resource_capacity(
+            &self.runtime,
+            ResourceClass::ReadyHandles,
+            "limits.reactor.maxReadyHandles",
+            "runtime.resources.maxReadyHandles",
+        )?;
+        self.create_session_with_output_generation_sender_and_runtime(
+            session_id,
+            heap_limit_mb,
+            cpu_time_limit_ms,
+            wall_clock_limit_ms,
+            output_generation,
+            warm_hint,
+            event_tx,
+            self.runtime.clone(),
+            ready_batch_handle_limit,
+            crate::host_call::DEFAULT_BRIDGE_CALL_TIMEOUT,
+        )
+    }
+
+    /// Create a session whose guest-owned work and resource reservations are
+    /// charged to `session_runtime`. The manager's own runtime remains the
+    /// process-scoped context used for shared snapshot and warm-pool work.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_session_with_output_generation_sender_and_runtime(
+        &mut self,
+        session_id: String,
+        heap_limit_mb: Option<u32>,
+        cpu_time_limit_ms: Option<u32>,
+        wall_clock_limit_ms: Option<u32>,
+        output_generation: Option<u64>,
+        warm_hint: Option<WarmSessionHint>,
+        event_tx: Option<RuntimeEventSender>,
+        session_runtime: RuntimeContext,
+        ready_batch_handle_limit: usize,
+        bridge_call_timeout: Duration,
+    ) -> Result<(), String> {
+        self.reap_finished_quarantines();
         if self.sessions.contains_key(&session_id) {
             return Err(format!("session {} already exists", session_id));
         }
 
+        let slot_permit = SessionSlotPermit::try_acquire(
+            &self.slot_control,
+            self.max_concurrency,
+            self.runtime.metrics().clone(),
+        )?;
+
         let cpu_time_limit_ms = normalize_cpu_time_limit_ms(cpu_time_limit_ms);
         let wall_clock_limit_ms = normalize_wall_clock_limit_ms(wall_clock_limit_ms);
-        let (tx, rx) = crossbeam_channel::bounded(SESSION_COMMAND_CHANNEL_CAPACITY);
+        let command_capacity = configured_resource_capacity(
+            &session_runtime,
+            ResourceClass::HandleCommands,
+            "limits.reactor.maxHandleCommands",
+            "runtime.resources.maxHandleCommands",
+        )?;
+        let (tx, rx) = crossbeam_channel::bounded(command_capacity);
+        let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
+        let ready_generation = output_generation.unwrap_or(1);
+        let (ready_broker, ready_rx) =
+            SessionReadiness::new(ready_generation, &session_runtime, ready_batch_handle_limit)?;
         let isolate_handle = Arc::new(Mutex::new(None));
         let execution_abort = new_execution_abort();
         let pause_control = Arc::new(SessionPauseControl::default());
+        #[cfg(test)]
+        let session_resources = Arc::clone(session_runtime.resources());
         let assignment = SessionAssignment {
             heap_limit_mb,
             cpu_time_limit_ms,
             wall_clock_limit_ms,
             rx,
-            slot_control: Arc::clone(&self.slot_control),
-            max_concurrency: self.max_concurrency,
-            event_tx: self.event_tx.clone(),
+            shutdown_rx,
+            ready_rx,
+            ready_broker: Arc::clone(&ready_broker),
+            slot_permit,
+            event_tx: event_tx.unwrap_or_else(|| self.event_tx.clone()),
             call_id_router: Arc::clone(&self.call_id_router),
             shared_call_id: Arc::clone(&self.shared_call_id),
             snapshot_cache: Arc::clone(&self.snapshot_cache),
@@ -774,12 +1403,15 @@ impl SessionManager {
             pause_control: Arc::clone(&pause_control),
             session_id: session_id.clone(),
             output_generation,
+            runtime: session_runtime,
+            bridge_call_timeout,
         };
 
         let join_handle = match self.claim_warm_worker(warm_hint.as_ref(), assignment) {
             Ok((join_handle, true)) => {
                 if let Some(hint) = warm_hint {
                     self.warm_pool.ensure_count(
+                        self.runtime.clone(),
                         Arc::clone(&self.snapshot_cache),
                         Arc::clone(&self.slot_control),
                         hint.bridge_code,
@@ -800,10 +1432,15 @@ impl SessionManager {
             SessionEntry {
                 output_generation,
                 tx,
+                command_capacity,
+                shutdown_tx,
                 join_handle: Some(join_handle),
                 isolate_handle,
                 execution_abort,
                 pause_control,
+                ready_broker,
+                #[cfg(test)]
+                session_resources,
             },
         );
 
@@ -902,7 +1539,7 @@ impl SessionManager {
         Ok(true)
     }
 
-    fn detach_session(&mut self, session_id: &str) -> Result<(), String> {
+    pub(crate) fn detach_session(&mut self, session_id: &str) -> Result<(), String> {
         let entry = self
             .sessions
             .get(session_id)
@@ -918,13 +1555,60 @@ impl SessionManager {
         {
             handle.terminate_execution();
         }
-        signal_execution_abort(&entry.execution_abort, ExecutionAbortReason::Terminated);
-        self.clear_call_routes_for_session(session_id);
+        signal_execution_abort_durable(&entry.execution_abort, ExecutionAbortReason::Terminated);
+        self.clear_call_routes_for_session(session_id, entry.output_generation);
         let mut entry = self.sessions.remove(session_id).unwrap();
-        let _ = entry.tx.try_send(SessionCommand::Shutdown);
+        signal_session_shutdown(&entry.shutdown_tx, session_id);
         drop(entry.tx);
-        let _ = entry.join_handle.take();
+        if let Some(join_handle) = entry.join_handle.take() {
+            eprintln!(
+                "WARN_AGENTOS_VM_EXECUTOR_QUARANTINED: session={} generation={:?}",
+                session_id, entry.output_generation
+            );
+            self.quarantined.push(QuarantinedSession {
+                session_id: session_id.to_owned(),
+                output_generation: entry.output_generation,
+                join_handle,
+                quarantined_at: Instant::now(),
+                deadline_reported: false,
+            });
+        }
         Ok(())
+    }
+
+    fn reap_finished_quarantines(&mut self) {
+        let mut retained = Vec::with_capacity(self.quarantined.len());
+        for mut quarantined in self.quarantined.drain(..) {
+            if !quarantined.join_handle.is_finished() {
+                if !quarantined.deadline_reported
+                    && quarantined.quarantined_at.elapsed() >= self.executor_teardown_timeout
+                {
+                    quarantined.deadline_reported = true;
+                    eprintln!(
+                        "ERR_AGENTOS_VM_EXECUTOR_TEARDOWN_TIMEOUT: session={} generation={:?} deadline_ms={}; executor remains quarantined and retains its permit; raise runtime.executor.teardownTimeoutMs",
+                        quarantined.session_id,
+                        quarantined.output_generation,
+                        self.executor_teardown_timeout.as_millis()
+                    );
+                }
+                retained.push(quarantined);
+                continue;
+            }
+            if quarantined.join_handle.join().is_err() {
+                eprintln!(
+                    "ERR_AGENTOS_VM_EXECUTOR_PANIC: quarantined session={} generation={:?}",
+                    quarantined.session_id, quarantined.output_generation
+                );
+            } else {
+                eprintln!(
+                    "INFO_AGENTOS_VM_EXECUTOR_QUARANTINE_RELEASED: session={} generation={:?}",
+                    quarantined.session_id, quarantined.output_generation
+                );
+            }
+            self.call_id_router
+                .cancel_session(&quarantined.session_id, quarantined.output_generation);
+        }
+        self.quarantined = retained;
     }
 
     /// Destroy a session inline. Joins the session thread before returning, so
@@ -944,7 +1628,11 @@ impl SessionManager {
             return Err(format!("session {} does not exist", session_id));
         }
 
-        self.clear_call_routes_for_session(session_id);
+        let output_generation = self
+            .sessions
+            .get(session_id)
+            .and_then(|entry| entry.output_generation);
+        self.clear_call_routes_for_session(session_id, output_generation);
         let mut entry = self
             .sessions
             .remove(session_id)
@@ -960,30 +1648,27 @@ impl SessionManager {
         {
             handle.terminate_execution();
         }
-        signal_execution_abort(&entry.execution_abort, ExecutionAbortReason::Terminated);
-        // Send shutdown, then drop the entry (and with it the sender) so the
-        // session thread's rx.recv() returns Err if Shutdown was consumed by
-        // an inner loop.
-        let _ = entry.tx.try_send(SessionCommand::Shutdown);
+        signal_execution_abort_durable(&entry.execution_abort, ExecutionAbortReason::Terminated);
+        // Shutdown has a dedicated lane so a full ordinary command queue can
+        // never turn the following join into a deadlock.
+        signal_session_shutdown(&entry.shutdown_tx, session_id);
         let join_handle = entry.join_handle.take();
         drop(entry);
         Ok(SessionShutdown {
             session_id: session_id.to_owned(),
+            output_generation,
             join_handle,
             call_id_router: Arc::clone(&self.call_id_router),
         })
     }
 
     pub(crate) fn take_session_shutdown_handles(&mut self) -> Vec<thread::JoinHandle<()>> {
-        self.call_id_router
-            .lock()
-            .expect("call_id router lock poisoned")
-            .clear();
+        self.call_id_router.clear();
 
         let mut handles: Vec<_> = self
             .sessions
             .drain()
-            .filter_map(|(_, mut entry)| {
+            .filter_map(|(session_id, mut entry)| {
                 #[cfg(not(test))]
                 if let Some(handle) = entry
                     .isolate_handle
@@ -993,28 +1678,32 @@ impl SessionManager {
                 {
                     handle.terminate_execution();
                 }
-                signal_execution_abort(&entry.execution_abort, ExecutionAbortReason::Terminated);
-                let _ = entry.tx.try_send(SessionCommand::Shutdown);
+                signal_execution_abort_durable(
+                    &entry.execution_abort,
+                    ExecutionAbortReason::Terminated,
+                );
+                signal_session_shutdown(&entry.shutdown_tx, &session_id);
                 drop(entry.tx);
                 entry.join_handle.take()
             })
             .collect();
         handles.extend(self.warm_pool.shutdown_handles());
+        handles.extend(
+            self.quarantined
+                .drain(..)
+                .map(|quarantined| quarantined.join_handle),
+        );
         handles
     }
 
+    #[cfg(test)]
     pub(crate) fn clear_call_route(&self, call_id: u64) {
-        self.call_id_router
-            .lock()
-            .expect("call_id router lock poisoned")
-            .remove(&call_id);
+        self.call_id_router.cancel(call_id);
     }
 
-    fn clear_call_routes_for_session(&self, session_id: &str) {
+    fn clear_call_routes_for_session(&self, session_id: &str, output_generation: Option<u64>) {
         self.call_id_router
-            .lock()
-            .expect("call_id router lock poisoned")
-            .retain(|_, routed_session_id| routed_session_id != session_id);
+            .cancel_session(session_id, output_generation);
     }
 
     /// Resolve a session's command sender and apply message side effects that
@@ -1025,7 +1714,7 @@ impl SessionManager {
         &self,
         session_id: &str,
         msg: &SessionMessage,
-    ) -> Result<Sender<SessionCommand>, String> {
+    ) -> Result<(Sender<SessionCommand>, usize), String> {
         let entry = self
             .sessions
             .get(session_id)
@@ -1046,15 +1735,111 @@ impl SessionManager {
             signal_execution_abort(&entry.execution_abort, ExecutionAbortReason::Terminated);
         }
 
-        Ok(entry.tx.clone())
+        Ok((entry.tx.clone(), entry.command_capacity))
+    }
+
+    /// Admit an ordinary message without ever blocking the thread that also
+    /// routes call-specific bridge responses. Readiness must use
+    /// `publish_readiness`; ordinary events are never reclassified by name.
+    pub fn try_send_to_session(&self, session_id: &str, msg: SessionMessage) -> Result<(), String> {
+        let terminate_requested = matches!(&msg, SessionMessage::TerminateExecution);
+        let (sender, command_capacity) = self.session_command_sender(session_id, &msg)?;
+        let command = SessionCommand::Message(msg);
+
+        match sender.try_send(command) {
+            Ok(()) => Ok(()),
+            Err(crossbeam_channel::TrySendError::Full(_)) if terminate_requested => {
+                // session_command_sender already delivered termination through
+                // the isolate handle and execution-abort channel.
+                Ok(())
+            }
+            Err(crossbeam_channel::TrySendError::Full(_)) => {
+                Err(format!(
+                    "ERR_AGENTOS_SESSION_COMMAND_LIMIT: session {session_id} command queue exceeded limit of {command_capacity}; raise limits.reactor.maxHandleCommands"
+                ))
+            }
+            Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
+                Err(format!(
+                    "session thread disconnected for session {session_id}"
+                ))
+            }
+        }
+    }
+
+    pub fn publish_readiness(
+        &self,
+        session_id: &str,
+        capability_id: u64,
+        capability_generation: u64,
+        flags: ReadyFlags,
+    ) -> Result<(), String> {
+        let entry = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| format!("session {session_id} does not exist"))?;
+        entry
+            .ready_broker
+            .publish(capability_id, capability_generation, flags)
+    }
+
+    pub fn publish_signal(&self, session_id: &str, signal: i32) -> Result<(), String> {
+        let entry = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| format!("session {session_id} does not exist"))?;
+        entry.ready_broker.publish_signal(signal)
+    }
+
+    pub fn remove_readiness(
+        &self,
+        session_id: &str,
+        capability_id: u64,
+        capability_generation: u64,
+    ) -> Result<(), String> {
+        let entry = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| format!("session {session_id} does not exist"))?;
+        entry
+            .ready_broker
+            .remove(capability_id, capability_generation)
+    }
+
+    pub fn set_application_read_interest(
+        &self,
+        session_id: &str,
+        capability_id: u64,
+        capability_generation: u64,
+        enabled: bool,
+    ) -> Result<(), String> {
+        let entry = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| format!("session {session_id} does not exist"))?;
+        entry.ready_broker.set_application_read_interest(
+            capability_id,
+            capability_generation,
+            enabled,
+        )
+    }
+
+    pub fn publish_timer(&self, session_id: &str, timer_id: u64) -> Result<(), String> {
+        let entry = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| format!("session {session_id} does not exist"))?;
+        entry.ready_broker.publish_timer(timer_id)
     }
 
     /// Get a session's command sender without a message (used for control commands
     /// like SetModuleReader that aren't a SessionMessage). Dispatch-thread only.
-    pub fn session_sender(&self, session_id: &str) -> Result<Sender<SessionCommand>, String> {
+    pub fn session_sender(
+        &self,
+        session_id: &str,
+    ) -> Result<(Sender<SessionCommand>, usize), String> {
         self.sessions
             .get(session_id)
-            .map(|entry| entry.tx.clone())
+            .map(|entry| (entry.tx.clone(), entry.command_capacity))
             .ok_or_else(|| format!("session {} does not exist", session_id))
     }
 
@@ -1093,13 +1878,9 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Send a message to a session. Blocks on the session command channel, so
-    /// this must not be called while a shared lock on the manager is held.
+    /// Send a message to a session without blocking response/control progress.
     pub fn send_to_session(&self, session_id: &str, msg: SessionMessage) -> Result<(), String> {
-        let sender = self.session_command_sender(session_id, &msg)?;
-        sender
-            .send(SessionCommand::Message(msg))
-            .map_err(|e| format!("session thread disconnected: {}", e))
+        self.try_send_to_session(session_id, msg)
     }
 
     /// Destroy a set of sessions inline, ignoring sessions that were already
@@ -1132,6 +1913,12 @@ impl SessionManager {
         self.sessions.len()
     }
 
+    #[allow(dead_code)]
+    pub fn quarantined_session_count(&mut self) -> usize {
+        self.reap_finished_quarantines();
+        self.quarantined.len()
+    }
+
     /// Return all session IDs.
     #[allow(dead_code)]
     pub fn all_sessions(&self) -> Vec<String> {
@@ -1145,7 +1932,23 @@ impl SessionManager {
         *lock.lock().unwrap()
     }
 
-    /// Get the call_id routing table for BridgeResponse dispatch.
+    pub fn session_output_generation(&self, session_id: &str) -> Option<u64> {
+        self.sessions
+            .get(session_id)
+            .and_then(|entry| entry.output_generation)
+    }
+
+    #[cfg(test)]
+    pub fn session_resources(
+        &self,
+        session_id: &str,
+    ) -> Option<Arc<agentos_runtime::accounting::ResourceLedger>> {
+        self.sessions
+            .get(session_id)
+            .map(|entry| Arc::clone(&entry.session_resources))
+    }
+
+    /// Get the direct bridge-call response registry.
     pub fn call_id_router(&self) -> &CallIdRouter {
         &self.call_id_router
     }
@@ -1197,6 +2000,7 @@ fn handle_late_session_message(
             call_id,
             status,
             payload,
+            reservation: _,
         }) => send_late_message_warning(
             event_tx,
             session_id,
@@ -1211,11 +2015,12 @@ fn handle_late_session_message(
             event_type,
             payload,
         }) => {
-            // Timer and socket-readiness events are wake hints, not data; both
-            // race execution completion by design (edge-triggered readiness can
-            // fire as the guest finishes) and carry nothing to lose, so drop
-            // them silently instead of warning.
-            if event_type == "timer" || event_type == "net_socket" {
+            // Timer and socket-readiness events are wake hints, not data.
+            // `stdin_end` is likewise an idempotent teardown notification. All
+            // three can race execution completion by design and carry no data
+            // to recover, so classify them as expected stale control events
+            // instead of writing a false error into the guest's stderr.
+            if event_type == "timer" || event_type == "net_socket" || event_type == "stdin_end" {
                 return;
             }
             send_late_message_warning(
@@ -1238,30 +2043,6 @@ fn handle_late_session_message(
         ),
         SessionMessage::InjectGlobals { .. } | SessionMessage::Execute { .. } => {}
     }
-}
-
-fn defer_session_command_before_slot(
-    deferred_commands: &mut VecDeque<SessionCommand>,
-    event_tx: &RuntimeEventSender,
-    session_id: &str,
-    output_generation: Option<u64>,
-    command: SessionCommand,
-) -> bool {
-    if deferred_commands.len() < MAX_DEFERRED_SESSION_COMMANDS {
-        deferred_commands.push_back(command);
-        return true;
-    }
-
-    send_late_message_warning(
-        event_tx,
-        session_id,
-        output_generation,
-        DEFERRED_COMMAND_LIMIT_ERROR_CODE,
-        format!(
-            "dropping queued session before slot acquisition because deferred command queue exceeded limit of {MAX_DEFERRED_SESSION_COMMANDS}"
-        ),
-    );
-    false
 }
 
 #[cfg(not(test))]
@@ -1288,9 +2069,75 @@ fn spawn_session_thread(assignment: SessionAssignment) -> std::io::Result<thread
     } else {
         assignment.session_id.clone()
     };
+    // AGENTOS_THREAD_SITE: admitted-v8-session-executor
     thread::Builder::new()
         .name(format!("session-{}", name_prefix))
         .spawn(move || session_thread(assignment, None))
+}
+
+fn recv_session_command(
+    rx: &Receiver<SessionCommand>,
+    shutdown_rx: &Receiver<()>,
+    ready_rx: &Receiver<ReadyWake>,
+    ready_broker: &SessionReadiness,
+) -> Option<SessionCommand> {
+    loop {
+        // Commands already admitted before a readiness publication establish
+        // the V8 context that consumes that readiness. In particular, a kill
+        // can publish a signal immediately after Execute is queued. Selecting
+        // the later signal first would enter the pre-execution discard branch
+        // below and lose the default termination. Preserve admission order
+        // before falling back to the fair blocking selector.
+        match shutdown_rx.try_recv() {
+            Ok(()) | Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                return Some(SessionCommand::Shutdown);
+            }
+            Err(crossbeam_channel::TryRecvError::Empty) => {}
+        }
+        match rx.try_recv() {
+            Ok(command) => return Some(command),
+            Err(crossbeam_channel::TryRecvError::Disconnected) => return None,
+            Err(crossbeam_channel::TryRecvError::Empty) => {}
+        }
+        match ready_rx.try_recv() {
+            Ok(wake) => match ready_batch_command(ready_broker, wake) {
+                Ok(command) => return Some(command),
+                Err(error) => {
+                    eprintln!("{error}");
+                    continue;
+                }
+            },
+            Err(crossbeam_channel::TryRecvError::Disconnected) => return None,
+            Err(crossbeam_channel::TryRecvError::Empty) => {}
+        }
+
+        crossbeam_channel::select! {
+            recv(shutdown_rx) -> _ => return Some(SessionCommand::Shutdown),
+            recv(ready_rx) -> wake => {
+                let wake = wake.ok()?;
+                match ready_batch_command(ready_broker, wake) {
+                    Ok(command) => return Some(command),
+                    Err(error) => {
+                        eprintln!("{error}");
+                        continue;
+                    }
+                }
+            },
+            recv(rx) -> command => return command.ok(),
+        }
+    }
+}
+
+/// Every consumed wake must become a command, including control-only and
+/// currently-empty batches. Dispatching the batch is what completes the
+/// broker epoch; dropping it would strand the capacity-one wake lane forever.
+fn ready_batch_command(
+    ready_broker: &SessionReadiness,
+    wake: ReadyWake,
+) -> Result<SessionCommand, String> {
+    ready_broker
+        .take_batch(wake)
+        .map(SessionCommand::ReadyBatch)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1303,8 +2150,10 @@ fn session_thread(
         cpu_time_limit_ms,
         wall_clock_limit_ms,
         rx,
-        slot_control,
-        max_concurrency,
+        shutdown_rx,
+        ready_rx,
+        ready_broker,
+        slot_permit: _slot_permit,
         event_tx,
         call_id_router,
         shared_call_id,
@@ -1314,7 +2163,12 @@ fn session_thread(
         pause_control,
         session_id,
         output_generation,
+        runtime,
+        bridge_call_timeout,
     } = assignment;
+    #[cfg(not(test))]
+    let execution_task_owner =
+        output_generation.map(|generation| agentos_runtime::TaskOwner::Vm { generation });
     #[cfg(test)]
     let _ = (
         heap_limit_mb,
@@ -1325,50 +2179,11 @@ fn session_thread(
         snapshot_cache,
         isolate_handle,
         execution_abort,
-        pause_control,
+        &pause_control,
+        &ready_broker,
+        &runtime,
+        bridge_call_timeout,
     );
-
-    // Acquire concurrency slot, but keep polling the session channel so a queued
-    // session can still shut down cleanly before it ever gets a slot.
-    let mut deferred_commands = VecDeque::new();
-    let acquired_slot = {
-        let (lock, cvar) = &*slot_control;
-        let mut count = lock.lock().unwrap();
-        loop {
-            if *count < max_concurrency {
-                *count += 1;
-                break true;
-            }
-
-            let (next_count, _) = cvar
-                .wait_timeout(count, std::time::Duration::from_millis(50))
-                .unwrap();
-            count = next_count;
-
-            match rx.try_recv() {
-                Ok(SessionCommand::Shutdown)
-                | Err(crossbeam_channel::TryRecvError::Disconnected) => {
-                    break false;
-                }
-                Ok(command) => {
-                    if !defer_session_command_before_slot(
-                        &mut deferred_commands,
-                        &event_tx,
-                        &session_id,
-                        output_generation,
-                        command,
-                    ) {
-                        break false;
-                    }
-                }
-                Err(crossbeam_channel::TryRecvError::Empty) => {}
-            }
-        }
-    };
-
-    if !acquired_slot {
-        return;
-    }
 
     // Capture THIS session thread's per-thread CPU clock once. The clock id is
     // stable for the thread's lifetime and can be polled from the watchdog
@@ -1391,12 +2206,12 @@ fn session_thread(
         mut isolate_bridge_code,
         mut isolate_userland_code,
     ) = match precreated_isolate {
-        Some(precreated) => (
-            Some(precreated.isolate),
-            Some(precreated.context),
+        Some(mut precreated) => (
+            precreated.isolate.take(),
+            precreated.context.take(),
             true,
-            Some(precreated.bridge_code),
-            Some(precreated.userland_code),
+            Some(std::mem::take(&mut precreated.bridge_code)),
+            Some(std::mem::take(&mut precreated.userland_code)),
         ),
         None => (None, None, false, None, None),
     };
@@ -1436,19 +2251,30 @@ fn session_thread(
 
     // Process commands until shutdown or channel close
     loop {
-        let next_command = if let Some(command) = deferred_commands.pop_front() {
-            Ok(command)
-        } else {
-            rx.recv()
-        };
+        let next_command = recv_session_command(&rx, &shutdown_rx, &ready_rx, &ready_broker);
 
         pause_control.wait_while_paused();
         match next_command {
-            Ok(SessionCommand::Shutdown) | Err(_) => break,
-            Ok(SessionCommand::SetModuleReader(reader)) => {
+            Some(SessionCommand::Shutdown) | None => break,
+            Some(SessionCommand::ReadyBatch(batch)) => {
+                if batch.signals_ready {
+                    if let Err(error) = ready_broker.drain_signals(&batch) {
+                        eprintln!("ERR_AGENTOS_READY_DISCARD: could not discard signals: {error}");
+                    }
+                }
+                if batch.timers_ready {
+                    if let Err(error) = ready_broker.drain_timers(&batch) {
+                        eprintln!("ERR_AGENTOS_READY_DISCARD: could not discard timers: {error}");
+                    }
+                }
+                if let Err(error) = ready_broker.complete_batch(&batch, &batch.entries) {
+                    eprintln!("{error}");
+                }
+            }
+            Some(SessionCommand::SetModuleReader(reader)) => {
                 execution::install_session_guest_reader(Some(reader));
             }
-            Ok(SessionCommand::Message(msg)) => match msg {
+            Some(SessionCommand::Message(msg)) => match msg {
                 SessionMessage::InjectGlobals { payload } => {
                     #[cfg(not(test))]
                     {
@@ -1668,25 +2494,25 @@ fn session_thread(
                         let (_active_execution_abort, abort_rx) =
                             ActiveExecutionAbort::arm(&execution_abort);
 
-                        // Create deferred queue for sync bridge call filtering
-                        let deferred_queue = new_deferred_queue();
-
-                        // Create BridgeCallContext with channel sender (no shared mutex)
-                        let channel_rx = ChannelResponseReceiver::with_abort(
-                            rx.clone(),
-                            abort_rx.clone(),
-                            Arc::clone(&deferred_queue),
-                            Arc::clone(&pause_control),
-                        );
-                        let bridge_ctx = BridgeCallContext::with_receiver(
+                        // Async completions have a dedicated bounded lane.
+                        // Synchronous calls register their own capacity-one
+                        // waiter in the same call-specific registry.
+                        let (async_response_tx, async_response_rx) =
+                            crossbeam_channel::bounded(bridge::MAX_PENDING_PROMISES);
+                        let bridge_ctx = BridgeCallContext::with_registry(
                             Box::new(ChannelRuntimeEventSender::new(
                                 event_tx.clone(),
                                 output_generation,
                             )),
-                            Box::new(channel_rx),
                             session_id.clone(),
+                            output_generation,
                             Arc::clone(&call_id_router),
                             Arc::clone(&shared_call_id),
+                            async_response_tx,
+                            abort_rx.clone(),
+                            runtime.clone(),
+                            Arc::clone(&pause_control),
+                            bridge_call_timeout,
                         );
 
                         // Replace stub bridge functions with real session-local ones
@@ -1811,6 +2637,8 @@ fn session_thread(
                                 };
                                 let handle = iso.thread_safe_handle();
                                 match crate::timeout::CpuBudgetGuard::new(
+                                    &runtime,
+                                    execution_task_owner.clone(),
                                     budget_ms,
                                     cpu_clock,
                                     handle,
@@ -1856,6 +2684,8 @@ fn session_thread(
                             Some(limit_ms) => {
                                 let handle = iso.thread_safe_handle();
                                 match crate::timeout::TimeoutGuard::with_execution_abort(
+                                    &runtime,
+                                    execution_task_owner.clone(),
                                     limit_ms,
                                     handle,
                                     execution_abort.clone(),
@@ -1953,19 +2783,22 @@ fn session_thread(
                         // need event loop pumping to deliver their callbacks.
                         let should_enter_event_loop = !pending.is_empty()
                             || execution::has_pending_module_evaluation()
-                            || execution::has_pending_script_evaluation()
-                            || !deferred_queue.lock().unwrap().is_empty();
+                            || execution::has_pending_script_evaluation();
                         let event_loop_status = if should_enter_event_loop {
                             let scope = &mut v8::HandleScope::new(iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
-                            run_event_loop(
+                            run_event_loop_with_readiness(
                                 scope,
-                                &rx,
+                                EventLoopSources {
+                                    commands: &rx,
+                                    readiness: &ready_broker,
+                                    readiness_wakes: &ready_rx,
+                                    bridge_responses: Some(&async_response_rx),
+                                    abort: Some(&abort_rx),
+                                    pause: Some(&pause_control),
+                                },
                                 &pending,
-                                Some(&abort_rx),
-                                Some(&deferred_queue),
-                                Some(&pause_control),
                             )
                         } else {
                             EventLoopStatus::Completed
@@ -2027,20 +2860,21 @@ fn session_thread(
                             }
 
                             // Phase 2: pump event loop for active handles
-                            if !pending.is_empty()
-                                || execution::has_pending_script_evaluation()
-                                || !deferred_queue.lock().unwrap().is_empty()
-                            {
+                            if !pending.is_empty() || execution::has_pending_script_evaluation() {
                                 let scope = &mut v8::HandleScope::new(iso);
                                 let ctx = v8::Local::new(scope, &exec_context);
                                 let scope = &mut v8::ContextScope::new(scope, ctx);
-                                let event_loop_status = run_event_loop(
+                                let event_loop_status = run_event_loop_with_readiness(
                                     scope,
-                                    &rx,
+                                    EventLoopSources {
+                                        commands: &rx,
+                                        readiness: &ready_broker,
+                                        readiness_wakes: &ready_rx,
+                                        bridge_responses: Some(&async_response_rx),
+                                        abort: Some(&abort_rx),
+                                        pause: Some(&pause_control),
+                                    },
                                     &pending,
-                                    Some(&abort_rx),
-                                    Some(&deferred_queue),
-                                    Some(&pause_control),
                                 );
 
                                 if matches!(event_loop_status, EventLoopStatus::Terminated) {
@@ -2218,13 +3052,8 @@ fn session_thread(
         isolate::drop_isolate(v8_isolate.take());
     }
 
-    // Release concurrency slot
-    {
-        let (lock, cvar) = &*slot_control;
-        let mut count = lock.lock().unwrap();
-        *count -= 1;
-        cvar.notify_one();
-    }
+    // `_slot_permit` releases only after all thread-affine V8 state above has
+    // been destroyed. A detached generation cannot leak its permit early.
 }
 
 /// Sync bridge functions block V8 while the host processes the call
@@ -2286,12 +3115,8 @@ pub fn reset_pending_promises(pending: &mut crate::bridge::PendingPromises) {
 /// Run the session event loop: dispatch incoming messages to V8.
 ///
 /// Called after script/module execution when there are pending async promises.
-/// Polls the session channel for BridgeResponse, StreamEvent, and
-/// TerminateExecution messages, dispatching each into V8 with microtask flush.
-///
-/// When `deferred` is provided, drains queued messages from sync bridge calls
-/// before blocking on the channel. This prevents StreamEvent loss when sync
-/// bridge calls consume non-BridgeResponse messages from the shared channel.
+/// Polls the ordinary session channel for events/control and the dedicated
+/// async bridge-response lane, dispatching bounded work into V8.
 ///
 /// When `abort_rx` is provided (timeout is configured), uses `select!` to
 /// also monitor the abort channel — if the timeout fires and drops the sender,
@@ -2299,65 +3124,105 @@ pub fn reset_pending_promises(pending: &mut crate::bridge::PendingPromises) {
 ///
 /// Returns true if execution completed normally, false if terminated.
 #[doc(hidden)]
-pub(crate) fn run_event_loop(
+pub fn run_event_loop(
     scope: &mut v8::HandleScope,
     rx: &Receiver<SessionCommand>,
     pending: &crate::bridge::PendingPromises,
     abort_rx: Option<&crossbeam_channel::Receiver<()>>,
-    deferred: Option<&DeferredQueue>,
+    bridge_rx: Option<&crossbeam_channel::Receiver<BridgeResponse>>,
     pause_control: Option<&SessionPauseControl>,
 ) -> EventLoopStatus {
+    let (ready_broker, ready_rx) = match SessionReadiness::disabled(1) {
+        Ok(readiness) => readiness,
+        Err(error) => {
+            eprintln!("{error}");
+            return EventLoopStatus::Terminated;
+        }
+    };
+    run_event_loop_with_readiness(
+        scope,
+        EventLoopSources {
+            commands: rx,
+            readiness: &ready_broker,
+            readiness_wakes: &ready_rx,
+            bridge_responses: bridge_rx,
+            abort: abort_rx,
+            pause: pause_control,
+        },
+        pending,
+    )
+}
+
+struct EventLoopSources<'a> {
+    commands: &'a Receiver<SessionCommand>,
+    readiness: &'a SessionReadiness,
+    readiness_wakes: &'a Receiver<ReadyWake>,
+    bridge_responses: Option<&'a Receiver<BridgeResponse>>,
+    abort: Option<&'a Receiver<()>>,
+    pause: Option<&'a SessionPauseControl>,
+}
+
+fn run_event_loop_with_readiness(
+    scope: &mut v8::HandleScope,
+    sources: EventLoopSources<'_>,
+    pending: &crate::bridge::PendingPromises,
+) -> EventLoopStatus {
+    let EventLoopSources {
+        commands: rx,
+        readiness: ready_broker,
+        readiness_wakes: ready_rx,
+        bridge_responses: bridge_rx,
+        abort: abort_rx,
+        pause: pause_control,
+    } = sources;
+    let mut bridge_lane_open = bridge_rx.is_some();
     while !pending.is_empty()
         || execution::pending_module_evaluation_needs_wait(scope)
         || execution::pending_script_evaluation_needs_wait(scope)
         || pending_guest_timer_count(scope) > 0
         || pending_guest_immediate_count(scope) > 0
-        || deferred
-            .map(|dq| !dq.lock().unwrap().is_empty())
-            .unwrap_or(false)
     {
         if let Some(control) = pause_control {
             control.wait_while_paused();
         }
         pump_v8_message_loop(scope);
 
-        // Drain deferred messages queued by sync bridge calls before blocking
-        if let Some(dq) = deferred {
-            let frames: Vec<SessionMessage> = dq.lock().unwrap().drain(..).collect();
-            for frame in frames {
-                let status = dispatch_event_loop_frame(scope, frame, pending);
+        // Bound completion work per turn so a response flood cannot starve
+        // ordinary stream/control events.
+        if bridge_lane_open {
+            let responses = bridge_rx.expect("open bridge lane must have a receiver");
+            for _ in 0..64 {
+                let response = match responses.try_recv() {
+                    Ok(response) => response,
+                    Err(crossbeam_channel::TryRecvError::Empty) => break,
+                    Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                        bridge_lane_open = false;
+                        break;
+                    }
+                };
+                let status = dispatch_event_loop_frame(
+                    scope,
+                    SessionMessage::BridgeResponse(response),
+                    pending,
+                );
                 if !matches!(status, EventLoopStatus::Completed) {
                     return status;
                 }
             }
-            if pending.is_empty()
-                && !execution::pending_module_evaluation_needs_wait(scope)
-                && !execution::pending_script_evaluation_needs_wait(scope)
-                && pending_guest_timer_count(scope) == 0
-                && pending_guest_immediate_count(scope) == 0
-            {
-                break;
-            }
         }
 
-        // Flush microtasks before blocking. Run in a loop to drain the full
-        // microtask queue -- each checkpoint may resolve Promises that schedule
-        // new microtasks (e.g., async function await chains).
-        for _ in 0..100 {
-            scope.perform_microtask_checkpoint();
-            pump_v8_message_loop(scope);
-            // Check if new deferred work appeared from microtask processing
-            if let Some(dq) = deferred {
-                if !dq.lock().unwrap().is_empty() {
-                    break; // New bridge work to process
-                }
-            }
-        }
+        // Drain one JavaScript turn before blocking. A V8 microtask checkpoint
+        // already drains recursively queued Promise continuations; the platform
+        // pump likewise drains every currently runnable foreground task and
+        // checkpoints after each one. Repeating both operations 100 times added
+        // a fixed empty-work floor to every readiness and bridge completion.
+        scope.perform_microtask_checkpoint();
+        pump_v8_message_loop(scope);
 
         if pending_guest_immediate_count(scope) > 0 {
-            match try_recv_session_command(scope, rx, abort_rx) {
+            match try_recv_session_command(scope, rx, ready_rx, ready_broker, bridge_rx, abort_rx) {
                 Ok(Some(cmd)) => {
-                    let status = dispatch_session_command(scope, cmd, pending);
+                    let status = dispatch_session_command(scope, cmd, pending, ready_broker);
                     if !matches!(status, EventLoopStatus::Completed) {
                         return status;
                     }
@@ -2381,9 +3246,6 @@ pub(crate) fn run_event_loop(
             && !execution::pending_script_evaluation_needs_wait(scope)
             && pending_guest_timer_count(scope) == 0
             && pending_guest_immediate_count(scope) == 0
-            && deferred
-                .map(|dq| dq.lock().unwrap().is_empty())
-                .unwrap_or(true)
         {
             break;
         }
@@ -2393,7 +3255,14 @@ pub(crate) fn run_event_loop(
         // periodically flush microtasks (like Node.js's libuv + DrainTasks pattern).
         let cmd = loop {
             if pending_guest_immediate_count(scope) > 0 {
-                match try_recv_session_command(scope, rx, abort_rx) {
+                match try_recv_session_command(
+                    scope,
+                    rx,
+                    ready_rx,
+                    ready_broker,
+                    bridge_rx,
+                    abort_rx,
+                ) {
                     Ok(Some(cmd)) => break cmd,
                     Ok(None) => {
                         let status = drain_guest_immediates(scope);
@@ -2407,17 +3276,85 @@ pub(crate) fn run_event_loop(
                     Err(status) => return status,
                 }
             }
-            let recv_result = if let Some(abort) = abort_rx {
-                crossbeam_channel::select! {
-                    recv(rx) -> result => result.ok(),
-                    recv(abort) -> _ => {
+            if bridge_lane_open {
+                let responses = bridge_rx.expect("open bridge lane must have a receiver");
+                match responses.try_recv() {
+                    Ok(response) => {
+                        break SessionCommand::Message(SessionMessage::BridgeResponse(response));
+                    }
+                    Err(crossbeam_channel::TryRecvError::Empty) => {}
+                    Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                        bridge_lane_open = false;
+                    }
+                }
+            }
+            if let Ok(wake) = ready_rx.try_recv() {
+                match ready_batch_command(ready_broker, wake) {
+                    Ok(command) => break command,
+                    Err(error) => {
+                        eprintln!("{error}");
+                        continue;
+                    }
+                }
+            }
+            // All externally driven work must be registered with the blocking
+            // selector. The 1 ms timeout exists only to pump V8 platform work;
+            // it must not become the delivery cadence for direct bridge
+            // responses, readiness, ordinary commands, or abort.
+            let mut selector = Select::new();
+            let ordinary_index = selector.recv(rx);
+            let ready_index = selector.recv(ready_rx);
+            let bridge_selection = if bridge_lane_open {
+                bridge_rx.map(|responses| (selector.recv(responses), responses))
+            } else {
+                None
+            };
+            let abort_selection = abort_rx.map(|abort| (selector.recv(abort), abort));
+            let recv_result = match selector.select_timeout(Duration::from_millis(1)) {
+                Ok(operation) => {
+                    let index = operation.index();
+                    if index == ordinary_index {
+                        operation.recv(rx).ok()
+                    } else if index == ready_index {
+                        match operation.recv(ready_rx) {
+                            Ok(wake) => match ready_batch_command(ready_broker, wake) {
+                                Ok(command) => Some(command),
+                                Err(error) => {
+                                    eprintln!("{error}");
+                                    None
+                                }
+                            },
+                            Err(_) => None,
+                        }
+                    } else if let Some((bridge_index, responses)) = bridge_selection {
+                        if index == bridge_index {
+                            match operation.recv(responses) {
+                                Ok(response) => Some(SessionCommand::Message(
+                                    SessionMessage::BridgeResponse(response),
+                                )),
+                                Err(_) => {
+                                    bridge_lane_open = false;
+                                    None
+                                }
+                            }
+                        } else if let Some((abort_index, abort)) = abort_selection {
+                            debug_assert_eq!(index, abort_index);
+                            let _ = operation.recv(abort);
+                            scope.terminate_execution();
+                            return EventLoopStatus::Terminated;
+                        } else {
+                            unreachable!("event-loop selector returned an unknown operation")
+                        }
+                    } else if let Some((abort_index, abort)) = abort_selection {
+                        debug_assert_eq!(index, abort_index);
+                        let _ = operation.recv(abort);
                         scope.terminate_execution();
                         return EventLoopStatus::Terminated;
-                    },
-                    default(std::time::Duration::from_millis(1)) => None,
+                    } else {
+                        unreachable!("event-loop selector returned an unknown operation")
+                    }
                 }
-            } else {
-                rx.recv_timeout(std::time::Duration::from_millis(1)).ok()
+                Err(_) => None,
             };
             if let Some(cmd) = recv_result {
                 break cmd;
@@ -2425,36 +3362,22 @@ pub(crate) fn run_event_loop(
             if let Some(control) = pause_control {
                 control.wait_while_paused();
             }
-            // No command received — flush microtasks and check deferred queue
+            // No command received — flush microtasks and re-check direct
+            // response and exit conditions.
             scope.perform_microtask_checkpoint();
             pump_v8_message_loop(scope);
-            if let Some(dq) = deferred {
-                if !dq.lock().unwrap().is_empty() {
-                    // New deferred work appeared — drain it in the outer loop
-                    let frames: Vec<SessionMessage> = dq.lock().unwrap().drain(..).collect();
-                    for frame in frames {
-                        let status = dispatch_event_loop_frame(scope, frame, pending);
-                        if !matches!(status, EventLoopStatus::Completed) {
-                            return status;
-                        }
-                    }
-                }
-            }
             // Check if we should exit
             if pending.is_empty()
                 && !execution::pending_module_evaluation_needs_wait(scope)
                 && !execution::pending_script_evaluation_needs_wait(scope)
                 && pending_guest_timer_count(scope) == 0
                 && pending_guest_immediate_count(scope) == 0
-                && deferred
-                    .map(|dq| dq.lock().unwrap().is_empty())
-                    .unwrap_or(true)
             {
                 return EventLoopStatus::Completed;
             }
         };
 
-        let status = dispatch_session_command(scope, cmd, pending);
+        let status = dispatch_session_command(scope, cmd, pending, ready_broker);
         if !matches!(status, EventLoopStatus::Completed) {
             return status;
         }
@@ -2465,8 +3388,32 @@ pub(crate) fn run_event_loop(
 fn try_recv_session_command(
     scope: &mut v8::HandleScope,
     rx: &Receiver<SessionCommand>,
+    ready_rx: &Receiver<ReadyWake>,
+    ready_broker: &SessionReadiness,
+    bridge_rx: Option<&crossbeam_channel::Receiver<BridgeResponse>>,
     abort_rx: Option<&crossbeam_channel::Receiver<()>>,
 ) -> Result<Option<SessionCommand>, EventLoopStatus> {
+    if let Some(responses) = bridge_rx {
+        match responses.try_recv() {
+            Ok(response) => {
+                return Ok(Some(SessionCommand::Message(
+                    SessionMessage::BridgeResponse(response),
+                )));
+            }
+            Err(crossbeam_channel::TryRecvError::Empty) => {}
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {}
+        }
+    }
+    match ready_rx.try_recv() {
+        Ok(wake) => match ready_batch_command(ready_broker, wake) {
+            Ok(command) => return Ok(Some(command)),
+            Err(error) => {
+                eprintln!("{error}");
+            }
+        },
+        Err(crossbeam_channel::TryRecvError::Empty) => {}
+        Err(crossbeam_channel::TryRecvError::Disconnected) => {}
+    }
     if let Some(abort) = abort_rx {
         crossbeam_channel::select! {
             recv(abort) -> _ => {
@@ -2489,14 +3436,161 @@ fn dispatch_session_command(
     scope: &mut v8::HandleScope,
     cmd: SessionCommand,
     pending: &crate::bridge::PendingPromises,
+    ready_broker: &SessionReadiness,
 ) -> EventLoopStatus {
     match cmd {
         SessionCommand::Message(frame) => dispatch_event_loop_frame(scope, frame, pending),
+        SessionCommand::ReadyBatch(batch) => dispatch_ready_batch(scope, batch, ready_broker),
         SessionCommand::SetModuleReader(reader) => {
             execution::install_session_guest_reader(Some(reader));
             EventLoopStatus::Completed
         }
         SessionCommand::Shutdown => EventLoopStatus::Terminated,
+    }
+}
+
+/// Dispatch one bounded readiness turn, then complete its wake on every exit.
+///
+/// Callback exceptions are execution failures, but they must not strand the
+/// session broker in `WakeState::Outstanding`. Keeping dispatch in an inner
+/// function gives this wrapper finally-style completion semantics: every inner
+/// return reaches `complete_ready_batch_dispatch` before control returns to the
+/// reusable session loop.
+fn dispatch_ready_batch(
+    scope: &mut v8::HandleScope,
+    batch: RuntimeReadyBatch,
+    ready_broker: &SessionReadiness,
+) -> EventLoopStatus {
+    let mut delivered = Vec::with_capacity(batch.entries.len());
+    let dispatch_status =
+        dispatch_ready_batch_callbacks(scope, &batch, ready_broker, &mut delivered);
+    complete_ready_batch_dispatch(ready_broker, &batch, &delivered, dispatch_status)
+}
+
+fn dispatch_ready_batch_callbacks(
+    scope: &mut v8::HandleScope,
+    batch: &RuntimeReadyBatch,
+    ready_broker: &SessionReadiness,
+    delivered: &mut Vec<ReadyObservation>,
+) -> EventLoopStatus {
+    for entry in &batch.entries {
+        let tc = &mut v8::TryCatch::new(scope);
+        let dispatch = crate::stream::dispatch_readiness(
+            tc,
+            entry.capability_id,
+            entry.capability_generation,
+            entry.flags,
+        );
+        tc.perform_microtask_checkpoint();
+        if let Some(exception) = tc.exception() {
+            let (code, error) = execution::exception_to_result(tc, exception);
+            return EventLoopStatus::Failed(code, error);
+        }
+        match dispatch {
+            crate::stream::ReadinessDispatch::Delivered => delivered.push(*entry),
+            crate::stream::ReadinessDispatch::TargetMissing => {
+                // The bridge exists but this capability may not be registered
+                // yet (for example, readiness raced the connect response).
+                // Leave the observation unacknowledged so the durable
+                // sidecar state schedules another coalesced wake.
+            }
+            crate::stream::ReadinessDispatch::BridgeMissing => {
+                return EventLoopStatus::Failed(
+                            1,
+                            ExecutionError {
+                                error_type: String::from("Error"),
+                                message: String::from(
+                                    "ERR_AGENTOS_READY_DISPATCH_MISSING: guest bridge does not expose _agentOSReadyDispatch",
+                                ),
+                                stack: String::new(),
+                                code: Some(String::from("ERR_AGENTOS_READY_DISPATCH_MISSING")),
+                            },
+                        );
+            }
+        }
+    }
+    if batch.signals_ready {
+        let signals = match ready_broker.drain_signals(batch) {
+            Ok(signals) => signals,
+            Err(error) => return readiness_dispatch_failure(error),
+        };
+        for signal in signals {
+            let Some(signal_name) = signal_name_for_stream_event(signal) else {
+                continue;
+            };
+            let tc = &mut v8::TryCatch::new(scope);
+            crate::stream::dispatch_signal_event(tc, signal_name, signal);
+            tc.perform_microtask_checkpoint();
+            if let Some(exception) = tc.exception() {
+                let (code, error) = execution::exception_to_result(tc, exception);
+                return EventLoopStatus::Failed(code, error);
+            }
+            if let Some(error) = execution::take_unhandled_promise_rejection(tc) {
+                return EventLoopStatus::Failed(1, error);
+            }
+        }
+    }
+    if batch.timers_ready {
+        let timers = match ready_broker.drain_timers(batch) {
+            Ok(timers) => timers,
+            Err(error) => return readiness_dispatch_failure(error),
+        };
+        for timer_id in timers {
+            let tc = &mut v8::TryCatch::new(scope);
+            crate::stream::dispatch_timer_event(tc, timer_id);
+            tc.perform_microtask_checkpoint();
+            if let Some(exception) = tc.exception() {
+                let (code, error) = execution::exception_to_result(tc, exception);
+                return EventLoopStatus::Failed(code, error);
+            }
+            if let Some(error) = execution::take_unhandled_promise_rejection(tc) {
+                return EventLoopStatus::Failed(1, error);
+            }
+        }
+    }
+    EventLoopStatus::Completed
+}
+
+fn complete_ready_batch_dispatch(
+    ready_broker: &SessionReadiness,
+    batch: &RuntimeReadyBatch,
+    delivered: &[ReadyObservation],
+    dispatch_status: EventLoopStatus,
+) -> EventLoopStatus {
+    if let Err(error) = ready_broker.complete_batch(batch, delivered) {
+        if matches!(&dispatch_status, EventLoopStatus::Completed) {
+            return readiness_dispatch_failure(error);
+        }
+        eprintln!(
+            "ERR_AGENTOS_READY_COMPLETE_AFTER_DISPATCH_FAILURE: could not complete readiness wake after guest dispatch failed: {error}"
+        );
+    }
+    dispatch_status
+}
+
+fn readiness_dispatch_failure(message: String) -> EventLoopStatus {
+    EventLoopStatus::Failed(
+        1,
+        ExecutionError {
+            error_type: String::from("Error"),
+            message,
+            stack: String::new(),
+            code: Some(String::from("ERR_AGENTOS_READY_COMPLETE")),
+        },
+    )
+}
+
+fn signal_name_for_stream_event(signal: i32) -> Option<&'static str> {
+    match signal {
+        1 => Some("SIGHUP"),
+        2 => Some("SIGINT"),
+        10 => Some("SIGUSR1"),
+        14 => Some("SIGALRM"),
+        18 => Some("SIGCONT"),
+        15 => Some("SIGTERM"),
+        17 => Some("SIGCHLD"),
+        28 => Some("SIGWINCH"),
+        _ => None,
     }
 }
 
@@ -2601,6 +3695,7 @@ fn dispatch_event_loop_frame(
             call_id,
             status,
             payload,
+            reservation: _reservation,
         }) => {
             let (result, error) = if status == 1 {
                 (None, Some(String::from_utf8_lossy(&payload).to_string()))
@@ -2643,113 +3738,12 @@ fn dispatch_event_loop_frame(
     }
 }
 
-/// ResponseReceiver that receives typed session messages directly from the session channel.
-///
-/// Only returns BridgeResponse frames from recv_response(). Non-BridgeResponse
-/// messages (StreamEvent, TerminateExecution) consumed during sync bridge calls
-/// are queued in the deferred queue for later processing by the event loop.
-///
-/// When `abort_rx` is set (timeout configured), uses `select!` to also monitor
-/// the abort channel. If the timeout fires, the abort sender is dropped, which
-/// unblocks the select and returns a timeout error.
-pub(crate) struct ChannelResponseReceiver {
-    rx: Receiver<SessionCommand>,
-    abort_rx: Option<crossbeam_channel::Receiver<()>>,
-    deferred: DeferredQueue,
-    pause_control: Option<Arc<SessionPauseControl>>,
-}
-
-impl ChannelResponseReceiver {
-    #[allow(dead_code)]
-    pub(crate) fn new(rx: Receiver<SessionCommand>, deferred: DeferredQueue) -> Self {
-        ChannelResponseReceiver {
-            rx,
-            abort_rx: None,
-            deferred,
-            pause_control: None,
-        }
-    }
-
-    pub(crate) fn with_abort(
-        rx: Receiver<SessionCommand>,
-        abort_rx: crossbeam_channel::Receiver<()>,
-        deferred: DeferredQueue,
-        pause_control: Arc<SessionPauseControl>,
-    ) -> Self {
-        ChannelResponseReceiver {
-            rx,
-            abort_rx: Some(abort_rx),
-            deferred,
-            pause_control: Some(pause_control),
-        }
-    }
-}
-
-impl crate::host_call::BridgeResponseReceiver for ChannelResponseReceiver {
-    fn recv_response(&self, expected_call_id: u64) -> Result<BridgeResponse, String> {
-        loop {
-            // Wait for next command, with optional abort monitoring
-            let cmd = if let Some(ref abort) = self.abort_rx {
-                crossbeam_channel::select! {
-                    recv(self.rx) -> result => match result {
-                        Ok(cmd) => cmd,
-                        Err(_) => return Err("channel closed".into()),
-                    },
-                    recv(abort) -> _ => {
-                        return Err("execution aborted".into());
-                    },
-                }
-            } else {
-                match self.rx.recv() {
-                    Ok(cmd) => cmd,
-                    Err(_) => return Err("channel closed".into()),
-                }
-            };
-
-            match cmd {
-                SessionCommand::Message(frame) => {
-                    if let SessionMessage::BridgeResponse(response) = &frame {
-                        let call_id = response.call_id;
-                        if call_id == expected_call_id {
-                            if let Some(control) = &self.pause_control {
-                                control.wait_while_paused();
-                            }
-                            crate::host_call::record_sync_bridge_response_channel_received(call_id);
-                            return Ok(response.clone());
-                        }
-                        push_deferred_sync_message(&self.deferred, frame)?;
-                        continue;
-                    }
-                    // Queue non-BridgeResponse for later event loop processing
-                    push_deferred_sync_message(&self.deferred, frame)?;
-                }
-                SessionCommand::SetModuleReader(reader) => {
-                    execution::install_session_guest_reader(Some(reader));
-                }
-                SessionCommand::Shutdown => return Err("session shutdown".into()),
-            }
-        }
-    }
-}
-
-fn push_deferred_sync_message(
-    deferred: &DeferredQueue,
-    frame: SessionMessage,
-) -> Result<(), String> {
-    let mut queue = deferred.lock().unwrap();
-    if queue.len() >= MAX_DEFERRED_SYNC_MESSAGES {
-        return Err(format!(
-            "sync bridge deferred message queue exceeded limit of {MAX_DEFERRED_SYNC_MESSAGES}"
-        ));
-    }
-    queue.push_back(frame);
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
+
+    const TEST_READY_BATCH_HANDLES: usize = 64;
 
     /// Helper to create a SessionManager for tests
     fn test_manager(max: usize) -> SessionManager {
@@ -2758,9 +3752,13 @@ mod tests {
 
     fn test_manager_with_events(max: usize) -> (SessionManager, Receiver<RuntimeEventEnvelope>) {
         let (tx, _rx) = crossbeam_channel::unbounded();
-        let router: CallIdRouter = Arc::new(Mutex::new(HashMap::new()));
+        let router: CallIdRouter = Arc::new(BridgeCallRegistry::with_default_limit());
         let snap_cache = Arc::new(SnapshotCache::new(4));
-        let manager = SessionManager::new(max, tx, router, snap_cache);
+        let runtime =
+            agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+                .expect("create test process runtime")
+                .context();
+        let manager = SessionManager::new(max, tx, router, snap_cache, runtime);
         (manager, _rx)
     }
 
@@ -2769,6 +3767,86 @@ mod tests {
         assert_eq!(normalize_cpu_time_limit_ms(None), None);
         assert_eq!(normalize_cpu_time_limit_ms(Some(0)), None);
         assert_eq!(normalize_cpu_time_limit_ms(Some(1)), Some(1));
+    }
+
+    #[test]
+    fn vm_executor_permits_report_active_and_high_water_metrics() {
+        let control: SlotControl = Arc::new((Mutex::new(0), Condvar::new()));
+        let metrics = RuntimeMetrics::new();
+
+        let first = SessionSlotPermit::try_acquire(&control, 2, metrics.clone())
+            .expect("acquire first VM executor");
+        let second = SessionSlotPermit::try_acquire(&control, 2, metrics.clone())
+            .expect("acquire second VM executor");
+        let active = metrics.snapshot().executors[ExecutorMetricClass::Vm.index()].active;
+        assert_eq!(active.current, 2);
+        assert_eq!(active.high_water, 2);
+
+        drop(first);
+        assert_eq!(
+            metrics.snapshot().executors[ExecutorMetricClass::Vm.index()]
+                .active
+                .current,
+            1
+        );
+
+        drop(second);
+        let released = metrics.snapshot().executors[ExecutorMetricClass::Vm.index()].active;
+        assert_eq!(released.current, 0);
+        assert_eq!(released.high_water, 2);
+    }
+
+    #[test]
+    fn configured_executor_and_command_bounds_drive_session_manager() {
+        const SUBPROCESS_ENV: &str = "AGENTOS_V8_CONFIGURED_SESSION_MANAGER_SUBPROCESS";
+        if std::env::var_os(SUBPROCESS_ENV).is_none() {
+            let test_name =
+                "session::tests::configured_executor_and_command_bounds_drive_session_manager";
+            let output =
+                std::process::Command::new(std::env::current_exe().expect("current test binary"))
+                    .arg(test_name)
+                    .arg("--exact")
+                    .arg("--nocapture")
+                    .env(SUBPROCESS_ENV, "1")
+                    .output()
+                    .unwrap_or_else(|error| panic!("spawn isolated test {test_name}: {error}"));
+            assert!(
+                output.status.success(),
+                "isolated test {test_name} failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            return;
+        }
+        let mut config = agentos_runtime::RuntimeConfig {
+            max_active_vm_executors: 3,
+            vm_executor_teardown_timeout_ms: 23,
+            ..agentos_runtime::RuntimeConfig::default()
+        };
+        config.resources.max_handle_commands = 7;
+        let runtime = agentos_runtime::SidecarRuntime::process(&config)
+            .expect("configured process runtime")
+            .context();
+        let (event_tx, _event_rx) = crossbeam_channel::unbounded();
+        let router: CallIdRouter = Arc::new(BridgeCallRegistry::with_default_limit());
+        let mut manager = SessionManager::new(
+            runtime.max_active_vm_executors(),
+            event_tx,
+            router,
+            Arc::new(SnapshotCache::new(1)),
+            runtime,
+        );
+
+        assert_eq!(manager.max_concurrency, 3);
+        assert_eq!(manager.executor_teardown_timeout, Duration::from_millis(23));
+        manager
+            .create_session("configured-bounds".into(), None, None, None)
+            .expect("create bounded session");
+        assert_eq!(manager.sessions["configured-bounds"].command_capacity, 7);
+        manager
+            .destroy_session("configured-bounds")
+            .expect("destroy bounded session");
     }
 
     fn expect_late_message_warning(
@@ -2895,7 +3973,7 @@ mod tests {
             assert_eq!(mgr.session_count(), 0);
         }
 
-        // --- Part 3: Max concurrency queuing ---
+        // --- Part 3: Max concurrency admission before thread creation ---
         {
             let mut mgr = test_manager(2);
 
@@ -2903,18 +3981,22 @@ mod tests {
                 .expect("create s1");
             mgr.create_session("s2".into(), None, None, None)
                 .expect("create s2");
-            mgr.create_session("s3".into(), None, None, None)
-                .expect("create s3");
+            let error = mgr
+                .create_session("s3".into(), None, None, None)
+                .expect_err("third executor must be rejected before thread creation");
+            assert!(error.contains("ERR_AGENTOS_VM_EXECUTOR_LIMIT"));
 
             // Allow threads to acquire slots
             std::thread::sleep(std::time::Duration::from_millis(300));
 
-            // Only 2 slots active (s3 is queued)
+            // Only two admitted executor threads exist.
             assert_eq!(mgr.active_slot_count(), 2);
-            assert_eq!(mgr.session_count(), 3);
+            assert_eq!(mgr.session_count(), 2);
 
-            // Destroy s1 — releases slot, s3 acquires it
+            // Destroy s1, then a new generation can acquire the released slot.
             mgr.destroy_session("s1").expect("destroy s1");
+            mgr.create_session("s3".into(), None, None, None)
+                .expect("create s3 after release");
             std::thread::sleep(std::time::Duration::from_millis(300));
             assert_eq!(mgr.active_slot_count(), 2);
             assert_eq!(mgr.session_count(), 2);
@@ -2939,10 +4021,10 @@ mod tests {
             None,
         )
         .expect("create session");
-        mgr.call_id_router()
-            .lock()
-            .expect("call_id router")
-            .insert(42, "session-route".into());
+        let _waiter = mgr
+            .call_id_router()
+            .register_sync(&mgr.runtime, 0, 1, 42, "session-route", Some(7))
+            .expect("register bridge call target");
 
         assert!(
             mgr.detach_session_if_output_generation("session-route", 7)
@@ -2950,13 +4032,18 @@ mod tests {
             "matching output generation should detach session"
         );
         assert!(
-            mgr.call_id_router()
-                .lock()
-                .expect("call_id router")
-                .get(&42)
-                .is_none(),
+            mgr.call_id_router().pending_len() == 0,
             "detach should clear stale bridge call routes for the session"
         );
+        assert_eq!(
+            mgr.quarantined.len(),
+            1,
+            "detached executor join ownership must remain in the manager"
+        );
+        for handle in mgr.take_session_shutdown_handles() {
+            handle.join().expect("join quarantined executor");
+        }
+        assert_eq!(mgr.active_slot_count(), 0);
     }
 
     #[test]
@@ -2974,17 +4061,84 @@ mod tests {
             "entry should be removed before the shutdown is finished"
         );
 
-        // A same-id create during the unfinished shutdown window must succeed
-        // because the entry was removed up front.
-        mgr.create_session("two-phase".into(), None, None, None)
-            .expect("re-create session while first shutdown is unfinished");
+        // Removing the registry entry does not release the executor permit.
+        // Until the old thread joins, a successor generation is quarantined.
+        let error = mgr
+            .create_session("two-phase".into(), None, None, None)
+            .expect_err("old generation must retain its executor permit");
+        assert!(error.contains("ERR_AGENTOS_VM_EXECUTOR_LIMIT"));
+        first_shutdown.finish();
 
+        mgr.create_session("two-phase".into(), None, None, None)
+            .expect("re-create session after old generation joins");
         let second_shutdown = mgr
             .begin_destroy_session("two-phase")
             .expect("begin destroy re-created session");
-        first_shutdown.finish();
         second_shutdown.finish();
         assert_eq!(mgr.session_count(), 0);
+    }
+
+    #[test]
+    fn shutdown_bypasses_a_full_ordinary_command_lane() {
+        let mut mgr = test_manager(1);
+        let command_capacity = mgr
+            .runtime
+            .resources()
+            .usage(ResourceClass::HandleCommands)
+            .limit
+            .expect("configured command capacity");
+        let (tx, rx) = crossbeam_channel::bounded(command_capacity);
+        for index in 0..command_capacity {
+            tx.send(SessionCommand::Message(SessionMessage::StreamEvent(
+                StreamEvent {
+                    event_type: format!("ordinary-{index}"),
+                    payload: Vec::new(),
+                },
+            )))
+            .expect("fill ordinary command lane");
+        }
+        let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
+        let join_handle = thread::spawn(move || {
+            shutdown_rx.recv().expect("dedicated shutdown token");
+            drop(rx);
+        });
+        let (ready_broker, _ready_rx) =
+            SessionReadiness::new(1, &mgr.runtime, TEST_READY_BATCH_HANDLES)
+                .expect("create session readiness");
+        let session_resources = Arc::clone(mgr.runtime.resources());
+        mgr.sessions.insert(
+            String::from("full-command-lane"),
+            SessionEntry {
+                output_generation: None,
+                tx,
+                command_capacity,
+                shutdown_tx,
+                join_handle: Some(join_handle),
+                isolate_handle: Arc::new(Mutex::new(None)),
+                execution_abort: new_execution_abort(),
+                pause_control: Arc::new(SessionPauseControl::default()),
+                ready_broker,
+                session_resources,
+            },
+        );
+
+        mgr.begin_destroy_session("full-command-lane")
+            .expect("begin destroy overloaded session")
+            .finish();
+        assert_eq!(mgr.session_count(), 0);
+    }
+
+    #[test]
+    fn execution_abort_is_durable_when_signaled_before_waiter_arm() {
+        let execution_abort = new_execution_abort();
+        signal_execution_abort_durable(&execution_abort, ExecutionAbortReason::Terminated);
+
+        let (_guard, receiver) = ActiveExecutionAbort::arm(&execution_abort);
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_millis(10)),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected),
+            "a waiter armed after termination must observe it immediately"
+        );
     }
 
     #[test]
@@ -2998,134 +4152,16 @@ mod tests {
             .expect("begin destroy session");
         // Simulate a route the session thread registered between the pre-join
         // route clear and thread exit.
-        mgr.call_id_router()
-            .lock()
-            .expect("call_id router")
-            .insert(42, "late-route".into());
+        let _waiter = mgr
+            .call_id_router()
+            .register_sync(&mgr.runtime, 0, 1, 42, "late-route", None)
+            .expect("register late bridge call target");
 
         shutdown.finish();
         assert!(
-            mgr.call_id_router()
-                .lock()
-                .expect("call_id router")
-                .get(&42)
-                .is_none(),
+            mgr.call_id_router().pending_len() == 0,
             "finish should clear call routes registered during shutdown"
         );
-    }
-
-    #[test]
-    fn channel_response_receiver_filters_bridge_response() {
-        use crate::host_call::BridgeResponseReceiver;
-
-        // Sync bridge call interleaved with StreamEvent does not drop the StreamEvent
-        let (tx, rx) = crossbeam_channel::bounded(10);
-        let deferred = new_deferred_queue();
-        let receiver = ChannelResponseReceiver::new(rx, Arc::clone(&deferred));
-
-        // Send: StreamEvent, TerminateExecution, then BridgeResponse
-        tx.send(SessionCommand::Message(SessionMessage::StreamEvent(
-            StreamEvent {
-                event_type: "child_stdout".into(),
-                payload: vec![0x01, 0x02],
-            },
-        )))
-        .unwrap();
-        tx.send(SessionCommand::Message(SessionMessage::TerminateExecution))
-            .unwrap();
-        tx.send(SessionCommand::Message(SessionMessage::BridgeResponse(
-            BridgeResponse {
-                call_id: 1,
-                status: 0,
-                payload: vec![0xAB],
-            },
-        )))
-        .unwrap();
-
-        // recv_response should skip StreamEvent and TerminateExecution, return BridgeResponse
-        let frame = receiver.recv_response(1).unwrap();
-        assert!(
-            frame.call_id == 1,
-            "expected BridgeResponse with call_id=1, got {:?}",
-            frame
-        );
-
-        // Deferred queue should contain the StreamEvent and TerminateExecution
-        let dq = deferred.lock().unwrap();
-        assert_eq!(dq.len(), 2, "expected 2 deferred messages");
-        assert!(
-            matches!(&dq[0], SessionMessage::StreamEvent(StreamEvent { event_type, .. }) if event_type == "child_stdout"),
-            "first deferred should be StreamEvent"
-        );
-        assert!(
-            matches!(&dq[1], SessionMessage::TerminateExecution),
-            "second deferred should be TerminateExecution"
-        );
-    }
-
-    #[test]
-    fn channel_response_receiver_rejects_deferred_queue_overflow() {
-        use crate::host_call::BridgeResponseReceiver;
-
-        let (tx, rx) = crossbeam_channel::bounded(MAX_DEFERRED_SYNC_MESSAGES + 1);
-        let deferred = new_deferred_queue();
-        let receiver = ChannelResponseReceiver::new(rx, Arc::clone(&deferred));
-
-        for index in 0..=MAX_DEFERRED_SYNC_MESSAGES {
-            tx.send(SessionCommand::Message(SessionMessage::StreamEvent(
-                StreamEvent {
-                    event_type: format!("child_stdout_{index}"),
-                    payload: Vec::new(),
-                },
-            )))
-            .unwrap();
-        }
-
-        let error = receiver
-            .recv_response(1)
-            .expect_err("deferred queue overflow should reject sync bridge wait");
-        assert!(error.contains("deferred message queue exceeded limit"));
-        assert_eq!(deferred.lock().unwrap().len(), MAX_DEFERRED_SYNC_MESSAGES);
-    }
-
-    #[test]
-    fn pre_slot_deferred_command_overflow_is_bounded_and_logged() {
-        let (event_tx, event_rx) = crossbeam_channel::unbounded();
-        let mut deferred_commands = VecDeque::new();
-
-        for _ in 0..MAX_DEFERRED_SESSION_COMMANDS {
-            assert!(defer_session_command_before_slot(
-                &mut deferred_commands,
-                &event_tx,
-                "queued-session",
-                Some(3),
-                SessionCommand::Message(SessionMessage::TerminateExecution),
-            ));
-        }
-
-        assert!(!defer_session_command_before_slot(
-            &mut deferred_commands,
-            &event_tx,
-            "queued-session",
-            Some(3),
-            SessionCommand::Message(SessionMessage::TerminateExecution),
-        ));
-        assert_eq!(deferred_commands.len(), MAX_DEFERRED_SESSION_COMMANDS);
-
-        let warning = event_rx.recv().expect("overflow warning");
-        assert_eq!(warning.output_generation, Some(3));
-        match warning.event {
-            RuntimeEvent::Log {
-                session_id,
-                channel,
-                message,
-            } => {
-                assert_eq!(session_id, "queued-session");
-                assert_eq!(channel, 1);
-                assert!(message.contains(DEFERRED_COMMAND_LIMIT_ERROR_CODE));
-            }
-            other => panic!("expected overflow warning log, got {other:?}"),
-        }
     }
 
     #[test]
@@ -3149,39 +4185,22 @@ mod tests {
     }
 
     #[test]
-    fn channel_response_receiver_abort_unblocks_waiting_sync_call() {
-        use crate::host_call::BridgeResponseReceiver;
-
-        let (_tx, rx) = crossbeam_channel::bounded(1);
-        let deferred = new_deferred_queue();
-        let execution_abort = new_execution_abort();
-        let (_active_abort, abort_rx) = ActiveExecutionAbort::arm(&execution_abort);
-        let receiver = ChannelResponseReceiver::with_abort(
-            rx,
-            abort_rx,
-            deferred,
-            Arc::new(SessionPauseControl::default()),
+    fn late_stdin_end_is_an_expected_stale_control_event() {
+        let (event_tx, event_rx) = crossbeam_channel::unbounded();
+        handle_late_session_message(
+            &RuntimeEventSender::from(event_tx),
+            "completed-session",
+            Some(7),
+            SessionMessage::StreamEvent(StreamEvent {
+                event_type: String::from("stdin_end"),
+                payload: Vec::new(),
+            }),
         );
 
-        let (result_tx, result_rx) = std::sync::mpsc::channel();
-        let join_handle = std::thread::spawn(move || {
-            let _ = result_tx.send(receiver.recv_response(1));
-        });
-
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        signal_execution_abort(&execution_abort, ExecutionAbortReason::Terminated);
-
-        let result = result_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .expect("abort should unblock the waiting receiver");
-        assert_eq!(
-            result.expect_err("abort should not yield a bridge response"),
-            "execution aborted"
+        assert!(
+            event_rx.try_recv().is_err(),
+            "an idempotent stdin EOF racing process exit must not become guest stderr"
         );
-
-        join_handle
-            .join()
-            .expect("receiver thread should exit cleanly");
     }
 
     #[test]
@@ -3196,6 +4215,7 @@ mod tests {
                 call_id: 41,
                 status: 0,
                 payload: vec![0xAA, 0xBB],
+                reservation: None,
             }),
         )
         .expect("send late bridge response");
@@ -3208,6 +4228,234 @@ mod tests {
         );
 
         mgr.destroy_session("late-bridge").expect("destroy session");
+    }
+
+    #[test]
+    fn control_only_readiness_wake_becomes_a_command_and_rearms() {
+        let mgr = test_manager(1);
+        let (broker, wake_rx) = SessionReadiness::new(23, &mgr.runtime, TEST_READY_BATCH_HANDLES)
+            .expect("create session readiness");
+
+        broker.publish_timer(91).expect("publish first timer");
+        let first_wake = wake_rx.try_recv().expect("first timer wake");
+        let first_batch = match ready_batch_command(&broker, first_wake).expect("timer command") {
+            SessionCommand::ReadyBatch(batch) => batch,
+            _ => panic!("timer wake must produce a readiness command"),
+        };
+        assert!(first_batch.entries.is_empty());
+        assert!(first_batch.timers_ready);
+        assert_eq!(
+            broker
+                .drain_timers(&first_batch)
+                .expect("drain first timer"),
+            vec![91]
+        );
+        broker
+            .complete_batch(&first_batch, &[])
+            .expect("complete first timer wake");
+
+        broker.publish_timer(92).expect("publish second timer");
+        let second_wake = wake_rx
+            .try_recv()
+            .expect("completing a control-only batch must rearm the wake lane");
+        let second_batch = match ready_batch_command(&broker, second_wake).expect("second command")
+        {
+            SessionCommand::ReadyBatch(batch) => batch,
+            _ => panic!("second timer wake must produce a readiness command"),
+        };
+        assert!(second_batch.entries.is_empty());
+        assert!(second_batch.timers_ready);
+    }
+
+    #[test]
+    fn admitted_session_command_precedes_later_signal_wake() {
+        let mgr = test_manager(1);
+        let (broker, ready_rx) = SessionReadiness::new(31, &mgr.runtime, TEST_READY_BATCH_HANDLES)
+            .expect("create session readiness");
+        let (tx, rx) = crossbeam_channel::bounded(2);
+        let (_shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
+
+        tx.send(SessionCommand::Message(SessionMessage::StreamEvent(
+            StreamEvent {
+                event_type: String::from("execute-admitted-first"),
+                payload: Vec::new(),
+            },
+        )))
+        .expect("queue ordinary session command");
+        broker.publish_signal(15).expect("publish later SIGTERM");
+
+        assert!(matches!(
+            recv_session_command(&rx, &shutdown_rx, &ready_rx, &broker),
+            Some(SessionCommand::Message(SessionMessage::StreamEvent(_)))
+        ));
+        let Some(SessionCommand::ReadyBatch(batch)) =
+            recv_session_command(&rx, &shutdown_rx, &ready_rx, &broker)
+        else {
+            panic!("later signal wake must remain queued after the admitted command");
+        };
+        assert!(batch.signals_ready);
+        assert_eq!(
+            broker.drain_signals(&batch).expect("drain signal"),
+            vec![15]
+        );
+        broker
+            .complete_batch(&batch, &[])
+            .expect("complete signal wake");
+    }
+
+    #[test]
+    fn readiness_flood_uses_one_wake_and_carries_only_capability_identity() {
+        let mgr = test_manager(1);
+        let (broker, wake_rx) = SessionReadiness::new(7, &mgr.runtime, TEST_READY_BATCH_HANDLES)
+            .expect("create session readiness");
+        for _ in 0..1_000_000 {
+            broker
+                .publish(41, 3, ReadyFlags::READABLE)
+                .expect("publish readiness");
+        }
+
+        let wake = wake_rx.try_recv().expect("one coalesced wake");
+        assert!(
+            wake_rx.try_recv().is_err(),
+            "wake lane must have capacity one"
+        );
+        let batch = broker.take_batch(wake).expect("take readiness batch");
+        assert_eq!(batch.entries.len(), 1);
+        assert_eq!(batch.entries[0].capability_id, 41);
+        assert_eq!(batch.entries[0].capability_generation, 3);
+        assert_eq!(batch.entries[0].flags, ReadyFlags::READABLE);
+        assert_eq!(batch.entries[0].revision, 1_000_000);
+        broker
+            .complete_batch(&batch, &batch.entries)
+            .expect("complete readiness");
+        assert_eq!(
+            broker.broker.pending_handle_count().expect("pending count"),
+            0
+        );
+    }
+
+    #[test]
+    fn readiness_batch_honors_vm_reactor_work_quantum_override() {
+        let mgr = test_manager(1);
+        let (broker, wake_rx) =
+            SessionReadiness::new(29, &mgr.runtime, 2).expect("create bounded readiness");
+        for capability_id in 1..=3 {
+            broker
+                .publish(capability_id, 1, ReadyFlags::READABLE)
+                .expect("publish readiness");
+        }
+
+        let first_wake = wake_rx.recv().expect("first coalesced wake");
+        let first_batch = broker.take_batch(first_wake).expect("first bounded batch");
+        assert_eq!(
+            first_batch.entries.len(),
+            2,
+            "limits.reactor.workQuantum must cap one V8 readiness turn"
+        );
+        broker
+            .complete_batch(&first_batch, &first_batch.entries)
+            .expect("complete first bounded batch");
+
+        let second_wake = wake_rx.recv().expect("replacement wake for remaining work");
+        let second_batch = broker
+            .take_batch(second_wake)
+            .expect("second bounded batch");
+        assert_eq!(second_batch.entries.len(), 1);
+    }
+
+    #[test]
+    fn readiness_batch_rejects_zero_vm_reactor_work_quantum() {
+        let mgr = test_manager(1);
+        let error = SessionReadiness::new(30, &mgr.runtime, 0)
+            .expect_err("zero work quantum must fail closed");
+        assert!(error.contains("limits.reactor.workQuantum"));
+    }
+
+    #[test]
+    fn readiness_rejects_a_stale_capability_generation_without_replacing_state() {
+        let mgr = test_manager(1);
+        let (broker, wake_rx) = SessionReadiness::new(13, &mgr.runtime, TEST_READY_BATCH_HANDLES)
+            .expect("create session readiness");
+        broker
+            .publish(9, 4, ReadyFlags::READABLE)
+            .expect("publish live capability");
+        let error = broker
+            .publish(9, 3, ReadyFlags::CLOSE)
+            .expect_err("stale capability generation must fail");
+        assert!(error.contains("ERR_AGENTOS_READY_STALE_CAPABILITY"));
+        assert!(wake_rx.len() <= 1, "wake lane must stay capacity one");
+        let wake = wake_rx.recv().expect("durable wake");
+        let batch = broker.take_batch(wake).expect("take readiness batch");
+        assert_eq!(batch.entries.len(), 1);
+        assert_eq!(batch.entries[0].capability_generation, 4);
+        assert_eq!(batch.entries[0].flags, ReadyFlags::READABLE);
+    }
+
+    #[test]
+    fn readiness_before_guest_registration_remains_pending_until_dispatch_succeeds() {
+        let mgr = test_manager(1);
+        let (broker, wake_rx) = SessionReadiness::new(17, &mgr.runtime, TEST_READY_BATCH_HANDLES)
+            .expect("create session readiness");
+        broker
+            .publish(33, 8, ReadyFlags::READABLE)
+            .expect("publish readiness before guest registration");
+
+        let first_wake = wake_rx.recv().expect("initial wake");
+        let first_batch = broker.take_batch(first_wake).expect("initial batch");
+        broker
+            .complete_batch(&first_batch, &[])
+            .expect("preserve readiness when guest target is absent");
+        assert_eq!(
+            broker.broker.pending_handle_count().expect("pending count"),
+            1
+        );
+
+        let retry_wake = wake_rx.recv().expect("retry wake after registration");
+        let retry_batch = broker.take_batch(retry_wake).expect("retry batch");
+        broker
+            .complete_batch(&retry_batch, &retry_batch.entries)
+            .expect("acknowledge readiness after target runs");
+        assert_eq!(
+            broker.broker.pending_handle_count().expect("pending count"),
+            0
+        );
+    }
+
+    #[test]
+    fn readiness_dispatch_failure_completes_wake_before_session_reuse() {
+        let mgr = test_manager(1);
+        let (broker, wake_rx) = SessionReadiness::new(18, &mgr.runtime, TEST_READY_BATCH_HANDLES)
+            .expect("create reusable session readiness");
+        broker
+            .publish(34, 9, ReadyFlags::READABLE)
+            .expect("publish readiness before failing dispatch");
+
+        let first_wake = wake_rx.recv().expect("initial wake");
+        let first_batch = broker.take_batch(first_wake).expect("initial batch");
+        let status = complete_ready_batch_dispatch(
+            &broker,
+            &first_batch,
+            &[],
+            EventLoopStatus::Failed(
+                1,
+                ExecutionError {
+                    error_type: String::from("Error"),
+                    message: String::from("injected readiness handler failure"),
+                    stack: String::new(),
+                    code: Some(String::from("ERR_TEST_READY_DISPATCH")),
+                },
+            ),
+        );
+        assert!(matches!(status, EventLoopStatus::Failed(1, _)));
+
+        let retry_wake = wake_rx
+            .try_recv()
+            .expect("failed dispatch must complete and rearm the wake for session reuse");
+        let retry_batch = broker.take_batch(retry_wake).expect("reused-session batch");
+        assert_eq!(retry_batch.entries, first_batch.entries);
+        broker
+            .complete_batch(&retry_batch, &retry_batch.entries)
+            .expect("reused session can acknowledge the retried readiness");
     }
 
     /// Regression test for the pending-promise-resolver leak / V8 lifetime-contract

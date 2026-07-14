@@ -20,6 +20,11 @@ The JavaScript runtime is powered by the Rivet [Secure Exec](https://secureexec.
 
 Guest code runs as Node.js (reporting `process.version` as `v22.0.0`), but it never touches the host runtime. Every `node:` builtin resolves to a kernel-backed bridge or an in-isolate polyfill, never the real host module. For the full builtin matrix (`fs`, `net`, `http`, `crypto`, undici-backed `fetch`, and more), see the Secure Exec [Node.js Compatibility](https://secureexec.dev/docs/nodejs-compatibility) reference.
 
+For the implementation-level event loop—how process-wide Tokio tasks notify a
+thread-affine V8 isolate, how readiness is coalesced, and how `Duplex`
+backpressure reaches a sidecar-owned socket—see
+[JavaScript Executor & Socket Reactor](/docs/architecture/javascript-executor).
+
 ### npm packages
 
 By default the VM has no npm packages installed. Mount a host `node_modules` directory to give guest code access to real packages: the `nodeModulesMount` helper projects it read-only at `/root/node_modules`, and the in-kernel resolver walks it exactly like Node.js does, with no bundling or patching.

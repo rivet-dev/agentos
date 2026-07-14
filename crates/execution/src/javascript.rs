@@ -7,11 +7,13 @@ use crate::runtime_support::{
     NODE_SANDBOX_ROOT_ENV,
 };
 use crate::signal::NodeSignalHandlerRegistration;
-use crate::v8_host::{V8RuntimeHost, V8SessionHandle};
+use crate::v8_host::{V8RuntimeHost, V8SessionFrameReceiver, V8SessionHandle};
 use crate::v8_ipc::BinaryFrame;
 use crate::v8_runtime;
-use agentos_bridge::queue_tracker::{register_queue, TrackedLimit, TrackedReceiver};
+use agentos_bridge::queue_tracker::{register_queue, TrackedLimit};
+use agentos_runtime::RuntimeContext;
 use agentos_v8_runtime::runtime_protocol::{RuntimeCommand, WarmSessionHint};
+use flume::{Receiver as EventReceiver, Sender as EventSender};
 use getrandom::getrandom;
 use serde::Deserialize;
 use serde::Serialize;
@@ -31,10 +33,7 @@ use std::sync::{
 };
 use std::thread;
 use std::time::{Duration, Instant};
-use tokio::sync::{
-    mpsc::{channel, error::TryRecvError as TokioTryRecvError, Receiver as TokioReceiver},
-    Notify,
-};
+use tokio::sync::Notify;
 use tokio::time;
 
 const NODE_ENTRYPOINT_ENV: &str = "AGENTOS_ENTRYPOINT";
@@ -66,6 +65,7 @@ const NODE_SYNC_RPC_DATA_BYTES_ENV: &str = "AGENTOS_NODE_SYNC_RPC_DATA_BYTES";
 const NODE_SYNC_RPC_WAIT_TIMEOUT_MS_ENV: &str = "AGENTOS_NODE_SYNC_RPC_WAIT_TIMEOUT_MS";
 static NEXT_V8_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 static JAVASCRIPT_TIMER_WHEEL: OnceLock<Arc<TimerWheel>> = OnceLock::new();
+static JAVASCRIPT_TIMER_WHEEL_INIT: Mutex<()> = Mutex::new(());
 
 #[derive(Default)]
 struct JsStartPhaseStats {
@@ -320,13 +320,6 @@ struct JavascriptSyncRpcRequestWire {
     args: Vec<Value>,
 }
 
-struct JavascriptSyncRpcChannels {
-    parent_request_reader: File,
-    parent_response_writer: File,
-    child_request_writer: OwnedFd,
-    child_response_reader: OwnedFd,
-}
-
 impl LinePrefixFilter {
     fn filter_chunk(&mut self, chunk: &[u8], prefixes: &[&str]) -> Vec<u8> {
         self.pending.extend_from_slice(chunk);
@@ -349,12 +342,14 @@ fn has_control_prefix(line: &[u8], prefixes: &[&str]) -> bool {
     prefixes.iter().any(|prefix| trimmed.starts_with(prefix))
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 struct JavascriptSyncRpcResponseWriter {
     sender: SyncSender<Vec<u8>>,
     timeout: Duration,
 }
 
+#[cfg(test)]
 impl JavascriptSyncRpcResponseWriter {
     fn new(writer: File, timeout: Duration) -> Self {
         let (sender, receiver) = mpsc::sync_channel(NODE_SYNC_RPC_RESPONSE_QUEUE_CAPACITY);
@@ -392,6 +387,7 @@ impl JavascriptSyncRpcResponseWriter {
     }
 }
 
+#[cfg(test)]
 impl Clone for JavascriptSyncRpcResponseWriter {
     fn clone(&self) -> Self {
         Self {
@@ -448,6 +444,15 @@ pub struct JavascriptExecutionLimits {
     pub wall_clock_limit_ms: Option<u32>,
     /// Timeout for materializing the per-VM Node import cache.
     pub import_cache_materialize_timeout_ms: Option<u64>,
+    /// Maximum live JavaScript timers in this execution. `None` keeps the
+    /// engine default. The sidecar supplies the VM-scoped configured value.
+    pub max_timers: Option<usize>,
+    /// Maximum readiness identities delivered in one V8 turn. Sidecar VM
+    /// execution must supply `limits.reactor.workQuantum` here.
+    pub reactor_work_quantum: Option<usize>,
+    /// Per-call host bridge deadline. Sidecar VMs supply
+    /// `limits.reactor.operationDeadlineMs`; zero is invalid.
+    pub bridge_call_timeout_ms: Option<u64>,
 }
 
 /// Per-execution guest-runtime config carried as typed fields rather than
@@ -653,8 +658,10 @@ impl GuestModuleResolution {
     }
 }
 
-#[derive(Default)]
 struct LocalBridgeState {
+    runtime: Option<RuntimeContext>,
+    timer_resources: Option<Arc<agentos_runtime::accounting::ResourceLedger>>,
+    max_timers: usize,
     translator: GuestPathTranslator,
     resolution_cache: LocalModuleResolutionCache,
     /// jsRuntime module-resolution mode for this execution.
@@ -676,6 +683,42 @@ struct LocalBridgeState {
     module_reader: Option<Box<dyn ModuleFsReader + Send>>,
 }
 
+impl Default for LocalBridgeState {
+    fn default() -> Self {
+        let runtime = default_test_runtime_context();
+        let timer_resources = runtime
+            .as_ref()
+            .map(|runtime| Arc::clone(runtime.resources()));
+        Self {
+            runtime,
+            timer_resources,
+            max_timers: MAX_TIMERS_PER_EXECUTION,
+            translator: GuestPathTranslator::default(),
+            resolution_cache: LocalModuleResolutionCache::default(),
+            module_resolution: GuestModuleResolution::default(),
+            handle_descriptions: HashMap::new(),
+            next_timer_id: 0,
+            timers: Arc::new(Mutex::new(HashMap::new())),
+            kernel_stdin: Arc::new(LocalKernelStdinBridge::default()),
+            forward_kernel_stdin_rpc: false,
+            v8_session: None,
+            module_reader: None,
+        }
+    }
+}
+
+#[cfg(test)]
+fn default_test_runtime_context() -> Option<RuntimeContext> {
+    agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+        .ok()
+        .map(agentos_runtime::SidecarRuntime::context)
+}
+
+#[cfg(not(test))]
+fn default_test_runtime_context() -> Option<RuntimeContext> {
+    None
+}
+
 impl Drop for LocalBridgeState {
     /// Tear down all tracked timers when the bridge state is dropped (which
     /// happens when the event-bridge service loop exits on session termination —
@@ -684,6 +727,9 @@ impl Drop for LocalBridgeState {
     /// finds its entry gone and suppresses its callback via `timer_should_fire`,
     /// so a destroyed session's timers do not fire after the fact.
     fn drop(&mut self) {
+        if let Some(wheel) = JAVASCRIPT_TIMER_WHEEL.get() {
+            wheel.cancel_registry(&self.timers);
+        }
         if let Ok(mut timers) = self.timers.lock() {
             timers.clear();
         }
@@ -725,11 +771,12 @@ struct LocalPackageJson {
     imports: Option<Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 struct LocalTimerEntry {
     delay_ms: u64,
     generation: u64,
     repeat: bool,
+    _reservation: Option<agentos_runtime::accounting::Reservation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -776,6 +823,8 @@ enum LocalBridgeCallResult {
 /// `u64::MAX` ms; clamping keeps the timer wheel's deadline math and session
 /// handle lifetime within Node-compatible bounds.
 const MAX_TIMER_DELAY_MS: u64 = 2_147_483_647;
+const MAX_TIMERS_PER_EXECUTION: usize = 4_096;
+const MAX_TIMER_ACTIONS_PER_TURN: usize = 1_024;
 
 fn timer_delay_ms(value: Option<&Value>) -> u64 {
     let delay = match value {
@@ -789,6 +838,16 @@ fn timer_delay_ms(value: Option<&Value>) -> u64 {
     } else {
         delay.floor().min(MAX_TIMER_DELAY_MS as f64) as u64
     }
+}
+
+fn timer_dispatch_error(message: String) -> Value {
+    json!({
+        "__bd_error": {
+            "name": "Error",
+            "code": message.split(':').next().unwrap_or("ERR_AGENTOS_JAVASCRIPT_TIMER"),
+            "message": message,
+        }
+    })
 }
 
 /// Decide whether a woken timer action should fire, and reclaim its tracking
@@ -823,14 +882,20 @@ fn timer_should_fire(
 
 struct TimerWheel {
     state: Mutex<TimerWheelState>,
-    ready: Condvar,
+    ready: Notify,
 }
 
 #[derive(Default)]
 struct TimerWheelState {
     heap: BinaryHeap<Reverse<(Instant, u64)>>,
-    entries: HashMap<u64, TimerAction>,
+    entries: HashMap<u64, ScheduledTimerAction>,
+    timer_index: HashMap<(usize, u64), u64>,
     next_seq: u64,
+}
+
+struct ScheduledTimerAction {
+    deadline: Instant,
+    action: TimerAction,
 }
 
 enum TimerAction {
@@ -849,7 +914,33 @@ enum TimerAction {
     },
 }
 
+fn settle_timer_bridge_response(
+    session: &V8SessionHandle,
+    call_id: u64,
+    status: u8,
+    payload: Vec<u8>,
+) {
+    if let Err(error) = session.send_bridge_response(call_id, status, payload) {
+        tracing::warn!(
+            call_id,
+            error = %error,
+            "timer bridge response caller stopped waiting"
+        );
+    }
+}
+
 impl TimerAction {
+    fn timer_key(&self) -> (usize, u64) {
+        match self {
+            Self::StreamEvent {
+                timer_id, timers, ..
+            }
+            | Self::BridgeResponse {
+                timer_id, timers, ..
+            } => (Arc::as_ptr(timers) as usize, *timer_id),
+        }
+    }
+
     fn execute(self) {
         match self {
             Self::StreamEvent {
@@ -862,9 +953,13 @@ impl TimerAction {
                     return;
                 }
 
-                let payload =
-                    v8_runtime::json_to_cbor_payload(&json!(timer_id)).unwrap_or_default();
-                let _ = session.send_stream_event("timer", payload);
+                if let Err(error) = session.publish_timer(timer_id) {
+                    tracing::warn!(
+                        timer_id,
+                        error = %error,
+                        "could not publish durable JavaScript timer readiness"
+                    );
+                }
             }
             Self::BridgeResponse {
                 session,
@@ -876,86 +971,144 @@ impl TimerAction {
                 if !timer_should_fire(&timers, timer_id, generation) {
                     return;
                 }
-                let _ = session.send_bridge_response(call_id, 0, Vec::new());
+                settle_timer_bridge_response(&session, call_id, 0, Vec::new());
             }
         }
     }
 }
 
 impl TimerWheel {
-    fn get() -> &'static Arc<Self> {
-        JAVASCRIPT_TIMER_WHEEL.get_or_init(Self::start)
+    fn get(runtime: &RuntimeContext) -> Result<&'static Arc<Self>, String> {
+        if let Some(wheel) = JAVASCRIPT_TIMER_WHEEL.get() {
+            return Ok(wheel);
+        }
+
+        let _initializing = JAVASCRIPT_TIMER_WHEEL_INIT.lock().map_err(|_| {
+            String::from(
+                "ERR_AGENTOS_JAVASCRIPT_TIMER_WHEEL_INIT: timer wheel initialization lock poisoned",
+            )
+        })?;
+        if let Some(wheel) = JAVASCRIPT_TIMER_WHEEL.get() {
+            return Ok(wheel);
+        }
+
+        let wheel = Self::start(runtime.clone())?;
+        let _ = JAVASCRIPT_TIMER_WHEEL.set(wheel);
+        JAVASCRIPT_TIMER_WHEEL.get().ok_or_else(|| {
+            String::from("ERR_AGENTOS_JAVASCRIPT_TIMER_WHEEL_INIT: timer wheel was not installed")
+        })
     }
 
-    fn start() -> Arc<Self> {
+    fn start(runtime: RuntimeContext) -> Result<Arc<Self>, String> {
         let wheel = Arc::new(Self {
             state: Mutex::new(TimerWheelState::default()),
-            ready: Condvar::new(),
+            ready: Notify::new(),
         });
         let worker = Arc::clone(&wheel);
-        // Detached daemon: queued entries carry generation-checked session handles,
-        // matching the previous fire-and-forget timer threads without one OS
-        // thread per guest timer.
-        if let Err(error) = thread::Builder::new()
-            .name(String::from("secure-exec-js-timer-wheel"))
-            .spawn(move || worker.run())
-        {
-            tracing::warn!(?error, "failed to start JavaScript timer wheel thread");
-        }
-        wheel
+        runtime
+            .spawn(agentos_runtime::TaskClass::Timer, async move {
+                worker.run().await
+            })
+            .map_err(|error| {
+                format!("ERR_AGENTOS_TASK_LIMIT: failed to start JavaScript timer wheel: {error}")
+            })?;
+        Ok(wheel)
     }
 
-    fn schedule(&self, delay_ms: u64, action: TimerAction) {
+    fn schedule(&self, delay_ms: u64, action: TimerAction) -> Result<(), String> {
         let now = Instant::now();
         let deadline = now
             .checked_add(Duration::from_millis(delay_ms))
             .unwrap_or(now);
         let mut state = self.lock_state();
+        let timer_key = action.timer_key();
+        if let Some(previous_seq) = state.timer_index.remove(&timer_key) {
+            state.entries.remove(&previous_seq);
+        }
         let old_earliest = state.heap.peek().map(|Reverse((deadline, _))| *deadline);
         let seq = state.next_seq;
-        state.next_seq = state.next_seq.wrapping_add(1);
+        state.next_seq = state.next_seq.checked_add(1).ok_or_else(|| {
+            String::from(
+                "ERR_AGENTOS_JAVASCRIPT_TIMER_SEQUENCE_EXHAUSTED: process timer sequence exhausted",
+            )
+        })?;
         state.heap.push(Reverse((deadline, seq)));
-        state.entries.insert(seq, action);
+        state
+            .entries
+            .insert(seq, ScheduledTimerAction { deadline, action });
+        state.timer_index.insert(timer_key, seq);
+        Self::compact_heap_if_needed(&mut state);
         if old_earliest.is_none_or(|old| deadline < old) {
             self.ready.notify_one();
         }
+        Ok(())
     }
 
-    fn run(&self) {
+    fn cancel(&self, timers: &Arc<Mutex<HashMap<u64, LocalTimerEntry>>>, timer_id: u64) {
+        let key = (Arc::as_ptr(timers) as usize, timer_id);
+        let mut state = self.lock_state();
+        if let Some(seq) = state.timer_index.remove(&key) {
+            state.entries.remove(&seq);
+            Self::compact_heap_if_needed(&mut state);
+        }
+    }
+
+    fn cancel_registry(&self, timers: &Arc<Mutex<HashMap<u64, LocalTimerEntry>>>) {
+        let registry = Arc::as_ptr(timers) as usize;
+        let mut state = self.lock_state();
+        let keys = state
+            .timer_index
+            .keys()
+            .filter(|(candidate, _)| *candidate == registry)
+            .copied()
+            .collect::<Vec<_>>();
+        for key in keys {
+            if let Some(seq) = state.timer_index.remove(&key) {
+                state.entries.remove(&seq);
+            }
+        }
+        Self::compact_heap_if_needed(&mut state);
+    }
+
+    async fn run(&self) {
         loop {
-            let due = {
-                let mut state = self.lock_state();
-                loop {
-                    match state.heap.peek().copied() {
-                        Some(Reverse((deadline, _))) => {
-                            let now = Instant::now();
-                            if deadline <= now {
-                                break;
-                            }
-                            let timeout = deadline.saturating_duration_since(now);
-                            state = match self.ready.wait_timeout(state, timeout) {
-                                Ok((state, _)) => state,
-                                Err(poisoned) => poisoned.into_inner().0,
-                            };
-                        }
-                        None => {
-                            state = match self.ready.wait(state) {
-                                Ok(state) => state,
-                                Err(poisoned) => poisoned.into_inner(),
-                            };
-                        }
+            // Create the notification future before reading the heap so a
+            // concurrently inserted earlier deadline cannot be lost.
+            let notified = self.ready.notified();
+            let next_deadline = self
+                .lock_state()
+                .heap
+                .peek()
+                .map(|Reverse((deadline, _))| *deadline);
+            match next_deadline {
+                Some(deadline) if deadline > Instant::now() => {
+                    tokio::select! {
+                        _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {}
+                        _ = notified => continue,
                     }
                 }
+                Some(_) => {}
+                None => {
+                    notified.await;
+                    continue;
+                }
+            }
 
+            let due = {
+                let mut state = self.lock_state();
                 let now = Instant::now();
-                let mut due = Vec::new();
+                let mut due = Vec::with_capacity(MAX_TIMER_ACTIONS_PER_TURN);
                 while let Some(Reverse((deadline, seq))) = state.heap.peek().copied() {
-                    if deadline > now {
+                    if deadline > now || due.len() >= MAX_TIMER_ACTIONS_PER_TURN {
                         break;
                     }
                     state.heap.pop();
-                    if let Some(action) = state.entries.remove(&seq) {
-                        due.push(action);
+                    if let Some(scheduled) = state.entries.remove(&seq) {
+                        let timer_key = scheduled.action.timer_key();
+                        if state.timer_index.get(&timer_key) == Some(&seq) {
+                            state.timer_index.remove(&timer_key);
+                        }
+                        due.push(scheduled.action);
                     }
                 }
                 due
@@ -966,7 +1119,20 @@ impl TimerWheel {
                     tracing::warn!("JavaScript timer wheel action panicked");
                 }
             }
+            tokio::task::yield_now().await;
         }
+    }
+
+    fn compact_heap_if_needed(state: &mut TimerWheelState) {
+        let compact_above = state.entries.len().saturating_mul(2).saturating_add(1_024);
+        if state.heap.len() <= compact_above {
+            return;
+        }
+        state.heap = state
+            .entries
+            .iter()
+            .map(|(&seq, scheduled)| Reverse((scheduled.deadline, seq)))
+            .collect();
     }
 
     fn lock_state(&self) -> std::sync::MutexGuard<'_, TimerWheelState> {
@@ -1549,6 +1715,7 @@ fn decode_bridge_output_args(args: &[Value]) -> Vec<u8> {
 #[derive(Debug)]
 pub enum JavascriptExecutionError {
     EmptyArgv,
+    InvalidLimit(String),
     MissingContext(String),
     VmMismatch { expected: String, found: String },
     PrepareImportCache(std::io::Error),
@@ -1568,6 +1735,7 @@ impl fmt::Display for JavascriptExecutionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyArgv => f.write_str("guest JavaScript execution requires argv[0]"),
+            Self::InvalidLimit(message) => write!(f, "invalid JavaScript limit: {message}"),
             Self::MissingContext(context_id) => {
                 write!(f, "unknown guest JavaScript context: {context_id}")
             }
@@ -1624,7 +1792,11 @@ impl std::error::Error for JavascriptExecutionError {}
 pub struct JavascriptExecution {
     execution_id: String,
     child_pid: u32,
-    events: tokio::sync::Mutex<TokioReceiver<JavascriptExecutionEvent>>,
+    // One bounded mailbox supports both the async sidecar pump and standalone
+    // blocking consumers. Using a runtime-specific receiver here previously
+    // forced blocking compatibility paths through Handle::block_on, which
+    // panicked whenever those paths were reached from the unified runtime.
+    events: EventReceiver<JavascriptExecutionEvent>,
     pending_sync_rpc: Arc<Mutex<Option<PendingSyncRpcState>>>,
     kernel_stdin: Arc<LocalKernelStdinBridge>,
     _import_cache_guard: Arc<NodeImportCacheCleanup>,
@@ -1633,6 +1805,7 @@ pub struct JavascriptExecution {
     /// replacement isolate and its bridge before committing kernel process
     /// state, but must not enqueue guest code until that commit is complete.
     prepared_execute: Option<PreparedJavascriptExecute>,
+    _event_bridge_task: tokio::task::JoinHandle<()>,
     /// Host-direct module resolver state, used ONLY by the standalone `wait()`
     /// loop. The real VM runtime resolves modules against the kernel VFS on the
     /// sidecar service loop and never reaches this; but `wait()` runs without a
@@ -1712,8 +1885,9 @@ impl JavascriptExecution {
 
     pub fn close_stdin(&mut self) -> Result<(), JavascriptExecutionError> {
         self.kernel_stdin.close();
-        let _ = self.v8_session.send_stream_event("stdin_end", vec![]);
-        Ok(())
+        self.v8_session
+            .send_stream_event("stdin_end", vec![])
+            .map_err(JavascriptExecutionError::Stdin)
     }
 
     pub(crate) fn write_kernel_stdin_only(
@@ -1907,22 +2081,52 @@ impl JavascriptExecution {
         &self,
         timeout: Duration,
     ) -> Result<Option<JavascriptExecutionEvent>, JavascriptExecutionError> {
-        if timeout.is_zero() {
-            let mut events = self.events.lock().await;
-            return match events.try_recv() {
+        self.poll_event_until(Some(timeout)).await
+    }
+
+    /// Probe the durable event queue without registering or discarding a
+    /// waker. The sidecar calls this after the execution engine has notified
+    /// its coalesced process-event broker.
+    pub fn try_poll_event(
+        &self,
+    ) -> Result<Option<JavascriptExecutionEvent>, JavascriptExecutionError> {
+        match self.events.try_recv() {
+            Ok(event) => Ok(Some(event)),
+            Err(flume::TryRecvError::Empty) => Ok(None),
+            Err(flume::TryRecvError::Disconnected) => {
+                Err(JavascriptExecutionError::EventChannelClosed)
+            }
+        }
+    }
+
+    /// Wait for one event until an optional operation deadline. `None` is a
+    /// true readiness wait; it does not install a recurring adapter timer.
+    pub async fn poll_event_until(
+        &self,
+        timeout: Option<Duration>,
+    ) -> Result<Option<JavascriptExecutionEvent>, JavascriptExecutionError> {
+        if timeout.is_some_and(|timeout| timeout.is_zero()) {
+            return match self.events.try_recv() {
                 Ok(event) => Ok(Some(event)),
-                Err(TokioTryRecvError::Empty) => Ok(None),
-                Err(TokioTryRecvError::Disconnected) => {
+                Err(flume::TryRecvError::Empty) => Ok(None),
+                Err(flume::TryRecvError::Disconnected) => {
                     Err(JavascriptExecutionError::EventChannelClosed)
                 }
             };
         }
 
-        let mut events = self.events.lock().await;
-        match time::timeout(timeout, events.recv()).await {
-            Ok(Some(event)) => Ok(Some(event)),
-            Ok(None) => Err(JavascriptExecutionError::EventChannelClosed),
-            Err(_) => Ok(None),
+        match timeout {
+            Some(timeout) => match time::timeout(timeout, self.events.recv_async()).await {
+                Ok(Ok(event)) => Ok(Some(event)),
+                Ok(Err(_closed)) => Err(JavascriptExecutionError::EventChannelClosed),
+                Err(_) => Ok(None),
+            },
+            None => self
+                .events
+                .recv_async()
+                .await
+                .map(Some)
+                .map_err(|_| JavascriptExecutionError::EventChannelClosed),
         }
     }
 
@@ -1930,49 +2134,42 @@ impl JavascriptExecution {
         &self,
         timeout: Duration,
     ) -> Result<Option<JavascriptExecutionEvent>, JavascriptExecutionError> {
-        let deadline = Instant::now() + timeout;
-        loop {
-            if let Ok(mut events) = self.events.try_lock() {
-                match events.try_recv() {
-                    Ok(event) => return Ok(Some(event)),
-                    Err(TokioTryRecvError::Disconnected) => {
-                        return Err(JavascriptExecutionError::EventChannelClosed);
-                    }
-                    Err(TokioTryRecvError::Empty) => {
-                        if Instant::now() >= deadline {
-                            return Ok(None);
-                        }
-                    }
-                }
+        match self.events.recv_timeout(timeout) {
+            Ok(event) => Ok(Some(event)),
+            Err(flume::RecvTimeoutError::Timeout) => Ok(None),
+            Err(flume::RecvTimeoutError::Disconnected) => {
+                Err(JavascriptExecutionError::EventChannelClosed)
             }
-
-            if Instant::now() >= deadline {
-                return Ok(None);
-            }
-            thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    /// Block until the next execution event without a recurring timeout poll.
+    /// Adapters that have no deadline use this path so an idle guest consumes
+    /// no scheduler turns while it waits for readiness or completion.
+    pub(crate) fn next_event_blocking(
+        &self,
+    ) -> Result<JavascriptExecutionEvent, JavascriptExecutionError> {
+        self.events
+            .recv()
+            .map_err(|_| JavascriptExecutionError::EventChannelClosed)
     }
 
     pub fn wait(mut self) -> Result<JavascriptExecutionResult, JavascriptExecutionError> {
         self.close_stdin()?;
-        let mut events = std::mem::replace(
-            self.events.get_mut(),
-            channel(JAVASCRIPT_EVENT_CHANNEL_CAPACITY).1,
-        );
         let execution_id = std::mem::take(&mut self.execution_id);
 
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
 
         loop {
-            match events.blocking_recv() {
-                Some(JavascriptExecutionEvent::Stdout(chunk)) => {
+            match self.events.recv() {
+                Ok(JavascriptExecutionEvent::Stdout(chunk)) => {
                     append_captured_output(&mut stdout, chunk, "stdout")?;
                 }
-                Some(JavascriptExecutionEvent::Stderr(chunk)) => {
+                Ok(JavascriptExecutionEvent::Stderr(chunk)) => {
                     append_captured_output(&mut stderr, chunk, "stderr")?;
                 }
-                Some(JavascriptExecutionEvent::SyncRpcRequest(request)) => {
+                Ok(JavascriptExecutionEvent::SyncRpcRequest(request)) => {
                     // The standalone engine has no kernel/service loop. Service
                     // module-resolution RPCs host-directly (the only FS source
                     // available here) so `wait()` does not deadlock; everything
@@ -1982,8 +2179,15 @@ impl JavascriptExecution {
                     }
                     return Err(JavascriptExecutionError::PendingSyncRpcRequest(request.id));
                 }
-                Some(JavascriptExecutionEvent::SignalState { .. }) => {}
-                Some(JavascriptExecutionEvent::Exited(exit_code)) => {
+                Ok(JavascriptExecutionEvent::SignalState { .. }) => {}
+                Ok(JavascriptExecutionEvent::Exited(exit_code)) => {
+                    // Join the V8 executor while this method still owns the
+                    // event receiver. That keeps terminal diagnostics
+                    // drainable; waiting for Drop would close this local
+                    // receiver first during return-value teardown.
+                    self.v8_session
+                        .destroy()
+                        .map_err(JavascriptExecutionError::Terminate)?;
                     return Ok(JavascriptExecutionResult {
                         execution_id,
                         exit_code,
@@ -1991,7 +2195,7 @@ impl JavascriptExecution {
                         stderr,
                     });
                 }
-                None => return Err(JavascriptExecutionError::EventChannelClosed),
+                Err(_closed) => return Err(JavascriptExecutionError::EventChannelClosed),
             }
         }
     }
@@ -2074,6 +2278,10 @@ impl JavascriptExecution {
 
 impl Drop for JavascriptExecution {
     fn drop(&mut self) {
+        // Closing the V8 producer lets the bridge task drain any terminal
+        // warning/result and then finish when its per-session lane closes.
+        // Aborting the task first would drop the lane while the session thread
+        // was still completing teardown.
         let _ = self.v8_session.destroy();
     }
 }
@@ -2129,24 +2337,26 @@ impl Drop for V8SessionRegistrationGuard<'_> {
 }
 
 struct PendingV8SessionRegistration<'a> {
-    frame_receiver: TrackedReceiver<BinaryFrame>,
+    frame_receiver: V8SessionFrameReceiver,
     registration_guard: V8SessionRegistrationGuard<'a>,
 }
 
-fn register_v8_session<F>(
-    v8_host: &V8RuntimeHost,
+#[allow(clippy::too_many_arguments)] // one session's identity, limits, hint, and creation hook
+fn register_v8_session<'a, F>(
+    v8_host: &'a V8RuntimeHost,
+    runtime: &RuntimeContext,
     session_id: String,
     heap_limit_mb: u32,
     cpu_time_limit_ms: u32,
     wall_clock_limit_ms: u32,
     warm_hint: Option<WarmSessionHint>,
     create_session: F,
-) -> Result<PendingV8SessionRegistration<'_>, JavascriptExecutionError>
+) -> Result<PendingV8SessionRegistration<'a>, JavascriptExecutionError>
 where
     F: FnOnce(RuntimeCommand) -> std::io::Result<()>,
 {
     let frame_receiver = v8_host
-        .register_session(&session_id)
+        .register_session(&session_id, runtime)
         .map_err(JavascriptExecutionError::Spawn)?;
     let registration_guard = V8SessionRegistrationGuard::new(v8_host, session_id.clone());
 
@@ -2165,14 +2375,28 @@ where
     })
 }
 
-#[derive(Default)]
 pub struct JavascriptExecutionEngine {
+    runtime: Option<RuntimeContext>,
     next_context_id: usize,
     next_execution_id: usize,
     contexts: BTreeMap<String, JavascriptContext>,
     import_caches: BTreeMap<String, NodeImportCache>,
     v8_host: Option<V8RuntimeHost>,
     event_notify: Option<Arc<Notify>>,
+}
+
+impl Default for JavascriptExecutionEngine {
+    fn default() -> Self {
+        Self {
+            runtime: default_test_runtime_context(),
+            next_context_id: 0,
+            next_execution_id: 0,
+            contexts: BTreeMap::new(),
+            import_caches: BTreeMap::new(),
+            v8_host: None,
+            event_notify: None,
+        }
+    }
 }
 
 impl std::fmt::Debug for JavascriptExecutionEngine {
@@ -2187,6 +2411,28 @@ impl std::fmt::Debug for JavascriptExecutionEngine {
 }
 
 impl JavascriptExecutionEngine {
+    pub fn new(runtime: RuntimeContext) -> Self {
+        Self {
+            runtime: Some(runtime),
+            ..Self::default()
+        }
+    }
+
+    /// Bind this engine to the process-owned runtime before starting work.
+    /// This setter exists for embedders that previously constructed via
+    /// `Default`; new code should prefer [`Self::new`].
+    pub fn set_runtime_context(&mut self, runtime: RuntimeContext) {
+        self.runtime = Some(runtime);
+    }
+
+    pub(crate) fn runtime_context(&self) -> Result<&RuntimeContext, JavascriptExecutionError> {
+        self.runtime.as_ref().ok_or_else(|| {
+            JavascriptExecutionError::Spawn(std::io::Error::other(
+                "ERR_AGENTOS_RUNTIME_NOT_INJECTED: JavascriptExecutionEngine requires a process RuntimeContext; construct it with JavascriptExecutionEngine::new(runtime)",
+            ))
+        })
+    }
+
     #[doc(hidden)]
     pub fn set_event_notify(&mut self, notify: Option<Arc<Notify>>) {
         self.event_notify = notify;
@@ -2231,14 +2477,35 @@ impl JavascriptExecutionEngine {
         &mut self,
         request: StartJavascriptExecutionRequest,
     ) -> Result<JavascriptExecution, JavascriptExecutionError> {
-        self.start_execution_with_module_reader(request, None, None)
+        let runtime = self.runtime_context()?.clone();
+        self.start_execution_with_runtime(request, runtime)
+    }
+
+    pub fn start_execution_with_runtime(
+        &mut self,
+        request: StartJavascriptExecutionRequest,
+        runtime: RuntimeContext,
+    ) -> Result<JavascriptExecution, JavascriptExecutionError> {
+        self.create_execution_with_module_reader_and_runtime(request, None, None, runtime, false)
     }
 
     pub fn prepare_execution(
         &mut self,
         request: StartJavascriptExecutionRequest,
     ) -> Result<JavascriptExecution, JavascriptExecutionError> {
-        self.prepare_execution_with_module_reader(request, None, None)
+        let runtime = self.runtime_context()?.clone();
+        self.prepare_execution_with_runtime(request, runtime)
+    }
+
+    /// Prepare an execution with an explicitly scoped runtime without enqueueing
+    /// guest code. Cross-runtime exec uses this to bind the replacement isolate
+    /// to the target VM's accounting and reactor state before committing execve.
+    pub fn prepare_execution_with_runtime(
+        &mut self,
+        request: StartJavascriptExecutionRequest,
+        runtime: RuntimeContext,
+    ) -> Result<JavascriptExecution, JavascriptExecutionError> {
+        self.create_execution_with_module_reader_and_runtime(request, None, None, runtime, true)
     }
 
     fn ensure_v8_host(&mut self) -> Result<(), JavascriptExecutionError> {
@@ -2249,7 +2516,9 @@ impl JavascriptExecutionEngine {
             None => true,
         };
         if should_spawn_v8_host {
-            self.v8_host = Some(V8RuntimeHost::spawn().map_err(JavascriptExecutionError::Spawn)?);
+            let runtime = self.runtime_context()?.clone();
+            self.v8_host =
+                Some(V8RuntimeHost::spawn(&runtime).map_err(JavascriptExecutionError::Spawn)?);
         }
         Ok(())
     }
@@ -2304,7 +2573,14 @@ impl JavascriptExecutionEngine {
         module_reader: Option<Box<dyn ModuleFsReader + Send>>,
         guest_reader: Option<Box<dyn agentos_v8_runtime::execution::GuestModuleReader>>,
     ) -> Result<JavascriptExecution, JavascriptExecutionError> {
-        self.create_execution_with_module_reader(request, module_reader, guest_reader, false)
+        let runtime = self.runtime_context()?.clone();
+        self.create_execution_with_module_reader_and_runtime(
+            request,
+            module_reader,
+            guest_reader,
+            runtime,
+            false,
+        )
     }
 
     /// Prepare an execution through every fallible image-loading step without
@@ -2316,16 +2592,57 @@ impl JavascriptExecutionEngine {
         module_reader: Option<Box<dyn ModuleFsReader + Send>>,
         guest_reader: Option<Box<dyn agentos_v8_runtime::execution::GuestModuleReader>>,
     ) -> Result<JavascriptExecution, JavascriptExecutionError> {
-        self.create_execution_with_module_reader(request, module_reader, guest_reader, true)
+        let runtime = self.runtime_context()?.clone();
+        self.create_execution_with_module_reader_and_runtime(
+            request,
+            module_reader,
+            guest_reader,
+            runtime,
+            true,
+        )
     }
 
-    fn create_execution_with_module_reader(
+    pub fn start_execution_with_module_reader_and_runtime(
         &mut self,
         request: StartJavascriptExecutionRequest,
         module_reader: Option<Box<dyn ModuleFsReader + Send>>,
         guest_reader: Option<Box<dyn agentos_v8_runtime::execution::GuestModuleReader>>,
+        runtime: RuntimeContext,
+    ) -> Result<JavascriptExecution, JavascriptExecutionError> {
+        self.create_execution_with_module_reader_and_runtime(
+            request,
+            module_reader,
+            guest_reader,
+            runtime,
+            false,
+        )
+    }
+
+    pub fn prepare_execution_with_module_reader_and_runtime(
+        &mut self,
+        request: StartJavascriptExecutionRequest,
+        module_reader: Option<Box<dyn ModuleFsReader + Send>>,
+        guest_reader: Option<Box<dyn agentos_v8_runtime::execution::GuestModuleReader>>,
+        runtime: RuntimeContext,
+    ) -> Result<JavascriptExecution, JavascriptExecutionError> {
+        self.create_execution_with_module_reader_and_runtime(
+            request,
+            module_reader,
+            guest_reader,
+            runtime,
+            true,
+        )
+    }
+
+    fn create_execution_with_module_reader_and_runtime(
+        &mut self,
+        request: StartJavascriptExecutionRequest,
+        module_reader: Option<Box<dyn ModuleFsReader + Send>>,
+        guest_reader: Option<Box<dyn agentos_v8_runtime::execution::GuestModuleReader>>,
+        runtime: RuntimeContext,
         defer_execute: bool,
     ) -> Result<JavascriptExecution, JavascriptExecutionError> {
+        let process_runtime = self.runtime_context()?.clone();
         let context = self
             .contexts
             .get(&request.context_id)
@@ -2342,12 +2659,17 @@ impl JavascriptExecutionEngine {
         if request.argv.is_empty() {
             return Err(JavascriptExecutionError::EmptyArgv);
         }
+        let reactor_work_quantum = javascript_reactor_work_quantum(&request, &runtime)?;
+        let bridge_call_timeout = javascript_bridge_call_timeout(&request, &runtime)?;
 
         let phase_start = Instant::now();
         // Ensure import cache is materialized (still needed for module resolution)
         let import_cache = self.import_caches.entry(context.vm_id.clone()).or_default();
         import_cache
-            .ensure_materialized_with_timeout(javascript_import_cache_materialize_timeout(&request))
+            .ensure_materialized_with_timeout_and_runtime(
+                &process_runtime,
+                javascript_import_cache_materialize_timeout(&request),
+            )
             .map_err(JavascriptExecutionError::PrepareImportCache)?;
         let import_cache_guard = import_cache.cleanup_guard();
         record_js_start_phase("js_start_import_cache", phase_start.elapsed());
@@ -2388,12 +2710,20 @@ impl JavascriptExecutionEngine {
             mut registration_guard,
         } = register_v8_session(
             v8_host,
+            &runtime,
             session_id.clone(),
             heap_limit_mb,
             cpu_time_limit_ms,
             wall_clock_limit_ms,
             warm_hint,
-            |command| v8_host.create_session_from_command(command),
+            |command| {
+                v8_host.create_session_from_command_with_runtime(
+                    command,
+                    &runtime,
+                    reactor_work_quantum,
+                    bridge_call_timeout,
+                )
+            },
         )?;
         record_js_start_phase("js_start_v8_session_register", phase_start.elapsed());
 
@@ -2500,6 +2830,9 @@ impl JavascriptExecutionEngine {
         // default + in-place assign: LocalBridgeState is Drop, so `..Default::default()`
         // (E0509) is not allowed.
         let mut local_bridge = LocalBridgeState::default();
+        local_bridge.runtime = Some(process_runtime);
+        local_bridge.timer_resources = Some(Arc::clone(runtime.resources()));
+        local_bridge.max_timers = javascript_max_timers(&request);
         local_bridge.translator = translator;
         local_bridge.kernel_stdin = kernel_stdin.clone();
         local_bridge.v8_session = Some(v8_session.clone());
@@ -2509,14 +2842,15 @@ impl JavascriptExecutionEngine {
             .env
             .get(FORWARD_KERNEL_STDIN_RPC_ENV)
             .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
-        let events = spawn_v8_event_bridge(
+        let (events, event_bridge_task) = spawn_v8_event_bridge(
+            &runtime,
             frame_receiver,
             pending_sync_rpc.clone(),
             sync_rpc_timeout,
             v8_session.clone(),
             local_bridge,
             self.event_notify.clone(),
-        );
+        )?;
         record_js_start_phase("js_start_event_bridge", phase_start.elapsed());
 
         let phase_start = Instant::now();
@@ -2565,12 +2899,13 @@ impl JavascriptExecutionEngine {
         Ok(JavascriptExecution {
             execution_id,
             child_pid: v8_host.child_pid(),
-            events: tokio::sync::Mutex::new(events),
+            events,
             pending_sync_rpc,
             kernel_stdin,
             _import_cache_guard: import_cache_guard,
             v8_session,
             prepared_execute,
+            _event_bridge_task: event_bridge_task,
             module_resolution: Mutex::new((
                 standalone_translator,
                 LocalModuleResolutionCache::default(),
@@ -2589,8 +2924,14 @@ impl JavascriptExecutionEngine {
         &mut self,
         vm_id: &str,
     ) -> Result<&std::path::Path, std::io::Error> {
+        let runtime = self
+            .runtime
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other(
+                "ERR_AGENTOS_RUNTIME_NOT_INJECTED: JavascriptExecutionEngine requires a process RuntimeContext",
+            ))?;
         let import_cache = self.import_caches.entry(vm_id.to_owned()).or_default();
-        import_cache.ensure_materialized()?;
+        import_cache.ensure_materialized_with_runtime(runtime)?;
         Ok(import_cache.cache_path())
     }
 
@@ -2670,6 +3011,54 @@ fn javascript_import_cache_materialize_timeout(
     Duration::from_millis(timeout_ms)
 }
 
+fn javascript_max_timers(request: &StartJavascriptExecutionRequest) -> usize {
+    request
+        .limits
+        .max_timers
+        .filter(|value| *value > 0)
+        .unwrap_or(MAX_TIMERS_PER_EXECUTION)
+}
+
+fn javascript_reactor_work_quantum(
+    request: &StartJavascriptExecutionRequest,
+    runtime: &RuntimeContext,
+) -> Result<usize, JavascriptExecutionError> {
+    match request.limits.reactor_work_quantum {
+        Some(0) => Err(JavascriptExecutionError::InvalidLimit(String::from(
+            "limits.reactor.workQuantum must be greater than zero",
+        ))),
+        Some(limit) => Ok(limit),
+        None if runtime.vm_generation().is_some() => Err(JavascriptExecutionError::InvalidLimit(
+            String::from("limits.reactor.workQuantum is required for VM-scoped execution"),
+        )),
+        None => runtime
+            .resources()
+            .usage(agentos_runtime::accounting::ResourceClass::ReadyHandles)
+            .limit
+            .ok_or_else(|| {
+                JavascriptExecutionError::InvalidLimit(String::from(
+                    "standalone runtime.resources.maxReadyHandles must be bounded",
+                ))
+            }),
+    }
+}
+
+fn javascript_bridge_call_timeout(
+    request: &StartJavascriptExecutionRequest,
+    runtime: &RuntimeContext,
+) -> Result<Duration, JavascriptExecutionError> {
+    match request.limits.bridge_call_timeout_ms {
+        Some(0) => Err(JavascriptExecutionError::InvalidLimit(String::from(
+            "limits.reactor.operationDeadlineMs must be greater than zero",
+        ))),
+        Some(timeout_ms) => Ok(Duration::from_millis(timeout_ms)),
+        None if runtime.vm_generation().is_some() => Err(JavascriptExecutionError::InvalidLimit(
+            String::from("limits.reactor.operationDeadlineMs is required for VM-scoped execution"),
+        )),
+        None => Ok(Duration::from_secs(30)),
+    }
+}
+
 /// Resolve the TRUE CPU-time budget (ms) for a JavaScript execution.
 ///
 /// Read from typed `limits.jsRuntime.cpuTimeLimitMs`, falling back to a bounded
@@ -2699,6 +3088,7 @@ fn javascript_wall_clock_limit_ms(request: &StartJavascriptExecutionRequest) -> 
         .unwrap_or(DEFAULT_V8_WALL_CLOCK_LIMIT_MS)
 }
 
+#[cfg(test)]
 fn spawn_javascript_sync_rpc_timeout(
     id: u64,
     timeout: Duration,
@@ -2709,8 +3099,17 @@ fn spawn_javascript_sync_rpc_timeout(
         return;
     };
 
-    thread::spawn(move || {
-        thread::sleep(timeout);
+    let runtime = match agentos_runtime::SidecarRuntime::process(
+        &agentos_runtime::RuntimeConfig::default(),
+    ) {
+        Ok(runtime) => runtime.context(),
+        Err(error) => {
+            eprintln!("ERR_AGENTOS_RUNTIME_UNAVAILABLE: could not arm JavaScript sync RPC timeout: {error}");
+            return;
+        }
+    };
+    if let Err(error) = runtime.spawn(agentos_runtime::TaskClass::Timer, async move {
+        tokio::time::sleep(timeout).await;
 
         let should_timeout = match pending_state.lock() {
             Ok(mut guard) if *guard == Some(PendingSyncRpcState::Pending(id)) => {
@@ -2739,60 +3138,12 @@ fn spawn_javascript_sync_rpc_timeout(
                 },
             }),
         );
-    });
+    }) {
+        eprintln!("ERR_AGENTOS_TASK_LIMIT: could not arm JavaScript sync RPC timeout: {error}");
+    }
 }
 
-fn spawn_javascript_sync_rpc_reader(
-    reader: File,
-    sender: mpsc::Sender<JavascriptProcessEvent>,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        let mut reader = BufReader::new(reader);
-        let mut line = String::new();
-
-        loop {
-            line.clear();
-            match reader.read_line(&mut line) {
-                Ok(0) => return,
-                Ok(_) => {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-
-                    match parse_javascript_sync_rpc_request(trimmed) {
-                        Ok(request) => {
-                            if sender
-                                .send(JavascriptProcessEvent::SyncRpcRequest(request))
-                                .is_err()
-                            {
-                                return;
-                            }
-                        }
-                        Err(message) => {
-                            if sender
-                                .send(JavascriptProcessEvent::RawStderr(
-                                    format!("{message}\n").into_bytes(),
-                                ))
-                                .is_err()
-                            {
-                                return;
-                            }
-                        }
-                    }
-                }
-                Err(error) => {
-                    let _ = sender.send(JavascriptProcessEvent::RawStderr(
-                        format!("failed to read JavaScript sync RPC request: {error}\n")
-                            .into_bytes(),
-                    ));
-                    return;
-                }
-            }
-        }
-    })
-}
-
+#[cfg(test)]
 fn parse_javascript_sync_rpc_request(line: &str) -> Result<JavascriptSyncRpcRequest, String> {
     let wire: JavascriptSyncRpcRequestWire =
         serde_json::from_str(line).map_err(|error| error.to_string())?;
@@ -2804,6 +3155,7 @@ fn parse_javascript_sync_rpc_request(line: &str) -> Result<JavascriptSyncRpcRequ
     })
 }
 
+#[cfg(test)]
 fn write_javascript_sync_rpc_response(
     writer: &JavascriptSyncRpcResponseWriter,
     response: Value,
@@ -2814,6 +3166,7 @@ fn write_javascript_sync_rpc_response(
     writer.send(payload)
 }
 
+#[cfg(test)]
 fn spawn_javascript_sync_rpc_response_writer(
     writer: File,
     receiver: Receiver<Vec<u8>>,
@@ -3111,6 +3464,9 @@ fn resolve_v8_entrypoint(cwd: &Path, entrypoint: &str) -> String {
     resolved.to_string_lossy().into_owned()
 }
 
+// Keep each injected process/runtime value explicit at this one serialization
+// boundary; grouping them would duplicate the already-typed guest config.
+#[allow(clippy::too_many_arguments)]
 fn prepend_v8_runtime_shim(
     user_code: String,
     entrypoint: &str,
@@ -3407,265 +3763,378 @@ fn prepend_v8_runtime_shim(
     )
 }
 
-/// Spawn a V8 event bridge thread that converts V8 BinaryFrame messages
-/// into JavascriptExecutionEvent for the sidecar event loop.
+/// Spawn a supervised task on the process runtime that converts V8 BinaryFrame
+/// messages into JavascriptExecutionEvent values for the sidecar event loop.
 ///
 /// Internal bridge calls (module loading, logging, timers) are handled locally
 /// by the event bridge. Kernel operations (fs, net, child_process, dns) are
 /// forwarded to the sidecar via SyncRpcRequest events.
 fn spawn_v8_event_bridge(
-    frame_receiver: TrackedReceiver<BinaryFrame>,
+    runtime: &RuntimeContext,
+    frame_receiver: V8SessionFrameReceiver,
     pending_sync_rpc: Arc<Mutex<Option<PendingSyncRpcState>>>,
     _sync_rpc_timeout: Duration,
     v8_session: V8SessionHandle,
     mut local_bridge: LocalBridgeState,
     event_notify: Option<Arc<Notify>>,
-) -> TokioReceiver<JavascriptExecutionEvent> {
-    let (sender, receiver) = channel(JAVASCRIPT_EVENT_CHANNEL_CAPACITY);
+) -> Result<
+    (
+        EventReceiver<JavascriptExecutionEvent>,
+        tokio::task::JoinHandle<()>,
+    ),
+    JavascriptExecutionError,
+> {
+    let (sender, receiver) = flume::bounded(JAVASCRIPT_EVENT_CHANNEL_CAPACITY);
     let event_gauge = register_queue(
         TrackedLimit::JavascriptEventChannel,
         JAVASCRIPT_EVENT_CHANNEL_CAPACITY,
     );
 
-    thread::spawn(move || {
-        let mut emitted_exit = false;
-        loop {
-            let frame_recv_start = Instant::now();
-            let Ok(frame) = frame_receiver.recv() else {
-                break;
-            };
-            let frame_recv_wait = frame_recv_start.elapsed();
-            let mut exit_frame_start = None;
-            let event = match frame {
-                BinaryFrame::BridgeCall {
-                    call_id,
-                    method,
-                    payload,
-                    ..
-                } => {
-                    // Convert CBOR payload to JSON args
-                    let phase_start = Instant::now();
-                    let args = v8_runtime::cbor_payload_to_json_args(&payload).unwrap_or_default();
-                    record_sync_bridge_phase(&method, "event_decode_args", phase_start.elapsed());
+    let task = runtime
+        .spawn(agentos_runtime::TaskClass::Vm, async move {
+            let mut emitted_exit = false;
+            loop {
+                let frame_recv_start = Instant::now();
+                let Ok(frame) = frame_receiver.recv_async().await else {
+                    break;
+                };
+                let frame_recv_wait = frame_recv_start.elapsed();
+                let mut exit_frame_start = None;
+                let event = match frame {
+                    BinaryFrame::BridgeCall {
+                        call_id,
+                        method,
+                        payload,
+                        ..
+                    } => {
+                        // Convert CBOR payload to JSON args
+                        let phase_start = Instant::now();
+                        let args =
+                            v8_runtime::cbor_payload_to_json_args(&payload).unwrap_or_default();
+                        record_sync_bridge_phase(
+                            &method,
+                            "event_decode_args",
+                            phase_start.elapsed(),
+                        );
 
-                    // Module resolution / loading must read the mounted
-                    // `node_modules` VFS, not host files directly. When the
-                    // sidecar supplied a read-only VFS module reader, resolve
-                    // these inline on this bridge thread (off the service loop) so
-                    // a large cold-start module graph runs concurrently with — and
-                    // never serializes behind / starves — the ACP bootstrap that
-                    // is itself awaiting the adapter's `session/new` response on
-                    // the single service-loop thread. Without a reader (no mount),
-                    // they flow to the service loop as SyncRpcRequests (mapped to
-                    // `__resolve_module` / `__load_file` / `__module_format` /
-                    // `__batch_resolve_modules`) and resolve against `vm.kernel`.
-                    let is_module_method = matches!(
-                        method.as_str(),
-                        "_resolveModule"
-                            | "_resolveModuleSync"
-                            | "_loadFile"
-                            | "_loadFileSync"
-                            | "_moduleFormat"
-                            | "_batchResolveModules"
-                    );
-                    let resolve_on_service_loop =
-                        is_module_method && !local_bridge.has_module_reader();
+                        // Module resolution / loading must read the mounted
+                        // `node_modules` VFS, not host files directly. When the
+                        // sidecar supplied a read-only VFS module reader, resolve
+                        // these inline on this bridge thread (off the service loop) so
+                        // a large cold-start module graph runs concurrently with — and
+                        // never serializes behind / starves — the ACP bootstrap that
+                        // is itself awaiting the adapter's `session/new` response on
+                        // the single service-loop thread. Without a reader (no mount),
+                        // they flow to the service loop as SyncRpcRequests (mapped to
+                        // `__resolve_module` / `__load_file` / `__module_format` /
+                        // `__batch_resolve_modules`) and resolve against `vm.kernel`.
+                        let is_module_method = matches!(
+                            method.as_str(),
+                            "_resolveModule"
+                                | "_resolveModuleSync"
+                                | "_loadFile"
+                                | "_loadFileSync"
+                                | "_moduleFormat"
+                                | "_batchResolveModules"
+                        );
+                        let resolve_on_service_loop =
+                            is_module_method && !local_bridge.has_module_reader();
 
-                    // Check if this is an internal bridge call we handle locally
-                    if !resolve_on_service_loop {
-                        if let Some(response) =
-                            local_bridge.handle_internal_bridge_call(call_id, &method, &args)
-                        {
-                            if let LocalBridgeCallResult::Immediate(response) = response {
-                                let cbor_payload =
-                                    v8_runtime::json_to_cbor_payload(&response).unwrap_or_default();
-                                let _ = v8_session.send_bridge_response(call_id, 0, cbor_payload);
+                        // Check if this is an internal bridge call we handle locally
+                        if !resolve_on_service_loop {
+                            if let Some(response) =
+                                local_bridge.handle_internal_bridge_call(call_id, &method, &args)
+                            {
+                                if let LocalBridgeCallResult::Immediate(response) = response {
+                                    let cbor_payload = v8_runtime::json_to_cbor_payload(&response)
+                                        .unwrap_or_default();
+                                    if let Err(error) =
+                                        v8_session.send_bridge_response(call_id, 0, cbor_payload)
+                                    {
+                                        eprintln!(
+                                            "INFO_AGENTOS_STALE_BRIDGE_COMPLETION: call_id={call_id} error={error}"
+                                        );
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+
+                        // Handle logging locally (produce stdout/stderr events)
+                        if method == "_log" || method == "_error" {
+                            let output = decode_bridge_output_args(&args);
+                            // Respond to the bridge call
+                            if let Err(error) = v8_session.send_bridge_response(
+                                call_id,
+                                0,
+                                v8_runtime::json_to_cbor_payload(&Value::Null).unwrap_or_default(),
+                            ) {
+                                eprintln!(
+                                    "INFO_AGENTOS_STALE_BRIDGE_COMPLETION: call_id={call_id} error={error}"
+                                );
+                            }
+                            if method == "_log" {
+                                if !send_javascript_event_async(
+                                    &sender,
+                                    &event_gauge,
+                                    event_notify.as_deref(),
+                                    JavascriptExecutionEvent::Stdout(output),
+                                )
+                                .await
+                                {
+                                    break;
+                                }
+                            } else {
+                                if !send_javascript_event_async(
+                                    &sender,
+                                    &event_gauge,
+                                    event_notify.as_deref(),
+                                    JavascriptExecutionEvent::Stderr(output),
+                                )
+                                .await
+                                {
+                                    break;
+                                }
                             }
                             continue;
                         }
-                    }
 
-                    // Handle logging locally (produce stdout/stderr events)
-                    if method == "_log" || method == "_error" {
-                        let output = decode_bridge_output_args(&args);
-                        // Respond to the bridge call
-                        let _ = v8_session.send_bridge_response(
-                            call_id,
-                            0,
-                            v8_runtime::json_to_cbor_payload(&Value::Null).unwrap_or_default(),
+                        // Map the bridge method name to the sidecar sync RPC method name
+                        let phase_start = Instant::now();
+                        let (sidecar_method, _needs_translation) =
+                            v8_runtime::map_bridge_method(&method);
+                        record_sync_bridge_phase(
+                            &method,
+                            "event_map_method",
+                            phase_start.elapsed(),
                         );
-                        if method == "_log" {
-                            if !send_javascript_event(
-                                &sender,
-                                &event_gauge,
-                                event_notify.as_deref(),
-                                JavascriptExecutionEvent::Stdout(output),
-                            ) {
-                                break;
-                            }
-                        } else {
-                            if !send_javascript_event(
-                                &sender,
-                                &event_gauge,
-                                event_notify.as_deref(),
-                                JavascriptExecutionEvent::Stderr(output),
-                            ) {
-                                break;
-                            }
+
+                        // Track pending sync RPC
+                        let phase_start = Instant::now();
+                        if let Ok(mut pending) = pending_sync_rpc.lock() {
+                            *pending = Some(PendingSyncRpcState::Pending(call_id));
                         }
-                        continue;
-                    }
+                        record_sync_bridge_phase(
+                            &method,
+                            "event_mark_pending",
+                            phase_start.elapsed(),
+                        );
 
-                    // Map the bridge method name to the sidecar sync RPC method name
-                    let phase_start = Instant::now();
-                    let (sidecar_method, _needs_translation) =
-                        v8_runtime::map_bridge_method(&method);
-                    record_sync_bridge_phase(&method, "event_map_method", phase_start.elapsed());
-
-                    // Track pending sync RPC
-                    let phase_start = Instant::now();
-                    if let Ok(mut pending) = pending_sync_rpc.lock() {
-                        *pending = Some(PendingSyncRpcState::Pending(call_id));
-                    }
-                    record_sync_bridge_phase(&method, "event_mark_pending", phase_start.elapsed());
-
-                    let phase_start = Instant::now();
-                    let request_args = translate_request_args_for_legacy(sidecar_method, &args);
-                    let mut raw_bytes_args = HashMap::new();
-                    if sidecar_method == "net.write"
-                        || sidecar_method == "fs.writeSync"
-                        || sidecar_method == "fs.writevSync"
-                        || sidecar_method == "fs.writeFileSync"
-                    {
-                        if let Ok(Some(bytes)) = v8_runtime::cbor_payload_raw_byte_arg(&payload, 1)
+                        let phase_start = Instant::now();
+                        let request_args = translate_request_args_for_legacy(sidecar_method, &args);
+                        let mut raw_bytes_args = HashMap::new();
+                        if sidecar_method == "net.write"
+                            || sidecar_method == "fs.writeSync"
+                            || sidecar_method == "fs.writevSync"
+                            || sidecar_method == "fs.writeFileSync"
                         {
-                            raw_bytes_args.insert(1, bytes);
-                        }
-                    }
-                    if method == "_fsReadRaw" {
-                        raw_bytes_args.insert(usize::MAX, Vec::new());
-                    }
-                    record_sync_bridge_phase(
-                        &method,
-                        "event_translate_args",
-                        phase_start.elapsed(),
-                    );
-                    Some(JavascriptExecutionEvent::SyncRpcRequest(
-                        JavascriptSyncRpcRequest {
-                            id: call_id,
-                            method: sidecar_method.to_owned(),
-                            args: request_args,
-                            raw_bytes_args,
-                        },
-                    ))
-                }
-                BinaryFrame::Log {
-                    channel, message, ..
-                } => {
-                    if channel == 0 {
-                        Some(JavascriptExecutionEvent::Stdout(message.into_bytes()))
-                    } else {
-                        Some(JavascriptExecutionEvent::Stderr(message.into_bytes()))
-                    }
-                }
-                BinaryFrame::ExecutionResult {
-                    exit_code, error, ..
-                } => {
-                    let phase_start = Instant::now();
-                    exit_frame_start = Some(phase_start);
-                    record_js_event_phase("js_exit_frame_recv_wait", frame_recv_wait);
-                    let is_process_exit_error = error.as_ref().is_some_and(|err| {
-                        err.error_type == "ProcessExitError"
-                            || err.message.starts_with("process.exit(")
-                    });
-                    let resolved_exit_code = error
-                        .as_ref()
-                        .and_then(|err| {
-                            if is_process_exit_error {
-                                parse_process_exit_code_message(&err.message)
-                            } else {
-                                None
+                            if let Ok(Some(bytes)) =
+                                v8_runtime::cbor_payload_raw_byte_arg(&payload, 1)
+                            {
+                                raw_bytes_args.insert(1, bytes);
                             }
-                        })
-                        .unwrap_or(exit_code);
-                    let should_emit_error = error.is_some() && !is_process_exit_error;
-                    if should_emit_error {
-                        let err = error.as_ref().expect("checked above");
-                        let error_msg = if err.stack.is_empty() {
-                            format!("{}: {}\n", err.error_type, err.message)
+                        }
+                        if method == "_fsReadRaw" {
+                            raw_bytes_args.insert(usize::MAX, Vec::new());
+                        }
+                        record_sync_bridge_phase(
+                            &method,
+                            "event_translate_args",
+                            phase_start.elapsed(),
+                        );
+                        Some(JavascriptExecutionEvent::SyncRpcRequest(
+                            JavascriptSyncRpcRequest {
+                                id: call_id,
+                                method: sidecar_method.to_owned(),
+                                args: request_args,
+                                raw_bytes_args,
+                            },
+                        ))
+                    }
+                    BinaryFrame::Log {
+                        channel, message, ..
+                    } => {
+                        if channel == 0 {
+                            Some(JavascriptExecutionEvent::Stdout(message.into_bytes()))
                         } else {
-                            format!("{}\n", err.stack)
-                        };
-                        if !send_javascript_event(
-                            &sender,
-                            &event_gauge,
-                            event_notify.as_deref(),
-                            JavascriptExecutionEvent::Stderr(error_msg.into_bytes()),
-                        ) {
-                            break;
+                            Some(JavascriptExecutionEvent::Stderr(message.into_bytes()))
                         }
                     }
-                    emitted_exit = true;
-                    record_js_event_phase(
-                        "js_exit_frame_to_event_construct",
-                        phase_start.elapsed(),
-                    );
-                    Some(JavascriptExecutionEvent::Exited(resolved_exit_code))
-                }
-                BinaryFrame::StreamCallback { .. } => None,
-                _ => None,
-            };
-
-            if let Some(event) = event {
-                let sync_rpc = match &event {
-                    JavascriptExecutionEvent::SyncRpcRequest(request) => {
-                        Some((request.id, request.method.clone()))
+                    BinaryFrame::ExecutionResult {
+                        exit_code, error, ..
+                    } => {
+                        let phase_start = Instant::now();
+                        exit_frame_start = Some(phase_start);
+                        record_js_event_phase("js_exit_frame_recv_wait", frame_recv_wait);
+                        let is_process_exit_error = error.as_ref().is_some_and(|err| {
+                            err.error_type == "ProcessExitError"
+                                || err.message.starts_with("process.exit(")
+                        });
+                        let resolved_exit_code = error
+                            .as_ref()
+                            .and_then(|err| {
+                                if is_process_exit_error {
+                                    parse_process_exit_code_message(&err.message)
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(exit_code);
+                        let should_emit_error = error.is_some() && !is_process_exit_error;
+                        if should_emit_error {
+                            let err = error.as_ref().expect("checked above");
+                            let error_msg = if err.stack.is_empty() {
+                                format!("{}: {}\n", err.error_type, err.message)
+                            } else {
+                                format!("{}\n", err.stack)
+                            };
+                            if !send_javascript_event_async(
+                                &sender,
+                                &event_gauge,
+                                event_notify.as_deref(),
+                                JavascriptExecutionEvent::Stderr(error_msg.into_bytes()),
+                            )
+                            .await
+                            {
+                                break;
+                            }
+                        }
+                        emitted_exit = true;
+                        record_js_event_phase(
+                            "js_exit_frame_to_event_construct",
+                            phase_start.elapsed(),
+                        );
+                        Some(JavascriptExecutionEvent::Exited(resolved_exit_code))
                     }
+                    BinaryFrame::StreamCallback { .. } => None,
                     _ => None,
                 };
-                if let Some((call_id, method)) = sync_rpc.as_ref() {
-                    record_sync_bridge_request_enqueued(*call_id, method);
-                }
-                let phase_start = sync_rpc.as_ref().map(|_| Instant::now());
-                let exit_send_start = if matches!(&event, JavascriptExecutionEvent::Exited(_)) {
-                    Some(Instant::now())
-                } else {
-                    None
-                };
-                if !send_javascript_event(&sender, &event_gauge, event_notify.as_deref(), event) {
-                    break;
-                }
-                if let (Some((_, method)), Some(start)) = (sync_rpc, phase_start) {
-                    record_sync_bridge_phase(&method, "event_enqueue", start.elapsed());
-                }
-                if let Some(start) = exit_send_start {
-                    record_js_event_phase("js_exit_event_send", start.elapsed());
-                }
-                if let Some(start) = exit_frame_start {
-                    record_js_event_phase("js_exit_frame_to_event_sent", start.elapsed());
+
+                if let Some(event) = event {
+                    let sync_rpc = match &event {
+                        JavascriptExecutionEvent::SyncRpcRequest(request) => {
+                            Some((request.id, request.method.clone()))
+                        }
+                        _ => None,
+                    };
+                    if let Some((call_id, method)) = sync_rpc.as_ref() {
+                        record_sync_bridge_request_enqueued(*call_id, method);
+                    }
+                    let phase_start = sync_rpc.as_ref().map(|_| Instant::now());
+                    let exit_send_start = if matches!(&event, JavascriptExecutionEvent::Exited(_)) {
+                        Some(Instant::now())
+                    } else {
+                        None
+                    };
+                    if !send_javascript_event_async(
+                        &sender,
+                        &event_gauge,
+                        event_notify.as_deref(),
+                        event,
+                    )
+                    .await
+                    {
+                        break;
+                    }
+                    if let (Some((_, method)), Some(start)) = (sync_rpc, phase_start) {
+                        record_sync_bridge_phase(&method, "event_enqueue", start.elapsed());
+                    }
+                    if let Some(start) = exit_send_start {
+                        record_js_event_phase("js_exit_event_send", start.elapsed());
+                    }
+                    if let Some(start) = exit_frame_start {
+                        record_js_event_phase("js_exit_frame_to_event_sent", start.elapsed());
+                    }
                 }
             }
-        }
 
-        if !emitted_exit {
-            let phase_start = Instant::now();
-            let sent = send_javascript_event(
-                &sender,
-                &event_gauge,
-                event_notify.as_deref(),
-                JavascriptExecutionEvent::Exited(1),
-            );
-            if sent {
-                record_js_event_phase("js_exit_fallback_event_send", phase_start.elapsed());
+            if !emitted_exit {
+                let phase_start = Instant::now();
+                let sent = send_javascript_event_async(
+                    &sender,
+                    &event_gauge,
+                    event_notify.as_deref(),
+                    JavascriptExecutionEvent::Exited(1),
+                )
+                .await;
+                if sent {
+                    record_js_event_phase("js_exit_fallback_event_send", phase_start.elapsed());
+                }
             }
-        }
-    });
+        })
+        .map_err(|error| {
+            JavascriptExecutionError::Spawn(std::io::Error::other(error.to_string()))
+        })?;
 
-    receiver
+    Ok((receiver, task))
 }
 
+async fn send_javascript_event_async(
+    sender: &EventSender<JavascriptExecutionEvent>,
+    gauge: &agentos_bridge::queue_tracker::QueueGauge,
+    notify: Option<&Notify>,
+    event: JavascriptExecutionEvent,
+) -> bool {
+    match event {
+        JavascriptExecutionEvent::Stdout(chunk)
+            if chunk.len() > JAVASCRIPT_EVENT_PAYLOAD_LIMIT_BYTES =>
+        {
+            for chunk in chunk.chunks(JAVASCRIPT_EVENT_PAYLOAD_LIMIT_BYTES) {
+                if !send_single_javascript_event_async(
+                    sender,
+                    gauge,
+                    notify,
+                    JavascriptExecutionEvent::Stdout(chunk.to_vec()),
+                )
+                .await
+                {
+                    return false;
+                }
+            }
+            true
+        }
+        JavascriptExecutionEvent::Stderr(chunk)
+            if chunk.len() > JAVASCRIPT_EVENT_PAYLOAD_LIMIT_BYTES =>
+        {
+            for chunk in chunk.chunks(JAVASCRIPT_EVENT_PAYLOAD_LIMIT_BYTES) {
+                if !send_single_javascript_event_async(
+                    sender,
+                    gauge,
+                    notify,
+                    JavascriptExecutionEvent::Stderr(chunk.to_vec()),
+                )
+                .await
+                {
+                    return false;
+                }
+            }
+            true
+        }
+        event => send_single_javascript_event_async(sender, gauge, notify, event).await,
+    }
+}
+
+async fn send_single_javascript_event_async(
+    sender: &EventSender<JavascriptExecutionEvent>,
+    gauge: &agentos_bridge::queue_tracker::QueueGauge,
+    notify: Option<&Notify>,
+    event: JavascriptExecutionEvent,
+) -> bool {
+    match sender.send_async(event).await {
+        Ok(()) => {
+            gauge.observe_depth(sender.len());
+            if let Some(notify) = notify {
+                notify.notify_one();
+            }
+            true
+        }
+        Err(_closed) => false,
+    }
+}
+
+#[cfg(test)]
 fn send_javascript_event(
-    sender: &tokio::sync::mpsc::Sender<JavascriptExecutionEvent>,
+    sender: &EventSender<JavascriptExecutionEvent>,
     gauge: &agentos_bridge::queue_tracker::QueueGauge,
     notify: Option<&Notify>,
     event: JavascriptExecutionEvent,
@@ -3705,8 +4174,9 @@ fn send_javascript_event(
     }
 }
 
+#[cfg(test)]
 fn send_single_javascript_event(
-    sender: &tokio::sync::mpsc::Sender<JavascriptExecutionEvent>,
+    sender: &EventSender<JavascriptExecutionEvent>,
     gauge: &agentos_bridge::queue_tracker::QueueGauge,
     notify: Option<&Notify>,
     event: JavascriptExecutionEvent,
@@ -3715,17 +4185,15 @@ fn send_single_javascript_event(
     // slow. A burst of guest events that briefly outpaces the host draining this
     // channel is normal; previously a single `try_send` returning `Full` tore the
     // whole session down (`destroy()` -> Shutdown -> `Exited(1)`), turning a
-    // transient backlog into a fatal crash. This bridge runs on its own dedicated
-    // OS thread (never a Tokio runtime worker), so a blocking send is safe: it
-    // parks this thread — and, in turn, the guest producing into it — until the
-    // host drains capacity. The only terminal condition is the receiver being
-    // dropped (host gone for good), which surfaces as `Closed` and stops the loop.
-    match sender.blocking_send(event) {
+    // transient backlog into a fatal crash. This test-only synchronous helper
+    // parks its calling thread until the host drains capacity. Production uses
+    // `send_javascript_event_async`, which yields the shared runtime task.
+    match sender.send(event) {
         Ok(()) => {
             // Sample the live channel depth so the centralized queue tracker can
             // warn before the host consumer falls far enough behind to stall the
             // session (and surface the high-water mark for debugging).
-            gauge.observe_depth(sender.max_capacity().saturating_sub(sender.capacity()));
+            gauge.observe_depth(sender.len());
             if let Some(notify) = notify {
                 notify.notify_one();
             }
@@ -3900,11 +4368,16 @@ impl LocalBridgeState {
             "kernelTimerCreate" => {
                 let delay_ms = timer_delay_ms(args.first());
                 let repeat = args.get(1).and_then(Value::as_bool).unwrap_or(false);
-                json!(self.create_kernel_timer(delay_ms, repeat))
+                match self.create_kernel_timer(delay_ms, repeat) {
+                    Ok(timer_id) => json!(timer_id),
+                    Err(error) => timer_dispatch_error(error),
+                }
             }
             "kernelTimerArm" => {
                 if let Some(timer_id) = args.first().and_then(Value::as_u64) {
-                    self.arm_kernel_timer(timer_id);
+                    if let Err(error) = self.arm_kernel_timer(timer_id) {
+                        return timer_dispatch_error(error);
+                    }
                 }
                 Value::Null
             }
@@ -3922,7 +4395,13 @@ impl LocalBridgeState {
             }),
         };
 
-        if dispatch_method.starts_with("kernel") {
+        if result.get("__bd_error").is_some() {
+            Value::String(serde_json::to_string(&result).unwrap_or_else(|_| {
+                String::from(
+                    "{\"__bd_error\":{\"name\":\"Error\",\"message\":\"dispatch failed\"}}",
+                )
+            }))
+        } else if dispatch_method.starts_with("kernel") {
             Value::String(
                 serde_json::to_string(&json!({ "__bd_result": result }))
                     .unwrap_or_else(|_| String::from("{\"__bd_result\":null}")),
@@ -3944,56 +4423,85 @@ impl LocalBridgeState {
         }
     }
 
-    fn create_kernel_timer(&mut self, delay_ms: u64, repeat: bool) -> u64 {
-        self.next_timer_id += 1;
-        if let Ok(mut timers) = self.timers.lock() {
-            timers.insert(
-                self.next_timer_id,
-                LocalTimerEntry {
-                    delay_ms,
-                    generation: 0,
-                    repeat,
-                },
-            );
-        }
-        self.next_timer_id
+    fn create_kernel_timer(&mut self, delay_ms: u64, repeat: bool) -> Result<u64, String> {
+        self.register_timer(delay_ms, repeat)
     }
 
     /// Allocate a fresh timer id and register a one-shot (`repeat == false`)
     /// tracking entry at generation 0. Used by the bridge-timer path so the
     /// queued wheel action can be cancelled (its entry removed) on `clear`/teardown.
-    fn register_oneshot_timer(&mut self, delay_ms: u64) -> u64 {
-        self.next_timer_id += 1;
-        let timer_id = self.next_timer_id;
-        if let Ok(mut timers) = self.timers.lock() {
-            timers.insert(
-                timer_id,
-                LocalTimerEntry {
-                    delay_ms,
-                    generation: 0,
-                    repeat: false,
-                },
-            );
-        }
-        timer_id
+    fn register_oneshot_timer(&mut self, delay_ms: u64) -> Result<u64, String> {
+        self.register_timer(delay_ms, false)
     }
 
-    fn arm_kernel_timer(&self, timer_id: u64) {
+    fn register_timer(&mut self, delay_ms: u64, repeat: bool) -> Result<u64, String> {
+        let mut timers = self.timers.lock().map_err(|_| {
+            String::from(
+                "ERR_AGENTOS_JAVASCRIPT_TIMER_STATE: JavaScript timer registry lock poisoned",
+            )
+        })?;
+        if timers.len() >= self.max_timers {
+            return Err(format!(
+                "ERR_AGENTOS_JAVASCRIPT_TIMER_LIMIT: execution exceeded {} active timers; raise limits.jsRuntime.maxTimers",
+                self.max_timers
+            ));
+        }
+        let reservation = self
+            .timer_resources
+            .as_ref()
+            .ok_or_else(|| {
+                String::from(
+                    "ERR_AGENTOS_RUNTIME_NOT_INJECTED: JavaScript timers require a resource ledger",
+                )
+            })?
+            .reserve(agentos_runtime::accounting::ResourceClass::Timers, 1)
+            .map_err(|error| error.to_string())?;
+        let timer_id = self.next_timer_id.checked_add(1).ok_or_else(|| {
+            String::from("ERR_AGENTOS_JAVASCRIPT_TIMER_ID_EXHAUSTED: execution exhausted timer IDs")
+        })?;
+        self.next_timer_id = timer_id;
+        timers.insert(
+            timer_id,
+            LocalTimerEntry {
+                delay_ms,
+                generation: 0,
+                repeat,
+                _reservation: Some(reservation),
+            },
+        );
+        Ok(timer_id)
+    }
+
+    fn arm_kernel_timer(&self, timer_id: u64) -> Result<(), String> {
         let Some(session) = self.v8_session.clone() else {
-            return;
+            return Err(String::from(
+                "ERR_AGENTOS_JAVASCRIPT_TIMER_SESSION: timer has no live V8 session",
+            ));
         };
 
-        let Some((delay_ms, generation, timers)) =
-            self.timers.lock().ok().and_then(|mut timers| {
-                let entry = timers.get_mut(&timer_id)?;
-                entry.generation = entry.generation.wrapping_add(1);
-                Some((entry.delay_ms, entry.generation, self.timers.clone()))
-            })
-        else {
-            return;
+        let (delay_ms, generation, timers) = {
+            let mut timers = self.timers.lock().map_err(|_| {
+                String::from(
+                    "ERR_AGENTOS_JAVASCRIPT_TIMER_STATE: JavaScript timer registry lock poisoned",
+                )
+            })?;
+            let entry = timers.get_mut(&timer_id).ok_or_else(|| {
+                format!("ERR_AGENTOS_JAVASCRIPT_TIMER_UNKNOWN: unknown timer {timer_id}")
+            })?;
+            entry.generation = entry.generation.checked_add(1).ok_or_else(|| {
+                format!(
+                    "ERR_AGENTOS_JAVASCRIPT_TIMER_GENERATION_EXHAUSTED: timer {timer_id} exhausted generations"
+                )
+            })?;
+            (entry.delay_ms, entry.generation, self.timers.clone())
         };
 
-        TimerWheel::get().schedule(
+        let runtime = self.runtime.as_ref().ok_or_else(|| {
+            String::from(
+                "ERR_AGENTOS_RUNTIME_NOT_INJECTED: JavaScript timers require a process RuntimeContext",
+            )
+        })?;
+        TimerWheel::get(runtime)?.schedule(
             delay_ms,
             TimerAction::StreamEvent {
                 session,
@@ -4001,12 +4509,15 @@ impl LocalBridgeState {
                 generation,
                 timers,
             },
-        );
+        )
     }
 
     fn clear_kernel_timer(&self, timer_id: u64) {
         if let Ok(mut timers) = self.timers.lock() {
             timers.remove(&timer_id);
+        }
+        if let Some(wheel) = JAVASCRIPT_TIMER_WHEEL.get() {
+            wheel.cancel(&self.timers, timer_id);
         }
     }
 
@@ -4021,20 +4532,43 @@ impl LocalBridgeState {
         // map) or the entry is otherwise removed, the timer wheel observes the
         // missing/mismatched generation via `timer_should_fire` and suppresses the
         // response instead of touching the torn-down session.
-        let timer_id = self.register_oneshot_timer(delay_ms);
+        let timer_id = match self.register_oneshot_timer(delay_ms) {
+            Ok(timer_id) => timer_id,
+            Err(error) => {
+                settle_timer_bridge_response(&session, call_id, 1, error.into_bytes());
+                return;
+            }
+        };
         let generation = 0;
         let timers = self.timers.clone();
 
-        TimerWheel::get().schedule(
+        let Some(runtime) = self.runtime.as_ref() else {
+            self.clear_kernel_timer(timer_id);
+            let error = "ERR_AGENTOS_RUNTIME_NOT_INJECTED: JavaScript timers require a process RuntimeContext";
+            settle_timer_bridge_response(&session, call_id, 1, error.as_bytes().to_vec());
+            return;
+        };
+        let wheel = match TimerWheel::get(runtime) {
+            Ok(wheel) => wheel,
+            Err(error) => {
+                self.clear_kernel_timer(timer_id);
+                settle_timer_bridge_response(&session, call_id, 1, error.into_bytes());
+                return;
+            }
+        };
+        if let Err(error) = wheel.schedule(
             delay_ms,
             TimerAction::BridgeResponse {
-                session,
+                session: session.clone(),
                 call_id,
                 timer_id,
                 generation,
                 timers,
             },
-        );
+        ) {
+            self.clear_kernel_timer(timer_id);
+            settle_timer_bridge_response(&session, call_id, 1, error.into_bytes());
+        }
     }
 
     fn has_module_reader(&self) -> bool {
@@ -4652,22 +5186,30 @@ impl LocalKernelStdinBridge {
             .and_then(Value::as_u64)
             .map(|value| value.clamp(1, 64 * 1024) as usize)
             .unwrap_or(64 * 1024);
-        let timeout = Duration::from_millis(args.get(1).and_then(Value::as_u64).unwrap_or(100));
-        let deadline = Instant::now() + timeout;
+        let deadline = if args.get(1).is_some_and(Value::is_null) {
+            None
+        } else {
+            let timeout = Duration::from_millis(args.get(1).and_then(Value::as_u64).unwrap_or(100));
+            Some(Instant::now() + timeout)
+        };
         let mut state = self.state.lock().expect("kernel stdin state poisoned");
 
         while state.bytes.is_empty() && !state.closed {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Value::Null;
-            }
-            let (next_state, wait_result) = self
-                .ready
-                .wait_timeout(state, remaining)
-                .expect("kernel stdin wait poisoned");
-            state = next_state;
-            if wait_result.timed_out() && state.bytes.is_empty() && !state.closed {
-                return Value::Null;
+            if let Some(deadline) = deadline {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Value::Null;
+                }
+                let (next_state, wait_result) = self
+                    .ready
+                    .wait_timeout(state, remaining)
+                    .expect("kernel stdin wait poisoned");
+                state = next_state;
+                if wait_result.timed_out() && state.bytes.is_empty() && !state.closed {
+                    return Value::Null;
+                }
+            } else {
+                state = self.ready.wait(state).expect("kernel stdin wait poisoned");
             }
         }
 
@@ -5521,7 +6063,11 @@ export default { createInterface };
         );
     }
 
-    if module_name == "stream" {
+    // Historical embedded-only stream classes live below only as source text
+    // for compatibility archaeology. The active `node:stream` wrapper must
+    // fall through to the runtime builtin so ESM and CommonJS share constructor
+    // identity (including the Duplex used by node:net.Socket).
+    if module_name == "__legacy_embedded_stream" {
         return String::from(
             r#"class MiniEmitter {
   constructor() {
@@ -7054,6 +7600,7 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "isDisturbed",
             "isErrored",
             "isReadable",
+            "isWritable",
             "pipeline",
         ],
         "stream/consumers" => &["arrayBuffer", "blob", "buffer", "json", "text"],
@@ -7432,6 +7979,9 @@ mod tests {
                 cpu_time_limit_ms: Some(750),
                 wall_clock_limit_ms: Some(500),
                 import_cache_materialize_timeout_ms: Some(125),
+                max_timers: Some(321),
+                reactor_work_quantum: Some(64),
+                bridge_call_timeout_ms: Some(15_000),
             },
             wasm_module_bytes: None,
             inline_code: None,
@@ -7462,6 +8012,54 @@ mod tests {
             std::time::Duration::from_millis(125),
             "import-cache timeout must come from the typed wire limit, not env"
         );
+        assert_eq!(javascript_max_timers(&request), 321);
+        assert_eq!(
+            javascript_reactor_work_quantum(
+                &request,
+                &default_test_runtime_context().expect("test runtime")
+            )
+            .expect("typed reactor work quantum"),
+            64
+        );
+    }
+
+    #[test]
+    fn vm_scoped_reactor_work_quantum_is_required_and_nonzero() {
+        let process = default_test_runtime_context().expect("test runtime context");
+        let resources = Arc::new(agentos_runtime::accounting::ResourceLedger::child(
+            "javascript-reactor-work-quantum-test",
+            std::iter::empty::<(
+                agentos_runtime::accounting::ResourceClass,
+                agentos_runtime::accounting::ResourceLimit,
+            )>(),
+            Arc::clone(process.resources()),
+        ));
+        let runtime = process.scoped_for_vm(resources, 9_001);
+        let mut request = StartJavascriptExecutionRequest {
+            guest_runtime: Default::default(),
+            vm_id: String::from("vm-js"),
+            context_id: String::from("ctx-js"),
+            argv0: None,
+            argv: vec![String::from("/entry.mjs")],
+            env: BTreeMap::new(),
+            cwd: PathBuf::from("/tmp"),
+            limits: JavascriptExecutionLimits::default(),
+            wasm_module_bytes: None,
+            inline_code: None,
+        };
+
+        let missing = javascript_reactor_work_quantum(&request, &runtime)
+            .expect_err("VM execution must carry its work quantum");
+        assert!(missing
+            .to_string()
+            .contains("limits.reactor.workQuantum is required"));
+
+        request.limits.reactor_work_quantum = Some(0);
+        let zero = javascript_reactor_work_quantum(&request, &runtime)
+            .expect_err("zero VM work quantum must fail closed");
+        assert!(zero
+            .to_string()
+            .contains("limits.reactor.workQuantum must be greater than zero"));
     }
 
     #[test]
@@ -7496,6 +8094,7 @@ mod tests {
             javascript_wall_clock_limit_ms(&request),
             DEFAULT_V8_WALL_CLOCK_LIMIT_MS
         );
+        assert_eq!(javascript_max_timers(&request), MAX_TIMERS_PER_EXECUTION);
         assert_eq!(
             javascript_import_cache_materialize_timeout(&request),
             std::time::Duration::from_millis(DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS)
@@ -7637,8 +8236,31 @@ mod tests {
     }
 
     #[test]
+    fn kernel_stdin_bridge_null_timeout_waits_for_readiness_without_polling() {
+        let bridge = Arc::new(LocalKernelStdinBridge::default());
+        let reader = Arc::clone(&bridge);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            sender
+                .send(reader.read(&[json!(64), Value::Null]))
+                .expect("publish stdin result");
+        });
+
+        assert!(receiver.recv_timeout(Duration::from_millis(20)).is_err());
+        bridge.write(b"ready").expect("make stdin readable");
+        let value = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("readiness should wake the parked read");
+        assert_eq!(
+            value["dataBase64"],
+            Value::String(v8_runtime::base64_encode_pub(b"ready"))
+        );
+        thread.join().expect("stdin reader exits");
+    }
+
+    #[test]
     fn javascript_event_sender_reports_closed_receiver() {
-        let (sender, receiver) = channel(1);
+        let (sender, receiver) = flume::bounded(1);
         drop(receiver);
         let gauge = register_queue(TrackedLimit::JavascriptEventChannel, 1);
         assert!(!send_javascript_event(
@@ -7654,25 +8276,14 @@ mod tests {
     // truncating the stream and tearing the session down.
     #[test]
     fn javascript_event_sender_backpressures_instead_of_destroying_when_full() {
-        let host = V8RuntimeHost::spawn().expect("spawn V8 runtime host");
-        let session_id = format!(
-            "event-overflow-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time")
-                .as_nanos()
-        );
-        let _session_receiver = host
-            .register_session(&session_id)
-            .expect("register event overflow session");
         let gauge = register_queue(TrackedLimit::JavascriptEventChannel, 1);
-        let (sender, mut event_receiver) = channel(1);
+        let (sender, event_receiver) = flume::bounded(1);
 
         // Drain slowly on another thread so the producer is forced onto the
         // blocking-backpressure path the old destroy-on-full code never reached.
         let drainer = std::thread::spawn(move || {
             let mut drained = 0usize;
-            while event_receiver.blocking_recv().is_some() {
+            while event_receiver.recv().is_ok() {
                 drained += 1;
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
@@ -7692,17 +8303,11 @@ mod tests {
         drop(sender);
         let drained = drainer.join().expect("drainer thread panicked");
         assert_eq!(drained, SENDS, "every event must survive backpressure");
-
-        // The session must NOT have been destroyed: it is still registered, so a
-        // re-registration attempt fails.
-        host.register_session(&session_id)
-            .expect_err("session must survive backpressure (not be destroyed)");
-        host.unregister_session(&session_id);
     }
 
     #[test]
     fn javascript_event_sender_chunks_oversized_output_without_data_loss() {
-        let (sender, mut event_receiver) = channel(JAVASCRIPT_EVENT_CHANNEL_CAPACITY);
+        let (sender, event_receiver) = flume::bounded(JAVASCRIPT_EVENT_CHANNEL_CAPACITY);
         let gauge = register_queue(
             TrackedLimit::JavascriptEventChannel,
             JAVASCRIPT_EVENT_CHANNEL_CAPACITY,
@@ -7716,8 +8321,8 @@ mod tests {
             JavascriptExecutionEvent::Stdout(payload.clone())
         ));
 
-        let first = event_receiver.blocking_recv().expect("first chunk");
-        let second = event_receiver.blocking_recv().expect("second chunk");
+        let first = event_receiver.recv().expect("first chunk");
+        let second = event_receiver.recv().expect("second chunk");
         let joined = [first, second]
             .into_iter()
             .flat_map(|event| match event {
@@ -7776,7 +8381,8 @@ mod tests {
 
     #[test]
     fn register_v8_session_deregisters_on_create_session_failure() {
-        let host = V8RuntimeHost::spawn().expect("spawn V8 runtime host");
+        let runtime = default_test_runtime_context().expect("test runtime context");
+        let host = V8RuntimeHost::spawn(&runtime).expect("spawn V8 runtime host");
         let session_id = format!(
             "v8-register-failure-{}",
             SystemTime::now()
@@ -7785,16 +8391,24 @@ mod tests {
                 .as_nanos()
         );
 
-        let error =
-            match register_v8_session(&host, session_id.clone(), 0, 0, 0, None, |_command| {
+        let error = match register_v8_session(
+            &host,
+            &runtime,
+            session_id.clone(),
+            0,
+            0,
+            0,
+            None,
+            |_command| {
                 Err(std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
                     "simulated CreateSession send failure",
                 ))
-            }) {
-                Ok(_) => panic!("register_v8_session should surface create-session send failures"),
-                Err(error) => error,
-            };
+            },
+        ) {
+            Ok(_) => panic!("register_v8_session should surface create-session send failures"),
+            Err(error) => error,
+        };
 
         match error {
             JavascriptExecutionError::Spawn(inner) => {
@@ -7803,7 +8417,7 @@ mod tests {
             other => panic!("unexpected error: {other:?}"),
         }
         let receiver = host
-            .register_session(&session_id)
+            .register_session(&session_id, &runtime)
             .expect("failed registration should not leak the session output receiver");
         drop(receiver);
         host.unregister_session(&session_id);
@@ -7856,12 +8470,13 @@ mod tests {
             })
             .expect("start JavaScript execution");
         let session_id = execution.v8_session.session_id().to_owned();
+        let runtime = engine.runtime_context().expect("engine runtime").clone();
         let host = engine.v8_host.as_ref().expect("shared V8 runtime host");
 
         drop(execution);
 
         let receiver = host
-            .register_session(&session_id)
+            .register_session(&session_id, &runtime)
             .expect("execution drop should still destroy and deregister the session");
         drop(receiver);
         host.unregister_session(&session_id);
@@ -7952,6 +8567,7 @@ mod tests {
                 delay_ms: 1_000,
                 generation: 0,
                 repeat: false,
+                _reservation: None,
             },
         );
 
@@ -7983,6 +8599,7 @@ mod tests {
                 delay_ms: 10,
                 generation: 1,
                 repeat: false,
+                _reservation: None,
             },
         );
 
@@ -8008,6 +8625,36 @@ mod tests {
     }
 
     #[test]
+    fn timer_registration_reserves_before_insert_and_releases_on_remove() {
+        use agentos_runtime::accounting::{ResourceClass, ResourceLedger, ResourceLimit};
+
+        let ledger = Arc::new(ResourceLedger::root(
+            "vm=test",
+            [(
+                ResourceClass::Timers,
+                ResourceLimit::new(1, "limits.jsRuntime.maxTimers"),
+            )],
+        ));
+        let mut state = LocalBridgeState::default();
+        state.timer_resources = Some(Arc::clone(&ledger));
+        state.max_timers = 2;
+
+        let first = state.register_timer(10, false).expect("first timer");
+        assert_eq!(ledger.usage(ResourceClass::Timers).used, 1);
+        let error = state
+            .register_timer(10, false)
+            .expect_err("second timer must hit the ledger bound");
+        assert!(error.contains("limits.jsRuntime.maxTimers"), "{error}");
+        assert_eq!(state.timers.lock().unwrap().len(), 1);
+
+        state.clear_kernel_timer(first);
+        assert_eq!(ledger.usage(ResourceClass::Timers).used, 0);
+        state
+            .register_timer(10, false)
+            .expect("released admission is reusable");
+    }
+
+    #[test]
     fn bridge_timer_registration_is_tracked_and_drop_clears_timers() {
         // H2: the bridge-timer path must register its timer (so it is cancellable)
         // before queuing a wheel action, and session teardown
@@ -8017,8 +8664,12 @@ mod tests {
         // Observe the same map the queued actions would consult.
         let timers = state.timers.clone();
 
-        let id_a = state.register_oneshot_timer(MAX_TIMER_DELAY_MS);
-        let id_b = state.register_oneshot_timer(500);
+        let id_a = state
+            .register_oneshot_timer(MAX_TIMER_DELAY_MS)
+            .expect("register first timer");
+        let id_b = state
+            .register_oneshot_timer(500)
+            .expect("register second timer");
         assert_ne!(id_a, id_b, "each bridge timer gets a fresh id");
         assert_eq!(
             timers.lock().unwrap().len(),
@@ -8029,7 +8680,9 @@ mod tests {
         // entry is real and consultable) ...
         assert!(timer_should_fire(&timers, id_a, 0));
         // ... and seeding a still-pending one before teardown:
-        let id_c = state.register_oneshot_timer(1_000);
+        let id_c = state
+            .register_oneshot_timer(1_000)
+            .expect("register third timer");
 
         // Session teardown: dropping the bridge state must clear every timer so any
         // queued action wakes to a missing entry and suppresses its callback.

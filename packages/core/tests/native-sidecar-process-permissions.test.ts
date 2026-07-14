@@ -118,7 +118,7 @@ describe("native sidecar process client permissions", () => {
 			[
 				"import { writeFileSync } from 'node:fs';",
 				"const capturePath = process.argv[2];",
-				"const schema = { name: 'agentos-native-sidecar', version: 7 };",
+				"const schema = { name: 'agentos-native-sidecar', version: 8 };",
 				"let stdinBuffer = Buffer.alloc(0);",
 				"const captures = [];",
 				"const writeFrame = (frame) => {",
@@ -291,8 +291,13 @@ describe("native sidecar process client permissions", () => {
 					},
 				},
 			]);
-			expect("child_process" in captured[0]?.permissions).toBe(false);
-			expect("childProcess" in captured[1]?.permissions).toBe(false);
+			const createCapture = captured[0];
+			const configureCapture = captured[1];
+			if (!createCapture || !configureCapture) {
+				throw new Error("expected create_vm and configure_vm permission captures");
+			}
+			expect("child_process" in createCapture.permissions).toBe(false);
+			expect("childProcess" in configureCapture.permissions).toBe(false);
 		} finally {
 			await client.dispose();
 		}

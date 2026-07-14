@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+	EXCLUDED,
 	assertDiscoverySanity,
 	buildMetaPlatformMap,
 	discoverPackages,
@@ -81,4 +82,9 @@ test("sanity check passes for the agent-os workspace", () => {
 	const packages = discoverPackages(repoRoot);
 
 	assert.doesNotThrow(() => assertDiscoverySanity(packages));
+});
+
+test("browser migration packages stay explicitly excluded from publication", () => {
+	assert(EXCLUDED.has("@rivet-dev/agentos-browser"));
+	assert(EXCLUDED.has("@rivet-dev/agentos-runtime-browser"));
 });

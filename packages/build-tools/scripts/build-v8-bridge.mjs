@@ -86,7 +86,7 @@ const customAlias = {
 	"node:url": nodeStdlibUrlPackageEntry,
 	stream: path.join(undiciShimDir, "stream.js"),
 	"node:stream": path.join(undiciShimDir, "stream.js"),
-	"secure-exec-stream-stdlib": stdLibBrowser.stream,
+	"secure-exec-stream-stdlib": require.resolve("readable-stream"),
 	net: path.join(undiciShimDir, "net.js"),
 	"node:net": path.join(undiciShimDir, "net.js"),
 	tls: path.join(undiciShimDir, "tls.js"),
@@ -212,6 +212,7 @@ async function validateBridgeContractGlobals(sourceText) {
 		"_netModule",
 		"_tlsModule",
 		"_netSocketDispatch",
+		"_agentOSReadyDispatch",
 		"_dgramSocketDispatch",
 		"_http2RetainDispatch",
 		"_httpServerDispatch",
@@ -664,6 +665,12 @@ function createUndiciBuildPlugins() {
 		{
 			name: "secure-exec-undici-runtime-features-shim",
 			setup(build) {
+				// readable-stream deliberately imports the trailing-slash package
+				// specifier. esbuild aliases reject trailing-slash names, so resolve
+				// this exact dependency through a plugin.
+				build.onResolve({ filter: /^process\/$/ }, () => ({
+					path: path.join(undiciShimDir, "process.cjs"),
+				}));
 				build.onResolve(
 					{
 						filter:
@@ -705,6 +712,7 @@ const result = await build({
 	platform: "browser",
 	target: "es2020",
 	minify: true,
+	metafile: true,
 	alias: mainBundleAlias,
 	define: {
 		"process.env.NODE_ENV": '"production"',
@@ -753,6 +761,7 @@ const zlibResult = await build({
 	platform: "browser",
 	target: "es2020",
 	minify: true,
+	metafile: true,
 	alias,
 	define: {
 		"process.env.NODE_ENV": '"production"',
@@ -779,6 +788,20 @@ if (result.errors.length > 0) {
 }
 if (zlibResult.errors.length > 0) {
 	throw new Error(`Failed to build v8-bridge-zlib.js: ${zlibResult.errors[0].text}`);
+}
+
+for (const [name, buildResult] of [
+	["v8-bridge.js", result],
+	["v8-bridge-zlib.js", zlibResult],
+]) {
+	const timerBackedProcessInputs = Object.keys(
+		buildResult.metafile?.inputs ?? {},
+	).filter((input) => /(?:^|\/)process\/browser\.js$/.test(input));
+	if (timerBackedProcessInputs.length > 0) {
+		throw new Error(
+			`${name} bundled the timer-backed browser process shim: ${timerBackedProcessInputs.join(", ")}`,
+		);
+	}
 }
 
 const webStreamsPrelude = await buildWebStreamsPrelude();

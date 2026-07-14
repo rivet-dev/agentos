@@ -32,7 +32,11 @@ const PATCHED_ERRNO = resolve(
 	SECURE_EXEC_C_ROOT,
 	"sysroot/include/wasm32-wasi/errno.h",
 );
-const SIDECAR_BINARY = resolve(REPO_ROOT, "target/debug/agentos-sidecar");
+const SIDECAR_BINARY = resolve(
+	REPO_ROOT,
+	process.env.CARGO_TARGET_DIR ?? "target",
+	"debug/agentos-sidecar",
+);
 const HAS_PATCHED_SYSROOT = existsSync(PATCHED_LIBC) && existsSync(PATCHED_ERRNO);
 
 function hasCommand(command: string): boolean {
@@ -107,6 +111,16 @@ function ensureFsProbeBuilt(): void {
 }
 
 function ensureWorkspaceSidecarBuilt(): void {
+	const configuredSidecar = process.env.AGENTOS_SIDECAR_BIN;
+	if (configuredSidecar) {
+		if (!existsSync(configuredSidecar)) {
+			throw new Error(
+				`AGENTOS_SIDECAR_BIN is set to ${configuredSidecar} but the file does not exist`,
+			);
+		}
+		process.env.AGENTOS_WASM_SNAPSHOT_RUNNER = "off";
+		return;
+	}
 	runChecked("cargo", ["build", "-q", "-p", "agentos-sidecar"], {
 		cwd: REPO_ROOT,
 		label: "failed to build workspace agentos-sidecar",

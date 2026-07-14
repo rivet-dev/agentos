@@ -1,8 +1,9 @@
+mod support;
+
 use agentos_execution::{
     v8_runtime::map_bridge_method, CreateJavascriptContextRequest, GuestRuntimeConfig,
-    JavascriptExecution, JavascriptExecutionEngine, JavascriptExecutionEvent,
-    JavascriptExecutionLimits, JavascriptExecutionResult, JavascriptSyncRpcRequest,
-    StartJavascriptExecutionRequest,
+    JavascriptExecution, JavascriptExecutionEvent, JavascriptExecutionLimits,
+    JavascriptExecutionResult, JavascriptSyncRpcRequest, StartJavascriptExecutionRequest,
 };
 use base64::Engine;
 use serde::Deserialize;
@@ -314,6 +315,58 @@ impl HostChildProcessHarness {
 
             thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// Translate the host-child harness's durable output state into the
+    /// evented stream protocol used by the production sidecar. The JavaScript
+    /// child-process shim no longer issues recurring `child_process.poll`
+    /// bridge calls, so this standalone conformance harness must emulate the
+    /// sidecar's readiness pump instead of waiting for a guest poll request.
+    fn drain_stream_events(&mut self) -> Result<Vec<(&'static str, Value)>, String> {
+        const MAX_EVENTS_PER_TURN: usize = 256;
+
+        let child_ids: Vec<String> = self.children.keys().cloned().collect();
+        let mut stream_events = Vec::new();
+        for child_id in child_ids {
+            while stream_events.len() < MAX_EVENTS_PER_TURN {
+                let event = self.poll(&[Value::String(child_id.clone()), json!(0)])?;
+                let Some(event_type) = event.get("type").and_then(Value::as_str) else {
+                    break;
+                };
+                match event_type {
+                    "stdout" | "stderr" => stream_events.push((
+                        if event_type == "stdout" {
+                            "child_stdout"
+                        } else {
+                            "child_stderr"
+                        },
+                        json!({
+                            "sessionId": child_id,
+                            "data": event.get("data").cloned().unwrap_or(Value::Null),
+                        }),
+                    )),
+                    "exit" => {
+                        stream_events.push((
+                            "child_exit",
+                            json!({
+                                "sessionId": child_id,
+                                "code": event
+                                    .get("exitCode")
+                                    .and_then(Value::as_i64)
+                                    .unwrap_or(1),
+                                "signal": Value::Null,
+                            }),
+                        ));
+                        break;
+                    }
+                    other => return Err(format!("unknown child event type {other}")),
+                }
+            }
+            if stream_events.len() >= MAX_EVENTS_PER_TURN {
+                break;
+            }
+        }
+        Ok(stream_events)
     }
 
     fn spawn_sync(&mut self, host_cwd: &Path, args: &[Value]) -> Result<Value, String> {
@@ -717,16 +770,43 @@ fn wait_with_host_child_process_bridge(
     let mut harness = HostChildProcessHarness::default();
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
+    let mut no_progress_deadline = Instant::now() + Duration::from_secs(5);
 
     loop {
+        let stream_events = harness
+            .drain_stream_events()
+            .expect("drain host child-process stream events");
+        if !stream_events.is_empty() {
+            no_progress_deadline = Instant::now() + Duration::from_secs(5);
+        }
+        for (event_type, payload) in stream_events {
+            execution
+                .send_stream_event(event_type, payload)
+                .expect("send host child-process stream event");
+        }
+
+        let poll_timeout = if harness.children.is_empty() {
+            Duration::from_secs(5)
+        } else {
+            Duration::from_millis(10)
+        };
         match execution
-            .poll_event_blocking(Duration::from_secs(5))
+            .poll_event_blocking(poll_timeout)
             .expect("poll JavaScript execution event")
         {
-            Some(JavascriptExecutionEvent::Stdout(chunk)) => stdout.extend(chunk),
-            Some(JavascriptExecutionEvent::Stderr(chunk)) => stderr.extend(chunk),
-            Some(JavascriptExecutionEvent::SignalState { .. }) => {}
+            Some(JavascriptExecutionEvent::Stdout(chunk)) => {
+                stdout.extend(chunk);
+                no_progress_deadline = Instant::now() + Duration::from_secs(5);
+            }
+            Some(JavascriptExecutionEvent::Stderr(chunk)) => {
+                stderr.extend(chunk);
+                no_progress_deadline = Instant::now() + Duration::from_secs(5);
+            }
+            Some(JavascriptExecutionEvent::SignalState { .. }) => {
+                no_progress_deadline = Instant::now() + Duration::from_secs(5);
+            }
             Some(JavascriptExecutionEvent::SyncRpcRequest(request)) => {
+                no_progress_deadline = Instant::now() + Duration::from_secs(5);
                 if execution
                     .try_service_standalone_module_sync_rpc(&request)
                     .expect("service module sync RPC")
@@ -751,7 +831,13 @@ fn wait_with_host_child_process_bridge(
                     stderr,
                 };
             }
-            None => panic!("JavaScript execution timed out while awaiting exit"),
+            None if Instant::now() < no_progress_deadline => {}
+            None => panic!(
+                "JavaScript execution timed out while awaiting exit; stdout={:?}; stderr={:?}; live_children={}",
+                String::from_utf8_lossy(&stdout),
+                String::from_utf8_lossy(&stderr),
+                harness.children.len()
+            ),
         }
     }
 }
@@ -793,7 +879,7 @@ impl Drop for EnvVarGuard {
 }
 
 fn javascript_contexts_preserve_vm_and_bootstrap_configuration() {
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: Some(String::from("./bootstrap.mjs")),
@@ -813,7 +899,7 @@ fn javascript_execution_uses_v8_runtime_without_spawning_guest_node_binary() {
     write_fake_node_binary(&fake_node_path, &log_path);
     let _node_binary = EnvVarGuard::set_path("AGENTOS_NODE_BINARY", &fake_node_path);
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -855,7 +941,7 @@ fn javascript_execution_uses_v8_runtime_without_spawning_guest_node_binary() {
 
 fn javascript_execution_virtual_os_identity_comes_from_guest_runtime_not_env() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -921,7 +1007,7 @@ if (os.machine() !== "vm64") throw new Error(`machine=${os.machine()}`);
 
 fn javascript_execution_virtualizes_process_metadata_for_inline_v8_code() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -976,7 +1062,7 @@ if (process.ppid !== 41) throw new Error(`ppid=${process.ppid}`);
 
 fn javascript_execution_process_kill_rejects_invalid_pid_in_guest_js() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1031,7 +1117,7 @@ try {
 
 fn javascript_execution_preserves_binary_process_stdio_writes() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1066,7 +1152,7 @@ process.stderr.write(Buffer.from([0xfe, 0x00, 0x42]));
 
 fn javascript_execution_intl_number_format_does_not_require_host_icu() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1111,7 +1197,7 @@ console.log(formatter.format(1234.5));
 // termination, and ICU is bundled, so the exact repro runs and returns a string.
 fn javascript_execution_to_locale_date_string_does_not_crash_embedded_v8() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1165,7 +1251,7 @@ console.log(JSON.stringify({ formatted }));
 #[allow(dead_code)] // quarantined: see the live-stdin/tty harness note above
 fn javascript_execution_stream_consumers_text_reads_live_stdin() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1212,7 +1298,7 @@ console.log(JSON.stringify({ body }));
 #[allow(dead_code)] // quarantined: see the live-stdin/tty harness note above
 fn javascript_execution_process_stdin_async_iterator_finishes_with_live_stdin() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1260,7 +1346,7 @@ console.log(JSON.stringify({ body }));
 #[allow(dead_code)] // quarantined: see the live-stdin/tty harness note above
 fn javascript_execution_process_exit_from_live_stdin_listener_exits_without_waiting_for_eof() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1328,7 +1414,7 @@ process.stdin.once("data", (chunk) => {
 
 fn javascript_execution_process_exit_ignores_live_interval_handles() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1386,7 +1472,7 @@ process.stdout.write("after exit\n");
 
 fn javascript_execution_process_exit_bypasses_promise_catch_handlers() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1431,7 +1517,7 @@ Promise.resolve()
 #[allow(dead_code)] // quarantined: see the live-stdin/tty harness note above
 fn javascript_execution_live_stdin_replays_end_after_late_listener_registration() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1484,7 +1570,7 @@ setTimeout(() => {
 
 fn javascript_execution_file_url_to_path_accepts_guest_absolute_paths() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1529,7 +1615,7 @@ if (fileURLToPath(href) !== guestPath) {
 
 fn javascript_execution_imports_node_events_without_hanging() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1575,7 +1661,7 @@ if (value !== "ok") {
 
 fn javascript_execution_imports_node_process_without_hanging() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1620,7 +1706,7 @@ if (typeof process.pid !== "number" || process.pid <= 0) {
 
 fn javascript_execution_imports_node_fs_promises_without_hanging() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1664,7 +1750,7 @@ if (typeof fs.readFile !== "function") {
 
 fn javascript_execution_imports_node_perf_hooks_without_hanging() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1720,7 +1806,7 @@ if (typeof process.hrtime.bigint() !== "bigint") {
 
 fn javascript_execution_high_resolution_time_opt_in_enables_sub_ms_hrtime() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js-high-res-on"),
         bootstrap_module: None,
@@ -1772,7 +1858,7 @@ if (!sawSubMs) {
 
 fn javascript_execution_high_resolution_time_default_off_keeps_coarse_clock() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js-high-res-off"),
         bootstrap_module: None,
@@ -1814,7 +1900,7 @@ for (let attempt = 0; attempt < 20; attempt++) {
 
 fn javascript_execution_exposes_compatibility_shims_and_denies_escape_builtins() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1919,7 +2005,7 @@ console.log(JSON.stringify({
 
     let host = run_host_node_json(temp.path(), &temp.path().join("entry.mjs"));
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -1953,7 +2039,7 @@ console.log(JSON.stringify({
 
 fn javascript_execution_provides_async_hooks_and_diagnostics_channel_stubs() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -2099,7 +2185,7 @@ if (JSON.stringify(searchPaths) !== JSON.stringify(expectedPaths)) {
         "module.exports = 'pkg';\n",
     );
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -2174,7 +2260,7 @@ fn javascript_execution_rejects_native_node_addons() {
     let temp = tempdir().expect("create temp dir");
     write_fixture(&temp.path().join("addon.node"), "not a native addon\n");
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -2229,7 +2315,7 @@ fs.statSync("/workspace/note.txt");
 "#,
     );
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -2308,7 +2394,7 @@ if (summary.rinfo.address !== "127.0.0.1" || summary.rinfo.port !== 7) {
 }
 "#,
     );
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -2392,9 +2478,26 @@ if (summary.rinfo.address !== "127.0.0.1" || summary.rinfo.port !== 7) {
         )
         .expect("respond to dgram.send");
 
+    assert!(
+        execution
+            .poll_event_blocking(Duration::from_millis(20))
+            .expect("probe dgram event queue")
+            .is_none(),
+        "dgram must not poll again until sidecar readiness arrives"
+    );
+    execution
+        .send_stream_event(
+            "net_socket",
+            json!({
+                "event": "dgram",
+                "socketId": "udp-1",
+            }),
+        )
+        .expect("wake dgram receive from sidecar readiness");
+
     let request = expect_next_sync_rpc(&mut execution, "poll message dgram.poll request");
     assert_eq!(request.method, "dgram.poll");
-    assert_eq!(request.args, vec![json!("udp-1"), json!(10)]);
+    assert_eq!(request.args, vec![json!("udp-1"), json!(0)]);
     execution
         .respond_sync_rpc_success(
             request.id,
@@ -2442,7 +2545,7 @@ fn javascript_execution_strips_hashbang_from_module_entrypoints() {
         "#!/usr/bin/env node\nimport fs from \"node:fs\";\nfs.statSync(\"/workspace/hashbang.txt\");\n",
     );
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -2521,7 +2624,7 @@ fn javascript_execution_resolves_pnpm_store_dependencies_from_symlinked_entrypoi
     })])
     .expect("serialize guest mappings");
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -2601,7 +2704,7 @@ fn javascript_execution_resolves_dependencies_from_package_specific_symlink_moun
     })])
     .expect("serialize guest mappings");
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -2650,7 +2753,7 @@ fn javascript_execution_resolves_dependencies_from_package_specific_symlink_moun
 
 fn javascript_execution_v8_timer_callbacks_fire_and_clear_correctly() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -2826,7 +2929,7 @@ setImmediate(() => {
 
 fn javascript_execution_v8_readline_polyfill_emits_lines() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -2875,7 +2978,7 @@ if (seen[0] !== "alpha" || seen[1] !== "beta" || seen[2] !== "gamma") {
 
 fn javascript_execution_v8_builtin_wrappers_expose_common_named_exports() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -3098,7 +3201,7 @@ console.log(JSON.stringify({
 "#,
     );
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -3139,7 +3242,7 @@ console.log(JSON.stringify({
 
 fn javascript_execution_v8_web_stream_globals_support_basic_io() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -3199,7 +3302,7 @@ if (first.value !== "alpha" || first.done !== false || second.done !== true) {
 
 fn javascript_execution_v8_text_codec_streams_support_pipe_through() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -3290,7 +3393,7 @@ if (roundTrip !== "hello world") {
 
 fn javascript_execution_v8_abort_controller_dispatches_abort() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -3332,7 +3435,7 @@ if (!controller.signal.aborted || controller.signal.reason !== "stop" || !seenAb
 
 fn javascript_execution_v8_request_accepts_abort_signal() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -3376,7 +3479,7 @@ if (!(request.signal instanceof AbortSignal)) {
 
 fn javascript_execution_v8_abort_signal_static_helpers_work() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -3448,7 +3551,7 @@ if (compositeReason !== "manual-stop" || composite.reason !== "manual-stop") {
 
 fn javascript_execution_v8_schedule_timer_bridge_resolves() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -3494,7 +3597,7 @@ fn javascript_execution_v8_schedule_timer_bridge_resolves() {
 
 fn javascript_execution_v8_kernel_poll_bridge_requests_multiple_fds() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -3577,7 +3680,7 @@ console.log(JSON.stringify(result));
 
 fn javascript_execution_v8_crypto_random_sources_use_local_secure_bridge() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -3655,7 +3758,7 @@ fn javascript_execution_v8_crypto_basic_operations_emit_expected_sync_rpcs() {
 
 fn javascript_execution_v8_load_polyfill_returns_runtime_module_expressions() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -3749,6 +3852,23 @@ if (typeof cjsStream.Readable !== "function") {
   throw new Error("require('stream').Readable should stay available on the constructor export");
 }
 
+// readable-stream imports the trailing-slash `process/` package internally.
+// Its browser fallback implements nextTick with setTimeout(0), which inserts a
+// timer turn before `_read()`. AgentOS must route that dependency to the guest
+// process nextTick queue so stream demand is visible in the same microtask turn.
+let readStarted = false;
+const nextTickReadable = new Readable({
+  read() {
+    readStarted = true;
+    this.push(null);
+  },
+});
+nextTickReadable.resume();
+await Promise.resolve();
+if (!readStarted) {
+  throw new Error("readable-stream deferred _read() through a timer-backed process.nextTick shim");
+}
+
 const pass = new PassThrough();
 let output = "";
 pass.on("data", (chunk) => {
@@ -3796,7 +3916,7 @@ if (lifecycle.join(",") !== "write,finish,destroy") {
 "#,
     );
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -3859,7 +3979,7 @@ if (!(file instanceof bufferModule.Blob)) {
 "#,
     );
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -3920,7 +4040,7 @@ new tty.WriteStream(1);
 "#,
     );
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -3969,7 +4089,7 @@ if (typeof sqlite.StatementSync !== "function") {
 "#,
     );
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -4037,7 +4157,7 @@ try {
 "#,
     );
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -4135,7 +4255,7 @@ if (!resolved.endsWith("/entry.cjs")) {
 "#,
     );
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -4232,7 +4352,7 @@ if (!resolved.endsWith("/entry.cjs")) {
 "#,
     );
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -4274,7 +4394,7 @@ console.log(
 "#,
     );
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -4341,7 +4461,7 @@ console.log(JSON.stringify(dep));
     let mut host = run_host_node_json(temp.path(), &temp.path().join("entry.cjs"));
     host["hadSelfBeforeDelete"] = json!(true);
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -4398,7 +4518,7 @@ for (const [name, module] of Object.entries({ http, https })) {
 "#,
     );
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -4432,11 +4552,24 @@ fn javascript_execution_v8_net_socket_readable_state_tracks_ssh2_writable_shape(
         &temp.path().join("entry.mjs"),
         r#"
 import net from "node:net";
+import { Duplex } from "node:stream";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+if (require("stream").Duplex !== Duplex) {
+  throw new Error("bare and node: stream modules returned different Duplex constructors");
+}
 
 const isWritable = (stream) =>
   Boolean(stream?.writable && stream?._readableState?.ended === false);
 
 const socket = new net.Socket();
+if (!(socket instanceof Duplex)) {
+  throw new Error("net.Socket did not inherit from the guest Duplex constructor");
+}
+if (Object.getPrototypeOf(net.Socket.prototype) !== Duplex.prototype) {
+  throw new Error("net.Socket prototype is not directly rooted in guest Duplex.prototype");
+}
 if (socket._readableState?.ended !== false) {
   throw new Error(`expected open socket ended=false, got ${String(socket._readableState?.ended)}`);
 }
@@ -4455,7 +4588,7 @@ if (isWritable(socket)) {
 "#,
     );
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -4506,7 +4639,7 @@ fn javascript_execution_v8_event_channel_backpressures_instead_of_destroying_ses
     const LINE_COUNT: usize = 1000;
     let temp = tempdir().expect("create temp dir");
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -4643,6 +4776,7 @@ const secondChunkIdx = order.indexOf("data:chunk-2");
 if (immediateIdx === -1) {
   throw new Error("macrotask never ran: " + trace);
 }
+
 if (secondChunkIdx === -1) {
   throw new Error("second chunk never delivered: " + trace);
 }
@@ -4656,7 +4790,7 @@ console.log("ORDER_OK:" + trace);
 "#,
     );
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -4752,6 +4886,802 @@ console.log("ORDER_OK:" + trace);
     );
 }
 
+fn javascript_execution_v8_net_socket_backpressure_stops_and_resumes_transport_reads() {
+    let temp = tempdir().expect("create temp dir");
+    write_fixture(
+        &temp.path().join("entry.mjs"),
+        r#"
+import net from "node:net";
+
+const socket = new net.Socket({ readableHighWaterMark: 4 });
+socket.connect({ host: "127.0.0.1", port: 80 });
+
+await new Promise((resolve, reject) => {
+  socket.once("readable", resolve);
+  socket.once("error", reject);
+});
+
+if (socket.readableLength !== 8) {
+  throw new Error(`expected one admitted 8-byte chunk, got ${socket.readableLength}`);
+}
+const chunk = socket.read();
+if (chunk?.toString() !== "abcdefgh") {
+  throw new Error(`unexpected buffered chunk: ${String(chunk)}`);
+}
+socket.resume();
+
+await new Promise((resolve, reject) => {
+  socket.once("end", resolve);
+  socket.once("close", resolve);
+  socket.once("error", reject);
+});
+console.log("BACKPRESSURE_OK");
+"#,
+    );
+
+    let mut engine = support::javascript_engine();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+
+    let mut execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            limits: Default::default(),
+            guest_runtime: Default::default(),
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./entry.mjs")],
+            argv0: None,
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            wasm_module_bytes: None,
+            inline_code: None,
+        })
+        .expect("start JavaScript execution");
+
+    let chunk = base64::engine::general_purpose::STANDARD.encode("abcdefgh");
+    let mut socket_reads = 0usize;
+    let mut read_interest = Vec::new();
+    let mut rpc_trace = Vec::new();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let exit_code = loop {
+        match execution
+            .poll_event_blocking(Duration::from_secs(5))
+            .expect("poll net socket backpressure event")
+        {
+            Some(JavascriptExecutionEvent::Stdout(bytes)) => stdout.extend(bytes),
+            Some(JavascriptExecutionEvent::Stderr(bytes)) => stderr.extend(bytes),
+            Some(JavascriptExecutionEvent::SignalState { .. }) => {}
+            Some(JavascriptExecutionEvent::SyncRpcRequest(request)) => {
+                if execution
+                    .try_service_standalone_module_sync_rpc(&request)
+                    .expect("service module sync RPC")
+                {
+                    continue;
+                }
+                let request_id = request.id;
+                rpc_trace.push(request.method.clone());
+                let response = match request.method.as_str() {
+                    "net.connect" => json!({
+                        "socketId": 1,
+                        "localAddress": "127.0.0.1",
+                        "localPort": 12345,
+                        "localFamily": "IPv4",
+                        "remoteAddress": "127.0.0.1",
+                        "remotePort": 80,
+                        "remoteFamily": "IPv4",
+                    }),
+                    "net.socket_wait_connect" => json!(
+                        "{\"localAddress\":\"127.0.0.1\",\"localPort\":12345,\
+                         \"remoteAddress\":\"127.0.0.1\",\"remotePort\":80}"
+                    ),
+                    "net.socket_set_read_interest" => {
+                        read_interest.push(
+                            request
+                                .args
+                                .get(1)
+                                .and_then(Value::as_bool)
+                                .expect("read-interest boolean"),
+                        );
+                        Value::Null
+                    }
+                    "net.socket_read" => {
+                        socket_reads += 1;
+                        if socket_reads == 1 {
+                            json!(chunk)
+                        } else {
+                            Value::Null
+                        }
+                    }
+                    _ => Value::Null,
+                };
+                execution
+                    .respond_sync_rpc_success(request_id, response)
+                    .expect("respond to net socket backpressure RPC");
+            }
+            Some(JavascriptExecutionEvent::Exited(exit_code)) => break exit_code,
+            None => panic!(
+                "net socket backpressure execution timed out while awaiting exit; \
+                 read_interest={read_interest:?}, socket_reads={socket_reads}, \
+                 rpcs={rpc_trace:?}, stdout={}, stderr={}",
+                String::from_utf8_lossy(&stdout),
+                String::from_utf8_lossy(&stderr)
+            ),
+        }
+    };
+
+    let stdout = String::from_utf8(stdout).expect("stdout utf8");
+    let stderr = String::from_utf8(stderr).expect("stderr utf8");
+    assert_eq!(
+        exit_code, 0,
+        "guest exited non-zero\nstdout: {stdout}\nstderr: {stderr}\nrpcs: {rpc_trace:?}"
+    );
+    assert!(
+        stdout.contains("BACKPRESSURE_OK"),
+        "guest did not complete backpressure fixture: {stdout}\n{stderr}"
+    );
+    assert_eq!(
+        socket_reads, 2,
+        "the pump must perform one data read, stop at push(false), then read EOF only after resume; rpcs: {rpc_trace:?}"
+    );
+    let stop_index = read_interest
+        .iter()
+        .position(|enabled| !enabled)
+        .expect("push(false) must disable native application read interest");
+    assert!(
+        read_interest[..stop_index].iter().any(|enabled| *enabled),
+        "_read() must enable application read interest before the admitted read: {read_interest:?}"
+    );
+    assert!(
+        read_interest[stop_index + 1..]
+            .iter()
+            .any(|enabled| *enabled),
+        "draining below the HWM must invoke _read() and resume application reads: {read_interest:?}"
+    );
+}
+
+#[test]
+fn javascript_execution_v8_net_socket_unref_preserves_read_delivery() {
+    let temp = tempdir().expect("create temp dir");
+    write_fixture(
+        &temp.path().join("entry.mjs"),
+        r#"
+import net from "node:net";
+
+const socket = net.connect({ host: "127.0.0.1", port: 80 });
+// This referenced timer is deliberately independent of the socket. It proves
+// unref() changes only socket liveness while the VM still has other live work.
+const keepAlive = setInterval(() => {}, 1_000);
+
+const received = await new Promise((resolve, reject) => {
+  socket.once("error", reject);
+  socket.once("data", (chunk) => resolve(chunk.toString()));
+  socket.once("connect", () => {
+    socket.unref();
+    setTimeout(() => {
+      if (!globalThis._agentOSReadyDispatch(100n, 1n, 1)) {
+        reject(new Error("socket readiness target was not registered"));
+      }
+    }, 10);
+  });
+});
+
+clearInterval(keepAlive);
+if (received !== "after-unref") {
+  throw new Error(`unexpected data after unref: ${received}`);
+}
+socket.destroy();
+console.log("NET_UNREF_IO_OK");
+"#,
+    );
+
+    let mut engine = support::javascript_engine();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+    let mut execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            limits: Default::default(),
+            guest_runtime: Default::default(),
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./entry.mjs")],
+            argv0: None,
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            wasm_module_bytes: None,
+            inline_code: None,
+        })
+        .expect("start JavaScript execution");
+
+    let encoded = base64::engine::general_purpose::STANDARD.encode("after-unref");
+    let mut socket_reads = 0usize;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let exit_code = loop {
+        match execution
+            .poll_event_blocking(Duration::from_secs(5))
+            .expect("poll unref socket bridge event")
+        {
+            Some(JavascriptExecutionEvent::Stdout(bytes)) => stdout.extend(bytes),
+            Some(JavascriptExecutionEvent::Stderr(bytes)) => stderr.extend(bytes),
+            Some(JavascriptExecutionEvent::SignalState { .. }) => {}
+            Some(JavascriptExecutionEvent::SyncRpcRequest(request)) => {
+                if execution
+                    .try_service_standalone_module_sync_rpc(&request)
+                    .expect("service module sync RPC")
+                {
+                    continue;
+                }
+                let response = match request.method.as_str() {
+                    "net.connect" => json!({
+                        "socketId": 1,
+                        "capabilityId": 100,
+                        "capabilityGeneration": 1,
+                        "localAddress": "127.0.0.1",
+                        "localPort": 12345,
+                        "localFamily": "IPv4",
+                        "remoteAddress": "127.0.0.1",
+                        "remotePort": 80,
+                        "remoteFamily": "IPv4",
+                    }),
+                    "net.socket_wait_connect" => json!(
+                        "{\"localAddress\":\"127.0.0.1\",\"localPort\":12345,\
+                         \"remoteAddress\":\"127.0.0.1\",\"remotePort\":80}"
+                    ),
+                    "net.socket_read" => {
+                        socket_reads += 1;
+                        match socket_reads {
+                            1 => json!("__agentos_net_timeout__"),
+                            2 => json!(encoded),
+                            _ => json!("__agentos_net_timeout__"),
+                        }
+                    }
+                    "net.socket_set_read_interest" | "net.destroy" => Value::Null,
+                    other => panic!("unexpected unref socket RPC {other}: {:?}", request.args),
+                };
+                execution
+                    .respond_sync_rpc_success(request.id, response)
+                    .expect("respond to unref socket RPC");
+            }
+            Some(JavascriptExecutionEvent::Exited(exit_code)) => break exit_code,
+            None => panic!(
+                "unref socket execution timed out; reads={socket_reads}, stdout={}, stderr={}",
+                String::from_utf8_lossy(&stdout),
+                String::from_utf8_lossy(&stderr),
+            ),
+        }
+    };
+
+    let stdout = String::from_utf8(stdout).expect("stdout utf8");
+    let stderr = String::from_utf8(stderr).expect("stderr utf8");
+    assert_eq!(
+        exit_code, 0,
+        "unref socket guest exited non-zero\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("NET_UNREF_IO_OK"),
+        "unref socket did not receive delayed readiness data: {stdout}\n{stderr}"
+    );
+    assert_eq!(
+        socket_reads, 3,
+        "expected an empty read, the delayed readiness payload, then a bounded empty probe"
+    );
+}
+
+#[test]
+fn javascript_execution_v8_net_socket_serializes_split_writev_batches() {
+    let temp = tempdir().expect("create temp dir");
+    write_fixture(
+        &temp.path().join("entry.mjs"),
+        r#"
+import net from "node:net";
+
+globalThis.__agentOSNetBridgeMetrics.enable();
+const socket = net.connect({ host: "127.0.0.1", port: 80 });
+const callbackOrder = [];
+
+await new Promise((resolve, reject) => {
+  socket.once("error", reject);
+  socket.once("data", () => {
+    socket.cork();
+    socket.write(Buffer.alloc(300 * 1024, 0x41), () => callbackOrder.push("A"));
+    socket.write(Buffer.from("B"), () => callbackOrder.push("B"));
+    socket.uncork();
+    socket.end(() => {
+      callbackOrder.push("end");
+      resolve();
+    });
+  });
+});
+
+if (callbackOrder.join(",") !== "A,B,end") {
+  throw new Error(`write callbacks completed out of order: ${callbackOrder}`);
+}
+socket.destroy();
+console.log("NET_WRITE_TAIL_OK");
+"#,
+    );
+
+    let mut engine = support::javascript_engine();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+    let mut execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            limits: Default::default(),
+            guest_runtime: Default::default(),
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./entry.mjs")],
+            argv0: None,
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            wasm_module_bytes: None,
+            inline_code: None,
+        })
+        .expect("start JavaScript execution");
+
+    let inbound = base64::engine::general_purpose::STANDARD.encode("trigger");
+    let mut socket_reads = 0usize;
+    let mut writes = Vec::<Vec<u8>>::new();
+    let mut held_first_write = None;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    // Hold the first 256 KiB completion. Even though _writev() has already
+    // detached its one-byte B batch, no second net.write may cross the bridge.
+    while held_first_write.is_none() {
+        match execution
+            .poll_event_blocking(Duration::from_secs(5))
+            .expect("poll first serialized write")
+        {
+            Some(JavascriptExecutionEvent::Stdout(bytes)) => stdout.extend(bytes),
+            Some(JavascriptExecutionEvent::Stderr(bytes)) => stderr.extend(bytes),
+            Some(JavascriptExecutionEvent::SignalState { .. }) => {}
+            Some(JavascriptExecutionEvent::SyncRpcRequest(request)) => {
+                if execution
+                    .try_service_standalone_module_sync_rpc(&request)
+                    .expect("service module sync RPC")
+                {
+                    continue;
+                }
+                if request.method == "net.write" {
+                    writes.push(
+                        request
+                            .raw_bytes_args
+                            .get(&1)
+                            .expect("raw net.write payload")
+                            .clone(),
+                    );
+                    held_first_write = Some(request.id);
+                    continue;
+                }
+                let response = match request.method.as_str() {
+                    "net.connect" => json!({
+                        "socketId": 1,
+                        "capabilityId": 100,
+                        "capabilityGeneration": 1,
+                        "localAddress": "127.0.0.1",
+                        "localPort": 12345,
+                        "localFamily": "IPv4",
+                        "remoteAddress": "127.0.0.1",
+                        "remotePort": 80,
+                        "remoteFamily": "IPv4",
+                    }),
+                    "net.socket_wait_connect" => json!(
+                        "{\"localAddress\":\"127.0.0.1\",\"localPort\":12345,\
+                         \"remoteAddress\":\"127.0.0.1\",\"remotePort\":80}"
+                    ),
+                    "net.socket_read" => {
+                        socket_reads += 1;
+                        if socket_reads == 1 {
+                            json!(inbound)
+                        } else {
+                            json!("__agentos_net_timeout__")
+                        }
+                    }
+                    "net.socket_set_read_interest"
+                    | "__bench.net_tcp_metrics_reset"
+                    | "__bench.net_tcp_metrics_snapshot" => Value::Null,
+                    other => panic!(
+                        "unexpected RPC before first serialized write {other}: {:?}",
+                        request.args
+                    ),
+                };
+                execution
+                    .respond_sync_rpc_success(request.id, response)
+                    .expect("respond before first serialized write");
+            }
+            Some(JavascriptExecutionEvent::Exited(code)) => {
+                panic!("write-tail guest exited before first write: {code}")
+            }
+            None => panic!("write-tail guest timed out before first write"),
+        }
+    }
+
+    let no_second_write_deadline = Instant::now() + Duration::from_millis(200);
+    while Instant::now() < no_second_write_deadline {
+        let remaining = no_second_write_deadline.saturating_duration_since(Instant::now());
+        match execution
+            .poll_event_blocking(remaining)
+            .expect("prove first write completion gates the next write")
+        {
+            Some(JavascriptExecutionEvent::Stdout(bytes)) => stdout.extend(bytes),
+            Some(JavascriptExecutionEvent::Stderr(bytes)) => stderr.extend(bytes),
+            Some(JavascriptExecutionEvent::SignalState { .. }) => {}
+            Some(JavascriptExecutionEvent::SyncRpcRequest(request)) => {
+                if execution
+                    .try_service_standalone_module_sync_rpc(&request)
+                    .expect("service module sync RPC")
+                {
+                    continue;
+                }
+                assert_ne!(
+                    request.method, "net.write",
+                    "a second raw write escaped while the first completion was held"
+                );
+                let response = match request.method.as_str() {
+                    "net.socket_read" => json!("__agentos_net_timeout__"),
+                    "net.socket_set_read_interest" => Value::Null,
+                    other => panic!(
+                        "unexpected RPC while first write was held {other}: {:?}",
+                        request.args
+                    ),
+                };
+                execution
+                    .respond_sync_rpc_success(request.id, response)
+                    .expect("respond while first write held");
+            }
+            Some(JavascriptExecutionEvent::Exited(code)) => {
+                panic!("write-tail guest exited while first write held: {code}")
+            }
+            None => break,
+        }
+    }
+
+    execution
+        .respond_sync_rpc_success(held_first_write.expect("held first write"), Value::Null)
+        .expect("release first serialized write");
+
+    let mut exit_code = None;
+    while exit_code.is_none() {
+        match execution
+            .poll_event_blocking(Duration::from_secs(5))
+            .expect("poll remaining serialized writes")
+        {
+            Some(JavascriptExecutionEvent::Stdout(bytes)) => stdout.extend(bytes),
+            Some(JavascriptExecutionEvent::Stderr(bytes)) => stderr.extend(bytes),
+            Some(JavascriptExecutionEvent::SignalState { .. }) => {}
+            Some(JavascriptExecutionEvent::SyncRpcRequest(request)) => {
+                if execution
+                    .try_service_standalone_module_sync_rpc(&request)
+                    .expect("service module sync RPC")
+                {
+                    continue;
+                }
+                if request.method == "net.write" {
+                    writes.push(
+                        request
+                            .raw_bytes_args
+                            .get(&1)
+                            .expect("raw net.write payload")
+                            .clone(),
+                    );
+                }
+                let response = match request.method.as_str() {
+                    "net.write"
+                    | "net.shutdown"
+                    | "net.destroy"
+                    | "net.socket_set_read_interest" => Value::Null,
+                    "net.socket_read" => json!("__agentos_net_timeout__"),
+                    other => panic!(
+                        "unexpected RPC after first serialized write {other}: {:?}",
+                        request.args
+                    ),
+                };
+                execution
+                    .respond_sync_rpc_success(request.id, response)
+                    .expect("respond after first serialized write");
+            }
+            Some(JavascriptExecutionEvent::Exited(code)) => exit_code = Some(code),
+            None => panic!(
+                "write-tail guest timed out; writes={:?}, stdout={}, stderr={}",
+                writes.iter().map(Vec::len).collect::<Vec<_>>(),
+                String::from_utf8_lossy(&stdout),
+                String::from_utf8_lossy(&stderr),
+            ),
+        }
+    }
+
+    let stdout = String::from_utf8(stdout).expect("stdout utf8");
+    let stderr = String::from_utf8(stderr).expect("stderr utf8");
+    assert_eq!(
+        exit_code,
+        Some(0),
+        "write-tail guest exited non-zero\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("NET_WRITE_TAIL_OK"),
+        "write-tail guest did not observe ordered callbacks: {stdout}\n{stderr}"
+    );
+    assert_eq!(
+        writes.iter().map(Vec::len).collect::<Vec<_>>(),
+        vec![256 * 1024, 44 * 1024, 1],
+        "split writev payloads crossed the bridge out of order"
+    );
+    assert!(writes[0].iter().all(|byte| *byte == b'A'));
+    assert!(writes[1].iter().all(|byte| *byte == b'A'));
+    assert_eq!(writes[2], b"B");
+}
+
+fn javascript_execution_v8_net_close_connect_and_accept_wakes_match_node_ordering() {
+    let temp = tempdir().expect("create temp dir");
+    write_fixture(
+        &temp.path().join("entry.mjs"),
+        r#"
+import net from "node:net";
+
+const immediate = () => new Promise((resolve) => setImmediate(resolve));
+const once = (target, event) => new Promise((resolve) => target.once(event, resolve));
+
+async function assertDestroyedLoopbackDoesNotConnect() {
+  const events = [];
+  const socket = new net.Socket();
+  const closed = once(socket, "close");
+  socket.on("connect", () => events.push("connect"));
+  socket.on("ready", () => events.push("ready"));
+  socket.on("close", () => events.push("close"));
+  socket.on("error", (error) => { throw error; });
+  socket.connect({ host: "127.0.0.1", port: 81 });
+  socket.destroy();
+  await closed;
+  await immediate();
+  if (events.join(",") !== "close") {
+    throw new Error(`destroyed loopback socket emitted stale lifecycle events: ${events}`);
+  }
+}
+
+async function assertBufferedEof(label, destroyBeforeDrain) {
+  const events = [];
+  const socket = new net.Socket();
+  const connected = once(socket, "connect");
+  const readable = once(socket, "readable");
+  const closed = once(socket, "close");
+  socket.on("end", () => events.push("end"));
+  socket.on("close", () => events.push("close"));
+  socket.on("error", (error) => { throw error; });
+  socket.connect({ host: "127.0.0.1", port: 80 });
+  await connected;
+  socket.end();
+  await readable;
+  await immediate();
+
+  if (events.includes("close")) {
+    throw new Error(`${label}: close emitted while EOF data remained paused`);
+  }
+
+  if (destroyBeforeDrain) {
+    socket.destroy();
+    await closed;
+    if (events.filter((event) => event === "close").length !== 1) {
+      throw new Error(`${label}: destroy must emit close exactly once: ${events}`);
+    }
+    return;
+  }
+
+  const chunk = socket.read();
+  events.push(`read:${chunk?.toString()}`);
+  await closed;
+  const readIndex = events.indexOf(`read:buffered-1`);
+  const endIndex = events.indexOf("end");
+  const closeIndex = events.indexOf("close");
+  if (readIndex === -1 || endIndex < readIndex || closeIndex < endIndex) {
+    throw new Error(`${label}: expected buffered read -> end -> close, got ${events}`);
+  }
+}
+
+async function assertAcceptWakesCoalesce() {
+  globalThis.__agentOSNetBridgeMetrics.enable();
+  globalThis.__agentOSNetBridgeMetrics.reset();
+  const server = net.createServer();
+  server.on("error", (error) => { throw error; });
+  const snapshot = await new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      for (let index = 0; index < 32; index += 1) {
+        if (!globalThis._agentOSReadyDispatch(77n, 1n, 1)) {
+          throw new Error("server readiness target was not registered");
+        }
+      }
+      setImmediate(() => {
+        const metrics = globalThis.__agentOSNetBridgeMetrics.snapshot();
+        server.close(() => resolve(metrics));
+      });
+    });
+  });
+  if (snapshot.acceptEventWakeups !== 1 || snapshot.acceptWakeAlreadyQueued !== 31) {
+    throw new Error(`accept wakes were not capacity-one: ${JSON.stringify(snapshot)}`);
+  }
+  if (snapshot.acceptRawCalls > 2) {
+    throw new Error(`coalesced accept wakes over-polled: ${JSON.stringify(snapshot)}`);
+  }
+}
+
+await assertDestroyedLoopbackDoesNotConnect();
+await assertBufferedEof("drain", false);
+await assertBufferedEof("destroy", true);
+await assertAcceptWakesCoalesce();
+console.log("NET_LIFECYCLE_WAKE_OK");
+"#,
+    );
+
+    let mut engine = support::javascript_engine();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+    let mut execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            limits: Default::default(),
+            guest_runtime: Default::default(),
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./entry.mjs")],
+            argv0: None,
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            wasm_module_bytes: None,
+            inline_code: None,
+        })
+        .expect("start JavaScript execution");
+
+    let mut next_socket_id = 0_u64;
+    let mut socket_reads = BTreeMap::<u64, usize>::new();
+    let mut socket_destroys = BTreeMap::<u64, usize>::new();
+    let mut accept_calls = 0_usize;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let exit_code = loop {
+        match execution
+            .poll_event_blocking(Duration::from_secs(5))
+            .expect("poll net lifecycle bridge event")
+        {
+            Some(JavascriptExecutionEvent::Stdout(bytes)) => stdout.extend(bytes),
+            Some(JavascriptExecutionEvent::Stderr(bytes)) => stderr.extend(bytes),
+            Some(JavascriptExecutionEvent::SignalState { .. }) => {}
+            Some(JavascriptExecutionEvent::SyncRpcRequest(request)) => {
+                if execution
+                    .try_service_standalone_module_sync_rpc(&request)
+                    .expect("service module sync RPC")
+                {
+                    continue;
+                }
+                let request_id = request.id;
+                let response = match request.method.as_str() {
+                    "net.connect" => {
+                        let port = request.args[0]["port"]
+                            .as_u64()
+                            .expect("net.connect port");
+                        if port == 81 {
+                            json!({
+                                "loopbackHttpTarget": { "processId": "proc", "serverId": 1 },
+                                "localAddress": "127.0.0.1",
+                                "localPort": 12346,
+                                "localFamily": "IPv4",
+                                "remoteAddress": "127.0.0.1",
+                                "remotePort": 81,
+                                "remoteFamily": "IPv4",
+                            })
+                        } else {
+                            next_socket_id += 1;
+                            json!({
+                                "socketId": next_socket_id,
+                                "capabilityId": 100 + next_socket_id,
+                                "capabilityGeneration": 1,
+                                "localAddress": "127.0.0.1",
+                                "localPort": 12346 + next_socket_id,
+                                "localFamily": "IPv4",
+                                "remoteAddress": "127.0.0.1",
+                                "remotePort": 80,
+                                "remoteFamily": "IPv4",
+                            })
+                        }
+                    }
+                    "net.socket_wait_connect" => {
+                        let socket_id = request.args[0]
+                            .as_u64()
+                            .expect("wait-connect socket id");
+                        json!(format!(
+                            "{{\"localAddress\":\"127.0.0.1\",\"localPort\":{},\"remoteAddress\":\"127.0.0.1\",\"remotePort\":80}}",
+                            12346 + socket_id
+                        ))
+                    }
+                    "net.socket_read" => {
+                        let socket_id = request.args[0]
+                            .as_u64()
+                            .expect("read socket id");
+                        let reads = socket_reads.entry(socket_id).or_default();
+                        *reads += 1;
+                        if *reads == 1 {
+                            json!(base64::engine::general_purpose::STANDARD
+                                .encode(format!("buffered-{socket_id}")))
+                        } else {
+                            Value::Null
+                        }
+                    }
+                    "net.destroy" => {
+                        let socket_id = request.args[0]
+                            .as_u64()
+                            .expect("destroy socket id");
+                        *socket_destroys.entry(socket_id).or_default() += 1;
+                        Value::Null
+                    }
+                    "net.listen" => json!({
+                        "serverId": 1,
+                        "capabilityId": 77,
+                        "capabilityGeneration": 1,
+                        "address": {
+                            "localAddress": "127.0.0.1",
+                            "localPort": 23456,
+                            "localFamily": "IPv4",
+                        },
+                    }),
+                    "net.server_accept" => {
+                        accept_calls += 1;
+                        json!("__agentos_net_timeout__")
+                    }
+                    "net.server_close"
+                    | "net.shutdown"
+                    | "net.socket_set_read_interest"
+                    | "__bench.net_tcp_metrics_reset"
+                    | "__bench.net_tcp_metrics_snapshot" => Value::Null,
+                    other => panic!("unexpected net lifecycle RPC {other}: {:?}", request.args),
+                };
+                execution
+                    .respond_sync_rpc_success(request_id, response)
+                    .expect("respond to net lifecycle RPC");
+            }
+            Some(JavascriptExecutionEvent::Exited(exit_code)) => break exit_code,
+            None => panic!(
+                "net lifecycle execution timed out; reads={socket_reads:?}, destroys={socket_destroys:?}, accepts={accept_calls}, stdout={}, stderr={}",
+                String::from_utf8_lossy(&stdout),
+                String::from_utf8_lossy(&stderr),
+            ),
+        }
+    };
+
+    let stdout = String::from_utf8(stdout).expect("stdout utf8");
+    let stderr = String::from_utf8(stderr).expect("stderr utf8");
+    assert_eq!(
+        exit_code, 0,
+        "guest exited non-zero\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("NET_LIFECYCLE_WAKE_OK"),
+        "guest did not complete net lifecycle fixture: {stdout}\n{stderr}"
+    );
+    assert_eq!(
+        socket_destroys,
+        BTreeMap::from([(1, 1), (2, 1)]),
+        "drain and explicit destroy must each release exactly once"
+    );
+    assert_eq!(
+        accept_calls, 2,
+        "initial accept plus one coalesced pending retry were expected"
+    );
+}
+
 fn javascript_execution_v8_dynamic_import_accepts_file_urls() {
     let temp = tempdir().expect("create temp dir");
     write_fixture(
@@ -4769,7 +5699,7 @@ console.log(JSON.stringify({ href, value: module.default.value }));
 "#,
     );
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -4808,7 +5738,7 @@ console.log(JSON.stringify({ href, value: module.default.value }));
 
 fn javascript_execution_v8_wasm_instantiate_streaming_never_hangs() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -4872,7 +5802,7 @@ console.log(outcome);
 
 fn javascript_execution_v8_structured_clone_rebinds_to_sandbox_realm() {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -5016,7 +5946,7 @@ fn run_js_runtime_guest(
     inline_code: &str,
 ) -> JavascriptExecutionResult {
     let temp = tempdir().expect("create temp dir");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -5185,7 +6115,7 @@ fn js_runtime_module_resolution_relative_allows_local_denies_bare() {
     let temp = tempdir().expect("create temp dir");
     std::fs::write(temp.path().join("local.mjs"), "export const ok = 42;\n")
         .expect("write local module");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -5260,7 +6190,7 @@ fn js_runtime_browser_loads_cjs_npm_package() {
         "module.exports = { answer: 42 };\n",
     )
     .expect("write index.js");
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -5341,7 +6271,7 @@ fn javascript_infinite_loop_is_terminated_by_cpu_watchdog() {
                 return;
             }
         };
-        let mut engine = JavascriptExecutionEngine::default();
+        let mut engine = support::javascript_engine();
         let context = engine.create_context(CreateJavascriptContextRequest {
             vm_id: String::from("vm-js"),
             bootstrap_module: None,
@@ -5425,7 +6355,7 @@ fn javascript_awaiting_guest_is_not_killed_by_cpu_budget() {
                 return;
             }
         };
-        let mut engine = JavascriptExecutionEngine::default();
+        let mut engine = support::javascript_engine();
         let context = engine.create_context(CreateJavascriptContextRequest {
             vm_id: String::from("vm-js-await"),
             bootstrap_module: None,
@@ -5512,7 +6442,7 @@ fn javascript_default_cpu_budget_allows_short_cpu_work() {
                 return;
             }
         };
-        let mut engine = JavascriptExecutionEngine::default();
+        let mut engine = support::javascript_engine();
         let context = engine.create_context(CreateJavascriptContextRequest {
             vm_id: String::from("vm-js-nolimit"),
             bootstrap_module: None,
@@ -5608,7 +6538,7 @@ fn javascript_awaiting_guest_is_terminated_by_wall_clock_backstop() {
                 return;
             }
         };
-        let mut engine = JavascriptExecutionEngine::default();
+        let mut engine = support::javascript_engine();
         let context = engine.create_context(CreateJavascriptContextRequest {
             vm_id: String::from("vm-js-wallclock"),
             bootstrap_module: None,
@@ -5706,7 +6636,7 @@ fn javascript_cpu_budget_only_does_not_impose_wall_clock_limit() {
                 return;
             }
         };
-        let mut engine = JavascriptExecutionEngine::default();
+        let mut engine = support::javascript_engine();
         let context = engine.create_context(CreateJavascriptContextRequest {
             vm_id: String::from("vm-js-cpu-only"),
             bootstrap_module: None,
@@ -5796,7 +6726,7 @@ fn javascript_no_time_limit_when_neither_env_set() {
                 return;
             }
         };
-        let mut engine = JavascriptExecutionEngine::default();
+        let mut engine = support::javascript_engine();
         let context = engine.create_context(CreateJavascriptContextRequest {
             vm_id: String::from("vm-js-notimelimit"),
             bootstrap_module: None,
@@ -5891,7 +6821,7 @@ fn javascript_heap_allocation_bomb_is_capped_by_oom_guard() {
                 return;
             }
         };
-        let mut engine = JavascriptExecutionEngine::default();
+        let mut engine = support::javascript_engine();
         let context = engine.create_context(CreateJavascriptContextRequest {
             vm_id: String::from("vm-js"),
             bootstrap_module: None,
@@ -6110,6 +7040,8 @@ fn javascript_v8_suite() {
     javascript_execution_v8_net_socket_readable_state_tracks_ssh2_writable_shape();
     javascript_execution_v8_event_channel_backpressures_instead_of_destroying_session();
     javascript_execution_v8_net_socket_read_loop_yields_macrotask_between_chunks();
+    javascript_execution_v8_net_socket_backpressure_stops_and_resumes_transport_reads();
+    javascript_execution_v8_net_close_connect_and_accept_wakes_match_node_ordering();
     javascript_execution_v8_dynamic_import_accepts_file_urls();
     javascript_execution_v8_wasm_instantiate_streaming_never_hangs();
     javascript_execution_v8_structured_clone_rebinds_to_sandbox_realm();

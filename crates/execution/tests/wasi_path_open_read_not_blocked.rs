@@ -31,8 +31,9 @@ fn read_source(rel: &str) -> String {
 fn extract_has_write_rights_body(source: &str) -> Option<&str> {
     let start = source.find("_hasWriteRights(rights)")?;
     let rest = &source[start..];
-    // Grab a generous window covering the small method body.
-    let end = rest.find("_writeUint32").unwrap_or(rest.len().min(800));
+    // Stop at the next sibling method so unrelated read-right checks cannot
+    // become false positives when methods are inserted or renamed below it.
+    let end = rest.find("_hasReadRights(rights)")?;
     Some(&rest[..end])
 }
 
@@ -94,5 +95,27 @@ fn wasm_runner_path_open_gates_write_access_on_write_rights() {
     assert!(
         wasm_src.contains("if (requestedWriteAccess && resolved.readOnly) {"),
         "read-only EROFS must be gated behind requestedWriteAccess so reads succeed"
+    );
+}
+
+#[test]
+fn wasm_runner_fd_close_releases_directory_backing_fd() {
+    let wasm_src = read_source("assets/runners/wasi-module.js");
+    let close_start = wasm_src
+        .find("_fdClose(fd)")
+        .expect("expected WASI fd_close implementation");
+    let close_end = wasm_src[close_start..]
+        .find("_fdSync(fd)")
+        .map(|offset| close_start + offset)
+        .expect("expected fd_sync after fd_close");
+    let close_body = &wasm_src[close_start..close_end];
+
+    assert!(
+        close_body.contains("entry.kind === \"file\" || entry.kind === \"directory\""),
+        "fd_close must release both file and directory backing descriptors; body: {close_body}"
+    );
+    assert!(
+        close_body.contains("__agentOSFs().closeSync(entry.realFd);"),
+        "fd_close must close the kernel-backed descriptor before deleting its WASI entry"
     );
 }

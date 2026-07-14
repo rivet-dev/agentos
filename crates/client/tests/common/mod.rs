@@ -16,6 +16,12 @@ use agentos_client::AgentOs;
 
 static INIT: Once = Once::new();
 
+fn test_node_modules_dir() -> PathBuf {
+    std::env::var_os("AGENTOS_TEST_NODE_MODULES_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../node_modules"))
+}
+
 pub fn ensure_sidecar_env() {
     INIT.call_once(|| {
         if std::env::var("AGENTOS_SIDECAR_BIN").is_err() {
@@ -70,10 +76,7 @@ pub async fn new_vm_with_sidecar_pool(pool: impl Into<String>) -> AgentOs {
     ensure_sidecar_env();
     AgentOs::create(AgentOsConfig {
         mounts: vec![node_modules_mount(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../node_modules")
-                .to_string_lossy()
-                .into_owned(),
+            test_node_modules_dir().to_string_lossy().into_owned(),
         )],
         sidecar: Some(AgentOsSidecarConfig::Shared {
             pool: Some(pool.into()),
@@ -109,10 +112,7 @@ async fn new_vm_with_config(
 ) -> AgentOs {
     ensure_sidecar_env();
     let mut all_mounts = vec![node_modules_mount(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../node_modules")
-            .to_string_lossy()
-            .into_owned(),
+        test_node_modules_dir().to_string_lossy().into_owned(),
     )];
     all_mounts.extend(mounts);
     AgentOs::create(AgentOsConfig {

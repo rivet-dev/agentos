@@ -90,7 +90,7 @@ endif
 ifeq ($(wildcard $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a),)
   CUSTOM_WASM_PROG_NAMES :=
 else
-  CUSTOM_WASM_PROG_NAMES := curl wget grep sqlite3 tree zip unzip
+  CUSTOM_WASM_PROG_NAMES := curl wget git git-remote-http grep sqlite3 tree zip unzip
 endif
 
 WASM_PROG_NAMES := $(sort $(basename $(notdir $(SOURCES))) $(CUSTOM_WASM_PROG_NAMES))
@@ -157,7 +157,7 @@ CURL_LIBCURL_ARTIFACT := $(CURL_LIBCURL_PREFIX)/lib/libcurl.a
 CURL_UPSTREAM_OVERLAY_DIR := ../../software/curl/native/c/overlay
 CURL_UPSTREAM_OVERLAY_FILES := $(wildcard $(CURL_UPSTREAM_OVERLAY_DIR)/lib/*.c $(CURL_UPSTREAM_OVERLAY_DIR)/lib/*.h $(CURL_UPSTREAM_OVERLAY_DIR)/lib/vtls/*.c $(CURL_UPSTREAM_OVERLAY_DIR)/lib/vtls/*.h)
 ZLIB_VERSION := 1.3.1
-ZLIB_URL := https://zlib.net/zlib-$(ZLIB_VERSION).tar.gz
+ZLIB_URL := https://zlib.net/fossils/zlib-$(ZLIB_VERSION).tar.gz
 ZLIB_BUILD_DIR := $(BUILD_DIR)/zlib
 # mbedTLS 3.6 LTS — in-guest TLS for curl/wget/git (see
 # docs-internal/networking-parity-spec.md). Use the prepared release tarball

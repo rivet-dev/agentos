@@ -1,13 +1,14 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import {
 	createServer,
 	type IncomingMessage,
 	type ServerResponse,
 } from "node:http";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import opencode from "@agentos-software/opencode";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
-import { describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import type { AgentCapabilities, AgentInfo } from "../src/agent-os.js";
 import { AgentOs } from "../src/agent-os.js";
 import {
@@ -16,14 +17,32 @@ import {
 	startLlmock,
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
+import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import {
 	createVmOpenCodeHome,
 	createVmWorkspace,
 	readVmText,
 } from "./helpers/opencode-helper.js";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
+const ACP_TRACE_DIR = mkdtempSync(join(tmpdir(), "agentos-opencode-trace-"));
+const ACP_TRACE_PATH = join(ACP_TRACE_DIR, "acp.jsonl");
+const PREVIOUS_ACP_TRACE_PATH = process.env.AGENT_OS_ACP_TRACE_PATH;
+
+beforeAll(() => {
+	// The native sidecar is shared across VMs, so its process environment must
+	// be configured before this file creates the first VM.
+	process.env.AGENT_OS_ACP_TRACE_PATH = ACP_TRACE_PATH;
+});
+
+afterAll(() => {
+	if (PREVIOUS_ACP_TRACE_PATH === undefined) {
+		delete process.env.AGENT_OS_ACP_TRACE_PATH;
+	} else {
+		process.env.AGENT_OS_ACP_TRACE_PATH = PREVIOUS_ACP_TRACE_PATH;
+	}
+	rmSync(ACP_TRACE_DIR, { recursive: true, force: true });
+});
 const REGISTRY_COMMAND_DIR_CANDIDATES = [
 	resolve(
 		import.meta.dirname,
@@ -243,14 +262,14 @@ async function createOpenCodeVm(mockUrl: string): Promise<AgentOs> {
 	return AgentOs.create({
 		loopbackExemptPorts: [Number(new URL(mockUrl).port)],
 		mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-		// opencode is pre-packed + projected by default.
-		software: [...shellSoftware],
+		software: [opencode, ...shellSoftware],
 	});
 }
 
 async function createOpenCodeOnlyVm(mockUrl: string): Promise<AgentOs> {
 	return AgentOs.create({
 		loopbackExemptPorts: [Number(new URL(mockUrl).port)],
+		software: [opencode],
 	});
 }
 
@@ -558,10 +577,6 @@ describe("OpenCode session API integration", () => {
 
 	test("real OpenCode missing session/load degrades to transcript fallback", async () => {
 		const { mock, url } = await startLlmock([DEFAULT_TEXT_FIXTURE]);
-		const traceDir = mkdtempSync(join(tmpdir(), "agentos-opencode-trace-"));
-		const tracePath = join(traceDir, "acp.jsonl");
-		const previousTracePath = process.env.AGENT_OS_ACP_TRACE_PATH;
-		process.env.AGENT_OS_ACP_TRACE_PATH = tracePath;
 
 		let vm: AgentOs | undefined;
 		let liveSessionId: string | undefined;
@@ -607,7 +622,7 @@ describe("OpenCode session API integration", () => {
 					.some((request) => hasUserMessageContaining(request, transcriptPath)),
 			).toBe(true);
 
-			const traces = readFileSync(tracePath, "utf8")
+			const traces = readFileSync(ACP_TRACE_PATH, "utf8")
 				.trim()
 				.split("\n")
 				.map((line) => JSON.parse(line) as Record<string, unknown>);
@@ -632,12 +647,6 @@ describe("OpenCode session API integration", () => {
 				await vm.dispose();
 			}
 			await stopLlmock(mock);
-			if (previousTracePath === undefined) {
-				delete process.env.AGENT_OS_ACP_TRACE_PATH;
-			} else {
-				process.env.AGENT_OS_ACP_TRACE_PATH = previousTracePath;
-			}
-			rmSync(traceDir, { recursive: true, force: true });
 		}
 	}, 120_000);
 
@@ -834,12 +843,13 @@ describe("OpenCode session API integration", () => {
 						},
 					})
 				).sessionId;
+				const activeSessionId = sessionId;
 
-				vm.onPermissionRequest(sessionId, (request) => {
+				vm.onPermissionRequest(activeSessionId, (request) => {
 					permissionIds.push(request.permissionId);
 					permissionParams.push(request.params);
 					permissionResponses.push(
-						vm.respondPermission(sessionId!, request.permissionId, "once"),
+						vm.respondPermission(activeSessionId, request.permissionId, "once"),
 					);
 				});
 
@@ -937,10 +947,15 @@ describe("OpenCode session API integration", () => {
 					},
 				})
 			).sessionId;
+			const activeSessionId = sessionId;
 
-			vm.onPermissionRequest(sessionId, (request) => {
+			vm.onPermissionRequest(activeSessionId, (request) => {
 				permissionIds.push(request.permissionId);
-				void vm.respondPermission(sessionId!, request.permissionId, "reject");
+				void vm.respondPermission(
+					activeSessionId,
+					request.permissionId,
+					"reject",
+				);
 			});
 
 			const { response } = await vm.prompt(

@@ -1,4 +1,5 @@
 use crate::ipc_binary::{BinaryFrame, ExecutionErrorBin};
+use agentos_runtime::readiness::ReadyFlags;
 use std::io;
 use std::sync::Arc;
 
@@ -34,6 +35,27 @@ pub enum RuntimeCommand {
     SendToSession {
         session_id: String,
         message: SessionMessage,
+    },
+    /// In-process capability readiness publication. Durable data stays in the
+    /// owning sidecar subsystem; this command carries identity and level state.
+    PublishReadiness {
+        session_id: String,
+        capability_id: u64,
+        capability_generation: u64,
+        flags: ReadyFlags,
+    },
+    RemoveReadiness {
+        session_id: String,
+        capability_id: u64,
+        capability_generation: u64,
+    },
+    PublishSignal {
+        session_id: String,
+        signal: i32,
+    },
+    PublishTimer {
+        session_id: String,
+        timer_id: u64,
     },
     /// Install a direct module-source reader on a session thread. Carries the live
     /// reader (not serialized) so module loads skip the bridge round-trip. Routed
@@ -101,6 +123,9 @@ pub struct BridgeResponse {
     pub call_id: u64,
     pub status: u8,
     pub payload: Vec<u8>,
+    /// In-process byte ownership. IPC-created responses leave this empty;
+    /// sidecar-owned direct responses retain it until V8 copies the payload.
+    pub reservation: Option<agentos_runtime::accounting::SharedReservation>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -216,6 +241,7 @@ impl TryFrom<BinaryFrame> for RuntimeCommand {
                         call_id,
                         status,
                         payload,
+                        reservation: None,
                     }),
                 })
             }

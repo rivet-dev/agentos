@@ -1,4 +1,4 @@
-// Execution budget enforcement via dedicated watchdog threads.
+// Execution budget enforcement via process-owned runtime tasks.
 //
 // Two INDEPENDENT mechanisms live here:
 //
@@ -22,9 +22,10 @@
 // and when both are set whichever fires first terminates execution.
 
 use agentos_bridge::queue_tracker::{register_limit, TrackedLimit};
+use agentos_runtime::{RuntimeContext, TaskClass, TaskOwner};
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 
 pub(crate) const TIMEOUT_GUARD_START_ERROR_CODE: &str = "ERR_TIMEOUT_GUARD_START";
@@ -153,7 +154,7 @@ impl ThreadCpuClock {
 
 /// Guard for per-execution TRUE CPU-time budget enforcement.
 ///
-/// Spawns a watchdog thread that polls the execution thread's CPU clock every
+/// Spawns a shared-runtime watchdog task that polls the execution thread's CPU clock every
 /// [`CPU_BUDGET_POLL_INTERVAL`]. When accumulated active-JS CPU time exceeds the
 /// budget, it calls `v8::Isolate::terminate_execution()` and signals the
 /// execution abort with [`crate::session::ExecutionAbortReason::CpuBudgetExceeded`].
@@ -161,9 +162,8 @@ impl ThreadCpuClock {
 ///
 /// Drop or call `cancel()` to stop the watchdog (execution completed normally).
 pub(crate) struct CpuBudgetGuard {
-    cancel_tx: Option<crossbeam_channel::Sender<()>>,
     fired: Arc<AtomicBool>,
-    join_handle: Option<thread::JoinHandle<()>>,
+    task: Option<tokio::task::JoinHandle<()>>,
 }
 
 #[cfg(unix)]
@@ -176,12 +176,13 @@ impl CpuBudgetGuard {
     /// - `execution_abort`: signalled with `CpuBudgetExceeded` when the budget is exhausted
     #[cfg_attr(test, allow(dead_code))]
     pub(crate) fn new(
+        runtime: &RuntimeContext,
+        owner: Option<TaskOwner>,
         budget_ms: u32,
         cpu_clock: ThreadCpuClock,
         isolate_handle: v8::IsolateHandle,
         execution_abort: crate::session::SharedExecutionAbort,
     ) -> Result<Self, String> {
-        let (cancel_tx, cancel_rx) = crossbeam_channel::bounded::<()>(1);
         let fired = Arc::new(AtomicBool::new(false));
         let fired_clone = Arc::clone(&fired);
 
@@ -196,54 +197,40 @@ impl CpuBudgetGuard {
         // separately by `warn_limit_exhausted`).
         let cpu_gauge = register_limit(TrackedLimit::V8CpuTimeMs, budget_ms as usize);
 
-        let handle = thread::Builder::new()
-            .name("cpu-budget".into())
-            .spawn(move || {
-                let ticker = crossbeam_channel::tick(CPU_BUDGET_POLL_INTERVAL);
-                loop {
-                    crossbeam_channel::select! {
-                        recv(cancel_rx) -> _ => {
-                            // Cancelled — execution completed normally.
-                            return;
-                        }
-                        recv(ticker) -> _ => {
-                            let used = cpu_clock
-                                .elapsed_ms()
-                                .unwrap_or(baseline_ms)
-                                .saturating_sub(baseline_ms);
-                            cpu_gauge.observe_depth(used as usize);
-                            if used >= budget_ms {
-                                fired_clone.store(true, Ordering::SeqCst);
-                                isolate_handle.terminate_execution();
-                                crate::session::signal_execution_abort(
-                                    &execution_abort,
-                                    crate::session::ExecutionAbortReason::CpuBudgetExceeded,
-                                );
-                                return;
-                            }
-                        }
-                    }
+        let handle = spawn_timer(runtime, owner, async move {
+            let start = tokio::time::Instant::now() + CPU_BUDGET_POLL_INTERVAL;
+            let mut ticker = tokio::time::interval_at(start, CPU_BUDGET_POLL_INTERVAL);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                let used = cpu_clock
+                    .elapsed_ms()
+                    .unwrap_or(baseline_ms)
+                    .saturating_sub(baseline_ms);
+                cpu_gauge.observe_depth(used as usize);
+                if used >= budget_ms {
+                    fired_clone.store(true, Ordering::SeqCst);
+                    isolate_handle.terminate_execution();
+                    crate::session::signal_execution_abort(
+                        &execution_abort,
+                        crate::session::ExecutionAbortReason::CpuBudgetExceeded,
+                    );
+                    return;
                 }
-            })
-            .map_err(|error| {
-                format!(
-                    "{CPU_BUDGET_GUARD_START_ERROR_CODE}: failed to spawn cpu-budget thread: {error}"
-                )
-            })?;
+            }
+        })
+        .map_err(|error| format!("{CPU_BUDGET_GUARD_START_ERROR_CODE}: {error}"))?;
 
         Ok(CpuBudgetGuard {
-            cancel_tx: Some(cancel_tx),
             fired,
-            join_handle: Some(handle),
+            task: Some(handle),
         })
     }
 
-    /// Cancel the watchdog (execution completed normally). Blocks until the
-    /// watchdog thread exits.
+    /// Cancel the watchdog when execution completes normally.
     pub(crate) fn cancel(&mut self) {
-        self.cancel_tx.take();
-        if let Some(h) = self.join_handle.take() {
-            let _ = h.join();
+        if let Some(task) = self.task.take() {
+            task.abort();
         }
     }
 
@@ -277,6 +264,8 @@ pub(crate) fn current_thread_cpu_clock() -> Option<ThreadCpuClock> {
 #[cfg(not(unix))]
 impl CpuBudgetGuard {
     pub(crate) fn new(
+        _runtime: &RuntimeContext,
+        _owner: Option<TaskOwner>,
         _budget_ms: u32,
         _cpu_clock: ThreadCpuClock,
         _isolate_handle: v8::IsolateHandle,
@@ -295,32 +284,32 @@ impl CpuBudgetGuard {
     }
 }
 
-/// Guard for per-session CPU timeout enforcement.
+/// Guard for per-execution wall-clock timeout enforcement.
 ///
-/// Spawns a timer thread that calls `v8::Isolate::terminate_execution()`
+/// Spawns a timer task that calls `v8::Isolate::terminate_execution()`
 /// and closes the active execution abort channel to unblock any channel-based
 /// readers when the timeout elapses. Drop or call `cancel()` to prevent firing.
 pub struct TimeoutGuard {
-    /// Sender side of cancellation channel — dropped to cancel the timer
-    cancel_tx: Option<crossbeam_channel::Sender<()>>,
     /// Set to true when the timeout fired
     fired: Arc<AtomicBool>,
-    /// Timer thread handle
-    join_handle: Option<thread::JoinHandle<()>>,
+    /// Shared-runtime timer task
+    task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl TimeoutGuard {
-    /// Spawn a timeout timer thread.
+    /// Spawn a timeout task on the injected process runtime.
     ///
     /// - `timeout_ms`: wall-clock time limit in milliseconds
     /// - `isolate_handle`: V8 isolate handle for `terminate_execution()`
     /// - `abort_tx`: dropped on timeout to unblock channel readers via `select!`
     pub(crate) fn new(
+        runtime: &RuntimeContext,
+        owner: Option<TaskOwner>,
         timeout_ms: u32,
         isolate_handle: v8::IsolateHandle,
         abort_tx: crossbeam_channel::Sender<()>,
     ) -> Result<Self, String> {
-        Self::spawn(timeout_ms, isolate_handle, move || {
+        Self::spawn(runtime, owner, timeout_ms, isolate_handle, move || {
             drop(abort_tx);
         })
     }
@@ -332,11 +321,13 @@ impl TimeoutGuard {
     /// `limits.jsRuntime.wallClockLimitMs`.
     #[cfg_attr(test, allow(dead_code))]
     pub(crate) fn with_execution_abort(
+        runtime: &RuntimeContext,
+        owner: Option<TaskOwner>,
         timeout_ms: u32,
         isolate_handle: v8::IsolateHandle,
         execution_abort: crate::session::SharedExecutionAbort,
     ) -> Result<Self, String> {
-        Self::spawn(timeout_ms, isolate_handle, move || {
+        Self::spawn(runtime, owner, timeout_ms, isolate_handle, move || {
             crate::session::signal_execution_abort(
                 &execution_abort,
                 crate::session::ExecutionAbortReason::WallClockTimedOut,
@@ -345,11 +336,12 @@ impl TimeoutGuard {
     }
 
     fn spawn(
+        runtime: &RuntimeContext,
+        owner: Option<TaskOwner>,
         timeout_ms: u32,
         isolate_handle: v8::IsolateHandle,
         on_timeout: impl FnOnce() + Send + 'static,
     ) -> Result<Self, String> {
-        let (cancel_tx, cancel_rx) = crossbeam_channel::bounded::<()>(1);
         let fired = Arc::new(AtomicBool::new(false));
         let fired_clone = Arc::clone(&fired);
 
@@ -360,58 +352,49 @@ impl TimeoutGuard {
         let warn_at_ms =
             timeout_ms as u64 * agentos_bridge::queue_tracker::WARN_FILL_PERCENT as u64 / 100;
 
-        let handle = thread::Builder::new()
-            .name("timeout".into())
-            .spawn(move || {
-                let warn_timer = crossbeam_channel::after(Duration::from_millis(warn_at_ms));
-                let timer = crossbeam_channel::after(Duration::from_millis(timeout_ms as u64));
-
-                loop {
-                    crossbeam_channel::select! {
-                        recv(warn_timer) -> _ => {
-                            // Crossed the approach threshold — warn once. The full
-                            // timer (and cancel) are still pending; `after` fires
-                            // only once, so the next select waits on those.
-                            wall_gauge.observe_depth(warn_at_ms as usize);
-                        }
-                        recv(timer) -> _ => {
-                            // Timeout elapsed — terminate V8 execution
-                            fired_clone.store(true, Ordering::SeqCst);
-                            isolate_handle.terminate_execution();
-                            on_timeout();
-                            return;
-                        }
-                        recv(cancel_rx) -> _ => {
-                            // Cancelled — execution completed normally
-                            return;
-                        }
-                    }
-                }
-            })
-            .map_err(|error| {
-                format!("{TIMEOUT_GUARD_START_ERROR_CODE}: failed to spawn timeout thread: {error}")
-            })?;
+        let handle = spawn_timer(runtime, owner, async move {
+            let start = tokio::time::Instant::now();
+            let warn_at = start + Duration::from_millis(warn_at_ms);
+            let deadline = start + Duration::from_millis(timeout_ms as u64);
+            tokio::time::sleep_until(warn_at).await;
+            wall_gauge.observe_depth(warn_at_ms as usize);
+            tokio::time::sleep_until(deadline).await;
+            fired_clone.store(true, Ordering::SeqCst);
+            isolate_handle.terminate_execution();
+            on_timeout();
+        })
+        .map_err(|error| format!("{TIMEOUT_GUARD_START_ERROR_CODE}: {error}"))?;
 
         Ok(TimeoutGuard {
-            cancel_tx: Some(cancel_tx),
             fired,
-            join_handle: Some(handle),
+            task: Some(handle),
         })
     }
 
-    /// Cancel the timeout (execution completed normally).
-    /// Blocks until the timer thread exits.
+    /// Cancel the timeout when execution completes normally.
     pub fn cancel(&mut self) {
-        // Drop the cancel sender to unblock the timer thread's select!
-        self.cancel_tx.take();
-        if let Some(h) = self.join_handle.take() {
-            let _ = h.join();
+        if let Some(task) = self.task.take() {
+            task.abort();
         }
     }
 
     /// Check if the timeout fired.
     pub fn timed_out(&self) -> bool {
         self.fired.load(Ordering::SeqCst)
+    }
+}
+
+fn spawn_timer<F>(
+    runtime: &RuntimeContext,
+    owner: Option<TaskOwner>,
+    future: F,
+) -> Result<tokio::task::JoinHandle<()>, agentos_runtime::TaskSpawnError>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    match owner {
+        Some(owner) => runtime.spawn_owned(TaskClass::Timer, owner, |_| {}, future),
+        None => runtime.spawn(TaskClass::Timer, future),
     }
 }
 

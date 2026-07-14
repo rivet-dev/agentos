@@ -23,10 +23,11 @@ use agentos_kernel::mount_table::MountTable;
 use agentos_kernel::root_fs::RootFilesystemMode;
 use agentos_kernel::socket_table::SocketId;
 use agentos_native_sidecar_core::VmLayerStore;
+use agentos_runtime::accounting::{Reservation, ResourceClass, ResourceLedger, SharedReservation};
+use agentos_runtime::RuntimeContext;
 use agentos_vm_config as vm_config;
 use agentos_vm_config::PermissionsPolicy;
 use rusqlite::Connection;
-use rustls::{ClientConnection, ServerConnection, StreamOwned};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use socket2::Socket;
@@ -34,14 +35,15 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::fs::File;
-use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{Receiver as TokioReceiver, Sender as TokioSender};
+use tokio::sync::oneshot::Sender as SyncSender;
+use tokio::sync::Notify;
 
 // ---------------------------------------------------------------------------
 // Type aliases
@@ -149,97 +151,75 @@ struct RealIntervalTimerState {
     deadline: Option<Instant>,
     interval: Duration,
     pending_expiry: bool,
-    shutdown: bool,
 }
 
-/// Sidecar-clocked ITIMER_REAL state. One bounded worker is created for each
-/// WASM process, and reconfiguration wakes that worker instead of spawning an
-/// unbounded series of sleeping timer threads.
+/// Sidecar-clocked ITIMER_REAL state. Expiration is advanced lazily when the
+/// WASM runner queries timer/signal state at a syscall boundary. This matches
+/// standard coalesced SIGALRM behavior without a thread or Tokio task per VM.
 pub(crate) struct ActiveRealIntervalTimer {
-    state: Arc<(Mutex<RealIntervalTimerState>, Condvar)>,
+    state: Mutex<RealIntervalTimerState>,
 }
 
 impl ActiveRealIntervalTimer {
-    pub(crate) fn new(start_worker: bool) -> Self {
-        let state = Arc::new((
-            Mutex::new(RealIntervalTimerState {
+    pub(crate) fn new() -> Self {
+        Self {
+            state: Mutex::new(RealIntervalTimerState {
                 deadline: None,
                 interval: Duration::ZERO,
                 pending_expiry: false,
-                shutdown: false,
             }),
-            Condvar::new(),
-        ));
-        if start_worker {
-            let worker_state = Arc::clone(&state);
-            std::thread::spawn(move || {
-                let (lock, ready) = &*worker_state;
-                let mut timer = lock.lock().unwrap_or_else(|error| error.into_inner());
-                loop {
-                    if timer.shutdown {
-                        break;
-                    }
-                    let Some(deadline) = timer.deadline else {
-                        timer = ready.wait(timer).unwrap_or_else(|error| error.into_inner());
-                        continue;
-                    };
-                    let now = Instant::now();
-                    if now < deadline {
-                        let (next, _) = ready
-                            .wait_timeout(timer, deadline.saturating_duration_since(now))
-                            .unwrap_or_else(|error| error.into_inner());
-                        timer = next;
-                        continue;
-                    }
-
-                    if timer.interval.is_zero() {
-                        timer.deadline = None;
-                    } else {
-                        let interval = timer.interval;
-                        let mut next = deadline;
-                        while next <= now {
-                            next = next.checked_add(interval).unwrap_or(now + interval);
-                        }
-                        timer.deadline = Some(next);
-                    }
-                    // Standard SIGALRM instances coalesce while pending. The
-                    // runner drains this bit through process.take_signal at
-                    // WASM syscall boundaries, including blocking sleeps.
-                    timer.pending_expiry = true;
-                }
-            });
         }
-        Self { state }
     }
 
     pub(crate) fn get(&self) -> (u64, u64) {
-        let timer = self
-            .state
-            .0
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        real_interval_timer_values(&timer, Instant::now())
+        let mut timer = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let now = Instant::now();
+        refresh_real_interval_timer(&mut timer, now);
+        real_interval_timer_values(&timer, now)
     }
 
     pub(crate) fn set(&self, value_us: u64, interval_us: u64) -> (u64, u64) {
-        let (lock, ready) = &*self.state;
-        let mut timer = lock.lock().unwrap_or_else(|error| error.into_inner());
+        let mut timer = self.state.lock().unwrap_or_else(|error| error.into_inner());
         let now = Instant::now();
+        refresh_real_interval_timer(&mut timer, now);
         let previous = real_interval_timer_values(&timer, now);
-        timer.deadline = (value_us != 0).then(|| now + Duration::from_micros(value_us));
+        timer.deadline = (value_us != 0)
+            .then(|| now.checked_add(Duration::from_micros(value_us)))
+            .flatten();
         timer.interval = Duration::from_micros(interval_us);
-        ready.notify_all();
         previous
     }
 
     pub(crate) fn take_expiry(&self) -> bool {
-        let mut timer = self
-            .state
-            .0
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let mut timer = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        refresh_real_interval_timer(&mut timer, Instant::now());
         std::mem::take(&mut timer.pending_expiry)
     }
+}
+
+fn refresh_real_interval_timer(timer: &mut RealIntervalTimerState, now: Instant) {
+    let Some(deadline) = timer.deadline else {
+        return;
+    };
+    if now < deadline {
+        return;
+    }
+
+    timer.pending_expiry = true;
+    if timer.interval.is_zero() {
+        timer.deadline = None;
+        return;
+    }
+
+    let interval_nanos = timer.interval.as_nanos();
+    let elapsed_nanos = now.saturating_duration_since(deadline).as_nanos();
+    let remainder_nanos = elapsed_nanos % interval_nanos;
+    let until_next_nanos = interval_nanos - remainder_nanos;
+    let until_next = Duration::new(
+        (until_next_nanos / 1_000_000_000) as u64,
+        (until_next_nanos % 1_000_000_000) as u32,
+    );
+    timer.deadline = now.checked_add(until_next);
 }
 
 fn real_interval_timer_values(timer: &RealIntervalTimerState, now: Instant) -> (u64, u64) {
@@ -252,12 +232,179 @@ fn real_interval_timer_values(timer: &RealIntervalTimerState, now: Instant) -> (
     (remaining, interval)
 }
 
-impl Drop for ActiveRealIntervalTimer {
-    fn drop(&mut self) {
-        let (lock, ready) = &*self.state;
-        let mut timer = lock.lock().unwrap_or_else(|error| error.into_inner());
-        timer.shutdown = true;
-        ready.notify_all();
+#[cfg(test)]
+mod real_interval_timer_tests {
+    use super::*;
+
+    #[test]
+    fn one_shot_expiry_is_coalesced_and_disarmed() {
+        let now = Instant::now();
+        let mut timer = RealIntervalTimerState {
+            deadline: now.checked_sub(Duration::from_millis(1)),
+            interval: Duration::ZERO,
+            pending_expiry: false,
+        };
+
+        refresh_real_interval_timer(&mut timer, now);
+        assert!(timer.pending_expiry);
+        assert_eq!(timer.deadline, None);
+
+        refresh_real_interval_timer(&mut timer, now + Duration::from_secs(1));
+        assert!(
+            timer.pending_expiry,
+            "expiry remains one coalesced pending bit"
+        );
+    }
+
+    #[test]
+    fn periodic_expiry_advances_to_first_deadline_after_now() {
+        let now = Instant::now();
+        let interval = Duration::from_millis(10);
+        let mut timer = RealIntervalTimerState {
+            deadline: now.checked_sub(Duration::from_millis(25)),
+            interval,
+            pending_expiry: false,
+        };
+
+        refresh_real_interval_timer(&mut timer, now);
+        let next = timer.deadline.expect("periodic timer remains armed");
+        assert!(timer.pending_expiry);
+        assert!(next > now);
+        assert!(next <= now + interval);
+
+        timer.pending_expiry = false;
+        refresh_real_interval_timer(&mut timer, now);
+        assert!(
+            !timer.pending_expiry,
+            "no duplicate expiry before next deadline"
+        );
+        assert_eq!(timer.deadline, Some(next));
+    }
+}
+
+/// One completion admitted against the VM-wide aggregate count. The local
+/// channel capacity remains an independent per-lane bound; this reservation
+/// prevents N handles from each consuming that capacity simultaneously.
+#[derive(Debug)]
+struct QueuedAsyncCompletion<T> {
+    value: T,
+    _reservation: Reservation,
+}
+
+pub(crate) struct AsyncCompletionSender<T> {
+    inner: TokioSender<QueuedAsyncCompletion<T>>,
+    runtime: RuntimeContext,
+}
+
+impl<T> Clone for AsyncCompletionSender<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            runtime: self.runtime.clone(),
+        }
+    }
+}
+
+pub(crate) struct AsyncCompletionReceiver<T> {
+    inner: TokioReceiver<QueuedAsyncCompletion<T>>,
+}
+
+impl<T> fmt::Debug for AsyncCompletionSender<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AsyncCompletionSender")
+            .field("capacity", &self.inner.capacity())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T> fmt::Debug for AsyncCompletionReceiver<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AsyncCompletionReceiver")
+            .field("capacity", &self.inner.capacity())
+            .finish_non_exhaustive()
+    }
+}
+
+pub(crate) fn async_completion_channel<T>(
+    runtime: RuntimeContext,
+    capacity: usize,
+) -> (AsyncCompletionSender<T>, AsyncCompletionReceiver<T>) {
+    let (sender, receiver) = tokio::sync::mpsc::channel(capacity);
+    (
+        AsyncCompletionSender {
+            inner: sender,
+            runtime,
+        },
+        AsyncCompletionReceiver { inner: receiver },
+    )
+}
+
+impl<T> AsyncCompletionSender<T> {
+    pub(crate) async fn send(&self, value: T) -> Result<(), String> {
+        let resources = Arc::clone(self.runtime.resources());
+        let reservation = tokio::select! {
+            biased;
+            () = self.runtime.admission_closed() => {
+                return Err(String::from(
+                    "ERR_AGENTOS_ASYNC_COMPLETION_CLOSED: VM completion admission is closed",
+                ));
+            }
+            () = self.inner.closed() => {
+                return Err(String::from(
+                    "ERR_AGENTOS_ASYNC_COMPLETION_DISCONNECTED: completion consumer disconnected",
+                ));
+            }
+            reservation = resources.reserve_when_available(ResourceClass::AsyncCompletions, 1) => {
+                reservation.map_err(|error| error.to_string())?
+            }
+        };
+        let queued = QueuedAsyncCompletion {
+            value,
+            _reservation: reservation,
+        };
+        tokio::select! {
+            biased;
+            () = self.runtime.admission_closed() => Err(String::from(
+                "ERR_AGENTOS_ASYNC_COMPLETION_CLOSED: VM completion admission closed before queue insertion",
+            )),
+            result = self.inner.send(queued) => result.map_err(|_| String::from(
+                "ERR_AGENTOS_ASYNC_COMPLETION_DISCONNECTED: completion consumer disconnected",
+            )),
+        }
+    }
+
+    pub(crate) fn try_send(&self, value: T) -> Result<(), String> {
+        if !self.runtime.admission_is_open() {
+            return Err(String::from(
+                "ERR_AGENTOS_ASYNC_COMPLETION_CLOSED: VM completion admission is closed",
+            ));
+        }
+        let reservation = self
+            .runtime
+            .resources()
+            .reserve(ResourceClass::AsyncCompletions, 1)
+            .map_err(|error| error.to_string())?;
+        self.inner
+            .try_send(QueuedAsyncCompletion {
+                value,
+                _reservation: reservation,
+            })
+            .map_err(|error| match error {
+                tokio::sync::mpsc::error::TrySendError::Full(_) => String::from(
+                    "ERR_AGENTOS_ASYNC_COMPLETION_LANE_LIMIT: completion lane is full; raise limits.reactor.maxAsyncCompletions",
+                ),
+                tokio::sync::mpsc::error::TrySendError::Closed(_) => String::from(
+                    "ERR_AGENTOS_ASYNC_COMPLETION_DISCONNECTED: completion consumer disconnected",
+                ),
+            })
+    }
+}
+
+impl<T> AsyncCompletionReceiver<T> {
+    pub(crate) fn try_recv(&mut self) -> Result<T, tokio::sync::mpsc::error::TryRecvError> {
+        self.inner.try_recv().map(|queued| queued.value)
     }
 }
 
@@ -308,6 +455,7 @@ pub struct NativeSidecarConfig {
     pub compile_cache_root: Option<PathBuf>,
     pub expected_auth_token: Option<String>,
     pub acp_termination_grace: Duration,
+    pub runtime: agentos_runtime::RuntimeConfig,
 }
 
 impl Default for NativeSidecarConfig {
@@ -318,12 +466,14 @@ impl Default for NativeSidecarConfig {
             compile_cache_root: None,
             expected_auth_token: None,
             acp_termination_grace: Duration::from_secs(3),
+            runtime: agentos_runtime::RuntimeConfig::default(),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SidecarError {
+    ResourceLimit(agentos_runtime::accounting::LimitError),
     InvalidState(String),
     ProtocolVersionMismatch(String),
     BridgeVersionMismatch(String),
@@ -341,6 +491,7 @@ pub enum SidecarError {
 impl fmt::Display for SidecarError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ResourceLimit(error) => error.fmt(f),
             Self::InvalidState(message)
             | Self::ProtocolVersionMismatch(message)
             | Self::BridgeVersionMismatch(message)
@@ -358,6 +509,59 @@ impl fmt::Display for SidecarError {
 }
 
 impl Error for SidecarError {}
+
+/// Format a resource-limit failure for an untrusted guest. VM-local occupancy
+/// is safe to expose to that VM; process occupancy includes other VMs and must
+/// not become a cross-tenant resource oracle.
+pub(crate) fn guest_limit_message(limit: &agentos_runtime::accounting::LimitError) -> String {
+    if limit.scope.starts_with("vm=") {
+        return limit.to_string();
+    }
+    format!(
+        "ERR_AGENTOS_RESOURCE_LIMIT: scope=process resource={} requested={} limit={}; raise {}",
+        limit.resource.name(),
+        limit.requested,
+        limit.limit,
+        limit.config_path
+    )
+}
+
+impl From<agentos_runtime::accounting::LimitError> for SidecarError {
+    fn from(error: agentos_runtime::accounting::LimitError) -> Self {
+        Self::ResourceLimit(error)
+    }
+}
+
+impl From<agentos_runtime::capability::CapabilityError> for SidecarError {
+    fn from(error: agentos_runtime::capability::CapabilityError) -> Self {
+        match error {
+            agentos_runtime::capability::CapabilityError::Limit(limit) => {
+                Self::ResourceLimit(limit)
+            }
+            other => Self::Execution(other.to_string()),
+        }
+    }
+}
+
+impl From<agentos_runtime::TaskSpawnError> for SidecarError {
+    fn from(error: agentos_runtime::TaskSpawnError) -> Self {
+        match error {
+            agentos_runtime::TaskSpawnError::ResourceLimit(limit) => Self::ResourceLimit(limit),
+            agentos_runtime::TaskSpawnError::AdmissionClosed { scope } => Self::Execution(format!(
+                "ERR_AGENTOS_TASK_ADMISSION_CLOSED: scope={scope} is closing"
+            )),
+        }
+    }
+}
+
+impl From<agentos_runtime::BlockingJobError> for SidecarError {
+    fn from(error: agentos_runtime::BlockingJobError) -> Self {
+        match error {
+            agentos_runtime::BlockingJobError::ResourceLimit(limit) => Self::ResourceLimit(limit),
+            other => Self::Execution(other.to_string()),
+        }
+    }
+}
 
 pub trait SidecarRequestTransport: Send + Sync {
     fn send_request(
@@ -538,11 +742,21 @@ impl Default for VmConfiguration {
 pub(crate) struct VmState {
     pub(crate) connection_id: String,
     pub(crate) session_id: String,
+    /// Process-unique VM generation. Capability and completion identities are
+    /// never valid outside this generation.
+    pub(crate) generation: u64,
     /// Operator-tunable VM-scoped runtime limits. Immutable for the VM's lifetime;
     /// `ConfigureVm` does not mutate limits.
     pub(crate) limits: crate::limits::VmLimits,
     pub(crate) pending_stdin_bytes_budget: Arc<VmPendingByteBudget>,
     pub(crate) pending_event_bytes_budget: Arc<VmPendingByteBudget>,
+    /// Child of the one process ledger owned by RuntimeContext.
+    pub(crate) resources: Arc<agentos_runtime::accounting::ResourceLedger>,
+    /// VM-scoped admission view over the process's single Tokio runtime and
+    /// fixed blocking executor. This owns no runtime or worker of its own.
+    pub(crate) runtime_context: agentos_runtime::RuntimeContext,
+    /// Common lifecycle/identity registry for native and kernel backends.
+    pub(crate) capabilities: agentos_runtime::capability::CapabilityRegistry,
     pub(crate) dns: VmDnsConfig,
     pub(crate) listen_policy: VmListenPolicy,
     pub(crate) create_loopback_exempt_ports: BTreeSet<u16>,
@@ -569,6 +783,11 @@ pub(crate) struct VmState {
     pub(crate) active_processes: BTreeMap<String, ActiveProcess>,
     pub(crate) exited_process_snapshots: VecDeque<ExitedProcessSnapshot>,
     pub(crate) detached_child_processes: BTreeSet<String>,
+    /// Rotating start positions for bounded child-process event turns. Durable
+    /// runtime queues retain the events; these cursors prevent a hot, sorted
+    /// child ID from monopolizing every coalesced wake.
+    pub(crate) attached_child_event_cursor: usize,
+    pub(crate) detached_child_event_cursor: usize,
     pub(crate) signal_states: BTreeMap<String, BTreeMap<u32, SignalHandlerRegistration>>,
     /// Legacy staging root slot retained for same-version internal state shape.
     /// The current `/opt/agentos` projection mounts package tars and synthetic
@@ -590,6 +809,59 @@ pub(crate) struct VmState {
     pub(crate) shadow_sync_inventory: BTreeMap<String, ShadowSyncInventoryEntry>,
     pub(crate) unix_address_registry: GuestUnixAddressRegistry,
     pub(crate) unix_socket_host_dir: PathBuf,
+}
+
+/// Minimal ownership retained when a VM generation misses its teardown
+/// barrier. Kernel, adapter, filesystem, and routing state are deliberately not
+/// retained; only the handles needed to prove eventual reconciliation survive.
+#[derive(Debug)]
+pub(crate) struct QuarantinedVmGeneration {
+    pub(crate) connection_id: String,
+    pub(crate) session_id: String,
+    pub(crate) vm_id: String,
+    pub(crate) generation: u64,
+    pub(crate) resources: Arc<agentos_runtime::accounting::ResourceLedger>,
+    pub(crate) runtime_context: agentos_runtime::RuntimeContext,
+    pub(crate) capabilities: agentos_runtime::capability::CapabilityRegistry,
+    pub(crate) reason: VmQuarantineReason,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum VmQuarantineReason {
+    TeardownDeadline,
+    ResourceIntegrity,
+    CapabilityRegistryIntegrity,
+    FairnessIntegrity,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct VmReconciliationSnapshot {
+    pub(crate) active_tasks: usize,
+    pub(crate) outstanding_capabilities: usize,
+    pub(crate) ledger_zero: bool,
+    pub(crate) integrity_ok: bool,
+}
+
+impl QuarantinedVmGeneration {
+    pub(crate) fn reconciliation_snapshot(&self) -> VmReconciliationSnapshot {
+        VmReconciliationSnapshot {
+            active_tasks: self.runtime_context.tasks().active_scoped(),
+            outstanding_capabilities: self.capabilities.outstanding_len(),
+            ledger_zero: self.resources.is_zero(),
+            integrity_ok: self.resources.integrity_ok(),
+        }
+    }
+
+    pub(crate) fn can_reap(&self) -> bool {
+        if self.reason != VmQuarantineReason::TeardownDeadline {
+            return false;
+        }
+        let snapshot = self.reconciliation_snapshot();
+        snapshot.active_tasks == 0
+            && snapshot.outstanding_capabilities == 0
+            && snapshot.ledger_zero
+            && snapshot.integrity_ok
+    }
 }
 
 /// Launch parameters for one projected agent package.
@@ -649,6 +921,7 @@ pub(crate) struct VmDnsConfig {
 
 #[derive(Debug, Clone)]
 pub(crate) struct JavascriptSocketPathContext {
+    pub(crate) sandbox_root: PathBuf,
     pub(crate) unix_abstract_namespace: [u8; 32],
     pub(crate) unix_socket_host_dir: PathBuf,
     pub(crate) unix_bound_addresses: GuestUnixAddressRegistry,
@@ -663,6 +936,12 @@ pub(crate) struct JavascriptSocketPathContext {
     pub(crate) udp_loopback_host_to_guest_ports: BTreeMap<(JavascriptSocketFamily, u16), u16>,
     pub(crate) used_tcp_guest_ports: BTreeMap<JavascriptSocketFamily, BTreeSet<u16>>,
     pub(crate) used_udp_guest_ports: BTreeMap<JavascriptSocketFamily, BTreeSet<u16>>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct NetworkResourceCounts {
+    pub(crate) sockets: usize,
+    pub(crate) connections: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -787,6 +1066,13 @@ impl PendingKernelStdin {
 pub(crate) struct ActiveProcess {
     pub(crate) kernel_pid: u32,
     pub(crate) kernel_handle: KernelProcessHandle,
+    /// VM-scoped admission/accounting view over the process-owned runtime.
+    /// Child processes inherit this exact generation-bound context; they must
+    /// never rediscover the process context through a global lookup.
+    pub(crate) runtime_context: agentos_runtime::RuntimeContext,
+    /// Immutable limits for the owning VM generation. Protocol tasks read
+    /// their bounds from this snapshot instead of process-wide constants.
+    pub(crate) limits: crate::limits::VmLimits,
     pub(crate) kernel_stdin_writer_fd: Option<u32>,
     /// Backlog for pipe-backed kernel stdin awaiting pipe capacity; see
     /// [`PendingKernelStdin`].
@@ -807,6 +1093,13 @@ pub(crate) struct ActiveProcess {
     pub(crate) host_write_dirty: bool,
     pub(crate) mapped_host_fds: BTreeMap<u32, ActiveMappedHostFd>,
     pub(crate) next_mapped_host_fd: u32,
+    /// Wakes the shared process-event pump after durable local events are
+    /// queued. `Notify` coalesces repeated wakes while the deque preserves all
+    /// event data.
+    pub(crate) process_event_notify: Arc<Notify>,
+    /// Durable event backlog bound inherited from
+    /// `runtime.protocol.maxProcessEvents` when this process is admitted.
+    pub(crate) process_event_capacity: usize,
     pub(crate) pending_execution_events: VecDeque<ActiveExecutionEvent>,
     pub(crate) pending_execution_event_bytes: usize,
     pub(crate) pending_execution_event_count_limit: usize,
@@ -814,6 +1107,8 @@ pub(crate) struct ActiveProcess {
     pub(crate) pending_execution_event_count_gauge: Arc<QueueGauge>,
     pub(crate) pending_execution_event_bytes_gauge: Arc<QueueGauge>,
     pub(crate) vm_pending_event_bytes_budget: Arc<VmPendingByteBudget>,
+    pub(crate) pending_javascript_net_connects:
+        BTreeMap<u64, Arc<Mutex<PendingJavascriptNetConnectState>>>,
     pub(crate) pending_self_signal_exit: Option<i32>,
     /// Actual terminating signal observed from the runtime process (or the
     /// signal used for a shared-runtime synthetic exit). This is distinct from
@@ -828,9 +1123,18 @@ pub(crate) struct ActiveProcess {
     pub(crate) real_interval_timer: ActiveRealIntervalTimer,
     pub(crate) child_processes: BTreeMap<String, ActiveProcess>,
     pub(crate) next_child_process_id: usize,
+    /// In-flight `spawnSync`/Python subprocess calls owned by this process.
+    /// Child runtime events advance these records from the shared process pump;
+    /// no sidecar or Tokio worker blocks waiting for child output.
+    pub(crate) pending_child_process_sync: BTreeMap<String, PendingChildProcessSync>,
     pub(crate) http_servers: BTreeMap<u64, ActiveHttpServer>,
-    pub(crate) pending_http_requests: BTreeMap<(u64, u64), Option<String>>,
+    pub(crate) pending_http_requests: BTreeMap<(u64, u64), PendingHttpRequest>,
     pub(crate) http2: ActiveHttp2State,
+    /// Capability leases are the lifecycle truth for every network handle in
+    /// the legacy guest-facing maps below. Dropping a map entry without its
+    /// lease is prevented by the typed insert/release helpers.
+    pub(crate) capability_leases:
+        BTreeMap<NativeCapabilityKey, agentos_runtime::capability::CapabilityLease>,
     pub(crate) tcp_listeners: BTreeMap<String, ActiveTcpListener>,
     pub(crate) next_tcp_listener_id: usize,
     pub(crate) tcp_sockets: BTreeMap<String, ActiveTcpSocket>,
@@ -843,9 +1147,9 @@ pub(crate) struct ActiveProcess {
     pub(crate) next_unix_socket_id: usize,
     pub(crate) udp_sockets: BTreeMap<String, ActiveUdpSocket>,
     pub(crate) next_udp_socket_id: usize,
-    /// Synchronous host sockets opened by the guest Python `socket` bridge,
-    /// keyed by the handle returned to the runner. Distinct from the JS
-    /// runtime's event-driven `tcp_sockets`/`udp_sockets` above.
+    /// Adapter handles returned to the guest Python `socket` bridge. These
+    /// reference the same sidecar-owned capabilities in `tcp_sockets` and
+    /// `udp_sockets`; Python does not own a parallel descriptor or I/O task.
     pub(crate) python_sockets: BTreeMap<u64, PythonHostSocket>,
     pub(crate) next_python_socket_id: u64,
     pub(crate) cipher_sessions: BTreeMap<u64, ActiveCipherSession>,
@@ -871,8 +1175,9 @@ pub(crate) struct ActiveProcess {
     /// A parked `__kernel_stdin_read` / `__kernel_poll` sync RPC awaiting
     /// kernel readiness (reply-by-token deferral so servicing never blocks the
     /// dispatch loop). At most one per process: the guest thread is blocked in
-    /// this RPC, so it cannot issue another. `(request, absolute deadline)`.
-    pub(crate) deferred_kernel_wait_rpc: Option<(JavascriptSyncRpcRequest, Instant)>,
+    /// this RPC, so it cannot issue another. The optional absolute deadline is
+    /// `None` for a readiness-only wait with no recurring timeout.
+    pub(crate) deferred_kernel_wait_rpc: Option<(JavascriptSyncRpcRequest, Option<Instant>)>,
     /// Per-process module resolution cache, persisted across module sync-RPCs
     /// (`__resolve_module` / `__load_file` / `__module_format` /
     /// `__batch_resolve_modules`) for the lifetime of this process so cold-start
@@ -880,6 +1185,38 @@ pub(crate) struct ActiveProcess {
     /// kernel VFS; the node_modules tree is mounted read-only, so cached
     /// stat/exists/package.json results under it stay valid for the process run.
     pub(crate) module_resolution_cache: agentos_execution::LocalModuleResolutionCache,
+}
+
+pub(crate) struct PendingChildProcessSync {
+    pub(crate) pid: u32,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
+    pub(crate) max_buffer: usize,
+    pub(crate) deadline: Option<Instant>,
+    pub(crate) timeout_signal: String,
+    pub(crate) kill_sent: bool,
+    pub(crate) timed_out: bool,
+    pub(crate) max_buffer_exceeded: bool,
+    pub(crate) completion: PendingChildProcessSyncCompletion,
+}
+
+pub(crate) enum PendingChildProcessSyncCompletion {
+    Javascript(tokio::sync::oneshot::Sender<Result<Value, DeferredRpcError>>),
+    Python { request_id: u64 },
+}
+
+#[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum NativeCapabilityKey {
+    HttpServer(u64),
+    Http2Server(u64),
+    Http2Session(u64),
+    Http2Stream(u64),
+    TcpListener(String),
+    TcpSocket(String),
+    TlsSocket(String),
+    UnixListener(String),
+    UnixSocket(String),
+    UdpSocket(String),
 }
 
 pub(crate) struct ActiveMappedHostFd {
@@ -926,17 +1263,19 @@ pub(crate) struct ActiveEcdhSession {
     pub(crate) key_pair: Option<openssl::ec::EcKey<openssl::pkey::Private>>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct NetworkResourceCounts {
-    pub(crate) sockets: usize,
-    pub(crate) connections: usize,
-}
-
 #[derive(Debug)]
 pub(crate) struct ActiveHttpServer {
     pub(crate) listener: TcpListener,
     pub(crate) guest_local_addr: SocketAddr,
     pub(crate) next_request_id: u64,
+    pub(crate) closed: Arc<AtomicBool>,
+    pub(crate) close_notify: Arc<tokio::sync::Notify>,
+}
+
+#[derive(Debug)]
+pub(crate) enum PendingHttpRequest {
+    Buffered(Option<String>),
+    Deferred(tokio::sync::oneshot::Sender<Result<Value, DeferredRpcError>>),
 }
 
 #[derive(Clone, Default)]
@@ -944,17 +1283,43 @@ pub(crate) struct ActiveHttp2State {
     pub(crate) shared: Arc<Mutex<Http2SharedState>>,
 }
 
-#[derive(Default)]
 pub(crate) struct Http2SharedState {
     pub(crate) next_session_id: u64,
     pub(crate) next_stream_id: u64,
-    pub(crate) ready: Arc<Condvar>,
+    pub(crate) ready: Arc<tokio::sync::Notify>,
+    pub(crate) event_capacity_notify: Arc<tokio::sync::Notify>,
     pub(crate) event_session: Option<V8SessionHandle>,
     pub(crate) servers: BTreeMap<u64, ActiveHttp2Server>,
     pub(crate) sessions: BTreeMap<u64, ActiveHttp2Session>,
     pub(crate) streams: BTreeMap<u64, ActiveHttp2Stream>,
-    pub(crate) server_events: BTreeMap<u64, VecDeque<Http2BridgeEvent>>,
-    pub(crate) session_events: BTreeMap<u64, VecDeque<Http2BridgeEvent>>,
+    pub(crate) capability_leases:
+        BTreeMap<NativeCapabilityKey, agentos_runtime::capability::CapabilityLease>,
+    pub(crate) server_events: BTreeMap<u64, VecDeque<QueuedHttp2Event>>,
+    pub(crate) session_events: BTreeMap<u64, VecDeque<QueuedHttp2Event>>,
+    pub(crate) limits: crate::limits::VmLimits,
+    pub(crate) resources: Option<Arc<ResourceLedger>>,
+    pub(crate) vm_generation: u64,
+}
+
+impl Default for Http2SharedState {
+    fn default() -> Self {
+        Self {
+            next_session_id: 0,
+            next_stream_id: 0,
+            ready: Arc::new(tokio::sync::Notify::new()),
+            event_capacity_notify: Arc::new(tokio::sync::Notify::new()),
+            event_session: None,
+            servers: BTreeMap::new(),
+            sessions: BTreeMap::new(),
+            streams: BTreeMap::new(),
+            capability_leases: BTreeMap::new(),
+            server_events: BTreeMap::new(),
+            session_events: BTreeMap::new(),
+            limits: crate::limits::VmLimits::default(),
+            resources: None,
+            vm_generation: 0,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -964,11 +1329,22 @@ pub(crate) struct ActiveHttp2Server {
     pub(crate) secure: bool,
     pub(crate) tls: Option<JavascriptTlsBridgeOptions>,
     pub(crate) closed: Arc<AtomicBool>,
+    pub(crate) close_notify: Arc<tokio::sync::Notify>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct ActiveHttp2Session {
-    pub(crate) command_tx: UnboundedSender<Http2SessionCommand>,
+    pub(crate) command_tx: TokioSender<QueuedHttp2Command>,
+    pub(crate) capability_id: u64,
+    pub(crate) vm_generation: u64,
+    pub(crate) fairness: agentos_runtime::fairness::FairWorkBroker,
+    pub(crate) command_timeout: Duration,
+    pub(crate) close_requested: Arc<AtomicBool>,
+    pub(crate) close_abrupt: Arc<AtomicBool>,
+    pub(crate) close_notify: Arc<tokio::sync::Notify>,
+    pub(crate) _reservations: Vec<SharedReservation>,
+    pub(crate) resources: Arc<ResourceLedger>,
+    pub(crate) stream_resources: Arc<ResourceLedger>,
 }
 
 #[derive(Debug, Clone)]
@@ -976,6 +1352,19 @@ pub(crate) struct ActiveHttp2Stream {
     pub(crate) session_id: u64,
     pub(crate) paused: Arc<AtomicBool>,
     pub(crate) resume_notify: Arc<tokio::sync::Notify>,
+    pub(crate) _reservations: Vec<SharedReservation>,
+}
+
+#[derive(Debug)]
+pub(crate) struct QueuedHttp2Event {
+    pub(crate) event: Http2BridgeEvent,
+    pub(crate) reservations: Vec<Reservation>,
+}
+
+#[derive(Debug)]
+pub(crate) struct QueuedHttp2Command {
+    pub(crate) command: Http2SessionCommand,
+    pub(crate) reservations: Vec<Reservation>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1008,6 +1397,8 @@ pub(crate) struct Http2RuntimeSnapshot {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub(crate) struct Http2SessionSnapshot {
+    pub(crate) capability_id: Option<u64>,
+    pub(crate) capability_generation: Option<u64>,
     pub(crate) encrypted: bool,
     pub(crate) alpn_protocol: Option<String>,
     pub(crate) origin_set: Vec<String>,
@@ -1034,57 +1425,82 @@ pub(crate) struct Http2BridgeEvent {
     pub(crate) flags: Option<u64>,
 }
 
+#[derive(Debug)]
+pub(crate) struct Http2ResponseSender(SyncSender<Result<Value, DeferredRpcError>>);
+
+impl Http2ResponseSender {
+    pub(crate) fn new(sender: SyncSender<Result<Value, DeferredRpcError>>) -> Self {
+        Self(sender)
+    }
+
+    pub(crate) fn settle(self, result: Result<Value, String>) {
+        if self
+            .0
+            .send(result.map_err(|message| DeferredRpcError {
+                code: String::from("ERR_AGENTOS_HTTP2_COMMAND"),
+                message,
+            }))
+            .is_err()
+        {
+            eprintln!(
+                "INFO_AGENTOS_STALE_HTTP2_COMPLETION: HTTP/2 command waiter was dropped before settlement"
+            );
+        }
+    }
+}
+
+#[derive(Debug)]
 pub(crate) enum Http2SessionCommand {
     Request {
         headers_json: String,
         options_json: String,
-        respond_to: Sender<Result<Value, String>>,
+        pending_capability: agentos_runtime::capability::PendingCapability,
+        stream_reservations: Vec<Reservation>,
+        respond_to: Http2ResponseSender,
     },
     Settings {
         settings_json: String,
-        respond_to: Sender<Result<Value, String>>,
+        respond_to: Http2ResponseSender,
     },
     SetLocalWindowSize {
         size: u32,
-        respond_to: Sender<Result<Value, String>>,
+        respond_to: Http2ResponseSender,
     },
     Goaway {
         error_code: u32,
         last_stream_id: u32,
         opaque_data: Option<Vec<u8>>,
-        respond_to: Sender<Result<Value, String>>,
-    },
-    Close {
-        abrupt: bool,
-        respond_to: Sender<Result<Value, String>>,
+        respond_to: Http2ResponseSender,
     },
     StreamRespond {
         stream_id: u64,
         headers_json: String,
-        respond_to: Sender<Result<Value, String>>,
+        respond_to: Http2ResponseSender,
     },
     StreamPush {
         stream_id: u64,
         headers_json: String,
-        respond_to: Sender<Result<Value, String>>,
+        pending_capability: agentos_runtime::capability::PendingCapability,
+        stream_reservations: Vec<Reservation>,
+        respond_to: Http2ResponseSender,
     },
     StreamWrite {
         stream_id: u64,
         chunk: Vec<u8>,
         end_stream: bool,
-        respond_to: Sender<Result<Value, String>>,
+        respond_to: Http2ResponseSender,
     },
     StreamClose {
         stream_id: u64,
         error_code: Option<u32>,
-        respond_to: Sender<Result<Value, String>>,
+        respond_to: Http2ResponseSender,
     },
     StreamRespondWithFile {
         stream_id: u64,
         body: Vec<u8>,
         headers_json: String,
         options_json: String,
-        respond_to: Sender<Result<Value, String>>,
+        respond_to: Http2ResponseSender,
     },
 }
 
@@ -1105,14 +1521,19 @@ pub(crate) enum JavascriptTcpListenerEvent {
 pub(crate) struct PendingTcpSocket {
     pub(crate) stream: Option<TcpStream>,
     pub(crate) kernel_socket_id: Option<SocketId>,
-    pub(crate) preallocated: bool,
     pub(crate) guest_local_addr: SocketAddr,
     pub(crate) guest_remote_addr: SocketAddr,
 }
 
 #[derive(Debug)]
 pub(crate) enum JavascriptTcpSocketEvent {
-    Data(Vec<u8>),
+    Data {
+        bytes: Vec<u8>,
+        reservation: agentos_runtime::accounting::SharedReservation,
+        /// Protocol-specific ownership that remains live until the payload is
+        /// transferred out of the transport/event layer.
+        source_reservations: Vec<agentos_runtime::accounting::SharedReservation>,
+    },
     End,
     Close {
         had_error: bool,
@@ -1126,7 +1547,8 @@ pub(crate) enum JavascriptTcpSocketEvent {
 #[derive(Clone, Debug)]
 pub(crate) struct JavascriptSocketEventPusher {
     pub(crate) session: V8SessionHandle,
-    pub(crate) socket_id: String,
+    pub(crate) capability_id: agentos_runtime::capability::CapabilityId,
+    pub(crate) capability_generation: agentos_runtime::capability::CapabilityGeneration,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1138,18 +1560,32 @@ pub(crate) enum KernelSocketReadinessEvent {
 
 #[derive(Clone, Debug)]
 pub(crate) struct KernelSocketReadinessTarget {
-    pub(crate) session: V8SessionHandle,
+    pub(crate) session: Option<V8SessionHandle>,
+    pub(crate) notify: Option<Arc<Notify>>,
+    pub(crate) capability_id: agentos_runtime::capability::CapabilityId,
+    pub(crate) capability_generation: agentos_runtime::capability::CapabilityGeneration,
     pub(crate) target_id: String,
     pub(crate) event: KernelSocketReadinessEvent,
 }
 
 #[derive(Debug)]
 pub(crate) struct ActiveTcpSocket {
+    pub(crate) runtime_context: agentos_runtime::RuntimeContext,
+    pub(crate) reactor_limits: ReactorIoLimits,
+    pub(crate) fairness_identity: Arc<OnceLock<(u64, u64)>>,
+    pub(crate) fairness_identity_committed: Arc<Notify>,
     pub(crate) stream: Option<Arc<Mutex<TcpStream>>>,
     pub(crate) pending_read_stream: Option<Arc<Mutex<Option<TcpStream>>>>,
-    pub(crate) events: Option<Arc<Mutex<Receiver<JavascriptTcpSocketEvent>>>>,
-    pub(crate) event_sender: Option<Sender<JavascriptTcpSocketEvent>>,
+    pub(crate) plain_reader_running: Arc<AtomicBool>,
+    pub(crate) plain_reader_stopped: Arc<Notify>,
+    pub(crate) events: Option<Arc<Mutex<AsyncCompletionReceiver<JavascriptTcpSocketEvent>>>>,
+    pub(crate) event_sender: Option<AsyncCompletionSender<JavascriptTcpSocketEvent>>,
+    /// Durable per-operation wait source shared by adapters. Event data stays
+    /// in `events`; this is only a coalesced readiness hint.
+    pub(crate) read_event_notify: Arc<Notify>,
     pub(crate) event_pusher: Arc<Mutex<Option<JavascriptSocketEventPusher>>>,
+    pub(crate) application_read_interest: Arc<AtomicBool>,
+    pub(crate) application_read_notify: Arc<Notify>,
     pub(crate) kernel_socket_id: Option<SocketId>,
     pub(crate) no_delay: bool,
     pub(crate) keep_alive: bool,
@@ -1158,9 +1594,9 @@ pub(crate) struct ActiveTcpSocket {
     pub(crate) guest_remote_addr: SocketAddr,
     pub(crate) listener_id: Option<String>,
     pub(crate) tls_mode: Arc<AtomicBool>,
-    pub(crate) tls_stream: Arc<Mutex<Option<ActiveTlsStream>>>,
+    pub(crate) native_tls_commands: Arc<Mutex<Option<TokioSender<NativeTlsCommand>>>>,
+    pub(crate) plain_commands: Option<TokioSender<NativePlainSocketCommand>>,
     pub(crate) tls_state: Arc<Mutex<Option<ActiveTlsState>>>,
-    pub(crate) loopback_tls_pending_write: Arc<Mutex<Option<LoopbackTlsPendingWriteHandle>>>,
     pub(crate) saw_local_shutdown: Arc<AtomicBool>,
     pub(crate) saw_remote_end: Arc<AtomicBool>,
     pub(crate) close_notified: Arc<AtomicBool>,
@@ -1177,30 +1613,103 @@ pub(crate) struct ActiveTcpSocket {
     /// SCM_RIGHTS. It keeps owner-0 kernel sockets alive while queued or held
     /// by another process and lets the kernel prune discarded transfers.
     pub(crate) kernel_transfer_guard: Option<TransferredFd>,
+    pub(crate) resources: Arc<agentos_runtime::accounting::ResourceLedger>,
+}
+
+#[derive(Debug)]
+pub(crate) enum NativeTlsCommand {
+    Write {
+        payload: TlsWritePayload,
+        /// Present once the TLS handshake has completed and the bridge can
+        /// wait for transport completion. A loopback write admitted while the
+        /// peer is still upgrading has no waiter: blocking that synchronous
+        /// bridge call would prevent the peer VM callback from starting the
+        /// handshake. The transport still owns the charged payload and reports
+        /// any eventual failure through the socket event path.
+        completion: Option<SyncSender<Result<Value, DeferredRpcError>>>,
+    },
+    Shutdown {
+        _command_reservation: agentos_runtime::accounting::SharedReservation,
+        completion: SyncSender<Result<Value, DeferredRpcError>>,
+    },
+    Close {
+        _command_reservation: agentos_runtime::accounting::SharedReservation,
+    },
+}
+
+#[derive(Debug)]
+pub(crate) enum NativePlainSocketCommand {
+    Write {
+        payload: PlainSocketWritePayload,
+        completion: tokio::sync::oneshot::Sender<Result<Value, DeferredRpcError>>,
+    },
+    Shutdown {
+        _command_reservation: agentos_runtime::accounting::SharedReservation,
+        completion: tokio::sync::oneshot::Sender<Result<Value, DeferredRpcError>>,
+    },
+}
+
+#[derive(Debug)]
+pub(crate) struct PlainSocketWritePayload {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) _command_reservation: agentos_runtime::accounting::SharedReservation,
+    pub(crate) _bytes_reservation: agentos_runtime::accounting::SharedReservation,
+    pub(crate) _buffered_reservation: agentos_runtime::accounting::SharedReservation,
+}
+
+#[derive(Debug)]
+pub(crate) struct TlsWritePayload {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) _command_reservation: agentos_runtime::accounting::SharedReservation,
+    pub(crate) _command_bytes_reservation: agentos_runtime::accounting::SharedReservation,
+    pub(crate) _buffered_reservation: agentos_runtime::accounting::SharedReservation,
+    pub(crate) _tls_reservation: agentos_runtime::accounting::SharedReservation,
+}
+
+/// VM-scoped scheduling bounds copied into each native handle owner. Keeping
+/// these beside the handle prevents transport tasks from consulting process
+/// globals after the VM generation has been admitted.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ReactorIoLimits {
+    pub(crate) operation_quantum: usize,
+    pub(crate) byte_quantum: usize,
+    pub(crate) accept_quantum: usize,
+    pub(crate) datagram_quantum: usize,
+    pub(crate) max_handle_commands: usize,
+    pub(crate) max_async_completions: usize,
+    pub(crate) operation_deadline: Duration,
 }
 
 #[derive(Debug)]
 pub(crate) struct LoopbackTlsTransportPair {
     pub(crate) state: Mutex<LoopbackTlsTransportPairState>,
     pub(crate) ready: Condvar,
+    pub(crate) resources: Arc<agentos_runtime::accounting::ResourceLedger>,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct LoopbackTlsTransportPairState {
     pub(crate) lower_to_higher: VecDeque<u8>,
     pub(crate) higher_to_lower: VecDeque<u8>,
+    pub(crate) lower_to_higher_reservations: VecDeque<agentos_runtime::accounting::Reservation>,
+    pub(crate) higher_to_lower_reservations: VecDeque<agentos_runtime::accounting::Reservation>,
+    pub(crate) lower_to_higher_tls_reservations: VecDeque<agentos_runtime::accounting::Reservation>,
+    pub(crate) higher_to_lower_tls_reservations: VecDeque<agentos_runtime::accounting::Reservation>,
     pub(crate) lower_write_closed: bool,
     pub(crate) higher_write_closed: bool,
     pub(crate) lower_closed: bool,
     pub(crate) higher_closed: bool,
     pub(crate) lower_read_interrupt: bool,
     pub(crate) higher_read_interrupt: bool,
+    pub(crate) lower_read_waker: Option<std::task::Waker>,
+    pub(crate) higher_read_waker: Option<std::task::Waker>,
+    pub(crate) lower_write_waker: Option<std::task::Waker>,
+    pub(crate) higher_write_waker: Option<std::task::Waker>,
 }
 
 pub(crate) struct LoopbackTlsEndpoint {
     pub(crate) pair: Arc<LoopbackTlsTransportPair>,
     pub(crate) is_lower_socket: bool,
-    pub(crate) poll_timeout: Duration,
     /// Registry key (`vm_id:lower:higher`) under which this endpoint's transport
     /// pair is registered in the loopback-TLS transport registry. Stored so the
     /// endpoint's `Drop` can eagerly prune its own registry entry once it is the
@@ -1210,39 +1719,12 @@ pub(crate) struct LoopbackTlsEndpoint {
     pub(crate) registry_key: Option<String>,
 }
 
-#[derive(Debug)]
-pub(crate) struct LoopbackTlsPendingWriteState {
-    pub(crate) buffer: Vec<u8>,
-    pub(crate) warned_near_cap: bool,
-    pub(crate) flushing: bool,
-    pub(crate) defer_shutdown_write: bool,
-    pub(crate) failure_message: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct LoopbackTlsPendingWriteHandle {
-    pub(crate) state: Arc<Mutex<LoopbackTlsPendingWriteState>>,
-    pub(crate) tls_handshake_complete: Arc<AtomicBool>,
-    pub(crate) failed: Arc<AtomicBool>,
-    pub(crate) pair: Arc<LoopbackTlsTransportPair>,
-    pub(crate) is_lower_socket: bool,
-    pub(crate) handshake_started_at: Instant,
-}
-
 impl fmt::Debug for LoopbackTlsEndpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LoopbackTlsEndpoint")
             .field("is_lower_socket", &self.is_lower_socket)
             .finish()
     }
-}
-
-#[derive(Debug)]
-pub(crate) enum ActiveTlsStream {
-    Client(StreamOwned<ClientConnection, TcpStream>),
-    Server(StreamOwned<ServerConnection, TcpStream>),
-    LoopbackClient(StreamOwned<ClientConnection, LoopbackTlsEndpoint>),
-    LoopbackServer(StreamOwned<ServerConnection, LoopbackTlsEndpoint>),
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1295,6 +1777,9 @@ pub(crate) enum JavascriptTlsDataValue {
 pub(crate) struct ActiveTlsState {
     pub(crate) client_hello: Option<JavascriptTlsClientHello>,
     pub(crate) local_certificates: Vec<Vec<u8>>,
+    pub(crate) peer_certificates: Vec<Vec<u8>>,
+    pub(crate) protocol: Option<String>,
+    pub(crate) cipher: Option<Value>,
     pub(crate) session_reused: bool,
 }
 
@@ -1325,7 +1810,10 @@ pub(crate) struct ActiveTcpListener {
 
 #[derive(Debug)]
 pub(crate) enum JavascriptUnixListenerEvent {
-    Connection(PendingUnixSocket),
+    Connection {
+        socket: PendingUnixSocket,
+        capability: agentos_runtime::capability::PendingCapability,
+    },
     Error {
         code: Option<String>,
         message: String,
@@ -1353,23 +1841,17 @@ pub(crate) struct PendingUnixConnectionGuard {
 }
 
 #[derive(Debug)]
-pub(crate) struct UnixSocketReadState {
-    /// Bytes already removed from the host socket but not yet consumed by the
-    /// guest open socket description. The reader never grows this past
-    /// `max_buffered_bytes`, so an idle guest applies backpressure to the host
-    /// socket instead of growing an unbounded sidecar queue.
-    pub(crate) bytes: VecDeque<u8>,
-    pub(crate) terminal_events: VecDeque<JavascriptTcpSocketEvent>,
-    pub(crate) max_buffered_bytes: usize,
-    pub(crate) warned_near_limit: bool,
-    pub(crate) closed: bool,
-}
-
-#[derive(Debug)]
 pub(crate) struct ActiveUnixSocket {
+    pub(crate) reactor_limits: ReactorIoLimits,
+    pub(crate) fairness_identity: Arc<OnceLock<(u64, u64)>>,
+    pub(crate) fairness_identity_committed: Arc<Notify>,
     pub(crate) stream: Arc<Mutex<UnixStream>>,
-    pub(crate) read_state: Arc<(Mutex<UnixSocketReadState>, Condvar)>,
+    pub(crate) plain_commands: TokioSender<NativePlainSocketCommand>,
+    pub(crate) events: Arc<Mutex<AsyncCompletionReceiver<JavascriptTcpSocketEvent>>>,
+    pub(crate) event_sender: AsyncCompletionSender<JavascriptTcpSocketEvent>,
     pub(crate) event_pusher: Arc<Mutex<Option<JavascriptSocketEventPusher>>>,
+    pub(crate) application_read_interest: Arc<AtomicBool>,
+    pub(crate) application_read_notify: Arc<Notify>,
     pub(crate) listener_id: Option<String>,
     pub(crate) local_path: Option<String>,
     pub(crate) remote_path: Option<String>,
@@ -1382,13 +1864,24 @@ pub(crate) struct ActiveUnixSocket {
     pub(crate) saw_local_shutdown: Arc<AtomicBool>,
     pub(crate) saw_remote_end: Arc<AtomicBool>,
     pub(crate) close_notified: Arc<AtomicBool>,
+    /// Bytes already drained from the async completion lane but not yet
+    /// consumed by the shared Unix open description. Duplicated and
+    /// SCM_RIGHTS-transferred descriptors retain this same buffer so partial
+    /// reads and `MSG_PEEK` observe one Linux-style read cursor.
+    pub(crate) read_buffer: Arc<Mutex<VecDeque<u8>>>,
     pub(crate) description_handles: Arc<()>,
+    pub(crate) resources: Arc<agentos_runtime::accounting::ResourceLedger>,
 }
 
 #[derive(Debug)]
 pub(crate) struct ActiveUnixListener {
     pub(crate) listener: Option<UnixListener>,
     pub(crate) bound_socket: Option<Socket>,
+    pub(crate) events: Arc<Mutex<AsyncCompletionReceiver<JavascriptUnixListenerEvent>>>,
+    pub(crate) event_pusher: Arc<Mutex<Option<JavascriptSocketEventPusher>>>,
+    pub(crate) close_notify: Arc<Notify>,
+    pub(crate) close_completion: Arc<Mutex<Option<tokio::sync::oneshot::Receiver<()>>>>,
+    pub(crate) acceptor_started: bool,
     pub(crate) path: String,
     pub(crate) abstract_path_hex: Option<String>,
     pub(crate) registry_binding_id: String,
@@ -1440,6 +1933,10 @@ pub(crate) enum JavascriptUdpSocketEvent {
     Message {
         data: Vec<u8>,
         remote_addr: SocketAddr,
+        _byte_reservation: agentos_runtime::accounting::SharedReservation,
+        _datagram_reservation: agentos_runtime::accounting::SharedReservation,
+        _udp_byte_reservation: agentos_runtime::accounting::SharedReservation,
+        _udp_datagram_reservation: agentos_runtime::accounting::SharedReservation,
     },
     Error {
         code: Option<String>,
@@ -1447,26 +1944,121 @@ pub(crate) enum JavascriptUdpSocketEvent {
     },
 }
 
-/// A blocking host socket backing one guest Python socket. Reads use a short
-/// timeout (set on the socket) so a `recv`/`recvfrom` RPC never stalls the
-/// shared sidecar event loop; the Python shim re-polls to emulate blocking.
+#[derive(Debug)]
+pub(crate) struct NativeUdpSendPayload {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) _command_reservation: SharedReservation,
+    pub(crate) _command_bytes_reservation: SharedReservation,
+    pub(crate) _buffered_reservation: SharedReservation,
+    pub(crate) _udp_bytes_reservation: SharedReservation,
+}
+
+#[derive(Debug)]
+pub(crate) enum NativeUdpSocketOption {
+    Broadcast(bool),
+    Ttl(u32),
+    MulticastTtl(u32),
+    MulticastLoopback(bool),
+    MulticastInterface(String),
+    Membership {
+        group: IpAddr,
+        interface: Option<String>,
+        join: bool,
+    },
+    SourceMembership {
+        source: IpAddr,
+        group: IpAddr,
+        interface: Option<String>,
+        join: bool,
+    },
+}
+
+#[derive(Debug)]
+pub(crate) enum NativeUdpCommand {
+    Send {
+        payload: NativeUdpSendPayload,
+        remote_addr: Option<SocketAddr>,
+        guest_local_addr: SocketAddr,
+        completion: SyncSender<Result<Value, DeferredRpcError>>,
+    },
+    Poll {
+        _command_reservation: SharedReservation,
+        completion: SyncSender<Result<Option<JavascriptUdpSocketEvent>, DeferredRpcError>>,
+    },
+    Connect {
+        _command_reservation: SharedReservation,
+        remote_addr: SocketAddr,
+        guest_local_addr: SocketAddr,
+        guest_remote_addr: SocketAddr,
+        completion: SyncSender<Result<Value, DeferredRpcError>>,
+    },
+    Disconnect {
+        _command_reservation: SharedReservation,
+        completion: SyncSender<Result<Value, DeferredRpcError>>,
+    },
+    RemoteAddress {
+        _command_reservation: SharedReservation,
+        completion: SyncSender<Result<Value, DeferredRpcError>>,
+    },
+    SetOption {
+        _command_reservation: SharedReservation,
+        option: NativeUdpSocketOption,
+        guest_local_addr: SocketAddr,
+        completion: SyncSender<Result<Value, DeferredRpcError>>,
+    },
+    SetBufferSize {
+        _command_reservation: SharedReservation,
+        which: String,
+        size: usize,
+        completion: SyncSender<Result<Value, DeferredRpcError>>,
+    },
+    GetBufferSize {
+        _command_reservation: SharedReservation,
+        which: String,
+        completion: SyncSender<Result<Value, DeferredRpcError>>,
+    },
+}
+
 #[derive(Debug)]
 pub(crate) enum PythonHostSocket {
-    Tcp(TcpStream),
-    Udp(UdpSocket),
+    Tcp {
+        socket_id: String,
+        pending_read: Option<PythonTcpReadBuffer>,
+    },
+    Udp {
+        socket_id: String,
+    },
+}
+
+#[derive(Debug)]
+pub(crate) struct PythonTcpReadBuffer {
+    pub(crate) data: Vec<u8>,
+    pub(crate) offset: usize,
+    pub(crate) _reservation: agentos_runtime::accounting::SharedReservation,
+    pub(crate) _source_reservations: Vec<agentos_runtime::accounting::SharedReservation>,
 }
 
 #[derive(Debug)]
 pub(crate) struct ActiveUdpSocket {
     pub(crate) family: JavascriptUdpFamily,
-    pub(crate) socket: Option<UdpSocket>,
+    pub(crate) native_commands: Option<TokioSender<NativeUdpCommand>>,
     pub(crate) kernel_socket_id: Option<SocketId>,
     pub(crate) guest_local_addr: Option<SocketAddr>,
+    pub(crate) native_local_addr: Option<SocketAddr>,
+    pub(crate) kernel_connected_remote_addr: Option<SocketAddr>,
     pub(crate) recv_buffer_size: usize,
     pub(crate) send_buffer_size: usize,
     /// One strong reference per guest-visible datagram socket description.
     pub(crate) description_handles: Arc<()>,
     pub(crate) kernel_transfer_guard: Option<TransferredFd>,
+    pub(crate) resources: Arc<agentos_runtime::accounting::ResourceLedger>,
+    pub(crate) runtime_context: agentos_runtime::RuntimeContext,
+    pub(crate) reactor_limits: ReactorIoLimits,
+    pub(crate) fairness_identity: Arc<OnceLock<(u64, u64)>>,
+    pub(crate) fairness_identity_committed: Arc<Notify>,
+    pub(crate) read_event_notify: Arc<Notify>,
+    pub(crate) event_pusher: Arc<Mutex<Option<JavascriptSocketEventPusher>>>,
+    pub(crate) native_read_wake_pending: Arc<AtomicBool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1474,6 +2066,7 @@ pub(crate) struct ActiveUdpSocket {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)] // execution state is process-registry owned and preserves backend drop affinity
 pub(crate) enum ActiveExecution {
     Javascript(JavascriptExecution),
     Python(PythonExecution),
@@ -1490,18 +2083,26 @@ pub(crate) struct ToolExecution {
     pub(crate) pending_event_count_limit: Arc<AtomicUsize>,
     pub(crate) pending_event_bytes_limit: Arc<AtomicUsize>,
     pub(crate) vm_pending_event_bytes_budget: Arc<VmPendingByteBudget>,
+    pub(crate) event_notify: Arc<Notify>,
 }
 
 impl Default for ToolExecution {
     fn default() -> Self {
+        Self::with_event_notify(
+            Arc::new(Notify::new()),
+            agentos_runtime::DEFAULT_PROTOCOL_MAX_PROCESS_EVENTS,
+        )
+    }
+}
+
+impl ToolExecution {
+    pub(crate) fn with_event_notify(event_notify: Arc<Notify>, event_capacity: usize) -> Self {
         Self {
             cancelled: Arc::new(AtomicBool::new(false)),
             pending_events: Arc::new(Mutex::new(VecDeque::new())),
             event_overflow_reason: Arc::new(Mutex::new(None)),
             pending_event_bytes: Arc::new(AtomicUsize::new(0)),
-            pending_event_count_limit: Arc::new(AtomicUsize::new(
-                agentos_native_sidecar_core::limits::DEFAULT_PROCESS_PENDING_EVENT_COUNT,
-            )),
+            pending_event_count_limit: Arc::new(AtomicUsize::new(event_capacity)),
             pending_event_bytes_limit: Arc::new(AtomicUsize::new(
                 agentos_native_sidecar_core::limits::DEFAULT_PROCESS_PENDING_EVENT_BYTES,
             )),
@@ -1509,6 +2110,7 @@ impl Default for ToolExecution {
                 agentos_native_sidecar_core::limits::DEFAULT_PROCESS_PENDING_EVENT_BYTES,
                 TrackedLimit::PendingExecutionEventBytes,
             ),
+            event_notify,
         }
     }
 }
@@ -1518,12 +2120,66 @@ pub(crate) enum ActiveExecutionEvent {
     Stdout(Vec<u8>),
     Stderr(Vec<u8>),
     JavascriptSyncRpcRequest(JavascriptSyncRpcRequest),
+    JavascriptSyncRpcCompletion(JavascriptSyncRpcCompletion),
     PythonVfsRpcRequest(Box<PythonVfsRpcRequest>),
+    PythonSocketConnectCompletion(Box<PythonSocketConnectCompletion>),
     SignalState {
         signal: u32,
         registration: SignalHandlerRegistration,
     },
     Exited(i32),
+}
+
+#[derive(Debug)]
+pub(crate) struct JavascriptSyncRpcCompletion {
+    pub(crate) request_id: u64,
+    pub(crate) result: Result<Value, DeferredRpcError>,
+}
+
+#[derive(Debug)]
+pub(crate) struct PythonSocketConnectCompletion {
+    pub(crate) request_id: u64,
+    pub(crate) result: Result<PendingPythonTcpConnect, DeferredRpcError>,
+}
+
+#[derive(Debug)]
+pub(crate) struct PendingPythonTcpConnect {
+    pub(crate) native_socket_id: String,
+    pub(crate) python_socket_id: u64,
+    pub(crate) socket: ActiveTcpSocket,
+    pub(crate) pending_capability: agentos_runtime::capability::PendingCapability,
+}
+
+#[derive(Debug)]
+pub(crate) enum PendingJavascriptNetConnect {
+    Tcp {
+        socket_id: String,
+        socket: Box<ActiveTcpSocket>,
+        pending_capability: agentos_runtime::capability::PendingCapability,
+        local_reservation_id: Option<String>,
+    },
+    Unix {
+        socket_id: String,
+        socket: Box<ActiveUnixSocket>,
+        pending_capability: agentos_runtime::capability::PendingCapability,
+        remote_path: String,
+        remote_abstract_path_hex: Option<String>,
+    },
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct PendingJavascriptNetConnectState {
+    pub(crate) connected: Option<PendingJavascriptNetConnect>,
+    /// A bound-but-unlistened Unix socket is removed from the process table
+    /// while its nonblocking connect is in flight. Keep the original handle
+    /// here so a failed connect can restore the guest descriptor unchanged.
+    pub(crate) bound_unix_listener: Option<(String, ActiveUnixListener)>,
+}
+
+#[derive(Debug)]
+pub(crate) struct DeferredRpcError {
+    pub(crate) code: String,
+    pub(crate) message: String,
 }
 
 #[derive(Debug)]
@@ -1569,4 +2225,103 @@ pub(crate) struct ProcNetEntry {
     pub(crate) local_port: u16,
     pub(crate) state: String,
     pub(crate) inode: u64,
+}
+
+#[cfg(test)]
+mod async_completion_tests {
+    use super::*;
+    use agentos_runtime::accounting::ResourceLimit;
+
+    fn completion_runtime(
+        maximum: usize,
+        generation: u64,
+    ) -> (RuntimeContext, Arc<ResourceLedger>) {
+        let process =
+            agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+                .expect("test process runtime")
+                .context();
+        let resources = Arc::new(ResourceLedger::child(
+            format!("completion-test-vm-{generation}"),
+            [(
+                ResourceClass::AsyncCompletions,
+                ResourceLimit::new(maximum, "limits.reactor.maxAsyncCompletions"),
+            )],
+            Arc::clone(process.resources()),
+        ));
+        (
+            process.scoped_for_vm(Arc::clone(&resources), generation),
+            resources,
+        )
+    }
+
+    #[test]
+    fn completion_reservations_bound_all_lanes_in_one_vm() {
+        let (runtime, resources) = completion_runtime(2, 91);
+        let (first_tx, mut first_rx) = async_completion_channel(runtime.clone(), 2);
+        let (second_tx, second_rx) = async_completion_channel(runtime.clone(), 2);
+
+        first_tx.try_send("first").expect("first lane admission");
+        second_tx.try_send("second").expect("second lane admission");
+        assert_eq!(resources.usage(ResourceClass::AsyncCompletions).used, 2);
+
+        let error = first_tx
+            .try_send("aggregate overflow")
+            .expect_err("per-VM completion limit must span both lanes");
+        assert!(error.contains("limits.reactor.maxAsyncCompletions"));
+
+        assert_eq!(
+            first_rx.try_recv().expect("release first completion"),
+            "first"
+        );
+        second_tx
+            .try_send("replacement")
+            .expect("released aggregate slot can move to another lane");
+        assert_eq!(resources.usage(ResourceClass::AsyncCompletions).used, 2);
+
+        drop(first_rx);
+        drop(second_rx);
+        assert_eq!(
+            resources.usage(ResourceClass::AsyncCompletions).used,
+            0,
+            "dropping queued lanes must release every completion reservation"
+        );
+
+        let (disconnected_tx, disconnected_rx) = async_completion_channel(runtime, 1);
+        drop(disconnected_rx);
+        let error = disconnected_tx
+            .try_send("disconnected")
+            .expect_err("disconnected lane rejects insertion");
+        assert!(error.contains("ERR_AGENTOS_ASYNC_COMPLETION_DISCONNECTED"));
+        assert_eq!(resources.usage(ResourceClass::AsyncCompletions).used, 0);
+    }
+
+    #[test]
+    fn failed_completion_send_and_vm_close_release_reservations() {
+        let (runtime, resources) = completion_runtime(1, 92);
+        let (held_tx, _held_rx) = async_completion_channel(runtime.clone(), 1);
+        let (waiting_tx, waiting_rx) = async_completion_channel(runtime.clone(), 1);
+        held_tx.try_send(1_u8).expect("fill aggregate limit");
+
+        runtime.handle().block_on(async {
+            let waiter = tokio::spawn(async move { waiting_tx.send(2_u8).await });
+            tokio::task::yield_now().await;
+            runtime.close_admission();
+            let error = tokio::time::timeout(Duration::from_secs(1), waiter)
+                .await
+                .expect("VM close wakes completion admission waiter")
+                .expect("completion waiter joins")
+                .expect_err("closed VM rejects queued completion");
+            assert!(error.contains("ERR_AGENTOS_ASYNC_COMPLETION_CLOSED"));
+        });
+
+        drop(held_tx);
+        assert_eq!(
+            resources.usage(ResourceClass::AsyncCompletions).used,
+            1,
+            "the queued item owns the only remaining reservation"
+        );
+        drop(_held_rx);
+        drop(waiting_rx);
+        assert_eq!(resources.usage(ResourceClass::AsyncCompletions).used, 0);
+    }
 }

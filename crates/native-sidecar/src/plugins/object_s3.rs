@@ -1,3 +1,4 @@
+use crate::bridge::MountPluginContext;
 use crate::plugins::s3_common::{
     create_s3_client, normalize_prefix, S3MountCredentials, DEFAULT_REGION,
 };
@@ -28,14 +29,14 @@ struct ObjectS3MountConfig {
 #[derive(Debug)]
 pub(crate) struct ObjectS3MountPlugin;
 
-impl<Context> FileSystemPluginFactory<Context> for ObjectS3MountPlugin {
+impl<B> FileSystemPluginFactory<MountPluginContext<B>> for ObjectS3MountPlugin {
     fn plugin_id(&self) -> &'static str {
         "object_s3"
     }
 
     fn open(
         &self,
-        request: OpenFileSystemPluginRequest<'_, Context>,
+        request: OpenFileSystemPluginRequest<'_, MountPluginContext<B>>,
     ) -> Result<Box<dyn MountedFileSystem>, PluginError> {
         let config: ObjectS3MountConfig = serde_json::from_value(request.config.clone())
             .map_err(|error| PluginError::invalid_input(error.to_string()))?;
@@ -69,6 +70,9 @@ impl<Context> FileSystemPluginFactory<Context> for ObjectS3MountPlugin {
                 dir_mode: config.dir_mode.unwrap_or(0o755),
             },
         );
-        Ok(Box::new(MountedEngineFileSystem::new(fs)?))
+        Ok(Box::new(MountedEngineFileSystem::with_runtime_context(
+            fs,
+            request.context.runtime_context.clone(),
+        )))
     }
 }

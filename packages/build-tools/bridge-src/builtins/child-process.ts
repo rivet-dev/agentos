@@ -16,6 +16,30 @@ __export(child_process_exports, {
   spawnSync: () => spawnSync
 });
 var childProcessInstances = /* @__PURE__ */ new Map();
+const CHILD_PROCESS_EVENT_ROUTES = Symbol.for("agentos.childProcessEventRoutes");
+const childProcessEventRoutes = (() => {
+  const existing = globalThis[CHILD_PROCESS_EVENT_ROUTES];
+  if (existing instanceof Map) return existing;
+  const routes = /* @__PURE__ */ new Map();
+  Object.defineProperty(globalThis, CHILD_PROCESS_EVENT_ROUTES, {
+    value: routes,
+    configurable: false,
+    enumerable: false,
+    writable: false
+  });
+  return routes;
+})();
+function publishChildProcessEvent(eventType, payload) {
+  const route = childProcessEventRoutes.get(payload?.sessionId);
+  if (typeof route !== "function") return;
+  try {
+    route(eventType, payload);
+  } catch (error) {
+    queueMicrotask(() => {
+      throw error;
+    });
+  }
+}
 // fds handed to a live child as its inherited stdout/stderr. Node keeps the
 // underlying file open for the child's lifetime even after the parent closes
 // its own descriptor (the child dup'd it at fork). We emulate that: the parent's
@@ -48,8 +72,6 @@ function releaseChildInheritedFd(fd) {
     }
   }
 }
-var DETACHED_CHILD_BOOTSTRAP_POLLS = 200;
-var DETACHED_CHILD_IMMEDIATE_BOOTSTRAP_POLLS = 25;
 function normalizeChildProcessSessionId(payload) {
   if (!payload || typeof payload !== "object") {
     return null;
@@ -110,106 +132,6 @@ function splitChildProcessIpcFrames(buffer, chunk) {
     cursor = frameEnd + 1;
   }
 }
-function dispatchChildProcessPollResult(sessionId, next) {
-  if (!next || typeof next !== "object") {
-    return false;
-  }
-  if (next.type === "stdout" || next.type === "stderr") {
-    const payload = { sessionId };
-    if (typeof next.data === "string") {
-      payload.data = next.data;
-    } else if (typeof Buffer !== "undefined" && Buffer.isBuffer(next.data)) {
-      payload.dataBase64 = next.data.toString("base64");
-    } else if (next.data instanceof Uint8Array) {
-      payload.dataBase64 = Buffer.from(
-        next.data.buffer,
-        next.data.byteOffset,
-        next.data.byteLength
-      ).toString("base64");
-    } else if (ArrayBuffer.isView(next.data)) {
-      payload.dataBase64 = Buffer.from(
-        next.data.buffer,
-        next.data.byteOffset,
-        next.data.byteLength
-      ).toString("base64");
-    } else if (next.data?.__agentOSType === "bytes" && typeof next.data.base64 === "string") {
-      payload.dataBase64 = next.data.base64;
-    }
-    childProcessDispatch(`child_${next.type}`, payload);
-    return true;
-  }
-  if (next.type === "exit") {
-    childProcessDispatch("child_exit", { sessionId, code: next.exitCode, signal: next.signal ?? null });
-    return true;
-  }
-  return false;
-}
-// Detached child_process instances keep the poll timer + synthetic handle refed
-// until we prove the child has crossed its bootstrap boundary. `_pollRefed`
-// records the public ref/unref state, `_detachedBootstrapPending` keeps the
-// bootstrap latch active, `_detachedBootstrapPollsRemaining` bounds how many
-// immediate/output-bearing polls we will drain before forcing completion, and
-// `_detachedBootstrapTimer` stays null because `unref()` no longer schedules a
-// retry timer that can race `exit` emission.
-function completeDetachedChildBootstrap(child) {
-  if (!child?._detachedBootstrapPending) {
-    return;
-  }
-  child._detachedBootstrapPending = false;
-  child._detachedBootstrapPollsRemaining = 0;
-  if (child._detachedBootstrapTimer != null) {
-    clearTimeout(child._detachedBootstrapTimer);
-    child._detachedBootstrapTimer = null;
-  }
-  if (!child._pollRefed) {
-    child._pollTimer?.unref?.();
-    if (child._handleRefed && child._handleId && typeof _unregisterHandle === "function") {
-      _unregisterHandle(child._handleId);
-      child._handleRefed = false;
-    }
-  }
-}
-function consumeDetachedChildBootstrapPoll(child) {
-  if (!child?._detachedBootstrapPending) {
-    return;
-  }
-  if (child._detachedBootstrapPollsRemaining > 0) {
-    child._detachedBootstrapPollsRemaining -= 1;
-  }
-  if (child._detachedBootstrapPollsRemaining === 0) {
-    completeDetachedChildBootstrap(child);
-  }
-}
-function pumpDetachedChildBootstrap(child, attempts = DETACHED_CHILD_IMMEDIATE_BOOTSTRAP_POLLS) {
-  if (!child?.detached || child._sessionId == null || typeof _childProcessPoll === "undefined") {
-    return false;
-  }
-  if (!child._detachedBootstrapPending) {
-    return true;
-  }
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (!childProcessInstances.has(child._sessionId)) {
-      return true;
-    }
-    const next = normalizeChildProcessBridgePayload(
-      _childProcessPoll.applySync(void 0, [child._sessionId, 10])
-    );
-    consumeDetachedChildBootstrapPoll(child);
-    if (!next || typeof next !== "object") {
-      if (!child._detachedBootstrapPending) {
-        return true;
-      }
-      continue;
-    }
-    if (dispatchChildProcessPollResult(child._sessionId, next) && next?.type === "exit") {
-      return true;
-    }
-    if (!child._detachedBootstrapPending) {
-      return true;
-    }
-  }
-  return !child._detachedBootstrapPending;
-}
 // When a child stdout/stderr is wired to an inherited numeric fd, write the
 // bytes straight to that descriptor (matching native node, where the child's
 // output lands in the inherited file/pipe rather than on child.stdout). Returns
@@ -260,7 +182,6 @@ function routeChildProcessEvent(sessionId, type, data) {
     if (writeChildOutputToInheritedFd(child._stderrFd, buf)) return;
     child.stderr.emit("data", buf);
   } else if (type === "exit") {
-    completeDetachedChildBootstrap(child);
     const wasConnected = child.connected;
     child.connected = false;
     const signalCode = data && typeof data === "object" ? data.signal ?? null : null;
@@ -333,50 +254,20 @@ var childProcessDispatch = (eventTypeOrSessionId, payloadOrType, data) => {
       eventTypeOrSessionId === "child_stdout" ? "stdout" : "stderr",
       bytes
     );
+    publishChildProcessEvent(eventTypeOrSessionId, {
+      sessionId,
+      data: bytes
+    });
     return;
   }
   if (eventTypeOrSessionId === "child_exit") {
     const code = typeof payload?.code === "number" ? payload.code : Number(payload?.code ?? 1);
     const signal = typeof payload?.signal === "string" ? payload.signal : null;
     routeChildProcessEvent(sessionId, "exit", { code, signal });
+    publishChildProcessEvent(eventTypeOrSessionId, { sessionId, code, signal });
   }
 };
 exposeCustomGlobal("_childProcessDispatch", childProcessDispatch);
-var CHILD_PROCESS_POLL_DRAIN_LIMIT = 64;
-function scheduleChildProcessPoll(sessionId, delayMs = 0) {
-  const child = childProcessInstances.get(sessionId);
-  if (!child || typeof _childProcessPoll === "undefined" || child._pollScheduled) {
-    return;
-  }
-  child._pollScheduled = true;
-  const pollTimer = setTimeout(() => {
-    child._pollTimer = null;
-    child._pollScheduled = false;
-    if (!childProcessInstances.has(sessionId)) {
-      return;
-    }
-    let drained = 0;
-    while (drained < CHILD_PROCESS_POLL_DRAIN_LIMIT && childProcessInstances.has(sessionId)) {
-      consumeDetachedChildBootstrapPoll(child);
-      const next = normalizeChildProcessBridgePayload(
-        _childProcessPoll.applySync(void 0, [sessionId, drained === 0 ? 10 : 0])
-      );
-      if (!next || typeof next !== "object") {
-        scheduleChildProcessPoll(sessionId, drained === 0 ? 5 : 0);
-        return;
-      }
-      drained += 1;
-      if (dispatchChildProcessPollResult(sessionId, next) && next.type === "exit") {
-        return;
-      }
-    }
-    scheduleChildProcessPoll(sessionId, 0);
-  }, delayMs);
-  child._pollTimer = pollTimer;
-  if (!child._pollRefed && !child._detachedBootstrapPending && typeof pollTimer?.unref === "function") {
-    pollTimer.unref();
-  }
-}
 function hasOutputListeners(stream, event) {
   return (stream._listeners[event]?.length ?? 0) > 0 || (stream._onceListeners[event]?.length ?? 0) > 0;
 }
@@ -516,12 +407,6 @@ var ChildProcess = class {
   signalCode = null;
   _pendingSignalCode = null;
   connected = false;
-  _pollScheduled = false;
-  _pollRefed = true;
-  _pollTimer = null;
-  _detachedBootstrapPending = false;
-  _detachedBootstrapPollsRemaining = 0;
-  _detachedBootstrapTimer = null;
   _sessionId = null;
   _handleId = null;
   _handleDescription = "";
@@ -899,8 +784,6 @@ var ChildProcess = class {
     return true;
   }
   ref() {
-    this._pollRefed = true;
-    this._pollTimer?.ref?.();
     if (!this._handleRefed && this._handleId && typeof _registerHandle === "function") {
       _registerHandle(this._handleId, this._handleDescription);
       this._handleRefed = true;
@@ -908,14 +791,7 @@ var ChildProcess = class {
     return this;
   }
   unref() {
-    this._pollRefed = false;
-    if (this._detachedBootstrapPending) {
-      pumpDetachedChildBootstrap(this);
-    }
-    if (!this._detachedBootstrapPending) {
-      this._pollTimer?.unref?.();
-    }
-    if (!this._detachedBootstrapPending && this._handleRefed && this._handleId && typeof _unregisterHandle === "function") {
+    if (this._handleRefed && this._handleId && typeof _unregisterHandle === "function") {
       _unregisterHandle(this._handleId);
       this._handleRefed = false;
     }
@@ -1119,8 +995,6 @@ function spawn(command, args, options) {
   child.spawnfile = command;
   child.spawnargs = [command, ...argsArray];
   child.detached = opts.detached === true;
-  child._detachedBootstrapPending = child.detached;
-  child._detachedBootstrapPollsRemaining = child.detached ? DETACHED_CHILD_BOOTSTRAP_POLLS : 0;
   const stdio = Array.isArray(opts.stdio) ? opts.stdio : opts.stdio === "inherit" ? ["inherit", "inherit", "inherit"] : [];
   // Node fd inheritance: when stdio[1]/stdio[2] is a numeric fd the child's
   // stdout/stderr is wired to that (host/VFS) descriptor, so the bytes are
@@ -1237,7 +1111,6 @@ function spawn(command, args, options) {
       child.stderr.on("data", (chunk) => process.stderr.write(chunk));
     }
     setTimeout(() => child.emit("spawn"), 0);
-    scheduleChildProcessPoll(sessionId, 0);
     return child;
   }
   const err = new Error(
@@ -1498,4 +1371,4 @@ var childProcess = {
 };
 exposeCustomGlobal("_childProcessModule", childProcess);
 var child_process_default = childProcess;
-export { child_process_exports, childProcessInstances, _childInheritedFds, retainChildInheritedFd, deferCloseIfChildInheritedFd, releaseChildInheritedFd, DETACHED_CHILD_BOOTSTRAP_POLLS, DETACHED_CHILD_IMMEDIATE_BOOTSTRAP_POLLS, normalizeChildProcessSessionId, normalizeChildProcessBridgePayload, CHILD_PROCESS_IPC_FRAME_PREFIX, encodeChildProcessIpcFrame, decodeChildProcessIpcFramePayload, splitChildProcessIpcFrames, dispatchChildProcessPollResult, completeDetachedChildBootstrap, consumeDetachedChildBootstrapPoll, pumpDetachedChildBootstrap, writeChildOutputToInheritedFd, redirectSyncOutputToInheritedFd, routeChildProcessEvent, childProcessDispatch, CHILD_PROCESS_POLL_DRAIN_LIMIT, scheduleChildProcessPoll, hasOutputListeners, decodeOutputChunk, scheduleOutputFlush, checkStreamMaxListeners, createOutputAsyncIterator, _nextChildPid, ChildProcess, exec, execSync, spawn, spawnSync, execFile, execFileSync, fork, childProcess, child_process_default };
+export { child_process_exports, childProcessInstances, _childInheritedFds, retainChildInheritedFd, deferCloseIfChildInheritedFd, releaseChildInheritedFd, normalizeChildProcessSessionId, normalizeChildProcessBridgePayload, CHILD_PROCESS_IPC_FRAME_PREFIX, encodeChildProcessIpcFrame, decodeChildProcessIpcFramePayload, splitChildProcessIpcFrames, writeChildOutputToInheritedFd, redirectSyncOutputToInheritedFd, routeChildProcessEvent, childProcessDispatch, hasOutputListeners, decodeOutputChunk, scheduleOutputFlush, checkStreamMaxListeners, createOutputAsyncIterator, _nextChildPid, ChildProcess, exec, execSync, spawn, spawnSync, execFile, execFileSync, fork, childProcess, child_process_default };

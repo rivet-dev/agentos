@@ -65,6 +65,11 @@ fn rust_const_name(line: &str) -> Option<&str> {
     let after_vis = trimmed
         .strip_prefix("pub(crate) ")
         .or_else(|| trimmed.strip_prefix("pub "))
+        .or_else(|| {
+            trimmed
+                .strip_prefix("pub(in ")
+                .and_then(|rest| rest.split_once(") ").map(|(_, declaration)| declaration))
+        })
         .unwrap_or(trimmed);
     let after_const = after_vis.strip_prefix("const ")?;
     let name = identifier_prefix(after_const);
@@ -282,7 +287,7 @@ fn limit_constants_are_classified() {
         let key = (c.name.clone(), c.path.clone());
         if !inventory_keys.contains(&key) {
             failures.push(format!(
-                "unclassified limit constant {} in {}: wire it through VmLimits and mark it \
+                "unclassified limit constant {} in {}: wire it through a typed configuration field and mark it \
                  \"policy\", or add an \"invariant\"/\"policy-deferred\" entry to \
                  crates/sidecar/tests/fixtures/limits-inventory.json with a one-line rationale",
                 c.name, c.path
@@ -302,7 +307,9 @@ fn limit_constants_are_classified() {
         }
     }
 
-    // Every policy entry names the VmLimits field it is wired through.
+    // Every policy entry names the typed VM- or process-scoped configuration field it is wired
+    // through. Process-wide reactor and transport limits intentionally live in RuntimeConfig,
+    // rather than being duplicated into every VM's VmLimits.
     for entry in &inventory {
         if entry.class == "policy" {
             let wired_ok = entry
@@ -361,6 +368,10 @@ fn match_rule_unit_assertions() {
     assert_eq!(
         rust_const_name("pub const DEFAULT_MAX_PROCESSES: usize = 256;"),
         Some("DEFAULT_MAX_PROCESSES")
+    );
+    assert_eq!(
+        rust_const_name("pub(in crate::execution) const UDP_MAX_DATAGRAM_BYTES: usize = 65_536;"),
+        Some("UDP_MAX_DATAGRAM_BYTES")
     );
     // Lowercase const is not a screaming-snake limit constant.
     assert_eq!(rust_const_name("const max_value: usize = 1;"), None);

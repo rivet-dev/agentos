@@ -31,7 +31,7 @@ function request(method, path, port, options) {
 			(res) => {
 				let body = "";
 				res.on("data", (chunk) => (body += chunk));
-				res.on("end", () => resolve({ status: res.statusCode, body }));
+				res.on("end", () => resolve({ status: res.statusCode, headers: res.headers, body }));
 			},
 		);
 		req.on("error", reject);
@@ -42,6 +42,16 @@ function request(method, path, port, options) {
 	});
 }
 
+function parseJsonResponse(response, route) {
+	try {
+		return JSON.parse(response.body);
+	} catch (error) {
+		throw new Error(
+			`${route} returned invalid JSON (status=${response.status}, headers=${JSON.stringify(response.headers)}, body=${JSON.stringify(response.body)}): ${error.message}`,
+		);
+	}
+}
+
 async function main() {
 	await app.listen({ port: 0, host: "127.0.0.1" });
 	const port = app.server.address().port;
@@ -50,19 +60,35 @@ async function main() {
 		const results = [];
 
 		const r1 = await request("GET", "/hello", port);
-		results.push({ route: "GET /hello", status: r1.status, body: JSON.parse(r1.body) });
+		results.push({
+			route: "GET /hello",
+			status: r1.status,
+			body: parseJsonResponse(r1, "GET /hello"),
+		});
 
 		const r2 = await request("GET", "/users/42", port);
-		results.push({ route: "GET /users/42", status: r2.status, body: JSON.parse(r2.body) });
+		results.push({
+			route: "GET /users/42",
+			status: r2.status,
+			body: parseJsonResponse(r2, "GET /users/42"),
+		});
 
 		const r3 = await request("POST", "/data", port, {
 			headers: { "Content-Type": "application/json" },
 			body: { key: "value" },
 		});
-		results.push({ route: "POST /data", status: r3.status, body: JSON.parse(r3.body) });
+		results.push({
+			route: "POST /data",
+			status: r3.status,
+			body: parseJsonResponse(r3, "POST /data"),
+		});
 
 		const r4 = await request("GET", "/async", port);
-		results.push({ route: "GET /async", status: r4.status, body: JSON.parse(r4.body) });
+		results.push({
+			route: "GET /async",
+			status: r4.status,
+			body: parseJsonResponse(r4, "GET /async"),
+		});
 
 		console.log(JSON.stringify(results));
 	} finally {

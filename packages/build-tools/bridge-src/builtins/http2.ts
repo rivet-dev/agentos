@@ -4,6 +4,10 @@ import { exposeCustomGlobal } from "../global-exposure.js";
 import { Response } from "./fetch.js";
 import { createErrorWithCode, createTypeErrorWithCode, dispatchHttp2CompatibilityRequest, formatReceivedType, http } from "./http.js";
 import { buildSerializedTlsOptions, normalizeListenArgs, normalizeSocketTimeout } from "./net.js";
+import {
+  registerCapabilityReadiness,
+  unregisterCapabilityReadiness,
+} from "./readiness.js";
 
 var HTTP2_K_SOCKET = /* @__PURE__ */ Symbol.for("secure-exec.http2.kSocket");
 
@@ -1279,13 +1283,17 @@ var Http2Session = class extends Http2EventEmitter {
   socket;
   state = cloneHttp2SessionRuntimeState(DEFAULT_HTTP2_SESSION_STATE);
   _sessionId;
+  capabilityId;
+  capabilityGeneration;
   _waitStarted = false;
   _pendingSettingsAckCount = 0;
   _awaitingInitialSettingsAck = false;
   _settingsCallbacks = [];
-  constructor(sessionId, socketState) {
+  constructor(sessionId, socketState, identity) {
     super();
     this._sessionId = sessionId;
+    this.capabilityId = identity?.capabilityId;
+    this.capabilityGeneration = identity?.capabilityGeneration;
     this.socket = new Http2SocketProxy(socketState, () => {
       setTimeout(() => {
         this.destroy();
@@ -1298,6 +1306,9 @@ var Http2Session = class extends Http2EventEmitter {
       return;
     }
     this._waitStarted = true;
+    registerCapabilityReadiness(this, () =>
+      wakeRetainedHttp2Handle("session", this._sessionId)
+    );
     pollRetainedHttp2Handle(
       "session",
       this._sessionId,
@@ -1309,6 +1320,7 @@ var Http2Session = class extends Http2EventEmitter {
   _release() {
     this._waitStarted = false;
     retainedHttp2Handles.delete(`session:${this._sessionId}`);
+    unregisterCapabilityReadiness(this);
   }
   _beginInitialSettingsAck() {
     this._awaitingInitialSettingsAck = true;
@@ -1420,16 +1432,10 @@ var Http2Session = class extends Http2EventEmitter {
         return;
       }
     }
-    _networkHttp2SessionCloseRaw?.applySync(void 0, [this._sessionId]);
-    setTimeout(() => {
-      if (!http2Sessions.has(this._sessionId)) {
-        return;
-      }
-      this._release();
-      this.emit("close");
-      http2Sessions.delete(this._sessionId);
-      _unregisterHandle?.(`http2:session:${this._sessionId}`);
-    }, 50);
+    if (typeof _networkHttp2SessionCloseRaw === "undefined") {
+      throw new Error("http2 session close bridge is not available");
+    }
+    _networkHttp2SessionCloseRaw.applySync(void 0, [this._sessionId]);
   }
   destroy() {
     if (typeof _networkHttp2SessionDestroyRaw !== "undefined") {
@@ -1445,6 +1451,8 @@ var Http2Server = class extends Http2EventEmitter {
   allowHTTP1;
   encrypted;
   _serverId;
+  capabilityId;
+  capabilityGeneration;
   listening = false;
   _address = null;
   _options;
@@ -1479,6 +1487,9 @@ var Http2Server = class extends Http2EventEmitter {
       return;
     }
     this._waitStarted = true;
+    registerCapabilityReadiness(this, () =>
+      wakeRetainedHttp2Handle("server", this._serverId)
+    );
     pollRetainedHttp2Handle(
       "server",
       this._serverId,
@@ -1490,6 +1501,7 @@ var Http2Server = class extends Http2EventEmitter {
   _release() {
     this._waitStarted = false;
     retainedHttp2Handles.delete(`server:${this._serverId}`);
+    unregisterCapabilityReadiness(this);
   }
   setTimeout(timeout, callback) {
     this._timeoutMs = normalizeSocketTimeout(timeout);
@@ -1543,6 +1555,8 @@ var Http2Server = class extends Http2EventEmitter {
       _networkHttp2ServerListenRaw.applySyncPromise(void 0, [JSON.stringify(payload)])
     );
     this._address = result.address ?? null;
+    this.capabilityId = result.capabilityId;
+    this.capabilityGeneration = result.capabilityGeneration;
     this.listening = true;
     this._retain();
     _registerHandle?.(`http2:server:${this._serverId}`, "http2 server");
@@ -1558,19 +1572,16 @@ var Http2Server = class extends Http2EventEmitter {
       queueMicrotask(() => this.emit("close"));
       return this;
     }
-    void _networkHttp2ServerCloseRaw?.apply(void 0, [this._serverId], {
-      result: { promise: true }
-    });
-    setTimeout(() => {
-      if (!this.listening) {
-        return;
-      }
-      this.listening = false;
-      this._release();
-      this.emit("close");
-      http2Servers.delete(this._serverId);
-      _unregisterHandle?.(`http2:server:${this._serverId}`);
-    }, 50);
+    if (typeof _networkHttp2ServerCloseRaw === "undefined") {
+      throw new Error("http2 server close bridge is not available");
+    }
+    // Closing the listener is an immediate control-plane state transition in
+    // the sidecar. Wait for that response on the direct sync-response lane so
+    // the terminal event is durable before re-waking the bounded event drain.
+    // An async promise here can otherwise park the only follow-up wake behind
+    // the event that the promise is meant to expose.
+    _networkHttp2ServerCloseRaw.applySyncPromise(void 0, [this._serverId]);
+    wakeRetainedHttp2Handle("server", this._serverId);
     return this;
   }
 };
@@ -1622,7 +1633,8 @@ function connectHttp2(authorityOrOptions, optionsOrListener, maybeListener) {
   const initialState = parseHttp2SessionState(response.state);
   const session = new Http2Session(
     response.sessionId,
-    initialState?.socket ?? void 0
+    initialState?.socket ?? void 0,
+    response
   );
   applyHttp2SessionState(session, initialState);
   session._beginInitialSettingsAck();
@@ -1642,7 +1654,7 @@ function connectHttp2(authorityOrOptions, optionsOrListener, maybeListener) {
 function getOrCreateHttp2Session(sessionId, state) {
   let session = http2Sessions.get(sessionId);
   if (!session) {
-    session = new Http2Session(sessionId, state?.socket ?? void 0);
+    session = new Http2Session(sessionId, state?.socket ?? void 0, state);
     http2Sessions.set(sessionId, session);
   }
   applyHttp2SessionState(session, state);
@@ -1930,7 +1942,7 @@ function http2Dispatch(kind, id, data, extra, extraNumber, extraHeaders, flags) 
   }
 }
 
-function dispatchPolledHttp2Event(event) {
+function dispatchPolledHttp2Event(event, terminalKind) {
   if (typeof event === "string") {
     event = JSON.parse(event);
   }
@@ -1950,27 +1962,27 @@ function dispatchPolledHttp2Event(event) {
     typeof event.extraHeaders === "string" ? event.extraHeaders : void 0,
     typeof event.flags === "string" || typeof event.flags === "number" ? event.flags : void 0
   );
-  return event.kind === "serverClose" || event.kind === "sessionClose";
+  return event.kind === terminalKind;
 }
 
 function pollRetainedHttp2Handle(kind, id, isActive, poll, onError) {
   const handleKey = `${kind}:${id}`;
+  const terminalKind = kind === "server" ? "serverClose" : "sessionClose";
   const handle = {
     active: true,
     running: false,
     pendingWake: false,
-    fallbackTimer: null,
     poll,
     tick: null
   };
-  const clearFallbackTimer = () => {
-    if (handle.fallbackTimer !== null) {
-      clearTimeout(handle.fallbackTimer);
-      handle.fallbackTimer = null;
-    }
+  const scheduleTick = () => {
+    queueMicrotask(() => {
+      if (retainedHttp2Handles.get(handleKey) === handle && handle.active) {
+        handle.tick?.();
+      }
+    });
   };
   const tick = () => {
-    clearFallbackTimer();
     if (!isActive()) {
       handle.active = false;
       retainedHttp2Handles.delete(handleKey);
@@ -1989,11 +2001,17 @@ function pollRetainedHttp2Handle(kind, id, isActive, poll, onError) {
         hitDrainLimit = false;
         let i = 0;
         for (; i < 64 && isActive(); i++) {
-          const event = poll();
+          let event;
+          try {
+            event = poll();
+          } catch (error) {
+            onError(error);
+            return;
+          }
           if (!event) {
             break;
           }
-          sawTerminal = dispatchPolledHttp2Event(event);
+          sawTerminal = dispatchPolledHttp2Event(event, terminalKind);
           if (sawTerminal) {
             break;
           }
@@ -2001,32 +2019,23 @@ function pollRetainedHttp2Handle(kind, id, isActive, poll, onError) {
         hitDrainLimit = i === 64;
       } while (!sawTerminal && handle.pendingWake && isActive());
       if (!sawTerminal && hitDrainLimit && isActive()) {
-        handle.fallbackTimer = setTimeout(tick, 0);
-      } else if (!sawTerminal && isActive()) {
-        handle.fallbackTimer = setTimeout(tick, 10);
+        // The sidecar only wakes on empty-to-nonempty. If one bounded turn
+        // leaves durable events queued, schedule exactly one continuation.
+        scheduleTick();
       } else if (sawTerminal) {
-        handle.active = false;
-        retainedHttp2Handles.delete(handleKey);
-      }
-    } catch (error) {
-      onError(error);
-      if (isActive()) {
-        handle.fallbackTimer = setTimeout(tick, 10);
-      } else {
         handle.active = false;
         retainedHttp2Handles.delete(handleKey);
       }
     } finally {
       handle.running = false;
       if (handle.pendingWake && handle.active && isActive()) {
-        clearFallbackTimer();
-        handle.fallbackTimer = setTimeout(tick, 0);
+        scheduleTick();
       }
     }
   };
   handle.tick = tick;
   retainedHttp2Handles.set(handleKey, handle);
-  setTimeout(tick, 0);
+  scheduleTick();
 }
 
 function wakeRetainedHttp2Handle(kind, id) {
@@ -2038,19 +2047,11 @@ function wakeRetainedHttp2Handle(kind, id) {
   if (handle.running) {
     return;
   }
-  if (typeof queueMicrotask === "function") {
-    queueMicrotask(() => {
-      if (retainedHttp2Handles.get(`${kind}:${id}`) === handle) {
-        handle.tick?.();
-      }
-    });
-    return;
-  }
-  setTimeout(() => {
+  queueMicrotask(() => {
     if (retainedHttp2Handles.get(`${kind}:${id}`) === handle) {
       handle.tick?.();
     }
-  }, 0);
+  });
 }
 
 function onHttp2RetainDispatch(payload) {

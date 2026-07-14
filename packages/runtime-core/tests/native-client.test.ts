@@ -17,23 +17,31 @@ describe("stdio sidecar protocol client", () => {
 		writeFileSync(
 			driverPath,
 			[
+				"import { Socket } from 'node:net';",
+				"const control = new Socket({ fd: 3, readable: true, writable: true });",
 				"let stdinBuffer = Buffer.alloc(0);",
-				"const writeFrame = (frame) => {",
+				"const writeFrame = (stream, frame) => {",
 				"  const payload = Buffer.from(JSON.stringify(frame));",
 				"  const header = Buffer.alloc(4);",
 				"  header.writeUInt32BE(payload.length, 0);",
-				"  process.stdout.write(Buffer.concat([header, payload]));",
+				"  stream.write(Buffer.concat([header, payload]));",
 				"};",
 				"const handleFrame = (frame) => {",
 				"  if (frame.payload.type !== 'create_layer') {",
-				"    throw new Error(`unexpected payload ${frame.payload.type}`);",
+				"    throw new Error('unexpected payload ' + frame.payload.type);",
 				"  }",
-				"  writeFrame({",
+				"  writeFrame(control, {",
 				"    frame_type: 'response',",
 				"    schema: frame.schema,",
 				"    request_id: frame.request_id,",
 				"    ownership: frame.ownership,",
 				"    payload: { type: 'layer_created', layer_id: 'layer-1' },",
+				"  });",
+				"  writeFrame(process.stdout, {",
+				"    frame_type: 'event',",
+				"    schema: frame.schema,",
+				"    ownership: frame.ownership,",
+				"    payload: { type: 'structured', name: 'ready', detail: {} },",
 				"  });",
 				"};",
 				"const drain = () => {",
@@ -61,6 +69,10 @@ describe("stdio sidecar protocol client", () => {
 		});
 
 		try {
+			const ready = client.waitForEvent({
+				type: "structured",
+				name: "ready",
+			});
 			await expect(
 				client.sendRequest({
 					ownership,
@@ -68,6 +80,9 @@ describe("stdio sidecar protocol client", () => {
 				}),
 			).resolves.toMatchObject({
 				payload: { type: "layer_created", layer_id: "layer-1" },
+			});
+			await expect(ready).resolves.toMatchObject({
+				payload: { type: "structured", name: "ready" },
 			});
 		} finally {
 			await client.dispose();
@@ -80,15 +95,17 @@ describe("stdio sidecar protocol client", () => {
 		writeFileSync(
 			driverPath,
 			[
+				"import { Socket } from 'node:net';",
+				"const control = new Socket({ fd: 3, readable: true, writable: true });",
 				"let stdinBuffer = Buffer.alloc(0);",
-				"const writeFrame = (frame) => {",
+				"const writeFrame = (stream, frame) => {",
 				"  const payload = Buffer.from(JSON.stringify(frame));",
 				"  const header = Buffer.alloc(4);",
 				"  header.writeUInt32BE(payload.length, 0);",
-				"  process.stdout.write(Buffer.concat([header, payload]));",
+				"  stream.write(Buffer.concat([header, payload]));",
 				"};",
 				"const handleFrame = (frame) => {",
-				"  writeFrame({",
+				"  writeFrame(control, {",
 				"    frame_type: 'response',",
 				"    schema: frame.schema,",
 				"    request_id: frame.request_id,",

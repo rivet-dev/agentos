@@ -12,6 +12,25 @@
 
 use agentos_sidecar_client::{ProtocolCodecError, TransportError};
 
+/// Structured sidecar admission metadata kept behind one allocation so the
+/// public [`ClientError`] remains cheap to return through every SDK method.
+#[derive(Debug)]
+pub struct ResourceLimitDetails {
+    pub limit_name: Option<String>,
+    pub configured_limit: Option<u64>,
+    pub current_usage: Option<u64>,
+    pub requested: Option<u64>,
+    pub unit: Option<String>,
+    pub scope: Option<String>,
+    pub vm_id: Option<String>,
+    pub session_generation: Option<u64>,
+    pub capability_id: Option<u64>,
+    pub operation: Option<String>,
+    pub configuration_path: Option<String>,
+    pub retryable: Option<bool>,
+    pub errno: Option<String>,
+}
+
 /// Typed error taxonomy for the client SDK.
 #[derive(thiserror::Error, Debug)]
 pub enum ClientError {
@@ -57,6 +76,15 @@ pub enum ClientError {
     #[error("kernel error [{code}]: {message}")]
     Kernel { code: String, message: String },
 
+    /// A sidecar policy/admission bound rejected an operation. Fields are
+    /// copied from the lockstep wire response and never parsed from text.
+    #[error("resource limit [{code}]: {message}")]
+    ResourceLimit {
+        code: String,
+        message: String,
+        details: Box<ResourceLimitDetails>,
+    },
+
     /// A cron schedule string could not be parsed/validated.
     #[error("invalid schedule: {0}")]
     InvalidSchedule(String),
@@ -84,6 +112,38 @@ impl From<TransportError> for ClientError {
 }
 
 impl ClientError {
+    pub(crate) fn from_rejection(
+        rejection: agentos_sidecar_client::wire::RejectedResponse,
+    ) -> Self {
+        if rejection.code == "ERR_AGENTOS_RESOURCE_LIMIT"
+            || rejection.code == "ERR_AGENTOS_OVERLOADED"
+        {
+            return Self::ResourceLimit {
+                code: rejection.code,
+                message: rejection.message,
+                details: Box::new(ResourceLimitDetails {
+                    limit_name: rejection.limit_name,
+                    configured_limit: rejection.configured_limit,
+                    current_usage: rejection.current_usage,
+                    requested: rejection.requested,
+                    unit: rejection.unit,
+                    scope: rejection.scope,
+                    vm_id: rejection.vm_id,
+                    session_generation: rejection.session_generation,
+                    capability_id: rejection.capability_id,
+                    operation: rejection.operation,
+                    configuration_path: rejection.configuration_path,
+                    retryable: rejection.retryable,
+                    errno: rejection.errno,
+                }),
+            };
+        }
+        Self::Kernel {
+            code: rejection.code,
+            message: rejection.message,
+        }
+    }
+
     /// Render this error the way the TypeScript `AgentOs` surfaces `err.message` into batch results
     /// (`BatchWriteResult.error` / `BatchReadResult.error`).
     ///
@@ -95,6 +155,13 @@ impl ClientError {
     pub fn batch_message(&self) -> String {
         match self {
             ClientError::Kernel { code, message } => {
+                if message.starts_with(&format!("{code}:")) {
+                    message.clone()
+                } else {
+                    format!("{code}: {message}")
+                }
+            }
+            ClientError::ResourceLimit { code, message, .. } => {
                 if message.starts_with(&format!("{code}:")) {
                     message.clone()
                 } else {
@@ -117,3 +184,44 @@ impl ClientError {
 
 /// Convenience alias for results carrying a typed [`ClientError`].
 pub type ClientResult<T> = std::result::Result<T, ClientError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn structured_resource_limit_metadata_survives_rejection_conversion() {
+        let error = ClientError::from_rejection(agentos_sidecar_client::wire::RejectedResponse {
+            code: String::from("ERR_AGENTOS_RESOURCE_LIMIT"),
+            message: String::from("handle command bytes exceeded"),
+            limit_name: Some(String::from("handleCommandBytes")),
+            configured_limit: Some(4096),
+            current_usage: Some(3072),
+            requested: Some(2048),
+            unit: Some(String::from("bytes")),
+            scope: Some(String::from("vm")),
+            vm_id: Some(String::from("vm-1")),
+            session_generation: Some(3),
+            capability_id: Some(11),
+            operation: Some(String::from("socket.write")),
+            configuration_path: Some(String::from("limits.reactor.maxHandleCommandBytes")),
+            retryable: Some(true),
+            errno: Some(String::from("EAGAIN")),
+        });
+
+        match error {
+            ClientError::ResourceLimit { details, .. } => {
+                assert_eq!(details.configured_limit, Some(4096));
+                assert_eq!(details.current_usage, Some(3072));
+                assert_eq!(details.requested, Some(2048));
+                assert_eq!(
+                    details.configuration_path.as_deref(),
+                    Some("limits.reactor.maxHandleCommandBytes")
+                );
+                assert_eq!(details.retryable, Some(true));
+                assert_eq!(details.errno.as_deref(), Some("EAGAIN"));
+            }
+            other => panic!("expected resource limit, got {other:?}"),
+        }
+    }
+}

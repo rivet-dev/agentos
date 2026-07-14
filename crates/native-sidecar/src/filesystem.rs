@@ -39,7 +39,7 @@ use agentos_execution::{
     ModuleResolver, PythonVfsRpcMethod, PythonVfsRpcRequest, PythonVfsRpcResponsePayload,
     PythonVfsRpcStat,
 };
-use agentos_kernel::vfs::{VirtualStat, VirtualTimeSpec, VirtualUtimeSpec};
+use agentos_kernel::vfs::{VirtualFileSystem, VirtualStat, VirtualTimeSpec, VirtualUtimeSpec};
 use agentos_native_sidecar_core::{
     decode_guest_filesystem_content, handle_guest_filesystem_call as core_guest_filesystem_call,
 };
@@ -527,7 +527,11 @@ fn mirror_guest_filesystem_shadow_after_call(
         }
         GuestFilesystemOperation::CreateDir | GuestFilesystemOperation::Mkdir => {
             mirror_guest_directory_write_to_shadow(vm, &payload.path)?;
-            refresh_shadow_inventory_path(vm, &payload.path)?;
+            // A mkdir result can only add the requested empty directory and,
+            // for recursive mkdir, missing ancestors. Inventory those nodes
+            // directly instead of performing a guest-visible recursive readdir
+            // that would require an unrelated `fs.readdir` permission.
+            refresh_shadow_inventory_node(vm, &payload.path)?;
         }
         GuestFilesystemOperation::RemoveFile | GuestFilesystemOperation::RemoveDir => {
             remove_guest_shadow_path(vm, &payload.path)?;
@@ -672,10 +676,11 @@ fn refresh_shadow_inventory_path(vm: &mut VmState, guest_path: &str) -> Result<(
     Ok(())
 }
 
-/// Refresh only a pathname's structural type. Metadata operations such as
-/// chmod/utimes must not recursively read a directory after making it mode
-/// 000: Linux reports the metadata operation as successful, and existing
-/// descendant inventory remains valid even though readdir is now denied.
+/// Refresh only a pathname's structural type and any newly mirrored ancestors.
+/// Freshly created directories are empty, and metadata operations such as
+/// chmod/utimes must not recursively read a directory after making it mode 000:
+/// Linux reports the operation as successful, and existing descendant inventory
+/// remains valid even though readdir is now denied.
 fn refresh_shadow_inventory_node(vm: &mut VmState, guest_path: &str) -> Result<(), SidecarError> {
     let guest_path = normalize_path(guest_path);
     let mut updates = collect_shadow_inventory_ancestors(vm, &guest_path)?;
@@ -698,10 +703,7 @@ fn collect_shadow_inventory_ancestors(
     // the shadow has the same unlink/rmdir effect in the kernel VFS.
     let mut ancestors = Vec::new();
     let mut cursor = guest_path.to_owned();
-    loop {
-        let Some(parent) = Path::new(&cursor).parent() else {
-            break;
-        };
+    while let Some(parent) = Path::new(&cursor).parent() {
         let parent = normalize_path(&parent.to_string_lossy());
         if parent == "/" {
             break;
@@ -725,10 +727,14 @@ fn shadow_inventory_kernel_node_type(
     vm: &mut VmState,
     guest_path: &str,
 ) -> Result<Option<ShadowNodeType>, SidecarError> {
-    let stat = match vm.kernel.lstat(guest_path) {
+    // This inventory is trusted sidecar bookkeeping after the guest mutation has
+    // already passed its operation-specific permission check. Re-entering through
+    // `KernelVm::lstat` would incorrectly require a separate guest `fs.stat`
+    // permission for each parent that the shadow mirror records.
+    let stat = match vm.kernel.filesystem_mut().inner_mut().lstat(guest_path) {
         Ok(stat) => stat,
         Err(error) if error.code() == "ENOENT" => return Ok(None),
-        Err(error) => return Err(kernel_error(error)),
+        Err(error) => return Err(kernel_error(error.into())),
     };
     let node_type = if stat.is_symbolic_link {
         ShadowNodeType::Symlink
@@ -1098,11 +1104,21 @@ impl ProcessModuleFsReader<'_> {
 impl ModuleFsReader for ProcessModuleFsReader<'_> {
     fn canonical_guest_path(&mut self, guest_path: &str) -> Option<String> {
         let normalized = self.normalize_guest_path(guest_path);
-        if self
-            .open_mapped_path(&normalized, "module.realpath", O_PATH_ANCHOR)
-            .is_some()
-        {
-            return Some(normalized);
+        if let Some(mapped) = self.mapped_host_path(&normalized) {
+            if self.materialize_mapped_path(&normalized, &mapped).is_ok() {
+                if let Ok(opened) = open_mapped_runtime_beneath(
+                    &mapped,
+                    "module.realpath",
+                    O_PATH_ANCHOR,
+                    Mode::empty(),
+                ) {
+                    if let Some(resolved) =
+                        mapped_runtime_resolved_guest_path(&mapped, &opened.host_path)
+                    {
+                        return Some(resolved);
+                    }
+                }
+            }
         }
         self.kernel.realpath(&normalized).ok()
     }
@@ -2192,6 +2208,20 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             let path = path.as_str();
             match mapped_runtime_host_path(process, path, true) {
                 Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
+                    // Mapped paths are a merged view of the process shadow and
+                    // kernel VFS. A file created by WASM exists only in the
+                    // kernel until a JavaScript operation materializes it. If
+                    // the shadow leaf is absent, unlink the kernel entry
+                    // directly: copying file contents merely to delete them
+                    // would be wasteful and would incorrectly require target
+                    // read permission. If the shadow leaf exists, remove both
+                    // representations below.
+                    if !mapped_runtime_host_path_exists(&mapped_host)? {
+                        return kernel
+                            .remove_file(path)
+                            .map(|()| Value::Null)
+                            .map_err(kernel_error);
+                    }
                     let parent = open_mapped_runtime_parent_beneath(&mapped_host, "fs.unlink")?;
                     let host_path = parent.host_path.join(&parent.child_name);
                     mapped_child_remove_file(&parent).map_err(|error| {
@@ -2911,6 +2941,39 @@ fn mapped_runtime_relative_path(mapped: &MappedRuntimeHostPath) -> Result<PathBu
     } else {
         relative.to_path_buf()
     })
+}
+
+/// Re-express the resolver's confined, symlink-resolved host path in the guest
+/// namespace. Node resolves a module's real path before walking ancestor
+/// `node_modules` directories; preserving the original symlink spelling here
+/// breaks pnpm's `.pnpm/<pkg>/node_modules` dependency layout.
+fn mapped_runtime_resolved_guest_path(
+    mapped: &MappedRuntimeHostPath,
+    resolved_host_path: &Path,
+) -> Option<String> {
+    let requested_relative = mapped_runtime_relative_path(mapped).ok()?;
+    let canonical_root = fs::canonicalize(&mapped.host_root).ok()?;
+    let resolved_relative = resolved_host_path.strip_prefix(&canonical_root).ok()?;
+
+    let normalized_guest = normalize_path(&mapped.guest_path);
+    let requested_suffix = requested_relative.to_string_lossy().replace('\\', "/");
+    let guest_root = if requested_suffix == "." || requested_suffix.is_empty() {
+        normalized_guest
+    } else {
+        let suffix = format!("/{requested_suffix}");
+        let prefix = normalized_guest.strip_suffix(&suffix)?;
+        if prefix.is_empty() {
+            String::from("/")
+        } else {
+            prefix.to_owned()
+        }
+    };
+    let resolved_suffix = resolved_relative.to_string_lossy().replace('\\', "/");
+    Some(normalize_path(&format!(
+        "{}/{}",
+        guest_root.trim_end_matches('/'),
+        resolved_suffix
+    )))
 }
 
 fn open_mapped_runtime_beneath(
@@ -4791,9 +4854,11 @@ mod tests {
     use super::{
         create_mapped_runtime_directory, create_mapped_runtime_root_directory,
         mapped_runtime_host_path_exists, mapped_runtime_relative_path,
-        mapped_runtime_symlink_metadata, materialize_mapped_host_path_from_kernel,
-        move_across_devices_at, open_mapped_runtime_parent_beneath, read_mapped_runtime_link,
+        mapped_runtime_resolved_guest_path, mapped_runtime_symlink_metadata,
+        materialize_mapped_host_path_from_kernel, move_across_devices_at,
+        open_mapped_runtime_beneath, open_mapped_runtime_parent_beneath, read_mapped_runtime_link,
         rename_mapped_host_path, MappedRuntimeHostAccess, MappedRuntimeHostPath, SidecarError,
+        O_PATH_ANCHOR,
     };
     use crate::execution::javascript_sync_rpc_error_code;
     use crate::state::{SidecarKernel, EXECUTION_DRIVER_NAME, JAVASCRIPT_COMMAND};
@@ -5074,6 +5139,43 @@ mod tests {
             fs::canonicalize(&host_root).expect("canonicalize host root")
         );
         assert_eq!(parent.child_name.to_string_lossy(), "workspace");
+    }
+
+    #[test]
+    fn mapped_module_realpath_preserves_pnpm_dependency_ancestor() {
+        let host_root = temp_dir("mapped-module-pnpm-realpath");
+        let package_dir = host_root.join(".pnpm/consumer@1.0.0/node_modules/consumer");
+        fs::create_dir_all(&package_dir).expect("create pnpm package directory");
+        fs::write(
+            package_dir.join("index.js"),
+            "module.exports = require('dep');",
+        )
+        .expect("write package entry");
+        std::os::unix::fs::symlink(
+            ".pnpm/consumer@1.0.0/node_modules/consumer",
+            host_root.join("consumer"),
+        )
+        .expect("create top-level package symlink");
+
+        let mapped = MappedRuntimeHostPath {
+            guest_path: String::from("/root/node_modules/consumer/index.js"),
+            host_root: host_root.clone(),
+            host_path: host_root.join("consumer/index.js"),
+        };
+        let opened = open_mapped_runtime_beneath(
+            &mapped,
+            "test.module.realpath",
+            O_PATH_ANCHOR,
+            nix::sys::stat::Mode::empty(),
+        )
+        .expect("resolve mapped module path");
+
+        assert_eq!(
+            mapped_runtime_resolved_guest_path(&mapped, &opened.host_path).as_deref(),
+            Some("/root/node_modules/.pnpm/consumer@1.0.0/node_modules/consumer/index.js"),
+        );
+
+        fs::remove_dir_all(&host_root).expect("remove mapped host root");
     }
 
     #[test]

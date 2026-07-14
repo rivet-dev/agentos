@@ -3519,18 +3519,57 @@ export function writePersistenceFlushedResponse(bc: bare.ByteCursor, x: Persiste
 export type RejectedResponse = {
     readonly code: string
     readonly message: string
+    readonly limitName: string | null
+    readonly configuredLimit: u64 | null
+    readonly currentUsage: u64 | null
+    readonly requested: u64 | null
+    readonly unit: string | null
+    readonly scope: string | null
+    readonly vmId: string | null
+    readonly sessionGeneration: u64 | null
+    readonly capabilityId: u64 | null
+    readonly operation: string | null
+    readonly configurationPath: string | null
+    readonly retryable: boolean | null
+    readonly errno: string | null
 }
 
 export function readRejectedResponse(bc: bare.ByteCursor): RejectedResponse {
     return {
         code: bare.readString(bc),
         message: bare.readString(bc),
+        limitName: read0(bc),
+        configuredLimit: read21(bc),
+        currentUsage: read21(bc),
+        requested: read21(bc),
+        unit: read0(bc),
+        scope: read0(bc),
+        vmId: read0(bc),
+        sessionGeneration: read21(bc),
+        capabilityId: read21(bc),
+        operation: read0(bc),
+        configurationPath: read0(bc),
+        retryable: read30(bc),
+        errno: read0(bc),
     }
 }
 
 export function writeRejectedResponse(bc: bare.ByteCursor, x: RejectedResponse): void {
     bare.writeString(bc, x.code)
     bare.writeString(bc, x.message)
+    write0(bc, x.limitName)
+    write21(bc, x.configuredLimit)
+    write21(bc, x.currentUsage)
+    write21(bc, x.requested)
+    write0(bc, x.unit)
+    write0(bc, x.scope)
+    write0(bc, x.vmId)
+    write21(bc, x.sessionGeneration)
+    write21(bc, x.capabilityId)
+    write0(bc, x.operation)
+    write0(bc, x.configurationPath)
+    write30(bc, x.retryable)
+    write0(bc, x.errno)
 }
 
 export type VmFetchResponse = {
@@ -4328,12 +4367,70 @@ export function writeSidecarResponseFrame(bc: bare.ByteCursor, x: SidecarRespons
     writeSidecarResponsePayload(bc, x.payload)
 }
 
+export type ShutdownControl = {
+    readonly reason: string
+}
+
+export function readShutdownControl(bc: bare.ByteCursor): ShutdownControl {
+    return {
+        reason: bare.readString(bc),
+    }
+}
+
+export function writeShutdownControl(bc: bare.ByteCursor, x: ShutdownControl): void {
+    bare.writeString(bc, x.reason)
+}
+
+export type ControlPayload =
+    | { readonly tag: "ShutdownControl"; readonly val: ShutdownControl }
+
+export function readControlPayload(bc: bare.ByteCursor): ControlPayload {
+    const offset = bc.offset
+    const tag = bare.readU8(bc)
+    switch (tag) {
+        case 0:
+            return { tag: "ShutdownControl", val: readShutdownControl(bc) }
+        default: {
+            bc.offset = offset
+            throw new bare.BareError(offset, "invalid tag")
+        }
+    }
+}
+
+export function writeControlPayload(bc: bare.ByteCursor, x: ControlPayload): void {
+    switch (x.tag) {
+        case "ShutdownControl": {
+            bare.writeU8(bc, 0)
+            writeShutdownControl(bc, x.val)
+            break
+        }
+    }
+}
+
+export type ControlFrame = {
+    readonly schema: ProtocolSchema
+    readonly payload: ControlPayload
+}
+
+export function readControlFrame(bc: bare.ByteCursor): ControlFrame {
+    return {
+        schema: readProtocolSchema(bc),
+        payload: readControlPayload(bc),
+    }
+}
+
+export function writeControlFrame(bc: bare.ByteCursor, x: ControlFrame): void {
+    writeProtocolSchema(bc, x.schema)
+    writeControlPayload(bc, x.payload)
+}
+
 export type ProtocolFrame =
     | { readonly tag: "RequestFrame"; readonly val: RequestFrame }
     | { readonly tag: "ResponseFrame"; readonly val: ResponseFrame }
     | { readonly tag: "EventFrame"; readonly val: EventFrame }
     | { readonly tag: "SidecarRequestFrame"; readonly val: SidecarRequestFrame }
     | { readonly tag: "SidecarResponseFrame"; readonly val: SidecarResponseFrame }
+    | { readonly tag: "ControlFrame"; readonly val: ControlFrame }
 
 export function readProtocolFrame(bc: bare.ByteCursor): ProtocolFrame {
     const offset = bc.offset
@@ -4349,6 +4446,8 @@ export function readProtocolFrame(bc: bare.ByteCursor): ProtocolFrame {
             return { tag: "SidecarRequestFrame", val: readSidecarRequestFrame(bc) }
         case 4:
             return { tag: "SidecarResponseFrame", val: readSidecarResponseFrame(bc) }
+        case 5:
+            return { tag: "ControlFrame", val: readControlFrame(bc) }
         default: {
             bc.offset = offset
             throw new bare.BareError(offset, "invalid tag")
@@ -4381,6 +4480,11 @@ export function writeProtocolFrame(bc: bare.ByteCursor, x: ProtocolFrame): void 
         case "SidecarResponseFrame": {
             bare.writeU8(bc, 4)
             writeSidecarResponseFrame(bc, x.val)
+            break
+        }
+        case "ControlFrame": {
+            bare.writeU8(bc, 5)
+            writeControlFrame(bc, x.val)
             break
         }
     }

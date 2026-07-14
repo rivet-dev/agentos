@@ -22,9 +22,10 @@ use crate::service::{
 };
 use crate::state::{
     BridgeError, KernelSocketReadinessEvent, KernelSocketReadinessRegistry,
-    KernelSocketReadinessTarget, VmConfiguration, VmDnsConfig, VmListenPolicy, VmPendingByteBudget,
-    VmState, DISPOSE_VM_SIGKILL_GRACE, DISPOSE_VM_SIGTERM_GRACE, EXECUTION_DRIVER_NAME,
-    JAVASCRIPT_COMMAND, PYTHON_COMMAND, WASM_COMMAND,
+    KernelSocketReadinessTarget, QuarantinedVmGeneration, VmConfiguration, VmDnsConfig,
+    VmListenPolicy, VmPendingByteBudget, VmQuarantineReason, VmReconciliationSnapshot, VmState,
+    DISPOSE_VM_SIGKILL_GRACE, DISPOSE_VM_SIGTERM_GRACE, EXECUTION_DRIVER_NAME, JAVASCRIPT_COMMAND,
+    PYTHON_COMMAND, WASM_COMMAND,
 };
 use crate::{DispatchResult, NativeSidecar, NativeSidecarBridge, SidecarError};
 
@@ -55,6 +56,8 @@ use agentos_native_sidecar_core::{
     root_filesystem_snapshot_response, snapshot_exported_response, snapshot_imported_response,
     vm_configured_response, vm_created_response, vm_disposed_response, VmLayerStore,
 };
+use agentos_runtime::accounting::{ResourceClass, ResourceLedger, ResourceLimit};
+use agentos_runtime::capability::CapabilityRegistry;
 use agentos_vm_config as vm_config;
 use base64::Engine;
 use openssl::rand::rand_bytes;
@@ -159,28 +162,31 @@ fn send_kernel_socket_readiness_event(
     target: KernelSocketReadinessTarget,
     readiness: SocketReadiness,
 ) {
-    let event = match (target.event, readiness.kind) {
-        (KernelSocketReadinessEvent::Accept, SocketReadinessKind::Accept) => "accept",
-        (KernelSocketReadinessEvent::Data, SocketReadinessKind::Data) => "data",
-        (KernelSocketReadinessEvent::Datagram, SocketReadinessKind::Data) => "dgram",
+    let flags = match (target.event, readiness.kind) {
+        (KernelSocketReadinessEvent::Accept, SocketReadinessKind::Accept) => {
+            agentos_runtime::readiness::ReadyFlags::ACCEPT
+        }
+        (KernelSocketReadinessEvent::Data, SocketReadinessKind::Data) => {
+            agentos_runtime::readiness::ReadyFlags::READABLE
+        }
+        (KernelSocketReadinessEvent::Datagram, SocketReadinessKind::Data) => {
+            agentos_runtime::readiness::ReadyFlags::DATAGRAM
+        }
         _ => return,
     };
-    let payload = match target.event {
-        KernelSocketReadinessEvent::Accept => {
-            agentos_execution::v8_runtime::json_to_cbor_payload(&serde_json::json!({
-                "serverId": target.target_id,
-                "event": event,
-            }))
-        }
-        KernelSocketReadinessEvent::Data | KernelSocketReadinessEvent::Datagram => {
-            agentos_execution::v8_runtime::json_to_cbor_payload(&serde_json::json!({
-                "socketId": target.target_id,
-                "event": event,
-            }))
+    if let Some(notify) = target.notify {
+        notify.notify_one();
+    }
+    if let Some(session) = target.session {
+        if let Err(error) =
+            session.publish_readiness(target.capability_id, target.capability_generation, flags)
+        {
+            eprintln!(
+                "ERR_AGENTOS_KERNEL_READINESS_WAKE: failed to publish capability={} generation={} target={}: {error}",
+                target.capability_id, target.capability_generation, target.target_id
+            );
         }
     }
-    .unwrap_or_default();
-    let _ = target.session.send_stream_event("net_socket", payload);
 }
 
 pub(crate) const DEFAULT_GUEST_PATH_ENV: &str =
@@ -215,6 +221,28 @@ where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    pub(crate) fn allocate_vm_identity(&mut self) -> Result<(String, u64), SidecarError> {
+        self.reap_reconciled_quarantined_vms();
+        self.ensure_vm_generation_capacity()?;
+        let next = self.next_vm_id.checked_add(1).ok_or_else(|| {
+            SidecarError::InvalidState(String::from(
+                "ERR_AGENTOS_VM_ID_EXHAUSTED: VM id counter overflowed",
+            ))
+        })?;
+        let generation = self
+            .runtime_context
+            .as_ref()
+            .ok_or_else(|| {
+                SidecarError::InvalidState(String::from(
+                    "ERR_AGENTOS_RUNTIME_UNAVAILABLE: VM generation allocation requires RuntimeContext",
+                ))
+            })?
+            .allocate_vm_generation()
+            .map_err(|error| SidecarError::InvalidState(error.to_string()))?;
+        self.next_vm_id = next;
+        Ok((format!("vm-{next}"), generation))
+    }
+
     pub(crate) async fn create_vm(
         &mut self,
         request: &crate::protocol::RequestFrame,
@@ -240,8 +268,7 @@ where
             .unwrap_or_else(deny_all_policy);
         validate_permissions_policy(&permissions_policy)?;
 
-        self.next_vm_id += 1;
-        let vm_id = format!("vm-{}", self.next_vm_id);
+        let (vm_id, vm_generation) = self.allocate_vm_identity()?;
         let cwd = create_vm_shadow_root(&vm_id)?;
         let (guest_cwd, host_cwd) = resolve_vm_cwds(create_config.cwd.as_ref(), &cwd)?;
         fs::create_dir_all(&host_cwd)
@@ -251,6 +278,21 @@ where
             self.config.max_frame_bytes,
         )?;
         let resource_limits = limits.resources.clone();
+        let process_runtime_context = self.runtime_context.as_ref().cloned().ok_or_else(|| {
+            SidecarError::InvalidState(String::from(
+                "ERR_AGENTOS_RUNTIME_UNAVAILABLE: VM admission requires RuntimeContext",
+            ))
+        })?;
+        let process_resources = Arc::clone(process_runtime_context.resources());
+        let vm_resources = Arc::new(vm_resource_ledger(
+            &vm_id,
+            vm_generation,
+            &limits,
+            process_resources,
+        )?);
+        let vm_runtime_context =
+            process_runtime_context.scoped_for_vm(Arc::clone(&vm_resources), vm_generation);
+        let capabilities = CapabilityRegistry::new(vm_generation, Arc::clone(&vm_resources));
         let dns = vm_dns_config_from_config(create_config.dns.as_ref())?;
         let listen_policy = vm_listen_policy_from_config(create_config.listen.as_ref())?;
         let create_loopback_exempt_ports: BTreeSet<u16> = create_config
@@ -293,6 +335,12 @@ where
             name_servers: dns.name_servers.clone(),
             overrides: dns.overrides.clone(),
         };
+        if self.runtime_context.is_none() {
+            return Err(SidecarError::InvalidState(String::from(
+                "VM creation requires the process RuntimeContext",
+            )));
+        }
+        config.dns_resolver = Arc::clone(&self.dns_resolver);
         config.loopback_exempt_ports = create_loopback_exempt_ports.clone();
         let root_mount_table = if let Some(native_root) = native_root.as_ref() {
             build_native_root_mount_table(
@@ -301,6 +349,7 @@ where
                 &root_filesystem,
                 MountPluginContext {
                     bridge: self.bridge.clone(),
+                    runtime_context: vm_runtime_context.clone(),
                     connection_id: connection_id.clone(),
                     session_id: session_id.clone(),
                     vm_id: vm_id.clone(),
@@ -318,6 +367,9 @@ where
         };
         config.resources = resource_limits;
         let mut kernel = KernelVm::new(root_mount_table, config);
+        kernel
+            .set_socket_resource_ledger(Arc::clone(&vm_resources))
+            .map_err(kernel_error)?;
         let kernel_socket_readiness: KernelSocketReadinessRegistry =
             Arc::new(Mutex::new(BTreeMap::new()));
         let readiness_targets = Arc::clone(&kernel_socket_readiness);
@@ -388,9 +440,13 @@ where
             VmState {
                 connection_id: connection_id.clone(),
                 session_id: session_id.clone(),
+                generation: vm_generation,
                 limits,
                 pending_stdin_bytes_budget,
                 pending_event_bytes_budget,
+                resources: vm_resources,
+                runtime_context: vm_runtime_context,
+                capabilities,
                 dns,
                 listen_policy,
                 create_loopback_exempt_ports,
@@ -417,6 +473,8 @@ where
                 active_processes: BTreeMap::new(),
                 exited_process_snapshots: VecDeque::new(),
                 detached_child_processes: BTreeSet::new(),
+                attached_child_event_cursor: 0,
+                detached_child_event_cursor: 0,
                 signal_states: BTreeMap::new(),
                 packages_staging_root: None,
                 projected_agent_launch: BTreeMap::new(),
@@ -425,6 +483,7 @@ where
                 unix_socket_host_dir,
             },
         );
+        self.observe_active_vm_generations();
 
         let events = vec![
             self.vm_lifecycle_event(
@@ -492,6 +551,11 @@ where
 
         let mount_plugins = &self.mount_plugins;
         let bridge = self.bridge.clone();
+        let snapshot_runtime_context = self.runtime_context.as_ref().cloned().ok_or_else(|| {
+            SidecarError::InvalidState(String::from(
+                "ERR_AGENTOS_RUNTIME_UNAVAILABLE: snapshot pre-warm requires RuntimeContext",
+            ))
+        })?;
         let vm = self.vms.get_mut(&vm_id).expect("owned VM should exist");
         let max_pread_bytes = vm.kernel.resource_limits().max_pread_bytes;
         let original_permissions = vm.configuration.permissions.clone();
@@ -528,6 +592,7 @@ where
             &effective_mounts,
             MountPluginContext {
                 bridge: bridge.clone(),
+                runtime_context: vm.runtime_context.clone(),
                 connection_id: connection_id.clone(),
                 session_id: session_id.clone(),
                 vm_id: vm_id.clone(),
@@ -622,12 +687,21 @@ where
         // it already projects, so the first session is warm without shipping the
         // source over the client wire.
         if let Some(userland) = snapshot_userland_code {
-            let _ = tokio::task::spawn_blocking(move || {
-                if let Err(error) = agentos_execution::v8_host::pre_warm_agent_snapshot(&userland) {
-                    eprintln!("agent snapshot pre-warm failed: {error}");
+            let requested_bytes = userland.len();
+            let runtime_for_job = snapshot_runtime_context.clone();
+            match snapshot_runtime_context
+                .blocking()
+                .run(requested_bytes, move || {
+                    agentos_execution::v8_host::pre_warm_agent_snapshot(&runtime_for_job, &userland)
+                })
+                .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => eprintln!("agent snapshot pre-warm failed: {error}"),
+                Err(error) => {
+                    eprintln!("agent snapshot pre-warm admission or execution failed: {error}")
                 }
-            })
-            .await;
+            }
         }
 
         tracing::info!(target: "agentos_native_sidecar::perf", phase = "configure_vm", elapsed_ms = __t.elapsed().as_millis() as u64, applied_mounts = applied_mounts as u64, "vm phase");
@@ -707,6 +781,7 @@ where
         }
         let mount_context = MountPluginContext {
             bridge: self.bridge.clone(),
+            runtime_context: vm.runtime_context.clone(),
             connection_id: connection_id.clone(),
             session_id: session_id.clone(),
             vm_id: vm_id.clone(),
@@ -928,6 +1003,29 @@ where
     ) -> Result<Vec<EventFrame>, SidecarError> {
         self.require_owned_vm(connection_id, session_id, vm_id)?;
 
+        // This is the first teardown transition. Pending admissions can still
+        // roll back, but stale VM clones cannot commit new capabilities, tasks,
+        // or blocking-executor work after this point.
+        let vm_before_disposal = self
+            .vms
+            .get(vm_id)
+            .expect("owned VM should exist before disposal");
+        let capability_admission_error = close_vm_admission(
+            &vm_before_disposal.runtime_context,
+            &vm_before_disposal.capabilities,
+        )
+        .err();
+        if let Some(error) = capability_admission_error.as_ref() {
+            eprintln!("ERR_AGENTOS_VM_CAPABILITY_ADMISSION_CLOSE: vm_id={vm_id} error={error}");
+        }
+        let fairness_retirement_result = retire_vm_fairness(
+            &vm_before_disposal.runtime_context,
+            vm_before_disposal.generation,
+        );
+        if let Err(error) = fairness_retirement_result.as_ref() {
+            eprintln!("ERR_AGENTOS_VM_FAIRNESS_RETIRE: vm_id={vm_id} error={error}");
+        }
+
         let mut events = vec![self.vm_lifecycle_event(
             connection_id,
             session_id,
@@ -952,6 +1050,7 @@ where
         // intentionally discarded rather than `?`-ed.
         let mount_context = MountPluginContext {
             bridge: self.bridge.clone(),
+            runtime_context: vm.runtime_context.clone(),
             connection_id: connection_id.to_owned(),
             session_id: session_id.to_owned(),
             vm_id: vm_id.to_owned(),
@@ -983,7 +1082,75 @@ where
             }
         }
 
+        let shutdown_deadline = Duration::from_millis(vm.limits.reactor.shutdown_deadline_ms);
+        let (reconciliation, deadline_expired) = wait_for_vm_reconciliation(
+            vm.resources.as_ref(),
+            &vm.runtime_context,
+            &vm.capabilities,
+            shutdown_deadline,
+        )
+        .await;
+        let quarantine_reason = vm_quarantine_reason(
+            capability_admission_error.is_some(),
+            fairness_retirement_result.is_err(),
+            reconciliation,
+            deadline_expired,
+        );
+
+        if let Some(reason) = quarantine_reason {
+            let diagnostic = match reason {
+                VmQuarantineReason::TeardownDeadline => format!(
+                    "ERR_AGENTOS_VM_TEARDOWN_DEADLINE: vm_id={vm_id} generation={} active_tasks={} outstanding_capabilities={} ledger_zero={} deadline_ms={}; raise limits.reactor.shutdownDeadlineMs",
+                    vm.generation,
+                    reconciliation.active_tasks,
+                    reconciliation.outstanding_capabilities,
+                    reconciliation.ledger_zero,
+                    vm.limits.reactor.shutdown_deadline_ms
+                ),
+                VmQuarantineReason::ResourceIntegrity => format!(
+                    "ERR_AGENTOS_VM_RESOURCE_INTEGRITY: vm_id={vm_id} generation={} accounting integrity failed; generation cannot be reaped",
+                    vm.generation
+                ),
+                VmQuarantineReason::CapabilityRegistryIntegrity => format!(
+                    "ERR_AGENTOS_VM_CAPABILITY_INTEGRITY: vm_id={vm_id} generation={} capability admission could not be closed; generation cannot be reaped; error={}",
+                    vm.generation,
+                    capability_admission_error.as_deref().unwrap_or("unknown")
+                ),
+                VmQuarantineReason::FairnessIntegrity => format!(
+                    "ERR_AGENTOS_VM_FAIRNESS_INTEGRITY: vm_id={vm_id} generation={} fairness membership could not be retired; generation cannot be reaped; error={}",
+                    vm.generation,
+                    fairness_retirement_result
+                        .as_ref()
+                        .expect_err("fairness quarantine requires a retirement error")
+                ),
+            };
+            eprintln!("{diagnostic}");
+            if let Err(error) = terminate_result.as_ref() {
+                eprintln!(
+                    "ERR_AGENTOS_VM_TEARDOWN_CLEANUP: vm_id={vm_id} phase=processes error={error}"
+                );
+            }
+            if let Err(error) = teardown_result.as_ref() {
+                eprintln!(
+                    "ERR_AGENTOS_VM_TEARDOWN_CLEANUP: vm_id={vm_id} phase=kernel_or_bridge error={error}"
+                );
+            }
+            self.retain_quarantined_vm(QuarantinedVmGeneration {
+                connection_id: connection_id.to_owned(),
+                session_id: session_id.to_owned(),
+                vm_id: vm_id.to_owned(),
+                generation: vm.generation,
+                resources: Arc::clone(&vm.resources),
+                runtime_context: vm.runtime_context.clone(),
+                capabilities: vm.capabilities.clone(),
+                reason,
+            })?;
+            return Err(SidecarError::Execution(diagnostic));
+        }
+
+        self.observe_active_vm_generations();
         // Surface the first failure only AFTER cleanup has completed.
+        fairness_retirement_result?;
         terminate_result?;
         teardown_result?;
 
@@ -996,41 +1163,58 @@ where
         Ok(events)
     }
 
-    /// Run the fallible second half of VM disposal (root-filesystem snapshot +
-    /// flush, lifecycle event, kernel dispose, permission reset) against a VM
-    /// that has already been detached from `self.vms`. Kept separate so its
-    /// `?`-propagated errors are captured by the caller and the per-VM tracking
-    /// maps are still reclaimed afterward.
+    /// Run every fallible second-half cleanup step, retaining the first error
+    /// while logging later failures. Teardown must reach kernel disposal and
+    /// permission reset even when snapshot or bridge work fails.
     async fn finish_vm_teardown(
         &mut self,
         vm_id: &str,
         vm: &mut VmState,
     ) -> Result<(), SidecarError> {
+        let mut first_error = None;
         let snapshot = if vm.kernel.root_filesystem_mut().is_some() {
-            Some(FilesystemSnapshot {
-                format: String::from(ROOT_FILESYSTEM_SNAPSHOT_FORMAT),
-                bytes: encode_root_snapshot(
-                    &vm.kernel.snapshot_root_filesystem().map_err(kernel_error)?,
-                )
-                .map_err(root_filesystem_error)?,
-            })
+            match vm
+                .kernel
+                .snapshot_root_filesystem()
+                .map_err(kernel_error)
+                .and_then(|snapshot| encode_root_snapshot(&snapshot).map_err(root_filesystem_error))
+            {
+                Ok(bytes) => Some(FilesystemSnapshot {
+                    format: String::from(ROOT_FILESYSTEM_SNAPSHOT_FORMAT),
+                    bytes,
+                }),
+                Err(error) => {
+                    record_vm_teardown_error(vm_id, "snapshot", error, &mut first_error);
+                    None
+                }
+            }
         } else {
             None
         };
 
-        self.bridge
-            .emit_lifecycle(vm_id, LifecycleState::Terminated)?;
-        vm.kernel.dispose().map_err(kernel_error)?;
+        if let Err(error) = self
+            .bridge
+            .emit_lifecycle(vm_id, LifecycleState::Terminated)
+        {
+            record_vm_teardown_error(vm_id, "lifecycle", error, &mut first_error);
+        }
+        if let Err(error) = vm.kernel.dispose().map_err(kernel_error) {
+            record_vm_teardown_error(vm_id, "kernel", error, &mut first_error);
+        }
         if let Some(snapshot) = snapshot {
-            self.bridge.with_mut(|bridge| {
+            if let Err(error) = self.bridge.with_mut(|bridge| {
                 bridge.flush_filesystem_state(FlushFilesystemStateRequest {
                     vm_id: vm_id.to_owned(),
                     snapshot,
                 })
-            })?;
+            }) {
+                record_vm_teardown_error(vm_id, "filesystem_flush", error, &mut first_error);
+            }
         }
-        self.bridge.clear_vm_permissions(vm_id)?;
-        Ok(())
+        if let Err(error) = self.bridge.clear_vm_permissions(vm_id) {
+            record_vm_teardown_error(vm_id, "permission_reset", error, &mut first_error);
+        }
+        first_error.map_or(Ok(()), Err)
     }
 
     pub(crate) async fn terminate_vm_processes(
@@ -1100,16 +1284,390 @@ where
 
         while self.vm_has_active_processes(vm_id) && Instant::now() < deadline {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            if let Some(event) = self
-                .poll_event(&ownership, remaining.min(Duration::from_millis(10)))
-                .await?
-            {
+            if let Some(event) = self.poll_event(&ownership, remaining).await? {
                 events.push(event);
             }
         }
 
         Ok(())
     }
+}
+
+fn record_vm_teardown_error(
+    vm_id: &str,
+    phase: &str,
+    error: SidecarError,
+    first_error: &mut Option<SidecarError>,
+) {
+    eprintln!("ERR_AGENTOS_VM_TEARDOWN_CLEANUP: vm_id={vm_id} phase={phase} error={error}");
+    if first_error.is_none() {
+        *first_error = Some(error);
+    }
+}
+
+fn vm_reconciliation_snapshot(
+    resources: &ResourceLedger,
+    runtime_context: &agentos_runtime::RuntimeContext,
+    capabilities: &CapabilityRegistry,
+) -> VmReconciliationSnapshot {
+    VmReconciliationSnapshot {
+        active_tasks: runtime_context.tasks().active_scoped(),
+        outstanding_capabilities: capabilities.outstanding_len(),
+        ledger_zero: resources.is_zero(),
+        integrity_ok: resources.integrity_ok(),
+    }
+}
+
+fn close_vm_admission(
+    runtime_context: &agentos_runtime::RuntimeContext,
+    capabilities: &CapabilityRegistry,
+) -> Result<(), String> {
+    let capability_result = capabilities
+        .close_admission()
+        .map_err(|error| error.to_string());
+    runtime_context.close_admission();
+    capability_result
+}
+
+fn retire_vm_fairness(
+    runtime_context: &agentos_runtime::RuntimeContext,
+    vm_generation: u64,
+) -> Result<(), SidecarError> {
+    runtime_context
+        .fairness()
+        .retire_vm(vm_generation)
+        .map(|_| ())
+        .map_err(|error| {
+            SidecarError::Execution(format!(
+                "ERR_AGENTOS_FAIRNESS_RETIRE_VM: generation={vm_generation}: {error}"
+            ))
+        })
+}
+
+fn vm_quarantine_reason(
+    capability_registry_integrity_failed: bool,
+    fairness_integrity_failed: bool,
+    reconciliation: VmReconciliationSnapshot,
+    deadline_expired: bool,
+) -> Option<VmQuarantineReason> {
+    if capability_registry_integrity_failed {
+        Some(VmQuarantineReason::CapabilityRegistryIntegrity)
+    } else if fairness_integrity_failed {
+        Some(VmQuarantineReason::FairnessIntegrity)
+    } else if !reconciliation.integrity_ok {
+        Some(VmQuarantineReason::ResourceIntegrity)
+    } else if deadline_expired
+        || reconciliation.active_tasks != 0
+        || reconciliation.outstanding_capabilities != 0
+        || !reconciliation.ledger_zero
+    {
+        Some(VmQuarantineReason::TeardownDeadline)
+    } else {
+        None
+    }
+}
+
+async fn wait_for_vm_reconciliation(
+    resources: &ResourceLedger,
+    runtime_context: &agentos_runtime::RuntimeContext,
+    capabilities: &CapabilityRegistry,
+    deadline: Duration,
+) -> (VmReconciliationSnapshot, bool) {
+    let initial = vm_reconciliation_snapshot(resources, runtime_context, capabilities);
+    if initial.active_tasks == 0
+        && initial.outstanding_capabilities == 0
+        && initial.ledger_zero
+        && initial.integrity_ok
+    {
+        return (initial, false);
+    }
+
+    let wait_for_ledger = async {
+        loop {
+            if resources.is_zero() || !resources.integrity_ok() {
+                return;
+            }
+            resources.capacity_changed().await;
+        }
+    };
+    let barrier = async {
+        tokio::join!(
+            runtime_context.tasks().wait_empty(),
+            capabilities.wait_empty(),
+            wait_for_ledger
+        );
+    };
+    let deadline_expired = tokio::time::timeout(deadline, barrier).await.is_err();
+    (
+        vm_reconciliation_snapshot(resources, runtime_context, capabilities),
+        deadline_expired,
+    )
+}
+
+fn vm_resource_ledger(
+    vm_id: &str,
+    generation: u64,
+    limits: &crate::limits::VmLimits,
+    process: Arc<ResourceLedger>,
+) -> Result<ResourceLedger, SidecarError> {
+    let socket_limit = limits.resources.max_sockets.ok_or_else(|| {
+        SidecarError::InvalidState(String::from(
+            "limits.resources.maxSockets must be bounded for sidecar VMs",
+        ))
+    })?;
+    let connection_limit = limits.resources.max_connections.ok_or_else(|| {
+        SidecarError::InvalidState(String::from(
+            "limits.resources.maxConnections must be bounded for sidecar VMs",
+        ))
+    })?;
+    let buffered_byte_limit = limits.resources.max_socket_buffered_bytes.ok_or_else(|| {
+        SidecarError::InvalidState(String::from(
+            "limits.resources.maxSocketBufferedBytes must be bounded for sidecar VMs",
+        ))
+    })?;
+    let datagram_limit = limits
+        .resources
+        .max_socket_datagram_queue_len
+        .ok_or_else(|| {
+            SidecarError::InvalidState(String::from(
+                "limits.resources.maxSocketDatagramQueueLen must be bounded for sidecar VMs",
+            ))
+        })?;
+    let child_limits = [
+        (
+            ResourceClass::Capabilities,
+            ResourceLimit::new(
+                limits.reactor.max_capabilities,
+                "limits.reactor.maxCapabilities",
+            ),
+        ),
+        (
+            ResourceClass::ReadyHandles,
+            ResourceLimit::new(
+                limits.reactor.max_ready_handles,
+                "limits.reactor.maxReadyHandles",
+            ),
+        ),
+        (
+            ResourceClass::Sockets,
+            ResourceLimit::new(socket_limit, "limits.resources.maxSockets"),
+        ),
+        (
+            ResourceClass::Connections,
+            ResourceLimit::new(connection_limit, "limits.resources.maxConnections"),
+        ),
+        (
+            ResourceClass::BufferedBytes,
+            ResourceLimit::new(
+                buffered_byte_limit,
+                "limits.resources.maxSocketBufferedBytes",
+            ),
+        ),
+        (
+            ResourceClass::Datagrams,
+            ResourceLimit::new(datagram_limit, "limits.resources.maxSocketDatagramQueueLen"),
+        ),
+        (
+            ResourceClass::Timers,
+            ResourceLimit::new(limits.js_runtime.max_timers, "limits.jsRuntime.maxTimers"),
+        ),
+        (
+            ResourceClass::HandleCommands,
+            ResourceLimit::new(
+                limits.reactor.max_handle_commands,
+                "limits.reactor.maxHandleCommands",
+            ),
+        ),
+        (
+            ResourceClass::HandleCommandBytes,
+            ResourceLimit::new(
+                limits.reactor.max_handle_command_bytes,
+                "limits.reactor.maxHandleCommandBytes",
+            ),
+        ),
+        (
+            ResourceClass::BridgeCalls,
+            ResourceLimit::new(
+                limits.reactor.max_bridge_calls,
+                "limits.reactor.maxBridgeCalls",
+            ),
+        ),
+        (
+            ResourceClass::BridgeRequestBytes,
+            ResourceLimit::new(
+                limits.reactor.max_bridge_request_bytes,
+                "limits.reactor.maxBridgeRequestBytes",
+            ),
+        ),
+        (
+            ResourceClass::BridgeResponseBytes,
+            ResourceLimit::new(
+                limits.reactor.max_bridge_response_bytes,
+                "limits.reactor.maxBridgeResponseBytes",
+            ),
+        ),
+        (
+            ResourceClass::AsyncCompletions,
+            ResourceLimit::new(
+                limits.reactor.max_async_completions,
+                "limits.reactor.maxAsyncCompletions",
+            ),
+        ),
+        (
+            ResourceClass::AsyncCompletionBytes,
+            ResourceLimit::new(
+                limits.reactor.max_async_completion_bytes,
+                "limits.reactor.maxAsyncCompletionBytes",
+            ),
+        ),
+        (
+            ResourceClass::UdpDatagrams,
+            ResourceLimit::new(
+                limits.udp.max_buffered_datagrams,
+                "limits.udp.maxBufferedDatagrams",
+            ),
+        ),
+        (
+            ResourceClass::UdpBytes,
+            ResourceLimit::new(limits.udp.max_buffered_bytes, "limits.udp.maxBufferedBytes"),
+        ),
+        (
+            ResourceClass::TlsBytes,
+            ResourceLimit::new(limits.tls.max_buffered_bytes, "limits.tls.maxBufferedBytes"),
+        ),
+        (
+            ResourceClass::Tasks,
+            ResourceLimit::new(limits.reactor.max_tasks, "limits.reactor.maxTasks"),
+        ),
+        (
+            ResourceClass::ExecutorSlots,
+            ResourceLimit::new(
+                limits.reactor.max_blocking_jobs,
+                "limits.reactor.maxBlockingJobs",
+            ),
+        ),
+        (
+            ResourceClass::ExecutorBytes,
+            ResourceLimit::new(
+                limits.reactor.max_blocking_bytes,
+                "limits.reactor.maxBlockingBytes",
+            ),
+        ),
+        (
+            ResourceClass::Http2Connections,
+            ResourceLimit::new(limits.http2.max_connections, "limits.http2.maxConnections"),
+        ),
+        (
+            ResourceClass::Http2Streams,
+            ResourceLimit::new(limits.http2.max_streams, "limits.http2.maxStreams"),
+        ),
+        (
+            ResourceClass::Http2BufferedBytes,
+            ResourceLimit::new(
+                limits.http2.max_buffered_bytes,
+                "limits.http2.maxBufferedBytes",
+            ),
+        ),
+        (
+            ResourceClass::Http2HeaderBytes,
+            ResourceLimit::new(limits.http2.max_header_bytes, "limits.http2.maxHeaderBytes"),
+        ),
+        (
+            ResourceClass::Http2DataBytes,
+            ResourceLimit::new(limits.http2.max_data_bytes, "limits.http2.maxDataBytes"),
+        ),
+        (
+            ResourceClass::Http2Commands,
+            ResourceLimit::new(
+                limits.http2.max_pending_commands,
+                "limits.http2.maxPendingCommands",
+            ),
+        ),
+        (
+            ResourceClass::Http2CommandBytes,
+            ResourceLimit::new(
+                limits.http2.max_pending_command_bytes,
+                "limits.http2.maxPendingCommandBytes",
+            ),
+        ),
+        (
+            ResourceClass::Http2Events,
+            ResourceLimit::new(
+                limits.http2.max_pending_events,
+                "limits.http2.maxPendingEvents",
+            ),
+        ),
+        (
+            ResourceClass::Http2EventBytes,
+            ResourceLimit::new(
+                limits.http2.max_pending_event_bytes,
+                "limits.http2.maxPendingEventBytes",
+            ),
+        ),
+    ];
+    for (resource, child_limit) in &child_limits {
+        if let Some(parent_limit) = process.usage(*resource).limit {
+            if child_limit.maximum > parent_limit {
+                return Err(SidecarError::InvalidState(format!(
+                    "{} ({}) must be <= process {} ({parent_limit})",
+                    child_limit.config_path,
+                    child_limit.maximum,
+                    match resource {
+                        ResourceClass::Capabilities => "runtime.resources.maxCapabilities",
+                        ResourceClass::ReadyHandles => "runtime.resources.maxReadyHandles",
+                        ResourceClass::Sockets => "runtime.resources.maxSockets",
+                        ResourceClass::Connections => "runtime.resources.maxConnections",
+                        ResourceClass::BufferedBytes => {
+                            "runtime.resources.maxSocketBufferedBytes"
+                        }
+                        ResourceClass::Datagrams => "runtime.resources.maxDatagrams",
+                        ResourceClass::HandleCommands => {
+                            "runtime.resources.maxHandleCommands"
+                        }
+                        ResourceClass::HandleCommandBytes => {
+                            "runtime.resources.maxHandleCommandBytes"
+                        }
+                        ResourceClass::BridgeCalls => "runtime.resources.maxBridgeCalls",
+                        ResourceClass::BridgeRequestBytes => {
+                            "runtime.resources.maxBridgeRequestBytes"
+                        }
+                        ResourceClass::BridgeResponseBytes => {
+                            "runtime.resources.maxBridgeResponseBytes"
+                        }
+                        ResourceClass::AsyncCompletions => {
+                            "runtime.resources.maxAsyncCompletions"
+                        }
+                        ResourceClass::AsyncCompletionBytes => {
+                            "runtime.resources.maxAsyncCompletionBytes"
+                        }
+                        ResourceClass::UdpDatagrams => "runtime.resources.maxUdpDatagrams",
+                        ResourceClass::UdpBytes => "runtime.resources.maxUdpBytes",
+                        ResourceClass::TlsBytes => "runtime.resources.maxTlsBytes",
+                        ResourceClass::Timers => "runtime.resources.maxTimers",
+                        ResourceClass::Tasks => "runtime.resources.maxTasks",
+                        ResourceClass::ExecutorSlots => "runtime.blocking.maxJobs",
+                        ResourceClass::ExecutorBytes => "runtime.blocking.maxQueuedBytes",
+                        ResourceClass::Http2Connections => "limits.http2.maxConnections",
+                        ResourceClass::Http2Streams => "limits.http2.maxStreams",
+                        ResourceClass::Http2BufferedBytes => "limits.http2.maxBufferedBytes",
+                        ResourceClass::Http2HeaderBytes => "limits.http2.maxHeaderBytes",
+                        ResourceClass::Http2DataBytes => "limits.http2.maxDataBytes",
+                        ResourceClass::Http2Commands => "limits.http2.maxPendingCommands",
+                        ResourceClass::Http2CommandBytes => {
+                            "limits.http2.maxPendingCommandBytes"
+                        }
+                        ResourceClass::Http2Events => "limits.http2.maxPendingEvents",
+                        ResourceClass::Http2EventBytes => "limits.http2.maxPendingEventBytes",
+                    }
+                )));
+            }
+        }
+    }
+    Ok(ResourceLedger::child(
+        format!("vm={vm_id} generation={generation}"),
+        child_limits,
+        process,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -2424,17 +2982,26 @@ fn prune_kernel_command_stub(
 #[cfg(test)]
 mod tests {
     use super::{
-        bootstrap_native_root_filesystem, bootstrap_shadow_root, create_vm_unix_socket_host_dir,
-        initialize_vm_shadow_root, materialize_shadow_root_snapshot_entries,
-        native_root_plugin_from_config, prune_kernel_command_stub, shadow_path_for_guest,
-        CA_CERTIFICATES_BUNDLE, CA_CERTIFICATES_GUEST_PATH, CA_CERTIFICATES_SYMLINK_PATH,
-        CA_CERTIFICATES_SYMLINK_TARGET, KERNEL_COMMAND_STUB,
+        bootstrap_native_root_filesystem, bootstrap_shadow_root, close_vm_admission,
+        create_vm_unix_socket_host_dir, initialize_vm_shadow_root,
+        materialize_shadow_root_snapshot_entries, native_root_plugin_from_config,
+        prune_kernel_command_stub, retire_vm_fairness, shadow_path_for_guest, vm_quarantine_reason,
+        vm_resource_ledger, wait_for_vm_reconciliation, CA_CERTIFICATES_BUNDLE,
+        CA_CERTIFICATES_GUEST_PATH, CA_CERTIFICATES_SYMLINK_PATH, CA_CERTIFICATES_SYMLINK_TARGET,
+        KERNEL_COMMAND_STUB,
     };
+    use crate::bridge::MountPluginContext;
     use crate::plugins::chunked_local::ChunkedLocalMountPlugin;
     use crate::protocol::{
         RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemEntryKind,
         RootFilesystemLowerDescriptor,
     };
+    use crate::service::NativeSidecar;
+    use crate::state::{
+        ConnectionState, QuarantinedVmGeneration, SessionState, VmQuarantineReason,
+        VmReconciliationSnapshot,
+    };
+    use crate::stdio::LocalBridge;
     use agentos_bridge::FilesystemSnapshot;
     use agentos_kernel::kernel::{KernelVm, KernelVmConfig};
     use agentos_kernel::mount_plugin::{FileSystemPluginFactory, OpenFileSystemPluginRequest};
@@ -2443,10 +3010,370 @@ mod tests {
     use agentos_kernel::resource_accounting::ResourceLimits;
     use agentos_kernel::root_fs::{encode_snapshot, FilesystemEntry, RootFilesystemSnapshot};
     use agentos_kernel::vfs::VirtualFileSystem;
+    use agentos_runtime::accounting::{ResourceClass, ResourceLedger, ResourceLimit};
+    use agentos_runtime::capability::{CapabilityKind, CapabilityRegistry};
+    use agentos_runtime::fairness::FairBudget;
+    use agentos_runtime::metrics::ResourceMetricClass;
+    use agentos_runtime::{RuntimeContext, SidecarRuntime, TaskClass};
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
+    use std::sync::Arc;
+    use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn reconciliation_handles(
+        generation: u64,
+    ) -> (Arc<ResourceLedger>, RuntimeContext, CapabilityRegistry) {
+        let process = SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+            .expect("initialize process runtime")
+            .context();
+        let resources = Arc::new(ResourceLedger::child(
+            format!("teardown-test-vm-generation={generation}"),
+            [
+                (
+                    ResourceClass::Tasks,
+                    ResourceLimit::new(4, "limits.reactor.maxTasks"),
+                ),
+                (
+                    ResourceClass::Capabilities,
+                    ResourceLimit::new(4, "limits.reactor.maxCapabilities"),
+                ),
+                (
+                    ResourceClass::Sockets,
+                    ResourceLimit::new(4, "limits.resources.maxSockets"),
+                ),
+            ],
+            Arc::clone(process.resources()),
+        ));
+        let runtime_context = process.scoped_for_vm(Arc::clone(&resources), generation);
+        let capabilities = CapabilityRegistry::new(generation, Arc::clone(&resources));
+        (resources, runtime_context, capabilities)
+    }
+
+    #[test]
+    fn vm_runtime_bounds_every_resource_class_by_default() {
+        let process = SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+            .expect("initialize process runtime")
+            .context();
+        let ledger = vm_resource_ledger(
+            "vm-all-resource-limits",
+            88_001,
+            &crate::limits::VmLimits::default(),
+            Arc::clone(process.resources()),
+        )
+        .expect("construct bounded VM ledger");
+
+        for resource in ResourceClass::ALL {
+            let usage = ledger.usage(resource);
+            assert_eq!(usage.used, 0, "{} starts charged", resource.name());
+            assert!(
+                usage.limit.is_some_and(|limit| limit > 0),
+                "{} has no positive VM limit",
+                resource.name()
+            );
+        }
+    }
+
+    fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("teardown test runtime")
+            .block_on(future)
+    }
+
+    fn active_vm_metric(sidecar: &NativeSidecar<LocalBridge>) -> usize {
+        sidecar
+            .runtime_context
+            .as_ref()
+            .expect("process runtime context")
+            .metrics()
+            .snapshot()
+            .resources[ResourceMetricClass::ActiveVms.index()]
+        .current
+    }
+
+    #[test]
+    fn teardown_start_closes_capability_and_executor_admission() {
+        let (_resources, runtime_context, capabilities) = reconciliation_handles(70_001);
+        let stale_runtime_context = runtime_context.clone();
+        close_vm_admission(&runtime_context, &capabilities).expect("close VM admission");
+        let error = capabilities
+            .reserve(CapabilityKind::UdpSocket)
+            .expect_err("closed VM generation must reject new capabilities");
+        assert!(error
+            .to_string()
+            .contains("ERR_AGENTOS_CAPABILITY_REGISTRY_CLOSED"));
+        let task_error = stale_runtime_context
+            .spawn(TaskClass::Vm, async {})
+            .expect_err("stale VM runtime clone must reject new executor work");
+        assert!(task_error
+            .to_string()
+            .contains("ERR_AGENTOS_TASK_ADMISSION_CLOSED"));
+    }
+
+    #[test]
+    fn teardown_fairness_retirement_survives_generation_churn_past_max_vms() {
+        let process = SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+            .expect("initialize process runtime")
+            .context();
+
+        block_on(async {
+            let mut first_generation = None;
+            for _ in 0..=4_096 {
+                let generation = process
+                    .allocate_vm_generation()
+                    .expect("allocate churn VM generation");
+                first_generation.get_or_insert(generation);
+                let turn = process
+                    .fairness()
+                    .acquire(generation, 1, FairBudget::new(1, 1))
+                    .await
+                    .expect("acquire churn fairness turn");
+                turn.complete(FairBudget::new(1, 1), false)
+                    .expect("complete churn fairness turn");
+                retire_vm_fairness(&process, generation)
+                    .expect("teardown must retire churn VM fairness membership");
+            }
+
+            let first_generation = first_generation.expect("at least one churn generation");
+            let error = process
+                .fairness()
+                .acquire(first_generation, 2, FairBudget::new(1, 1))
+                .await
+                .expect_err("retired VM generation must not re-enroll");
+            assert!(
+                error
+                    .to_string()
+                    .contains("ERR_AGENTOS_FAIRNESS_CAPABILITY_RETIRED"),
+                "{error}"
+            );
+
+            let successor = process
+                .allocate_vm_generation()
+                .expect("allocate post-churn VM generation");
+            let turn = process
+                .fairness()
+                .acquire(successor, 1, FairBudget::new(1, 1))
+                .await
+                .expect("retirement must reclaim maxVms membership");
+            turn.complete(FairBudget::new(1, 1), false)
+                .expect("complete post-churn fairness turn");
+            retire_vm_fairness(&process, successor)
+                .expect("retire post-churn VM fairness membership");
+        });
+    }
+
+    #[test]
+    fn vm_executor_limits_must_fit_process_executor_limits() {
+        let limits = crate::limits::VmLimits::default();
+        for (resource, maximum, child_path, process_path) in [
+            (
+                ResourceClass::ExecutorSlots,
+                1,
+                "limits.reactor.maxBlockingJobs",
+                "runtime.blocking.maxJobs",
+            ),
+            (
+                ResourceClass::ExecutorBytes,
+                1,
+                "limits.reactor.maxBlockingBytes",
+                "runtime.blocking.maxQueuedBytes",
+            ),
+        ] {
+            let process = Arc::new(ResourceLedger::root(
+                format!("executor-ceiling-test-{resource:?}"),
+                [(resource, ResourceLimit::new(maximum, process_path))],
+            ));
+            let error = vm_resource_ledger("vm-test", 70_005, &limits, process)
+                .expect_err("VM executor limit must not exceed its process ceiling");
+            let diagnostic = error.to_string();
+            assert!(diagnostic.contains(child_path), "{diagnostic}");
+            assert!(diagnostic.contains(process_path), "{diagnostic}");
+        }
+    }
+
+    #[test]
+    fn empty_vm_generation_reconciles_without_waiting() {
+        let (resources, runtime_context, capabilities) = reconciliation_handles(70_002);
+        let (snapshot, deadline_expired) = block_on(wait_for_vm_reconciliation(
+            resources.as_ref(),
+            &runtime_context,
+            &capabilities,
+            Duration::ZERO,
+        ));
+        assert!(!deadline_expired);
+        assert_eq!(snapshot.active_tasks, 0);
+        assert_eq!(snapshot.outstanding_capabilities, 0);
+        assert!(snapshot.ledger_zero);
+        assert!(snapshot.integrity_ok);
+        assert_eq!(vm_quarantine_reason(false, false, snapshot, false), None);
+    }
+
+    #[test]
+    fn fairness_retirement_failure_is_a_non_reapable_integrity_quarantine() {
+        let generation = 70_007;
+        let (resources, runtime_context, capabilities) = reconciliation_handles(generation);
+        let snapshot = VmReconciliationSnapshot {
+            active_tasks: 0,
+            outstanding_capabilities: 0,
+            ledger_zero: true,
+            integrity_ok: true,
+        };
+        assert_eq!(
+            vm_quarantine_reason(false, true, snapshot, false),
+            Some(VmQuarantineReason::FairnessIntegrity)
+        );
+        let quarantined = QuarantinedVmGeneration {
+            connection_id: String::from("conn-test"),
+            session_id: String::from("session-test"),
+            vm_id: String::from("vm-test"),
+            generation,
+            resources,
+            runtime_context,
+            capabilities,
+            reason: VmQuarantineReason::FairnessIntegrity,
+        };
+        assert!(quarantined.reconciliation_snapshot().ledger_zero);
+        assert!(!quarantined.can_reap());
+    }
+
+    #[test]
+    fn integrity_quarantine_is_never_reaped_after_counts_reconcile() {
+        let generation = 70_006;
+        let (resources, runtime_context, capabilities) = reconciliation_handles(generation);
+        let quarantined = QuarantinedVmGeneration {
+            connection_id: String::from("conn-test"),
+            session_id: String::from("session-test"),
+            vm_id: String::from("vm-test"),
+            generation,
+            resources,
+            runtime_context,
+            capabilities,
+            reason: VmQuarantineReason::ResourceIntegrity,
+        };
+        assert!(quarantined.reconciliation_snapshot().ledger_zero);
+        assert!(!quarantined.can_reap());
+    }
+
+    #[test]
+    fn stuck_supervised_task_enters_quarantine_until_barrier_releases() {
+        block_on(async {
+            let generation = 70_003;
+            let (resources, runtime_context, capabilities) = reconciliation_handles(generation);
+            let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+            let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+            let task = runtime_context
+                .spawn(TaskClass::Vm, async move {
+                    let _ = started_tx.send(());
+                    let _ = release_rx.await;
+                })
+                .expect("spawn supervised VM task");
+            started_rx
+                .await
+                .expect("task reached deterministic barrier");
+
+            let (snapshot, deadline_expired) = wait_for_vm_reconciliation(
+                resources.as_ref(),
+                &runtime_context,
+                &capabilities,
+                Duration::ZERO,
+            )
+            .await;
+            assert!(deadline_expired);
+            assert_eq!(snapshot.active_tasks, 1);
+            assert_eq!(
+                vm_quarantine_reason(false, false, snapshot, deadline_expired),
+                Some(VmQuarantineReason::TeardownDeadline)
+            );
+
+            let quarantined = QuarantinedVmGeneration {
+                connection_id: String::from("conn-test"),
+                session_id: String::from("session-test"),
+                vm_id: String::from("vm-test"),
+                generation,
+                resources: Arc::clone(&resources),
+                runtime_context: runtime_context.clone(),
+                capabilities: capabilities.clone(),
+                reason: VmQuarantineReason::TeardownDeadline,
+            };
+            assert!(!quarantined.can_reap());
+
+            release_tx.send(()).expect("release task barrier");
+            task.await.expect("supervised task joins");
+            let (snapshot, deadline_expired) = wait_for_vm_reconciliation(
+                resources.as_ref(),
+                &runtime_context,
+                &capabilities,
+                Duration::ZERO,
+            )
+            .await;
+            assert!(!deadline_expired);
+            assert!(snapshot.ledger_zero);
+            assert!(quarantined.can_reap());
+        });
+    }
+
+    #[test]
+    fn quarantined_generation_is_not_reused_by_successor() {
+        let mut sidecar = NativeSidecar::new(LocalBridge::default()).expect("test sidecar");
+        sidecar.observe_active_vm_generations();
+        let baseline = active_vm_metric(&sidecar);
+        let (quarantined_vm_id, generation) =
+            sidecar.allocate_vm_identity().expect("allocate generation");
+        let (resources, runtime_context, capabilities) = reconciliation_handles(generation);
+        let held = resources
+            .reserve(ResourceClass::Tasks, 1)
+            .expect("hold quarantine accounting open");
+        sidecar
+            .retain_quarantined_vm(QuarantinedVmGeneration {
+                connection_id: String::from("conn-test"),
+                session_id: String::from("session-test"),
+                vm_id: quarantined_vm_id.clone(),
+                generation,
+                resources: Arc::clone(&resources),
+                runtime_context,
+                capabilities,
+                reason: VmQuarantineReason::TeardownDeadline,
+            })
+            .expect("retain quarantined generation");
+        assert_eq!(active_vm_metric(&sidecar), baseline + 1);
+        sidecar.connections.insert(
+            String::from("conn-test"),
+            ConnectionState {
+                auth_token: String::new(),
+                sessions: BTreeSet::from([String::from("session-test")]),
+            },
+        );
+        sidecar.sessions.insert(
+            String::from("session-test"),
+            SessionState {
+                connection_id: String::from("conn-test"),
+                placement: crate::protocol::SidecarPlacement::SidecarPlacementShared(
+                    crate::protocol::SidecarPlacementShared { pool: None },
+                ),
+                metadata: BTreeMap::new(),
+                vm_ids: BTreeSet::new(),
+            },
+        );
+        let rejected = sidecar
+            .require_owned_vm("conn-test", "session-test", &quarantined_vm_id)
+            .expect_err("quarantined generation must reject work");
+        assert!(rejected.to_string().contains("ERR_AGENTOS_VM_QUARANTINED"));
+
+        let (successor_id, successor_generation) =
+            sidecar.allocate_vm_identity().expect("allocate successor");
+        assert!(successor_generation > generation);
+        assert_ne!(successor_id, quarantined_vm_id);
+        assert!(sidecar.quarantined_vms.contains_key(&generation));
+
+        drop(held);
+        sidecar.reap_reconciled_quarantined_vms();
+        assert!(!sidecar.quarantined_vms.contains_key(&generation));
+        assert_eq!(active_vm_metric(&sidecar), baseline);
+    }
 
     #[test]
     fn vm_unix_socket_host_directories_are_private_and_unique() {
@@ -2584,6 +3511,19 @@ mod tests {
             .expect("native root should be present");
         let config: serde_json::Value =
             serde_json::from_str(&native_root.plugin.config).expect("valid plugin config");
+        let sidecar = NativeSidecar::new(LocalBridge::default()).expect("test sidecar");
+        let mount_context = MountPluginContext {
+            bridge: sidecar.bridge.clone(),
+            runtime_context: sidecar
+                .runtime_context
+                .clone()
+                .expect("test sidecar runtime context"),
+            connection_id: String::from("connection-test"),
+            session_id: String::from("session-test"),
+            vm_id: String::from("vm-test"),
+            sidecar_requests: sidecar.sidecar_requests.clone(),
+            max_pread_bytes: None,
+        };
         let plugin = ChunkedLocalMountPlugin;
         let mut filesystem = plugin
             .open(OpenFileSystemPluginRequest {
@@ -2591,7 +3531,7 @@ mod tests {
                 guest_path: "/",
                 read_only: false,
                 config: &config,
-                context: &(),
+                context: &mount_context,
             })
             .expect("sqlite root should open");
         bootstrap_native_root_filesystem(
@@ -2668,7 +3608,7 @@ mod tests {
                 guest_path: "/",
                 read_only: false,
                 config: &config,
-                context: &(),
+                context: &mount_context,
             })
             .expect("chunked local root should reopen");
         let mut reopened = MountTable::new_boxed_root(reopened, MountOptions::new("chunked_local"));

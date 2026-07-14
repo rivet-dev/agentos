@@ -1,20 +1,17 @@
 import { resolvePublishedSidecarBinary } from "./binary.js";
-import {
-	SidecarProcessExited,
-	StdioSidecarProcess,
-} from "./process.js";
+import type { LiveSidecarEventSelector } from "./event-buffer.js";
+import type { LiveOwnershipScope } from "./ownership.js";
+import { SidecarProcessExited, StdioSidecarProcess } from "./process.js";
 import { SidecarProtocolClient } from "./protocol-client.js";
-import type { SidecarProcessTransport } from "./sidecar-client.js";
-import { registerSidecarProcessSpawnFactory } from "./sidecar-process.js";
 import type {
 	LiveEventFrame,
 	LiveResponseFrame,
 	LiveSidecarRequestHandler,
 	ProtocolFramePayloadCodec,
 } from "./protocol-frames.js";
-import type { LiveOwnershipScope } from "./ownership.js";
 import type { LiveRequestPayload } from "./request-payloads.js";
-import type { LiveSidecarEventSelector } from "./event-buffer.js";
+import type { SidecarProcessTransport } from "./sidecar-client.js";
+import { registerSidecarProcessSpawnFactory } from "./sidecar-process.js";
 
 export const DEFAULT_SIDECAR_EVENT_BUFFER_CAPACITY = 4_096;
 export const DEFAULT_SIDECAR_GRACEFUL_EXIT_MS = 5_000;
@@ -69,6 +66,7 @@ export class StdioSidecarProtocolClient implements SidecarProcessTransport {
 		this.protocolClient = new SidecarProtocolClient({
 			stdin: this.child.stdin,
 			stdout: this.child.stdout,
+			control: this.sidecarProcess.control,
 			eventBufferCapacity: options.eventBufferCapacity,
 			payloadCodec: options.payloadCodec,
 			silenceTimeoutMs: options.silenceTimeoutMs,
@@ -112,8 +110,7 @@ export class StdioSidecarProtocolClient implements SidecarProcessTransport {
 			{
 				silenceTimeoutMs: options.silenceTimeoutMs,
 				eventBufferCapacity:
-					options.eventBufferCapacity ??
-					DEFAULT_SIDECAR_EVENT_BUFFER_CAPACITY,
+					options.eventBufferCapacity ?? DEFAULT_SIDECAR_EVENT_BUFFER_CAPACITY,
 				gracefulExitMs:
 					options.gracefulExitMs ?? DEFAULT_SIDECAR_GRACEFUL_EXIT_MS,
 				forceExitMs: options.forceExitMs ?? DEFAULT_SIDECAR_FORCE_EXIT_MS,
@@ -140,9 +137,7 @@ export class StdioSidecarProtocolClient implements SidecarProcessTransport {
 	}
 
 	async waitForEvent(
-		matcher:
-			| LiveSidecarEventSelector
-			| ((event: LiveEventFrame) => boolean),
+		matcher: LiveSidecarEventSelector | ((event: LiveEventFrame) => boolean),
 		timeoutMs?: number,
 		options?: {
 			signal?: AbortSignal;
@@ -152,6 +147,12 @@ export class StdioSidecarProtocolClient implements SidecarProcessTransport {
 	}
 
 	async dispose(): Promise<void> {
+		let shutdownError: Error | null = null;
+		try {
+			await this.protocolClient.shutdown(this.disposedErrorMessage);
+		} catch (error) {
+			shutdownError = error instanceof Error ? error : new Error(String(error));
+		}
 		this.protocolClient.failPermanently(new Error(this.disposedErrorMessage));
 
 		if (!this.child.stdin.destroyed) {
@@ -161,10 +162,15 @@ export class StdioSidecarProtocolClient implements SidecarProcessTransport {
 				// Stdin may already be closing. The child exit watcher will catch up.
 			}
 		}
+		if (!this.sidecarProcess.control.destroyed) {
+			try {
+				this.sidecarProcess.control.end();
+			} catch {
+				// The control socket may already be closing with the child.
+			}
+		}
 
-		const exitCode = await this.sidecarProcess.waitForExit(
-			this.gracefulExitMs,
-		);
+		const exitCode = await this.sidecarProcess.waitForExit(this.gracefulExitMs);
 		if (exitCode === null) {
 			try {
 				this.child.kill("SIGKILL");
@@ -190,15 +196,19 @@ export class StdioSidecarProtocolClient implements SidecarProcessTransport {
 		} catch {
 			// Best effort. The child is gone so the descriptor will close on its own.
 		}
+		try {
+			this.sidecarProcess.control.destroy();
+		} catch {
+			// Best effort. The child is gone so the descriptor will close on its own.
+		}
 
-		if (
-			exitCode !== null &&
-			exitCode !== 0 &&
-			this.child.signalCode === null
-		) {
+		if (exitCode !== null && exitCode !== 0 && this.child.signalCode === null) {
 			throw new Error(
 				`sidecar exited with code ${exitCode}\nstderr:\n${this.sidecarProcess.stderrText()}`,
 			);
+		}
+		if (shutdownError && this.child.exitCode !== 0) {
+			throw shutdownError;
 		}
 	}
 

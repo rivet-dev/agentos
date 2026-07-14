@@ -365,7 +365,6 @@ var ClientRequest = class {
   _closeEmitted = false;
   _abortEmitted = false;
   _signalAbortHandler;
-  _signalPollTimer = null;
   _skipExecute = false;
   _destroyError;
   _errorEmitted = false;
@@ -922,16 +921,11 @@ var ClientRequest = class {
       signalWithOnAbort.__secureExecPrevOnAbort__?.call(signal, event);
       this._signalAbortHandler?.();
     });
-    this._startAbortSignalPoll(signal);
   }
   _unbindAbortSignal() {
     const signal = this._options.signal;
     if (!signal || !this._signalAbortHandler) {
       return;
-    }
-    if (this._signalPollTimer) {
-      clearTimeout(this._signalPollTimer);
-      this._signalPollTimer = null;
     }
     if (typeof signal.removeEventListener === "function") {
       signal.removeEventListener("abort", this._signalAbortHandler);
@@ -946,23 +940,6 @@ var ClientRequest = class {
     }
     delete signalWithOnAbort.__secureExecPrevOnAbort__;
     this._signalAbortHandler = void 0;
-  }
-  _startAbortSignalPoll(signal) {
-    const poll = () => {
-      if (this.destroyed) {
-        this._signalPollTimer = null;
-        return;
-      }
-      if (signal.aborted) {
-        this._signalPollTimer = null;
-        this._signalAbortHandler?.();
-        return;
-      }
-      this._signalPollTimer = setTimeout(poll, 5);
-    };
-    if (!this._signalPollTimer) {
-      this._signalPollTimer = setTimeout(poll, 5);
-    }
   }
   _clearTimeout() {
     if (this.socket && this.timeoutCb) {
@@ -3997,9 +3974,11 @@ async function dispatchSocketBackedServerRequest(server, requestInput, streamSoc
         if (!outgoing.writableFinished) outgoing.end();
       }
     }
-    if (!outgoing.writableFinished) {
-      outgoing.end();
-    }
+    // A Node request listener is callback-driven: frameworks such as Fastify
+    // return `undefined`, then finish the response after an awaited route hook.
+    // Ending here as soon as the listener returns races that continuation and
+    // produces a synthetic empty 200 response. Leave the request open until
+    // ServerResponse.end()/destroy() closes it, matching native Node.
     await outgoing.waitForClose();
     let aborted = false;
     const abortRequest = () => {

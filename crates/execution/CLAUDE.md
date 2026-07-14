@@ -66,7 +66,7 @@ The Rust sidecar kernel already has the VFS, process table, pipe manager, PTY ma
 
 ### Loader interception (`node_import_cache.rs`)
 
-ESM loader hooks (`loader.mjs`) and CJS `Module._load` patches (`runner.mjs`) are generated from Rust string templates. Every `import`/`require` is intercepted:
+The host-support ESM loader hook (`loader.mjs`) is generated from a Rust string template. The obsolete native-Node guest `runner.mjs` was removed when JavaScript execution moved to embedded V8; do not restore a second networking or CJS pump there. Loader imports are intercepted as follows:
 1. `resolveBuiltinAsset()` -- checks `BUILTIN_ASSETS` list. Redirects to a kernel-backed polyfill file.
 2. `resolveDeniedBuiltin()` -- checks `DENIED_BUILTINS` set. Redirects to a stub that throws `ERR_ACCESS_DENIED`. A builtin is in `DENIED_BUILTINS` only if it is NOT in `ALLOWED_BUILTINS`.
 3. **Fall through to `nextResolve()`** -- Node.js default resolution. Returns the real host module. **This must never happen for any builtin that guest code can import.**

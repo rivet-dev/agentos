@@ -183,7 +183,7 @@ pnpm --filter @agentos-software/coreutils build:runtime
 `WARN could not retrieve pid for child process` for successfully spawned
 commands.
 
-**Code:** `registry/native/patches/crates/brush-core/0004-wasi-child-pid.patch`
+**Code:** `toolchain/std-patches/crates/brush-core/0004-wasi-process-id.patch`
 returns the PID supplied by the patched WASI process implementation:
 
 ```rust

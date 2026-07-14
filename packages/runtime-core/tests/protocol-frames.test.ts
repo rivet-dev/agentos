@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
+import * as protocol from "../src/generated-protocol.js";
 import {
-	HostProtocolFrameFactory,
 	classifySidecarWrittenProtocolFrame,
 	decodeBareProtocolFrame,
 	decodeProtocolFramePayload,
 	encodeBareProtocolFrame,
 	encodeProtocolFramePayload,
 	fromGeneratedSidecarWrittenProtocolFrame,
+	HostProtocolFrameFactory,
 	resolveSidecarRequestFramePayload,
 	toGeneratedProtocolFrame,
 } from "../src/protocol-frames.js";
-import * as protocol from "../src/generated-protocol.js";
 import { SIDECAR_PROTOCOL_SCHEMA } from "../src/protocol-schema.js";
 
 const textDecoder = new TextDecoder();
@@ -26,7 +26,7 @@ const generatedAuthOwnership = {
 };
 
 const GENERATED_AUTH_FRAME_HEX =
-	"00166167656e746f732d6e61746976652d73696465636172070007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e070001000000";
+	"00166167656e746f732d6e61746976652d73696465636172080007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e080001000000";
 
 const hostCallbackRequest = {
 	frame_type: "sidecar_request" as const,
@@ -43,7 +43,7 @@ const hostCallbackRequest = {
 };
 
 describe("protocol frame conversion", () => {
-	it("creates host-written request and sidecar response frames", () => {
+	it("creates host-written request, response, and control frames", () => {
 		const factory = new HostProtocolFrameFactory();
 
 		const first = factory.createRequestFrame({
@@ -52,7 +52,7 @@ describe("protocol frame conversion", () => {
 				type: "authenticate",
 				client_name: "agentos",
 				auth_token: "token",
-				protocol_version: 7,
+				protocol_version: 8,
 				bridge_version: 1,
 			},
 		});
@@ -90,6 +90,13 @@ describe("protocol frame conversion", () => {
 				result: { ok: true },
 			},
 		});
+		expect(
+			factory.createControlFrame({ type: "shutdown", reason: "test complete" }),
+		).toEqual({
+			frame_type: "control",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			payload: { type: "shutdown", reason: "test complete" },
+		});
 	});
 
 	it("resolves sidecar request frame handlers", async () => {
@@ -112,8 +119,7 @@ describe("protocol frame conversion", () => {
 		).resolves.toMatchObject({
 			type: "host_callback_result",
 			invocation_id: "invocation",
-			error:
-				"no sidecar request handler registered for host_callback",
+			error: "no sidecar request handler registered for host_callback",
 		});
 
 		await expect(
@@ -125,8 +131,7 @@ describe("protocol frame conversion", () => {
 		).resolves.toMatchObject({
 			type: "host_callback_result",
 			invocation_id: "invocation",
-			error:
-				"sidecar handler returned js_bridge_result for host_callback",
+			error: "sidecar handler returned js_bridge_result for host_callback",
 		});
 	});
 
@@ -141,7 +146,7 @@ describe("protocol frame conversion", () => {
 					type: "authenticate",
 					client_name: "agentos",
 					auth_token: "token",
-					protocol_version: 7,
+					protocol_version: 8,
 					bridge_version: 1,
 				},
 			}),
@@ -169,9 +174,26 @@ describe("protocol frame conversion", () => {
 			},
 		});
 
-		expect(
-			protocol.decodeProtocolFrame(new Uint8Array(encoded)).tag,
-		).toBe("SidecarResponseFrame");
+		expect(protocol.decodeProtocolFrame(new Uint8Array(encoded)).tag).toBe(
+			"SidecarResponseFrame",
+		);
+
+		const control = encodeBareProtocolFrame({
+			frame_type: "control",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			payload: { type: "shutdown", reason: "test complete" },
+		});
+		expect(protocol.decodeProtocolFrame(new Uint8Array(control))).toMatchObject(
+			{
+				tag: "ControlFrame",
+				val: {
+					payload: {
+						tag: "ShutdownControl",
+						val: { reason: "test complete" },
+					},
+				},
+			},
+		);
 	});
 
 	it("matches native generated auth frame BARE bytes", () => {
@@ -190,13 +212,15 @@ describe("protocol frame conversion", () => {
 		});
 
 		expect(Buffer.from(encoded).toString("hex")).toBe(GENERATED_AUTH_FRAME_HEX);
-		expect(protocol.decodeProtocolFrame(new Uint8Array(encoded))).toMatchObject({
-			tag: "RequestFrame",
-			val: {
-				requestId: 7n,
-				payload: { tag: "AuthenticateRequest" },
+		expect(protocol.decodeProtocolFrame(new Uint8Array(encoded))).toMatchObject(
+			{
+				tag: "RequestFrame",
+				val: {
+					requestId: 7n,
+					payload: { tag: "AuthenticateRequest" },
+				},
 			},
-		});
+		);
 	});
 
 	it("decodes sidecar-written response frames from generated protocol frames", () => {

@@ -1,8 +1,8 @@
 use agentos_v8_runtime::embedded_runtime::{shared_embedded_runtime, EmbeddedV8Runtime};
 use agentos_v8_runtime::runtime_protocol::{RuntimeCommand, RuntimeEvent, SessionMessage};
+use agentos_v8_runtime::session::RuntimeEventOutputReceiver;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -15,6 +15,8 @@ fn run_timing_sensitive_tests() -> bool {
 }
 
 static NEXT_TEST_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_TEST_VM_GENERATION: AtomicU64 = AtomicU64::new(1);
+const TEST_REACTOR_WORK_QUANTUM: usize = 64;
 
 fn next_session_id() -> String {
     format!(
@@ -23,18 +25,76 @@ fn next_session_id() -> String {
     )
 }
 
+fn process_runtime_context() -> io::Result<agentos_runtime::RuntimeContext> {
+    agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+        .map(agentos_runtime::SidecarRuntime::context)
+        .map_err(|error| io::Error::other(error.to_string()))
+}
+
+fn embedded_runtime(max_concurrency: usize) -> io::Result<EmbeddedV8Runtime> {
+    EmbeddedV8Runtime::new(Some(max_concurrency), process_runtime_context()?)
+}
+
+fn vm_runtime_context(session_id: &str) -> io::Result<agentos_runtime::RuntimeContext> {
+    use agentos_runtime::accounting::{ResourceClass, ResourceLedger, ResourceLimit};
+
+    let process = process_runtime_context()?;
+    let limits = ResourceClass::ALL
+        .into_iter()
+        .map(|resource| {
+            let maximum = if resource == ResourceClass::HandleCommands {
+                // Preserve the original regression's exact ordinary-lane bound.
+                256
+            } else {
+                process
+                    .resources()
+                    .usage(resource)
+                    .limit
+                    .expect("process test runtime must bound every resource class")
+            };
+            let config_path = match resource {
+                ResourceClass::ReadyHandles => "limits.reactor.maxReadyHandles",
+                ResourceClass::Timers => "limits.jsRuntime.maxTimers",
+                ResourceClass::HandleCommands => "limits.reactor.maxHandleCommands",
+                ResourceClass::BridgeCalls => "limits.reactor.maxBridgeCalls",
+                ResourceClass::BridgeRequestBytes => "limits.reactor.maxBridgeRequestBytes",
+                ResourceClass::BridgeResponseBytes => "limits.reactor.maxBridgeResponseBytes",
+                ResourceClass::AsyncCompletions => "limits.reactor.maxAsyncCompletions",
+                _ => "limits.test.completeBoundedVmLedger",
+            };
+            (resource, ResourceLimit::new(maximum, config_path))
+        })
+        .collect::<Vec<_>>();
+    let resources = Arc::new(ResourceLedger::child(
+        format!("test-vm={session_id}"),
+        limits,
+        Arc::clone(process.resources()),
+    ));
+    Ok(process.scoped_for_vm(
+        resources,
+        NEXT_TEST_VM_GENERATION.fetch_add(1, Ordering::Relaxed),
+    ))
+}
+
 fn register_and_create_session(
     runtime: &Arc<EmbeddedV8Runtime>,
     session_id: &str,
-) -> io::Result<mpsc::Receiver<RuntimeEvent>> {
-    let receiver = runtime.register_session(session_id)?;
-    runtime.dispatch(RuntimeCommand::CreateSession {
-        session_id: session_id.to_owned(),
-        heap_limit_mb: None,
-        cpu_time_limit_ms: None,
-        wall_clock_limit_ms: None,
-        warm_hint: None,
-    })?;
+) -> io::Result<RuntimeEventOutputReceiver> {
+    let session_runtime = vm_runtime_context(session_id)?;
+    let (receiver, _registration) =
+        runtime.register_session_with_runtime(session_id, &session_runtime)?;
+    runtime.dispatch_create_session_with_runtime(
+        RuntimeCommand::CreateSession {
+            session_id: session_id.to_owned(),
+            heap_limit_mb: None,
+            cpu_time_limit_ms: None,
+            wall_clock_limit_ms: None,
+            warm_hint: None,
+        },
+        session_runtime,
+        TEST_REACTOR_WORK_QUANTUM,
+        std::time::Duration::from_secs(30),
+    )?;
     Ok(receiver)
 }
 
@@ -42,15 +102,22 @@ fn register_and_create_session_with_cpu_time_limit(
     runtime: &Arc<EmbeddedV8Runtime>,
     session_id: &str,
     cpu_time_limit_ms: Option<u32>,
-) -> io::Result<mpsc::Receiver<RuntimeEvent>> {
-    let receiver = runtime.register_session(session_id)?;
-    runtime.dispatch(RuntimeCommand::CreateSession {
-        session_id: session_id.to_owned(),
-        heap_limit_mb: None,
-        cpu_time_limit_ms,
-        wall_clock_limit_ms: None,
-        warm_hint: None,
-    })?;
+) -> io::Result<RuntimeEventOutputReceiver> {
+    let session_runtime = vm_runtime_context(session_id)?;
+    let (receiver, _registration) =
+        runtime.register_session_with_runtime(session_id, &session_runtime)?;
+    runtime.dispatch_create_session_with_runtime(
+        RuntimeCommand::CreateSession {
+            session_id: session_id.to_owned(),
+            heap_limit_mb: None,
+            cpu_time_limit_ms,
+            wall_clock_limit_ms: None,
+            warm_hint: None,
+        },
+        session_runtime,
+        TEST_REACTOR_WORK_QUANTUM,
+        std::time::Duration::from_secs(30),
+    )?;
     Ok(receiver)
 }
 
@@ -76,8 +143,34 @@ fn dispatch_execute(
     })
 }
 
+fn dispatch_execute_after_backpressure(
+    runtime: &EmbeddedV8Runtime,
+    session_id: &str,
+    mode: u8,
+    bridge_code: &str,
+    user_code: &str,
+) -> io::Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match dispatch_execute(runtime, session_id, mode, bridge_code, user_code) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if error
+                    .to_string()
+                    .contains("ERR_AGENTOS_SESSION_COMMAND_LIMIT") =>
+            {
+                if Instant::now() >= deadline {
+                    return Err(error);
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 fn wait_for_execution_result(
-    receiver: &mpsc::Receiver<RuntimeEvent>,
+    receiver: &RuntimeEventOutputReceiver,
     session_id: &str,
 ) -> RuntimeEvent {
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -100,7 +193,7 @@ fn wait_for_execution_result(
     }
 }
 
-fn wait_for_bridge_call(receiver: &mpsc::Receiver<RuntimeEvent>, session_id: &str) -> RuntimeEvent {
+fn wait_for_bridge_call(receiver: &RuntimeEventOutputReceiver, session_id: &str) -> RuntimeEvent {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let remaining = deadline
@@ -121,7 +214,7 @@ fn wait_for_bridge_call(receiver: &mpsc::Receiver<RuntimeEvent>, session_id: &st
     }
 }
 
-fn assert_execution_ok(receiver: &mpsc::Receiver<RuntimeEvent>, session_id: &str) {
+fn assert_execution_ok(receiver: &RuntimeEventOutputReceiver, session_id: &str) {
     let event = wait_for_execution_result(receiver, session_id);
     match event {
         RuntimeEvent::ExecutionResult {
@@ -153,7 +246,7 @@ fn wait_until(message: &str, predicate: impl Fn() -> bool) {
 }
 
 fn assert_create_destroy_reuses_session_ids() -> io::Result<()> {
-    let runtime = shared_embedded_runtime()?;
+    let runtime = shared_embedded_runtime(process_runtime_context()?)?;
     let session_id = next_session_id();
 
     let _receiver = register_and_create_session(&runtime, &session_id)?;
@@ -191,8 +284,49 @@ fn assert_create_destroy_reuses_session_ids() -> io::Result<()> {
     Ok(())
 }
 
+fn assert_stale_session_handle_cannot_settle_reused_session_call() -> io::Result<()> {
+    let runtime = Arc::new(embedded_runtime(1)?);
+    let session_id = next_session_id();
+
+    let _first_receiver = register_and_create_session(&runtime, &session_id)?;
+    let stale_handle = runtime.session_handle(session_id.clone());
+    stale_handle.destroy()?;
+    wait_until(
+        "destroyed session generation must release its executor slot before reuse",
+        || runtime.session_count() == 0 && runtime.active_slot_count() == 0,
+    );
+
+    let receiver = register_and_create_session(&runtime, &session_id)?;
+    let current_handle = runtime.session_handle(session_id.clone());
+    dispatch_execute(
+        runtime.as_ref(),
+        &session_id,
+        0,
+        "",
+        "_loadFileSync.applySyncPromise(void 0, ['/generation-check']);",
+    )?;
+    let call_id = match wait_for_bridge_call(&receiver, &session_id) {
+        RuntimeEvent::BridgeCall { call_id, .. } => call_id,
+        other => panic!("expected bridge call, got {other:?}"),
+    };
+
+    let error = stale_handle
+        .send_bridge_response(call_id, 0, Vec::new())
+        .expect_err("stale output generation must not settle a reused session call");
+    assert!(
+        error
+            .to_string()
+            .contains("ERR_AGENTOS_BRIDGE_STALE_GENERATION"),
+        "unexpected stale-generation error: {error}"
+    );
+    current_handle.send_bridge_response(call_id, 0, Vec::new())?;
+    assert_execution_ok(&receiver, &session_id);
+    current_handle.destroy()?;
+    Ok(())
+}
+
 fn assert_warmed_snapshot_bridge_state() -> io::Result<()> {
-    let runtime = Arc::new(EmbeddedV8Runtime::new(Some(1))?);
+    let runtime = Arc::new(embedded_runtime(1)?);
     let session_id = next_session_id();
     let receiver = register_and_create_session(&runtime, &session_id)?;
     let bridge_code = "(function() { globalThis.__snapshotMarker = 'warm'; })();";
@@ -218,7 +352,7 @@ fn assert_warmed_snapshot_bridge_state() -> io::Result<()> {
 }
 
 fn assert_snapshot_rebuild_on_bridge_change() -> io::Result<()> {
-    let runtime = Arc::new(EmbeddedV8Runtime::new(Some(1))?);
+    let runtime = Arc::new(embedded_runtime(1)?);
     let session_id = next_session_id();
     let receiver = register_and_create_session(&runtime, &session_id)?;
     let bridge_a = "(function() { globalThis.__bridgeSnapshot = 'A'; })();";
@@ -250,7 +384,7 @@ fn assert_snapshot_rebuild_on_bridge_change() -> io::Result<()> {
 }
 
 fn assert_execute_rejects_oversized_bridge_code() -> io::Result<()> {
-    let runtime = Arc::new(EmbeddedV8Runtime::new(Some(1))?);
+    let runtime = Arc::new(embedded_runtime(1)?);
     let session_id = next_session_id();
     let receiver = register_and_create_session(&runtime, &session_id)?;
     let oversized_bridge_code = " ".repeat(16 * 1024 * 1024 + 1);
@@ -291,7 +425,7 @@ fn assert_execute_rejects_oversized_bridge_code() -> io::Result<()> {
 }
 
 fn assert_direct_zero_cpu_time_limit_disables_timeout() -> io::Result<()> {
-    let runtime = Arc::new(EmbeddedV8Runtime::new(Some(1))?);
+    let runtime = Arc::new(embedded_runtime(1)?);
     let session_id = next_session_id();
     let receiver = register_and_create_session_with_cpu_time_limit(&runtime, &session_id, Some(0))?;
 
@@ -315,8 +449,8 @@ fn assert_direct_zero_cpu_time_limit_disables_timeout() -> io::Result<()> {
     Ok(())
 }
 
-fn assert_queued_work_waits_for_slot_release() -> io::Result<()> {
-    let runtime = Arc::new(EmbeddedV8Runtime::new(Some(1))?);
+fn assert_overload_rejects_before_thread_and_recovers_after_release() -> io::Result<()> {
+    let runtime = Arc::new(embedded_runtime(1)?);
     let session_a = next_session_id();
     let session_b = next_session_id();
     let receiver_a = register_and_create_session(&runtime, &session_a)?;
@@ -329,30 +463,38 @@ fn assert_queued_work_waits_for_slot_release() -> io::Result<()> {
     dispatch_execute(
         runtime.as_ref(),
         &session_a,
-        1,
-        "",
-        "await new Promise(() => {});",
-    )?;
-
-    let receiver_b = register_and_create_session(&runtime, &session_b)?;
-    dispatch_execute(
-        runtime.as_ref(),
-        &session_b,
         0,
-        "(function() { globalThis.__queuedSession = 'released'; })();",
-        "if (globalThis.__queuedSession !== 'released') { throw new Error(`saw ${globalThis.__queuedSession}`); }",
+        "",
+        "_loadFileSync('/overload-slot-holder');",
     )?;
-
-    wait_until(
-        "expected one active slot with the second session still queued",
-        || runtime.active_slot_count() == 1 && runtime.session_count() == 2,
+    let bridge_call = wait_for_bridge_call(&receiver_a, &session_a);
+    assert!(
+        matches!(
+            bridge_call,
+            RuntimeEvent::BridgeCall { ref method, .. } if method == "_loadFileSync"
+        ),
+        "expected the slot-holder execution to reach a synchronous bridge wait"
     );
-    if run_timing_sensitive_tests() {
-        assert!(
-            receiver_b.recv_timeout(Duration::from_millis(150)).is_err(),
-            "queued session should not emit an execution result before the first slot is released"
-        );
-    }
+
+    let _rejected_receiver = runtime.register_session(&session_b)?;
+    let overload = runtime
+        .dispatch(RuntimeCommand::CreateSession {
+            session_id: session_b.clone(),
+            heap_limit_mb: None,
+            cpu_time_limit_ms: None,
+            wall_clock_limit_ms: None,
+            warm_hint: None,
+        })
+        .expect_err("executor saturation must reject before spawning another VM thread");
+    assert!(
+        overload
+            .to_string()
+            .contains("ERR_AGENTOS_VM_EXECUTOR_LIMIT"),
+        "unexpected executor overload error: {overload}"
+    );
+    runtime.unregister_session(&session_b);
+    assert_eq!(runtime.active_slot_count(), 1);
+    assert_eq!(runtime.session_count(), 1);
 
     runtime.dispatch(RuntimeCommand::DestroySession {
         session_id: session_a.clone(),
@@ -370,6 +512,19 @@ fn assert_queued_work_waits_for_slot_release() -> io::Result<()> {
         "destroying the in-flight session should terminate its pending execution"
     );
 
+    wait_until(
+        "expected the terminated session to release its executor slot",
+        || runtime.active_slot_count() == 0 && runtime.session_count() == 0,
+    );
+
+    let receiver_b = register_and_create_session(&runtime, &session_b)?;
+    dispatch_execute(
+        runtime.as_ref(),
+        &session_b,
+        0,
+        "(function() { globalThis.__successorSession = 'released'; })();",
+        "if (globalThis.__successorSession !== 'released') { throw new Error(`saw ${globalThis.__successorSession}`); }",
+    )?;
     assert_execution_ok(&receiver_b, &session_b);
 
     runtime.dispatch(RuntimeCommand::DestroySession {
@@ -385,7 +540,7 @@ fn assert_queued_work_waits_for_slot_release() -> io::Result<()> {
 }
 
 fn assert_shared_runtime_handles_share_concurrency_quota() -> io::Result<()> {
-    let runtime = Arc::new(EmbeddedV8Runtime::new(Some(3))?);
+    let runtime = Arc::new(embedded_runtime(3)?);
     let clients = (0..4)
         .map(|_| Arc::clone(&runtime))
         .collect::<Vec<Arc<EmbeddedV8Runtime>>>();
@@ -402,37 +557,47 @@ fn assert_shared_runtime_handles_share_concurrency_quota() -> io::Result<()> {
         || runtime.active_slot_count() == 3 && runtime.session_count() == 3,
     );
 
-    receivers.push(register_and_create_session(&clients[3], &session_ids[3])?);
-
-    for (client, session_id) in clients.iter().zip(session_ids.iter()).take(3) {
+    for ((client, session_id), receiver) in clients
+        .iter()
+        .zip(session_ids.iter())
+        .take(3)
+        .zip(receivers.iter())
+    {
         dispatch_execute(
             client.as_ref(),
             session_id,
-            1,
+            0,
             "",
-            "await new Promise(() => {});",
+            &format!("_loadFileSync('/shared-slot-holder-{session_id}');"),
         )?;
-    }
-    dispatch_execute(
-        clients[3].as_ref(),
-        &session_ids[3],
-        0,
-        "(function() { globalThis.__sharedQuota = 'released'; })();",
-        "if (globalThis.__sharedQuota !== 'released') { throw new Error(`saw ${globalThis.__sharedQuota}`); }",
-    )?;
-
-    wait_until(
-        "expected one runtime-wide slot budget shared across all embedded runtime handles",
-        || runtime.active_slot_count() == 3 && runtime.session_count() == 4,
-    );
-    if run_timing_sensitive_tests() {
+        let bridge_call = wait_for_bridge_call(receiver, session_id);
         assert!(
-            receivers[3]
-                .recv_timeout(Duration::from_millis(150))
-                .is_err(),
-            "the fourth client should stay queued while the first three handles occupy the shared slots"
+            matches!(
+                bridge_call,
+                RuntimeEvent::BridgeCall { ref method, .. } if method == "_loadFileSync"
+            ),
+            "expected each shared slot-holder to reach a synchronous bridge wait"
         );
     }
+    let _rejected_receiver = clients[3].register_session(&session_ids[3])?;
+    let overload = clients[3]
+        .dispatch(RuntimeCommand::CreateSession {
+            session_id: session_ids[3].clone(),
+            heap_limit_mb: None,
+            cpu_time_limit_ms: None,
+            wall_clock_limit_ms: None,
+            warm_hint: None,
+        })
+        .expect_err("the shared executor limit must reject a fourth VM before thread creation");
+    assert!(
+        overload
+            .to_string()
+            .contains("ERR_AGENTOS_VM_EXECUTOR_LIMIT"),
+        "unexpected shared executor overload error: {overload}"
+    );
+    clients[3].unregister_session(&session_ids[3]);
+    assert_eq!(runtime.active_slot_count(), 3);
+    assert_eq!(runtime.session_count(), 3);
 
     runtime.dispatch(RuntimeCommand::DestroySession {
         session_id: session_ids[0].clone(),
@@ -447,9 +612,20 @@ fn assert_shared_runtime_handles_share_concurrency_quota() -> io::Result<()> {
                 ..
             } if error.as_ref().is_some_and(|error| error.message == "Execution terminated")
         ),
-        "destroying one in-flight session should release a shared slot for queued handles"
+        "destroying one in-flight session should release a shared executor slot"
     );
 
+    wait_until("expected the shared executor slot to be released", || {
+        runtime.active_slot_count() == 2 && runtime.session_count() == 2
+    });
+    receivers.push(register_and_create_session(&clients[3], &session_ids[3])?);
+    dispatch_execute(
+        clients[3].as_ref(),
+        &session_ids[3],
+        0,
+        "(function() { globalThis.__sharedQuota = 'released'; })();",
+        "if (globalThis.__sharedQuota !== 'released') { throw new Error(`saw ${globalThis.__sharedQuota}`); }",
+    )?;
     assert_execution_ok(&receivers[3], &session_ids[3]);
 
     for session_id in session_ids.iter().skip(1) {
@@ -468,7 +644,7 @@ fn assert_shared_runtime_handles_share_concurrency_quota() -> io::Result<()> {
 }
 
 fn assert_terminate_interrupts_sync_bridge_wait() -> io::Result<()> {
-    let runtime = Arc::new(EmbeddedV8Runtime::new(Some(1))?);
+    let runtime = Arc::new(embedded_runtime(1)?);
     let session_id = next_session_id();
     let receiver = register_and_create_session(&runtime, &session_id)?;
 
@@ -489,8 +665,27 @@ fn assert_terminate_interrupts_sync_bridge_wait() -> io::Result<()> {
         "expected the blocked sync bridge call to be visible before termination"
     );
 
+    let session = runtime.session_handle(session_id.clone());
+    let mut overload = None;
+    for index in 0..=256 {
+        match session.send_stream_event(&format!("terminate-flood-{index}"), Vec::new()) {
+            Ok(()) => {}
+            Err(error) => {
+                overload = Some(error);
+                break;
+            }
+        }
+    }
+    let overload = overload.expect("termination flood must reach typed command backpressure");
+    assert!(
+        overload
+            .to_string()
+            .contains("ERR_AGENTOS_SESSION_COMMAND_LIMIT"),
+        "unexpected termination-flood overload: {overload}"
+    );
+
     let terminate_started = Instant::now();
-    runtime.session_handle(session_id.clone()).terminate()?;
+    session.terminate()?;
     let terminated = wait_for_execution_result(&receiver, &session_id);
 
     if run_timing_sensitive_tests() {
@@ -511,7 +706,7 @@ fn assert_terminate_interrupts_sync_bridge_wait() -> io::Result<()> {
         "terminate() should interrupt a blocked sync bridge call instead of waiting for a host response"
     );
 
-    dispatch_execute(
+    dispatch_execute_after_backpressure(
         runtime.as_ref(),
         &session_id,
         0,
@@ -532,7 +727,7 @@ fn assert_terminate_interrupts_sync_bridge_wait() -> io::Result<()> {
 }
 
 fn assert_pause_preserves_synchronous_execution_stack() -> io::Result<()> {
-    let runtime = Arc::new(EmbeddedV8Runtime::new(Some(1))?);
+    let runtime = Arc::new(embedded_runtime(1)?);
     let session_id = next_session_id();
     let receiver = register_and_create_session(&runtime, &session_id)?;
     let handle = runtime.session_handle(session_id.clone());
@@ -576,8 +771,129 @@ fn assert_pause_preserves_synchronous_execution_stack() -> io::Result<()> {
     Ok(())
 }
 
+fn assert_sync_bridge_response_bypasses_stream_event_flood() -> io::Result<()> {
+    let runtime = Arc::new(embedded_runtime(1)?);
+    let session_id = next_session_id();
+    let receiver = register_and_create_session(&runtime, &session_id)?;
+
+    dispatch_execute(
+        runtime.as_ref(),
+        &session_id,
+        0,
+        "",
+        "_loadFileSync.applySyncPromise(void 0, ['/synthetic-stream-flood']);",
+    )?;
+
+    let bridge_call = wait_for_bridge_call(&receiver, &session_id);
+    let call_id = match bridge_call {
+        RuntimeEvent::BridgeCall {
+            call_id, method, ..
+        } if method == "_loadFileSync" => call_id,
+        other => panic!(
+            "expected guest JavaScript to block in a real sync bridge call before the flood, got {other:?}"
+        ),
+    };
+
+    let session = runtime.session_handle(session_id.clone());
+    let mut overload = None;
+    let mut accepted = 0;
+    for index in 0..=256 {
+        match session.send_stream_event(&format!("net-socket-{index}"), Vec::new()) {
+            Ok(()) => accepted += 1,
+            Err(error) => {
+                overload = Some(error);
+                break;
+            }
+        }
+    }
+    assert_eq!(
+        accepted, 256,
+        "the configured ordinary lane must admit 256 events"
+    );
+    let overload = overload.expect("ordinary event flood must reach typed backpressure");
+    assert!(
+        overload
+            .to_string()
+            .contains("ERR_AGENTOS_SESSION_COMMAND_LIMIT"),
+        "unexpected ordinary-lane overload: {overload}"
+    );
+
+    session.send_bridge_response(call_id, 0, Vec::new())?;
+    assert_execution_ok(&receiver, &session_id);
+
+    dispatch_execute_after_backpressure(
+        runtime.as_ref(),
+        &session_id,
+        0,
+        "",
+        "globalThis.__afterBridgeFlood = 'ok';",
+    )?;
+    assert_execution_ok(&receiver, &session_id);
+
+    runtime.dispatch(RuntimeCommand::DestroySession {
+        session_id: session_id.clone(),
+    })?;
+    runtime.unregister_session(&session_id);
+    wait_until(
+        "expected bridge-flood regression session to drain cleanly",
+        || runtime.session_count() == 0 && runtime.active_slot_count() == 0,
+    );
+    Ok(())
+}
+
+fn assert_sync_bridge_response_bypasses_full_ordinary_command_lane() -> io::Result<()> {
+    let runtime = Arc::new(embedded_runtime(1)?);
+    let session_id = next_session_id();
+    let receiver = register_and_create_session(&runtime, &session_id)?;
+
+    dispatch_execute(
+        runtime.as_ref(),
+        &session_id,
+        0,
+        "",
+        "_loadFileSync.applySyncPromise(void 0, ['/ordinary-lane-full']);",
+    )?;
+    let call_id = match wait_for_bridge_call(&receiver, &session_id) {
+        RuntimeEvent::BridgeCall { call_id, .. } => call_id,
+        other => panic!("expected bridge call, got {other:?}"),
+    };
+
+    let session = runtime.session_handle(session_id.clone());
+    // Fill the entire ordinary 256-entry session command lane with messages
+    // that cannot coalesce. Response settlement must not need a slot there.
+    let mut overload = None;
+    for index in 0..=256 {
+        match session.send_stream_event(&format!("ordinary-{index}"), Vec::new()) {
+            Ok(()) => {}
+            Err(error) => {
+                overload = Some(error);
+                break;
+            }
+        }
+    }
+    let overload = overload.expect("ordinary command lane must become full");
+    assert!(
+        overload
+            .to_string()
+            .contains("ERR_AGENTOS_SESSION_COMMAND_LIMIT"),
+        "unexpected ordinary-lane overload: {overload}"
+    );
+    for _ in 0..1_024 {
+        session.publish_signal(10)?;
+    }
+    session.send_bridge_response(call_id, 0, Vec::new())?;
+    assert_execution_ok(&receiver, &session_id);
+
+    session.destroy()?;
+    wait_until(
+        "expected full-command-lane regression session to drain cleanly",
+        || runtime.session_count() == 0 && runtime.active_slot_count() == 0,
+    );
+    Ok(())
+}
+
 fn assert_cpu_terminated_session_can_execute_again() -> io::Result<()> {
-    let runtime = Arc::new(EmbeddedV8Runtime::new(Some(1))?);
+    let runtime = Arc::new(embedded_runtime(1)?);
     let session_id = next_session_id();
     let receiver =
         register_and_create_session_with_cpu_time_limit(&runtime, &session_id, Some(25))?;
@@ -619,7 +935,7 @@ fn assert_cpu_terminated_session_can_execute_again() -> io::Result<()> {
 }
 
 fn assert_isolate_churn_recreates_embedded_sessions_without_segv() -> io::Result<()> {
-    let runtime = Arc::new(EmbeddedV8Runtime::new(Some(1))?);
+    let runtime = Arc::new(embedded_runtime(1)?);
     let bridge_code = "(function() { globalThis.__churnBridgeReady = true; })();";
 
     for _ in 0..32 {
@@ -637,6 +953,10 @@ fn assert_isolate_churn_recreates_embedded_sessions_without_segv() -> io::Result
             session_id: session_id.clone(),
         })?;
         runtime.unregister_session(&session_id);
+        wait_until(
+            "expected each churned executor permit to reconcile before its successor",
+            || runtime.session_count() == 0 && runtime.active_slot_count() == 0,
+        );
     }
 
     let session_id = next_session_id();
@@ -661,15 +981,22 @@ fn assert_isolate_churn_recreates_embedded_sessions_without_segv() -> io::Result
 
 #[test]
 fn embedded_runtime_session_consolidated_behaviors() -> io::Result<()> {
+    // This integration test is its own process entrypoint. Production
+    // subsystems may retrieve, but never lazily construct, the process runtime.
+    agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+        .map_err(|error| io::Error::other(error.to_string()))?;
     // Keep the embedded-runtime coverage in one test process. V8 teardown across
     // multiple integration tests still trips intermittent SIGSEGVs in this crate.
     assert_create_destroy_reuses_session_ids()?;
+    assert_stale_session_handle_cannot_settle_reused_session_call()?;
     assert_warmed_snapshot_bridge_state()?;
     assert_snapshot_rebuild_on_bridge_change()?;
     assert_execute_rejects_oversized_bridge_code()?;
     assert_direct_zero_cpu_time_limit_disables_timeout()?;
-    assert_queued_work_waits_for_slot_release()?;
+    assert_overload_rejects_before_thread_and_recovers_after_release()?;
     assert_shared_runtime_handles_share_concurrency_quota()?;
+    assert_sync_bridge_response_bypasses_stream_event_flood()?;
+    assert_sync_bridge_response_bypasses_full_ordinary_command_lane()?;
     assert_terminate_interrupts_sync_bridge_wait()?;
     assert_pause_preserves_synchronous_execution_stack()?;
     assert_cpu_terminated_session_can_execute_again()?;

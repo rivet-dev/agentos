@@ -14,6 +14,7 @@ use crate::v8_runtime;
 use agentos_bridge::queue_tracker::{
     register_limit, warn_limit_exhausted, QueueGauge, TrackedLimit,
 };
+use agentos_runtime::RuntimeContext;
 use base64::Engine as _;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -25,6 +26,7 @@ use std::os::unix::fs::{FileExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use tokio::sync::Notify;
 
 const WASM_MODULE_PATH_ENV: &str = "AGENTOS_WASM_MODULE_PATH";
 const WASM_GUEST_ARGV_ENV: &str = "AGENTOS_GUEST_ARGV";
@@ -43,6 +45,7 @@ const WASM_MAX_SPAWN_FILE_ACTIONS_ENV: &str = "AGENTOS_WASM_MAX_SPAWN_FILE_ACTIO
 const WASM_MAX_SPAWN_FILE_ACTION_BYTES_ENV: &str = "AGENTOS_WASM_MAX_SPAWN_FILE_ACTION_BYTES";
 const WASM_MAX_SOCKETS_ENV: &str = "AGENTOS_WASM_MAX_SOCKETS";
 const WASM_MAX_BLOCKING_READ_MS_ENV: &str = "AGENTOS_WASM_MAX_BLOCKING_READ_MS";
+const WASM_INTERNAL_MAX_STACK_BYTES_ENV: &str = "AGENTOS_INTERNAL_WASM_MAX_STACK_BYTES";
 const WASM_WARMUP_METRICS_PREFIX: &str = "__AGENTOS_WASM_WARMUP_METRICS__:";
 const WASM_SIGNAL_STATE_PREFIX: &str = "__AGENTOS_WASM_SIGNAL_STATE__:";
 const WASM_WARMUP_MARKER_VERSION: &str = "1";
@@ -115,6 +118,14 @@ const WASM_SIDECAR_ROUTED_FS_SYNC_METHODS: &[&str] = &[
     "fs.unlinkSync",
     "fs.writeFileSync",
     "fs.writeSync",
+];
+const WASM_SIDECAR_ROUTED_KERNEL_SYNC_METHODS: &[&str] = &[
+    "__kernel_isatty",
+    "__kernel_poll",
+    "__kernel_stdin_read",
+    "__kernel_stdio_write",
+    "__kernel_tty_size",
+    "__pty_set_raw_mode",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,6 +208,10 @@ pub struct WasmExecutionLimits {
     pub prewarm_timeout_ms: Option<u64>,
     /// V8 heap cap for the trusted JS runner isolate that hosts WASI/WASM.
     pub runner_heap_limit_mb: Option<u32>,
+    /// VM readiness work bound forwarded unchanged to the WASI V8 runner.
+    pub reactor_work_quantum: Option<usize>,
+    /// Per-call host bridge deadline forwarded unchanged to the WASI V8 runner.
+    pub bridge_call_timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -610,6 +625,33 @@ impl WasmExecution {
         }
     }
 
+    pub fn try_poll_event(&mut self) -> Result<Option<WasmExecutionEvent>, WasmExecutionError> {
+        loop {
+            if let Some(event) = self.pending_events.pop_front() {
+                return Ok(Some(event));
+            }
+            if let Some(event) = self.internal_sync_rpc.pending_events.pop_front() {
+                self.enqueue_wasm_event(event)?;
+                continue;
+            }
+            if let Some(event) = self.timeout_event_if_expired()? {
+                return Ok(Some(event));
+            }
+            let Some(event) = self.inner.try_poll_event().map_err(map_javascript_error)? else {
+                return Ok(None);
+            };
+            if let JavascriptExecutionEvent::SyncRpcRequest(request) = &event {
+                if self.handle_internal_sync_rpc(request)? {
+                    continue;
+                }
+                if let Some(signal_state) = self.handle_signal_state_sync_rpc(request)? {
+                    return Ok(Some(signal_state));
+                }
+            }
+            self.enqueue_javascript_event(event)?;
+        }
+    }
+
     pub fn poll_event_blocking(
         &mut self,
         timeout: Duration,
@@ -654,14 +696,14 @@ impl WasmExecution {
         let mut stderr = Vec::new();
 
         loop {
-            match self.poll_event_blocking(Duration::from_millis(50))? {
-                Some(WasmExecutionEvent::Stdout(chunk)) => {
+            match self.wait_event_blocking()? {
+                WasmExecutionEvent::Stdout(chunk) => {
                     append_wasm_captured_output(&mut stdout, &chunk, "stdout")?;
                 }
-                Some(WasmExecutionEvent::Stderr(chunk)) => {
+                WasmExecutionEvent::Stderr(chunk) => {
                     append_wasm_captured_output(&mut stderr, &chunk, "stderr")?;
                 }
-                Some(WasmExecutionEvent::SyncRpcRequest(request)) => {
+                WasmExecutionEvent::SyncRpcRequest(request) => {
                     if self.handle_wait_sync_rpc_request(&request, &mut stdout, &mut stderr)? {
                         continue;
                     }
@@ -670,8 +712,8 @@ impl WasmExecution {
                         request.method
                     )));
                 }
-                Some(WasmExecutionEvent::SignalState { .. }) => {}
-                Some(WasmExecutionEvent::Exited(exit_code)) => {
+                WasmExecutionEvent::SignalState { .. } => {}
+                WasmExecutionEvent::Exited(exit_code) => {
                     return Ok(WasmExecutionResult {
                         execution_id: self.execution_id,
                         exit_code,
@@ -679,8 +721,56 @@ impl WasmExecution {
                         stderr,
                     });
                 }
-                None => {}
             }
+        }
+    }
+
+    /// Wait for one meaningful WASM event without a recurring adapter poll.
+    /// A configured execution deadline becomes one deadline-capped wait; an
+    /// execution without a deadline blocks directly on the event receiver.
+    fn wait_event_blocking(&mut self) -> Result<WasmExecutionEvent, WasmExecutionError> {
+        loop {
+            if let Some(event) = self.pending_events.pop_front() {
+                return Ok(event);
+            }
+            if let Some(event) = self.internal_sync_rpc.pending_events.pop_front() {
+                self.enqueue_wasm_event(event)?;
+                continue;
+            }
+            if let Some(event) = self.timeout_event_if_expired()? {
+                return Ok(event);
+            }
+
+            let event = if let Some(limit) = self.execution_timeout {
+                let remaining = limit.saturating_sub(self.execution_started_at.elapsed());
+                if remaining.is_zero() {
+                    continue;
+                }
+                let Some(event) = self
+                    .inner
+                    .poll_event_blocking(remaining)
+                    .map_err(map_javascript_error)?
+                else {
+                    // The single deadline-aware wait expired. The next turn
+                    // materializes the typed timeout events exactly once.
+                    continue;
+                };
+                event
+            } else {
+                self.inner
+                    .next_event_blocking()
+                    .map_err(map_javascript_error)?
+            };
+
+            if let JavascriptExecutionEvent::SyncRpcRequest(request) = &event {
+                if self.handle_internal_sync_rpc(request)? {
+                    continue;
+                }
+                if let Some(signal_state) = self.handle_signal_state_sync_rpc(request)? {
+                    return Ok(signal_state);
+                }
+            }
+            self.enqueue_javascript_event(event)?;
         }
     }
 
@@ -707,8 +797,9 @@ impl WasmExecution {
             return Ok(None);
         };
         let elapsed = self.execution_started_at.elapsed();
-        // Sample elapsed budget each poll so the gauge fires its edge-triggered
-        // ~80% approach warning before the terminal exhaustion below.
+        // Observe elapsed usage on real event boundaries. The terminal path
+        // below records the exact configured capacity when the one-shot
+        // deadline wait expires.
         if let Some(gauge) = &self.fuel_gauge {
             gauge.observe_depth(duration_millis_saturating_usize(elapsed));
         }
@@ -716,7 +807,7 @@ impl WasmExecution {
             return Ok(None);
         }
 
-        let _ = self.inner.terminate();
+        self.inner.terminate().map_err(map_javascript_error)?;
         self.timeout_reported = true;
         let capacity = duration_millis_saturating_usize(limit);
         warn_limit_exhausted(TrackedLimit::WasmFuelMs, capacity, capacity);
@@ -925,8 +1016,9 @@ enum StreamChannel {
     Stderr,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct WasmExecutionEngine {
+    runtime: Option<RuntimeContext>,
     next_context_id: usize,
     next_execution_id: usize,
     contexts: BTreeMap<String, WasmContext>,
@@ -935,7 +1027,68 @@ pub struct WasmExecutionEngine {
     javascript_engine: JavascriptExecutionEngine,
 }
 
+impl Default for WasmExecutionEngine {
+    fn default() -> Self {
+        let runtime = default_wasm_test_runtime_context();
+        let javascript_engine = runtime
+            .as_ref()
+            .map_or_else(JavascriptExecutionEngine::default, |runtime| {
+                JavascriptExecutionEngine::new(runtime.clone())
+            });
+        Self {
+            runtime,
+            next_context_id: 0,
+            next_execution_id: 0,
+            contexts: BTreeMap::new(),
+            import_caches: BTreeMap::new(),
+            javascript_context_ids: BTreeMap::new(),
+            javascript_engine,
+        }
+    }
+}
+
+#[cfg(test)]
+fn default_wasm_test_runtime_context() -> Option<RuntimeContext> {
+    agentos_runtime::SidecarRuntime::process(&agentos_runtime::RuntimeConfig::default())
+        .ok()
+        .map(agentos_runtime::SidecarRuntime::context)
+}
+
+#[cfg(not(test))]
+fn default_wasm_test_runtime_context() -> Option<RuntimeContext> {
+    None
+}
+
 impl WasmExecutionEngine {
+    pub fn new(runtime: RuntimeContext) -> Self {
+        Self {
+            runtime: Some(runtime.clone()),
+            next_context_id: 0,
+            next_execution_id: 0,
+            contexts: BTreeMap::new(),
+            import_caches: BTreeMap::new(),
+            javascript_context_ids: BTreeMap::new(),
+            javascript_engine: JavascriptExecutionEngine::new(runtime),
+        }
+    }
+
+    pub fn set_runtime_context(&mut self, runtime: RuntimeContext) {
+        self.javascript_engine.set_runtime_context(runtime.clone());
+        self.runtime = Some(runtime);
+    }
+
+    fn runtime_context(&self) -> Result<&RuntimeContext, WasmExecutionError> {
+        self.runtime.as_ref().ok_or_else(|| {
+            WasmExecutionError::Spawn(std::io::Error::other(
+                "ERR_AGENTOS_RUNTIME_NOT_INJECTED: WasmExecutionEngine requires a process RuntimeContext; construct it with WasmExecutionEngine::new(runtime)",
+            ))
+        })
+    }
+
+    pub fn set_event_notify(&mut self, notify: Option<Arc<Notify>>) {
+        self.javascript_engine.set_event_notify(notify);
+    }
+
     pub fn create_context(&mut self, request: CreateWasmContextRequest) -> WasmContext {
         self.next_context_id += 1;
         self.import_caches.entry(request.vm_id.clone()).or_default();
@@ -985,19 +1138,30 @@ impl WasmExecutionEngine {
         &mut self,
         request: StartWasmExecutionRequest,
     ) -> Result<WasmExecution, WasmExecutionError> {
-        self.create_execution(request, false)
+        let runtime = self.runtime_context()?.clone();
+        self.create_execution_with_runtime(request, runtime, false)
     }
 
     pub fn prepare_execution(
         &mut self,
         request: StartWasmExecutionRequest,
     ) -> Result<WasmExecution, WasmExecutionError> {
-        self.create_execution(request, true)
+        let runtime = self.runtime_context()?.clone();
+        self.create_execution_with_runtime(request, runtime, true)
     }
 
-    fn create_execution(
+    pub fn start_execution_with_runtime(
         &mut self,
         request: StartWasmExecutionRequest,
+        runtime: RuntimeContext,
+    ) -> Result<WasmExecution, WasmExecutionError> {
+        self.create_execution_with_runtime(request, runtime, false)
+    }
+
+    fn create_execution_with_runtime(
+        &mut self,
+        request: StartWasmExecutionRequest,
+        runtime: RuntimeContext,
         defer_execute: bool,
     ) -> Result<WasmExecution, WasmExecutionError> {
         let context = self
@@ -1024,7 +1188,7 @@ impl WasmExecutionEngine {
         {
             let import_cache = self.import_caches.entry(context.vm_id.clone()).or_default();
             import_cache
-                .ensure_materialized_with_timeout(prewarm_timeout)
+                .ensure_materialized_with_timeout_and_runtime(&runtime, prewarm_timeout)
                 .map_err(WasmExecutionError::PrepareWarmPath)?;
         }
         let frozen_time_ms = frozen_time_ms();
@@ -1044,18 +1208,128 @@ impl WasmExecutionEngine {
             &javascript_context_id,
             &resolved_module,
             &request,
-            frozen_time_ms,
-            prewarm_timeout,
+            WasmPrewarmOptions {
+                frozen_time_ms,
+                timeout: prewarm_timeout,
+                runtime: &runtime,
+            },
         ) {
             Ok(metrics) => metrics,
             Err(WasmExecutionError::WarmupTimeout(_)) => None,
             Err(error) => return Err(error),
         };
 
+        self.finish_start_execution(
+            request,
+            runtime,
+            &context.vm_id,
+            javascript_context_id,
+            resolved_module,
+            frozen_time_ms,
+            execution_timeout,
+            warmup_metrics,
+            defer_execute,
+        )
+    }
+
+    /// Start a WASM execution from an async sidecar dispatch path. Import-cache
+    /// materialization and the optional V8 prewarm await their existing bounded
+    /// workers instead of blocking a Tokio runtime worker.
+    pub async fn start_execution_with_runtime_async(
+        &mut self,
+        request: StartWasmExecutionRequest,
+        runtime: RuntimeContext,
+    ) -> Result<WasmExecution, WasmExecutionError> {
+        let context = self
+            .contexts
+            .get(&request.context_id)
+            .cloned()
+            .ok_or_else(|| WasmExecutionError::MissingContext(request.context_id.clone()))?;
+
+        if context.vm_id != request.vm_id {
+            return Err(WasmExecutionError::VmMismatch {
+                expected: context.vm_id,
+                found: request.vm_id,
+            });
+        }
+
+        let resolved_module = resolve_wasm_module(&context, &request)?;
+        verify_wasm_module_header(&resolved_module)?;
+        let prewarm_timeout = resolve_wasm_prewarm_timeout(&request)?;
+        let javascript_context_id = self
+            .javascript_context_ids
+            .get(&context.context_id)
+            .cloned()
+            .ok_or_else(|| WasmExecutionError::MissingContext(context.context_id.clone()))?;
+        {
+            let import_cache = self.import_caches.entry(context.vm_id.clone()).or_default();
+            import_cache
+                .ensure_materialized_with_timeout_and_runtime_async(&runtime, prewarm_timeout)
+                .await
+                .map_err(WasmExecutionError::PrepareWarmPath)?;
+        }
+        let frozen_time_ms = frozen_time_ms();
+        validate_module_limits(&resolved_module, &request)?;
+        wasm_stack_limit_bytes(&request)?;
+        let execution_timeout = resolve_wasm_execution_timeout(&request)?;
+        let import_cache = self
+            .import_caches
+            .get(&context.vm_id)
+            .expect("vm import cache should exist after materialization");
+        let warmup_metrics = match prewarm_wasm_path_async(
+            import_cache,
+            &mut self.javascript_engine,
+            &javascript_context_id,
+            &resolved_module,
+            &request,
+            WasmPrewarmOptions {
+                frozen_time_ms,
+                timeout: prewarm_timeout,
+                runtime: &runtime,
+            },
+        )
+        .await
+        {
+            Ok(metrics) => metrics,
+            Err(WasmExecutionError::WarmupTimeout(_)) => None,
+            Err(error) => return Err(error),
+        };
+
+        self.finish_start_execution(
+            request,
+            runtime,
+            &context.vm_id,
+            javascript_context_id,
+            resolved_module,
+            frozen_time_ms,
+            execution_timeout,
+            warmup_metrics,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish_start_execution(
+        &mut self,
+        request: StartWasmExecutionRequest,
+        runtime: RuntimeContext,
+        vm_id: &str,
+        javascript_context_id: String,
+        resolved_module: ResolvedWasmModule,
+        frozen_time_ms: u128,
+        execution_timeout: Option<Duration>,
+        warmup_metrics: Option<Vec<u8>>,
+        defer_execute: bool,
+    ) -> Result<WasmExecution, WasmExecutionError> {
+        let import_cache = self
+            .import_caches
+            .get(vm_id)
+            .expect("vm import cache should exist after materialization");
         self.next_execution_id += 1;
         let execution_id = format!("exec-{}", self.next_execution_id);
         let javascript_execution = start_wasm_javascript_execution(
             &mut self.javascript_engine,
+            &runtime,
             import_cache,
             &javascript_context_id,
             &resolved_module,
@@ -1124,6 +1398,9 @@ fn map_javascript_error(error: JavascriptExecutionError) -> WasmExecutionError {
             std::io::ErrorKind::InvalidInput,
             "guest WebAssembly bootstrap requires a JavaScript entrypoint",
         )),
+        JavascriptExecutionError::InvalidLimit(message) => {
+            WasmExecutionError::InvalidLimit(message)
+        }
         JavascriptExecutionError::MissingContext(context_id) => {
             WasmExecutionError::MissingContext(context_id)
         }
@@ -1657,7 +1934,8 @@ fn wasm_sync_rpc_method_routes_through_sidecar_kernel(
     internal_sync_rpc: &WasmInternalSyncRpc,
 ) -> bool {
     internal_sync_rpc.route_fs_through_sidecar
-        && WASM_SIDECAR_ROUTED_FS_SYNC_METHODS.contains(&request.method.as_str())
+        && (WASM_SIDECAR_ROUTED_FS_SYNC_METHODS.contains(&request.method.as_str())
+            || WASM_SIDECAR_ROUTED_KERNEL_SYNC_METHODS.contains(&request.method.as_str()))
 }
 
 fn translate_wasm_guest_path(
@@ -2342,6 +2620,7 @@ fn wasm_snapshot_runner_mode() -> WasmSnapshotRunnerMode {
 
 fn start_wasm_javascript_execution(
     javascript_engine: &mut JavascriptExecutionEngine,
+    runtime: &RuntimeContext,
     import_cache: &NodeImportCache,
     javascript_context_id: &str,
     resolved_module: &ResolvedWasmModule,
@@ -2371,7 +2650,10 @@ fn start_wasm_javascript_execution(
         WasmSnapshotRunnerMode::Auto | WasmSnapshotRunnerMode::Block => {
             let userland_bundle = build_wasm_runner_userland_bundle(import_cache)?;
             let runner_heap_limit_mb = wasm_runner_heap_limit_mb(request);
-            V8RuntimeHost::warm_snapshot_async(userland_bundle.clone());
+            let runtime = javascript_engine
+                .runtime_context()
+                .map_err(map_javascript_error)?;
+            V8RuntimeHost::warm_snapshot_async(runtime, userland_bundle.clone());
             let use_snapshot = match snapshot_mode {
                 WasmSnapshotRunnerMode::Block => {
                     if !javascript_engine
@@ -2437,10 +2719,7 @@ fn start_wasm_javascript_execution(
         // runner still has to compile the WASI runtime + guest module into
         // its own isolate, which can overflow the 128 MiB per-guest default,
         // so size the runner heap explicitly (operator-tunable).
-        limits: JavascriptExecutionLimits {
-            v8_heap_limit_mb: Some(wasm_runner_heap_limit_mb(request)),
-            ..JavascriptExecutionLimits::default()
-        },
+        limits: wasm_runner_javascript_limits(&request.limits, wasm_runner_heap_limit_mb(request)),
         // Forward the guest-runtime identity so the runner's shim sets
         // process.* from typed config rather than env.
         guest_runtime,
@@ -2448,11 +2727,23 @@ fn start_wasm_javascript_execution(
         wasm_module_bytes: Some(wasm_module_bytes),
     };
     if options.defer_execute {
-        javascript_engine.prepare_execution(javascript_request)
+        javascript_engine.prepare_execution_with_runtime(javascript_request, runtime.clone())
     } else {
-        javascript_engine.start_execution(javascript_request)
+        javascript_engine.start_execution_with_runtime(javascript_request, runtime.clone())
     }
     .map_err(map_javascript_error)
+}
+
+fn wasm_runner_javascript_limits(
+    limits: &WasmExecutionLimits,
+    runner_heap_limit_mb: u32,
+) -> JavascriptExecutionLimits {
+    JavascriptExecutionLimits {
+        v8_heap_limit_mb: Some(runner_heap_limit_mb),
+        reactor_work_quantum: limits.reactor_work_quantum,
+        bridge_call_timeout_ms: limits.bridge_call_timeout_ms,
+        ..JavascriptExecutionLimits::default()
+    }
 }
 
 struct WasmModuleBytesCache {
@@ -2560,6 +2851,11 @@ fn build_wasm_internal_env(
         &mut internal_env,
         WASM_MAX_BLOCKING_READ_MS_ENV,
         request.limits.max_blocking_read_ms,
+    );
+    insert_optional_u64_env(
+        &mut internal_env,
+        WASM_INTERNAL_MAX_STACK_BYTES_ENV,
+        request.limits.max_stack_bytes,
     );
     internal_env.insert(
         WASM_MODULE_PATH_ENV.to_string(),
@@ -3195,14 +3491,19 @@ fn insert_wasm_runner_bootstrap(source: &str, bootstrap: &str) -> String {
     )
 }
 
+struct WasmPrewarmOptions<'a> {
+    frozen_time_ms: u128,
+    timeout: Duration,
+    runtime: &'a RuntimeContext,
+}
+
 fn prewarm_wasm_path(
     import_cache: &NodeImportCache,
     javascript_engine: &mut JavascriptExecutionEngine,
     javascript_context_id: &str,
     resolved_module: &ResolvedWasmModule,
     request: &StartWasmExecutionRequest,
-    frozen_time_ms: u128,
-    prewarm_timeout: Duration,
+    options: WasmPrewarmOptions<'_>,
 ) -> Result<Option<Vec<u8>>, WasmExecutionError> {
     let debug_enabled = env_flag_enabled(&request.env, WASM_WARMUP_DEBUG_ENV);
     let marker_contents = warmup_marker_contents(resolved_module);
@@ -3237,12 +3538,13 @@ fn prewarm_wasm_path(
 
     let mut prewarm_execution = start_wasm_javascript_execution(
         javascript_engine,
+        options.runtime,
         import_cache,
         javascript_context_id,
         resolved_module,
         request,
         WasmJavascriptExecutionOptions {
-            frozen_time_ms,
+            frozen_time_ms: options.frozen_time_ms,
             prewarm_only: true,
             warmup_metrics: None,
             defer_execute: false,
@@ -3269,10 +3571,14 @@ fn prewarm_wasm_path(
     let started = Instant::now();
 
     loop {
-        let poll_timeout = prewarm_timeout.saturating_sub(started.elapsed());
+        let poll_timeout = options.timeout.saturating_sub(started.elapsed());
         if poll_timeout.is_zero() {
-            let _ = prewarm_execution.terminate();
-            return Err(WasmExecutionError::WarmupTimeout(prewarm_timeout));
+            if let Err(error) = prewarm_execution.terminate() {
+                eprintln!(
+                    "ERR_AGENTOS_WASM_PREWARM_TERMINATE: timed-out prewarm did not terminate cleanly: {error}"
+                );
+            }
+            return Err(WasmExecutionError::WarmupTimeout(options.timeout));
         }
 
         match prewarm_execution
@@ -3312,8 +3618,155 @@ fn prewarm_wasm_path(
             }
             Some(JavascriptExecutionEvent::SignalState { .. }) => {}
             None => {
-                let _ = prewarm_execution.terminate();
-                return Err(WasmExecutionError::WarmupTimeout(prewarm_timeout));
+                if let Err(error) = prewarm_execution.terminate() {
+                    eprintln!(
+                        "ERR_AGENTOS_WASM_PREWARM_TERMINATE: timed-out prewarm did not terminate cleanly: {error}"
+                    );
+                }
+                return Err(WasmExecutionError::WarmupTimeout(options.timeout));
+            }
+        }
+    }
+
+    let _ = stdout;
+    fs::write(&marker_path, marker_contents).map_err(WasmExecutionError::PrepareWarmPath)?;
+    Ok(warmup_metrics_line(
+        debug_enabled,
+        true,
+        "executed",
+        import_cache,
+        &resolved_module.specifier,
+    ))
+}
+
+async fn prewarm_wasm_path_async(
+    import_cache: &NodeImportCache,
+    javascript_engine: &mut JavascriptExecutionEngine,
+    javascript_context_id: &str,
+    resolved_module: &ResolvedWasmModule,
+    request: &StartWasmExecutionRequest,
+    options: WasmPrewarmOptions<'_>,
+) -> Result<Option<Vec<u8>>, WasmExecutionError> {
+    let debug_enabled = env_flag_enabled(&request.env, WASM_WARMUP_DEBUG_ENV);
+    let marker_contents = warmup_marker_contents(resolved_module);
+    let marker_path = warmup_marker_path(
+        import_cache.prewarm_marker_dir(),
+        "wasm-runner-prewarm",
+        WASM_WARMUP_MARKER_VERSION,
+        &marker_contents,
+    );
+
+    if let Ok(metadata) = fs::metadata(&resolved_module.resolved_path) {
+        if metadata.len() > MAX_SYNC_WASM_PREWARM_MODULE_BYTES {
+            return Ok(warmup_metrics_line(
+                debug_enabled,
+                false,
+                "skipped-large-module",
+                import_cache,
+                &resolved_module.specifier,
+            ));
+        }
+    }
+
+    if marker_path.exists() {
+        return Ok(warmup_metrics_line(
+            debug_enabled,
+            false,
+            "cached",
+            import_cache,
+            &resolved_module.specifier,
+        ));
+    }
+
+    let mut prewarm_execution = start_wasm_javascript_execution(
+        javascript_engine,
+        options.runtime,
+        import_cache,
+        javascript_context_id,
+        resolved_module,
+        request,
+        WasmJavascriptExecutionOptions {
+            frozen_time_ms: options.frozen_time_ms,
+            prewarm_only: true,
+            warmup_metrics: None,
+            defer_execute: false,
+        },
+    )
+    .map_err(|error| match error {
+        WasmExecutionError::Spawn(err) => WasmExecutionError::WarmupSpawn(err),
+        other => other,
+    })?;
+    let mut internal_sync_rpc = WasmInternalSyncRpc {
+        module_guest_paths: wasm_guest_module_paths(&resolved_module.specifier, &request.env),
+        module_host_path: resolved_module.resolved_path.clone(),
+        guest_cwd: wasm_guest_cwd(&request.env),
+        host_cwd: request.cwd.clone(),
+        sandbox_root: wasm_sandbox_root(&request.env),
+        guest_path_mappings: wasm_guest_path_mappings(request),
+        route_fs_through_sidecar: false,
+        next_fd: 64,
+        open_files: BTreeMap::new(),
+        pending_events: VecDeque::new(),
+    };
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let started = Instant::now();
+
+    loop {
+        let poll_timeout = options.timeout.saturating_sub(started.elapsed());
+        if poll_timeout.is_zero() {
+            if let Err(error) = prewarm_execution.terminate() {
+                eprintln!(
+                    "ERR_AGENTOS_WASM_PREWARM_TERMINATE: timed-out prewarm did not terminate cleanly: {error}"
+                );
+            }
+            return Err(WasmExecutionError::WarmupTimeout(options.timeout));
+        }
+
+        match prewarm_execution
+            .poll_event(poll_timeout)
+            .await
+            .map_err(map_javascript_error)?
+        {
+            Some(JavascriptExecutionEvent::Stdout(chunk)) => {
+                append_wasm_captured_output(&mut stdout, &chunk, "stdout")?;
+            }
+            Some(JavascriptExecutionEvent::Stderr(chunk)) => {
+                append_wasm_captured_output(&mut stderr, &chunk, "stderr")?;
+            }
+            Some(JavascriptExecutionEvent::Exited(exit_code)) => {
+                if exit_code != 0 {
+                    return Err(WasmExecutionError::WarmupFailed {
+                        exit_code,
+                        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+                    });
+                }
+                break;
+            }
+            Some(JavascriptExecutionEvent::SyncRpcRequest(sync_request)) => {
+                let handled = handle_internal_wasm_sync_rpc_request(
+                    &mut prewarm_execution,
+                    &mut internal_sync_rpc,
+                    &sync_request,
+                )?;
+                if !handled {
+                    return Err(WasmExecutionError::WarmupFailed {
+                        exit_code: 1,
+                        stderr: format!(
+                            "unexpected WebAssembly prewarm sync RPC request {} {} {:?}",
+                            sync_request.id, sync_request.method, sync_request.args
+                        ),
+                    });
+                }
+            }
+            Some(JavascriptExecutionEvent::SignalState { .. }) => {}
+            None => {
+                if let Err(error) = prewarm_execution.terminate() {
+                    eprintln!(
+                        "ERR_AGENTOS_WASM_PREWARM_TERMINATE: timed-out prewarm did not terminate cleanly: {error}"
+                    );
+                }
+                return Err(WasmExecutionError::WarmupTimeout(options.timeout));
             }
         }
     }
@@ -4116,14 +4569,16 @@ mod tests {
         translate_wasm_host_symlink_target, wasm_guest_module_paths, wasm_host_path_is_read_only,
         wasm_memory_limit_bytes, wasm_memory_limit_pages, wasm_mutation_touches_read_only_mapping,
         wasm_read_only_filesystem_error, wasm_runner_base_env, wasm_runner_heap_limit_mb,
-        wasm_sandbox_root, wasm_snapshot_runner_base_env, wasm_sync_read_length,
-        wasm_sync_rpc_error_code, wasm_sync_rpc_method_routes_through_sidecar_kernel,
-        CreateWasmContextRequest, GuestRuntimeConfig, JavascriptSyncRpcRequest, ResolvedWasmModule,
+        wasm_runner_javascript_limits, wasm_sandbox_root, wasm_snapshot_runner_base_env,
+        wasm_sync_read_length, wasm_sync_rpc_error_code,
+        wasm_sync_rpc_method_routes_through_sidecar_kernel, CreateWasmContextRequest,
+        GuestRuntimeConfig, JavascriptSyncRpcRequest, ResolvedWasmModule,
         StartWasmExecutionRequest, Value, WasmExecutionEngine, WasmExecutionError,
         WasmExecutionLimits, WasmInternalSyncRpc, WasmPermissionTier,
         DEFAULT_WASM_PREWARM_TIMEOUT_MS, DEFAULT_WASM_RUNNER_HEAP_LIMIT_MB,
-        NODE_WASI_MODULE_SOURCE, WASM_CAPTURED_OUTPUT_LIMIT_BYTES, WASM_MAX_FUEL_ENV,
-        WASM_MAX_MEMORY_BYTES_ENV, WASM_MAX_MODULE_FILE_BYTES_ENV, WASM_MAX_SPAWN_FILE_ACTIONS_ENV,
+        NODE_WASI_MODULE_SOURCE, WASM_CAPTURED_OUTPUT_LIMIT_BYTES,
+        WASM_INTERNAL_MAX_STACK_BYTES_ENV, WASM_MAX_FUEL_ENV, WASM_MAX_MEMORY_BYTES_ENV,
+        WASM_MAX_MODULE_FILE_BYTES_ENV, WASM_MAX_SPAWN_FILE_ACTIONS_ENV,
         WASM_MAX_SPAWN_FILE_ACTION_BYTES_ENV, WASM_MAX_STACK_BYTES_ENV, WASM_PAGE_BYTES,
         WASM_SANDBOX_ROOT_ENV, WASM_SIDECAR_ROUTED_FS_SYNC_METHODS, WASM_SYNC_READ_LIMIT_BYTES,
     };
@@ -4133,6 +4588,20 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::Duration;
     use tempfile::tempdir;
+
+    #[test]
+    fn wasm_runner_forwards_vm_reactor_limits_to_javascript() {
+        let limits = WasmExecutionLimits {
+            reactor_work_quantum: Some(17),
+            bridge_call_timeout_ms: Some(12_345),
+            ..WasmExecutionLimits::default()
+        };
+        let javascript = wasm_runner_javascript_limits(&limits, 192);
+
+        assert_eq!(javascript.v8_heap_limit_mb, Some(192));
+        assert_eq!(javascript.reactor_work_quantum, Some(17));
+        assert_eq!(javascript.bridge_call_timeout_ms, Some(12_345));
+    }
 
     #[test]
     fn dispose_context_reclaims_wasm_and_nested_javascript_metadata() {
@@ -4175,6 +4644,8 @@ mod tests {
             max_sockets: None,
             max_blocking_read_ms: None,
             runner_heap_limit_mb: None,
+            reactor_work_quantum: None,
+            bridge_call_timeout_ms: None,
         };
         StartWasmExecutionRequest {
             limits,
@@ -4276,6 +4747,8 @@ mod tests {
             max_sockets: None,
             max_blocking_read_ms: None,
             runner_heap_limit_mb: Some(512),
+            reactor_work_quantum: Some(64),
+            bridge_call_timeout_ms: Some(30_000),
         });
 
         assert_eq!(
@@ -4345,6 +4818,8 @@ mod tests {
             max_sockets: None,
             max_blocking_read_ms: None,
             runner_heap_limit_mb: Some(512),
+            reactor_work_quantum: Some(64),
+            bridge_call_timeout_ms: Some(30_000),
         });
         let resolved_module = ResolvedWasmModule {
             specifier: String::from("./guest.wasm"),
@@ -4370,6 +4845,10 @@ mod tests {
             internal_env.get(WASM_MAX_SPAWN_FILE_ACTION_BYTES_ENV),
             Some(&String::from("321"))
         );
+        assert_eq!(
+            internal_env.get(WASM_INTERNAL_MAX_STACK_BYTES_ENV),
+            Some(&String::from("131072"))
+        );
         assert!(!internal_env.contains_key(WASM_MAX_STACK_BYTES_ENV));
         assert!(!internal_env.contains_key(WASM_MAX_FUEL_ENV));
         assert!(!internal_env.contains_key("AGENTOS_WASM_PREWARM_TIMEOUT_MS"));
@@ -4390,6 +4869,8 @@ mod tests {
             max_sockets: None,
             max_blocking_read_ms: None,
             runner_heap_limit_mb: Some(512),
+            reactor_work_quantum: Some(64),
+            bridge_call_timeout_ms: Some(30_000),
         });
         request
             .env
@@ -4424,6 +4905,8 @@ mod tests {
             max_sockets: None,
             max_blocking_read_ms: None,
             runner_heap_limit_mb: Some(512),
+            reactor_work_quantum: Some(64),
+            bridge_call_timeout_ms: Some(30_000),
         });
         request
             .env
@@ -5122,6 +5605,10 @@ mod tests {
             "const cwdGuestTarget = __agentOSPath().posix.resolve(cwdGuestPath, target);"
         ));
         assert!(bootstrap.contains("_rootRelativeTargetPrefersCwd(target)"));
+        assert!(bootstrap.contains("_mappedPathExists(cwdGuestTarget, cwdHostTarget)"));
+        assert!(bootstrap.contains("_mappedPathExists(rootGuestPath, rootHostPath)"));
+        assert!(bootstrap
+            .contains("__agentOSWasiSyncRpc().callSync(\"fs.statSync\", [sidecarGuestPath])"));
         assert!(bootstrap.contains("_rootRelativeTargetMatchesAbsoluteArg(target)"));
         assert!(bootstrap.contains("__agentOSPath().posix.normalize(arg) === rootGuestPath"));
         assert!(bootstrap.contains("_createParentExists(guestPath, hostPath)"));

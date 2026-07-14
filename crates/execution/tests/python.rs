@@ -1,3 +1,5 @@
+mod support;
+
 use agentos_execution::{
     CreatePythonContextRequest, PythonExecutionEngine, PythonExecutionEvent, PythonExecutionLimits,
     PythonVfsRpcMethod, PythonVfsRpcResponsePayload, PythonVfsRpcStat, StartPythonExecutionRequest,
@@ -197,7 +199,7 @@ fn assert_process_exits(pid: u32) {
 
 fn python_contexts_preserve_vm_and_pyodide_configuration() {
     let pyodide_dist_path = PathBuf::from("/tmp/pyodide");
-    let mut engine = PythonExecutionEngine::default();
+    let mut engine = support::python_engine();
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dist_path.clone(),
@@ -230,7 +232,7 @@ export async function loadPyodide(options) {
     );
     write_pyodide_lock_fixture(&pyodide_dir.join("pyodide-lock.json"));
 
-    let mut engine = PythonExecutionEngine::default();
+    let mut engine = support::python_engine();
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir.clone(),
@@ -273,7 +275,7 @@ export async function loadPyodide(options) {
     );
     write_pyodide_lock_fixture(&pyodide_dir.join("pyodide-lock.json"));
 
-    let mut engine = PythonExecutionEngine::default();
+    let mut engine = support::python_engine();
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
@@ -331,7 +333,7 @@ export async function loadPyodide(options) {
     );
     write_pyodide_lock_fixture(&pyodide_dir.join("pyodide-lock.json"));
 
-    let mut engine = PythonExecutionEngine::default();
+    let mut engine = support::python_engine();
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
@@ -413,7 +415,7 @@ export async function loadPyodide() {
     );
     write_pyodide_lock_fixture(&pyodide_dir.join("pyodide-lock.json"));
 
-    let mut engine = PythonExecutionEngine::default();
+    let mut engine = support::python_engine();
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir.clone(),
@@ -510,7 +512,7 @@ export async function loadPyodide(options) {
     );
     write_pyodide_lock_fixture(&pyodide_dir.join("pyodide-lock.json"));
 
-    let mut engine = PythonExecutionEngine::default();
+    let mut engine = support::python_engine();
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
@@ -635,7 +637,7 @@ export async function loadPyodide(options) {
     );
     write_pyodide_lock_fixture(&pyodide_dir.join("pyodide-lock.json"));
 
-    let mut engine = PythonExecutionEngine::default();
+    let mut engine = support::python_engine();
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
@@ -803,7 +805,7 @@ export async function loadPyodide() {
     );
     write_pyodide_lock_fixture(&pyodide_dir.join("pyodide-lock.json"));
 
-    let mut engine = PythonExecutionEngine::default();
+    let mut engine = support::python_engine();
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
@@ -860,7 +862,7 @@ export async function loadPyodide() {
     );
     write_pyodide_lock_fixture(&pyodide_dir.join("pyodide-lock.json"));
 
-    let mut engine = PythonExecutionEngine::default();
+    let mut engine = support::python_engine();
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
@@ -926,7 +928,7 @@ export async function loadPyodide() {
     );
     write_pyodide_lock_fixture(&pyodide_dir.join("pyodide-lock.json"));
 
-    let mut engine = PythonExecutionEngine::default();
+    let mut engine = support::python_engine();
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
@@ -1029,7 +1031,7 @@ export async function loadPyodide() {
     );
     write_pyodide_lock_fixture(&pyodide_dir.join("pyodide-lock.json"));
 
-    let mut engine = PythonExecutionEngine::default();
+    let mut engine = support::python_engine();
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
@@ -1087,7 +1089,7 @@ export async function loadPyodide(options) {
     );
     write_pyodide_lock_fixture(&pyodide_dir.join("pyodide-lock.json"));
 
-    let mut engine = PythonExecutionEngine::default();
+    let mut engine = support::python_engine();
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
@@ -1221,7 +1223,7 @@ export async function loadPyodide() {
     );
     write_pyodide_lock_fixture(&pyodide_dir.join("pyodide-lock.json"));
 
-    let mut engine = PythonExecutionEngine::default();
+    let mut engine = support::python_engine();
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,

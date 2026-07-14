@@ -7,6 +7,7 @@ use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
+use agentos_bridge::bridge_contract;
 use serde::de;
 use v8::MapFnTo;
 use v8::ValueDeserializerHelper;
@@ -23,7 +24,9 @@ static EMBEDDED_CBOR_USERS: AtomicUsize = AtomicUsize::new(0);
 const MAX_CBOR_BRIDGE_DEPTH: usize = 64;
 const MAX_CBOR_BRIDGE_CONTAINER_ITEMS: usize = 100_000;
 const MAX_VM_CONTEXTS: usize = 1024;
-const MAX_PENDING_PROMISES: usize = 1024;
+pub(crate) const MAX_PENDING_PROMISES: usize = 1024;
+const DEFAULT_BRIDGE_RESPONSE_MAX_BYTES: usize = 256 * 1024;
+const READ_RESPONSE_ENVELOPE_BYTES: usize = 4 * 1024;
 
 /// Initialize the codec from the AGENTOS_V8_CODEC environment variable.
 /// Call once at process startup before any sessions are created.
@@ -896,7 +899,7 @@ fn current_thread_resource_usage() -> Result<ThreadResourceUsageSnapshot, String
 // string for guest compatibility, pinned to the OpenSSL release vendored by the
 // sidecar (openssl-sys 300.6.0+3.6.2). The browser executor reports the same
 // constant so both runtimes present an identical identity.
-const EMULATED_OPENSSL_VERSION: &str = "3.6.2";
+const EMULATED_OPENSSL_VERSION: &str = "3.6.3";
 
 fn set_object_string_property<'s>(
     scope: &mut v8::HandleScope<'s>,
@@ -1432,11 +1435,21 @@ fn vm_run_script_in_context<'s>(
     context: v8::Local<'s, v8::Context>,
     code: &str,
     options: &VmRunOptions,
+    runtime: Option<&agentos_runtime::RuntimeContext>,
+    task_owner: Option<agentos_runtime::TaskOwner>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let mut timeout_guard = match options.timeout_ms {
         Some(timeout_ms) => {
+            let runtime = runtime.ok_or_else(|| {
+                format!(
+                    "{}: node:vm timeout requires the session runtime context",
+                    crate::timeout::TIMEOUT_GUARD_START_ERROR_CODE
+                )
+            })?;
             let (abort_tx, _abort_rx) = crossbeam_channel::bounded::<()>(0);
             Some(crate::timeout::TimeoutGuard::new(
+                runtime,
+                task_owner,
                 timeout_ms,
                 isolate_handle.clone(),
                 abort_tx,
@@ -1625,6 +1638,7 @@ fn vm_create_context_value<'s>(
 fn vm_run_in_context_value<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: &mut v8::FunctionCallbackArguments<'s>,
+    bridge_ctx: &BridgeCallContext,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let context_id = args
         .get(0)
@@ -1662,7 +1676,15 @@ fn vm_run_in_context_value<'s>(
         let global = context.global(context_scope);
         vm_copy_sandbox_into_context(context_scope, sandbox, global, &mirrored_keys);
     }
-    let result = vm_run_script_in_context(scope, isolate_handle, context, &code, &options)?;
+    let result = vm_run_script_in_context(
+        scope,
+        isolate_handle,
+        context,
+        &code,
+        &options,
+        bridge_ctx.runtime_context(),
+        bridge_ctx.timer_task_owner(),
+    )?;
     let updated_keys = {
         let context_scope = &mut v8::ContextScope::new(scope, context);
         let global = context.global(context_scope);
@@ -1685,19 +1707,29 @@ fn vm_run_in_context_value<'s>(
 fn vm_run_in_this_context_value<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: &mut v8::FunctionCallbackArguments<'s>,
+    bridge_ctx: &BridgeCallContext,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let code = args.get(0).to_rust_string_lossy(scope);
     let options_value = args.get(1);
     let options = vm_options_from_value(scope, options_value);
     let context = scope.get_current_context();
     let isolate_handle = unsafe { args.get_isolate() }.thread_safe_handle();
-    vm_run_script_in_context(scope, isolate_handle, context, &code, &options)
+    vm_run_script_in_context(
+        scope,
+        isolate_handle,
+        context,
+        &code,
+        &options,
+        bridge_ctx.runtime_context(),
+        bridge_ctx.timer_task_owner(),
+    )
 }
 
 fn handle_local_bridge_call<'s>(
     scope: &mut v8::HandleScope<'s>,
     method: &str,
     args: &mut v8::FunctionCallbackArguments<'s>,
+    bridge_ctx: &BridgeCallContext,
 ) -> Result<Option<v8::Local<'s, v8::Value>>, String> {
     match method {
         "process.memoryUsage" => Ok(Some(process_memory_usage_value(scope))),
@@ -1705,10 +1737,46 @@ fn handle_local_bridge_call<'s>(
         "process.resourceUsage" => process_resource_usage_value(scope).map(Some),
         "process.versions" => Ok(Some(process_versions_value(scope))),
         "_vmCreateContext" => vm_create_context_value(scope, args).map(Some),
-        "_vmRunInContext" => vm_run_in_context_value(scope, args).map(Some),
-        "_vmRunInThisContext" => vm_run_in_this_context_value(scope, args).map(Some),
+        "_vmRunInContext" => vm_run_in_context_value(scope, args, bridge_ctx).map(Some),
+        "_vmRunInThisContext" => vm_run_in_this_context_value(scope, args, bridge_ctx).map(Some),
         _ => Ok(None),
     }
+}
+
+fn read_response_length_argument(
+    scope: &mut v8::HandleScope,
+    method: &str,
+    args: &v8::FunctionCallbackArguments,
+) -> Option<usize> {
+    let index = match method {
+        "fs.readSync" | "_fsReadRaw" => 1,
+        "_pythonStdinRead" | "_kernelStdinReadRaw" | "_kernelStdinRead" => 0,
+        _ => return None,
+    };
+    let value = args.get(index).integer_value(scope)?;
+    usize::try_from(value).ok()
+}
+
+pub(crate) fn declared_bridge_response_bytes(
+    method: &str,
+    requested_read_bytes: Option<usize>,
+) -> usize {
+    if let Some(requested_read_bytes) = requested_read_bytes {
+        return requested_read_bytes.saturating_add(READ_RESPONSE_ENVELOPE_BYTES);
+    }
+    bridge_contract()
+        .response_max_bytes
+        .get(method)
+        .copied()
+        .unwrap_or(DEFAULT_BRIDGE_RESPONSE_MAX_BYTES)
+}
+
+fn bridge_response_declaration(
+    scope: &mut v8::HandleScope,
+    method: &str,
+    args: &v8::FunctionCallbackArguments,
+) -> usize {
+    declared_bridge_response_bytes(method, read_response_length_argument(scope, method, args))
 }
 
 /// Register sync-blocking bridge functions on the V8 global object.
@@ -1777,7 +1845,7 @@ fn sync_bridge_callback<'s>(
 
     {
         let tc = &mut v8::TryCatch::new(scope);
-        match handle_local_bridge_call(tc, &data.method, &mut args) {
+        match handle_local_bridge_call(tc, &data.method, &mut args, ctx) {
             Ok(Some(value)) => {
                 if tc.has_caught() {
                     let _ = tc.rethrow();
@@ -1813,7 +1881,12 @@ fn sync_bridge_callback<'s>(
     };
 
     // Perform sync-blocking bridge call
-    match ctx.sync_call_response(&data.method, encoded_args) {
+    let max_response_bytes = bridge_response_declaration(scope, &data.method, &args);
+    match ctx.sync_call_response_with_max_response_bytes(
+        &data.method,
+        encoded_args,
+        max_response_bytes,
+    ) {
         Ok(Some(response)) => {
             let v8_val = bridge_response_payload_to_v8(scope, response.status, &response.payload);
             if let Some(val) = v8_val {
@@ -1997,12 +2070,23 @@ fn async_bridge_callback(
         }
     };
 
-    // Send BridgeCall (non-blocking write)
-    match ctx.async_send(&data.method, encoded_args) {
-        Ok(call_id) => {
-            // Store resolver in pending promises map
+    // Register the response target and V8 resolver before the request can
+    // become host-visible. A fast response therefore cannot outrun resolver
+    // installation once response ingress is concurrent with the VM thread.
+    let max_response_bytes = bridge_response_declaration(scope, &data.method, &args);
+    match ctx.prepare_async_call_with_max_response_bytes(
+        &data.method,
+        encoded_args,
+        max_response_bytes,
+    ) {
+        Ok(prepared) => {
+            let call_id = prepared.call_id;
             let global_resolver = v8::Global::new(scope, resolver);
             pending.insert_reserved(call_id, global_resolver, reservation);
+            if let Err(err_msg) = ctx.dispatch_async_call(prepared) {
+                pending.remove(call_id);
+                reject_promise_with_error(scope, resolver, &err_msg, None);
+            }
         }
         Err(err_msg) => {
             // Reject the promise immediately if send fails
@@ -2169,12 +2253,12 @@ fn is_errno_segment(segment: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        bridge_error_code, clear_vm_context_registry_for_test, deserialize_cbor_value,
-        fill_vm_context_registry_for_test, register_async_bridge_fns, register_sync_bridge_fns,
-        reserve_vm_context_slot, reset_vm_context_registry, serialize_cbor_value,
-        vm_context_capacity_error, vm_context_registry_len_for_test, PendingPromises,
-        VmContextRegistryGuard, MAX_CBOR_BRIDGE_CONTAINER_ITEMS, MAX_CBOR_BRIDGE_DEPTH,
-        MAX_PENDING_PROMISES, MAX_VM_CONTEXTS,
+        bridge_error_code, clear_vm_context_registry_for_test, declared_bridge_response_bytes,
+        deserialize_cbor_value, fill_vm_context_registry_for_test, register_async_bridge_fns,
+        register_sync_bridge_fns, reserve_vm_context_slot, reset_vm_context_registry,
+        serialize_cbor_value, vm_context_capacity_error, vm_context_registry_len_for_test,
+        PendingPromises, VmContextRegistryGuard, MAX_CBOR_BRIDGE_CONTAINER_ITEMS,
+        MAX_CBOR_BRIDGE_DEPTH, MAX_PENDING_PROMISES, MAX_VM_CONTEXTS,
     };
     use crate::host_call::BridgeCallContext;
     use crate::ipc_binary::{self, BinaryFrame};
@@ -2204,6 +2288,23 @@ mod tests {
             }
         }
         count
+    }
+
+    #[test]
+    fn bridge_response_declarations_use_contract_reads_and_bounded_default() {
+        assert_eq!(declared_bridge_response_bytes("_log", None), 4096);
+        assert_eq!(
+            declared_bridge_response_bytes("_loadFileSync", None),
+            16 * 1024 * 1024
+        );
+        assert_eq!(
+            declared_bridge_response_bytes("_fsReadRaw", Some(32 * 1024)),
+            36 * 1024
+        );
+        assert_eq!(
+            declared_bridge_response_bytes("_unclassifiedBridge", None),
+            256 * 1024
+        );
     }
 
     #[test]

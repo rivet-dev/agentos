@@ -71,7 +71,7 @@ fn run_event_loop_with_watchdog(
     pending: &PendingPromises,
 ) -> EventLoopStatus {
     let (watchdog, abort_rx) = EventLoopWatchdog::start();
-    let status = run_event_loop(scope, rx, pending, Some(&abort_rx), None);
+    let status = run_event_loop(scope, rx, pending, Some(&abort_rx), None, None);
     watchdog.cancel();
     status
 }
@@ -101,8 +101,14 @@ fn event_loop_pumps_v8_platform_tasks_for_native_wasm_promises() {
         scope,
         "",
         "globalThis.__wasmDone = false; \
+         globalThis.__promiseChainDepth = 0; \
          (async () => { \
            await WebAssembly.compile(new Uint8Array([0,97,115,109,1,0,0,0])); \
+           let chain = Promise.resolve(); \
+           for (let i = 0; i < 256; i++) { \
+             chain = chain.then(() => { globalThis.__promiseChainDepth++; }); \
+           } \
+           await chain; \
            globalThis.__wasmDone = true; \
          })();",
         &mut bridge_cache,
@@ -133,12 +139,16 @@ fn event_loop_pumps_v8_platform_tasks_for_native_wasm_promises() {
         );
     }
 
-    let source = v8::String::new(scope, "globalThis.__wasmDone === true").unwrap();
+    let source = v8::String::new(
+        scope,
+        "globalThis.__wasmDone === true && globalThis.__promiseChainDepth === 256",
+    )
+    .unwrap();
     let script = v8::Script::compile(scope, source, None).unwrap();
     let result = script.run(scope).unwrap();
     assert!(
         result.boolean_value(scope),
-        "expected wasm promise to resolve"
+        "expected native task and recursively queued Promise continuations to resolve"
     );
 }
 

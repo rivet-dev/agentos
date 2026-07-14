@@ -121,11 +121,13 @@ version = "0.0.1"
 dependencies = [
  "agentos-bridge",
  "agentos-build-support",
+ "agentos-runtime",
  "agentos-v8-runtime",
  "base64 0.22.1",
  "ciborium",
+ "flume",
  "getrandom 0.2.17",
- "nix",
+ "nix 0.29.0",
  "serde",
  "serde_json",
  "tempfile",
@@ -139,8 +141,10 @@ name = "agentos-kernel"
 version = "0.0.1"
 dependencies = [
  "agentos-bridge",
+ "agentos-runtime",
  "agentos-vfs-core",
  "base64 0.22.1",
+ "event-listener",
  "getrandom 0.2.17",
  "hickory-proto",
  "hickory-resolver",
@@ -164,6 +168,7 @@ dependencies = [
  "agentos-execution",
  "agentos-kernel",
  "agentos-native-sidecar-core",
+ "agentos-runtime",
  "agentos-sidecar-protocol",
  "agentos-vfs",
  "agentos-vfs-core",
@@ -174,6 +179,7 @@ dependencies = [
  "aws-sdk-s3",
  "base64 0.22.1",
  "bytes",
+ "command-fds",
  "ctr",
  "filetime",
  "h2 0.4.15",
@@ -183,7 +189,7 @@ dependencies = [
  "jsonwebtoken",
  "log",
  "md-5 0.10.6",
- "nix",
+ "nix 0.29.0",
  "openssl",
  "pbkdf2",
  "rusqlite",
@@ -249,6 +255,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentos-runtime"
+version = "0.0.1"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
 name = "agentos-sidecar"
 version = "0.0.1"
 dependencies = [
@@ -256,6 +269,7 @@ dependencies = [
  "agentos-native-sidecar",
  "agentos-protocol",
  "agentos-vm-config",
+ "nix 0.29.0",
  "serde_bare",
  "serde_json",
  "tokio",
@@ -284,6 +298,7 @@ name = "agentos-sidecar-client"
 version = "0.0.1"
 dependencies = [
  "agentos-sidecar-protocol",
+ "command-fds",
  "futures",
  "parking_lot",
  "scc",
@@ -320,12 +335,16 @@ version = "0.0.1"
 dependencies = [
  "agentos-bridge",
  "agentos-build-support",
+ "agentos-runtime",
+ "cc",
  "ciborium",
  "crossbeam-channel",
+ "flume",
  "libc",
  "serde",
  "sha2 0.10.9",
  "signal-hook",
+ "tokio",
  "v8",
 ]
 
@@ -349,6 +368,7 @@ dependencies = [
 name = "agentos-vfs-core"
 version = "0.0.1"
 dependencies = [
+ "agentos-runtime",
  "anyhow",
  "async-trait",
  "base64 0.22.1",
@@ -1186,6 +1206,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "command-fds"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b60b5124979fccd9addd89d8b97a1d6eebb4950694520c75ddd722535ea443f"
+dependencies = [
+ "nix 0.31.3",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "concurrent-queue"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1473,6 +1513,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "event-listener"
+version = "5.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e13b66accf52311f30a0db42147dadea9850cb48cd070028831ae5f5d4b856ab"
+dependencies = [
+ "concurrent-queue",
+ "parking",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1524,6 +1575,18 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide 0.8.9",
+]
+
+[[package]]
+name = "flume"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da0e4dd2a88388a1f4ccc7c9ce104604dab68d9f408dc34cd45823d5a9069095"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "nanorand",
+ "spin 0.9.9",
 ]
 
 [[package]]
@@ -2570,6 +2633,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nanorand"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a51313c5820b0b02bd422f4b44776fbf47961755c74ce64afc73bfad10226c3"
+dependencies = [
+ "getrandom 0.2.17",
+]
+
+[[package]]
 name = "ndk-context"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2586,6 +2658,18 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "memoffset",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
 ]
 
 [[package]]
@@ -2727,6 +2811,12 @@ dependencies = [
  "primeorder",
  "sha2 0.10.9",
 ]
+
+[[package]]
+name = "parking"
+version = "2.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 
 [[package]]
 name = "parking_lot"
@@ -3601,6 +3691,15 @@ name = "spin"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
+
+[[package]]
+name = "spin"
+version = "0.9.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
+dependencies = [
+ "lock_api",
+]
 
 [[package]]
 name = "spin"

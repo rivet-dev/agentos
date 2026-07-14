@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Browser Agent OS sidecar wrapper"
+# Browser support is retained for a future migration but intentionally disabled
+# and must not be published while it is outside the unified reactor contract.
+publish = false
 
 # cdylib for the wasm32 browser build (wasm-pack); rlib so native tests + the
 # workspace can still link it as a library.

@@ -12,10 +12,13 @@ var config = {
   machine: typeof _osConfig !== "undefined" && _osConfig.machine || "x86_64"
 };
 function getRuntimeHomeDir() {
-  return runtimeVirtualOsString("homedir", globalThis.process?.env?.HOME || config.homedir);
+  return globalThis.process?.env?.HOME || runtimeVirtualOsString("homedir", config.homedir);
 }
 function getRuntimeTmpDir() {
-  return runtimeVirtualOsString("tmpdir", globalThis.process?.env?.TMPDIR || config.tmpdir);
+  return globalThis.process?.env?.TMPDIR || runtimeVirtualOsString("tmpdir", config.tmpdir);
+}
+function getRuntimeUserHomeDir() {
+  return runtimeVirtualOsString("homedir", config.homedir);
 }
 function getRuntimeUserName() {
   return runtimeVirtualOsString(
@@ -292,7 +295,7 @@ var os = {
       uid: getRuntimeUid(),
       gid: getRuntimeGid(),
       shell: getRuntimeShell(),
-      homedir: getRuntimeHomeDir()
+      homedir: getRuntimeUserHomeDir()
     };
   },
   // CPU information
@@ -368,4 +371,4 @@ var os = {
 };
 exposeCustomGlobal("_osModule", os);
 var os_default = os;
-export { config, getRuntimeHomeDir, getRuntimeTmpDir, getRuntimeUserName, getRuntimeShell, getRuntimeUid, getRuntimeGid, getRuntimeInternalEnv, getRuntimePositiveIntEnv, getRuntimeVirtualOs, runtimeVirtualOsString, runtimeVirtualOsPositiveInt, getRuntimeVirtualCpuCount, getRuntimeVirtualTotalMem, getRuntimeVirtualFreeMem, signals, canonicalChildProcessSignalNamesByNumber, normalizeChildProcessSignal, errno, priority, os, os_default };
+export { config, getRuntimeHomeDir, getRuntimeTmpDir, getRuntimeUserHomeDir, getRuntimeUserName, getRuntimeShell, getRuntimeUid, getRuntimeGid, getRuntimeInternalEnv, getRuntimePositiveIntEnv, getRuntimeVirtualOs, runtimeVirtualOsString, runtimeVirtualOsPositiveInt, getRuntimeVirtualCpuCount, getRuntimeVirtualTotalMem, getRuntimeVirtualFreeMem, signals, canonicalChildProcessSignalNamesByNumber, normalizeChildProcessSignal, errno, priority, os, os_default };

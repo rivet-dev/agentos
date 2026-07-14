@@ -75,6 +75,9 @@ pub fn to_generated_protocol_frame(
                 },
             )
         }
+        ProtocolFrame::Control(frame) => {
+            generated_protocol::ProtocolFrame::ControlFrame(frame.clone())
+        }
     })
 }
 
@@ -120,6 +123,7 @@ pub fn from_generated_protocol_frame(
                 payload: from_generated_sidecar_response_payload(frame.payload)?,
             })
         }
+        generated_protocol::ProtocolFrame::ControlFrame(frame) => ProtocolFrame::Control(frame),
     })
 }
 
@@ -1132,7 +1136,12 @@ pub enum ProtocolFrame {
     Event(EventFrame),
     SidecarRequest(SidecarRequestFrame),
     SidecarResponse(SidecarResponseFrame),
+    Control(ControlFrame),
 }
+
+pub type ControlFrame = crate::wire::ControlFrame;
+pub type ControlPayload = crate::wire::ControlPayload;
+pub type ShutdownControl = crate::wire::ShutdownControl;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestFrame {
@@ -1578,6 +1587,7 @@ impl_bare_newtype_union_enum!(
         Event(EventFrame) = 2,
         SidecarRequest(SidecarRequestFrame) = 3,
         SidecarResponse(SidecarResponseFrame) = 4,
+        Control(ControlFrame) = 5,
     }
 );
 
@@ -2519,6 +2529,7 @@ pub fn validate_frame(frame: &ProtocolFrame) -> Result<(), ProtocolCodecError> {
         ProtocolFrame::Event(event) => validate_event(event),
         ProtocolFrame::SidecarRequest(request) => validate_sidecar_request(request),
         ProtocolFrame::SidecarResponse(response) => validate_sidecar_response(response),
+        ProtocolFrame::Control(control) => validate_schema(&control.schema),
     }
 }
 
@@ -2867,6 +2878,14 @@ pub struct JavascriptDgramBindRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct JavascriptDgramSendRequest {
+    #[serde(default)]
+    pub address: Option<String>,
+    #[serde(default)]
+    pub port: Option<u16>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JavascriptDgramConnectRequest {
     #[serde(default)]
     pub address: Option<String>,
     pub port: u16,

@@ -1,8 +1,9 @@
+mod support;
+
 use agentos_execution::{
     CreateJavascriptContextRequest, CreatePythonContextRequest, CreateWasmContextRequest,
-    JavascriptExecutionEngine, PythonExecutionEngine, PythonExecutionEvent,
-    StartJavascriptExecutionRequest, StartPythonExecutionRequest, StartWasmExecutionRequest,
-    WasmExecutionEngine, WasmPermissionTier,
+    PythonExecutionEvent, StartJavascriptExecutionRequest, StartPythonExecutionRequest,
+    StartWasmExecutionRequest, WasmPermissionTier,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -38,7 +39,7 @@ fn write_pyodide_lock_fixture(path: &Path) {
 fn embedded_runtime_process_keeps_host_pid_internal_for_javascript() {
     let temp = tempdir().expect("create temp dir");
 
-    let mut engine = JavascriptExecutionEngine::default();
+    let mut engine = support::javascript_engine();
     let context = engine.create_context(CreateJavascriptContextRequest {
         vm_id: String::from("vm-js"),
         bootstrap_module: None,
@@ -80,7 +81,7 @@ fn embedded_runtime_process_keeps_host_pid_internal_for_wasm() {
     .expect("compile wasm fixture");
     fs::write(&module_path, module).expect("write wasm fixture");
 
-    let mut engine = WasmExecutionEngine::default();
+    let mut engine = support::wasm_engine();
     let context = engine.create_context(CreateWasmContextRequest {
         vm_id: String::from("vm-wasm"),
         module_path: Some(module_path.to_string_lossy().into_owned()),
@@ -133,7 +134,7 @@ export async function loadPyodide(options) {
     );
     write_pyodide_lock_fixture(&pyodide_dir.join("pyodide-lock.json"));
 
-    let mut engine = PythonExecutionEngine::default();
+    let mut engine = support::python_engine();
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,

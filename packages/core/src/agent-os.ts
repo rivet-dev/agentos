@@ -5451,6 +5451,7 @@ interface SidecarEventLoopHandle extends RefCountableHandle {
 	stdin?: RefCountableHandle | null;
 	stdout?: RefCountableHandle | null;
 	stderr?: RefCountableHandle | null;
+	stdio?: ReadonlyArray<RefCountableHandle | null>;
 	kill?(signal?: string | number): unknown;
 }
 
@@ -5502,7 +5503,17 @@ function applySharedSidecarHold(state: AgentOsSidecarState): void {
 	const child = state.sharedChild;
 	if (!child) return;
 	const hold = (state.eventLoopHolds ?? 0) > 0;
-	for (const handle of [child, child.stdin, child.stdout, child.stderr]) {
+	// Include the complete stdio array, not just the named fd0-fd2 aliases.
+	// Protocol v8 carries responses over fd3; leaving that control socket
+	// referenced pins Node's event loop after the final VM lease is disposed.
+	const handles = new Set<RefCountableHandle | null | undefined>([
+		child,
+		child.stdin,
+		child.stdout,
+		child.stderr,
+		...(child.stdio ?? []),
+	]);
+	for (const handle of handles) {
 		if (!handle) continue;
 		try {
 			if (hold) handle.ref?.();

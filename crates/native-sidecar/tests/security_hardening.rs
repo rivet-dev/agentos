@@ -169,6 +169,7 @@ fn sidecar_rejects_oversized_request_frames_before_dispatch() {
             compile_cache_root: Some(root.join("cache")),
             expected_auth_token: Some(String::from(TEST_AUTH_TOKEN)),
             acp_termination_grace: Duration::from_secs(3),
+            ..NativeSidecarConfig::default()
         },
     )
     .expect("create frame-limited sidecar");
@@ -176,27 +177,38 @@ fn sidecar_rejects_oversized_request_frames_before_dispatch() {
 
     let connection_id = authenticate_wire(&mut sidecar, "conn-1");
     let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let legacy_request = CreateVmRequest::legacy_test_config(
+        GuestRuntimeKind::JavaScript,
+        HashMap::from([
+            (String::from("cwd"), cwd.to_string_lossy().into_owned()),
+            (
+                String::from("limits.http.max_fetch_response_bytes"),
+                String::from("512"),
+            ),
+        ]),
+        RootFilesystemDescriptor {
+            mode: RootFilesystemMode::Ephemeral,
+            disable_default_base_layer: false,
+            lowers: Vec::new(),
+            bootstrap_entries: Vec::new(),
+        },
+        None,
+    );
+    let mut vm_config: agentos_vm_config::CreateVmConfig =
+        serde_json::from_str(&legacy_request.config).expect("decode frame-limit VM config");
+    let reactor = vm_config
+        .limits
+        .get_or_insert_default()
+        .reactor
+        .get_or_insert_default();
+    reactor.max_bridge_request_bytes = Some(512);
+    reactor.max_bridge_response_bytes = Some(512);
+    let create_request = CreateVmRequest::json_config(GuestRuntimeKind::JavaScript, vm_config);
     let vm_id = match sidecar
         .dispatch_wire_blocking(wire_request(
             3,
             wire_session(&connection_id, &session_id),
-            RequestPayload::CreateVmRequest(CreateVmRequest::legacy_test_config(
-                GuestRuntimeKind::JavaScript,
-                HashMap::from([
-                    (String::from("cwd"), cwd.to_string_lossy().into_owned()),
-                    (
-                        String::from("limits.http.max_fetch_response_bytes"),
-                        String::from("512"),
-                    ),
-                ]),
-                RootFilesystemDescriptor {
-                    mode: RootFilesystemMode::Ephemeral,
-                    disable_default_base_layer: false,
-                    lowers: Vec::new(),
-                    bootstrap_entries: Vec::new(),
-                },
-                None,
-            )),
+            RequestPayload::CreateVmRequest(create_request),
         ))
         .expect("create frame-limit vm")
         .response

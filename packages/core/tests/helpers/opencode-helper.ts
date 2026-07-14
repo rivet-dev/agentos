@@ -44,9 +44,7 @@ export function resolveOpenCodeAdapterBinPath(hostProjectDir: string): string {
 	} else if (typeof pkg.bin === "object" && pkg.bin !== null) {
 		binEntry = Object.values(pkg.bin)[0] as string;
 	} else {
-		throw new Error(
-			"No bin entry in @agentos-software/opencode package.json",
-		);
+		throw new Error("No bin entry in @agentos-software/opencode package.json");
 	}
 
 	return `/root/node_modules/@agentos-software/opencode/${binEntry}`;
@@ -58,7 +56,7 @@ export async function createVmOpenCodeHome(
 	options: CreateVmOpenCodeHomeOptions = {},
 ): Promise<string> {
 	const homeDir = `/tmp/opencode-home-${randomUUID()}`;
-	const configPath = `${homeDir}/.config/opencode/opencode.json`;
+	const configPath = `${homeDir}/.config/opencode/config.json`;
 	await mkdirpVm(vm, `${homeDir}/.config/opencode`);
 	const providers = options.providers ?? {
 		anthropic: {

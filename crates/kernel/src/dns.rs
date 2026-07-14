@@ -1,3 +1,5 @@
+#[cfg(not(target_arch = "wasm32"))]
+use agentos_runtime::BlockingJobError;
 use hickory_proto::rr::domain::Name;
 use hickory_proto::rr::rdata::{A, AAAA};
 use hickory_proto::rr::{RData, Record, RecordType};
@@ -14,8 +16,6 @@ use std::net::{IpAddr, SocketAddr};
 #[cfg(not(target_arch = "wasm32"))]
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::{mpsc, Mutex};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DnsConfig {
@@ -235,8 +235,9 @@ pub trait DnsResolver {
 pub type SharedDnsResolver = Arc<dyn DnsResolver + Send + Sync>;
 
 #[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
 pub struct HickoryDnsResolver {
-    worker: Mutex<mpsc::Sender<DnsWorkerRequest>>,
+    runtime: Option<agentos_runtime::RuntimeContext>,
 }
 
 /// On wasm the kernel has no tokio runtime or host DNS stack, so the resolver is
@@ -244,35 +245,6 @@ pub struct HickoryDnsResolver {
 /// unavailable; guests must supply DNS overrides or literal addresses.
 #[cfg(target_arch = "wasm32")]
 pub struct HickoryDnsResolver;
-
-#[cfg(not(target_arch = "wasm32"))]
-enum DnsWorkerRequest {
-    LookupIp {
-        hostname: String,
-        name_servers: Vec<SocketAddr>,
-        response: mpsc::Sender<Result<Vec<IpAddr>, DnsResolverError>>,
-    },
-    LookupRecords {
-        hostname: String,
-        name_servers: Vec<SocketAddr>,
-        record_type: RecordType,
-        response: mpsc::Sender<Result<Vec<Record>, DnsResolverError>>,
-    },
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl Default for HickoryDnsResolver {
-    fn default() -> Self {
-        let (sender, receiver) = mpsc::channel();
-        std::thread::Builder::new()
-            .name("secure-exec-dns-resolver".to_owned())
-            .spawn(move || run_dns_worker(receiver))
-            .expect("failed to spawn DNS resolver worker");
-        Self {
-            worker: Mutex::new(sender),
-        }
-    }
-}
 
 #[cfg(target_arch = "wasm32")]
 impl Default for HickoryDnsResolver {
@@ -283,24 +255,39 @@ impl Default for HickoryDnsResolver {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl HickoryDnsResolver {
+    pub fn with_runtime(runtime: agentos_runtime::RuntimeContext) -> Self {
+        Self {
+            runtime: Some(runtime),
+        }
+    }
+
     fn send_lookup_ip(
         &self,
         hostname: String,
         name_servers: Vec<SocketAddr>,
     ) -> Result<Vec<IpAddr>, DnsResolverError> {
-        let (response, receiver) = mpsc::channel();
-        self.worker
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .send(DnsWorkerRequest::LookupIp {
-                hostname,
-                name_servers,
-                response,
+        let runtime = self.runtime.as_ref().cloned().ok_or_else(|| {
+            DnsResolverError::lookup_failed(
+                "DNS resolver has no injected sidecar runtime; configure HickoryDnsResolver::with_runtime",
+            )
+        })?;
+        let resolver = {
+            let _entered = runtime.handle().enter();
+            resolver_for(&name_servers)?
+        };
+        let reserved_bytes = dns_lookup_input_bytes(&hostname, &name_servers);
+        let handle = runtime.handle().clone();
+        let timeout = runtime.blocking_job_timeout();
+        runtime
+            .blocking()
+            .run_sync(reserved_bytes, timeout, move || {
+                handle.block_on(async move {
+                    tokio::time::timeout(timeout, lookup_ip_with_resolver(resolver, hostname))
+                        .await
+                        .unwrap_or_else(|_| Err(dns_lookup_timeout_error(timeout)))
+                })
             })
-            .map_err(|_| DnsResolverError::lookup_failed("dns resolver worker stopped"))?;
-        receiver
-            .recv()
-            .map_err(|_| DnsResolverError::lookup_failed("dns resolver worker stopped"))?
+            .map_err(map_blocking_lookup_error)?
     }
 
     fn send_lookup_records(
@@ -309,20 +296,31 @@ impl HickoryDnsResolver {
         name_servers: Vec<SocketAddr>,
         record_type: RecordType,
     ) -> Result<Vec<Record>, DnsResolverError> {
-        let (response, receiver) = mpsc::channel();
-        self.worker
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .send(DnsWorkerRequest::LookupRecords {
-                hostname,
-                name_servers,
-                record_type,
-                response,
+        let runtime = self.runtime.as_ref().cloned().ok_or_else(|| {
+            DnsResolverError::lookup_failed(
+                "DNS resolver has no injected sidecar runtime; configure HickoryDnsResolver::with_runtime",
+            )
+        })?;
+        let resolver = {
+            let _entered = runtime.handle().enter();
+            resolver_for(&name_servers)?
+        };
+        let reserved_bytes = dns_lookup_input_bytes(&hostname, &name_servers);
+        let handle = runtime.handle().clone();
+        let timeout = runtime.blocking_job_timeout();
+        runtime
+            .blocking()
+            .run_sync(reserved_bytes, timeout, move || {
+                handle.block_on(async move {
+                    tokio::time::timeout(
+                        timeout,
+                        lookup_records_with_resolver(resolver, hostname, record_type),
+                    )
+                    .await
+                    .unwrap_or_else(|_| Err(dns_lookup_timeout_error(timeout)))
+                })
             })
-            .map_err(|_| DnsResolverError::lookup_failed("dns resolver worker stopped"))?;
-        receiver
-            .recv()
-            .map_err(|_| DnsResolverError::lookup_failed("dns resolver worker stopped"))?
+            .map_err(map_blocking_lookup_error)?
     }
 }
 
@@ -348,72 +346,7 @@ impl DnsResolver for HickoryDnsResolver {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn run_dns_worker(receiver: mpsc::Receiver<DnsWorkerRequest>) {
-    let runtime = match tokio::runtime::Runtime::new() {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            for request in receiver {
-                request.respond_with_error(DnsResolverError::lookup_failed(format!(
-                    "failed to create DNS runtime: {error}"
-                )));
-            }
-            return;
-        }
-    };
-    let mut resolvers = BTreeMap::new();
-    for request in receiver {
-        match request {
-            DnsWorkerRequest::LookupIp {
-                hostname,
-                name_servers,
-                response,
-            } => {
-                let result = worker_lookup_ip(&runtime, &mut resolvers, hostname, name_servers);
-                let _ = response.send(result);
-            }
-            DnsWorkerRequest::LookupRecords {
-                hostname,
-                name_servers,
-                record_type,
-                response,
-            } => {
-                let result = worker_lookup_records(
-                    &runtime,
-                    &mut resolvers,
-                    hostname,
-                    name_servers,
-                    record_type,
-                );
-                let _ = response.send(result);
-            }
-        }
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl DnsWorkerRequest {
-    fn respond_with_error(self, error: DnsResolverError) {
-        match self {
-            Self::LookupIp { response, .. } => {
-                let _ = response.send(Err(error));
-            }
-            Self::LookupRecords { response, .. } => {
-                let _ = response.send(Err(error));
-            }
-        }
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn worker_resolver_for(
-    resolvers: &mut BTreeMap<Vec<SocketAddr>, TokioResolver>,
-    name_servers: &[SocketAddr],
-) -> Result<TokioResolver, DnsResolverError> {
-    let key = name_servers.to_vec();
-    if let Some(resolver) = resolvers.get(&key).cloned() {
-        return Ok(resolver);
-    }
-
+fn resolver_for(name_servers: &[SocketAddr]) -> Result<TokioResolver, DnsResolverError> {
     let resolver_config = resolver_config_from_name_servers(name_servers);
     let builder = if let Some(config) = resolver_config {
         TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
@@ -424,78 +357,87 @@ fn worker_resolver_for(
             ))
         })?
     };
-    let resolver = builder.build().map_err(|error| {
+    builder.build().map_err(|error| {
         DnsResolverError::lookup_failed(format!("failed to build DNS resolver: {error}"))
-    })?;
-    let resolver = resolvers.entry(key).or_insert_with(|| resolver).clone();
-    Ok(resolver)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn worker_lookup_ip(
-    runtime: &tokio::runtime::Runtime,
-    resolvers: &mut BTreeMap<Vec<SocketAddr>, TokioResolver>,
-    hostname: String,
-    name_servers: Vec<SocketAddr>,
-) -> Result<Vec<IpAddr>, DnsResolverError> {
-    let resolver = worker_resolver_for(resolvers, &name_servers)?;
-    runtime.block_on(async move {
-        let lookup = resolver.lookup_ip(&hostname).await.map_err(|error| {
-            DnsResolverError::lookup_failed(format!(
-                "failed to resolve DNS address {hostname}: {error}"
-            ))
-        })?;
-
-        let mut addresses = Vec::new();
-        let mut seen = BTreeSet::new();
-        for ip in lookup.iter() {
-            if seen.insert(ip) {
-                addresses.push(ip);
-            }
-        }
-
-        if addresses.is_empty() {
-            return Err(DnsResolverError::lookup_failed(format!(
-                "failed to resolve DNS address {hostname}"
-            )));
-        }
-
-        Ok(addresses)
     })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn worker_lookup_records(
-    runtime: &tokio::runtime::Runtime,
-    resolvers: &mut BTreeMap<Vec<SocketAddr>, TokioResolver>,
+fn dns_lookup_input_bytes(hostname: &str, name_servers: &[SocketAddr]) -> usize {
+    hostname.len().saturating_add(
+        name_servers
+            .len()
+            .saturating_mul(std::mem::size_of::<SocketAddr>()),
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn map_blocking_lookup_error(error: BlockingJobError) -> DnsResolverError {
+    DnsResolverError::lookup_failed(format!("ERR_AGENTOS_DNS_LOOKUP_EXECUTOR: {error}"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn dns_lookup_timeout_error(timeout: std::time::Duration) -> DnsResolverError {
+    DnsResolverError::lookup_failed(format!(
+        "ERR_AGENTOS_DNS_LOOKUP_TIMEOUT: DNS lookup exceeded {}ms; raise runtime.blocking.jobTimeoutMs",
+        timeout.as_millis()
+    ))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn lookup_ip_with_resolver(
+    resolver: TokioResolver,
     hostname: String,
-    name_servers: Vec<SocketAddr>,
+) -> Result<Vec<IpAddr>, DnsResolverError> {
+    let lookup = resolver.lookup_ip(&hostname).await.map_err(|error| {
+        DnsResolverError::lookup_failed(format!(
+            "failed to resolve DNS address {hostname}: {error}"
+        ))
+    })?;
+
+    let mut addresses = Vec::new();
+    let mut seen = BTreeSet::new();
+    for ip in lookup.iter() {
+        if seen.insert(ip) {
+            addresses.push(ip);
+        }
+    }
+
+    if addresses.is_empty() {
+        return Err(DnsResolverError::lookup_failed(format!(
+            "failed to resolve DNS address {hostname}"
+        )));
+    }
+
+    Ok(addresses)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn lookup_records_with_resolver(
+    resolver: TokioResolver,
+    hostname: String,
     record_type: RecordType,
 ) -> Result<Vec<Record>, DnsResolverError> {
-    let resolver = worker_resolver_for(resolvers, &name_servers)?;
-    runtime.block_on(async move {
-        let lookup = resolver
-            .lookup(&hostname, record_type)
-            .await
-            .map_err(|error| {
-                let message =
-                    format!("failed to resolve DNS {record_type} record {hostname}: {error}");
-                if error.is_nx_domain() {
-                    DnsResolverError::nx_domain(message)
-                } else if error.is_no_records_found() {
-                    DnsResolverError::no_data(message)
-                } else {
-                    DnsResolverError::lookup_failed(message)
-                }
-            })?;
-        let records = lookup.answers().to_vec();
-        if records.is_empty() {
-            return Err(DnsResolverError::no_data(format!(
-                "failed to resolve DNS {record_type} record {hostname}"
-            )));
-        }
-        Ok(records)
-    })
+    let lookup = resolver
+        .lookup(&hostname, record_type)
+        .await
+        .map_err(|error| {
+            let message = format!("failed to resolve DNS {record_type} record {hostname}: {error}");
+            if error.is_nx_domain() {
+                DnsResolverError::nx_domain(message)
+            } else if error.is_no_records_found() {
+                DnsResolverError::no_data(message)
+            } else {
+                DnsResolverError::lookup_failed(message)
+            }
+        })?;
+    let records = lookup.answers().to_vec();
+    if records.is_empty() {
+        return Err(DnsResolverError::no_data(format!(
+            "failed to resolve DNS {record_type} record {hostname}"
+        )));
+    }
+    Ok(records)
 }
 
 #[cfg(target_arch = "wasm32")]

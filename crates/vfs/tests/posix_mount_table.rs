@@ -278,6 +278,55 @@ fn mount_table_realpath_follows_symlinks_across_leaf_mounts() {
 }
 
 #[test]
+fn mount_table_realpath_rebases_mounted_absolute_link_after_leaf_mounts() {
+    let mut table = MountTable::new(MemoryFileSystem::new());
+
+    table
+        .mount_boxed(
+            "/opt/agentos/bin/pi",
+            Box::new(vfs::posix::MountedVirtualFileSystem::new(
+                SingleSymlinkFileSystem::new("../pkgs/pi/current/bin/pi"),
+            )),
+            MountOptions::new("single-symlink").read_only(true),
+        )
+        .expect("mount command symlink leaf");
+    table
+        .mount_boxed(
+            "/opt/agentos/pkgs/pi/current",
+            Box::new(vfs::posix::MountedVirtualFileSystem::new(
+                SingleSymlinkFileSystem::new("1.2.3"),
+            )),
+            MountOptions::new("single-symlink").read_only(true),
+        )
+        .expect("mount current symlink leaf");
+
+    let mut content = MemoryFileSystem::new();
+    content
+        .mkdir("/bin", true)
+        .expect("seed package bin directory");
+    content
+        .write_file("/adapter.mjs", b"adapter".to_vec())
+        .expect("seed package adapter");
+    content
+        .symlink("/adapter.mjs", "/bin/pi")
+        .expect("seed mount-local command symlink");
+    table
+        .mount(
+            "/opt/agentos/pkgs/pi/1.2.3",
+            content,
+            MountOptions::new("package").read_only(true),
+        )
+        .expect("mount package content leaf");
+
+    assert_eq!(
+        table
+            .realpath("/opt/agentos/bin/pi")
+            .expect("resolve command through leaf and package symlinks"),
+        "/opt/agentos/pkgs/pi/1.2.3/adapter.mjs"
+    );
+}
+
+#[test]
 fn mount_table_realpath_keeps_mount_local_absolute_symlinks_inside_mount() {
     let mut table = MountTable::new(MemoryFileSystem::new());
     let mut mounted = MemoryFileSystem::new();

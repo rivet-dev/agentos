@@ -260,7 +260,6 @@ fn long_lived_parent_retains_zombies_until_waited_under_pressure() {
             ProcessStatus::Exited
         );
     }
-    assert_eq!(table.zombie_reaper_thread_spawn_count(), 1);
     assert_eq!(table.zombie_timer_count(), child_pids.len());
 
     for (child_pid, status) in child_pids {
@@ -1348,7 +1347,7 @@ fn waitpid_for_supports_pid_zero_and_negative_process_group_selectors() {
 }
 
 #[test]
-fn zombie_reaper_uses_a_single_worker_for_many_exits() {
+fn zombie_reaper_is_cooperatively_driven_for_many_exits() {
     let table = ProcessTable::with_zombie_ttl(Duration::from_millis(100));
     let mut pids = Vec::new();
 
@@ -1367,8 +1366,13 @@ fn zombie_reaper_uses_a_single_worker_for_many_exits() {
         pids.push(pid);
     }
 
-    assert_eq!(table.zombie_reaper_thread_spawn_count(), 1);
     assert_eq!(table.zombie_timer_count(), 100);
+    assert!(
+        table
+            .next_zombie_reap_deadline()
+            .is_some_and(|deadline| deadline <= Instant::now() + Duration::from_millis(100)),
+        "runtime adapter should be able to arm the earliest cooperative reap deadline"
+    );
 
     wait_for(|| table.zombie_timer_count() == 0, Duration::from_secs(2));
 

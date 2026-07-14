@@ -2,7 +2,8 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::{Mutex, Once};
+use std::sync::{mpsc, Mutex, Once};
+use std::thread;
 
 use crate::ipc::ExecutionError;
 use agentos_bridge::queue_tracker::{warn_limit_exhausted, TrackedLimit};
@@ -10,6 +11,14 @@ use agentos_bridge::queue_tracker::{warn_limit_exhausted, TrackedLimit};
 static V8_INIT: Once = Once::new();
 static V8_ISOLATE_LIFECYCLE: Mutex<()> = Mutex::new(());
 const MAX_UNHANDLED_PROMISE_REJECTIONS: usize = 1024;
+
+unsafe extern "C" {
+    // rusty_v8 130 does not expose these public V8 embedder hooks in Rust. The
+    // build-script C++ shim is compiled against the pinned V8 headers so this
+    // boundary does not depend on platform-specific C++ mangled names.
+    fn agentos_v8_initialize_sandbox_hardware_before_thread_creation();
+    fn agentos_v8_set_default_thread_isolation_permissions();
+}
 
 #[repr(align(16))]
 struct AlignedBytes<const N: usize>([u8; N]);
@@ -99,16 +108,63 @@ pub fn configure_isolate(isolate: &mut v8::OwnedIsolate) {
     isolate.set_promise_reject_callback(promise_reject_callback);
 }
 
+/// V8's process-global background worker pool is constant topology, not an
+/// implicit function of host CPU count. Four preserves useful parallelism for
+/// background compilation while keeping the trusted thread census bounded.
+const V8_PLATFORM_WORKER_THREADS: u32 = 4;
+
 /// Initialize the V8 platform (once per process).
 /// Safe to call multiple times; only the first call takes effect.
 pub fn init_v8_platform() {
     V8_INIT.call_once(|| {
-        v8::icu::set_common_data_74(&ICU_COMMON_DATA.0)
-            .expect("failed to initialize V8 ICU common data");
-        let platform = v8::new_default_platform(0, false).make_shared();
-        v8::V8::initialize_platform(platform);
-        v8::V8::initialize();
+        // V8 requires sandbox hardware keys to be allocated before any thread
+        // which may access its sandbox is created. This call precedes both the
+        // platform owner below and V8's own default-platform workers.
+        unsafe { agentos_v8_initialize_sandbox_hardware_before_thread_creation() };
+        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        // V8 binds process-global isolate-group state to its initialization
+        // thread. A library caller can be a short-lived Rust test, request, or
+        // maintenance thread, so initializing inline leaves later executor
+        // threads using torn-down process-global WebAssembly tables. Keep one
+        // constant owner alive for the process lifetime instead.
+        // AGENTOS_THREAD_SITE: constant-v8-platform-owner
+        thread::Builder::new()
+            .name(String::from("agentos-v8-platform"))
+            .spawn(move || {
+                v8::icu::set_common_data_74(&ICU_COMMON_DATA.0)
+                    .expect("failed to initialize V8 ICU common data");
+                let platform =
+                    v8::new_default_platform(V8_PLATFORM_WORKER_THREADS, false).make_shared();
+                v8::V8::initialize_platform(platform);
+                v8::V8::initialize();
+                ready_tx
+                    .send(())
+                    .expect("V8 platform initializer lost its caller");
+
+                // V8 is intentionally process-global and is never disposed
+                // while the sidecar is alive. Parking preserves the thread-local
+                // isolate-group owner without consuming CPU or a Tokio worker.
+                loop {
+                    thread::park();
+                }
+            })
+            .expect("failed to spawn V8 platform owner");
+        ready_rx
+            .recv()
+            .expect("V8 platform owner exited during initialization");
     });
+}
+
+/// Restore V8's read-only protection-key defaults on the current thread.
+///
+/// Executor and maintenance threads may descend from fixed host workers that
+/// existed before V8 allocated its pkeys. Linux preserves each parent's PKRU
+/// value across clone, so such descendants can otherwise fault merely reading
+/// V8's process-wide code-pointer tables. Call this after platform init and
+/// before the thread first enters V8.
+pub fn prepare_current_thread() {
+    init_v8_platform();
+    unsafe { agentos_v8_set_default_thread_isolation_permissions() };
 }
 
 // Headroom granted to V8 when the near-heap-limit callback fires. V8 fatal-aborts
@@ -180,6 +236,7 @@ pub fn install_heap_limit_guard(isolate: &mut v8::OwnedIsolate) {
 /// with an unbounded heap, so a guest heap bomb terminates its own isolate rather
 /// than fatal-aborting the shared process.
 pub fn create_isolate(heap_limit_mb: Option<u32>) -> v8::OwnedIsolate {
+    prepare_current_thread();
     let limit = heap_limit_mb.unwrap_or(DEFAULT_HEAP_LIMIT_MB);
     let mut params = v8::CreateParams::default();
     let limit_bytes = (limit as usize) * 1024 * 1024;

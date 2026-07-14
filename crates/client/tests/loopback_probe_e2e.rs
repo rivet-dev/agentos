@@ -7,6 +7,7 @@ mod common;
 use agentos_client::config::{AgentOsConfig, PatternPermissions, PermissionMode, Permissions};
 use agentos_client::ExecOptions;
 use std::io::Write;
+use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn guest_fetch_reaches_host_loopback() {
@@ -42,10 +43,13 @@ async fn guest_fetch_reaches_host_loopback() {
         "fetch('http://127.0.0.1:{port}/').then(r=>r.text()).then(t=>console.log('BODY:'+t)).catch(e=>{{console.error('FETCHERR:'+e.message+' cause:'+(e.cause&&e.cause.message));process.exit(3)}})"
     );
     let args = vec![String::from("-e"), script];
-    let result = os
-        .exec_argv("node", &args, ExecOptions::default())
-        .await
-        .expect("exec");
+    let result = tokio::time::timeout(
+        Duration::from_secs(15),
+        os.exec_argv("node", &args, ExecOptions::default()),
+    )
+    .await
+    .expect("guest fetch timed out")
+    .expect("exec");
     println!(
         "exit={} stdout={:?} stderr={:?}",
         result.exit_code, result.stdout, result.stderr
