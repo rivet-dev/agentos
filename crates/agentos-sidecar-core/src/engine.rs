@@ -5983,6 +5983,35 @@ mod tests {
     }
 
     #[test]
+    fn resumable_create_session_rejects_protocol_version_mismatch_and_cleans_up() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let process_id = core
+            .begin_create_session(&mut host, "conn-a", &echo_create_request())
+            .expect("begin");
+
+        let err = core
+            .feed_agent_output(
+                &mut host,
+                "conn-a",
+                &process_id,
+                br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":2}}
+"#,
+            )
+            .expect_err("protocol mismatch must surface");
+
+        assert_eq!(err.code(), "invalid_state");
+        assert!(err.to_string().contains("requested 1, agent reported 2"));
+        assert_eq!(core.pending_create_count(), 0);
+        assert_eq!(core.session_count(), 0);
+        assert_eq!(
+            host.killed,
+            vec![(process_id, String::from("SIGKILL"))],
+            "failed create must abort the adapter exactly once"
+        );
+    }
+
+    #[test]
     fn resumable_native_resume_never_polls_and_forwards_bootstrap_notifications() {
         let mut core = AcpCore::new();
         let mut host = ResumableMockHost::default();

@@ -3171,6 +3171,42 @@ mod tests {
     }
 
     #[test]
+    fn permission_results_preserve_adapter_option_ids_for_all_reply_aliases() {
+        let params = json!({
+            "options": [
+                { "optionId": "once", "kind": "allow_once" },
+                { "optionId": "always", "kind": "allow_always" },
+                { "optionId": "reject", "kind": "reject_once" },
+            ],
+        });
+
+        for (reply, expected_option_id) in [
+            ("once", "once"),
+            ("allow_once", "once"),
+            ("always", "always"),
+            ("allow_always", "always"),
+            ("reject", "reject"),
+            ("reject_once", "reject"),
+        ] {
+            assert_eq!(
+                permission_result(reply, &params),
+                json!({
+                    "outcome": {
+                        "outcome": "selected",
+                        "optionId": expected_option_id,
+                    },
+                }),
+                "reply alias {reply} must select the adapter-provided option id"
+            );
+        }
+
+        assert_eq!(
+            permission_result("unknown", &params),
+            json!({ "outcome": { "outcome": "cancelled" } })
+        );
+    }
+
+    #[test]
     fn only_callback_timeout_uses_sidecar_permission_default() {
         assert_eq!(
             permission_callback_reply_from_result(Err(SidecarError::Timeout(String::from(

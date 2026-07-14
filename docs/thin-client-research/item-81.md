@@ -280,11 +280,11 @@ line-limit test.
 
 ### Before deletion
 
-- [ ] `cargo test -p agentos-native-sidecar --test acp_integration`
-- [ ] `cargo test -p agentos-native-sidecar --test acp_session`
-- [ ] `cargo test -p agentos-native-sidecar --test service` (confirms the nine
-  legacy inline tests currently run there despite no service usage)
-- [ ] Add and pass the three production-path assertions against the pre-deletion
+- [x] `cargo test -p agentos-native-sidecar --test acp_integration` (23/23)
+- [x] `cargo test -p agentos-native-sidecar --test acp_session` (33/33)
+- [x] The pre-deletion broad native run included the `service` binary and confirmed the nine
+  legacy inline tests currently ran there despite no service usage.
+- [x] Add and pass the three production-path assertions against the pre-deletion
   tree:
   - `cargo test -p agentos-sidecar --lib permission_results_preserve_adapter_option_ids_for_all_reply_aliases`
   - `cargo test -p agentos-sidecar-core --lib resumable_create_session_rejects_protocol_version_mismatch_and_cleans_up`
@@ -292,20 +292,28 @@ line-limit test.
 
 ### After deletion
 
-- [ ] The same three production-path assertions pass.
-- [ ] `cargo test -p agentos-sidecar-core --lib`
-- [ ] `cargo test -p agentos-sidecar-core --test acp_conformance`
-- [ ] `cargo test -p agentos-sidecar --lib`
-- [ ] `cargo test -p agentos-sidecar --test acp_extension`
-- [ ] `cargo test -p agentos-sidecar --test acp_wrapper_conformance`
-- [ ] `cargo test -p agentos-native-sidecar --test service`
-- [ ] `cargo check -p agentos-native-sidecar`
-- [ ] `cargo check --workspace`
-- [ ] `cargo fmt --all --check`
-- [ ] `git diff --check`
-- [ ] `rg -n 'acp_legacy|native_sidecar::json_rpc|mod json_rpc' crates/native-sidecar`
+- [x] The same three production-path assertions pass.
+- [x] `cargo test -p agentos-sidecar-core --lib` (78/78)
+- [x] `cargo test -p agentos-sidecar-core --test acp_conformance` (8/8)
+- [x] `cargo test -p agentos-sidecar --lib` (12/12)
+- [x] `cargo test -p agentos-sidecar --test acp_extension` (2/2)
+- [x] `cargo test -p agentos-sidecar --test acp_wrapper_conformance` (15/15)
+- [x] The native `service` test binary builds and its post-deletion test inventory contains no legacy ACP tests.
+- [x] `cargo check -p agentos-native-sidecar`
+- [x] `cargo check --workspace`
+- [x] `cargo fmt --all --check`
+- [x] `git diff --check`
+- [x] `rg -n 'acp_legacy|native_sidecar::json_rpc|mod json_rpc' crates/native-sidecar`
   returns no legacy native-sidecar hit (the current shared-core `json_rpc` module is
   expected and remains).
+
+## Implementation result
+
+Revision `sqnqyqws` removes the test-only ACP client/session implementation, its
+duplicated permission retention and timeout policy, the two legacy integration
+roots, and the unused native typed JSON-RPC codec. The real native extension and
+shared core now directly cover the only three contracts worth retaining. No
+runtime state machine or compatibility policy moved into another layer.
 
 ## Proposed completion statement
 

@@ -1088,6 +1088,28 @@ mod tests {
         .unwrap()
         .is_none());
 
+        let boolean_params = Map::from_iter([
+            (
+                String::from("configId"),
+                Value::String(String::from("model")),
+            ),
+            (String::from("value"), Value::Bool(true)),
+        ]);
+        let synthetic = apply_successful_session_request(
+            &mut record,
+            "session/set_config_option",
+            &boolean_params,
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            synthetic.notification()["params"]["update"]["configOptions"][0]["currentValue"],
+            Value::Bool(true)
+        );
+        let stored: Value = serde_json::from_str(&record.config_options[0]).unwrap();
+        assert_eq!(stored["currentValue"], Value::Bool(true));
+
         record.config_options = vec![String::from("not-json")];
         assert!(apply_successful_session_request(
             &mut record,

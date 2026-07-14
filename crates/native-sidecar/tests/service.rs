@@ -1,9 +1,6 @@
 pub trait NativeSidecarBridge: agentos_bridge::HostBridge {}
 impl<T> NativeSidecarBridge for T where T: agentos_bridge::HostBridge {}
 
-#[allow(dead_code, unused_imports)]
-#[path = "acp_legacy/mod.rs"]
-mod acp;
 #[allow(dead_code)]
 #[path = "../src/bootstrap.rs"]
 mod bootstrap;
@@ -21,9 +18,6 @@ mod extension;
 #[allow(dead_code)]
 #[path = "../src/filesystem.rs"]
 mod filesystem;
-#[allow(dead_code, unused_imports)]
-#[path = "../src/json_rpc.rs"]
-mod json_rpc;
 #[allow(dead_code, unused_imports)]
 #[path = "../src/limits.rs"]
 mod limits;
