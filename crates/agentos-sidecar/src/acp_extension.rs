@@ -1417,6 +1417,9 @@ impl AcpExtension {
                 Ok(()) => {
                     process.cleanup.output_buffer_stopped = true;
                 }
+                Err(error) if is_process_already_gone(&error) => {
+                    process.cleanup.output_buffer_stopped = true;
+                }
                 Err(error) => errors.push(error),
             }
         }
