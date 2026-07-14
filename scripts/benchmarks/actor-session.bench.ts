@@ -16,7 +16,7 @@
  */
 
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -268,27 +268,55 @@ async function retryRunnerReady<T>(operation: () => Promise<T>): Promise<T> {
 	}
 }
 
-async function stopChild(child: ChildProcess): Promise<void> {
-	const signalTree = (signal: NodeJS.Signals): void => {
+async function signalBenchmarkProcesses(
+	child: ChildProcess,
+	storagePath: string,
+	signal: NodeJS.Signals,
+): Promise<void> {
 		if (process.platform !== "win32" && child.pid !== undefined) {
 			try {
 				process.kill(-child.pid, signal);
-				return;
 			} catch {
-				// The process group may already be gone; fall back to the direct child.
+				// The server process group may already be gone.
 			}
 		}
-		child.kill(signal);
-	};
+	child.kill(signal);
+
+	// Rivet Engine creates its own process group, so it can outlive the server
+	// process even when the server group is signalled. On Linux, identify only
+	// engine descendants carrying this run's unique storage marker.
+	if (process.platform === "linux") {
+		const marker = Buffer.from(`RIVETKIT_STORAGE_PATH=${storagePath}\0`);
+		for (const entry of await readdir("/proc", { withFileTypes: true })) {
+			if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) continue;
+			try {
+				const environ = await readFile(`/proc/${entry.name}/environ`);
+				if (environ.indexOf(marker) !== -1) {
+					process.kill(Number(entry.name), signal);
+				}
+			} catch {
+				// Processes may exit or become inaccessible while /proc is scanned.
+			}
+		}
+	}
+}
+
+async function stopChild(
+	child: ChildProcess,
+	storagePath: string,
+): Promise<void> {
 
 	if (child.exitCode !== null && process.platform === "win32") return;
-	signalTree("SIGTERM");
-	await Promise.race([
-		new Promise<void>((resolve) => child.once("exit", () => resolve())),
-		sleep(2_000).then(() => {
-			signalTree("SIGKILL");
-		}),
-	]);
+	await signalBenchmarkProcesses(child, storagePath, "SIGTERM");
+	if (child.exitCode === null) {
+		await Promise.race([
+			new Promise<void>((resolve) => child.once("exit", () => resolve())),
+			sleep(2_000),
+		]);
+	} else {
+		await sleep(250);
+	}
+	await signalBenchmarkProcesses(child, storagePath, "SIGKILL");
 }
 
 async function warmActor(actor: any): Promise<number> {
@@ -583,7 +611,7 @@ async function main(): Promise<void> {
 			}
 		}
 	} finally {
-		if (server) await stopChild(server);
+		if (server) await stopChild(server, storagePath);
 		await mock.stop().catch(() => undefined);
 		await rm(storagePath, { recursive: true, force: true });
 	}
