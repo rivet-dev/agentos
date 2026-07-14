@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use agentos_client::config::{AgentOsConfig, PackageRef};
 use agentos_client::process::SpawnOptions;
-use agentos_client::{AgentOs, ExecOptions};
+use agentos_client::AgentOs;
 
 mod common;
 

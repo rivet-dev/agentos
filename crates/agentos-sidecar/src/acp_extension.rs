@@ -37,13 +37,15 @@ const MAX_ACP_TERMINAL_OUTPUT_BYTE_LIMIT: usize = 1024 * 1024;
 const ACP_TERMINAL_OUTPUT_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const ACP_CANCEL_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
+type NativeCoreProcessRoutes = BTreeMap<(String, String), Arc<Mutex<NativeCoreProcess>>>;
+
 #[derive(Debug, Default)]
 pub struct AcpExtension {
     cores: Mutex<BTreeMap<String, Arc<std::sync::Mutex<AcpCore>>>>,
     next_process_id: AtomicUsize,
     next_terminal_id: AtomicUsize,
     terminals: Mutex<BTreeMap<String, NativeAcpTerminal>>,
-    core_processes: Mutex<BTreeMap<(String, String), Arc<Mutex<NativeCoreProcess>>>>,
+    core_processes: Mutex<NativeCoreProcessRoutes>,
     core_owners: Mutex<BTreeMap<String, NativeCoreOwner>>,
     permission_waits: Mutex<BTreeMap<NativePermissionWaitKey, ExtensionCallbackCancellation>>,
 }
@@ -787,6 +789,7 @@ impl AcpExtension {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn recover_interrupted_prompt_adapter(
         &self,
         core: &Arc<std::sync::Mutex<AcpCore>>,
@@ -1444,10 +1447,10 @@ impl AcpExtension {
             }
             Ok(())
         } else {
-            return Err(SidecarError::Cleanup {
+            Err(SidecarError::Cleanup {
                 context: "failed to clean up native ACP agent route completely",
                 errors,
-            });
+            })
         }
     }
 

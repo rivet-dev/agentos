@@ -223,9 +223,11 @@ pub fn build_host_tool_reference(
                 })
                 .collect::<Vec<_>>()
                 .join(" ");
-            let suffix = (!signature.is_empty())
-                .then(|| format!(" {signature}"))
-                .unwrap_or_default();
+            let suffix = if signature.is_empty() {
+                String::new()
+            } else {
+                format!(" {signature}")
+            };
             lines.push(format!(
                 "- `agentos-{toolkit_name} {tool_name}{suffix}` — {}",
                 tool.description
@@ -249,9 +251,11 @@ pub fn build_host_tool_reference(
                             ))
                         })?;
                     let arguments = tool_input_to_flags(&input);
-                    let suffix = (!arguments.is_empty())
-                        .then(|| format!(" {arguments}"))
-                        .unwrap_or_default();
+                    let suffix = if arguments.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {arguments}")
+                    };
                     lines.push(format!(
                         "- {}: `agentos-{toolkit_name} {tool_name}{suffix}`",
                         example.description

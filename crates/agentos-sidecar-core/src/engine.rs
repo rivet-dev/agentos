@@ -337,9 +337,9 @@ enum PendingRestartStep {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PendingResumeStep {
-    AwaitingInitialize,
-    AwaitingNative(&'static str),
-    AwaitingFallbackSessionNew,
+    Initialize,
+    Native(&'static str),
+    FallbackSessionNew,
 }
 
 struct CompletedResume {
@@ -1559,7 +1559,7 @@ impl AcpCore {
                 pid: spawned.pid,
                 cwd: request.cwd,
                 transcript_path: request.transcript_path,
-                step: PendingResumeStep::AwaitingInitialize,
+                step: PendingResumeStep::Initialize,
                 stdout_buffer: String::new(),
                 init_result: None,
                 agent_capabilities: None,
@@ -1836,7 +1836,7 @@ impl AcpCore {
             }
 
             match pending.step {
-                PendingResumeStep::AwaitingInitialize => {
+                PendingResumeStep::Initialize => {
                     if message.get("id").and_then(Value::as_i64) != Some(1) {
                         continue;
                     }
@@ -1858,13 +1858,13 @@ impl AcpCore {
                             },
                         });
                         write_json_line(host, process_id, &load)?;
-                        pending.step = PendingResumeStep::AwaitingNative(method);
+                        pending.step = PendingResumeStep::Native(method);
                     } else {
                         write_resume_session_new(host, process_id, &pending.cwd)?;
-                        pending.step = PendingResumeStep::AwaitingFallbackSessionNew;
+                        pending.step = PendingResumeStep::FallbackSessionNew;
                     }
                 }
-                PendingResumeStep::AwaitingNative(method) => {
+                PendingResumeStep::Native(method) => {
                     if message.get("id").and_then(Value::as_i64) != Some(2) {
                         continue;
                     }
@@ -1883,9 +1883,9 @@ impl AcpCore {
                             .expect_err("native resume error must map to AcpCoreError"));
                     }
                     write_resume_session_new(host, process_id, &pending.cwd)?;
-                    pending.step = PendingResumeStep::AwaitingFallbackSessionNew;
+                    pending.step = PendingResumeStep::FallbackSessionNew;
                 }
-                PendingResumeStep::AwaitingFallbackSessionNew => {
+                PendingResumeStep::FallbackSessionNew => {
                     if message.get("id").and_then(Value::as_i64) != Some(2) {
                         continue;
                     }
@@ -2565,13 +2565,13 @@ impl AcpCore {
                 }
             } else if let Some(pending) = self.pending_resumes.get(&process_id) {
                 match pending.step {
-                    PendingResumeStep::AwaitingInitialize => {
+                    PendingResumeStep::Initialize => {
                         (INITIALIZE_TIMEOUT_MS, "resume.initialize".to_string())
                     }
-                    PendingResumeStep::AwaitingNative(method) => {
+                    PendingResumeStep::Native(method) => {
                         (request_timeout_ms(method), format!("resume.{method}"))
                     }
-                    PendingResumeStep::AwaitingFallbackSessionNew => {
+                    PendingResumeStep::FallbackSessionNew => {
                         (SESSION_NEW_TIMEOUT_MS, "resume.session_new".to_string())
                     }
                 }
@@ -4607,6 +4607,14 @@ fn session_id_from_session_result(session_result: &Map<String, Value>, fallback:
 mod tests {
     use super::*;
     use crate::host::{AgentOutput, ProjectedAgentLaunch, SpawnAgentRequest, SpawnedAgent};
+
+    #[test]
+    fn request_timeout_uses_acp_method_overrides() {
+        assert_eq!(request_timeout_ms("session/prompt"), 600_000);
+        assert_eq!(request_timeout_ms("initialize"), INITIALIZE_TIMEOUT_MS);
+        assert_eq!(request_timeout_ms("session/new"), SESSION_NEW_TIMEOUT_MS);
+        assert_eq!(request_timeout_ms("session/foo"), 120_000);
+    }
 
     fn projected_agent(id: &str) -> ProjectedAgentLaunch {
         ProjectedAgentLaunch {

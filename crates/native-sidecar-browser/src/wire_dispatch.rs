@@ -548,6 +548,7 @@ where
         host_runs
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn complete_failed_cron_run(
         &mut self,
         vm_id: &str,
@@ -675,6 +676,7 @@ where
         vm_id_of(&request.ownership).filter(|vm_id| self.active_vms.contains(vm_id))
     }
 
+    #[allow(clippy::result_large_err)]
     fn owned_vm_id(
         &self,
         request: &RequestFrame,

@@ -32,8 +32,6 @@ pub mod transport;
 // Centralized constants (ADR-001 §6 / spec.md §7)
 // ---------------------------------------------------------------------------
 
-/// Bounded exited-shell exit-code retention (for `wait_shell` after exit).
-
 /// Two-phase shell-drain timeout during dispose (milliseconds).
 pub const SHELL_DISPOSE_TIMEOUT_MS: u64 = 5_000;
 

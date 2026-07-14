@@ -28,8 +28,6 @@ const PROCESS_STREAM_CAPACITY: usize = 1024;
 /// forceful and does not inherit a caller-selected graceful signal.
 const ROUTE_FAILURE_KILL_SIGNAL: &str = "SIGKILL";
 
-/// Maximum first-observed process timestamp entries retained per VM.
-
 // ---------------------------------------------------------------------------
 // Supporting types
 // ---------------------------------------------------------------------------
@@ -47,6 +45,7 @@ pub type OutputCallback = Box<dyn FnMut(&[u8]) + Send>;
 
 /// `on_stdout`/`on_stderr` mirror the TS `ExecOptions.onStdout`/`onStderr` raw-byte streaming
 /// callbacks. They fire for the duration of the call.
+#[derive(Default)]
 pub struct ExecOptions {
     pub env: BTreeMap<String, String>,
     pub cwd: Option<String>,
@@ -55,20 +54,6 @@ pub struct ExecOptions {
     pub on_stdout: Option<OutputCallback>,
     pub on_stderr: Option<OutputCallback>,
     pub capture_stdio: Option<bool>,
-}
-
-impl Default for ExecOptions {
-    fn default() -> Self {
-        Self {
-            env: BTreeMap::new(),
-            cwd: None,
-            stdin: None,
-            timeout: None,
-            on_stdout: None,
-            on_stderr: None,
-            capture_stdio: None,
-        }
-    }
 }
 
 /// Result of `exec`.
@@ -635,6 +620,7 @@ impl AgentOs {
     }
 
     /// Send the `Execute` wire request, mapping a rejection into [`ClientError::Kernel`].
+    #[allow(clippy::too_many_arguments)]
     async fn send_execute(
         &self,
         command: Option<String>,
@@ -754,6 +740,7 @@ impl AgentOs {
     /// this process id into the per-process broadcast and
     /// watch channels. Exited entries are retained for post-exit inspection, then pruned oldest-first
     /// under registry pressure.
+    #[allow(clippy::too_many_arguments)]
     async fn run_spawn_events(
         self,
         pid: u32,
@@ -827,6 +814,7 @@ impl AgentOs {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_process_execute_request(
     command: Option<String>,
     shell_command: Option<String>,

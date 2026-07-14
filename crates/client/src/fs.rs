@@ -373,6 +373,7 @@ fn require_entries_payload(
     value.with_context(|| format!("sidecar returned no {operation} entries for {path}"))
 }
 
+#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 mod tests {
     use super::*;

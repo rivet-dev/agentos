@@ -58,8 +58,8 @@ pub fn record_session_close_outcome(
     outcome: SessionCloseOutcome,
     capacity: usize,
 ) -> bool {
-    if outcomes.contains_key(&session_id) {
-        outcomes.insert(session_id, outcome);
+    if let Some(existing) = outcomes.get_mut(&session_id) {
+        *existing = outcome;
         return false;
     }
 

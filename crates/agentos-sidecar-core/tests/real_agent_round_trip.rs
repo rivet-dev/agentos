@@ -46,7 +46,7 @@ impl AcpHost for NodeChildAcpHost {
         &mut self,
         id: &str,
     ) -> Result<Option<ProjectedAgentLaunch>, AcpCoreError> {
-        Ok((id == "echo").then(|| echo_projected_agent()))
+        Ok((id == "echo").then(echo_projected_agent))
     }
 
     fn list_projected_agents(&mut self) -> Result<Vec<ProjectedAgentLaunch>, AcpCoreError> {

@@ -6415,15 +6415,13 @@ where
                     "child_process shell command must not be empty",
                 ))
             })?;
-            if resolved.command == "sh" {
-                if !vm.command_guest_paths.contains_key("sh") {
-                    return Err(SidecarError::InvalidState(format!(
-                        "shell-mode child_process command requires /bin/sh, which is not \
-                         installed in this VM (install a software package that provides sh, \
-                         for example @agentos-software/coreutils): {}",
-                        request.command
-                    )));
-                }
+            if resolved.command == "sh" && !vm.command_guest_paths.contains_key("sh") {
+                return Err(SidecarError::InvalidState(format!(
+                    "shell-mode child_process command requires /bin/sh, which is not \
+                     installed in this VM (install a software package that provides sh, \
+                     for example @agentos-software/coreutils): {}",
+                    request.command
+                )));
             }
             (resolved.command, resolved.args)
         } else {

@@ -90,12 +90,14 @@ impl fmt::Display for CronSchedulerError {
 impl std::error::Error for CronSchedulerError {}
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 enum ParsedSchedule {
     Date(u64),
     Cron(ParsedCron),
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 enum ParsedCron {
     Standard(Cron),
     /// `LW` is part of the established JavaScript croner grammar but is not

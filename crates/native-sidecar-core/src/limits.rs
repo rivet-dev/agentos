@@ -543,6 +543,7 @@ fn apply_resource_limits_config(
     Ok(())
 }
 
+#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 mod process_route_retention_tests {
     use super::{process_route_retention, VmLimits, DEFAULT_PROCESS_ROUTE_RETENTION};

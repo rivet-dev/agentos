@@ -158,10 +158,7 @@ impl CapturedOutputState {
             StreamChannel::Stdout => ("stdout", &mut self.stdout, &self.stdout_gauge),
             StreamChannel::Stderr => ("stderr", &mut self.stderr, &self.stderr_gauge),
         };
-        let next_len = captured
-            .len()
-            .checked_add(chunk.len())
-            .unwrap_or(usize::MAX);
+        let next_len = captured.len().saturating_add(chunk.len());
         gauge.observe_depth(next_len);
         if next_len > self.limit_bytes {
             self.error = Some(RejectedResponse {

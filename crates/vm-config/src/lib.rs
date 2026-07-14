@@ -257,7 +257,7 @@ fn is_known_node_builtin(name: &str) -> bool {
     KNOWN_NODE_BUILTINS.contains(&bare)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export, export_to = "../../../packages/core/src/generated/")]
 pub struct RootFilesystemConfig {
@@ -281,17 +281,6 @@ pub struct RootFilesystemConfig {
     )]
     #[ts(optional)]
     pub bootstrap_entries: Option<Vec<RootFilesystemEntry>>,
-}
-
-impl Default for RootFilesystemConfig {
-    fn default() -> Self {
-        Self {
-            mode: None,
-            disable_default_base_layer: None,
-            lowers: None,
-            bootstrap_entries: None,
-        }
-    }
 }
 
 impl RootFilesystemConfig {

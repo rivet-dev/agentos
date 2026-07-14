@@ -2480,11 +2480,8 @@ mod tests {
         for _ in 0..100 {
             let result =
                 ensure_vm_disposal_process_event_capacity(committed, event_limit, event_limit);
-            if result.is_err() {
-                assert_eq!(
-                    crate::execution::error_code(&result.unwrap_err()),
-                    "limit_exceeded"
-                );
+            if let Err(error) = result {
+                assert_eq!(crate::execution::error_code(&error), "limit_exceeded");
                 break;
             }
             producer.pop_front().expect("producer keeps refilling");

@@ -1633,7 +1633,7 @@ impl AgentOs {
         let pending = self.take_pending_permission_sender(session_id, permission_id);
 
         if let Some(responder) = pending {
-            responder.send(reply.clone()).map_err(|_| {
+            responder.send(reply).map_err(|_| {
                 ClientError::Sidecar(format!(
                     "permission reply route closed before response: {permission_id}"
                 ))

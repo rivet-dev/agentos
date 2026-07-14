@@ -10,7 +10,6 @@ use agentos_client::config::{
 };
 use agentos_client::process::SpawnOptions;
 use agentos_client::AgentOs;
-use agentos_client::ExecOptions;
 use agentos_client::PackageDescriptor;
 
 fn allow_all() -> Permissions {

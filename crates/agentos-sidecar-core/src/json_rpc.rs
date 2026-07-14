@@ -24,6 +24,7 @@ pub struct JsonRpcExchange {
 /// Send a JSON-RPC `request` (with `id == response_id`) to the agent process and
 /// block for the matching response. `stdout` accumulates partial output across
 /// calls. Returns the parsed response message.
+#[allow(clippy::too_many_arguments)]
 pub fn send_json_rpc<H: AcpHost>(
     host: &mut H,
     process_id: &str,
@@ -47,6 +48,7 @@ pub fn send_json_rpc<H: AcpHost>(
     .response)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn send_json_rpc_exchange<H: AcpHost>(
     host: &mut H,
     process_id: &str,

@@ -1435,6 +1435,7 @@ ykAheWCsAteSEWVc0w==\n\
                 .expect("configure registry command mount");
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn configure_host_fixture_mount(
             sidecar: &mut NativeSidecar<RecordingBridge>,
             connection_id: &str,

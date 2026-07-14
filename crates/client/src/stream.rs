@@ -129,30 +129,28 @@ impl Stream for ByteStream {
         if self.terminated {
             return Poll::Ready(None);
         }
-        loop {
-            let (result, rx) = match self.inner.poll(cx) {
-                Poll::Ready(value) => value,
-                Poll::Pending => return Poll::Pending,
-            };
-            self.inner.set(recv_bytes(rx));
-            match result {
-                Ok(RoutedStreamEvent::Data(bytes)) => return Poll::Ready(Some(Ok(bytes))),
-                Ok(RoutedStreamEvent::Lagged { skipped }) => {
-                    self.terminated = true;
-                    return Poll::Ready(Some(Err(ClientError::EventStreamLagged { skipped })));
-                }
-                Ok(RoutedStreamEvent::Closed { context }) => {
-                    self.terminated = true;
-                    return Poll::Ready(Some(Err(ClientError::EventStreamClosed { context })));
-                }
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    self.terminated = true;
-                    return Poll::Ready(Some(Err(ClientError::EventStreamLagged { skipped })));
-                }
-                Err(broadcast::error::RecvError::Closed) => {
-                    self.terminated = true;
-                    return Poll::Ready(None);
-                }
+        let (result, rx) = match self.inner.poll(cx) {
+            Poll::Ready(value) => value,
+            Poll::Pending => return Poll::Pending,
+        };
+        self.inner.set(recv_bytes(rx));
+        match result {
+            Ok(RoutedStreamEvent::Data(bytes)) => Poll::Ready(Some(Ok(bytes))),
+            Ok(RoutedStreamEvent::Lagged { skipped }) => {
+                self.terminated = true;
+                Poll::Ready(Some(Err(ClientError::EventStreamLagged { skipped })))
+            }
+            Ok(RoutedStreamEvent::Closed { context }) => {
+                self.terminated = true;
+                Poll::Ready(Some(Err(ClientError::EventStreamClosed { context })))
+            }
+            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                self.terminated = true;
+                Poll::Ready(Some(Err(ClientError::EventStreamLagged { skipped })))
+            }
+            Err(broadcast::error::RecvError::Closed) => {
+                self.terminated = true;
+                Poll::Ready(None)
             }
         }
     }

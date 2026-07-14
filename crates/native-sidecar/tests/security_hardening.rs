@@ -579,7 +579,7 @@ fn guest_child_process_cannot_execute_host_only_javascript() {
         .expect("serialize host-only path");
     write_fixture(
         &parent_entry,
-        &format!(
+        format!(
             r#"import childProcess from "node:child_process";
 const child = childProcess.spawnSync("node", [{host_only_json}], {{ encoding: "utf8" }});
 console.log(JSON.stringify({{
@@ -643,7 +643,7 @@ fn python_entrypoints_cannot_execute_host_only_scripts() {
         .expect("serialize host-only Python path");
     write_fixture(
         &workspace.join("parent.mjs"),
-        &format!(
+        format!(
             r#"import childProcess from "node:child_process";
 const child = childProcess.spawnSync("python", [{host_only_json}], {{ encoding: "utf8" }});
 console.log(JSON.stringify({{
