@@ -15,6 +15,7 @@ use std::sync::{Arc, Weak};
 
 use anyhow::Result;
 use futures::Stream;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -545,13 +546,15 @@ pub struct SessionInfo {
 
 /// A registry agent entry from `list_agents`. Mirrors the TS `AgentRegistryEntry`.
 /// The client is npm-agnostic and parses no manifests: `list_agents` is a sidecar
-/// ACP RPC that enumerates the projected `/opt/agentos` packages. The entry is just
-/// the agent `id`; `installed` is always `true` (the package is materialized into
-/// the VM at boot).
+/// ACP RPC that enumerates the projected `/opt/agentos` packages and returns the
+/// resolved guest adapter entrypoint. `installed` is always `true` because the
+/// package is materialized into the VM at boot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRegistryEntry {
     pub id: String,
     pub installed: bool,
+    #[serde(rename = "adapterEntrypoint")]
+    pub adapter_entrypoint: String,
 }
 
 /// MCP server config used by `create_session`.
@@ -640,14 +643,13 @@ pub struct SessionMode {
 
 /// Session mode state (`{ currentModeId; availableModes }`).
 ///
-/// `currentModeId` and `availableModes` default so a loosely-shaped modes object (one missing either
-/// field) still deserializes and is stored. Mirrors TS `toSessionModes`, which returns ANY non-array
-/// object as `SessionModeState` with no field check.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// Both fields are required. A present malformed adapter value is a typed ACP
+/// decode failure rather than invented empty state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionModeState {
-    #[serde(default, rename = "currentModeId")]
+    #[serde(rename = "currentModeId")]
     pub current_mode_id: String,
-    #[serde(default, rename = "availableModes")]
+    #[serde(rename = "availableModes")]
     pub available_modes: Vec<SessionMode>,
 }
 
@@ -661,12 +663,10 @@ pub struct ConfigAllowedValue {
 
 /// A session config option.
 ///
-/// `id` defaults so a partial entry missing `id` still deserializes and is kept (rather than dropped),
-/// narrowing the gap with TS `toSessionConfigOptions`, which casts the whole array verbatim. Truly
-/// non-object entries still cannot be stored in this typed Vec; see the parity audit minor note.
+/// `id` is required. Present malformed entries fail the complete response
+/// instead of being dropped or normalized.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionConfigOption {
-    #[serde(default)]
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
@@ -953,8 +953,9 @@ fn parse_optional_json(
 ) -> std::result::Result<Option<Value>, ClientError> {
     value
         .map(|value| {
-            serde_json::from_str(&value).map_err(|error| {
-                ClientError::Sidecar(format!("malformed ACP {label} JSON: {error}"))
+            serde_json::from_str(&value).map_err(|source| ClientError::AcpDecode {
+                context: label.to_string(),
+                source,
             })
         })
         .transpose()
@@ -966,12 +967,154 @@ fn parse_json_vec(
 ) -> std::result::Result<Vec<Value>, ClientError> {
     values
         .into_iter()
-        .map(|value| {
-            serde_json::from_str(&value).map_err(|error| {
-                ClientError::Sidecar(format!("malformed ACP {label} JSON: {error}"))
+        .enumerate()
+        .map(|(index, value)| {
+            serde_json::from_str(&value).map_err(|source| ClientError::AcpDecode {
+                context: format!("{label}[{index}]"),
+                source,
             })
         })
         .collect()
+}
+
+fn decode_acp_value<T: DeserializeOwned>(
+    value: Value,
+    context: impl Into<String>,
+) -> std::result::Result<T, ClientError> {
+    serde_json::from_value(value).map_err(|source| ClientError::AcpDecode {
+        context: context.into(),
+        source,
+    })
+}
+
+fn decode_optional_acp_value<T: DeserializeOwned>(
+    value: Option<Value>,
+    context: &'static str,
+) -> std::result::Result<Option<T>, ClientError> {
+    value
+        .map(|value| decode_acp_value(value, context))
+        .transpose()
+}
+
+fn decode_acp_values<T: DeserializeOwned>(
+    values: Vec<Value>,
+    context: &'static str,
+) -> std::result::Result<Vec<T>, ClientError> {
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| decode_acp_value(value, format!("{context}[{index}]")))
+        .collect()
+}
+
+fn decode_agent_capabilities(
+    value: Option<Value>,
+) -> std::result::Result<Option<AgentCapabilities>, ClientError> {
+    Ok(decode_optional_acp_value(value, "agentCapabilities")?
+        .filter(|caps| !agent_capabilities_is_empty(caps)))
+}
+
+#[cfg(test)]
+mod acp_decode_tests {
+    use super::*;
+
+    fn assert_decode_context<T>(result: std::result::Result<T, ClientError>, expected: &str) {
+        let error = result.err().expect("ACP decode must fail");
+        assert!(matches!(
+            error,
+            ClientError::AcpDecode { ref context, .. } if context == expected
+        ));
+    }
+
+    #[test]
+    fn config_values_preserve_order_and_fail_at_the_original_index() {
+        let values = vec![
+            json!({ "id": "first", "category": "custom" }),
+            json!({ "id": "second", "category": "model" }),
+        ];
+        let decoded: Vec<SessionConfigOption> =
+            decode_acp_values(values, "configOptions").expect("valid config options");
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].id, "first");
+        assert_eq!(decoded[1].id, "second");
+
+        assert_decode_context::<Vec<SessionConfigOption>>(
+            decode_acp_values(
+                vec![
+                    json!({ "id": "valid", "category": "custom" }),
+                    json!({
+                        "id": "bad",
+                        "category": "custom",
+                        "readOnly": "not-a-boolean"
+                    }),
+                ],
+                "configOptions",
+            ),
+            "configOptions[1]",
+        );
+    }
+
+    #[test]
+    fn malformed_present_optional_state_is_typed_while_omission_stays_none() {
+        assert_eq!(
+            decode_optional_acp_value::<SessionModeState>(None, "modes").expect("omitted modes"),
+            None
+        );
+        assert_eq!(
+            decode_agent_capabilities(None).expect("omitted capabilities"),
+            None
+        );
+        assert_eq!(
+            decode_optional_acp_value::<AgentInfo>(None, "agentInfo").expect("omitted agent info"),
+            None
+        );
+
+        assert_decode_context::<Option<SessionModeState>>(
+            decode_optional_acp_value(Some(json!("not-modes")), "modes"),
+            "modes",
+        );
+        assert_decode_context::<Option<AgentCapabilities>>(
+            decode_agent_capabilities(Some(json!({ "permissions": "yes" }))),
+            "agentCapabilities",
+        );
+        assert_decode_context::<Option<AgentInfo>>(
+            decode_optional_acp_value(Some(json!({ "version": "1.0.0" })), "agentInfo"),
+            "agentInfo",
+        );
+        assert_eq!(
+            decode_agent_capabilities(Some(json!({}))).expect("empty capabilities object"),
+            None,
+            "a valid empty capabilities object retains the documented normalization"
+        );
+    }
+
+    #[test]
+    fn required_mode_and_config_fields_cannot_default_to_empty_values() {
+        assert_decode_context::<SessionModeState>(
+            decode_acp_value(json!({ "availableModes": [] }), "modes"),
+            "modes",
+        );
+        assert_decode_context::<SessionModeState>(
+            decode_acp_value(json!({ "currentModeId": "default" }), "modes"),
+            "modes",
+        );
+        assert_decode_context::<SessionConfigOption>(
+            decode_acp_value(json!({ "category": "custom" }), "configOptions[0]"),
+            "configOptions[0]",
+        );
+    }
+
+    #[test]
+    fn malformed_json_text_uses_the_same_field_and_index_context() {
+        assert_decode_context::<Option<Value>>(
+            parse_optional_json(Some(String::from("{")), "modes"),
+            "modes",
+        );
+        assert_decode_context::<Vec<Value>>(
+            parse_json_vec(vec![String::from("{}"), String::from("{")], "configOptions"),
+            "configOptions[1]",
+        );
+    }
 }
 
 fn unexpected_acp_response(operation: &str, response: AcpResponse) -> ClientError {
@@ -1245,6 +1388,7 @@ impl AgentOs {
             .map(|agent| AgentRegistryEntry {
                 id: agent.id,
                 installed: agent.installed,
+                adapter_entrypoint: agent.adapter_entrypoint,
             })
             .collect())
     }
@@ -1546,10 +1690,7 @@ impl AgentOs {
     /// Read session mode state from the sidecar.
     pub async fn get_session_modes(&self, session_id: &str) -> Result<Option<SessionModeState>> {
         let state = self.get_session_state(session_id).await?;
-        Ok(state
-            .modes
-            .filter(Value::is_object)
-            .and_then(|value| serde_json::from_value(value).ok()))
+        Ok(decode_optional_acp_value(state.modes, "modes")?)
     }
 
     /// Set the session model. Uses `set_config_option` with category `model`; readonly -> error
@@ -1580,13 +1721,8 @@ impl AgentOs {
         &self,
         session_id: &str,
     ) -> Result<Vec<SessionConfigOption>> {
-        Ok(self
-            .get_session_state(session_id)
-            .await?
-            .config_options
-            .into_iter()
-            .filter_map(|value| serde_json::from_value(value).ok())
-            .collect())
+        let state = self.get_session_state(session_id).await?;
+        Ok(decode_acp_values(state.config_options, "configOptions")?)
     }
 
     /// Read capabilities from the sidecar. Returns `None` for an empty object.
@@ -1594,24 +1730,14 @@ impl AgentOs {
         &self,
         session_id: &str,
     ) -> Result<Option<AgentCapabilities>> {
-        let capabilities = self
-            .get_session_state(session_id)
-            .await?
-            .agent_capabilities
-            .filter(Value::is_object)
-            .and_then(|value| serde_json::from_value(value).ok())
-            .filter(|caps| !agent_capabilities_is_empty(caps));
-        Ok(capabilities)
+        let capabilities = self.get_session_state(session_id).await?.agent_capabilities;
+        Ok(decode_agent_capabilities(capabilities)?)
     }
 
     /// Read agent info from the sidecar.
     pub async fn get_session_agent_info(&self, session_id: &str) -> Result<Option<AgentInfo>> {
-        Ok(self
-            .get_session_state(session_id)
-            .await?
-            .agent_info
-            .filter(Value::is_object)
-            .and_then(|value| serde_json::from_value(value).ok()))
+        let state = self.get_session_state(session_id).await?;
+        Ok(decode_optional_acp_value(state.agent_info, "agentInfo")?)
     }
 
     /// Raw passthrough to `send_session_request`.

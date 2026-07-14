@@ -60,6 +60,14 @@ pub enum ClientError {
     #[error("transport error: {0}")]
     Transport(#[from] ProtocolCodecError),
 
+    /// Trusted sidecar ACP JSON did not match the public Rust response type.
+    #[error("failed to decode ACP {context}: {source}")]
+    AcpDecode {
+        context: String,
+        #[source]
+        source: serde_json::Error,
+    },
+
     /// A generic sidecar rejection or I/O failure with context.
     #[error("sidecar error: {0}")]
     Sidecar(String),
