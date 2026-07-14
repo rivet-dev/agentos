@@ -1,17 +1,17 @@
 # Resource Limits
 
-Cap per-VM processes, file descriptors, sockets, and filesystem bytes so guest code can never exhaust the host.
+Cap per-VM resources, JavaScript CPU/wall-clock time, Python execution, and WASM runtime work so guest code can never exhaust the host.
 
-Every agentOS VM runs with **per-VM resource caps**. Runaway or malicious guest code can exhaust its own VM, but it can never starve the host or any sibling VM.
+Every agentOS VM runs with **per-VM resource and runtime caps**. Runaway or malicious guest code can exhaust its own VM, but it can never starve the host or any sibling VM.
 
 - **Bounded by default**: each VM ships with conservative caps. Unset fields fall back to built-in defaults that match the runtime's historical constants.
 - **Per-VM**: every VM gets its own budget. Limits are not shared across VMs.
-- **Enforced by the kernel**: a guest that exceeds a cap fails inside the VM (out-of-memory, `EMFILE`, `EAGAIN`, etc.). The host is never affected.
+- **Enforced by the sidecar/runtime**: a guest that exceeds a cap fails inside the VM (out-of-memory, `EMFILE`, `EAGAIN`, runtime timeout, etc.). The host is never affected.
 - **Operator-raisable**: the operator (the trusted process that creates the VM) may raise any cap for trusted workloads. Guest code can never raise its own caps.
 
 ## Setting limits
 
-Set caps on the `limits` object in the `agentOS` config. Limits are grouped by subsystem (`resources` and more). Omitted limits keep their secure default.
+Set caps on the `limits` object in the `agentOS` config. Limits are grouped by subsystem (`resources`, `jsRuntime`, `python`, `wasm`, and more). Omitted limits keep their secure default.
 
 ## Available caps
 
@@ -21,13 +21,40 @@ Set caps on the `limits` object in the `agentOS` config. Limits are grouped by s
 | `resources.maxOpenFds` | Open file descriptors | Exhausting the table fails with `EMFILE` / `ENFILE`. |
 | `resources.maxSockets` | Open sockets in the socket table | Bounds concurrent connections; excess `connect`/`accept` fail. |
 | `resources.maxFilesystemBytes` | Total bytes stored in the virtual filesystem | Bounds VFS storage; writes past the budget fail with a no-space error. |
+| `resources.maxWasmFuel` | WASM execution budget | Bounds WASM execution work; unset means no explicit fuel budget. |
+| `resources.maxWasmMemoryBytes` | WASM linear memory, in bytes | Default is `128 MiB`. |
 | `resources.maxWasmStackBytes` | Maximum WASM call-stack size, in bytes | Deep recursion fails with a stack overflow instead of crashing the VM. |
+| `jsRuntime.v8HeapLimitMb` | Guest JavaScript V8 heap, in MiB | Default is `128`. |
+| `jsRuntime.cpuTimeLimitMs` | Active JavaScript CPU time | Default is `30000`; `0` disables the CPU watchdog. |
+| `jsRuntime.wallClockLimitMs` | JavaScript elapsed wall-clock backstop | Default is `0`, disabled. Use this for finite commands, not long-lived adapters. |
+| `jsRuntime.importCacheMaterializeTimeoutMs` | Node import-cache materialization timeout | Default is `30000`. |
+| `jsRuntime.syncRpcWaitTimeoutMs` | JavaScript sync host-RPC wait | Unset keeps the engine default, currently `30000`. |
+| `python.executionTimeoutMs` | Python execution wall-clock timeout | Default is `300000`. |
+| `python.maxOldSpaceMb` | Pyodide runner V8 old-space heap, in MiB | Default is `0`, which keeps the engine default. |
+| `wasm.prewarmTimeoutMs` | WASM compile-cache warmup timeout | Default is `30000`. |
+| `wasm.runnerHeapLimitMb` | Trusted WASI/WASM runner V8 heap, in MiB | Default is `2048`; this is not guest linear memory. |
 
 ## Behavior at the limit
 
 - **WASM stack**: deep recursion throws a stack-overflow error in the guest, never a host crash.
+- **JavaScript CPU time**: CPU-bound loops terminate with a CPU-budget error once active JS CPU exceeds `jsRuntime.cpuTimeLimitMs`.
+- **JavaScript wall time**: awaiting or blocked JS terminates only when you set `jsRuntime.wallClockLimitMs`; the default is disabled for long-lived adapters.
 - **Filesystem bytes**: writing past the VFS budget fails with a no-space error to the guest.
 - **Counts (fds / processes / sockets)**: hitting a table cap returns the standard POSIX errno (`EMFILE`, `EAGAIN`, etc.), exactly as a real Linux kernel would under `ulimit`.
+
+## Sidecar liveness
+
+Separate from the guest caps above, the host detects a dead or wedged sidecar
+process by silence, not by per-request deadlines. The sidecar emits a liveness
+heartbeat every 10 seconds from a dedicated thread — so it keeps beating even
+mid-way through a long turn — and the host treats 30 seconds with no inbound
+frames at all as a dead sidecar: it kills the process and fails in-flight
+requests with a typed `SidecarSilenceTimeout` error.
+
+Because liveness is silence-based, individual requests have no time limit of
+their own: an agent turn may legitimately run for many minutes without being
+torn down. Neither the heartbeat cadence nor the silence window is
+configurable — they are fixed protocol constants.
 
 ## Warnings & observability
 

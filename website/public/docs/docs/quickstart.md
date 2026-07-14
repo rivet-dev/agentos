@@ -18,7 +18,7 @@ Set up an agentOS actor, create a session, and run your first coding agent.
 1. **Install**
 
    - **@rivet-dev/agentos** — Actor framework with built-in persistence and orchestration
-   - **@agentos-software/pi** — [Pi](https://github.com/mariozechner/pi-coding-agent) coding agent (Claude Code, Codex, and OpenCode coming soon)
+   - **@agentos-software/pi** — [Pi](https://github.com/mariozechner/pi-coding-agent) coding agent. [Claude Code](/docs/agents/claude), [Codex](/docs/agents/codex), and [OpenCode](/docs/agents/opencode) install the same way.
 
    ```bash
    npm install @rivet-dev/agentos @agentos-software/pi

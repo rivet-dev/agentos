@@ -24,7 +24,7 @@ export function BenchInfoTooltip({ children }: { children: ReactNode }) {
 			>
 				<path d='M8 0a8 8 0 100 16A8 8 0 008 0zm1 12H7V7h2v5zm-1-6a1 1 0 110-2 1 1 0 010 2z' />
 			</svg>
-			<span className='pointer-events-none absolute bottom-full left-0 z-50 mb-2 w-72 max-w-[min(20rem,80vw)] rounded-lg border border-ink/15 bg-white p-3 text-left text-[11px] font-normal normal-case leading-relaxed tracking-normal text-ink-soft opacity-0 shadow-xl transition-opacity duration-200 group-hover/tip:pointer-events-auto group-hover/tip:opacity-100 [&_a]:text-ink [&_a]:underline [&_a]:underline-offset-2 [&_strong]:font-medium [&_strong]:text-ink'>
+			<span className='pointer-events-none absolute bottom-full left-0 z-50 mb-2 w-72 max-w-[min(20rem,80vw)] rounded-lg border border-ink/15 bg-white p-3 text-left text-[11px] font-normal normal-case leading-relaxed tracking-normal text-ink-soft opacity-0 shadow-xl transition-opacity duration-200 group-hover/tip:pointer-events-auto group-hover/tip:opacity-100 [&_a]:text-accent-deep [&_a]:underline [&_a]:underline-offset-2 [&_strong]:font-medium [&_strong]:text-ink'>
 				{children}
 			</span>
 		</span>

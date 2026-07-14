@@ -81,7 +81,7 @@ const UseCase = ({ icon: Icon, title, description, benefits, example, delay = 0 
 	</motion.div>
 );
 
-const useCases: UseCaseProps[] = [
+export const useCases: UseCaseProps[] = [
 	{
 		icon: Code,
 		title: 'Programming Agents',

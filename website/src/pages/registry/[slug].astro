@@ -3,8 +3,9 @@ import Layout from "../../layouts/Layout.astro";
 import { Navigation } from "../../components/Navigation";
 import { Footer } from "../../components/Footer";
 import { registry } from "../../data/registry";
-import { REGISTRY_ICONS } from "../../data/registry-icons";
-import { InkChip, InkPanel } from "../../components/marketing/editorial/InkPanel";
+import { InkPanel } from "../../components/marketing/editorial/InkPanel";
+import { RegistryIconTile } from "../../components/marketing/registry/RegistryIconTile";
+import InstallRow from "../../components/marketing/registry/InstallRow.astro";
 // Use the docs theme's Shiki highlighter so registry code matches the docs
 // code blocks exactly (ayu-dark), instead of the old custom light palette.
 import { highlightCode as highlightCodeHtml } from "@rivet-dev/docs-theme/lib/highlight";
@@ -55,10 +56,12 @@ const isAvailableAgent =
 	entry.types.includes("agent") &&
 	!!entry.agentId;
 
-const npmHref =
-	entry.status === "available"
-		? `https://www.npmjs.com/package/${entry.package}`
-		: null;
+// Any entry can carry a package (docs entries for built-in agent adapters do
+// too); the ribbon and Information section link it to npm.
+const packageName = "package" in entry && entry.package ? entry.package : null;
+const npmHref = packageName
+	? `https://www.npmjs.com/package/${packageName}`
+	: null;
 
 // Docs link: an entry's own docsHref (always set for agents) wins; config
 // entries, built-in docs entries, software, and sandbox mounting providers
@@ -145,14 +148,51 @@ const exampleHtml = exampleSource
 	? await highlightCodeHtml(exampleSource, "ts")
 	: null;
 
-// Plain npm install is only shown for entries that aren't software or
-// sandbox-mounting (those show a registration example instead).
-const installCmd =
-	entry.status === "available" && !isSoftware && !isSandboxExt
-		? `npm install ${entry.package}`
+// The install command shown in step 1; the inline Copy button copies it.
+const installCommand =
+	entry.status === "available"
+		? isSandboxExt || isTool
+			? "npm install @rivet-dev/agentos-sandbox sandbox-agent"
+			: `npm install ${entry.package}`
 		: null;
 
-const EntryIcon = entry.icon ? REGISTRY_ICONS[entry.icon] : undefined;
+const statusLabel = isComingSoon
+	? "Coming Soon"
+	: entry.beta
+		? "Beta"
+		: entry.status === "available"
+			? "Available"
+			: "Built in";
+
+interface MetaCell {
+	label: string;
+	value: string;
+	href?: string;
+	external?: boolean;
+	mono?: boolean;
+}
+
+// The cells of the horizontal metadata bar under the header, App Store
+// Information-style. Keeps the header itself to icon + title + description.
+const ribbon: MetaCell[] = [
+	{
+		label: "Category",
+		value: entry.types.map((type) => TYPE_LABELS[type] ?? type).join(", "),
+	},
+	{ label: "Status", value: statusLabel },
+	...(packageName && npmHref
+		? [
+				{
+					label: "Package",
+					value: packageName,
+					href: npmHref,
+					external: true,
+					mono: true,
+				},
+			]
+		: []),
+	...(docsHref ? [{ label: "Docs", value: "Guide", href: docsHref }] : []),
+];
 ---
 
 <Layout
@@ -162,7 +202,7 @@ const EntryIcon = entry.icon ? REGISTRY_ICONS[entry.icon] : undefined;
 	<Navigation client:load />
 	<main class="paper-grain min-h-screen w-full overflow-x-hidden font-sans text-ink-soft">
 		<div class="relative isolate overflow-hidden pt-40">
-			<div class="mx-auto max-w-3xl px-6 lg:px-8">
+			<div class="mx-auto max-w-4xl px-6 lg:px-8">
 				<a
 					href="/registry"
 					class="mb-8 inline-flex items-center text-sm text-ink-faint no-underline transition-colors hover:text-ink"
@@ -170,245 +210,216 @@ const EntryIcon = entry.icon ? REGISTRY_ICONS[entry.icon] : undefined;
 					&larr; Back to Registry
 				</a>
 
-				<div class="mb-4 flex items-center gap-4">
-					{entry.image && (
-						<img
-							src={entry.image}
-							alt={entry.title}
-							width={40}
-							height={40}
-							class="object-contain"
-						/>
-					)}
-					{EntryIcon && (
-						<EntryIcon className="h-10 w-10 text-olive" />
-					)}
-					<h1 class="text-4xl font-medium leading-[1.06] tracking-[-0.015em] text-ink md:text-5xl">
-						{entry.title}
-					</h1>
-					{isComingSoon && (
-						<span class="rounded-full border border-ink/15 px-2.5 py-1 text-xs text-ink-faint">
-							Coming Soon
-						</span>
-					)}
-					{entry.beta && (
-						<span class="rounded-full border border-ink/15 px-2.5 py-1 text-xs text-ink-faint">
-							Beta
-						</span>
+				<div class="flex flex-col items-start gap-6 sm:flex-row sm:items-center sm:gap-8">
+					<RegistryIconTile
+						title={entry.title}
+						image={entry.image}
+						icon={entry.icon}
+						size={96}
+					/>
+					<div class="min-w-0 flex-1">
+						<h1 class="text-3xl font-medium leading-[1.06] tracking-[-0.015em] text-ink md:text-4xl">
+							{entry.title}
+						</h1>
+						<p class="mt-3 max-w-2xl text-lg leading-relaxed text-ink-soft">
+							{entry.description}
+						</p>
+					</div>
+					{entry.status !== "available" && (
+						<div class="shrink-0">
+							{isComingSoon ? (
+								<span
+									aria-disabled="true"
+									class="inline-flex items-center justify-center rounded-md border border-ink/15 px-6 py-2 text-sm font-medium text-ink-faint"
+								>
+									Coming soon
+								</span>
+							) : (
+								<a
+									href={docsHref!}
+									class="selection-dark inline-flex items-center justify-center rounded-md bg-ink px-6 py-2 text-sm font-medium text-cream no-underline transition-colors hover:bg-ink/85"
+								>
+									View docs
+								</a>
+							)}
+						</div>
 					)}
 				</div>
 
-				<div class="mt-4 flex gap-2">
-					{entry.types.map((type: string) => (
-						<span
-							class="rounded-full border border-pine/30 bg-pine/5 px-2 py-0.5 font-mono text-[11px] uppercase tracking-[0.12em] text-pine"
-						>
-							{TYPE_LABELS[type]}
-						</span>
+				<div class="mt-10 flex divide-x divide-ink/10 overflow-x-auto border-y border-ink/10">
+					{ribbon.map((cell) => (
+						<div class="min-w-[7.5rem] flex-1 px-4 py-4 text-center">
+							<div class="text-[13px] text-ink-faint">{cell.label}</div>
+							{cell.href ? (
+								<a
+									href={cell.href}
+									{...(cell.external
+										? { target: "_blank", rel: "noopener noreferrer" }
+										: {})}
+									class={`mt-1 block truncate text-sm font-medium text-ink no-underline hover:underline ${cell.mono ? "font-mono text-[13px]" : ""}`}
+									title={cell.value}
+								>
+									{cell.value}
+								</a>
+							) : (
+								<div
+									class="mt-1 truncate text-sm font-medium text-ink"
+									title={cell.value}
+								>
+									{cell.value}
+								</div>
+							)}
+						</div>
 					))}
 				</div>
-
-				<p class="mt-6 text-lg leading-relaxed text-ink-soft">
-					{entry.description}
-				</p>
 			</div>
 		</div>
 
-		<div class="mx-auto max-w-3xl px-6 pt-10 pb-24 lg:px-8">
+		<div class="mx-auto max-w-4xl px-6 pb-24 lg:px-8">
 			{isComingSoon ? (
-				<div class="border border-ink/10 bg-white/55 p-8 text-center">
+				<div class="mt-12 rounded-2xl border border-dashed border-ink/15 bg-white/40 p-10 text-center">
 					<p class="text-lg text-ink-faint">This integration is coming soon.</p>
+					<a
+						href="https://github.com/rivet-dev/agentos/issues"
+						target="_blank"
+						rel="noopener noreferrer"
+						class="mt-3 inline-block text-sm font-medium text-pine no-underline hover:underline"
+					>
+						Request an Extension
+					</a>
 				</div>
-			) : isDocs ? (
-				<>
-					<section>
-						<h2 class="mb-3 text-xl font-medium text-ink">{exampleHtml ? "Add to agentOS" : "Documentation"}</h2>
-						<p class="mb-4 text-sm text-ink-soft">
-							{exampleHtml && agentId ? (
-								<>
-									Register the {entry.title} adapter as your VM's{" "}
-									<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">software: []</code>, then open a session with the{" "}
-									<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">{agentId}</code>{" "}
-									agent id.
-								</>
-							) : (
-								"Built into agentOS — no separate install. See the docs for setup and usage."
+			) : (
+				<section id="get-started" class="mt-12">
+					{isDocs ? (
+						<>
+							<h2 class="mb-3 text-xl font-medium text-ink">
+								{exampleHtml ? "Add to agentOS" : "Documentation"}
+							</h2>
+							<p class="mb-4 text-sm text-ink-soft">
+								{exampleHtml && agentId ? (
+									<>
+										Register the {entry.title} adapter as your VM's{" "}
+										<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">software: []</code>, then open a session with the{" "}
+										<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">{agentId}</code>{" "}
+										agent id.
+									</>
+								) : (
+									"Built into agentOS — no separate install. See the docs for setup and usage."
+								)}
+							</p>
+							{exampleHtml && (
+								<InkPanel className="mb-6">
+									<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={exampleHtml} />
+								</InkPanel>
 							)}
-						</p>
-						{exampleHtml && (
+						</>
+					) : isConfig ? (
+						<>
+							<h2 class="mb-3 text-xl font-medium text-ink">Configuration</h2>
+							<p class="mb-4 text-sm text-ink-soft">
+								Built into the SDK — no separate install. Enable it with{" "}
+								<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">{configId}</code>{" "}
+								in your VM config.
+							</p>
 							<InkPanel className="mb-6">
 								<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={exampleHtml} />
 							</InkPanel>
-						)}
-					</section>
+						</>
+					) : isSoftware ? (
+						<>
+							<h2 class="mb-3 text-xl font-medium text-ink">1. Install</h2>
+							<InstallRow command={installCommand!} class="mb-8" />
 
-					<a
-						href={docsHref!}
-						class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
-					>
-						View documentation
-					</a>
-				</>
-			) : isConfig ? (
-				<>
-					<section>
-						<h2 class="mb-3 text-xl font-medium text-ink">Configuration</h2>
-						<p class="mb-4 text-sm text-ink-soft">
-							Built into the SDK — no separate install. Enable it with{" "}
-							<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">{configId}</code>{" "}
-							in your VM config.
-						</p>
-						<InkPanel className="mb-6">
-							<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={exampleHtml} />
-						</InkPanel>
-					</section>
+							<h2 class="mb-3 text-xl font-medium text-ink">2. Add to agentOS</h2>
+							<p class="mb-4 text-sm text-ink-soft">
+								Register it with your VM's{" "}
+								<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">software: []</code>{" "}
+								so its commands are available inside the VM.
+							</p>
+							<InkPanel className="mb-6">
+								<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={exampleHtml} />
+							</InkPanel>
+						</>
+					) : isSandboxExt || isTool ? (
+						<>
+							<h2 class="mb-3 text-xl font-medium text-ink">1. Install</h2>
+							<InstallRow command={installCommand!} class="mb-8" />
 
-					<a
-						href={docsHref!}
-						class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
-					>
-						View documentation
-					</a>
-				</>
-			) : isSoftware ? (
-				<>
-					<section>
-						<h2 class="mb-3 text-xl font-medium text-ink">1. Install</h2>
-						<InkChip command={`npm install ${entry.package}`} className="mb-8" />
-					</section>
+							<h2 class="mb-3 text-xl font-medium text-ink">2. Add to agentOS</h2>
+							<p class="mb-4 text-sm text-ink-soft">
+								{isSandboxExt ? (
+									<>
+										Mount a {entry.title} sandbox into the VM with{" "}
+										<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">@rivet-dev/agentos-sandbox</code>.
+									</>
+								) : (
+									<>
+										Mount the sandbox filesystem and register the process
+										bindings with{" "}
+										<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">@rivet-dev/agentos-sandbox</code>.
+									</>
+								)}
+							</p>
+							<InkPanel className="mb-6">
+								<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={exampleHtml} />
+							</InkPanel>
+						</>
+					) : isAvailableAgent ? (
+						<>
+							<h2 class="mb-3 text-xl font-medium text-ink">1. Install</h2>
+							<InstallRow command={installCommand!} class="mb-8" />
 
-					<section>
-						<h2 class="mb-3 text-xl font-medium text-ink">2. Add to agentOS</h2>
-						<p class="mb-4 text-sm text-ink-soft">
-							Register it with your VM's{" "}
-							<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">software: []</code>{" "}
-							so its commands are available inside the VM.
-						</p>
-						<InkPanel className="mb-6">
-							<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={exampleHtml} />
-						</InkPanel>
-					</section>
-
-					<div class="flex flex-wrap gap-3">
-						<a
-							href={docsHref!}
-							class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
-						>
-							View documentation
-						</a>
-						<a
-							href={npmHref!}
-							target="_blank"
-							rel="noopener noreferrer"
-							class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
-						>
-							View on npm
-						</a>
-					</div>
-				</>
-			) : isSandboxExt || isTool ? (
-				<>
-					<section>
-						<h2 class="mb-3 text-xl font-medium text-ink">1. Install</h2>
-						<InkChip
-							command="npm install @rivet-dev/agentos-sandbox sandbox-agent"
-							className="mb-8"
-						/>
-					</section>
-
-					<section>
-						<h2 class="mb-3 text-xl font-medium text-ink">2. Add to agentOS</h2>
-						<p class="mb-4 text-sm text-ink-soft">
-							{isSandboxExt ? (
-								<>
-									Mount a {entry.title} sandbox into the VM with{" "}
-									<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">@rivet-dev/agentos-sandbox</code>.
-								</>
-							) : (
-								<>
-									Mount the sandbox filesystem and register the process
-									bindings with{" "}
-									<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">@rivet-dev/agentos-sandbox</code>.
-								</>
-							)}
-						</p>
-						<InkPanel className="mb-6">
-							<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={exampleHtml} />
-						</InkPanel>
-					</section>
-
-					<div class="flex flex-wrap gap-3">
-						<a
-							href={docsHref!}
-							class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
-						>
-							View documentation
-						</a>
-						<a
-							href={npmHref!}
-							target="_blank"
-							rel="noopener noreferrer"
-							class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
-						>
-							View on npm
-						</a>
-					</div>
-				</>
-			) : isAvailableAgent ? (
-				<>
-					<section>
-						<h2 class="mb-3 text-xl font-medium text-ink">1. Install</h2>
-						<InkChip command={`npm install ${entry.package}`} className="mb-8" />
-					</section>
-
-					<section>
-						<h2 class="mb-3 text-xl font-medium text-ink">2. Add to agentOS</h2>
-						<p class="mb-4 text-sm text-ink-soft">
-							Register the {entry.title} adapter as your VM's{" "}
-							<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">software: []</code>, then open a session with the{" "}
-							<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">{entry.agentId}</code>{" "}
-							agent id.
-						</p>
-						<InkPanel className="mb-6">
-							<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={exampleHtml} />
-						</InkPanel>
-					</section>
-
-					<div class="flex flex-wrap gap-3">
-						<a
-							href={docsHref!}
-							class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
-						>
-							View documentation
-						</a>
-						<a
-							href={npmHref!}
-							target="_blank"
-							rel="noopener noreferrer"
-							class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
-						>
-							View on npm
-						</a>
-					</div>
-				</>
-			) : (
-				<>
-					<section>
-						<h2 class="mb-3 text-xl font-medium text-ink">Install</h2>
-						<InkChip command={installCmd!} className="mb-6" />
-					</section>
-
-					<a
-						href={npmHref!}
-						target="_blank"
-						rel="noopener noreferrer"
-						class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
-					>
-						View on npm
-					</a>
-				</>
+							<h2 class="mb-3 text-xl font-medium text-ink">2. Add to agentOS</h2>
+							<p class="mb-4 text-sm text-ink-soft">
+								Register the {entry.title} adapter as your VM's{" "}
+								<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">software: []</code>, then open a session with the{" "}
+								<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">{entry.agentId}</code>{" "}
+								agent id.
+							</p>
+							<InkPanel className="mb-6">
+								<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={exampleHtml} />
+							</InkPanel>
+						</>
+					) : (
+						<>
+							<h2 class="mb-3 text-xl font-medium text-ink">1. Install</h2>
+							<InstallRow command={installCommand!} class="mb-6" />
+						</>
+					)}
+				</section>
 			)}
 		</div>
 	</main>
 	<Footer client:visible />
 </Layout>
+
+<script>
+	// "Copy" buttons next to install commands: copy the command, then briefly
+	// swap the label to "Copied" and show the check icon so the action is
+	// visible. Toggling the label span (not the button's textContent) keeps the
+	// icons intact.
+	for (const button of document.querySelectorAll<HTMLButtonElement>(
+		"button[data-copy-command]",
+	)) {
+		const label = button.querySelector<HTMLElement>("[data-copy-label]");
+		const copyIcon = button.querySelector<SVGElement>('[data-copy-icon="copy"]');
+		const checkIcon = button.querySelector<SVGElement>('[data-copy-icon="check"]');
+		let timer: number | undefined;
+		button.addEventListener("click", async () => {
+			try {
+				await navigator.clipboard.writeText(button.dataset.copyCommand ?? "");
+				if (label) label.textContent = "Copied";
+				copyIcon?.classList.add("hidden");
+				checkIcon?.classList.remove("hidden");
+				window.clearTimeout(timer);
+				timer = window.setTimeout(() => {
+					if (label) label.textContent = "Copy";
+					checkIcon?.classList.add("hidden");
+					copyIcon?.classList.remove("hidden");
+				}, 1500);
+			} catch (error) {
+				console.error("copying the install command failed", error);
+			}
+		});
+	}
+</script>

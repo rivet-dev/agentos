@@ -562,4 +562,14 @@
       transform: translateX(0);
     }
   }
+
+  /* Idle terminal cursor in the agent session demo. */
+  @keyframes session-cursor-blink {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
 }
