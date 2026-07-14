@@ -28,7 +28,7 @@
 	},
 	"dependencies": {
 		"@agentclientprotocol/sdk": "^0.16.1",
-		"@agentos-software/codex-cli": "workspace:0.3.3"
+		"@agentos-software/codex-cli": "workspace:0.3.4"
 	},
 	"devDependencies": {
 		"@agentos-software/manifest": "workspace:*",
