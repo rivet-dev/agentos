@@ -223,7 +223,6 @@ export interface Kernel extends KernelInterface {
 	removePath(path: string, options?: { recursive?: boolean }): Promise<void>;
 	rename(oldPath: string, newPath: string): Promise<void>;
 	movePath(oldPath: string, newPath: string): Promise<void>;
-	readonly commands: ReadonlyMap<string, string>;
 	readonly processes: ReadonlyMap<number, ProcessInfo>;
 	readonly env: Record<string, string>;
 	readonly cwd: string;

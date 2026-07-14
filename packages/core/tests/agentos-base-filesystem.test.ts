@@ -145,10 +145,6 @@ describe("AgentOs base filesystem", () => {
 
 			expect(await vm.exists("/bin/fixture")).toBe(true);
 			expect(await vm.exists("/bin/fixture-alias")).toBe(true);
-
-			const kernel = getAgentOsKernel(vm);
-			expect(kernel.commands.get("fixture")).toBe("wasmvm");
-			expect(kernel.commands.get("fixture-alias")).toBe("wasmvm");
 		} finally {
 			rmSync(commandDir, { recursive: true, force: true });
 		}

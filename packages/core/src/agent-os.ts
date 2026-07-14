@@ -1424,9 +1424,6 @@ export class AgentOs {
 
 			try {
 				let env: Record<string, string> = {};
-				// Guest command paths. The sidecar owns the `/opt/agentos` projection and
-				// reports the exact projected package commands after initialization.
-				const commandGuestPaths = new Map<string, string>();
 				const { sidecarMounts } = collectSidecarMountPlan({
 					mounts: options?.mounts,
 				});
@@ -1488,10 +1485,6 @@ export class AgentOs {
 				});
 				env = { ...nativeVm.guestEnv };
 				createdNativeVm = nativeVm;
-				for (const command of nativeVm.projectedCommands) {
-					commandGuestPaths.set(command.name, command.guestPath);
-				}
-
 				rootBridge = new NativeSidecarKernelProxy({
 					client,
 					session,
@@ -1500,7 +1493,6 @@ export class AgentOs {
 					cwd: nativeVm.guestCwd,
 					localMounts,
 					sidecarMounts,
-					commandGuestPaths,
 					onDispose: cleanup,
 					// The native process is owned by the AgentOsSidecar handle and
 					// shared across VMs; disposing this VM must not kill the process.
@@ -2172,21 +2164,11 @@ export class AgentOs {
 		// appends the package to its live host-backed staging dir; the commands
 		// appear under `/opt/agentos/bin` immediately. The sidecar rejects a
 		// duplicate command, surfaced here as a thrown error.
-		const commands = await this._sidecarClient.linkPackage(
+		await this._sidecarClient.linkPackage(
 			this._sidecarSession,
 			this._sidecarVm,
 			{ path: ref.path },
 		);
-		if (this.#kernel instanceof NativeSidecarKernelProxy) {
-			this.#kernel.registerCommandGuestPaths(
-				new Map(
-					commands.projectedCommands.map((command) => [
-						command.name,
-						command.guestPath,
-					]),
-				),
-			);
-		}
 		// The client parses no manifests: an `agent` block in the linked package is
 		// picked up by the sidecar (it owns the projected `/opt/agentos` and answers
 		// createSession/listAgents from it). Nothing to record client-side.

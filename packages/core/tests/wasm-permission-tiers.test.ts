@@ -9,7 +9,7 @@ import type {
 } from "../src/sidecar/rpc-client.js";
 import { NativeSidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 
-describe("WASM command permission tiers", () => {
+describe("sidecar-authoritative command resolution", () => {
 	let proxy: NativeSidecarKernelProxy | null = null;
 	let fixtureRoot: string | null = null;
 
@@ -61,7 +61,7 @@ describe("WASM command permission tiers", () => {
 		return { client, execute };
 	}
 
-	test("sends unresolved WASM commands to the sidecar", async () => {
+	test("forwards commands without a client-side command registry", async () => {
 		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-wasm-tiers-"));
 		const { client, execute } = createMockClient();
 
@@ -76,9 +76,6 @@ describe("WASM command permission tiers", () => {
 			cwd: "/workspace",
 			localMounts: [],
 			sidecarMounts: [],
-			commandGuestPaths: new Map([
-				["grep", "/__secure_exec/commands/000/grep"],
-			]),
 		});
 
 		const proc = await proxy.spawn("grep", ["needle", "haystack.txt"], {
@@ -87,6 +84,8 @@ describe("WASM command permission tiers", () => {
 		const exitCode = await proc.wait();
 
 		expect(exitCode).toBe(0);
+		expect(proxy).not.toHaveProperty("commands");
+		expect(proxy).not.toHaveProperty("registerCommandGuestPaths");
 		expect(execute).toHaveBeenCalledTimes(1);
 		expect(execute.mock.calls[0]?.[2]).not.toHaveProperty("processId");
 		expect(execute.mock.calls[0]?.[2]).toMatchObject({
@@ -111,9 +110,6 @@ describe("WASM command permission tiers", () => {
 			cwd: "/workspace",
 			localMounts: [],
 			sidecarMounts: [],
-			commandGuestPaths: new Map([
-				["echo", "/__secure_exec/commands/000/echo"],
-			]),
 		});
 
 		await expect(

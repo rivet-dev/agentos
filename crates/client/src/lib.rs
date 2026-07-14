@@ -41,7 +41,7 @@ pub const SHELL_DISPOSE_TIMEOUT_MS: u64 = 5_000;
 // Public re-exports
 // ---------------------------------------------------------------------------
 
-pub use agent_os::{AgentOs, PackageDescriptor, ProjectedAgent};
+pub use agent_os::{AgentOs, PackageDescriptor};
 pub use error::{ClientError, ClientResult};
 pub use sidecar::{
     AgentOsSidecar, AgentOsSidecarDescription, AgentOsSidecarPlacement, SidecarState,

@@ -362,7 +362,6 @@ describe("native sidecar process client", () => {
 			cwd: "/workspace",
 			localMounts: [],
 			sidecarMounts: [],
-			commandGuestPaths: new Map(),
 		});
 
 		try {

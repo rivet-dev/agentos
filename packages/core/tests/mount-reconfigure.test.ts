@@ -63,7 +63,6 @@ function createProxy(client: unknown) {
 		cwd: "/work",
 		localMounts: [],
 		sidecarMounts: [],
-		commandGuestPaths: new Map<string, string>(),
 		ownsClient: true,
 	};
 	return new NativeSidecarKernelProxy(

@@ -83,7 +83,6 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 			cwd: "/workspace",
 			localMounts: [],
 			sidecarMounts: [],
-			commandGuestPaths: new Map(),
 		});
 
 		const proc = await proxy.spawn("node", ["/workspace/entry.mjs"], {
@@ -127,7 +126,6 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 			cwd: "/workspace",
 			localMounts: [],
 			sidecarMounts: [],
-			commandGuestPaths: new Map(),
 		});
 
 		await expect(
@@ -160,7 +158,6 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 			cwd: "/workspace",
 			localMounts: [],
 			sidecarMounts: [],
-			commandGuestPaths: new Map(),
 		});
 
 		const shell = await proxy.openShell({ cols: 100, rows: 40 });
@@ -200,7 +197,6 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 				cwd: "/workspace",
 				localMounts: [],
 				sidecarMounts: [],
-				commandGuestPaths: new Map(),
 			});
 
 			const options =

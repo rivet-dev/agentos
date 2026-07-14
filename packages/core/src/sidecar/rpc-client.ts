@@ -200,8 +200,6 @@ interface NativeSidecarKernelProxyOptions {
 	cwd: string;
 	localMounts: LocalCompatMount[];
 	sidecarMounts: SidecarMountDescriptor[];
-	commandGuestPaths: ReadonlyMap<string, string>;
-	onWasmCommandResolved?: (command: string) => void;
 	onDispose?: () => Promise<void>;
 	/**
 	 * Whether this proxy owns the underlying sidecar process. When VMs share one
@@ -216,7 +214,6 @@ interface NativeSidecarKernelProxyOptions {
 export class NativeSidecarKernelProxy {
 	readonly env: Record<string, string>;
 	readonly cwd: string;
-	readonly commands: ReadonlyMap<string, string>;
 	readonly vfs: VirtualFileSystem;
 	readonly processes = new Map<number, ProcessInfo>();
 
@@ -226,10 +223,6 @@ export class NativeSidecarKernelProxy {
 	private readonly ownsClient: boolean;
 	private readonly localMounts: LocalCompatMount[];
 	private readonly baseSidecarMounts: SidecarMountDescriptor[];
-	private readonly commandDrivers: Map<string, string>;
-	private readonly onWasmCommandResolved:
-		| ((command: string) => void)
-		| undefined;
 	private readonly onDispose: (() => Promise<void>) | undefined;
 	private readonly trackedProcesses = new Map<number, TrackedProcessEntry>();
 	private readonly trackedProcessesById = new Map<
@@ -265,10 +258,7 @@ export class NativeSidecarKernelProxy {
 				mount.plugin.id !== "js_bridge" ||
 				!localMountPaths.has(posixPath.normalize(mount.guestPath)),
 		);
-		this.commandDrivers = buildCommandMap(options.commandGuestPaths);
-		this.onWasmCommandResolved = options.onWasmCommandResolved;
 		this.onDispose = options.onDispose;
-		this.commands = this.commandDrivers;
 		this.vfs = this.createFilesystemView();
 		this.rootView = this.vfs;
 		this.eventPump = this.runEventPump();
@@ -283,14 +273,6 @@ export class NativeSidecarKernelProxy {
 	hostFilesystemForMount(mountId: string): VirtualFileSystem | undefined {
 		const normalized = posixPath.normalize(mountId);
 		return this.localMounts.find((mount) => mount.path === normalized)?.fs;
-	}
-
-	registerCommandGuestPaths(
-		commandGuestPaths: ReadonlyMap<string, string>,
-	): void {
-		for (const name of commandGuestPaths.keys()) {
-			this.commandDrivers.set(name, "wasmvm");
-		}
 	}
 
 	async dispose(): Promise<void> {
@@ -458,10 +440,6 @@ export class NativeSidecarKernelProxy {
 				stderr: decodeUtf8(completion.stderr),
 			};
 		};
-
-		if (this.commands.get(command) === "wasmvm") {
-			this.onWasmCommandResolved?.(command);
-		}
 
 		const proc = (await this.spawn(command, [...args], {
 			...options,
@@ -1059,24 +1037,6 @@ export class NativeSidecarKernelProxy {
 		await this.waitForMountReconfigure();
 		return this.client.readFile(this.session, this.vm, path);
 	}
-}
-
-function buildCommandMap(
-	commandGuestPaths: ReadonlyMap<string, string>,
-): Map<string, string> {
-	const commands = new Map<string, string>([
-		["node", "node"],
-		["npm", "node"],
-		["npx", "node"],
-		// `python` / `python3` are served by the embedded Pyodide runtime,
-		// mirroring how `node` is served by the embedded V8 runtime.
-		["python", "python"],
-		["python3", "python"],
-	]);
-	for (const name of commandGuestPaths.keys()) {
-		commands.set(name, "wasmvm");
-	}
-	return commands;
 }
 
 function isAlreadyExistsError(error: unknown): boolean {

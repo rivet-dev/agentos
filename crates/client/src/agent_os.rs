@@ -118,13 +118,6 @@ pub struct PackageDescriptor {
     pub path: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectedAgent {
-    pub id: String,
-    pub acp_entrypoint: String,
-    pub adapter_entrypoint: String,
-}
-
 /// The high-level client. Cheaply cloneable via `Arc`.
 #[derive(Clone)]
 pub struct AgentOs {
@@ -137,11 +130,6 @@ pub(crate) struct AgentOsInner {
     pub(crate) connection_id: String,
     pub(crate) session_id: String,
     pub(crate) vm_id: String,
-    /// Projected command names and guest entrypoints reported by the sidecar.
-    pub(crate) projected_commands: parking_lot::Mutex<BTreeMap<String, String>>,
-    /// Projected agents reported by the sidecar.
-    pub(crate) projected_agents: parking_lot::Mutex<Vec<ProjectedAgent>>,
-
     // Process registries.
     pub(crate) process_registry_lock: parking_lot::Mutex<()>,
     pub(crate) process_route_retention: usize,
@@ -357,13 +345,6 @@ impl AgentOs {
             }
         };
         let vm_id = initialized.vm_id;
-        let projected_commands = initialized
-            .projected_commands
-            .into_iter()
-            .map(|command| (command.name, command.guest_path))
-            .collect();
-        let projected_agents = projected_agents_from_wire(initialized.agents);
-
         // Tool callback implementations are host-only state but are not invoked during metadata
         // registration, so install them only after the sidecar commits initialization.
         if !tool_map.is_empty() {
@@ -384,8 +365,6 @@ impl AgentOs {
             connection_id,
             session_id,
             vm_id,
-            projected_commands: parking_lot::Mutex::new(projected_commands),
-            projected_agents: parking_lot::Mutex::new(projected_agents),
             process_registry_lock: parking_lot::Mutex::new(()),
             process_route_retention,
             next_process_terminal_sequence: AtomicU64::new(1),
@@ -441,17 +420,7 @@ impl AgentOs {
             )
             .await?;
         match response {
-            wire::ResponsePayload::PackageLinkedResponse(linked) => {
-                let mut guard = inner.projected_commands.lock();
-                for command in linked.projected_commands {
-                    guard.insert(command.name, command.guest_path);
-                }
-                register_projected_agents(
-                    &inner.projected_agents,
-                    projected_agents_from_wire(linked.agents),
-                );
-                Ok(())
-            }
+            wire::ResponsePayload::PackageLinkedResponse(_) => Ok(()),
             wire::ResponsePayload::RejectedResponse(rejected) => Err(rejected_to_error(rejected)),
             other => Err(ClientError::Sidecar(format!(
                 "unexpected link_package response: {other:?}"
@@ -607,10 +576,6 @@ impl AgentOs {
     /// `AgentOs.sidecar` (e.g. `describe()` reports `active_vm_count` across VMs sharing a pool).
     pub fn sidecar(&self) -> Arc<AgentOsSidecar> {
         self.inner.sidecar.clone()
-    }
-
-    pub fn projected_agents(&self) -> Vec<ProjectedAgent> {
-        self.inner.projected_agents.lock().clone()
     }
 }
 
@@ -1901,28 +1866,6 @@ fn build_package_descriptors(config: &AgentOsConfig) -> Vec<wire::PackageDescrip
             path: package.path.clone(),
         })
         .collect()
-}
-
-fn projected_agents_from_wire(agents: Vec<wire::AgentosProjectedAgent>) -> Vec<ProjectedAgent> {
-    agents
-        .into_iter()
-        .map(|agent| ProjectedAgent {
-            id: agent.id,
-            acp_entrypoint: agent.acp_entrypoint,
-            adapter_entrypoint: agent.adapter_entrypoint,
-        })
-        .collect()
-}
-
-fn register_projected_agents(
-    projected_agents: &parking_lot::Mutex<Vec<ProjectedAgent>>,
-    agents: Vec<ProjectedAgent>,
-) {
-    let mut guard = projected_agents.lock();
-    for agent in agents {
-        guard.retain(|existing| existing.id != agent.id);
-        guard.push(agent);
-    }
 }
 
 fn serialize_mounts(config: &AgentOsConfig) -> Result<Vec<wire::MountDescriptor>, ClientError> {
