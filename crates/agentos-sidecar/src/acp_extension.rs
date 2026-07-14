@@ -38,6 +38,7 @@ const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
 const SESSION_NEW_TIMEOUT: Duration = Duration::from_secs(30);
 const SESSION_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 const PERMISSION_CALLBACK_TIMEOUT: Duration = Duration::from_secs(120);
+const PERMISSION_CALLBACK_CLEANUP_GRACE: Duration = Duration::from_secs(5);
 // While an ACP request is in flight the stdio loop is inside the extension
 // dispatch, so this wait loop becomes the cooperative VM I/O pump. Keep it at
 // the same cadence as secure-exec's outer event pump so adapter fetches and
@@ -2511,16 +2512,14 @@ async fn handle_inbound_request(
                         "failed to serialize ACP permission params: {error}"
                     ))
                 })?,
-                timeout_ms: u64::try_from(PERMISSION_CALLBACK_TIMEOUT.as_millis())
-                    .expect("permission callback timeout must fit u64 milliseconds"),
+                cleanup_after_ms: u64::try_from(
+                    (PERMISSION_CALLBACK_TIMEOUT + PERMISSION_CALLBACK_CLEANUP_GRACE).as_millis(),
+                )
+                .expect("permission callback cleanup deadline must fit u64 milliseconds"),
             });
-            let response =
-                ctx.invoke_callback(encode_callback(callback)?, PERMISSION_CALLBACK_TIMEOUT)?;
-            let response: AcpCallbackResponse =
-                serde_bare::from_slice(&response).map_err(|error| {
-                    SidecarError::InvalidState(format!("invalid ACP callback response: {error}"))
-                })?;
-            let reply = permission_callback_reply(response);
+            let reply = permission_callback_reply_from_result(
+                ctx.invoke_callback(encode_callback(callback)?, PERMISSION_CALLBACK_TIMEOUT),
+            )?;
             json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -3361,6 +3360,23 @@ fn permission_callback_reply(response: AcpCallbackResponse) -> String {
     }
 }
 
+fn permission_callback_reply_from_result(
+    response: Result<Vec<u8>, SidecarError>,
+) -> Result<String, SidecarError> {
+    let response = match response {
+        Ok(response) => response,
+        Err(SidecarError::Timeout(message)) => {
+            tracing::warn!(%message, "ACP permission callback timed out; applying sidecar default");
+            return Ok(String::from("reject"));
+        }
+        Err(error) => return Err(error),
+    };
+    let response: AcpCallbackResponse = serde_bare::from_slice(&response).map_err(|error| {
+        SidecarError::InvalidState(format!("invalid ACP callback response: {error}"))
+    })?;
+    Ok(permission_callback_reply(response))
+}
+
 fn resolve_permission_option_id(params: &Value, reply: &str) -> Option<String> {
     let targets = match reply {
         "always" | "allow_always" => (&["always", "allow_always"][..], "allow_always"),
@@ -4085,6 +4101,7 @@ fn error_code(error: &SidecarError) -> String {
         SidecarError::Unauthorized(_) => "unauthorized",
         SidecarError::Unsupported(_) => "unsupported",
         SidecarError::FrameTooLarge(_) => "frame_too_large",
+        SidecarError::Timeout(_) => "timeout",
         SidecarError::Kernel(_) => "kernel",
         SidecarError::Plugin(_) => "plugin",
         SidecarError::Execution(_) => "execution",
@@ -4124,6 +4141,23 @@ mod tests {
             )),
             "once"
         );
+    }
+
+    #[test]
+    fn only_callback_timeout_uses_sidecar_permission_default() {
+        assert_eq!(
+            permission_callback_reply_from_result(Err(SidecarError::Timeout(String::from(
+                "host permission callback deadline elapsed",
+            ))))
+            .expect("timeout uses the sidecar default"),
+            "reject"
+        );
+        assert!(matches!(
+            permission_callback_reply_from_result(Err(SidecarError::Io(String::from(
+                "host callback transport failed",
+            )))),
+            Err(SidecarError::Io(message)) if message == "host callback transport failed"
+        ));
     }
 
     #[test]

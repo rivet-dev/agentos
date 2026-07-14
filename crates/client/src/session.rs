@@ -32,21 +32,18 @@ use crate::json_rpc::{JsonRpcId, JsonRpcNotification, JsonRpcResponse};
 use crate::stream::Subscription;
 use crate::stream::{RoutedStreamEvent, StreamRouteFailure};
 
-/// ACP method name for legacy permission requests/responses.
-const LEGACY_PERMISSION_METHOD: &str = "request/permission";
-
 pub(crate) struct PermissionRouteRequest {
     pub(crate) session_id: String,
     pub(crate) permission_id: String,
     pub(crate) params: Value,
-    pub(crate) timeout_ms: u64,
+    pub(crate) cleanup_after_ms: u64,
 }
 
 #[cfg(test)]
 mod stream_tests {
     use super::{
         broadcast_result_stream, failed_result_stream, send_bridged_permission_reply,
-        PermissionReply,
+        wait_for_permission_reply, PendingPermissionOutcome, PermissionReply,
     };
     use crate::error::ClientError;
     use crate::stream::{RoutedStreamEvent, StreamRouteFailure};
@@ -115,10 +112,95 @@ mod stream_tests {
             "permission-cleared"
         ));
     }
+
+    #[tokio::test]
+    async fn permission_reply_wait_uses_only_the_later_cleanup_deadline() {
+        let (_sender, receiver) = tokio::sync::oneshot::channel();
+        let (retained_responder, responder_receiver) = super::PermissionResponder::new();
+        let mut pending = Box::pin(wait_for_permission_reply(receiver, responder_receiver, 25));
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(5), &mut pending)
+                .await
+                .is_err(),
+            "the client must retain the route before the supplied cleanup deadline"
+        );
+        assert!(matches!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), pending)
+                .await
+                .expect("cleanup deadline must remain bounded"),
+            PendingPermissionOutcome::CleanupElapsed
+        ));
+        assert!(
+            retained_responder
+                .inner
+                .lock()
+                .as_ref()
+                .is_some_and(tokio::sync::oneshot::Sender::is_closed),
+            "cleanup must drop the responder receiver instead of leaving a bridge task alive"
+        );
+    }
+
+    #[tokio::test]
+    async fn permission_responder_reply_is_joined_without_a_detached_task() {
+        let (pending_sender, pending_receiver) = tokio::sync::oneshot::channel();
+        let (responder, responder_receiver) = super::PermissionResponder::new();
+        responder.respond(PermissionReply::Once);
+
+        let PendingPermissionOutcome::ResponderReply {
+            reply,
+            pending_reply,
+        } = wait_for_permission_reply(pending_receiver, responder_receiver, 1_000).await
+        else {
+            panic!("responder must win the permission reply wait");
+        };
+        assert_eq!(reply, PermissionReply::Once);
+
+        pending_sender
+            .send(reply)
+            .expect("pending route receiver remains available to join the reply");
+        assert_eq!(
+            pending_reply.await.expect("joined pending reply"),
+            PermissionReply::Once
+        );
+    }
 }
 
 pub(crate) struct PermissionRouteResult {
     pub(crate) reply: Option<String>,
+}
+
+enum PendingPermissionOutcome {
+    Reply(Option<PermissionReply>),
+    ResponderReply {
+        reply: PermissionReply,
+        pending_reply: tokio::sync::oneshot::Receiver<PermissionReply>,
+    },
+    CleanupElapsed,
+}
+
+async fn wait_for_permission_reply(
+    mut pending_reply: tokio::sync::oneshot::Receiver<PermissionReply>,
+    responder_reply: tokio::sync::oneshot::Receiver<PermissionReply>,
+    cleanup_after_ms: u64,
+) -> PendingPermissionOutcome {
+    let responder_reply = async move {
+        match responder_reply.await {
+            Ok(reply) => reply,
+            Err(_) => futures::future::pending::<PermissionReply>().await,
+        }
+    };
+    tokio::pin!(responder_reply);
+    let cleanup = tokio::time::sleep(std::time::Duration::from_millis(cleanup_after_ms));
+    tokio::pin!(cleanup);
+    tokio::select! {
+        reply = &mut pending_reply => PendingPermissionOutcome::Reply(reply.ok()),
+        reply = &mut responder_reply => PendingPermissionOutcome::ResponderReply {
+            reply,
+            pending_reply,
+        },
+        _ = &mut cleanup => PendingPermissionOutcome::CleanupElapsed,
+    }
 }
 
 struct SessionCreatedResponse {
@@ -513,8 +595,8 @@ impl PermissionResponder {
 /// Requests are delivered by the sidecar permission-request path
 /// ([`AgentOs::deliver_sidecar_permission_request`]). The subscriber resolves the request via
 /// [`PermissionResponder::respond`] or [`AgentOs::respond_permission`]; the
-/// sidecar-supplied timeout; an absent host reply is returned to the ACP sidecar,
-/// which owns the default permission outcome.
+/// sidecar owns the permission deadline/default and supplies only a later host-route cleanup
+/// deadline to keep client bookkeeping bounded.
 #[derive(Clone)]
 pub struct PermissionRequest {
     pub permission_id: String,
@@ -1065,8 +1147,8 @@ impl AgentOs {
     }
 
     /// Respond to a permission request. If a pending reply slot exists, resolves it and returns a
-    /// synthetic `{ via: "sidecar-request" }`; else the legacy `request/permission` RPC. Mirrors
-    /// `respondPermission`.
+    /// synthetic `{ via: "sidecar-request" }`. Replies to unknown or expired routes fail instead
+    /// of becoming a separate legacy RPC. Mirrors `respondPermission`.
     pub async fn respond_permission(
         &self,
         session_id: &str,
@@ -1093,13 +1175,10 @@ impl AgentOs {
             });
         }
 
-        Ok(self
-            .send_session_request(
-                session_id,
-                LEGACY_PERMISSION_METHOD,
-                Some(json!({ "permissionId": permission_id, "reply": reply })),
-            )
-            .await?)
+        Err(ClientError::Sidecar(format!(
+            "permission request is not pending: {permission_id}"
+        ))
+        .into())
     }
 
     fn take_pending_permission_sender(
@@ -1241,11 +1320,10 @@ impl AgentOs {
     }
 
     /// Subscribe to permission requests raised by the session's guest agent. Requests originate
-    /// from the sidecar `permission_request` callback (the sidecar normalizes both the legacy
-    /// `request/permission` and ACP `session/request_permission` method names before invoking the
-    /// host). With no subscribers the client returns no explicit answer; subscribers reply via
-    /// the carried [`PermissionResponder`] or [`AgentOs::respond_permission`], bounded by the
-    /// sidecar-supplied timeout. The ACP sidecar owns the missing-answer default.
+    /// from the typed sidecar permission callback. With no subscribers the client returns no
+    /// explicit answer; subscribers reply via the carried [`PermissionResponder`] or
+    /// [`AgentOs::respond_permission`]. The ACP sidecar owns the decision deadline and
+    /// missing-answer default; its later cleanup deadline only bounds this host route.
     pub fn on_permission_request(
         &self,
         session_id: &str,
@@ -1284,8 +1362,8 @@ impl AgentOs {
     /// - unknown session -> `error: "Session not found: <id>"`
     /// - no subscribers -> no reply, so the ACP sidecar applies its default
     /// - otherwise registers the `pending_permission_replies` slot, delivers the request, and waits
-    ///   up to the sidecar-supplied timeout for `respond_permission` / the responder; timeout
-    ///   removes the slot and returns `error: "Timed out waiting for permission reply: <id>"`.
+    ///   until `respond_permission`, the responder, or the sidecar-supplied post-decision cleanup
+    ///   deadline closes the host route. The sidecar alone owns the earlier timeout and default.
     pub(crate) async fn deliver_sidecar_permission_request(
         &self,
         request: PermissionRouteRequest,
@@ -1294,7 +1372,7 @@ impl AgentOs {
             session_id,
             permission_id,
             params,
-            timeout_ms,
+            cleanup_after_ms,
         } = request;
 
         let (slot_tx, slot_rx) = tokio::sync::oneshot::channel::<PermissionReply>();
@@ -1338,35 +1416,38 @@ impl AgentOs {
             }
         }
 
-        // Bridge the subscriber's `responder.respond(..)` into the same reply slot.
-        let this = self.clone();
-        let bridge_session_id = session_id.clone();
-        let bridge_permission_id = permission_id.clone();
-        tokio::spawn(async move {
-            if let Ok(reply) = responder_rx.await {
-                let sender =
-                    this.take_pending_permission_sender(&bridge_session_id, &bridge_permission_id);
-                send_bridged_permission_reply(sender, reply, &bridge_permission_id);
-            }
-        });
-
-        let timeout = tokio::time::sleep(std::time::Duration::from_millis(timeout_ms));
-        tokio::pin!(timeout);
-        tokio::select! {
-            reply = slot_rx => match reply {
-                Ok(reply) => PermissionRouteResult {
+        match wait_for_permission_reply(slot_rx, responder_rx, cleanup_after_ms).await {
+            PendingPermissionOutcome::Reply(reply) => match reply {
+                Some(reply) => PermissionRouteResult {
                     reply: Some(permission_reply_wire(reply).to_string()),
                 },
                 // The slot sender dropped without an explicit host answer.
-                Err(_) => PermissionRouteResult { reply: None },
+                None => PermissionRouteResult { reply: None },
             },
-            _ = &mut timeout => {
+            PendingPermissionOutcome::ResponderReply {
+                reply,
+                pending_reply,
+            } => {
+                let sender = self.take_pending_permission_sender(&session_id, &permission_id);
+                if send_bridged_permission_reply(sender, reply, &permission_id) {
+                    PermissionRouteResult {
+                        reply: Some(permission_reply_wire(reply).to_string()),
+                    }
+                } else {
+                    PermissionRouteResult {
+                        reply: pending_reply
+                            .await
+                            .ok()
+                            .map(permission_reply_wire)
+                            .map(str::to_string),
+                    }
+                }
+            }
+            PendingPermissionOutcome::CleanupElapsed => {
                 let _ = self.require_session(&session_id, |entry| {
                     let _ = entry.pending_permission_replies.remove(&permission_id);
                 });
-                PermissionRouteResult {
-                    reply: None,
-                }
+                PermissionRouteResult { reply: None }
             }
         }
     }

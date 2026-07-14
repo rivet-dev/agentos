@@ -226,7 +226,10 @@ type AcpPermissionCallback struct {
   sessionId: str
   permissionId: str
   params: JsonUtf8
-  timeoutMs: u64
+  # Sidecar-owned host bookkeeping deadline. This is strictly later than the
+  # sidecar's authoritative permission decision timeout; clients must not use
+  # it to choose the permission default.
+  cleanupAfterMs: u64
 }
 
 type AcpHostRequestCallback struct {

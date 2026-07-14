@@ -1218,7 +1218,7 @@ async fn handle_acp_ext_callback(
                     session_id: callback.session_id,
                     permission_id: callback.permission_id.clone(),
                     params,
-                    timeout_ms: callback.timeout_ms,
+                    cleanup_after_ms: callback.cleanup_after_ms,
                 },
             )
             .await;
@@ -1878,7 +1878,7 @@ mod tests {
                 session_id: String::from("session-1"),
                 permission_id: String::from("permission-1"),
                 params: String::from("not-json"),
-                timeout_ms: 120_000,
+                cleanup_after_ms: 125_000,
             },
         );
         let payload = serde_bare::to_vec(&callback).expect("encode ACP callback");

@@ -19,7 +19,7 @@ import { AgentOs } from "../src/index.js";
 interface PendingReply {
 	resolve: (reply: PermissionReply) => void;
 	reject: (error: Error) => void;
-	timer: ReturnType<typeof setTimeout>;
+	cleanupTimer: ReturnType<typeof setTimeout>;
 }
 
 function injectSession(vm: AgentOs, sessionId: string): void {
@@ -60,14 +60,14 @@ function addPendingPermission(
 		throw new Error(`no session ${sessionId}`);
 	}
 	return new Promise<PermissionReply>((resolve, reject) => {
-		const timer = setTimeout(() => {
+		const cleanupTimer = setTimeout(() => {
 			session.pendingPermissionReplies.delete(permissionId);
 			reject(new Error(`timed out: ${sessionId}/${permissionId}`));
 		}, 5_000);
 		session.pendingPermissionReplies.set(permissionId, {
 			resolve,
 			reject,
-			timer,
+			cleanupTimer,
 		});
 	});
 }
@@ -125,7 +125,7 @@ describe("cross-session permission-reply confusion (J.4 / F.3)", () => {
 		// Clean up B's still-pending timer so the test exits promptly.
 		const bEntry = bMap?.get("1");
 		if (bEntry) {
-			clearTimeout(bEntry.timer);
+			clearTimeout(bEntry.cleanupTimer);
 			bEntry.resolve("reject");
 		}
 	});

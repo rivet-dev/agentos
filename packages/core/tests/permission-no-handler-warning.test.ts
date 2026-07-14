@@ -13,7 +13,7 @@ import { AgentOs } from "../src/index.js";
 interface PendingReply {
 	resolve: (reply: PermissionReply) => void;
 	reject: (error: Error) => void;
-	timer: ReturnType<typeof setTimeout>;
+	cleanupTimer: ReturnType<typeof setTimeout>;
 }
 
 function injectSession(vm: AgentOs, sessionId: string): void {
@@ -49,7 +49,7 @@ function callPermissionCallback(
 				sessionId: string,
 				permissionId: string,
 				params: Record<string, unknown>,
-				timeoutMs: number,
+				cleanupAfterMs: number,
 			) => Promise<PermissionReply | undefined>;
 		}
 	)._handleAcpPermissionCallback(sessionId, permissionId, params, 120_000);

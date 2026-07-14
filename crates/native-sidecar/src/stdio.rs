@@ -1494,28 +1494,28 @@ impl SidecarRequestTransport for FrameSidecarRequestTransport {
             match self.writer.try_send(frame) {
                 Ok(()) => break Ok(()),
                 Err(mpsc::TrySendError::Disconnected(_)) => {
-                    break Err(String::from("stdout writer disconnected"));
+                    break Err(SidecarError::Io(String::from(
+                        "failed to write sidecar request frame: stdout writer disconnected",
+                    )));
                 }
                 Err(mpsc::TrySendError::Full(returned)) => {
                     if Instant::now() >= write_deadline {
-                        break Err(format!(
+                        break Err(SidecarError::Timeout(format!(
                             "timed out writing sidecar request frame after {}s",
                             timeout.as_secs()
-                        ));
+                        )));
                     }
                     frame = returned;
                     thread::sleep(Duration::from_millis(1));
                 }
             }
         };
-        if let Err(message) = write_result {
+        if let Err(error) = write_result {
             let _ = self
                 .pending
                 .lock()
                 .map(|mut pending| pending.remove(&request.request_id));
-            return Err(SidecarError::Io(format!(
-                "failed to write sidecar request frame: {message}"
-            )));
+            return Err(error);
         }
         match receiver.recv_timeout(timeout) {
             Ok(response) => {
@@ -1526,7 +1526,7 @@ impl SidecarRequestTransport for FrameSidecarRequestTransport {
                     .pending
                     .lock()
                     .map(|mut pending| pending.remove(&request.request_id));
-                Err(SidecarError::Io(format!(
+                Err(SidecarError::Timeout(format!(
                     "timed out waiting for sidecar response after {}s",
                     timeout.as_secs()
                 )))

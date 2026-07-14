@@ -117,6 +117,7 @@ pub enum SidecarError {
     Unauthorized(String),
     Unsupported(String),
     FrameTooLarge(String),
+    Timeout(String),
     Kernel(String),
     Plugin(String),
     Execution(String),
@@ -137,6 +138,7 @@ impl fmt::Display for SidecarError {
             | Self::Unauthorized(message)
             | Self::Unsupported(message)
             | Self::FrameTooLarge(message)
+            | Self::Timeout(message)
             | Self::Kernel(message)
             | Self::Plugin(message)
             | Self::Execution(message)

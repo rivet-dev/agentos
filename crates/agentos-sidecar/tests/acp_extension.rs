@@ -225,7 +225,11 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
                 AcpCallback::AcpPermissionCallback(callback) => {
                     assert_eq!(callback.session_id, "adapter-session");
                     assert_eq!(callback.permission_id, "perm-1");
-                    assert_eq!(callback.timeout_ms, 120_000);
+                    assert_eq!(callback.cleanup_after_ms, 125_000);
+                    assert!(
+                        callback.cleanup_after_ms > 120_000,
+                        "client cleanup must occur after the sidecar permission deadline"
+                    );
                     AcpCallbackResponse::AcpPermissionCallbackResponse(
                         AcpPermissionCallbackResponse {
                             permission_id: callback.permission_id,
@@ -939,7 +943,11 @@ fn install_default_acp_callback_handler(sidecar: &mut NativeSidecar<RecordingBri
                 serde_bare::from_slice(&envelope.payload).expect("decode ACP callback");
             let response = match callback {
                 AcpCallback::AcpPermissionCallback(callback) => {
-                    assert_eq!(callback.timeout_ms, 120_000);
+                    assert_eq!(callback.cleanup_after_ms, 125_000);
+                    assert!(
+                        callback.cleanup_after_ms > 120_000,
+                        "client cleanup must occur after the sidecar permission deadline"
+                    );
                     AcpCallbackResponse::AcpPermissionCallbackResponse(
                         AcpPermissionCallbackResponse {
                             permission_id: callback.permission_id,

@@ -71,7 +71,7 @@ below.
 | 25 | TypeScript parses Zod host-tool input twice. | Parse exactly once while keeping Zod tool construction client-side. | P1 | High |
 | 26 | TypeScript flattens typed sidecar rejection codes into message-only errors. | Export a structured error preserving code, message, and protocol details. | P1 | High |
 | 27 | TypeScript silently discards explicit software inputs it cannot serialize. | Reject structurally invalid client input; leave package existence/format/projection validation in the sidecar. | P1 | High |
-| 28 | TypeScript races a client permission timer against the adapter/sidecar timeout. | Remove the local policy timer and retain callback routing only. | P1 | High |
+| 28 | TypeScript and Rust use the sidecar's permission decision deadline as a client timer, so a client can race the authoritative default and a late reply can fall through a legacy request path. | Make the sidecar apply its default on a typed timeout; give clients only a strictly later route-cleanup deadline and reject replies to expired routes. | P1 | High |
 | 29 | TypeScript retains every exited `ManagedProcess` for the VM lifetime. | Delete completed routes or define an explicit bounded host-route policy. | P1 | Medium |
 | 30 | Rust opens a wire session per VM and suppresses `DisposeVm` failures. | Add/reuse explicit session-close semantics, propagate disposal failure, and keep retryability. | P1 | High |
 | 31 | Clients cache projected package/agent/command state instead of reading live `/opt/agentos`. | Remove caches and query authoritative live sidecar state. | P1 | High |
@@ -95,7 +95,7 @@ below.
 | 49 | Core declares unused heavy dependencies and an orphaned declaration. | Remove them and regenerate locks. | P2 | High |
 | 50 | A deprecated string package descriptor remains exported and used by a transpile-only test. | Remove it and typecheck the public API test. | P2 | High |
 | 51 | Active guidance describes obsolete manifests, runtime architecture, permission defaults, and commands. | Align CLAUDE/docs with current architecture and verify them. | P2 | High |
-| 52 | Both clients interpret legacy ACP permission methods even though support is adapter-specific. | Move compatibility into the native adapter and leave typed routing in clients. | P2 | Medium |
+| 52 | TypeScript still interprets legacy ACP permission notifications even though replies now require a typed callback route and adapter support is adapter-specific. | Move method compatibility into the native adapter and leave only typed callback routing in clients. | P2 | Medium |
 | 53 | TypeScript handles an ACP compatibility event shape with no producer. | Remove the dead branch. | P3 | High |
 | 54 | TypeScript swallows listener errors and Rust drops session/MCP conversion errors. | Propagate failures or emit structured host-visible warnings. | P3 | High |
 | 55 | The README hand-maintains a stale public API inventory. | Generate it from declarations or remove it. | P3 | High |
@@ -110,6 +110,8 @@ below.
 | 64 | TypeScript and Rust cron clients parse error codes/message markers and replace sidecar rejections with client-owned schedule error classes; native and browser sidecars do not yet emit one stable semantic code set. | Define invalid/past-schedule codes once in shared sidecar cron handling, pass them through both adapters, and delete client-side message parsing/remapping. | P1 | High |
 | 65 | Several TypeScript cleanup paths stringify multiple errors into one new `Error`, discarding structured codes and protocol details. | Throw `AggregateError` with the original errors and a contextual message so every typed cause remains inspectable. | P2 | High |
 | 66 | The shell client probes package files/manifests, substitutes a local build directory, and silently skips missing, unreadable, or command-less packages before VM creation. | Forward the selected registry package refs unchanged and let sidecar package loading return the real typed Linux/package error; remove all development fallback and skip logic. | P1 | High |
+| 67 | A synchronous TypeScript permission-handler exception leaves its pending reply route/timer alive until delayed cleanup and prevents later handlers from running. | Remove the route immediately, clear its timer, and surface the handler failure without selecting a permission result in the client. | P1 | High |
+| 68 | The callback protocol cannot tell a client that the authoritative sidecar wait expired, requiring a conservative cleanup grace and allowing an ignored late extension result. | Add explicit callback cancellation or expiry acknowledgement so the sidecar terminates its wait and the client route exactly once. | P2 | Medium |
 
 ## Work items
 
@@ -142,7 +144,7 @@ below.
 | 25 | done | P1 / high confidence | TypeScript now performs one authoritative Zod `safeParse` for a host callback and passes only that parsed/stripped/transformed value directly to `tool.execute`. The redundant `executeHostTool` parser is deleted. Zod construction and validation remain client-owned as required; support for registering effect/refinement schemas is separately tracked as item 61. |
 | 26 | done | P1 / high confidence | Every normal sidecar rejection now becomes the exported `SidecarRequestRejected`, preserving the exact `.code` and message plus request ID, ownership, and the original response frame at the one shared protocol boundary. Runtime-core root, `sidecar-client`, and core root export the class; Rust already preserves normal rejection codes in `ClientError::Kernel`. Anonymous process/ACP errors, cron policy remapping, and cleanup flattening are separately tracked as items 63–65. |
 | 27 | done | P1 / high confidence | Core and actor package-manager boundaries now accept only serializable path strings, `{ packagePath: string }`, and one-level meta-package arrays; malformed explicit entries fail before startup instead of disappearing. Normalizers are total and retain only exact-path deduplication. TypeScript does not inspect paths, files, package formats, manifests, commands, or projection; all semantic validation remains sidecar-owned. Rust already forwards every typed `PackageRef` without filtering. |
-| 28 | pending | P1 / high confidence | TypeScript races a client-owned ACP permission timeout against the sidecar-owned timeout/default. Remove the client policy timer and retain only callback routing. |
+| 28 | done | P1 / high confidence | The native ACP sidecar owns the 120-second permission decision deadline and maps only a typed callback timeout to its default reject outcome; other transport failures still propagate. The protocol gives TypeScript/Rust only a strictly later 125-second host-route cleanup bound. Both clients preserve omission, remove every pending route/responder at cleanup, and reject late replies instead of issuing legacy RPCs. |
 | 29 | pending | P1 / medium confidence | TypeScript retains every exited `ManagedProcess` for the VM lifetime, creating an unbounded duplicate of sidecar-owned history. Delete completed routing state or apply an explicit bounded route policy if late host correlation requires retention. |
 | 30 | pending | P1 / high confidence | Rust opens a wire session per VM without a close-session operation and suppresses `DisposeVm` failures. Reuse a connection session or add explicit close semantics, propagate failure, and keep shutdown retryable. |
 | 31 | pending | P1 / high confidence | Clients cache projected package, agent, and command state captured during configuration, contrary to live `/opt/agentos` authority. Remove caches and query live sidecar state. |
@@ -166,7 +168,7 @@ below.
 | 49 | pending | P2 / high confidence | Core declares unused heavy production dependencies and an orphaned `long-timeout` declaration. Remove them and regenerate locks. |
 | 50 | pending | P2 / high confidence | The deprecated string package descriptor remains exported and a transpile-only test calls `defineSoftware(string)` despite the supported `{ packagePath }` type. Remove the legacy surface and typecheck the public API test. |
 | 51 | pending | P2 / high confidence | Active CLAUDE/docs files describe obsolete JSON package manifests, an in-process runtime, contradictory permission defaults, and a deleted registry command. Align all guidance with the current architecture. |
-| 52 | pending | P2 / medium confidence | Legacy ACP permission-method shims remain in both clients even though support varies by native adapter. Move compatibility into the adapter/sidecar and leave typed routing in clients. |
+| 52 | pending | P2 / medium confidence | TypeScript still invokes host handlers for legacy ACP permission notifications, but those notifications have no typed pending reply route and cannot be answered after item 28. Remove the dead client interpretation and keep adapter-specific method compatibility in the adapter/sidecar. |
 | 53 | pending | P3 / high confidence | TypeScript handles a structured `acp.session_event` compatibility shape with no current producer. Remove the dead branch. |
 | 54 | pending | P3 / high confidence | TypeScript swallows event-listener exceptions and Rust silently drops some session/MCP conversion errors. Propagate failures or emit structured host-visible warnings. |
 | 55 | pending | P3 / high confidence | The core README hand-maintains an API inventory containing removed options, nonexistent types, and obsolete fields. Generate it from declarations or remove it. |
@@ -181,6 +183,8 @@ below.
 | 64 | pending | P1 / high confidence | Cron schedule failures are interpreted independently by TypeScript and Rust through code/message substring checks, while native and browser adapters emit divergent generic codes. Establish `invalid_schedule` and `past_schedule` in shared sidecar cron behavior, then remove client normalization and legacy schedule-error policy. |
 | 65 | pending | P2 / high confidence | Sidecar-session, lease, shared-sidecar, and injected-transport cleanup paths flatten multiple typed failures into joined message text. Preserve each original error in `AggregateError`, retaining stable codes and protocol context. |
 | 66 | pending | P1 / high confidence | `packages/shell/src/main.ts` performs host `existsSync`/`statSync`/manifest reads, replaces missing package refs with one local native command directory, and skips packages on failure. Delete those probes/fallbacks and forward the statically selected package refs so the sidecar remains the only semantic validator. |
+| 67 | pending | P1 / high confidence | A synchronous TypeScript permission-handler exception rejects the callback but leaves its pending reply entry and timer alive until delayed cleanup, and later handlers are not invoked. Remove the route immediately, clear its timer, and surface the handler failure without letting the client choose the permission result. |
+| 68 | pending | P2 / medium confidence | The callback protocol has no sidecar-to-client cancellation/expiry signal, so permission routes need a conservative post-decision cleanup grace and may send an ignored late extension result. Add explicit callback cancellation or expiry acknowledgement so host routes can terminate exactly when the authoritative sidecar wait ends. |
 
 ## Open-item validation checklists
 
@@ -218,7 +222,7 @@ the implementation. An item is not `done` until all three boxes are checked.
 | 25 | - [x] Before the fix, `packages/core/tests/toolkit-permissions.test.ts` invoked the captured production callback with `{ value: 1 }`; the non-idempotent Zod transform ran twice and `execute` received `{ value: 3 }` instead of `{ value: 2 }`. | - [x] Focused production-callback tests prove one transform, parsed hostile-key stripping/no prototype pollution, invalid-input rejection without execute, and forged legacy-shape rejection; `host-tools-zod` tests and core TypeScript compilation pass. The unrelated stale permission expectations are item 62. | - [x] Dedicated stacked `jj` revision `xuuxpqsy`; work-item row marked `done`. |
 | 26 | - [x] Against the parent behavior, `packages/runtime-core/tests/protocol-client.test.ts` failed because `EACCES` existed only inside a generic error message; the error had no `.code`, request identity, ownership, or rejected response frame. | - [x] The shared protocol boundary regression passes, all 121 runtime-core tests pass, the core root-export suite passes 6/6, the runtime-core build succeeds, and both package typechecks pass. Because every normal filesystem, permission, process, and cron request uses this boundary, each rejected response now exposes the same structured `.code` and full frame. | - [x] Dedicated stacked `jj` revision `vpwruksl`; work-item row marked `done`; independent sealing review found no blocker. |
 | 27 | - [x] Against the parent behavior, six core schema cases accepted malformed entries (`undefined`, `null`, boolean, number, empty object, and non-string `packagePath`), while the actor bridge test showed `{ packagePath: 42 }` was silently omitted. | - [x] Core schema tests pass 12/12, including valid raw/object/meta/future-field inputs; the full actor bridge suite passes 15/15 with explicit local native binaries; both package typechecks pass. Native sidecar package projection passes 11/11 for missing/invalid manifests, invalid entrypoints, duplicate commands, and mount behavior, proving semantics stayed authoritative there. | - [x] Dedicated stacked `jj` revision `ysymytqk`; work-item row marked `done`; independent sealing review found no blocker. |
-| 28 | - [ ] `packages/core/tests/session-config-routing.test.ts` detects a client-owned permission timeout racing the adapter. | - [ ] Native ACP timeout/default tests pass and the client test proves no local policy timer is created. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
+| 28 | - [x] Against the parent behavior, the initial TypeScript regression passed the callback's fourth argument as 10 ms and observed the callback settle locally; source audit confirmed that value directly drove the client timer and found the equivalent Rust `select!` race. | - [x] Native timeout/default and ACP integration tests prove typed timeout → reject, non-timeout propagation, and cleanup 125 s > decision 120 s. TypeScript permission routing passes 9/9; all 55 Rust client units pass, including retained-responder cleanup and reply races; core build, workspace check, and Rust formatting pass. | - [x] Dedicated stacked `jj` revision `ysnlrxzo`; work-item row marked `done`; independent sealing review found no remaining blocker. |
 | 29 | - [ ] `packages/core/tests/process-management.test.ts` demonstrates retained exited routes growing beyond sidecar history. | - [ ] Sequential-process coverage proves bounded client routing and sidecar-authoritative late lookup/wait behavior. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
 | 30 | - [ ] `crates/client/tests/session_lifecycle_e2e.rs` demonstrates session growth and suppressed `DisposeVm` failure. | - [ ] Repeated create/shutdown returns server session count to baseline and injected disposal failure remains retryable. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
 | 31 | - [ ] `packages/core/tests/software-projection.test.ts` and `crates/client/tests/link_software_e2e.rs` demonstrate stale post-create enumeration. | - [ ] Both clients observe live package/agent/command projection changes without configuration-time caches. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
@@ -242,7 +246,7 @@ the implementation. An item is not `done` until all three boxes are checked.
 | 49 | - [ ] Dependency/import audit proves the listed production dependencies and `long-timeout` declaration are unused. | - [ ] Core build, typecheck, package smoke test, and lockfile checks pass after removal. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
 | 50 | - [ ] Typechecking `public-api-exports.test.ts` exposes the unsupported `defineSoftware(string)` call. | - [ ] Public API/typecheck tests accept only `{ packagePath }` and prove legacy exports are absent. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
 | 51 | - [ ] `scripts/verify-thin-client-docs.mjs` detects stale package, architecture, permission, and command claims. | - [ ] The verifier plus website build pass against the corrected CLAUDE/docs sources. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
-| 52 | - [ ] TS/Rust routing tests demonstrate clients interpreting legacy permission method names. | - [ ] Native adapter conformance covers supported methods and clients route only the typed protocol callback. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
+| 52 | - [ ] TypeScript routing tests demonstrate a legacy permission notification invokes a handler but cannot create an answerable typed reply route. | - [ ] Native adapter conformance covers supported methods and clients route only the typed protocol callback. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
 | 53 | - [ ] Event fixture/source inventory proves no producer emits structured `acp.session_event`. | - [ ] Typed ACP event coverage passes after the dead branch is removed. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
 | 54 | - [ ] Protocol-client and Rust session tests demonstrate listener/serialization failures being swallowed. | - [ ] Failures propagate or produce structured host-visible warnings with no lossy collection. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
 | 55 | - [ ] README API assertions identify `commandDirs`, `AgentConfig`, and obsolete `AgentRegistryEntry` fields. | - [ ] Generated/declaration-backed documentation checks pass with no hand-maintained stale inventory. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
@@ -257,6 +261,8 @@ the implementation. An item is not `done` until all three boxes are checked.
 | 64 | - [ ] TypeScript/Rust cron tests demonstrate client message parsing/remapping and native/browser code divergence. | - [ ] Shared-sidecar conformance tests prove stable invalid/past codes and both clients pass the structured rejection through unchanged. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
 | 65 | - [ ] Cleanup tests inject multiple structured errors and demonstrate that joined-message errors discard their identities and codes. | - [ ] Every affected cleanup path throws `AggregateError` retaining the original typed errors and contextual message. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
 | 66 | - [ ] Shell package-selection tests demonstrate missing/unreadable refs being substituted or skipped without a sidecar request. | - [ ] Shell serialization forwards every selected package ref unchanged, performs no host package filesystem reads, and sidecar package error/projection tests pass. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
+| 67 | - [ ] A TypeScript permission callback test throws synchronously from the first handler and observes the pending reply entry/timer remain plus the second handler being skipped. | - [ ] Handler-failure coverage proves immediate route cleanup, host-visible failure, no client-selected reply, and defined delivery behavior for remaining handlers. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
+| 68 | - [ ] A callback transport test advances the authoritative sidecar timeout and demonstrates the client route surviving only because of the cleanup grace. | - [ ] Cancellation/expiry protocol tests prove the sidecar ends both wait and client route exactly once, with no ignored late result and no client policy timer. | - [ ] Dedicated stacked `jj` revision; work-item row marked `done`. |
 
 ## Decisions and explanations
 
@@ -332,9 +338,13 @@ sidecar/kernel-owned.
 Permission handlers are host callbacks and must remain routable through the
 clients. The clients now return an optional answer only when a host handler
 actually responds. Missing sessions, missing handlers, dropped responders, and
-timeouts produce no client-authored reply; the native ACP sidecar converts that
-absence to its standard reject outcome. This keeps host-only callback state in
-the host while putting the permission default in one adapter-owned place.
+closed routes produce no client-authored reply. The native ACP sidecar owns the
+120-second decision deadline and converts its typed callback timeout to the
+standard reject outcome. Clients receive only a later 125-second cleanup
+deadline for bounded host bookkeeping; it cannot choose the permission result,
+and a reply after route cleanup is rejected instead of becoming a legacy ACP
+request. This keeps host-only callback state in the host while putting the
+permission default in one adapter-owned place.
 
 ### 11 — Rivet actor wake integration
 
@@ -612,13 +622,12 @@ keeps the equivalent exact mount-id-to-object callback for the same reason.
   preserves that behavior. Core, TypeScript-tools, and secure-exec type/public
   surfaces compile against the single copy. Item 15 remains open until those
   consumers migrate and the surviving compatibility runtime can be deleted.
-- **18.36 — done / high confidence:** Removed the duplicated 120-second ACP
-  permission timeout and Rust public timeout constant from both clients. The
-  native ACP adapter now owns the bound and includes `timeoutMs` in its callback;
-  TypeScript/Rust use only that forwarded value to bound host reply correlation
-  and clean pending routes. Missing replies are now also sidecar-defaulted as
-  recorded in 18.63. Sidecar callback coverage asserts the authoritative value,
-  and client permission regressions retain host routing/warning behavior.
+- **18.36 — done / high confidence:** Removed the duplicated public 120-second
+  ACP permission constant from both clients. The native ACP adapter owns that
+  decision deadline and maps a typed callback timeout to its default reject
+  outcome. Its callback carries only `cleanupAfterMs: 125000`, a strictly later
+  bound for TypeScript/Rust host-route bookkeeping. Client cleanup returns no
+  policy answer, and late replies cannot fall through to a legacy request.
 - **18.37 — done / high confidence:** Removed client-authored JavaScript
   `platform: "node"` and `moduleResolution: "node"` values. The VM config wire
   model now preserves omission separately from an explicit default override,

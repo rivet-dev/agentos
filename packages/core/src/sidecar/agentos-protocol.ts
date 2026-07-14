@@ -1054,7 +1054,12 @@ export type AcpPermissionCallback = {
     readonly sessionId: string
     readonly permissionId: string
     readonly params: JsonUtf8
-    readonly timeoutMs: u64
+    /**
+     * Sidecar-owned host bookkeeping deadline. This is strictly later than the
+     * sidecar's authoritative permission decision timeout; clients must not use
+     * it to choose the permission default.
+     */
+    readonly cleanupAfterMs: u64
 }
 
 export function readAcpPermissionCallback(bc: bare.ByteCursor): AcpPermissionCallback {
@@ -1062,7 +1067,7 @@ export function readAcpPermissionCallback(bc: bare.ByteCursor): AcpPermissionCal
         sessionId: bare.readString(bc),
         permissionId: bare.readString(bc),
         params: readJsonUtf8(bc),
-        timeoutMs: bare.readU64(bc),
+        cleanupAfterMs: bare.readU64(bc),
     }
 }
 
@@ -1070,7 +1075,7 @@ export function writeAcpPermissionCallback(bc: bare.ByteCursor, x: AcpPermission
     bare.writeString(bc, x.sessionId)
     bare.writeString(bc, x.permissionId)
     writeJsonUtf8(bc, x.params)
-    bare.writeU64(bc, x.timeoutMs)
+    bare.writeU64(bc, x.cleanupAfterMs)
 }
 
 export type AcpHostRequestCallback = {

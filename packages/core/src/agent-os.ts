@@ -222,7 +222,7 @@ interface AgentSessionEntry {
 		{
 			resolve: (reply: PermissionReply) => void;
 			reject: (error: Error) => void;
-			timer: ReturnType<typeof setTimeout>;
+			cleanupTimer: ReturnType<typeof setTimeout>;
 		}
 	>;
 }
@@ -2562,7 +2562,7 @@ export class AgentOs {
 			permissionId,
 			pendingReply,
 		] of session.pendingPermissionReplies) {
-			clearTimeout(pendingReply.timer);
+			clearTimeout(pendingReply.cleanupTimer);
 			pendingReply.reject(
 				new Error(`Session closed before permission reply: ${permissionId}`),
 			);
@@ -2742,8 +2742,10 @@ export class AgentOs {
 		const callback = decodeAcpCallback(envelope.payload);
 		switch (callback.tag) {
 			case "AcpPermissionCallback": {
-				if (callback.val.timeoutMs > BigInt(Number.MAX_SAFE_INTEGER)) {
-					throw new Error("ACP permission callback timeout exceeds JS range");
+				if (callback.val.cleanupAfterMs > BigInt(Number.MAX_SAFE_INTEGER)) {
+					throw new Error(
+						"ACP permission callback cleanup deadline exceeds JS range",
+					);
 				}
 				const reply = await this._handleAcpPermissionCallback(
 					callback.val.sessionId,
@@ -2752,7 +2754,7 @@ export class AgentOs {
 						...toRecord(JSON.parse(callback.val.params)),
 						_acpMethod: ACP_PERMISSION_METHOD,
 					},
-					Number(callback.val.timeoutMs),
+					Number(callback.val.cleanupAfterMs),
 				);
 				return {
 					type: "ext_result",
@@ -2786,7 +2788,7 @@ export class AgentOs {
 		sessionId: string,
 		permissionId: string,
 		params: Record<string, unknown>,
-		timeoutMs: number,
+		cleanupAfterMs: number,
 	): Promise<PermissionReply | undefined> {
 		const session = this._sessions.get(sessionId);
 		if (!session) {
@@ -2802,18 +2804,18 @@ export class AgentOs {
 
 		try {
 			return await new Promise<PermissionReply>((resolve, reject) => {
-				const timer = setTimeout(() => {
+				const cleanupTimer = setTimeout(() => {
 					session.pendingPermissionReplies.delete(permissionId);
 					reject(
 						new Error(
-							`Timed out waiting for permission reply: ${permissionId}`,
+							`Permission reply route expired after the sidecar deadline: ${permissionId}`,
 						),
 					);
-				}, timeoutMs);
+				}, cleanupAfterMs);
 				session.pendingPermissionReplies.set(permissionId, {
 					resolve,
 					reject,
-					timer,
+					cleanupTimer,
 				});
 
 				const permissionRequest: PermissionRequest = {
@@ -2830,7 +2832,7 @@ export class AgentOs {
 			});
 		} catch (error) {
 			console.warn(
-				`ACP permission callback failed for ${sessionId}/${permissionId}; deferring to sidecar default`,
+				`ACP permission callback route closed for ${sessionId}/${permissionId}; the sidecar owns the outcome`,
 				error,
 			);
 			return undefined;
@@ -2880,7 +2882,7 @@ export class AgentOs {
 		const pendingReply = session?.pendingPermissionReplies.get(permissionId);
 		if (pendingReply) {
 			session?.pendingPermissionReplies.delete(permissionId);
-			clearTimeout(pendingReply.timer);
+			clearTimeout(pendingReply.cleanupTimer);
 			pendingReply.resolve(reply);
 			return {
 				jsonrpc: "2.0",
@@ -2893,10 +2895,7 @@ export class AgentOs {
 			};
 		}
 
-		return this._sendSessionRequest(sessionId, LEGACY_PERMISSION_METHOD, {
-			permissionId,
-			reply,
-		});
+		throw new Error(`Permission request is not pending: ${permissionId}`);
 	}
 
 	async setSessionMode(

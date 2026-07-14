@@ -24320,6 +24320,7 @@ pub(crate) fn error_code(error: &SidecarError) -> &'static str {
         SidecarError::Unauthorized(_) => "unauthorized",
         SidecarError::Unsupported(_) => "unsupported",
         SidecarError::FrameTooLarge(_) => "frame_too_large",
+        SidecarError::Timeout(_) => "timeout",
         SidecarError::Kernel(_) => "kernel_error",
         SidecarError::Plugin(_) => "plugin_error",
         SidecarError::Execution(_) => "execution_error",

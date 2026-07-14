@@ -6,6 +6,58 @@ import type {
 } from "../src/sidecar/agentos-protocol.js";
 
 describe("AgentOs session config routing", () => {
+	it("uses only the sidecar-owned post-decision cleanup deadline", async () => {
+		vi.useFakeTimers();
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			const agent = Object.create(AgentOs.prototype) as AgentOs;
+			const permissionHandlers = new Set<() => void>();
+			permissionHandlers.add(() => {});
+			(
+				agent as unknown as {
+					_sessions: Map<string, unknown>;
+				}
+			)._sessions = new Map([
+				[
+					"session-1",
+					{
+						sessionId: "session-1",
+						permissionHandlers,
+						pendingPermissionReplies: new Map(),
+					},
+				],
+			]);
+
+			const callback = (
+				agent as unknown as {
+					_handleAcpPermissionCallback: (
+						sessionId: string,
+						permissionId: string,
+						params: Record<string, unknown>,
+						cleanupAfterMs: number,
+					) => Promise<unknown>;
+				}
+			)._handleAcpPermissionCallback("session-1", "permission-1", {}, 20);
+			let settled = false;
+			void callback.then(() => {
+				settled = true;
+			});
+
+			await vi.advanceTimersByTimeAsync(10);
+			expect(settled).toBe(false);
+
+			await vi.advanceTimersByTimeAsync(10);
+			expect(settled).toBe(true);
+			await expect(callback).resolves.toBeUndefined();
+			await expect(
+				agent.respondPermission("session-1", "permission-1", "once"),
+			).rejects.toThrow("Permission request is not pending: permission-1");
+		} finally {
+			warn.mockRestore();
+			vi.useRealTimers();
+		}
+	});
+
 	it("forwards category and value without interpreting adapter config metadata", async () => {
 		const agent = Object.create(AgentOs.prototype) as AgentOs;
 		const sendAcpRequest = vi.fn(
