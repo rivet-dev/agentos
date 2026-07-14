@@ -33,6 +33,8 @@ run_step node --test scripts/check-rust-package-metadata.test.mjs
 run_step node scripts/check-rust-package-metadata.mjs
 run_step node --test scripts/check-agentos-client-protocol-compat.test.mjs
 run_step node scripts/check-agentos-client-protocol-compat.mjs
+run_step node --test scripts/verify-thin-client-docs.test.mjs
+run_step node scripts/verify-thin-client-docs.mjs
 if [[ -f scripts/check-registry-software-split.test.mjs ]]; then
 	run_step node --test scripts/check-registry-software-split.test.mjs
 	run_step node scripts/check-registry-software-split.mjs

@@ -9,11 +9,11 @@ Permission policies decide what guest code is allowed to touch — the network, 
 
 ## How it works
 
-Each policy is a small object passed to `agentOS({ permissions })`. A policy sets a `default` (`allow` or `deny`) and a list of `rules` that flip the decision for specific paths, hosts, or binding names. This example composes four policies and merges them into one permission set:
+Each policy is a small object passed to `agentOS({ permissions })`. A policy sets a `default` (`allow` or `deny`) and a list of `rules` that flip the decision for specific paths, hosts, or binding names. This example composes three restrictive policies and merges them into one permission set:
 
-- **Network** granted outright, with a stricter override that denies by default and allows only `api.example.com`.
+- **Network** uses an explicit rule set whose local default is deny and allows only `api.example.com`.
 - **Filesystem** allowed by default but denied for anything under `/vault/**`.
-- **Bindings** denied by default, allowing only the `add` binding by name.
+- **Bindings** use an explicit rule set whose local default is deny, allowing only the `add` binding by name.
 
 Rules are evaluated against the defaults, so you compose from broad posture down to narrow exceptions. The resulting VM enforces all of them on every guest operation.
 

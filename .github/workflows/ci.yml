@@ -42,6 +42,8 @@ jobs:
       - run: node scripts/check-agentos-client-protocol-compat.mjs
       - run: node --test scripts/verify-fixed-versions.test.mjs
       - run: node scripts/verify-fixed-versions.mjs
+      - run: node --test scripts/verify-thin-client-docs.test.mjs
+      - run: node scripts/verify-thin-client-docs.mjs
       - run: cargo fmt --check
       - run: pnpm check-types
       - run: pnpm lint

@@ -7,40 +7,28 @@ The sandbox permission policy is the kernel-level enforcement layer. Every guest
 - **Six scopes**, configured independently: `fs`, `network`, `childProcess`, `process`, `env`, `binding`.
 - **Each scope** is a mode (`"allow"` or `"deny"`), or a rule set.
 - **A denied operation** is rejected with `EACCES` before any host resource is touched.
-- **Merged over a secure default**, so partial policies work.
+- **Omitted top-level scopes inherit the sidecar allow-all default**, so partial policies remain explicit overrides.
 
 For the higher-level agent tool-approval layer (human-in-the-loop, auto-approve), see [Approvals](/docs/approvals).
 
 ## Defaults and merge semantics
 
-The sandbox is deny-by-default for outward-facing capabilities. When you pass no policy, this baseline applies:
+Omitting `permissions` selects the sidecar-owned allow-all product default. All six scopes—`fs`, `network`, `childProcess`, `process`, `env`, and `binding`—are `allow`.
 
-```ts
-{
-  fs: "allow",          // virtualized in-memory filesystem only
-  childProcess: "allow",
-  process: "allow",
-  env: "allow",
-  network: "deny",      // no network egress until you opt in
-}
-```
+An explicit partial top-level policy changes only the scopes it names. Omitted top-level scopes inherit `allow`. Inside an explicit rule-set scope, an omitted `default` means `deny`; set `default: "allow"` for a deny-list or `default: "deny"` for an allow-list.
 
-- `fs`/`childProcess`/`process`/`env` are allowed because they are fully virtualized (the guest sees only the VM, never the host) and are required to run a program at all.
-- `network` is denied: guest code cannot reach the network until you opt in.
-- Your policy is merged **over** this baseline. Omitted scopes keep their default; they are **not** denied. So `{ network: "allow" }` grants the network while keeping the execution essentials.
+Allow-all authorizes only capabilities present inside or explicitly configured for the VM. It does not expose the host filesystem, host process table, or unrestricted host sockets.
 
 ## Permission scopes
 
 | Scope | Controls | Default |
 |---|---|---|
 | `fs` | Filesystem reads, writes, and metadata operations | `allow` |
-| `network` | Outbound connections: `fetch`, HTTP, DNS, and inbound `listen` | `deny` |
+| `network` | Outbound connections: `fetch`, HTTP, DNS, and inbound `listen` | `allow` |
 | `childProcess` | Spawning child processes | `allow` |
 | `process` | Process-control operations | `allow` |
 | `env` | Environment variable access | `allow` |
-| `binding` | Invoking bindings registered with the runtime | `deny`* |
-
-\* The `binding` scope is auto-granted to `allow` when you register bindings and set no `binding` policy of your own. Pass a `binding` policy to gate individual bindings.
+| `binding` | Invoking bindings registered with the runtime | `allow` |
 
 ## Bind a policy to the VM
 
@@ -48,11 +36,11 @@ A policy is a plain object keyed by scope. Pass it as `permissions` to `agentOS(
 
 ## Grant or deny a whole scope
 
-The simplest value for a scope is a single mode string. `"allow"` permits every operation in the scope; `"deny"` rejects every one with `EACCES`. Omitted scopes keep their secure default, so you only list what you want to change.
+The simplest value for a scope is a single mode string. `"allow"` permits every operation in the scope; `"deny"` rejects every one with `EACCES`. Omitted top-level scopes inherit `allow`, so list every scope that must be restricted.
 
 ```ts
 const permissions = {
-	network: "allow", // turn on network egress
+	network: "deny",  // turn off network egress
 	fs: "deny",       // turn off all filesystem access
 };
 ```
