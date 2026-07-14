@@ -374,13 +374,22 @@ pub struct WireEventSubscription {
 struct PendingWireRequest {
     tx: oneshot::Sender<PendingWireResponse>,
     process_events: Option<WireEventSubscription>,
+    /// One bounded, request-scoped action that must happen after decoding the response but before
+    /// the waiter wakes or the reader can dispatch a following event frame. Kept wire-generic so
+    /// product clients can atomically bind their own host correlation without teaching this crate
+    /// about extension protocols such as ACP.
+    response_hook: Option<WireResponseHook>,
 }
 
 struct PendingWireResponse {
     payload: wire::ResponsePayload,
     process_events: Option<WireEventSubscription>,
     cancel_cleanup: Option<CancelledProcessCleanup>,
+    response_hook_error: Option<TransportError>,
 }
+
+type WireResponseHook =
+    Box<dyn FnOnce(&wire::ResponsePayload) -> Result<(), TransportError> + Send + Sync + 'static>;
 
 struct CancelledProcessCleanup {
     details: Option<CancelledProcessCleanupDetails>,
@@ -623,7 +632,38 @@ impl SidecarTransport {
         payload: wire::RequestPayload,
     ) -> Result<wire::ResponsePayload, TransportError> {
         Ok(self
-            .request_wire_with_frame_limit(ownership, payload, None, false)
+            .request_wire_with_frame_limit(ownership, payload, None, false, None)
+            .await?
+            .payload)
+    }
+
+    /// Issue a request and run one synchronous, request-scoped hook in the reader immediately after
+    /// its response is decoded. The hook completes before the response waiter is woken and before a
+    /// later event frame can be dispatched. Pending requests (and therefore captured hooks) remain
+    /// bounded by [`PENDING_REQUEST_LIMIT`]. Once the request is successfully enqueued, its hook is
+    /// intentionally retained even if the waiter is cancelled: the sidecar may still commit the
+    /// operation, and the hook must install host correlation for that authoritative response. The
+    /// pending tombstone is removed by the response, transport failure, or silence watchdog.
+    ///
+    /// The hook receives only generated wire types; extension decoding and correlation remain the
+    /// caller's responsibility. A hook must perform bounded in-memory work and must not block.
+    pub async fn request_wire_with_response_hook<F>(
+        &self,
+        ownership: wire::OwnershipScope,
+        payload: wire::RequestPayload,
+        response_hook: F,
+    ) -> Result<wire::ResponsePayload, TransportError>
+    where
+        F: FnOnce(&wire::ResponsePayload) -> Result<(), TransportError> + Send + Sync + 'static,
+    {
+        Ok(self
+            .request_wire_with_frame_limit(
+                ownership,
+                payload,
+                None,
+                false,
+                Some(Box::new(response_hook)),
+            )
             .await?
             .payload)
     }
@@ -636,7 +676,7 @@ impl SidecarTransport {
         max_frame_bytes: usize,
     ) -> Result<wire::ResponsePayload, TransportError> {
         Ok(self
-            .request_wire_with_frame_limit(ownership, payload, Some(max_frame_bytes), false)
+            .request_wire_with_frame_limit(ownership, payload, Some(max_frame_bytes), false, None)
             .await?
             .payload)
     }
@@ -656,7 +696,7 @@ impl SidecarTransport {
             )));
         }
         let response = self
-            .request_wire_with_frame_limit(ownership, payload, None, true)
+            .request_wire_with_frame_limit(ownership, payload, None, true, None)
             .await?;
         Ok((response.payload, response.process_events))
     }
@@ -667,7 +707,9 @@ impl SidecarTransport {
         payload: wire::RequestPayload,
         max_frame_bytes: Option<usize>,
         subscribe_process_events: bool,
+        response_hook: Option<WireResponseHook>,
     ) -> Result<PendingWireResponse, TransportError> {
+        let retain_response_hook = response_hook.is_some();
         let request_id = self.next_request_id();
         let frame = wire::ProtocolFrame::RequestFrame(wire::RequestFrame {
             schema: wire::protocol_schema(),
@@ -680,7 +722,7 @@ impl SidecarTransport {
         let (tx, rx) = oneshot::channel();
         let process_events =
             subscribe_process_events.then(|| self.process_event_log.subscribe_provisional());
-        self.register_pending(request_id, tx, process_events)?;
+        self.register_pending_with_hook(request_id, tx, process_events, response_hook)?;
         let mut pending_guard = PendingRequestGuard::new(self, request_id, true);
 
         if self.request_writer_tx.send(bytes).await.is_err() {
@@ -689,13 +731,20 @@ impl SidecarTransport {
                 "sidecar transport closed".to_string(),
             ));
         }
-        if subscribe_process_events {
+        if subscribe_process_events || retain_response_hook {
+            // Execute needs its process-id binding even when its caller is cancelled. Resource-
+            // establishing response hooks have the same requirement: after the request is
+            // successfully enqueued, retain this bounded pending tombstone so the reader still
+            // installs host correlation for an authoritative sidecar success.
             pending_guard.disarm();
         }
 
         let mut response = rx
             .await
             .map_err(|_| TransportError::Sidecar("sidecar transport disconnected".to_string()))?;
+        if let Some(error) = response.response_hook_error.take() {
+            return Err(error);
+        }
         if let Some(cleanup) = response.cancel_cleanup.as_mut() {
             cleanup.disarm();
         }
@@ -813,12 +862,32 @@ impl SidecarTransport {
                             }
                             _ => None,
                         };
+                        let response_hook_error = pending.response_hook.take().and_then(|hook| {
+                            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                hook(&response.payload)
+                            })) {
+                                Ok(Ok(())) => None,
+                                Ok(Err(error)) => Some(error),
+                                Err(_) => Some(TransportError::Sidecar(String::from(
+                                    "sidecar response hook panicked",
+                                ))),
+                            }
+                        });
                         let delivered = PendingWireResponse {
                             payload: response.payload,
                             process_events: pending.process_events,
                             cancel_cleanup,
+                            response_hook_error,
                         };
-                        let _ = pending.tx.send(delivered);
+                        if let Err(delivered) = pending.tx.send(delivered) {
+                            if let Some(error) = delivered.response_hook_error {
+                                tracing::error!(
+                                    ?error,
+                                    request_id = response.request_id,
+                                    "sidecar response hook failed after its request waiter was cancelled"
+                                );
+                            }
+                        }
                     }
                     None => {
                         tracing::warn!(
@@ -931,11 +1000,22 @@ impl SidecarTransport {
         self.register_pending(request_id, tx, None)
     }
 
+    #[cfg(test)]
     fn register_pending(
         &self,
         request_id: wire::RequestId,
         tx: oneshot::Sender<PendingWireResponse>,
         process_events: Option<WireEventSubscription>,
+    ) -> Result<(), TransportError> {
+        self.register_pending_with_hook(request_id, tx, process_events, None)
+    }
+
+    fn register_pending_with_hook(
+        &self,
+        request_id: wire::RequestId,
+        tx: oneshot::Sender<PendingWireResponse>,
+        process_events: Option<WireEventSubscription>,
+        response_hook: Option<WireResponseHook>,
     ) -> Result<(), TransportError> {
         let _guard = self.pending_request_lock.lock();
         if pending_request_count(self) >= PENDING_REQUEST_LIMIT {
@@ -943,9 +1023,14 @@ impl SidecarTransport {
                 "sidecar pending request limit exceeded: at most {PENDING_REQUEST_LIMIT} requests can be in flight"
             )));
         }
-        let _ = self
-            .pending
-            .insert(request_id, PendingWireRequest { tx, process_events });
+        let _ = self.pending.insert(
+            request_id,
+            PendingWireRequest {
+                tx,
+                process_events,
+                response_hook,
+            },
+        );
         Ok(())
     }
 }
@@ -1621,6 +1706,152 @@ mod tests {
         assert!(matches!(
             &event.payload,
             wire::EventPayload::ProcessOutputEvent(event) if event.chunk == b"immediate"
+        ));
+    }
+
+    #[tokio::test]
+    async fn response_hook_runs_before_waiter_wakes_and_following_event_dispatches() {
+        let transport = Arc::new(test_transport());
+        let ownership = test_vm_ownership("vm-response-hook");
+        let mut events = transport.subscribe_control_events_for(ownership.clone());
+        let hook_ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (tx, rx) = oneshot::channel();
+        transport
+            .register_pending_with_hook(
+                8,
+                tx,
+                None,
+                Some(Box::new({
+                    let hook_ran = hook_ran.clone();
+                    move |_| {
+                        hook_ran.store(true, Ordering::SeqCst);
+                        Ok(())
+                    }
+                })),
+            )
+            .expect("register response hook");
+
+        transport
+            .handle_wire_frame(wire::ProtocolFrame::ResponseFrame(wire::ResponseFrame {
+                schema: wire::protocol_schema(),
+                request_id: 8,
+                ownership: ownership.clone(),
+                payload: wire::ResponsePayload::ExtEnvelope(wire::ExtEnvelope {
+                    namespace: String::from("test.response-hook"),
+                    payload: vec![1],
+                }),
+            }))
+            .await;
+        assert!(
+            hook_ran.load(Ordering::SeqCst),
+            "response hook runs before its waiter can observe the response"
+        );
+        let response = rx.await.expect("response waiter wakes");
+        assert!(response.response_hook_error.is_none());
+
+        transport
+            .handle_wire_frame(wire::ProtocolFrame::EventFrame(wire::EventFrame {
+                schema: wire::protocol_schema(),
+                ownership,
+                payload: wire::EventPayload::StructuredEvent(wire::StructuredEvent {
+                    name: String::from("after-hook"),
+                    detail: std::collections::HashMap::new(),
+                }),
+            }))
+            .await;
+        assert!(hook_ran.load(Ordering::SeqCst));
+        assert!(matches!(
+            &events.recv().await.expect("following event" ).payload,
+            wire::EventPayload::StructuredEvent(event) if event.name == "after-hook"
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancelled_response_hook_request_still_binds_before_following_event() {
+        let (request_writer_tx, mut request_writer_rx) =
+            mpsc::channel(REQUEST_FRAME_QUEUE_CAPACITY);
+        let (control_writer_tx, _control_writer_rx) = mpsc::channel(CONTROL_FRAME_QUEUE_CAPACITY);
+        let transport = Arc::new(SidecarTransport {
+            child: parking_lot::Mutex::new(None),
+            pending: SccHashMap::new(),
+            pending_request_lock: parking_lot::Mutex::new(()),
+            request_counter: AtomicI64::new(100),
+            max_frame_bytes: AtomicUsize::new(wire::DEFAULT_MAX_FRAME_BYTES),
+            process_event_log: Arc::new(WireEventLog::new()),
+            control_event_log: Arc::new(WireEventLog::new()),
+            callbacks: SccHashMap::new(),
+            request_writer_tx,
+            control_writer_tx,
+            last_inbound_at: parking_lot::Mutex::new(std::time::Instant::now()),
+        });
+        let ownership = test_vm_ownership("vm-atomic-hook");
+        let mut events = transport.subscribe_control_events_for(ownership.clone());
+        let route_installed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let task = tokio::spawn({
+            let transport = transport.clone();
+            let ownership = ownership.clone();
+            let route_installed = route_installed.clone();
+            async move {
+                transport
+                    .request_wire_with_response_hook(
+                        ownership,
+                        wire::RequestPayload::ProvidedCommandsRequest,
+                        move |_| {
+                            route_installed.store(true, Ordering::SeqCst);
+                            Ok(())
+                        },
+                    )
+                    .await
+            }
+        });
+
+        request_writer_rx
+            .recv()
+            .await
+            .expect("request was successfully enqueued");
+        task.abort();
+        let _ = task.await;
+        assert_eq!(
+            pending_request_count(&transport),
+            1,
+            "post-enqueue cancellation must retain the bounded response hook tombstone"
+        );
+
+        transport
+            .handle_wire_frame(wire::ProtocolFrame::ResponseFrame(wire::ResponseFrame {
+                schema: wire::protocol_schema(),
+                request_id: 100,
+                ownership: ownership.clone(),
+                payload: wire::ResponsePayload::ExtEnvelope(wire::ExtEnvelope {
+                    namespace: String::from("test.cancelled-response-hook"),
+                    payload: vec![1],
+                }),
+            }))
+            .await;
+        transport
+            .handle_wire_frame(wire::ProtocolFrame::EventFrame(wire::EventFrame {
+                schema: wire::protocol_schema(),
+                ownership,
+                payload: wire::EventPayload::StructuredEvent(wire::StructuredEvent {
+                    name: String::from("immediate-after-response"),
+                    detail: std::collections::HashMap::new(),
+                }),
+            }))
+            .await;
+
+        assert!(
+            route_installed.load(Ordering::SeqCst),
+            "the cancelled request's hook must run before the next event is dispatched"
+        );
+        assert_eq!(pending_request_count(&transport), 0);
+        let event = events
+            .recv()
+            .await
+            .expect("following event remains observable");
+        assert!(matches!(
+            &event.payload,
+            wire::EventPayload::StructuredEvent(event)
+                if event.name == "immediate-after-response"
         ));
     }
 

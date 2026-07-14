@@ -965,6 +965,9 @@ impl AcpCore {
         let response = AcpResponse::AcpSessionResumedResponse(AcpSessionResumedResponse {
             session_id: session.session_id.clone(),
             mode: outcome.mode,
+            agent_type: session.agent_type.clone(),
+            process_id: session.process_id.clone(),
+            pid: session.pid,
         });
         self.sessions.insert(session.session_id.clone(), session);
         Ok(response)
@@ -1885,6 +1888,9 @@ mod tests {
             AcpResponse::AcpSessionResumedResponse(resumed) => {
                 assert_eq!(resumed.session_id, "live-1");
                 assert_eq!(resumed.mode, "fallback");
+                assert_eq!(resumed.agent_type, "echo");
+                assert_eq!(resumed.process_id, "acp-agent-0");
+                assert_eq!(resumed.pid, Some(9));
             }
             other => panic!("expected resumed response, got {other:?}"),
         }
@@ -1994,6 +2000,9 @@ mod tests {
         match response {
             AcpResponse::AcpSessionCreatedResponse(created) => {
                 assert_eq!(created.session_id, "sess-xyz");
+                assert_eq!(created.agent_type, "echo");
+                assert_eq!(created.process_id, "acp-agent-0");
+                assert_eq!(created.pid, Some(7));
             }
             other => panic!("expected created response, got {other:?}"),
         }
@@ -2130,6 +2139,9 @@ mod tests {
         match step {
             ResumeStep::Done(AcpResponse::AcpSessionCreatedResponse(created)) => {
                 assert_eq!(created.session_id, "sess-xyz");
+                assert_eq!(created.agent_type, "echo");
+                assert_eq!(created.process_id, "acp-agent-0");
+                assert_eq!(created.pid, Some(11));
             }
             other => panic!("expected Created, got {other:?}"),
         }

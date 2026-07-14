@@ -1,5 +1,6 @@
 use agentos_protocol::generated::v1::{
     AcpCreateSessionRequest, AcpRequest, AcpResponse, AcpRuntimeKind, AcpSessionCreatedResponse,
+    AcpSessionResumedResponse,
 };
 use agentos_protocol::{
     read_only_config_message, select_config_by_category, AcpPromptTextAccumulator,
@@ -105,6 +106,8 @@ fn omitted_session_fields_resolve_from_shared_sidecar_defaults() {
 fn acp_protocol_round_trips_session_created_response() {
     let response = AcpResponse::AcpSessionCreatedResponse(AcpSessionCreatedResponse {
         session_id: String::from("acp-session-1"),
+        agent_type: String::from("codex"),
+        process_id: String::from("acp-agent-1"),
         pid: Some(42),
         modes: Some(String::from(r#"{"currentModeId":"default"}"#)),
         config_options: vec![String::from(r#"{"id":"model","values":["gpt-5"]}"#)],
@@ -114,5 +117,20 @@ fn acp_protocol_round_trips_session_created_response() {
 
     let encoded = serde_bare::to_vec(&response).expect("encode acp response");
     let decoded: AcpResponse = serde_bare::from_slice(&encoded).expect("decode acp response");
+    assert_eq!(decoded, response);
+}
+
+#[test]
+fn acp_protocol_round_trips_session_resumed_route_identity() {
+    let response = AcpResponse::AcpSessionResumedResponse(AcpSessionResumedResponse {
+        session_id: String::from("acp-session-2"),
+        mode: String::from("fallback"),
+        agent_type: String::from("pi"),
+        process_id: String::from("acp-agent-2"),
+        pid: Some(84),
+    });
+
+    let encoded = serde_bare::to_vec(&response).expect("encode resumed response");
+    let decoded: AcpResponse = serde_bare::from_slice(&encoded).expect("decode resumed response");
     assert_eq!(decoded, response);
 }

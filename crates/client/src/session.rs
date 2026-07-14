@@ -11,6 +11,7 @@
 
 use std::collections::BTreeMap;
 use std::pin::Pin;
+use std::sync::{Arc, Weak};
 
 use anyhow::Result;
 use futures::Stream;
@@ -42,8 +43,10 @@ pub(crate) struct PermissionRouteRequest {
 #[cfg(test)]
 mod stream_tests {
     use super::{
-        broadcast_result_stream, failed_result_stream, finalize_acp_session_close,
-        send_bridged_permission_reply, wait_for_permission_reply, AgentExitEvent,
+        acp_session_route_response_hook, broadcast_result_stream, failed_result_stream,
+        finalize_acp_session_close, record_live_session_event,
+        register_acp_session_route_from_wire_response, send_bridged_permission_reply,
+        wait_for_permission_reply, AcpSessionRouteResponse, AgentExitEvent,
         PendingPermissionOutcome, PermissionReply, PermissionRequest,
     };
     use crate::agent_os::SessionEntry;
@@ -51,7 +54,8 @@ mod stream_tests {
     use crate::json_rpc::JsonRpcNotification;
     use crate::stream::{RoutedStreamEvent, StreamRouteFailure};
     use agentos_protocol::generated::v1::{
-        AcpListAgentsResponse, AcpResponse, AcpSessionClosedResponse,
+        AcpListAgentsResponse, AcpResponse, AcpSessionClosedResponse, AcpSessionCreatedResponse,
+        AcpSessionResumedResponse,
     };
     use futures::StreamExt;
 
@@ -270,6 +274,136 @@ mod stream_tests {
             agent_exit_rx.try_recv(),
             Err(tokio::sync::broadcast::error::TryRecvError::Closed)
         ));
+    }
+
+    #[tokio::test]
+    async fn create_and_resume_wire_responses_bind_routes_before_event_delivery() {
+        let sessions = scc::HashMap::new();
+        let responses = [
+            (
+                AcpSessionRouteResponse::Created,
+                "created-session",
+                AcpResponse::AcpSessionCreatedResponse(AcpSessionCreatedResponse {
+                    session_id: String::from("created-session"),
+                    agent_type: String::from("test-agent"),
+                    process_id: String::from("created-process"),
+                    pid: Some(7),
+                    modes: None,
+                    config_options: Vec::new(),
+                    agent_capabilities: None,
+                    agent_info: None,
+                }),
+            ),
+            (
+                AcpSessionRouteResponse::Resumed,
+                "resumed-session",
+                AcpResponse::AcpSessionResumedResponse(AcpSessionResumedResponse {
+                    session_id: String::from("resumed-session"),
+                    mode: String::from("native"),
+                    agent_type: String::from("test-agent"),
+                    process_id: String::from("resumed-process"),
+                    pid: Some(8),
+                }),
+            ),
+        ];
+
+        for (expected, session_id, response) in responses {
+            let wire_response = agentos_sidecar_client::wire::ResponsePayload::ExtEnvelope(
+                agentos_sidecar_client::wire::ExtEnvelope {
+                    namespace: agentos_protocol::ACP_EXTENSION_NAMESPACE.to_string(),
+                    payload: serde_bare::to_vec(&response).expect("encode ACP response"),
+                },
+            );
+            register_acp_session_route_from_wire_response(&sessions, expected, &wire_response)
+                .expect("bind session route from response hook");
+
+            let mut events = sessions
+                .read(session_id, |_, entry| entry.event_tx.subscribe())
+                .expect("session route is installed before event handling");
+            let notification = JsonRpcNotification {
+                jsonrpc: String::from("2.0"),
+                method: String::from("session/update"),
+                params: Some(serde_json::json!({ "sessionId": session_id })),
+            };
+            sessions
+                .read(session_id, |_, entry| {
+                    record_live_session_event(entry, notification.clone())
+                })
+                .expect("following event finds the bound session route");
+            assert!(matches!(
+                events.recv().await,
+                Ok(RoutedStreamEvent::Data(delivered)) if delivered == notification
+            ));
+        }
+
+        let expected_route_count = sessions.len();
+        let unexpected = agentos_sidecar_client::wire::ResponsePayload::ExtEnvelope(
+            agentos_sidecar_client::wire::ExtEnvelope {
+                namespace: agentos_protocol::ACP_EXTENSION_NAMESPACE.to_string(),
+                payload: serde_bare::to_vec(&AcpResponse::AcpListAgentsResponse(
+                    AcpListAgentsResponse { agents: Vec::new() },
+                ))
+                .expect("encode unexpected response"),
+            },
+        );
+        register_acp_session_route_from_wire_response(
+            &sessions,
+            AcpSessionRouteResponse::Created,
+            &unexpected,
+        )
+        .expect("unrelated ACP response binds nothing");
+        assert_eq!(sessions.len(), expected_route_count);
+        let malformed = agentos_sidecar_client::wire::ResponsePayload::ExtEnvelope(
+            agentos_sidecar_client::wire::ExtEnvelope {
+                namespace: agentos_protocol::ACP_EXTENSION_NAMESPACE.to_string(),
+                payload: vec![u8::MAX],
+            },
+        );
+        assert!(register_acp_session_route_from_wire_response(
+            &sessions,
+            AcpSessionRouteResponse::Resumed,
+            &malformed,
+        )
+        .is_err());
+        assert_eq!(
+            sessions.len(),
+            expected_route_count,
+            "malformed or unrelated responses must not manufacture a session route"
+        );
+    }
+
+    #[test]
+    fn retained_session_response_hook_does_not_keep_route_owner_alive() {
+        let sessions = std::sync::Arc::new(scc::HashMap::new());
+        let weak_sessions = std::sync::Arc::downgrade(&sessions);
+        let hook = acp_session_route_response_hook(
+            weak_sessions.clone(),
+            AcpSessionRouteResponse::Created,
+        );
+        assert_eq!(std::sync::Arc::strong_count(&sessions), 1);
+
+        drop(sessions);
+        assert!(weak_sessions.upgrade().is_none());
+
+        let response = agentos_sidecar_client::wire::ResponsePayload::ExtEnvelope(
+            agentos_sidecar_client::wire::ExtEnvelope {
+                namespace: agentos_protocol::ACP_EXTENSION_NAMESPACE.to_string(),
+                payload: serde_bare::to_vec(&AcpResponse::AcpSessionCreatedResponse(
+                    AcpSessionCreatedResponse {
+                        session_id: String::from("cancelled-session"),
+                        agent_type: String::from("test-agent"),
+                        process_id: String::from("cancelled-process"),
+                        pid: Some(9),
+                        modes: None,
+                        config_options: Vec::new(),
+                        agent_capabilities: None,
+                        agent_info: None,
+                    },
+                ))
+                .expect("encode ACP response"),
+            },
+        );
+        hook(&response).expect("a response after owner drop is a bounded no-op");
     }
 }
 
@@ -844,6 +978,81 @@ fn unexpected_acp_response(operation: &str, response: AcpResponse) -> ClientErro
     ClientError::Sidecar(format!("unexpected response to {operation}: {response:?}"))
 }
 
+fn register_session_route(sessions: &scc::HashMap<String, SessionEntry>, session_id: &str) {
+    let (event_tx, _) = tokio::sync::broadcast::channel(1024);
+    let (permission_tx, _) = tokio::sync::broadcast::channel(64);
+    let (agent_exit_tx, _) = tokio::sync::broadcast::channel(16);
+    let entry = SessionEntry {
+        event_tx,
+        permission_tx,
+        agent_exit_tx,
+        pending_permission_replies: scc::HashMap::new(),
+    };
+    let _ = sessions.insert(session_id.to_string(), entry);
+}
+
+#[derive(Clone, Copy)]
+enum AcpSessionRouteResponse {
+    Created,
+    Resumed,
+}
+
+/// Decode only enough of a successful ACP extension response to bind its new session route. This
+/// runs synchronously in the generic sidecar transport's response hook, before its reader can
+/// dispatch the next event frame. Rejections and unrelated responses deliberately bind nothing and
+/// retain their normal decoding/error behavior in [`AgentOs::send_acp_request_inner`].
+fn register_acp_session_route_from_wire_response(
+    sessions: &scc::HashMap<String, SessionEntry>,
+    expected: AcpSessionRouteResponse,
+    response: &wire::ResponsePayload,
+) -> std::result::Result<(), agentos_sidecar_client::TransportError> {
+    let wire::ResponsePayload::ExtEnvelope(envelope) = response else {
+        return Ok(());
+    };
+    if envelope.namespace != ACP_EXTENSION_NAMESPACE {
+        return Ok(());
+    }
+    let response: AcpResponse = serde_bare::from_slice(&envelope.payload).map_err(|error| {
+        agentos_sidecar_client::TransportError::Sidecar(format!(
+            "failed to decode ACP response while binding session route: {error}"
+        ))
+    })?;
+    let session_id = match (expected, response) {
+        (AcpSessionRouteResponse::Created, AcpResponse::AcpSessionCreatedResponse(created)) => {
+            Some(created.session_id)
+        }
+        (AcpSessionRouteResponse::Resumed, AcpResponse::AcpSessionResumedResponse(resumed)) => {
+            Some(resumed.session_id)
+        }
+        _ => None,
+    };
+    if let Some(session_id) = session_id {
+        register_session_route(sessions, &session_id);
+    }
+    Ok(())
+}
+
+/// Build a response hook that retains only the host route registry, not the VM/client/transport
+/// ownership graph. The transport deliberately keeps this hook after caller cancellation so an
+/// eventual authoritative success can still bind its route. A weak registry prevents that bounded
+/// tombstone from keeping a dropped client and its transport alive indefinitely.
+fn acp_session_route_response_hook(
+    sessions: Weak<scc::HashMap<String, SessionEntry>>,
+    expected: AcpSessionRouteResponse,
+) -> impl FnOnce(
+    &wire::ResponsePayload,
+) -> std::result::Result<(), agentos_sidecar_client::TransportError>
+       + Send
+       + Sync
+       + 'static {
+    move |response| {
+        let Some(sessions) = sessions.upgrade() else {
+            return Ok(());
+        };
+        register_acp_session_route_from_wire_response(&sessions, expected, response)
+    }
+}
+
 /// Validate the sidecar's ACP close response before releasing any host callback/event routes.
 /// Passing the request result into this one finalization point keeps transport failures and typed
 /// rejections retryable as well as rejecting unrelated or wrong-session success responses.
@@ -1066,8 +1275,8 @@ impl AgentOs {
             })?)
         };
         let response = self
-            .send_acp_request(AcpRequest::AcpCreateSessionRequest(
-                AcpCreateSessionRequest {
+            .send_acp_request_registering_session(
+                AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
                     agent_type: agent_type.to_string(),
                     runtime: None,
                     args: None,
@@ -1078,32 +1287,17 @@ impl AgentOs {
                     client_capabilities: None,
                     additional_instructions: options.additional_instructions.clone(),
                     skip_os_instructions: options.skip_os_instructions.then_some(true),
-                },
-            ))
+                }),
+                AcpSessionRouteResponse::Created,
+            )
             .await?;
         let AcpResponse::AcpSessionCreatedResponse(created) = response else {
             return Err(unexpected_acp_response("AcpCreateSessionRequest", response).into());
         };
         let created = session_created_from_acp(created)?;
-        self.register_session(&created.session_id);
-
         Ok(SessionId {
             session_id: created.session_id,
         })
-    }
-
-    /// Register only the host-side callback/event routes for a live sidecar session.
-    pub(crate) fn register_session(&self, session_id: &str) {
-        let (event_tx, _) = tokio::sync::broadcast::channel(1024);
-        let (permission_tx, _) = tokio::sync::broadcast::channel(64);
-        let (agent_exit_tx, _) = tokio::sync::broadcast::channel(16);
-        let entry = SessionEntry {
-            event_tx,
-            permission_tx,
-            agent_exit_tx,
-            pending_permission_replies: scc::HashMap::new(),
-        };
-        let _ = self.inner().sessions.insert(session_id.to_string(), entry);
     }
 
     /// Resume a session that exists in durable storage but is not live in this VM
@@ -1131,21 +1325,20 @@ impl AgentOs {
         let env = (!options.env.is_empty()).then(|| options.env.clone().into_iter().collect());
 
         let response = self
-            .send_acp_request(AcpRequest::AcpResumeSessionRequest(
-                AcpResumeSessionRequest {
+            .send_acp_request_registering_session(
+                AcpRequest::AcpResumeSessionRequest(AcpResumeSessionRequest {
                     session_id: session_id.to_string(),
                     agent_type: agent_type.to_string(),
                     transcript_path: options.transcript_path.clone(),
                     cwd: options.cwd.clone(),
                     env,
-                },
-            ))
+                }),
+                AcpSessionRouteResponse::Resumed,
+            )
             .await?;
         let AcpResponse::AcpSessionResumedResponse(resumed) = response else {
             return Err(unexpected_acp_response("AcpResumeSessionRequest", response).into());
         };
-
-        self.register_session(&resumed.session_id);
 
         Ok(ResumeSessionResult {
             session_id: resumed.session_id,
@@ -1215,19 +1408,43 @@ impl AgentOs {
         &self,
         request: AcpRequest,
     ) -> std::result::Result<AcpResponse, ClientError> {
+        self.send_acp_request_inner(request, None).await
+    }
+
+    async fn send_acp_request_registering_session(
+        &self,
+        request: AcpRequest,
+        expected: AcpSessionRouteResponse,
+    ) -> std::result::Result<AcpResponse, ClientError> {
+        self.send_acp_request_inner(request, Some(expected)).await
+    }
+
+    async fn send_acp_request_inner(
+        &self,
+        request: AcpRequest,
+        session_route: Option<AcpSessionRouteResponse>,
+    ) -> std::result::Result<AcpResponse, ClientError> {
         let payload = serde_bare::to_vec(&request).map_err(|error| {
             ClientError::Sidecar(format!("failed to encode ACP request: {error}"))
         })?;
-        let response = self
-            .transport()
-            .request_wire(
-                self.session_ownership(),
-                wire::RequestPayload::ExtEnvelope(wire::ExtEnvelope {
-                    namespace: ACP_EXTENSION_NAMESPACE.to_string(),
-                    payload,
-                }),
-            )
-            .await?;
+        let request = wire::RequestPayload::ExtEnvelope(wire::ExtEnvelope {
+            namespace: ACP_EXTENSION_NAMESPACE.to_string(),
+            payload,
+        });
+        let response = if let Some(expected) = session_route {
+            let sessions = Arc::downgrade(&self.inner().sessions);
+            self.transport()
+                .request_wire_with_response_hook(
+                    self.session_ownership(),
+                    request,
+                    acp_session_route_response_hook(sessions, expected),
+                )
+                .await?
+        } else {
+            self.transport()
+                .request_wire(self.session_ownership(), request)
+                .await?
+        };
         let envelope = match response {
             wire::ResponsePayload::ExtEnvelope(envelope) => envelope,
             wire::ResponsePayload::RejectedResponse(rejected) => {

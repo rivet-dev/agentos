@@ -576,6 +576,12 @@ function write11(bc: bare.ByteCursor, x: readonly JsonUtf8[]): void {
 
 export type AcpSessionCreatedResponse = {
     readonly sessionId: string
+    /**
+     * Complete host-route identity. Clients install the route atomically when this
+     * response frame arrives, before following bootstrap events are dispatched.
+     */
+    readonly agentType: string
+    readonly processId: string
     readonly pid: u32 | null
     readonly modes: JsonUtf8 | null
     readonly configOptions: readonly JsonUtf8[]
@@ -586,6 +592,8 @@ export type AcpSessionCreatedResponse = {
 export function readAcpSessionCreatedResponse(bc: bare.ByteCursor): AcpSessionCreatedResponse {
     return {
         sessionId: bare.readString(bc),
+        agentType: bare.readString(bc),
+        processId: bare.readString(bc),
         pid: read10(bc),
         modes: read7(bc),
         configOptions: read11(bc),
@@ -596,6 +604,8 @@ export function readAcpSessionCreatedResponse(bc: bare.ByteCursor): AcpSessionCr
 
 export function writeAcpSessionCreatedResponse(bc: bare.ByteCursor, x: AcpSessionCreatedResponse): void {
     bare.writeString(bc, x.sessionId)
+    bare.writeString(bc, x.agentType)
+    bare.writeString(bc, x.processId)
     write10(bc, x.pid)
     write7(bc, x.modes)
     write11(bc, x.configOptions)
@@ -742,18 +752,30 @@ export function writeAcpSessionClosedResponse(bc: bare.ByteCursor, x: AcpSession
 export type AcpSessionResumedResponse = {
     readonly sessionId: string
     readonly mode: string
+    /**
+     * Complete host-route identity for the newly live adapter/session.
+     */
+    readonly agentType: string
+    readonly processId: string
+    readonly pid: u32 | null
 }
 
 export function readAcpSessionResumedResponse(bc: bare.ByteCursor): AcpSessionResumedResponse {
     return {
         sessionId: bare.readString(bc),
         mode: bare.readString(bc),
+        agentType: bare.readString(bc),
+        processId: bare.readString(bc),
+        pid: read10(bc),
     }
 }
 
 export function writeAcpSessionResumedResponse(bc: bare.ByteCursor, x: AcpSessionResumedResponse): void {
     bare.writeString(bc, x.sessionId)
     bare.writeString(bc, x.mode)
+    bare.writeString(bc, x.agentType)
+    bare.writeString(bc, x.processId)
+    write10(bc, x.pid)
 }
 
 export type AcpErrorResponse = {

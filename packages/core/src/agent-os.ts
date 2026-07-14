@@ -771,12 +771,17 @@ function toAgentInfo(value: unknown): AgentInfo | null {
 	return value as AgentInfo;
 }
 
-function sessionEntryFromState(state: SidecarSessionState): AgentSessionEntry {
+function sessionEntryFromRoute(response: {
+	sessionId: string;
+	agentType: string;
+	processId: string;
+	pid: number | null;
+}): AgentSessionEntry {
 	return {
-		sessionId: state.sessionId,
-		agentType: state.agentType,
-		processId: state.processId,
-		pid: state.pid ?? null,
+		sessionId: response.sessionId,
+		agentType: response.agentType,
+		processId: response.processId,
+		pid: response.pid,
 		eventHandlers: new Set(),
 		permissionHandlers: new Set(),
 		warnedNoPermissionHandler: false,
@@ -2535,15 +2540,10 @@ export class AgentOs {
 		}
 	}
 
-	private async _sendAcpRequest(request: AcpRequest): Promise<AcpResponse> {
-		const envelope = await this._sidecarClient.extensionRequest(
-			this._sidecarSession,
-			this._sidecarVm,
-			{
-				namespace: ACP_EXTENSION_NAMESPACE,
-				payload: encodeAcpRequest(request),
-			},
-		);
+	private _decodeAcpResponseEnvelope(envelope: {
+		namespace: string;
+		payload: Uint8Array;
+	}): AcpResponse {
 		if (envelope.namespace !== ACP_EXTENSION_NAMESPACE) {
 			throw new Error(`unexpected ACP Ext namespace: ${envelope.namespace}`);
 		}
@@ -2555,6 +2555,36 @@ export class AgentOs {
 			error.code = response.val.code;
 			throw error;
 		}
+		return response;
+	}
+
+	private async _sendAcpRequest(
+		request: AcpRequest,
+		onResponse?: (response: AcpResponse) => void,
+	): Promise<AcpResponse> {
+		let hookResponse: AcpResponse | undefined;
+		const envelope = await this._sidecarClient.extensionRequest(
+			this._sidecarSession,
+			this._sidecarVm,
+			{
+				namespace: ACP_EXTENSION_NAMESPACE,
+				payload: encodeAcpRequest(request),
+			},
+			onResponse
+				? {
+						onResponse: (responseEnvelope) => {
+							hookResponse =
+								this._decodeAcpResponseEnvelope(responseEnvelope);
+							onResponse(hookResponse);
+						},
+					}
+				: undefined,
+		);
+		if (hookResponse) {
+			return hookResponse;
+		}
+		const response = this._decodeAcpResponseEnvelope(envelope);
+		onResponse?.(response);
 		return response;
 	}
 
@@ -2680,30 +2710,42 @@ export class AgentOs {
 		// System-prompt assembly/injection (launch args / OPENCODE_CONTEXTPATHS) is
 		// owned by the sidecar; the host only forwards additionalInstructions /
 		// skipOsInstructions plus the caller's env.
-		const response = await this._sendAcpRequest({
-			tag: "AcpCreateSessionRequest",
-			val: {
-				agentType: String(agentType),
-				runtime: null,
-				args: null,
-				env: options?.env ? new Map(Object.entries(options.env)) : null,
-				cwd: options?.cwd ?? null,
-				mcpServers: options?.mcpServers
-					? JSON.stringify(options.mcpServers)
-					: null,
-				protocolVersion: null,
-				clientCapabilities: null,
-				additionalInstructions: options?.additionalInstructions ?? null,
-				skipOsInstructions: options?.skipOsInstructions === true ? true : null,
+		const response = await this._sendAcpRequest(
+			{
+				tag: "AcpCreateSessionRequest",
+				val: {
+					agentType: String(agentType),
+					runtime: null,
+					args: null,
+					env: options?.env ? new Map(Object.entries(options.env)) : null,
+					cwd: options?.cwd ?? null,
+					mcpServers: options?.mcpServers
+						? JSON.stringify(options.mcpServers)
+						: null,
+					protocolVersion: null,
+					clientCapabilities: null,
+					additionalInstructions: options?.additionalInstructions ?? null,
+					skipOsInstructions:
+						options?.skipOsInstructions === true ? true : null,
+				},
 			},
-		});
+			(created) => {
+				if (created.tag !== "AcpSessionCreatedResponse") {
+					throw new Error(
+						`unexpected create_session response: ${created.tag}`,
+					);
+				}
+				this._sessions.set(
+					created.val.sessionId,
+					sessionEntryFromRoute(created.val),
+				);
+			},
+		);
 		if (response.tag !== "AcpSessionCreatedResponse") {
 			throw new Error(`unexpected create_session response: ${response.tag}`);
 		}
-		const state = await this._getSessionState(response.val.sessionId);
-		this._sessions.set(state.sessionId, sessionEntryFromState(state));
 
-		return { sessionId: state.sessionId };
+		return { sessionId: response.val.sessionId };
 	}
 
 	/**
@@ -2729,25 +2771,34 @@ export class AgentOs {
 		// The client is npm-agnostic: it sends only the agent NAME. The sidecar
 		// resolves the name -> package -> entrypoint/env/launchArgs from the
 		// projected manifest, exactly as createSession does.
-		const response = await this._sendAcpRequest({
-			tag: "AcpResumeSessionRequest",
-			val: {
-				sessionId,
-				agentType: String(agentType),
-				transcriptPath: options?.transcriptPath ?? null,
-				cwd: options?.cwd ?? null,
-				env: options?.env ? new Map(Object.entries(options.env)) : null,
+		const response = await this._sendAcpRequest(
+			{
+				tag: "AcpResumeSessionRequest",
+				val: {
+					sessionId,
+					agentType: String(agentType),
+					transcriptPath: options?.transcriptPath ?? null,
+					cwd: options?.cwd ?? null,
+					env: options?.env ? new Map(Object.entries(options.env)) : null,
+				},
 			},
-		});
+			(resumed) => {
+				if (resumed.tag !== "AcpSessionResumedResponse") {
+					throw new Error(
+						`unexpected resume_session response: ${resumed.tag}`,
+					);
+				}
+				this._sessions.set(
+					resumed.val.sessionId,
+					sessionEntryFromRoute(resumed.val),
+				);
+			},
+		);
 		if (response.tag !== "AcpSessionResumedResponse") {
 			throw new Error(`unexpected resume_session response: ${response.tag}`);
 		}
 		const { sessionId: liveSessionId, mode } = response.val;
-
-		const state = await this._getSessionState(liveSessionId);
-		this._sessions.set(state.sessionId, sessionEntryFromState(state));
-
-		return { sessionId: state.sessionId, mode };
+		return { sessionId: liveSessionId, mode };
 	}
 
 	private _installSidecarRequestHandler(): void {

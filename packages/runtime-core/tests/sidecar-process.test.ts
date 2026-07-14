@@ -45,8 +45,29 @@ class MemorySidecarTransport implements SidecarProcessTransport {
 	async sendRequest(input: {
 		ownership: LiveOwnershipScope;
 		payload: LiveRequestPayload;
+		onResponse?: (response: LiveResponseFrame) => void;
 	}): Promise<LiveResponseFrame> {
-		this.requests.push(input);
+		this.requests.push({
+			ownership: input.ownership,
+			payload: input.payload,
+		});
+		if (input.payload.type === "ext") {
+			const response: LiveResponseFrame = {
+				frame_type: "response",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: this.requests.length,
+				ownership: input.ownership,
+				payload: {
+					type: "ext_result",
+					envelope: {
+						namespace: input.payload.envelope.namespace,
+						payload: new Uint8Array([2]),
+					},
+				},
+			};
+			input.onResponse?.(response);
+			return response;
+		}
 		if (input.payload.type === "initialize_vm") {
 			return {
 				frame_type: "response",
@@ -130,6 +151,30 @@ class MemorySidecarTransport implements SidecarProcessTransport {
 }
 
 describe("sidecar process transport injection", () => {
+	test("forwards an extension response hook through the transport boundary", async () => {
+		const transport = new MemorySidecarTransport();
+		const process = SidecarProcess.fromClient(transport);
+		const order: string[] = [];
+
+		const response = await process.extensionRequest(
+			{ connectionId: "conn", sessionId: "session" },
+			{ vmId: "vm" },
+			{ namespace: "test", payload: new Uint8Array([1]) },
+			{
+				onResponse: (envelope) => {
+					order.push(`hook:${envelope.payload[0]}`);
+				},
+			},
+		);
+		order.push("await");
+
+		expect(order).toEqual(["hook:2", "await"]);
+		expect(response).toEqual({
+			namespace: "test",
+			payload: new Uint8Array([2]),
+		});
+	});
+
 	test("forwards one initialization request and preserves omissions", async () => {
 		const transport = new MemorySidecarTransport();
 		const process = SidecarProcess.fromClient(transport);

@@ -10,7 +10,10 @@ export class PendingResponseRegistry<TResponse> {
 	// so a response is bounded by the transport's silence watchdog (a dead or
 	// wedged sidecar rejects all pending requests through `rejectAll`) rather
 	// than by guessing how long any one request should take.
-	waitForResponse(requestId: number): Promise<TResponse> {
+	waitForResponse(
+		requestId: number,
+		onResponse?: (frame: TResponse) => void,
+	): Promise<TResponse> {
 		if (this.pending.has(requestId)) {
 			throw new Error(
 				`response waiter already registered for request ${requestId}`,
@@ -20,7 +23,14 @@ export class PendingResponseRegistry<TResponse> {
 			this.pending.set(requestId, {
 				resolve: (frame: TResponse) => {
 					this.pending.delete(requestId);
-					resolve(frame);
+					try {
+						onResponse?.(frame);
+						resolve(frame);
+					} catch (error) {
+						reject(
+							error instanceof Error ? error : new Error(String(error)),
+						);
+					}
 				},
 				reject: (error: Error) => {
 					this.pending.delete(requestId);

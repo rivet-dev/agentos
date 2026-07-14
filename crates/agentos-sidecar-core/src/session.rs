@@ -42,6 +42,8 @@ impl AcpSessionRecord {
     pub fn created_response(&self) -> AcpSessionCreatedResponse {
         AcpSessionCreatedResponse {
             session_id: self.session_id.clone(),
+            agent_type: self.agent_type.clone(),
+            process_id: self.process_id.clone(),
             pid: self.pid,
             modes: self.modes.clone(),
             config_options: self.config_options.clone(),

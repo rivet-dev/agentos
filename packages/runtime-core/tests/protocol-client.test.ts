@@ -171,6 +171,44 @@ describe("sidecar protocol client", () => {
 		client.dispose();
 	});
 
+	it("runs the response hook before a following event is dispatched", async () => {
+		const frameTransport = new MemoryFrameTransport();
+		const client = new SidecarProtocolClient({
+			frameTransport,
+			eventBufferCapacity: 8,
+			payloadCodec: "json",
+			stderrText: () => "stderr",
+		});
+		const order: string[] = [];
+		client.onEvent(() => order.push("event"));
+		const response = client.sendRequest({
+			ownership,
+			payload: { type: "create_layer" },
+			onResponse: () => order.push("response-hook"),
+		});
+
+		await expect.poll(() => frameTransport.writes.length).toBe(1);
+		frameTransport.emitFrame({
+			frame_type: "response",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			request_id: 1,
+			ownership,
+			payload: { type: "layer_created", layer_id: "layer" },
+		});
+		frameTransport.emitFrame({
+			frame_type: "event",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			ownership,
+			payload: { type: "structured", name: "ready", detail: {} },
+		});
+
+		expect(order).toEqual(["response-hook", "event"]);
+		await expect(response).resolves.toMatchObject({
+			payload: { type: "layer_created", layer_id: "layer" },
+		});
+		client.dispose();
+	});
+
 	it("preserves structured sidecar rejection details", async () => {
 		const frameTransport = new MemoryFrameTransport();
 		const client = new SidecarProtocolClient({

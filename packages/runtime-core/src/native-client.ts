@@ -144,6 +144,7 @@ export class StdioSidecarProtocolClient implements SidecarProcessTransport {
 	async sendRequest(input: {
 		ownership: LiveOwnershipScope;
 		payload: LiveRequestPayload;
+		onResponse?: (response: LiveResponseFrame) => void;
 	}): Promise<LiveResponseFrame> {
 		return await this.protocolClient.sendRequest(input);
 	}

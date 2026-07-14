@@ -19,6 +19,8 @@ export interface SidecarProcessTransport {
 	sendRequest(input: {
 		ownership: LiveOwnershipScope;
 		payload: LiveRequestPayload;
+		/** Runs synchronously while the response frame is routed, before later frames. */
+		onResponse?: (response: LiveResponseFrame) => void;
 	}): Promise<LiveResponseFrame>;
 	waitForEvent(
 		matcher:

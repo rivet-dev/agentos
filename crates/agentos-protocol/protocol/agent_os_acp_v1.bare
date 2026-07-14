@@ -105,6 +105,10 @@ type AcpRequest union {
 
 type AcpSessionCreatedResponse struct {
   sessionId: str
+  # Complete host-route identity. Clients install the route atomically when this
+  # response frame arrives, before following bootstrap events are dispatched.
+  agentType: str
+  processId: str
   pid: optional<u32>
   modes: optional<JsonUtf8>
   configOptions: list<JsonUtf8>
@@ -154,6 +158,10 @@ type AcpSessionClosedResponse struct {
 type AcpSessionResumedResponse struct {
   sessionId: str
   mode: str
+  # Complete host-route identity for the newly live adapter/session.
+  agentType: str
+  processId: str
+  pid: optional<u32>
 }
 
 type AcpErrorResponse struct {

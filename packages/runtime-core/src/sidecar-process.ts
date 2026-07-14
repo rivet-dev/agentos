@@ -597,6 +597,7 @@ export class SidecarProcess {
 		session: AuthenticatedSession,
 		vm: CreatedVm,
 		envelope: ExtEnvelope,
+		options?: { onResponse?: (envelope: ExtEnvelope) => void },
 	): Promise<ExtEnvelope> {
 		const response = await this.sendRequest({
 			ownership: {
@@ -609,6 +610,18 @@ export class SidecarProcess {
 				type: "ext",
 				envelope,
 			},
+			...(options?.onResponse
+				? {
+						onResponse: (frame: ResponseFrame) => {
+							if (frame.payload.type !== "ext_result") {
+								throw new Error(
+									`unexpected ext response: ${frame.payload.type}`,
+								);
+							}
+							options.onResponse?.(frame.payload.envelope);
+						},
+					}
+				: {}),
 		});
 		if (response.payload.type !== "ext_result") {
 			throw new Error(`unexpected ext response: ${response.payload.type}`);
@@ -1933,6 +1946,7 @@ export class SidecarProcess {
 	private async sendRequest(input: {
 		ownership: OwnershipScope;
 		payload: RequestPayload;
+		onResponse?: (response: ResponseFrame) => void;
 	}): Promise<ResponseFrame> {
 		return await this.protocolClient.sendRequest(input);
 	}

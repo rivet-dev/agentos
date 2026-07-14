@@ -209,6 +209,7 @@ export class SidecarProtocolClient {
 	async sendRequest(input: {
 		ownership: LiveOwnershipScope;
 		payload: LiveRequestPayload;
+		onResponse?: (response: LiveResponseFrame) => void;
 	}): Promise<LiveResponseFrame> {
 		if (this.closedError) {
 			throw this.closedError;
@@ -221,8 +222,16 @@ export class SidecarProtocolClient {
 		const response = await this.frameTransport.sendFrame(
 			request.request_id,
 			request,
+			(frame) => {
+				this.validateResponse(frame);
+				input.onResponse?.(frame);
+			},
 		);
+		this.validateResponse(response);
+		return response;
+	}
 
+	private validateResponse(response: LiveResponseFrame): void {
 		if (response.payload.type === "rejected") {
 			throw new SidecarRequestRejected({
 				code: response.payload.code,
@@ -230,7 +239,6 @@ export class SidecarProtocolClient {
 				response,
 			});
 		}
-		return response;
 	}
 
 	async waitForEvent(

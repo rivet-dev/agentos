@@ -1279,6 +1279,9 @@ impl AcpExtension {
                 AcpSessionResumedResponse {
                     session_id: session.session_id,
                     mode: outcome.mode,
+                    agent_type: session.agent_type,
+                    process_id: session.process_id,
+                    pid: session.pid,
                 },
             )),
             events,
@@ -1825,6 +1828,8 @@ impl AcpSessionRecord {
     fn created_response(&self) -> AcpSessionCreatedResponse {
         AcpSessionCreatedResponse {
             session_id: self.session_id.clone(),
+            agent_type: self.agent_type.clone(),
+            process_id: self.process_id.clone(),
             pid: self.pid,
             modes: self.modes.clone(),
             config_options: self.config_options.clone(),

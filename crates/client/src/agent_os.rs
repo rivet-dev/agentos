@@ -140,7 +140,7 @@ pub(crate) struct AgentOsInner {
     pub(crate) pending_shell_exits: SccHashMap<String, JoinHandle<()>>,
 
     // Session registries.
-    pub(crate) sessions: SccHashMap<String, SessionEntry>,
+    pub(crate) sessions: Arc<SccHashMap<String, SessionEntry>>,
     pub(crate) control_route_failure: parking_lot::Mutex<Option<StreamRouteFailure>>,
 
     // Cron.
@@ -371,7 +371,7 @@ impl AgentOs {
             processes: SccHashMap::new(),
             shells: SccHashMap::new(),
             pending_shell_exits: SccHashMap::new(),
-            sessions: SccHashMap::new(),
+            sessions: Arc::new(SccHashMap::new()),
             control_route_failure: parking_lot::Mutex::new(None),
             cron,
             sidecar,

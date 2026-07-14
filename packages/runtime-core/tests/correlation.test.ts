@@ -11,6 +11,30 @@ describe("pending response registry", () => {
 		expect(registry.resolve(7, "late")).toBe(false);
 	});
 
+	test("runs the response hook synchronously before resolving the waiter", async () => {
+		const registry = new PendingResponseRegistry<string>();
+		const order: string[] = [];
+		const response = registry.waitForResponse(8, (frame) => {
+			order.push(`hook:${frame}`);
+		});
+
+		expect(registry.resolve(8, "ok")).toBe(true);
+		order.push("after-resolve");
+		expect(order).toEqual(["hook:ok", "after-resolve"]);
+		await expect(response).resolves.toBe("ok");
+	});
+
+	test("rejects the waiter when its synchronous response hook fails", async () => {
+		const registry = new PendingResponseRegistry<string>();
+		const response = registry.waitForResponse(8, () => {
+			throw new Error("route registration failed");
+		});
+
+		expect(registry.resolve(8, "ok")).toBe(true);
+		await expect(response).rejects.toThrow("route registration failed");
+		expect(registry.resolve(8, "late")).toBe(false);
+	});
+
 	test("rejects a registered response by request id", async () => {
 		const registry = new PendingResponseRegistry<string>();
 		const response = registry.waitForResponse(9);

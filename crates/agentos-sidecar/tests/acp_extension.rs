@@ -293,6 +293,8 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
         panic!("unexpected create response: {created:?}");
     };
     assert_eq!(created.session_id, "adapter-session");
+    assert_eq!(created.agent_type, "pi");
+    assert!(created.process_id.starts_with("acp-agent-"));
     assert!(created.pid.is_some());
     let bootstrap_event = decode_single_acp_session_event(&create_events);
     assert_eq!(
