@@ -50,6 +50,7 @@ import {
 describe("root public API exports", () => {
 	test("re-exports the main public value surface from the root entrypoint", () => {
 		expect(AgentOs).toBeTypeOf("function");
+		expect("processTree" in AgentOs.prototype).toBe(false);
 		expect(AgentOsSidecar).toBeTypeOf("function");
 		expect(CronManager).toBeTypeOf("function");
 		expect(createHostDirBackend).toBeTypeOf("function");

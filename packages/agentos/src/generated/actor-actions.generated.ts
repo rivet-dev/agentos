@@ -5,7 +5,6 @@ import type {
 	ExecResult,
 	PermissionReply,
 	ProcessInfo,
-	ProcessTreeNode,
 	SpawnedProcessInfo,
 	VirtualStat,
 } from "@rivet-dev/agentos-core";
@@ -124,7 +123,6 @@ export type AgentOsActions = {
 	stopProcess: (c: Ctx, pid: number) => Promise<void>;
 	listProcesses: (c: Ctx) => Promise<SpawnedProcessInfo[]>;
 	allProcesses: (c: Ctx) => Promise<ProcessInfo[]>;
-	processTree: (c: Ctx) => Promise<ProcessTreeNode[]>;
 	getProcess: (c: Ctx, pid: number) => Promise<SpawnedProcessInfo>;
 	writeProcessStdin: (c: Ctx, pid: number, data: string | Uint8Array) => Promise<void>;
 	closeProcessStdin: (c: Ctx, pid: number) => Promise<void>;

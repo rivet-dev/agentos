@@ -4,8 +4,7 @@
 //! here so the dispatcher arms can reply directly.
 
 use agentos_client::{
-    AgentOs, ExecOptions, ExecResult, ProcessInfo, ProcessTreeNode, SpawnHandle, SpawnOptions,
-    SpawnedProcessInfo,
+    AgentOs, ExecOptions, ExecResult, ProcessInfo, SpawnHandle, SpawnOptions, SpawnedProcessInfo,
 };
 use anyhow::Result;
 use serde::Serialize;
@@ -111,12 +110,6 @@ pub async fn list_processes(vm: &AgentOs) -> Result<Vec<SpawnedProcessInfo>> {
 /// full kernel process snapshot.
 pub async fn all_processes(vm: &AgentOs) -> Result<Vec<ProcessInfo>> {
     vm.all_processes().await
-}
-
-/// `processTree()` — port of [`AgentOs::process_tree`]. Returns the
-/// kernel process forest.
-pub async fn process_tree(vm: &AgentOs) -> Result<Vec<ProcessTreeNode>> {
-    vm.process_tree().await
 }
 
 /// `getProcess(pid)` — reads the sidecar's authoritative process snapshot.

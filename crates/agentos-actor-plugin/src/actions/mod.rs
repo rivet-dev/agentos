@@ -386,7 +386,7 @@ pub mod contract {
 
     use agentos_client::{
         AgentExitEvent, CronEvent, CronOverlap, DirEntry, DirEntryType, JsonRpcResponse,
-        ProcessInfo, ProcessStatus, ProcessTreeNode, SpawnHandle, SpawnedProcessInfo, VirtualStat,
+        ProcessInfo, ProcessStatus, SpawnHandle, SpawnedProcessInfo, VirtualStat,
     };
     use anyhow::{anyhow, Result};
     use ciborium::Value as CborValue;
@@ -431,7 +431,6 @@ pub mod contract {
             }
             "listProcesses"
             | "allProcesses"
-            | "processTree"
             | "listCronJobs"
             | "listPersistedSessions"
             | "listMounts"
@@ -507,7 +506,6 @@ pub mod contract {
             }
             "listProcesses"
             | "allProcesses"
-            | "processTree"
             | "listCronJobs"
             | "listPersistedSessions"
             | "listMounts"
@@ -581,7 +579,6 @@ pub mod contract {
             }
             "listProcesses"
             | "allProcesses"
-            | "processTree"
             | "listCronJobs"
             | "listPersistedSessions"
             | "listMounts"
@@ -678,10 +675,6 @@ pub mod contract {
             "waitProcess" | "waitShell" => encode(&0i32),
             "listProcesses" => encode(&vec![spawned_process_info()]),
             "allProcesses" => encode(&vec![process_info()]),
-            "processTree" => encode(&vec![ProcessTreeNode {
-                info: process_info(),
-                children: Vec::new(),
-            }]),
             "getProcess" => encode(&spawned_process_info()),
             "openShell" => encode(&shell::OpenShellDto {
                 shell_id: "shell-1".to_owned(),
@@ -1027,10 +1020,6 @@ pub(crate) async fn dispatch(
         },
         "allProcesses" => match process::all_processes(vm).await {
             Ok(processes) => reply_ok(host, token, &processes),
-            Err(error) => reply_err(host, token, error),
-        },
-        "processTree" => match process::process_tree(vm).await {
-            Ok(tree) => reply_ok(host, token, &tree),
             Err(error) => reply_err(host, token, error),
         },
         "getProcess" => match decode_as::<(u32,)>(args) {

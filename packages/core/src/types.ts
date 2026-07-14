@@ -31,7 +31,6 @@ export type {
 	PermissionRequest,
 	PermissionRequestHandler,
 	PlainMountConfig,
-	ProcessTreeNode,
 	PromptResult,
 	ReaddirRecursiveOptions,
 	ResumeSessionOptions,

@@ -118,11 +118,6 @@ pub const ACTION_CONTRACTS: &[ActionContract] = &[
         ts_signature: "allProcesses: (c: Ctx) => Promise<ProcessInfo[]>;",
     },
     ActionContract {
-        name: "processTree",
-        reply_shape: ReplyShape::Array,
-        ts_signature: "processTree: (c: Ctx) => Promise<ProcessTreeNode[]>;",
-    },
-    ActionContract {
         name: "getProcess",
         reply_shape: ReplyShape::Object(&["args", "command", "exitCode", "pid", "running", "startedAt"]),
         ts_signature: "getProcess: (c: Ctx, pid: number) => Promise<SpawnedProcessInfo>;",
@@ -361,7 +356,6 @@ const TYPE_IMPORTS: &[TsImport] = &[
             "ExecResult",
             "PermissionReply",
             "ProcessInfo",
-            "ProcessTreeNode",
             "SpawnedProcessInfo",
             "VirtualStat",
         ],

@@ -6,7 +6,8 @@ skill: true
 
 This page is an internals deep-dive on the kernel's **process model**: the data
 structures and syscall paths behind every guest process. For the client-facing
-API (`exec`, `spawn`, `openShell`, lifecycle, the process tree), see
+API (`exec`, `spawn`, `openShell`, lifecycle, and the flat `allProcesses`
+snapshot), see
 [Processes & Shell](/docs/processes). For the surrounding component and trust
 model, see [Architecture](/docs/architecture).
 
@@ -21,7 +22,7 @@ Each VM owns one process table. It is the authority for what is "running"
 inside that VM; nothing in it corresponds to a host PID.
 
 - **Per-VM and isolated.** Two VMs have two independent tables. A PID in one VM is meaningless in another, and processes are never visible across the VM boundary.
-- **Holds every guest process,** not only the ones a client started explicitly. A `spawn` from the client, a child spawned by guest `node:child_process`, and the processes behind a shell pipeline are all table entries. This is why the system-wide views (`allProcesses`, `processTree`) can show more than what the client launched.
+- **Holds every guest process,** not only the ones a client started explicitly. A `spawn` from the client, a child spawned by guest `node:child_process`, and the processes behind a shell pipeline are all table entries. This is why the system-wide `allProcesses` snapshot can show more than what the client launched.
 - **Tracks lifecycle and lineage.** Each entry carries its PID, the command and arguments, parent PID (so the tree can be reconstructed), running/exited status, exit code once collected, and its attached stdio endpoints.
 - **Records a driver.** An entry knows which execution backend services it (for example a V8 isolate versus a WASM runtime). This is the `driver` field surfaced on `allProcesses`. Drivers differ in *how* the code runs; they share the same table, the same kernel-owned stdio, and the same boundary.
 

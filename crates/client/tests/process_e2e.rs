@@ -6,7 +6,7 @@
 //!
 //! When commands ARE available the suite asserts the real TS contract: exec stdout + exit code,
 //! binary stdout round-trip, spawn pid + stdin write, exit-code wait, list/get of SDK processes, and
-//! the kernel process snapshot (`all_processes` / `process_tree`).
+//! the kernel process snapshot (`all_processes`).
 
 mod common;
 
@@ -85,11 +85,7 @@ async fn process_surface_exec_spawn_and_snapshot() {
     );
     // Kernel-wide process snapshot is always obtainable (no WASM required).
     let all = os.all_processes().await.expect("all_processes snapshot");
-    let tree = os.process_tree().await.expect("process_tree snapshot");
-    assert!(
-        all.len() >= tree.len(),
-        "the process forest cannot have more roots than total processes"
-    );
+    assert!(all.iter().all(|process| process.pid > 0));
 
     // Gate: probe for the WASM command toolchain. Bare `echo` with no args prints an empty line, so
     // a clean exit (code 0) is the availability signal even though stdout is just "\n".
@@ -264,17 +260,9 @@ async fn process_surface_exec_spawn_and_snapshot() {
         "sidecar timeout should deliver SIGKILL exit status"
     );
 
-    // --- kernel snapshot: all_processes / process_tree -------------------------------------------
-    // The snapshot is a kernel-wide view. It must at least be obtainable and well-formed; every node
-    // in the tree must correspond to a process in the flat list (tree is built purely from the list).
+    // --- kernel snapshot: all_processes -----------------------------------------------------------
+    // The snapshot is the sidecar-authoritative kernel-wide view.
     let all = os.all_processes().await.expect("all_processes");
-    let tree = os.process_tree().await.expect("process_tree");
-    assert!(
-        all.len() >= tree.len(),
-        "the process forest cannot contain more roots than total processes"
-    );
-    // Every tree node must correspond to an entry in the flat list (the forest is built purely from
-    // it), and pgid/sid are self-consistent for the roots.
     let flat_pids: std::collections::BTreeSet<u32> = all.iter().map(|p| p.pid).collect();
     assert!(
         flat_pids.contains(&handle.pid),
@@ -289,12 +277,6 @@ async fn process_surface_exec_spawn_and_snapshot() {
     assert_eq!(spawned.cwd, "/workspace");
     assert!(spawned.start_time > 0.0);
     assert!(spawned.exit_time.is_some());
-    for root in &tree {
-        assert!(
-            flat_pids.contains(&root.info.pid),
-            "every process_tree root must exist in all_processes"
-        );
-    }
 
     os.shutdown().await.expect("shutdown");
 }

@@ -161,7 +161,7 @@ See `.agent/specs/test-structure.md` for the full restructuring plan. Target lay
 - `unit/` -- no VM, no sidecar; pure logic (host-tools Zod conversion, descriptors, cron manager, etc.)
 - `filesystem/` -- VFS CRUD, overlay, mount, layers, host-dir
 - Shared filesystem conformance coverage in `src/test/file-system.ts` is fail-closed: backend-specific deviations must be modeled as explicit `capabilities` flags on the test descriptor, never with permissive `try/catch` branches that treat any thrown error as success.
-- `process/` -- execution, signals, process tree, flat API wrappers
+- `process/` -- execution, signals, and process snapshots
 - `session/` -- ACP lifecycle, events, capabilities, MCP, cancellation
 - `agents/{pi,claude,opencode,codex}/` -- per-agent adapter tests
 - `wasm/` -- WASM command and permission tier tests
@@ -186,9 +186,9 @@ See `.agent/specs/test-structure.md` for the full restructuring plan. Target lay
 
 - `globalThis.fetch` is hardened (non-writable) in the VM -- can't be mocked in-process
 - Kernel child_process.spawn can't resolve bare commands from PATH (e.g., `pi`). Use `PI_ACP_PI_COMMAND` env var to point to the `.js` entry directly.
-- `allProcesses()` / `processTree()` on the native sidecar path are derived from
-  the VM's kernel process snapshot, never host `ps` output or client PID
-  remapping. `spawn()` already returns that same kernel PID.
+- `allProcesses()` on the native sidecar path returns the VM's sidecar-owned
+  kernel process snapshot, never host `ps` output or client PID remapping.
+  `spawn()` already returns that same kernel PID.
 - Module resolution reads the mounted `/root/node_modules` through the kernel VFS. Host-side adapter/agent package.json reads (for bin resolution) still use `readFileSync` against the host dir behind the `/root/node_modules` mount (or the matching software root)
 - Native ELF binaries cannot execute in the VM -- the kernel's command resolver only handles `.js`/`.mjs`/`.cjs` scripts and WASM commands.
 - Projected native assets under `/root/node_modules` are readable through module access, but guest `child_process.spawn*()` still routes them through the VM command resolver; spawning a projected ELF currently fails during WASM warmup instead of executing host-native code.

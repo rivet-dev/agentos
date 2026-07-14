@@ -10,7 +10,7 @@ Agents run inside isolated VMs with their own filesystem, process table, and net
 - **Sidecar placement** — reuse the default shared sidecar or inject an explicit sidecar handle
 - **Agent sessions (ACP)** — launch coding agents (Pi, Pi CLI, OpenCode, Claude) via JSON-RPC over stdio
 - **Filesystem operations** — read, write, mkdir, stat, move, delete, and recursive listing
-- **Process management** — spawn, exec, stop, kill processes; inspect process trees across all runtimes
+- **Process management** — spawn, exec, stop, and kill processes; inspect the kernel process table
 - **Agent registry** — discover available agents and their installation status
 - **Networking** — reach services running inside the VM via `fetch()`
 - **Shell access** — open interactive shells with PTY support
@@ -95,7 +95,6 @@ try {
 | `spawn` | `spawn(command: string, args: string[], options?: SpawnOptions): Promise<{ pid: number }>` | Spawn a long-running process and return its kernel PID |
 | `listProcesses` | `listProcesses(): Promise<SpawnedProcessInfo[]>` | List processes started via `spawn()` from a fresh sidecar snapshot |
 | `allProcesses` | `allProcesses(): Promise<ProcessInfo[]>` | List all kernel processes across all runtimes |
-| `processTree` | `processTree(): Promise<ProcessTreeNode[]>` | Get processes organized as a parent-child tree |
 | `getProcess` | `getProcess(pid: number): Promise<SpawnedProcessInfo>` | Get sidecar-authoritative info about a specific spawned process |
 | `stopProcess` | `stopProcess(pid: number): Promise<void>` | Send SIGTERM and await the sidecar result |
 | `killProcess` | `killProcess(pid: number): Promise<void>` | Send SIGKILL and await the sidecar result |
@@ -175,7 +174,6 @@ try {
 **Process**
 - `ProcessInfo` — Kernel process info (pid, ppid, pgid, sid, driver, command, args, cwd, status, exitCode, startTime, exitTime)
 - `SpawnedProcessInfo` — Info for processes created via `spawn()` (pid, command, args, running, exitCode)
-- `ProcessTreeNode` — ProcessInfo with `children: ProcessTreeNode[]`
 
 **Filesystem**
 - `DirEntry` — Directory entry (path, type, size)

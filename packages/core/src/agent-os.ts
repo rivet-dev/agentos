@@ -77,11 +77,6 @@ async function waitForTrackedExitPromises(
 	]);
 }
 
-/** Process tree node: extends kernel ProcessInfo with child references. */
-export interface ProcessTreeNode extends KernelProcessInfo {
-	children: ProcessTreeNode[];
-}
-
 /** A directory entry with metadata. */
 export interface DirEntry {
 	/** Absolute path to the entry. */
@@ -2060,30 +2055,6 @@ export class AgentOs {
 			return await this.#kernel.snapshotProcesses();
 		}
 		return [...this.#kernel.processes.values()];
-	}
-
-	/** Returns processes organized as a tree using ppid relationships. */
-	async processTree(): Promise<ProcessTreeNode[]> {
-		const all = await this.allProcesses();
-		const nodeMap = new Map<number, ProcessTreeNode>();
-
-		// Index: create a tree node for each process
-		for (const proc of all) {
-			nodeMap.set(proc.pid, { ...proc, children: [] });
-		}
-
-		// Wire: attach each node to its parent
-		const roots: ProcessTreeNode[] = [];
-		for (const node of nodeMap.values()) {
-			const parent = nodeMap.get(node.ppid);
-			if (parent) {
-				parent.children.push(node);
-			} else {
-				roots.push(node);
-			}
-		}
-
-		return roots;
 	}
 
 	/** Returns info about a specific process by PID. Throws if not found. */

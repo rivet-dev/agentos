@@ -4,7 +4,7 @@
 //!
 //! Two distinct process views: SDK-spawned processes (`processes` map, keyed by user-facing pid)
 //! back `spawn` + the stdin/stdout/stderr/exit subscriptions + `wait/list/get/stop/kill`; the kernel
-//! process table backs `exec`, `all_processes`, `process_tree`.
+//! process table backs `exec` and `all_processes`.
 
 use std::collections::BTreeMap;
 
@@ -164,14 +164,6 @@ pub struct ProcessInfo {
     pub start_time: f64,
     #[serde(rename = "exitTime")]
     pub exit_time: Option<f64>,
-}
-
-/// A node in the process forest (`ProcessInfo` + children).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ProcessTreeNode {
-    #[serde(flatten)]
-    pub info: ProcessInfo,
-    pub children: Vec<ProcessTreeNode>,
 }
 
 // ---------------------------------------------------------------------------
@@ -582,30 +574,11 @@ impl AgentOs {
             }
         };
 
-        let mut out: Vec<ProcessInfo> = Vec::new();
-
-        for entry in snapshot.processes {
-            let status = match entry.status {
-                ProcessSnapshotStatus::Running => ProcessStatus::Running,
-                ProcessSnapshotStatus::Stopped => ProcessStatus::Stopped,
-                ProcessSnapshotStatus::Exited => ProcessStatus::Exited,
-            };
-
-            out.push(ProcessInfo {
-                pid: entry.pid,
-                ppid: entry.ppid,
-                pgid: entry.pgid,
-                sid: entry.sid,
-                driver: entry.driver,
-                command: entry.command,
-                args: entry.args,
-                cwd: entry.cwd,
-                status,
-                exit_code: entry.exit_code,
-                start_time: entry.start_time_ms as f64,
-                exit_time: entry.exit_time_ms.map(|time| time as f64),
-            });
-        }
+        let mut out: Vec<ProcessInfo> = snapshot
+            .processes
+            .into_iter()
+            .map(process_info_from_snapshot_entry)
+            .collect();
 
         out.sort_by_key(|info| info.pid);
         Ok(out)
@@ -635,12 +608,6 @@ impl AgentOs {
                 "process snapshot lookup: unexpected response {other:?}"
             ))),
         }
-    }
-
-    /// Build the process forest from `all_processes`, linked by `ppid`.
-    pub async fn process_tree(&self) -> Result<Vec<ProcessTreeNode>> {
-        let processes = self.all_processes().await?;
-        Ok(build_process_forest(processes))
     }
 
     /// Get one SDK-spawned process from the sidecar's authoritative process snapshot.
@@ -1075,57 +1042,26 @@ fn map_process_control_response(
     }
 }
 
-/// Assemble a process forest from a flat process list, linking children by `ppid`.
-///
-/// Mirrors the TS `processTree` `nodeMap` algorithm exactly: a process is a root iff its `ppid` is
-/// NOT present among the listed pids. A self-parented process (`ppid == pid`) finds itself as its
-/// parent, so it is attached as its own child and is excluded from the roots (effectively dropped
-/// from the output tree). A `seen` guard prevents the self-cycle from recursing forever.
-fn build_process_forest(processes: Vec<ProcessInfo>) -> Vec<ProcessTreeNode> {
-    use std::collections::BTreeMap as Map;
-
-    let pids: std::collections::BTreeSet<u32> = processes.iter().map(|p| p.pid).collect();
-    // Children adjacency keyed by parent pid, preserving input (sorted) order.
-    let mut children_of: Map<u32, Vec<usize>> = Map::new();
-    let mut roots: Vec<usize> = Vec::new();
-    for (index, proc) in processes.iter().enumerate() {
-        if pids.contains(&proc.ppid) {
-            children_of.entry(proc.ppid).or_default().push(index);
-        } else {
-            roots.push(index);
-        }
+fn process_info_from_snapshot_entry(entry: wire::ProcessSnapshotEntry) -> ProcessInfo {
+    let status = match entry.status {
+        ProcessSnapshotStatus::Running => ProcessStatus::Running,
+        ProcessSnapshotStatus::Stopped => ProcessStatus::Stopped,
+        ProcessSnapshotStatus::Exited => ProcessStatus::Exited,
+    };
+    ProcessInfo {
+        pid: entry.pid,
+        ppid: entry.ppid,
+        pgid: entry.pgid,
+        sid: entry.sid,
+        driver: entry.driver,
+        command: entry.command,
+        args: entry.args,
+        cwd: entry.cwd,
+        status,
+        exit_code: entry.exit_code,
+        start_time: entry.start_time_ms as f64,
+        exit_time: entry.exit_time_ms.map(|time| time as f64),
     }
-
-    fn build_node(
-        index: usize,
-        processes: &[ProcessInfo],
-        children_of: &Map<u32, Vec<usize>>,
-        seen: &mut std::collections::BTreeSet<usize>,
-    ) -> ProcessTreeNode {
-        let info = processes[index].clone();
-        seen.insert(index);
-        let child_indices: Vec<usize> = children_of
-            .get(&info.pid)
-            .map(|indices| {
-                indices
-                    .iter()
-                    .copied()
-                    .filter(|child_index| !seen.contains(child_index))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let children = child_indices
-            .into_iter()
-            .map(|child_index| build_node(child_index, processes, children_of, seen))
-            .collect();
-        ProcessTreeNode { info, children }
-    }
-
-    let mut seen = std::collections::BTreeSet::new();
-    roots
-        .into_iter()
-        .map(|index| build_node(index, &processes, &children_of, &mut seen))
-        .collect()
 }
 
 /// Convert a [`StdinInput`] to raw bytes. A string is delivered as its UTF-8 bytes; raw bytes are
@@ -1245,8 +1181,9 @@ mod tests {
     use super::{
         apply_exec_event, build_process_execute_request, byte_stream_for_process_route,
         drain_process_output_tasks, handle_route_failure_abort_result, install_output_callback,
-        process_exit_result, record_process_terminal_and_prune, terminal_pids_to_prune,
-        timeout_to_wire, ExecOptions, OutputCallback, ROUTE_FAILURE_KILL_SIGNAL,
+        process_exit_result, process_info_from_snapshot_entry, record_process_terminal_and_prune,
+        terminal_pids_to_prune, timeout_to_wire, ExecOptions, OutputCallback,
+        ROUTE_FAILURE_KILL_SIGNAL,
     };
     use crate::agent_os::{ProcessEntry, ProcessExit};
     use crate::stream::RoutedStreamEvent;
@@ -1255,6 +1192,33 @@ mod tests {
     use scc::HashMap as SccHashMap;
     use std::sync::{Arc, Mutex};
     use tokio::sync::{broadcast, watch};
+
+    fn snapshot_entry(pid: u32, ppid: u32) -> wire::ProcessSnapshotEntry {
+        wire::ProcessSnapshotEntry {
+            process_id: format!("process-{pid}"),
+            pid,
+            ppid,
+            pgid: pid,
+            sid: 1,
+            driver: String::from("test"),
+            command: format!("command-{pid}"),
+            args: vec![format!("command-{pid}")],
+            cwd: String::from("/workspace"),
+            status: wire::ProcessSnapshotStatus::Running,
+            exit_code: None,
+            start_time_ms: u64::from(pid),
+            exit_time_ms: None,
+        }
+    }
+
+    #[test]
+    fn process_snapshot_preserves_sidecar_parent_child_lineage() {
+        let parent = process_info_from_snapshot_entry(snapshot_entry(40, 1));
+        let child = process_info_from_snapshot_entry(snapshot_entry(41, 40));
+
+        assert_eq!(child.ppid, parent.pid);
+        assert_eq!(parent.ppid, 1);
+    }
 
     #[tokio::test]
     async fn exec_callbacks_precede_terminal_result_and_do_not_build_it() {
