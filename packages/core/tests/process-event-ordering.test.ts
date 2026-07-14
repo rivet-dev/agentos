@@ -73,6 +73,129 @@ function createProxy(client: unknown) {
 }
 
 describe("sidecar-authoritative process event ordering", () => {
+	it("awaits execArgv stdin writes before sending EOF", async () => {
+		const { client, pushEvent } = createStubClient();
+		const operations: string[] = [];
+		let finishWrite!: () => void;
+		const writeBlocked = new Promise<void>((resolve) => {
+			finishWrite = resolve;
+		});
+		let finishClose!: () => void;
+		const closeBlocked = new Promise<void>((resolve) => {
+			finishClose = resolve;
+		});
+		client.writeStdin = vi.fn(async () => {
+			operations.push("write:start");
+			await writeBlocked;
+			operations.push("write:end");
+		});
+		client.closeStdin = vi.fn(async () => {
+			operations.push("close:start");
+			await closeBlocked;
+			operations.push("close:end");
+		});
+		const proxy = createProxy(client);
+		try {
+			const result = proxy.execArgv("node", ["script.js"], {
+				stdin: "input",
+			});
+			await vi.waitFor(() => expect(client.writeStdin).toHaveBeenCalledOnce());
+			expect(client.closeStdin).not.toHaveBeenCalled();
+
+			finishWrite();
+			await vi.waitFor(() => expect(client.closeStdin).toHaveBeenCalledOnce());
+			expect(operations).toEqual(["write:start", "write:end", "close:start"]);
+
+			pushEvent({
+				ownership: { scope: "vm", vm_id: vm.vmId },
+				payload: {
+					type: "process_exited",
+					process_id: "process-1",
+					exit_code: 0,
+					stdout: new Uint8Array(),
+					stderr: new Uint8Array(),
+				},
+			});
+			let settled = false;
+			void result.finally(() => {
+				settled = true;
+			});
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(settled).toBe(false);
+
+			finishClose();
+			await expect(result).resolves.toMatchObject({ exitCode: 0 });
+			expect(operations).toEqual([
+				"write:start",
+				"write:end",
+				"close:start",
+				"close:end",
+			]);
+		} finally {
+			finishWrite();
+			finishClose();
+			await proxy.dispose();
+		}
+	});
+
+	it("propagates execArgv stdin write rejection without sending EOF", async () => {
+		const { client, pushEvent } = createStubClient();
+		const writeError = new Error("stdin write rejected");
+		client.writeStdin = vi.fn(async () => {
+			throw writeError;
+		});
+		client.closeStdin = vi.fn(async () => {});
+		const proxy = createProxy(client);
+		try {
+			const result = proxy.execArgv("node", ["script.js"], { stdin: "input" });
+			const rejection = expect(result).rejects.toBe(writeError);
+			await vi.waitFor(() => expect(client.writeStdin).toHaveBeenCalledOnce());
+			pushEvent({
+				ownership: { scope: "vm", vm_id: vm.vmId },
+				payload: {
+					type: "process_exited",
+					process_id: "process-1",
+					exit_code: 0,
+					stdout: new Uint8Array(),
+					stderr: new Uint8Array(),
+				},
+			});
+			await rejection;
+			expect(client.closeStdin).not.toHaveBeenCalled();
+		} finally {
+			await proxy.dispose();
+		}
+	});
+
+	it("propagates execArgv EOF rejection before observing completion", async () => {
+		const { client, pushEvent } = createStubClient();
+		const closeError = new Error("stdin close rejected");
+		client.writeStdin = vi.fn(async () => {});
+		client.closeStdin = vi.fn(async () => {
+			throw closeError;
+		});
+		const proxy = createProxy(client);
+		try {
+			const result = proxy.execArgv("node", ["script.js"], { stdin: "input" });
+			const rejection = expect(result).rejects.toBe(closeError);
+			await vi.waitFor(() => expect(client.closeStdin).toHaveBeenCalledOnce());
+			pushEvent({
+				ownership: { scope: "vm", vm_id: vm.vmId },
+				payload: {
+					type: "process_exited",
+					process_id: "process-1",
+					exit_code: 0,
+					stdout: new Uint8Array(),
+					stderr: new Uint8Array(),
+				},
+			});
+			await rejection;
+		} finally {
+			await proxy.dispose();
+		}
+	});
+
 	it("uses terminal sidecar capture instead of rebuilding output from stream callbacks", async () => {
 		const { client, pushEvent } = createStubClient();
 		const proxy = createProxy(client);

@@ -63,7 +63,7 @@ describe("flat spawn API", () => {
 			});
 		});
 
-		vm.writeProcessStdin(pid, "hello from flat api\n");
+		await vm.writeProcessStdin(pid, "hello from flat api\n");
 
 		await stdoutReceived;
 

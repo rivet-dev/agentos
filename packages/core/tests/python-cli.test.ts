@@ -101,8 +101,8 @@ describe("python CLI (Pyodide runtime)", () => {
 			const { pid } = await vm.spawn("python", ["-"], {
 				onStdout: (data) => chunks.push(Buffer.from(data).toString("utf8")),
 			});
-			vm.writeProcessStdin(pid, "print('from stdin program')\n");
-			vm.closeProcessStdin(pid);
+			await vm.writeProcessStdin(pid, "print('from stdin program')\n");
+			await vm.closeProcessStdin(pid);
 			const exitCode = await vm.waitProcess(pid);
 			expect(exitCode).toBe(0);
 			expect(chunks.join("")).toContain("from stdin program");

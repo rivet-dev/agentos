@@ -425,9 +425,9 @@ export class NativeSidecarKernelProxy {
 			proc: InternalManagedProcess,
 		): Promise<KernelExecResult> => {
 			if (options?.stdin !== undefined) {
-				proc.writeStdin(options.stdin);
+				await proc.writeStdin(options.stdin);
 			}
-			proc.closeStdin();
+			await proc.closeStdin();
 
 			const completion = await proc[processCompletion];
 

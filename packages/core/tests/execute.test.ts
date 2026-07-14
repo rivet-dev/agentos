@@ -70,6 +70,21 @@ describe("command execution", () => {
 		expect(result.stdout).toContain("node-output");
 	});
 
+	test("execArgv writes all stdin before sending EOF", async () => {
+		const stdin = "x".repeat(1024 * 1024);
+		const result = await vm.execArgv(
+			"node",
+			[
+				"-e",
+				"let n=0; process.stdin.on('data', c => n += c.length); process.stdin.on('end', () => console.log(n));",
+			],
+			{ stdin },
+		);
+
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout.trim()).toBe(String(stdin.length));
+	});
+
 	test("exec shell pipeline", async () => {
 		for (let attempt = 0; attempt < 5; attempt += 1) {
 			const result = await vm.exec("echo hello | cat");
