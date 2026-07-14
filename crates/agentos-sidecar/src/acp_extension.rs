@@ -1033,6 +1033,13 @@ impl AcpExtension {
                     .kill_process_wire(KillProcessRequest { process_id, signal })
                     .await
                     .map(|_| ())
+                    .or_else(|error| {
+                        if is_process_already_gone(&error) {
+                            Ok(())
+                        } else {
+                            Err(error)
+                        }
+                    })
                     .map_err(sidecar_to_core_error);
                 send_native_core_reply(reply, result, "kill agent");
             }
@@ -1907,6 +1914,7 @@ fn is_process_already_gone(error: &SidecarError) -> bool {
     message.contains("has no active process")
         || message.contains("process already exited")
         || message.contains("process not found")
+        || message.contains("ESRCH: no such process")
 }
 
 fn decode_guest_file_response(
@@ -3109,6 +3117,13 @@ mod tests {
     #[test]
     fn acp_extension_uses_agent_os_namespace() {
         assert_eq!(AcpExtension::new().namespace(), ACP_EXTENSION_NAMESPACE);
+    }
+
+    #[test]
+    fn classifies_kernel_esrch_as_an_already_exited_process() {
+        assert!(is_process_already_gone(&SidecarError::Kernel(
+            String::from("ESRCH: no such process 4"),
+        )));
     }
 
     #[tokio::test]

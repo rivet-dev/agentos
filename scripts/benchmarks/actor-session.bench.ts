@@ -332,12 +332,16 @@ function sessionIdFrom(result: unknown): string {
 function gitMetadata(): { revision: string; dirty: boolean } {
 	try {
 		return {
-			revision: execFileSync("jj", ["log", "-r", "@", "--no-graph", "-T", "commit_id.short()"], {
-				encoding: "utf8",
-			}).trim(),
+			revision: execFileSync(
+				"jj",
+				["log", "-r", "@", "--no-graph", "-T", "commit_id.short()"],
+				{ encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+			).trim(),
 			dirty:
-				execFileSync("jj", ["diff", "--summary"], { encoding: "utf8" }).trim()
-					.length > 0,
+				execFileSync("jj", ["diff", "--summary"], {
+					encoding: "utf8",
+					stdio: ["ignore", "pipe", "ignore"],
+				}).trim().length > 0,
 		};
 	} catch {
 		try {
