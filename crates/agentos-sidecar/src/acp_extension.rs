@@ -570,14 +570,21 @@ impl AcpExtension {
                     )
                     .await;
             }
-            match self
+            let output = match self
                 .poll_native_core_output(
                     ctx,
                     &pending.process_id,
                     remaining.min(ACP_TERMINAL_OUTPUT_POLL_INTERVAL),
                 )
-                .await?
+                .await
             {
+                Ok(output) => output,
+                Err(error) if is_core_process_already_gone(&error) => {
+                    Some(AgentOutput::Exited(None))
+                }
+                Err(error) => return Err(error),
+            };
+            match output {
                 Some(AgentOutput::Stdout(chunk)) => {
                     return self
                         .run_core_transition(
@@ -1143,6 +1150,9 @@ impl AcpExtension {
                     {
                         Ok(Some(AgentOutput::Exited(code))) => break Ok(code),
                         Ok(_) => {}
+                        Err(error) if is_core_process_already_gone(&error) => {
+                            break Ok(Some(0));
+                        }
                         Err(error) => break Err(error),
                     }
                 };
@@ -1911,6 +1921,13 @@ fn is_process_already_gone(error: &SidecarError) -> bool {
         || message.contains("process already exited")
         || message.contains("process not found")
         || message.contains("ESRCH: no such process")
+}
+
+fn is_core_process_already_gone(error: &AcpCoreError) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("esrch")
+        || message.contains("no such process")
+        || message.contains("has no active process")
 }
 
 fn decode_guest_file_response(
@@ -3117,8 +3134,12 @@ mod tests {
 
     #[test]
     fn classifies_kernel_esrch_as_an_already_exited_process() {
+        let message = String::from("ESRCH: no such process 4");
         assert!(is_process_already_gone(&SidecarError::Kernel(
-            String::from("ESRCH: no such process 4"),
+            message.clone(),
+        )));
+        assert!(is_core_process_already_gone(&AcpCoreError::Execution(
+            message,
         )));
     }
 
