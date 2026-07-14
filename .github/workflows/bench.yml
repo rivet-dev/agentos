@@ -31,8 +31,8 @@ jobs:
       - run: cargo build --release --target wasm32-wasip1 -p agentos-native-baseline
       - run: make -C registry/native commands
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
+      - run: pnpm --filter '@agentos-software/common...' --filter '@rivet-dev/agentos-runtime-core' --workspace-concurrency=4 -r run build
       - run: pnpm --dir packages/core build
-      - run: pnpm --dir packages/runtime-core build
       - run: pnpm --dir packages/runtime-benchmarks bench:check
       - run: pnpm --dir packages/runtime-benchmarks bench:gate
         env:
