@@ -45,6 +45,8 @@ use agentos_protocol::{ACP_EXTENSION_NAMESPACE, PROTOCOL_VERSION as ACP_PROTOCOL
 use agentos_vm_config as vm_config;
 use bridge_support::RecordingBridge;
 
+const GUEST_CWD: &str = "/workspace";
+
 #[test]
 fn adapter_stderr_and_exit_surface_to_caller() {
     assert_node_available();
@@ -69,7 +71,7 @@ fn adapter_stderr_and_exit_surface_to_caller() {
         AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
             agent_type: String::from("pi"),
             runtime: Some(AcpRuntimeKind::JavaScript),
-            cwd: Some(cwd.to_string_lossy().into_owned()),
+            cwd: Some(String::from(GUEST_CWD)),
             args: Some(Vec::new()),
             env: Some(HashMap::new()),
             protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
@@ -290,7 +292,7 @@ fn create_vm(
             payload: RequestPayload::CreateVmRequest(CreateVmRequest {
                 runtime: GuestRuntimeKind::JavaScript,
                 config: serde_json::to_string(&vm_config::CreateVmConfig {
-                    cwd: Some(cwd.to_string_lossy().into_owned()),
+                    cwd: Some(String::from(GUEST_CWD)),
                     permissions: Some(allow_all_permissions()),
                     ..Default::default()
                 })

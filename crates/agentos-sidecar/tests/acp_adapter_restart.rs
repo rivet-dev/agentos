@@ -48,6 +48,8 @@ use agentos_protocol::{ACP_EXTENSION_NAMESPACE, PROTOCOL_VERSION as ACP_PROTOCOL
 use agentos_vm_config as vm_config;
 use bridge_support::RecordingBridge;
 
+const GUEST_CWD: &str = "/workspace";
+
 #[test]
 fn adapter_crash_restarts_or_evicts_and_emits_exit_event() {
     assert_node_available();
@@ -73,7 +75,7 @@ fn adapter_crash_restarts_or_evicts_and_emits_exit_event() {
         &connection_id,
         &session_id,
         &vm_id,
-        create_session_request(&restartable, &cwd),
+        create_session_request(&restartable),
     )
     .0;
     let AcpResponse::AcpSessionCreatedResponse(created) = created else {
@@ -94,7 +96,7 @@ fn adapter_crash_restarts_or_evicts_and_emits_exit_event() {
     let AcpResponse::AcpErrorResponse(AcpErrorResponse { code, message }) = response else {
         panic!("expected the crashed prompt to fail, got: {response:?}");
     };
-    assert_eq!(code, "invalid_state");
+    assert_eq!(code, "invalid_state", "unexpected prompt error: {message}");
     assert!(
         message.contains("exited with code 7"),
         "expected exit diagnostic in: {message}"
@@ -138,7 +140,7 @@ fn adapter_crash_restarts_or_evicts_and_emits_exit_event() {
         &connection_id,
         &session_id,
         &vm_id,
-        create_session_request(&unsupported, &cwd),
+        create_session_request(&unsupported),
     )
     .0;
     let AcpResponse::AcpSessionCreatedResponse(created) = created else {
@@ -200,7 +202,7 @@ fn adapter_crash_restarts_or_evicts_and_emits_exit_event() {
         &connection_id,
         &session_id,
         &vm_id,
-        create_session_request(&idle, &cwd),
+        create_session_request(&idle),
     )
     .0;
     let AcpResponse::AcpSessionCreatedResponse(created) = created else {
@@ -462,11 +464,11 @@ for await (const line of lines) {
 "#
 }
 
-fn create_session_request(adapter: &Path, cwd: &Path) -> AcpRequest {
+fn create_session_request(adapter: &Path) -> AcpRequest {
     AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
         agent_type: agent_type_for_adapter(adapter),
         runtime: Some(AcpRuntimeKind::JavaScript),
-        cwd: Some(cwd.to_string_lossy().into_owned()),
+        cwd: Some(String::from(GUEST_CWD)),
         args: Some(Vec::new()),
         env: Some(HashMap::new()),
         protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
@@ -634,7 +636,7 @@ fn create_vm(
             payload: RequestPayload::CreateVmRequest(CreateVmRequest {
                 runtime: GuestRuntimeKind::JavaScript,
                 config: serde_json::to_string(&vm_config::CreateVmConfig {
-                    cwd: Some(cwd.to_string_lossy().into_owned()),
+                    cwd: Some(String::from(GUEST_CWD)),
                     permissions: Some(allow_all_permissions()),
                     ..Default::default()
                 })

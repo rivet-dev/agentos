@@ -2057,6 +2057,32 @@ impl AcpCore {
         Ok(process_id)
     }
 
+    fn recover_resumable_request_start_failure<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        owner_id: &str,
+        session_id: &str,
+        error: AcpCoreError,
+    ) -> Result<AcpResponse, AcpCoreError> {
+        let Some(exit_code) = adapter_gone_exit_code(&error) else {
+            return Err(error);
+        };
+        let process_id = self
+            .session(owner_id, session_id)
+            .map(|session| session.process_id.clone())
+            .ok_or(error)?;
+        if let Err(cleanup_error) = host.abort_agent(&process_id) {
+            return Err(AcpCoreError::Cleanup {
+                context: "failed to clean up lazily detected exited ACP adapter before restart",
+                errors: vec![cleanup_error],
+            });
+        }
+        if let Some(session) = self.session_mut(owner_id, session_id) {
+            session.closed = true;
+        }
+        self.begin_resumable_adapter_restart(host, owner_id, session_id, &process_id, exit_code)
+    }
+
     fn feed_prompt<H: AcpHost>(
         &mut self,
         host: &mut H,
@@ -4330,17 +4356,29 @@ impl AcpCore {
                 self.pending_response(process_id)
             }
             AcpRequest::AcpSessionRequest(request) => {
-                let process_id =
-                    self.begin_session_request(host, caller_connection_id, &request)?;
-                self.pending_response(process_id)
+                match self.begin_session_request(host, caller_connection_id, &request) {
+                    Ok(process_id) => self.pending_response(process_id),
+                    Err(error) => self.recover_resumable_request_start_failure(
+                        host,
+                        caller_connection_id,
+                        &request.session_id,
+                        error,
+                    ),
+                }
             }
             AcpRequest::AcpSetSessionConfigRequest(request) => {
                 match self.prepare_session_config(caller_connection_id, &request)? {
                     PreparedSessionConfig::Immediate(response) => Ok(response),
                     PreparedSessionConfig::Forward(request) => {
-                        let process_id =
-                            self.begin_session_request(host, caller_connection_id, &request)?;
-                        self.pending_response(process_id)
+                        match self.begin_session_request(host, caller_connection_id, &request) {
+                            Ok(process_id) => self.pending_response(process_id),
+                            Err(error) => self.recover_resumable_request_start_failure(
+                                host,
+                                caller_connection_id,
+                                &request.session_id,
+                                error,
+                            ),
+                        }
                     }
                 }
             }
@@ -5716,6 +5754,7 @@ mod tests {
         killed: Vec<(String, String)>,
         abort_error: Option<String>,
         close_stdin_error: Option<String>,
+        write_stdin_error: Option<String>,
     }
     impl AcpHost for ResumableMockHost {
         fn resolve_projected_agent(
@@ -5741,6 +5780,9 @@ mod tests {
             Ok(())
         }
         fn write_stdin(&mut self, _: &str, chunk: &[u8]) -> Result<(), AcpCoreError> {
+            if let Some(message) = self.write_stdin_error.take() {
+                return Err(AcpCoreError::InvalidState(message));
+            }
             self.stdin
                 .push(String::from_utf8_lossy(chunk).trim().to_string());
             Ok(())
@@ -6306,6 +6348,33 @@ mod tests {
             },
         )
         .expect("begin crashing prompt")
+    }
+
+    #[test]
+    fn resumable_request_lazily_detects_exited_adapter_and_starts_restart() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let dead_process = create_restartable_resumable_session(&mut core, &mut host, "idle");
+        host.write_stdin_error = Some(format!("VM vm-1 has no active process {dead_process}"));
+
+        let response = core
+            .dispatch_resumable(
+                &mut host,
+                "owner-a",
+                AcpRequest::AcpSessionRequest(AcpSessionRequest {
+                    session_id: String::from("idle"),
+                    method: String::from("session/prompt"),
+                    params: Some(String::from(r#"{"prompt":[]}"#)),
+                }),
+            )
+            .expect("lazy adapter exit starts resumable restart");
+
+        assert!(matches!(response, AcpResponse::AcpPendingResponse(_)));
+        assert_eq!(core.pending_restart_count(), 1);
+        assert!(core.session("owner-a", "idle").unwrap().closed);
+        assert!(host
+            .killed
+            .contains(&(dead_process, String::from("SIGKILL"))));
     }
 
     #[test]

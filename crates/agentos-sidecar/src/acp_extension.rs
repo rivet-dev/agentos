@@ -61,6 +61,7 @@ struct NativeCoreProcess {
     owner_id: String,
     session_id: Option<String>,
     pending_output: VecDeque<AgentOutput>,
+    exit_observed: bool,
     /// The native host bounds this batch with
     /// `NativeSidecarConfig::max_extension_session_cleanup_events` before it is
     /// returned through `dispose_session_resources_wire`.
@@ -964,6 +965,7 @@ impl AcpExtension {
                             owner_id,
                             session_id: None,
                             pending_output: VecDeque::new(),
+                            exit_observed: false,
                             pending_cleanup_events: VecDeque::new(),
                             cleanup: NativeRouteCleanupProgress::default(),
                         })),
@@ -1035,19 +1037,34 @@ impl AcpExtension {
                 send_native_core_reply(reply, result, "kill agent");
             }
             NativeCoreCommand::AbortAgent { process_id, reply } => {
-                let kill = ctx
-                    .kill_process_wire(KillProcessRequest {
-                        process_id: process_id.clone(),
-                        signal: String::from("SIGKILL"),
-                    })
-                    .await;
                 let mut errors = Vec::new();
-                let wait_for_exit = match kill {
-                    Ok(_) => true,
-                    Err(error) if is_process_already_gone(&error) => false,
-                    Err(error) => {
-                        errors.push(sidecar_to_core_error(error));
-                        false
+                let owner_id = ownership_owner_id(ctx.ownership());
+                let route = self
+                    .core_processes
+                    .lock()
+                    .await
+                    .get(&(owner_id, process_id.clone()))
+                    .cloned();
+                let exit_observed = match route {
+                    Some(route) => route.lock().await.exit_observed,
+                    None => false,
+                };
+                let wait_for_exit = if exit_observed {
+                    false
+                } else {
+                    match ctx
+                        .kill_process_wire(KillProcessRequest {
+                            process_id: process_id.clone(),
+                            signal: String::from("SIGKILL"),
+                        })
+                        .await
+                    {
+                        Ok(_) => true,
+                        Err(error) if is_process_already_gone(&error) => false,
+                        Err(error) => {
+                            errors.push(sidecar_to_core_error(error));
+                            false
+                        }
                     }
                 };
                 if wait_for_exit {
@@ -1221,7 +1238,11 @@ impl AcpExtension {
         let route_key = (owner_id, process_id.to_string());
         let route = self.core_processes.lock().await.get(&route_key).cloned();
         if let Some(route) = route {
-            if let Some(output) = route.lock().await.pending_output.pop_front() {
+            let mut process = route.lock().await;
+            if let Some(output) = process.pending_output.pop_front() {
+                if matches!(output, AgentOutput::Exited(_)) {
+                    process.exit_observed = true;
+                }
                 return Ok(Some(output));
             }
         }
@@ -1267,6 +1288,7 @@ impl AcpExtension {
                 .push_back(AgentOutput::Stderr(buffered.stderr));
         }
         if buffered.exit_code.is_some() {
+            process.exit_observed = true;
             process
                 .pending_output
                 .push_back(AgentOutput::Exited(buffered.exit_code));
@@ -3078,6 +3100,7 @@ mod tests {
             owner_id: owner_id.to_owned(),
             session_id: Some(session_id.to_owned()),
             pending_output: VecDeque::new(),
+            exit_observed: false,
             pending_cleanup_events: VecDeque::new(),
             cleanup: NativeRouteCleanupProgress::default(),
         }))
