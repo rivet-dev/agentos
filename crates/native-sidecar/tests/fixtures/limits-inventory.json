@@ -1,11 +1,5 @@
 [
 	{
-		"name": "MAX_SYMLINK_DEPTH",
-		"path": "packages/build-tools/bridge-src/builtins/fs.ts",
-		"class": "invariant",
-		"rationale": "Linux ELOOP mirror of the kernel invariant."
-	},
-	{
 		"name": "MAX_REALPATH_SYMLINKS",
 		"path": "crates/vfs/src/posix/mount_table.rs",
 		"class": "invariant",
@@ -1081,7 +1075,7 @@
 		"rationale": "Bounds the browser transport's internal response-event queue; overflow is returned immediately as a typed protocol rejection."
 	},
 	{
-		"name": "MAX_REQUEST_EVENTS_PER_DISPATCH",
+		"name": "MAX_NON_EXTENSION_EVENTS_PER_DISPATCH",
 		"path": "crates/native-sidecar-browser/src/wire_dispatch.rs",
 		"class": "invariant",
 		"rationale": "Reserves the worst-case number of sidecar events emitted synchronously by one browser request before dispatch."
@@ -1142,15 +1136,9 @@
 	},
 	{
 		"name": "MAX_ADAPTER_RESTARTS",
-		"path": "crates/agentos-sidecar/src/acp_extension.rs",
+		"path": "crates/agentos-sidecar-core/src/engine.rs",
 		"class": "policy-deferred",
-		"rationale": "Sidecar-owned ACP adapter restart budget; not yet exposed as an ACP VM limit."
-	},
-	{
-		"name": "MAX_SESSION_STDOUT_BUFFER_BYTES",
-		"path": "crates/agentos-sidecar/src/acp_extension.rs",
-		"class": "policy-deferred",
-		"rationale": "Sidecar ACP line-assembly buffer cap aligned with the default ACP line limit; per-VM wiring remains deferred."
+		"rationale": "Shared ACP adapter restart budget is fixed and not exposed through ACP VM limits."
 	},
 	{
 		"name": "DEFAULT_MAX_RECURSIVE_FS_DEPTH",
@@ -1267,5 +1255,124 @@
 		"path": "crates/client/src/shell.rs",
 		"class": "policy-deferred",
 		"rationale": "Host-only shell callback broadcast capacity; PTY buffering and process policy remain sidecar-owned."
+	},
+	{
+		"name": "DEFAULT_ACP_MAX_READ_LINE_BYTES",
+		"path": "crates/agentos-sidecar-core/src/behavior.rs",
+		"class": "policy-deferred",
+		"rationale": "Shared ACP line-assembly ceiling remains fixed because VmLimits.acp.max_read_line_bytes is not threaded into AcpCore."
+	},
+	{
+		"name": "DEFAULT_ACP_PENDING_EVENT_LIMIT",
+		"path": "crates/agentos-sidecar-core/src/engine.rs",
+		"class": "policy-deferred",
+		"rationale": "Default per-owner ACP event-count bound; core setters exist but no sidecar or VM config wiring does."
+	},
+	{
+		"name": "DEFAULT_ACP_PENDING_EVENT_BYTES_LIMIT",
+		"path": "crates/agentos-sidecar-core/src/engine.rs",
+		"class": "policy-deferred",
+		"rationale": "Default per-owner ACP event-byte bound; core setters exist but no sidecar or VM config wiring does."
+	},
+	{
+		"name": "DEFAULT_ACP_PROCESS_ROUTE_LIMIT",
+		"path": "crates/agentos-sidecar-core/src/engine.rs",
+		"class": "policy-deferred",
+		"rationale": "Default per-owner live and cleanup route bound; configurable through AcpCore, not VM policy."
+	},
+	{
+		"name": "DEFAULT_MAX_DEFERRED_EXECUTION_EVENTS_PER_VM",
+		"path": "crates/native-sidecar-browser/src/service.rs",
+		"class": "policy",
+		"rationale": "Configured per-VM deferred-event queue bound with warning and typed rejection.",
+		"wired": "BrowserSidecarConfig.max_deferred_execution_events_per_vm"
+	},
+	{
+		"name": "DEFAULT_MAX_PENDING_EXECUTION_CLEANUPS_PER_VM",
+		"path": "crates/native-sidecar-browser/src/service.rs",
+		"class": "policy",
+		"rationale": "Configured per-VM execution and cleanup reservation bound.",
+		"wired": "BrowserSidecarConfig.max_pending_execution_cleanups_per_vm"
+	},
+	{
+		"name": "DEFAULT_MAX_SESSIONS",
+		"path": "crates/native-sidecar-browser/src/service.rs",
+		"class": "policy",
+		"rationale": "Configured browser-global session registry bound, including retained cleanup state.",
+		"wired": "BrowserSidecarConfig.max_sessions"
+	},
+	{
+		"name": "DEFAULT_MAX_VMS",
+		"path": "crates/native-sidecar-browser/src/service.rs",
+		"class": "policy",
+		"rationale": "Configured VM registry bound with warning and typed rejection.",
+		"wired": "BrowserSidecarConfig.max_vms"
+	},
+	{
+		"name": "DEFAULT_MAX_EXTENSION_SESSION_CLEANUP_EVENTS",
+		"path": "crates/native-sidecar/src/state.rs",
+		"class": "policy",
+		"rationale": "Configured retained lifecycle-event bound during extension cleanup.",
+		"wired": "NativeSidecarConfig.max_extension_session_cleanup_events"
+	},
+	{
+		"name": "DEFAULT_EXTENSION_EVENT_CAPACITY",
+		"path": "crates/native-sidecar-browser/src/service.rs",
+		"class": "invariant",
+		"rationale": "Internal extension batch fallback; normal wire requests use the dispatcher's remaining bounded queue capacity."
+	},
+	{
+		"name": "DEFERRED_EXECUTION_EVENTS_LIMIT",
+		"path": "crates/native-sidecar-browser/src/service.rs",
+		"class": "invariant",
+		"rationale": "Stable typed diagnostic identifier, not a numeric capacity."
+	},
+	{
+		"name": "EXTENSION_EVENTS_LIMIT",
+		"path": "crates/native-sidecar-browser/src/service.rs",
+		"class": "invariant",
+		"rationale": "Stable typed diagnostic identifier, not a numeric capacity."
+	},
+	{
+		"name": "PENDING_EXECUTION_CLEANUPS_LIMIT",
+		"path": "crates/native-sidecar-browser/src/service.rs",
+		"class": "invariant",
+		"rationale": "Stable typed diagnostic identifier, not a numeric capacity."
+	},
+	{
+		"name": "MAX_BROWSER_PROJECTED_AGENTS_PER_VM",
+		"path": "crates/native-sidecar-browser/src/service.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed per-VM projected-agent cap; no browser sidecar config field exists."
+	},
+	{
+		"name": "MAX_BROWSER_PROJECTED_PACKAGES_PER_VM",
+		"path": "crates/native-sidecar-browser/src/package_projection.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed per-VM projected-package count cap."
+	},
+	{
+		"name": "MAX_BROWSER_PROJECTED_PACKAGE_BYTES_PER_VM",
+		"path": "crates/native-sidecar-browser/src/package_projection.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed aggregate retained package-source byte cap."
+	},
+	{
+		"name": "MAX_BROWSER_PROJECTED_PACKAGE_ENTRIES_PER_VM",
+		"path": "crates/native-sidecar-browser/src/package_projection.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed package index-entry and metadata-work cap."
+	},
+	{
+		"name": "MAX_BROWSER_PROJECTED_PACKAGE_MATERIALIZED_BYTES_PER_VM",
+		"path": "crates/native-sidecar-browser/src/package_projection.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed copied and materialized package-content cap."
+	},
+	{
+		"name": "MAX_BROWSER_PROJECTED_PACKAGE_MOUNTS_PER_VM",
+		"path": "crates/native-sidecar-browser/src/package_projection.rs",
+		"class": "policy-deferred",
+		"rationale": "Fixed projected mount-count cap."
 	}
 ]
