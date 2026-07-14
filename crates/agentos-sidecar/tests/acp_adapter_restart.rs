@@ -186,7 +186,7 @@ fn adapter_crash_restarts_or_evicts_and_emits_exit_event() {
     let AcpResponse::AcpErrorResponse(AcpErrorResponse { code, message }) = response else {
         panic!("expected the post-eviction prompt to fail, got: {response:?}");
     };
-    assert_eq!(code, "invalid_state");
+    assert_eq!(code, "session_not_found");
     assert!(
         message.contains("unknown ACP session"),
         "expected unknown-session error after eviction, got: {message}"

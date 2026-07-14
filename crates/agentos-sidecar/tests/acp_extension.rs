@@ -1061,7 +1061,7 @@ fn acp_session_request_denies_cross_connection_prompt_and_cancel() {
 }
 
 /// Assert an ACP response is a deny that is INDISTINGUISHABLE from a missing
-/// session: the shared ACP core's `invalid_state` code and unknown-session
+/// session: the shared ACP core's `session_not_found` code and unknown-session
 /// message. This locks in the no-existence-leak property
 /// — a non-owner must learn nothing (not even that the session exists), so a
 /// regression to a distinguishable error (e.g. an `unauthorized` code) fails here.
@@ -1071,7 +1071,7 @@ fn assert_indistinguishable_deny(response: AcpResponse, what: &str) {
         panic!("{what} must be DENIED with an error response, but it returned: {response:?}");
     };
     assert_eq!(
-        error.code, "invalid_state",
+        error.code, "session_not_found",
         "{what} must fail closed with the same code as a missing session (no \
          'unauthorized' existence oracle); got code {:?} / message {:?}",
         error.code, error.message

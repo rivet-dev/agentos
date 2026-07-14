@@ -437,7 +437,7 @@ fn native_and_browser_wrappers_match_full_session_lifecycle() {
         );
         assert_eq!(
             native_step.response["code"],
-            json!("invalid_state"),
+            json!("session_not_found"),
             "cross-owner {label} must fail closed without revealing the session",
         );
         assert!(native_step.events.is_empty());
