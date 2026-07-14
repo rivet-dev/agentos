@@ -653,6 +653,54 @@ function findProjectedPackageRoot(packageName: string): string {
 // the snapshot build-entry (snapshot-entry.ts). Reading it skips the per-session
 // dynamic-import + evaluate of the whole SDK graph entirely.
 const PI_SDK_RUNTIME_GLOBAL = "__PI_SDK_RUNTIME__";
+const PI_SDK_MODULES_GLOBAL = "__piSdkModules";
+
+type PiSdkModuleOverrides = {
+	agentCore: { Agent: PiSdkRuntime["Agent"] };
+	authStorage: { AuthStorage: PiSdkRuntime["AuthStorage"] };
+	config: {
+		getAgentDir: PiSdkRuntime["getAgentDir"];
+		getDocsPath: PiSdkRuntime["getDocsPath"];
+	};
+	defaults: { DEFAULT_THINKING_LEVEL: string };
+	messages: { convertToLlm: PiSdkRuntime["convertToLlm"] };
+	modelRegistry: { ModelRegistry: PiSdkRuntime["ModelRegistry"] };
+	resourceLoader: {
+		DefaultResourceLoader: PiSdkRuntime["DefaultResourceLoader"];
+	};
+	sdk: {
+		createAgentSession: PiSdkRuntime["createAgentSession"];
+		createCodingTools: PiSdkRuntime["createCodingTools"];
+	};
+	sessionManager: { SessionManager: PiSdkRuntime["SessionManager"] };
+	settingsManager: { SettingsManager: PiSdkRuntime["SettingsManager"] };
+	tools: { createAllTools: PiSdkRuntime["createAllTools"] };
+};
+
+function readBundledRuntime(): PiSdkRuntime | undefined {
+	const modules = (globalThis as Record<string, unknown>)[
+		PI_SDK_MODULES_GLOBAL
+	] as PiSdkModuleOverrides | undefined;
+	if (!modules || typeof modules.sdk?.createAgentSession !== "function") {
+		return undefined;
+	}
+
+	return {
+		Agent: modules.agentCore.Agent,
+		AuthStorage: modules.authStorage.AuthStorage,
+		DefaultResourceLoader: modules.resourceLoader.DefaultResourceLoader,
+		DEFAULT_THINKING_LEVEL: modules.defaults.DEFAULT_THINKING_LEVEL,
+		ModelRegistry: modules.modelRegistry.ModelRegistry,
+		SettingsManager: modules.settingsManager.SettingsManager,
+		SessionManager: modules.sessionManager.SessionManager,
+		convertToLlm: modules.messages.convertToLlm,
+		getAgentDir: modules.config.getAgentDir,
+		getDocsPath: modules.config.getDocsPath,
+		createAgentSession: modules.sdk.createAgentSession,
+		createCodingTools: modules.sdk.createCodingTools,
+		createAllTools: modules.tools.createAllTools,
+	};
+}
 
 function readSnapshotRuntime(): PiSdkRuntime | undefined {
 	const candidate = (globalThis as Record<string, unknown>)[
@@ -670,6 +718,13 @@ function readSnapshotRuntime(): PiSdkRuntime | undefined {
 
 async function loadPiSdkRuntime(): Promise<PiSdkRuntime> {
 	if (!piSdkRuntimePromise) {
+		// Browser bundles publish the SDK modules on a global because there is no
+		// projected node_modules tree to discover inside the browser executor.
+		const bundledRuntime = readBundledRuntime();
+		if (bundledRuntime) {
+			piSdkRuntimePromise = Promise.resolve(bundledRuntime);
+			return piSdkRuntimePromise;
+		}
 		// Snapshot fast path: the SDK runtime is already on the global (evaluated
 		// into the snapshot at sidecar startup). No I/O, no module resolution.
 		const snapshotRuntime = readSnapshotRuntime();

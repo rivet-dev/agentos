@@ -1,7 +1,7 @@
 // Default converged sidecar loader.
 //
 // Item 3b of the browser convergence: ship the web-target wasm kernel
-// (crates/sidecar-browser, built into dist/sidecar-wasm-web/) plus a ready-made
+// (crates/native-sidecar-browser, built into dist/sidecar-wasm-web/) plus a ready-made
 // loader so consumers get the converged runtime out of the box without
 // supplying their own wasm binding. The runtime driver is converged-only, so
 // `createBrowserRuntimeDriverFactory({ convergedSidecar: createDefaultConvergedSidecar(config) })`

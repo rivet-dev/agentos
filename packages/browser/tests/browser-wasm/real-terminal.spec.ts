@@ -8,7 +8,9 @@ test("xterm drives the real browser brush shell through the PTY master", async (
 	page,
 }) => {
 	await page.goto("/real-terminal.html");
-	await expect(page.locator("#status")).toHaveText("ready", { timeout: 20_000 });
+	await expect(page.locator("#status")).toHaveText("ready", {
+		timeout: 20_000,
+	});
 
 	const opened = await page.evaluate(() => window.__realTerminal!.start());
 	expect(opened.masterFd).toBeGreaterThan(0);
@@ -16,8 +18,8 @@ test("xterm drives the real browser brush shell through the PTY master", async (
 	await expect(page.locator("#status")).toHaveText("running", {
 		timeout: 20_000,
 	});
-	await page.waitForFunction(() =>
-		window.__realTerminal!.screen().includes("sh-0.4$ "),
+	expect(await page.evaluate(() => window.__realTerminal!.screen())).toContain(
+		"sh-0.4$ ",
 	);
 
 	await page.locator(".xterm").click();

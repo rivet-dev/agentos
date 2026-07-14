@@ -16,6 +16,7 @@ use agentos_execution::{
 };
 use agentos_kernel::kernel::{KernelProcessHandle, KernelVm};
 use agentos_kernel::mount_table::MountTable;
+use agentos_kernel::pty::Termios;
 use agentos_kernel::root_fs::RootFilesystemMode;
 use agentos_kernel::socket_table::SocketId;
 use agentos_native_sidecar_core::VmLayerStore;
@@ -508,6 +509,12 @@ pub(crate) struct ActiveProcess {
     /// terminal reading the PTY master (a shell never relays its child's tty
     /// output).
     pub(crate) tty_master_owner: Option<(u32, u32)>,
+    /// Terminal attributes inherited at spawn by a child sharing an ancestor's
+    /// PTY. Restored when the child is reaped so a full-screen command cannot
+    /// strand its caller in raw mode. This is the exact inherited state rather
+    /// than an assumed cooked configuration, so nested raw-mode callers remain
+    /// raw after their child exits.
+    pub(crate) tty_restore_termios: Option<Termios>,
     /// A parked `__kernel_stdin_read` / `__kernel_poll` sync RPC awaiting
     /// kernel readiness (reply-by-token deferral so servicing never blocks the
     /// dispatch loop). At most one per process: the guest thread is blocked in

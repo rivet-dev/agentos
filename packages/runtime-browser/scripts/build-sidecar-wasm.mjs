@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Builds the converged browser sidecar (crates/sidecar-browser) to a
+// Builds the converged browser sidecar (crates/native-sidecar-browser) to a
 // wasm-bindgen Node package under .cache/sidecar-wasm, used by the converged
 // integration test to drive the REAL wasm kernel end to end.
 //
@@ -13,7 +13,7 @@ import path from "node:path";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(here, "..");
 const repoRoot = path.resolve(packageRoot, "..", "..");
-const cratePath = path.join(repoRoot, "crates", "sidecar-browser");
+const cratePath = path.join(repoRoot, "crates", "native-sidecar-browser");
 const outDir = path.join(packageRoot, ".cache", "sidecar-wasm");
 
 const result = spawnSync(

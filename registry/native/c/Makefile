@@ -689,7 +689,7 @@ $(BUILD_DIR)/vim: fetch-vim $(VIM_BRIDGE_BUILD)/libtermcap.a $(VIM_WCC) wasm-opt
 	vim_cv_tty_mode=0620 \
 	./configure --host=wasm32-wasip1 --build=$$(cc -dumpmachine 2>/dev/null || echo x86_64-pc-linux-gnu) \
 		--with-features=normal --with-tlib=termcap \
-		--disable-gui --without-x --disable-nls --disable-channel \
+		--disable-gui --without-x --without-wayland --disable-nls --disable-channel \
 		--disable-netbeans --disable-selinux --disable-gpm --disable-sysmouse \
 		--disable-icon-cache-update --disable-desktop-database-update
 	$(MAKE) -C $(VIM_SRC)/src vim

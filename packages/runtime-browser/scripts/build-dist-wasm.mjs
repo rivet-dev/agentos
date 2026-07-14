@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Builds the converged browser sidecar (crates/sidecar-browser) to a web-target
+// Builds the converged browser sidecar (crates/native-sidecar-browser) to a web-target
 // wasm-bindgen package emitted INTO the published output (dist/sidecar-wasm-web/),
 // so `@rivet-dev/agentos-runtime-browser` ships the converged kernel + can be loaded with the
 // zero-config default loader (src/default-sidecar.ts). Run after `tsc` (build)
@@ -13,7 +13,7 @@ import { mkdirSync, rmSync } from "node:fs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(here, "..");
 const repoRoot = path.resolve(packageRoot, "..", "..");
-const cratePath = path.join(repoRoot, "crates", "sidecar-browser");
+const cratePath = path.join(repoRoot, "crates", "native-sidecar-browser");
 const outDir = path.join(packageRoot, "dist", "sidecar-wasm-web");
 
 mkdirSync(path.join(packageRoot, "dist"), { recursive: true });

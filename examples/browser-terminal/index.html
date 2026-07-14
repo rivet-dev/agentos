@@ -3,10 +3,35 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Agent OS · Browser Terminal</title>
+    <title>Agent OS · Terminal Demos</title>
+    <style>
+      :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; background: #0b0e14; color: #c7d0e0; }
+      body { min-height: 100vh; margin: 0; display: grid; place-items: center; }
+      main { width: min(820px, calc(100% - 40px)); }
+      h1 { margin-bottom: 8px; }
+      p { color: #9aa6bb; line-height: 1.5; }
+      .choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 28px; }
+      a { display: block; min-height: 180px; padding: 22px; border: 1px solid #2a3345; border-radius: 10px; background: #11151f; color: inherit; text-decoration: none; }
+      a:hover { border-color: #4c8dff; }
+      strong { display: block; margin-bottom: 10px; font-size: 18px; color: white; }
+      code { color: #7dd3fc; }
+      @media (max-width: 680px) { .choices { grid-template-columns: 1fr; } }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <main>
+      <h1>Agent OS terminal demos</h1>
+      <p>The same xterm + PTY experience, with two different runtime boundaries.</p>
+      <div class="choices">
+        <a href="/browser.html">
+          <strong>In-browser VM</strong>
+          Agent OS, the shell, Pi, and the PTY run inside this browser tab. No Actor API or terminal server.
+        </a>
+        <a href="/actor.html">
+          <strong>Actor API</strong>
+          The browser sends <code>openShell</code>, input, and resize calls to a durable RivetKit actor-backed Agent OS VM.
+        </a>
+      </div>
+    </main>
   </body>
 </html>

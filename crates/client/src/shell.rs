@@ -31,7 +31,7 @@ use crate::error::ClientError;
 use crate::process::{install_output_callback, OutputCallback, ProcessStatus, StdinInput};
 use crate::stream::ByteStream;
 
-/// Channel capacity for a shell's data / stderr broadcasts.
+/// Channel capacity for a shell's data / stderr / ordered terminal broadcasts.
 const SHELL_DATA_CHANNEL_CAPACITY: usize = 1024;
 
 /// Maximum active or spawning terminals created by `connect_terminal` per VM.
@@ -242,6 +242,7 @@ impl AgentOs {
 
         let (data_tx, _) = tokio::sync::broadcast::channel(SHELL_DATA_CHANNEL_CAPACITY);
         let (stderr_tx, _) = tokio::sync::broadcast::channel(SHELL_DATA_CHANNEL_CAPACITY);
+        let (terminal_tx, _) = tokio::sync::broadcast::channel(SHELL_DATA_CHANNEL_CAPACITY);
         // Spawn-readiness gate: write/close await this before issuing their wire request.
         let (spawned_tx, _) = tokio::sync::watch::channel(false);
         // Exit-code channel backing `wait_shell`.
@@ -259,6 +260,7 @@ impl AgentOs {
             pid: 0,
             data_tx: data_tx.clone(),
             stderr_tx: stderr_tx.clone(),
+            terminal_tx: terminal_tx.clone(),
             process_id: process_id.clone(),
             spawned_tx: spawned_tx.clone(),
             exit_tx: exit_tx.clone(),
@@ -352,6 +354,9 @@ impl AgentOs {
                         if output.process_id != route_process_id {
                             continue;
                         }
+                        // Preserve the exact wire order for PTY terminal renderers before also
+                        // exposing the existing stdout/stderr-specific subscriptions.
+                        let _ = terminal_tx.send(output.chunk.clone());
                         // stdout -> data stream; stderr -> separate stderr stream (TS routing).
                         match output.channel {
                             StreamChannel::Stdout => {
@@ -418,12 +423,14 @@ impl AgentOs {
 
         let (data_tx, _) = tokio::sync::broadcast::channel(SHELL_DATA_CHANNEL_CAPACITY);
         let (stderr_tx, _) = tokio::sync::broadcast::channel(SHELL_DATA_CHANNEL_CAPACITY);
+        let (terminal_tx, _) = tokio::sync::broadcast::channel(SHELL_DATA_CHANNEL_CAPACITY);
         let (spawned_tx, _) = tokio::sync::watch::channel(false);
 
         let entry = ShellEntry {
             pid: 0,
             data_tx: data_tx.clone(),
             stderr_tx: stderr_tx.clone(),
+            terminal_tx: terminal_tx.clone(),
             process_id: process_id.clone(),
             spawned_tx: spawned_tx.clone(),
             // The caller-supplied exit channel doubles as the entry's `wait_shell` source.
@@ -502,6 +509,7 @@ impl AgentOs {
                         if output.process_id != route_process_id {
                             continue;
                         }
+                        let _ = terminal_tx.send(output.chunk.clone());
                         // Both stdout and stderr are appended to the same terminal output buffer
                         // (the agent reads a single combined stream), matching the TS handle.
                         on_output(&output.chunk);
@@ -770,6 +778,21 @@ impl AgentOs {
         self.inner()
             .shells
             .read(shell_id, |_, entry| entry.stderr_tx.subscribe())
+            .map(ByteStream::new)
+            .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()))
+    }
+
+    /// Subscribe to stdout and stderr in the exact order received from the sidecar. This is the
+    /// PTY-facing stream: terminal control sequences, command output, and prompts must not be split
+    /// across independently scheduled consumers. The stdout-only and stderr-only subscriptions
+    /// remain available for callers that need channel identity.
+    pub fn on_shell_terminal_data(
+        &self,
+        shell_id: &str,
+    ) -> std::result::Result<ByteStream, ClientError> {
+        self.inner()
+            .shells
+            .read(shell_id, |_, entry| entry.terminal_tx.subscribe())
             .map(ByteStream::new)
             .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()))
     }

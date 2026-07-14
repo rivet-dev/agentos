@@ -23,6 +23,9 @@ const SHELL_ENV = {
 const GUEST = createWasiCommandBootstrapScript({
 	commandSource: "/commands/sh",
 	command: "sh",
+	// Match the runnable browser terminal: avoid cursor-position probes that a
+	// protocol-only PTY transport has no terminal emulator to answer.
+	args: ["--input-backend", "minimal"],
 	commands: {
 		cat: "/commands/cat",
 		echo: "/commands/echo",

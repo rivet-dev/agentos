@@ -3,8 +3,10 @@ import { readFile } from "node:fs/promises";
 import { createInMemoryFileSystem } from "../../src/os-filesystem.js";
 import {
 	moduleFormat,
+	normalizeEsmTransformOutput,
 	POLYFILL_CODE_MAP,
 	resolveModule,
+	transformImportMeta,
 } from "../../src/runtime.js";
 
 async function writeJson(
@@ -43,6 +45,20 @@ async function loadModuleResolutionConformanceFixture() {
 }
 
 describe("browser module resolution", () => {
+	it("converts import.meta to a script-safe file URL", () => {
+		const source = transformImportMeta(
+			"module.exports = import.meta.url",
+			"/opt/agentos/pkg/cli file.mjs",
+		);
+		expect(source).toContain("file:///opt/agentos/pkg/cli%20file.mjs");
+		expect(() => new Function("module", source)({ exports: "" })).not.toThrow();
+	});
+
+	it("repairs concatenated return-await tokens from minified ESM", () => {
+		expect(normalizeEsmTransformOutput("returnawait helper()"))
+			.toBe("return await helper()");
+	});
+
 	it("matches the shared native/browser conformance fixture", async () => {
 		const fixture = await loadModuleResolutionConformanceFixture();
 		for (const testCase of fixture.cases) {
@@ -88,6 +104,15 @@ describe("browser module resolution", () => {
 		expect(loadPolyfill("secure-exec:wasi-command-host")).toContain(
 			"createWasiCommandHost",
 		);
+		expect(
+			() =>
+				new Function(
+					"module",
+					"exports",
+					"require",
+					loadPolyfill("secure-exec:wasi-command-host") ?? "",
+				),
+		).not.toThrow();
 	});
 
 	it("walks ancestor node_modules directories", async () => {

@@ -33,7 +33,7 @@ export function App() {
 			<aside className="sidebar">
 				<div className="sidebar-header">
 					<span className="brand">Agent OS</span>
-					<span className="brand-sub">Terminals</span>
+					<span className="brand-sub">Actor API terminal</span>
 				</div>
 				<button type="button" className="new-vm" onClick={addActor}>
 					+ New VM
@@ -68,6 +68,7 @@ export function App() {
 					VM ids persist in localStorage; reopen one to reconnect to its
 					running terminals.
 				</div>
+				<a className="mode-link" href="/browser.html">Open in-browser version →</a>
 			</aside>
 
 			<main className="main">

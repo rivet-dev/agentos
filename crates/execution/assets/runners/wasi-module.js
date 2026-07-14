@@ -50,6 +50,10 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
   const __agentOSWasiFiletypeRegularFile = 4;
   const __agentOSWasiFiletypeSymbolicLink = 7;
   const __agentOSWasiLookupSymlinkFollow = 1;
+  const __agentOSWasiFstflagsAtim = 1;
+  const __agentOSWasiFstflagsAtimNow = 2;
+  const __agentOSWasiFstflagsMtim = 4;
+  const __agentOSWasiFstflagsMtimNow = 8;
   const __agentOSWasiOpenCreate = 1;
   const __agentOSWasiOpenDirectory = 2;
   const __agentOSWasiOpenExclusive = 4;
@@ -147,6 +151,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
         fd_write: (...args) => this._fdWrite(...args),
         path_create_directory: (...args) => this._pathCreateDirectory(...args),
         path_filestat_get: (...args) => this._pathFilestatGet(...args),
+        path_filestat_set_times: (...args) => this._pathFilestatSetTimes(...args),
         path_link: (...args) => this._pathLink(...args),
         path_open: (...args) => this._pathOpen(...args),
         path_readlink: (...args) => this._pathReadlink(...args),
@@ -1227,9 +1232,10 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
         typeof bridgeStat?.applySyncPromise === "function" &&
         typeof resolved?.guestPath === "string"
       ) {
-        return this._measureWasiPhase(follow ? "bridgeStatSync" : "bridgeLstatSync", () =>
-          bridgeStat.applySyncPromise(void 0, [resolved.guestPath])
-        );
+        return this._measureWasiPhase(follow ? "bridgeStatSync" : "bridgeLstatSync", () => {
+          const stats = bridgeStat.applySyncPromise(void 0, [resolved.guestPath]);
+          return typeof stats === "string" ? JSON.parse(stats) : stats;
+        });
       }
       const fsPath = this._resolvedFsPath(resolved);
       return this._measureWasiPhase(follow ? "fsModuleStatSync" : "fsModuleLstatSync", () =>
@@ -2343,6 +2349,56 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
           }
         }
         return this._measureWasiPhase("writeFilestat", () => this._writeFilestat(statPtr, stats, this._filetypeForStats(stats)));
+      } catch (error) {
+        return this._mapFsError(error);
+      }
+    }
+
+    _pathFilestatSetTimes(fd, lookupFlags, pathPtr, pathLen, atim, mtim, fstFlags) {
+      try {
+        const resolved = this._resolveDescriptorPath(fd, pathPtr, pathLen);
+        if (resolved.error !== __agentOSWasiErrnoSuccess) {
+          return resolved.error;
+        }
+        if (resolved.readOnly) {
+          return __agentOSWasiErrnoRofs;
+        }
+        const flags = Number(fstFlags) >>> 0;
+        if (
+          (flags & __agentOSWasiFstflagsAtim) !== 0 &&
+          (flags & __agentOSWasiFstflagsAtimNow) !== 0
+        ) {
+          return __agentOSWasiErrnoInval;
+        }
+        if (
+          (flags & __agentOSWasiFstflagsMtim) !== 0 &&
+          (flags & __agentOSWasiFstflagsMtimNow) !== 0
+        ) {
+          return __agentOSWasiErrnoInval;
+        }
+        const fsPath = this._resolvedFsPath(resolved);
+        const follow = (Number(lookupFlags) & __agentOSWasiLookupSymlinkFollow) !== 0;
+        const stats = follow
+          ? __agentOSFs().statSync(fsPath)
+          : __agentOSFs().lstatSync(fsPath);
+        const nowSeconds = Date.now() / 1000;
+        const atimeSeconds = (flags & __agentOSWasiFstflagsAtimNow) !== 0
+          ? nowSeconds
+          : (flags & __agentOSWasiFstflagsAtim) !== 0
+            ? Number(atim) / 1e9
+            : Number(stats.atimeMs || 0) / 1000;
+        const mtimeSeconds = (flags & __agentOSWasiFstflagsMtimNow) !== 0
+          ? nowSeconds
+          : (flags & __agentOSWasiFstflagsMtim) !== 0
+            ? Number(mtim) / 1e9
+            : Number(stats.mtimeMs || 0) / 1000;
+        this._clearStatCache();
+        if (!follow && typeof __agentOSFs().lutimesSync === "function") {
+          __agentOSFs().lutimesSync(fsPath, atimeSeconds, mtimeSeconds);
+        } else {
+          __agentOSFs().utimesSync(fsPath, atimeSeconds, mtimeSeconds);
+        }
+        return __agentOSWasiErrnoSuccess;
       } catch (error) {
         return this._mapFsError(error);
       }

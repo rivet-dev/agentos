@@ -1,7 +1,7 @@
 import { Buffer as BufferPolyfill } from "buffer";
+
 (globalThis as unknown as { Buffer?: unknown }).Buffer ??= BufferPolyfill;
 
-import { Terminal } from "@xterm/xterm";
 import {
 	allowAll,
 	createBrowserDriver,
@@ -11,6 +11,7 @@ import {
 	type NodeRuntimeDriver,
 	type PtyOpenResult,
 } from "@rivet-dev/agentos-runtime-browser";
+import { Terminal } from "@xterm/xterm";
 import {
 	chatRequestToPrompt,
 	createChromeLanguageModelSession,
@@ -59,6 +60,7 @@ declare global {
 		__piTui?: {
 			start(): Promise<PiTuiResult>;
 			ask(prompt: string): Promise<PiTuiResult>;
+			write(data: string): Promise<void>;
 			screen(): string;
 			dispose(): Promise<void>;
 		};
@@ -182,9 +184,10 @@ async function getLanguageModelSession(): Promise<LanguageModelSession | null> {
 			},
 		})
 			.catch((error) => {
-				const message =
-					error instanceof Error ? error.message : String(error);
-				modelErrors.push(`Chrome LanguageModel session creation failed: ${message}`);
+				const message = error instanceof Error ? error.message : String(error);
+				modelErrors.push(
+					`Chrome LanguageModel session creation failed: ${message}`,
+				);
 				return null;
 			})
 			.finally(() => clearTimeout(timeout));
@@ -198,7 +201,10 @@ function isModelUrl(url: string): boolean {
 	if (url.includes(new URL(MODEL_ORIGIN).hostname)) return true;
 	try {
 		const parsed = new URL(url);
-		return parsed.origin === MODEL_ORIGIN && parsed.pathname.endsWith("/chat/completions");
+		return (
+			parsed.origin === MODEL_ORIGIN &&
+			parsed.pathname.endsWith("/chat/completions")
+		);
 	} catch {
 		return false;
 	}
@@ -207,7 +213,10 @@ function isModelUrl(url: string): boolean {
 function openAiSse(model: string, content: string): string {
 	const id = "chatcmpl-chrome-language-model";
 	const created = Math.floor(Date.now() / 1000);
-	const chunk = (delta: Record<string, unknown>, finish_reason: string | null) =>
+	const chunk = (
+		delta: Record<string, unknown>,
+		finish_reason: string | null,
+	) =>
 		`data: ${JSON.stringify({
 			id,
 			object: "chat.completion.chunk",
@@ -249,7 +258,9 @@ async function handleModelFetch(url: string, body: unknown) {
 	}
 	try {
 		const requestBody = bodyToString(body);
-		const request = JSON.parse(requestBody) as Parameters<typeof chatRequestToPrompt>[0];
+		const request = JSON.parse(requestBody) as Parameters<
+			typeof chatRequestToPrompt
+		>[0];
 		const text = await session.prompt(chatRequestToPrompt(request));
 		modelResponses.push(text);
 		return {
@@ -377,7 +388,10 @@ async function start(): Promise<PiTuiResult> {
 				error: `pi CLI bundle not built (${bundleResponse.status})`,
 			};
 		}
-		const rawCliBundle = (await bundleResponse.text()).replace(/^#![^\n]*\n/, "");
+		const rawCliBundle = (await bundleResponse.text()).replace(
+			/^#![^\n]*\n/,
+			"",
+		);
 		const packageJsonResponse = await fetch(PI_PACKAGE_JSON_URL);
 		if (!packageJsonResponse.ok) {
 			return {
@@ -392,9 +406,14 @@ async function start(): Promise<PiTuiResult> {
 			PI_THEME_URLS.map(async (url) => {
 				const response = await fetch(url);
 				if (!response.ok) {
-					throw new Error(`pi theme asset not staged: ${url} (${response.status})`);
+					throw new Error(
+						`pi theme asset not staged: ${url} (${response.status})`,
+					);
 				}
-				return [url.replace(/^\/pi-theme-/, ""), await response.text()] as const;
+				return [
+					url.replace(/^\/pi-theme-/, ""),
+					await response.text(),
+				] as const;
 			}),
 		);
 		const cliBundle = [
@@ -481,7 +500,8 @@ async function start(): Promise<PiTuiResult> {
 		});
 		driver = factory.createRuntimeDriver({
 			system,
-			runtime: (system as { runtime: { process: unknown; os: unknown } }).runtime,
+			runtime: (system as { runtime: { process: unknown; os: unknown } })
+				.runtime,
 		} as never);
 
 		let resolvePty!: (opened: PtyOpenResult) => void;
@@ -513,7 +533,8 @@ async function start(): Promise<PiTuiResult> {
 				execStatus = `resolved:${JSON.stringify(result)}`;
 			})
 			.catch((error) => {
-				execError = error instanceof Error ? error.stack || error.message : String(error);
+				execError =
+					error instanceof Error ? error.stack || error.message : String(error);
 				execStatus = `rejected:${execError}`;
 			});
 		pty = await ptyPromise;
@@ -536,7 +557,8 @@ async function start(): Promise<PiTuiResult> {
 		);
 	})().catch((error) => {
 		setStatus("error");
-		const message = error instanceof Error ? error.stack || error.message : String(error);
+		const message =
+			error instanceof Error ? error.stack || error.message : String(error);
 		terminal.write(`PI_TUI_BOOT_ERROR:${message}\r\n`);
 		return collectResult(message);
 	});
@@ -553,22 +575,33 @@ async function ask(prompt: string): Promise<PiTuiResult> {
 	const responseCount = modelResponses.length;
 	const errorCount = modelErrors.length;
 	await driver.writePty?.(executionId, pty.masterFd, `${prompt}\r`);
-	const reachedModel = await waitFor(() => modelRequests > requestCount || Boolean(execError), PROMPT_WINDOW_MS);
+	const reachedModel = await waitFor(
+		() => modelRequests > requestCount || Boolean(execError),
+		PROMPT_WINDOW_MS,
+	);
 	if (!reachedModel) {
 		return collectResult(
 			`typed prompt did not reach pi's model provider within ${PROMPT_WINDOW_MS}ms`,
 		);
 	}
 	const answered = await waitFor(
-		() => modelResponses.length > responseCount || modelErrors.length > errorCount || Boolean(execError),
+		() =>
+			modelResponses.length > responseCount ||
+			modelErrors.length > errorCount ||
+			Boolean(execError),
 		PROMPT_WINDOW_MS,
 	);
 	if (!answered) {
-		return collectResult(`pi's model provider did not complete within ${PROMPT_WINDOW_MS}ms`);
+		return collectResult(
+			`pi's model provider did not complete within ${PROMPT_WINDOW_MS}ms`,
+		);
 	}
 	const promptAnswered = modelResponses.length > responseCount;
 	return collectResult(
-		execError || (promptAnswered ? undefined : modelErrors.at(-1) ?? "pi model request failed"),
+		execError ||
+			(promptAnswered
+				? undefined
+				: (modelErrors.at(-1) ?? "pi model request failed")),
 		promptAnswered,
 	);
 }
@@ -576,12 +609,22 @@ async function ask(prompt: string): Promise<PiTuiResult> {
 async function dispose(): Promise<void> {
 	pumpRunning = false;
 	if (driver && pty && executionId) {
-		await driver.closePty?.(executionId, pty.masterFd).catch(() => {});
+		await driver.closePty?.(executionId, pty.masterFd).catch((error: unknown) => {
+			console.error("failed to close browser-local Pi PTY", error);
+		});
 	}
 	driver?.dispose?.();
 }
 
-window.__piTui = { start, ask, screen: terminalScreen, dispose };
+async function write(data: string): Promise<void> {
+	const boot = await start();
+	if (boot.error || !driver || !pty || !executionId) {
+		throw new Error(boot.error ?? "browser-local Pi PTY is not running");
+	}
+	await driver.writePty?.(executionId, pty.masterFd, data);
+}
+
+window.__piTui = { start, ask, write, screen: terminalScreen, dispose };
 setStatus("ready");
 // NOTE: this shared entry does NOT auto-boot — the Playwright gates drive
 // start()/ask() themselves. The Vite dev page boots via pi-tui-dev.ts so manual

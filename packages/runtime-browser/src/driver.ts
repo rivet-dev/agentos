@@ -1,10 +1,10 @@
+import { bytesToBase64 } from "./encoding.js";
 import type {
 	NetworkAdapter,
 	Permissions,
 	SystemDriver,
 	VirtualFileSystem,
 } from "./runtime.js";
-import { bytesToBase64 } from "./encoding.js";
 import {
 	createCommandExecutorStub,
 	createEnosysError,
@@ -396,19 +396,10 @@ export function createBrowserNetworkAdapter(): NetworkAdapter {
 				headers[k] = v;
 			});
 
-			const contentType = response.headers.get("content-type") || "";
-			const isBinary =
-				contentType.includes("octet-stream") ||
-				contentType.includes("gzip") ||
-				url.endsWith(".tgz");
-
-			let body: string;
-			if (isBinary) {
-				const buffer = await response.arrayBuffer();
-				body = bytesToBase64(new Uint8Array(buffer));
+			const encoded = await encodeBrowserResponseBody(response, url);
+			const body = encoded.body;
+			if (encoded.binary) {
 				headers["x-body-encoding"] = "base64";
-			} else {
-				body = await response.text();
 			}
 
 			return {
@@ -445,6 +436,30 @@ export function createBrowserNetworkAdapter(): NetworkAdapter {
 				url: response.url,
 			};
 		},
+	};
+}
+
+export async function encodeBrowserResponseBody(
+	response: Response,
+	url: string,
+): Promise<{ body: string; binary: boolean }> {
+	const contentType = response.headers.get("content-type") || "";
+	const bytes = new Uint8Array(await response.arrayBuffer());
+	const hasWasmMagic =
+		bytes.byteLength >= 4 &&
+		bytes[0] === 0x00 &&
+		bytes[1] === 0x61 &&
+		bytes[2] === 0x73 &&
+		bytes[3] === 0x6d;
+	const binary =
+		hasWasmMagic ||
+		contentType.includes("application/wasm") ||
+		contentType.includes("octet-stream") ||
+		contentType.includes("gzip") ||
+		url.endsWith(".tgz");
+	return {
+		body: binary ? bytesToBase64(bytes) : new TextDecoder().decode(bytes),
+		binary,
 	};
 }
 

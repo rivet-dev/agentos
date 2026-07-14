@@ -76,10 +76,14 @@ pub(crate) struct ProcessEntry {
 /// `data_tx` carries stdout only, matching TS where the kernel handle's `onData` is fed exclusively
 /// by `stdoutHandlers`. `stderr_tx` is the dedicated stderr channel that backs the `on_stderr` option
 /// and `on_shell_stderr`, matching TS where stderr reaches the host only through `stderrHandlers`.
+/// `terminal_tx` carries both streams in their original wire order for terminal renderers. Keeping
+/// that merge at the single wire-event consumer avoids reordering terminal control sequences and
+/// prompts when stdout/stderr are consumed by independent async tasks.
 pub(crate) struct ShellEntry {
     pub pid: u32,
     pub data_tx: broadcast::Sender<Vec<u8>>,
     pub stderr_tx: broadcast::Sender<Vec<u8>>,
+    pub terminal_tx: broadcast::Sender<Vec<u8>>,
     /// The sidecar-side process id used on the wire.
     pub process_id: String,
     /// Spawn-readiness gate. Seeded `false`; flips to `true` once the background `Execute` request is

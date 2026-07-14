@@ -2,6 +2,7 @@ import {
 	copyFileSync,
 	existsSync,
 	mkdirSync,
+	readdirSync,
 	rmSync,
 	statSync,
 } from "node:fs";
@@ -9,15 +10,16 @@ import { join, resolve } from "node:path";
 import { readManifest } from "./manifest.js";
 
 export interface StageOptions {
-	/** Package root holding `agentos-package.json`; `bin/` is (re)created here. */
+	/** Package root holding `agentos-package.json`; commands are staged under `bin/`. */
 	packageDir: string;
 	/** Directory of compiled command binaries (e.g. the native wasm build output). */
 	commandsDir: string;
 	/**
 	 * What to do when the commands dir or a declared binary is absent.
-	 * `"error"` (default) fails the stage; `"skip"` warns and leaves the package
-	 * a valid empty placeholder — used by in-repo builds so `pnpm build` works
-	 * on checkouts that have not run the native build.
+	 * `"error"` (default) fails the stage; `"skip"` warns and preserves declared
+	 * binaries already present in `bin/` while overlaying available artifacts.
+	 * Skip mode is used by in-repo builds so `pnpm build` works on checkouts that
+	 * have not run the complete native build.
 	 */
 	ifMissing?: "error" | "skip";
 }
@@ -31,9 +33,11 @@ export interface StageResult {
  * Populate a package's `bin/` from a commands directory, per the `commands` /
  * `aliases` / `stubs` lists declared in its `agentos-package.json`.
  *
- * `bin/` is wiped and rebuilt on every run. Sources are copied dereferenced
- * (`copyFileSync` follows symlinks), so alias/stub symlink farms in the
- * commands dir land as real files that survive npm packing.
+ * Error mode wipes and rebuilds `bin/`. Skip mode overlays available artifacts,
+ * preserves declared commands that are missing from a partial native target,
+ * and prunes undeclared entries. Sources are copied dereferenced (`copyFileSync`
+ * follows symlinks), so alias/stub symlink farms in the commands dir land as
+ * real files that survive npm packing.
  */
 export function stage(options: StageOptions): StageResult {
 	const packageDir = resolve(options.packageDir);
@@ -66,8 +70,27 @@ export function stage(options: StageOptions): StageResult {
 	}
 
 	const binDir = join(packageDir, "bin");
-	rmSync(binDir, { recursive: true, force: true });
-	mkdirSync(binDir, { recursive: true });
+	if (ifMissing === "error") {
+		rmSync(binDir, { recursive: true, force: true });
+		mkdirSync(binDir, { recursive: true });
+	} else {
+		// In-repo builds commonly have a partial native target after rebuilding a
+		// single command. Overlay those fresh artifacts on the checked-in command
+		// set instead of turning a complete package into a partial one. Still prune
+		// entries removed from the manifest so skip mode cannot retain undeclared
+		// commands forever.
+		mkdirSync(binDir, { recursive: true });
+		const declared = new Set([
+			...commands,
+			...stubs,
+			...Object.keys(aliases),
+		]);
+		for (const entry of readdirSync(binDir)) {
+			if (!declared.has(entry)) {
+				rmSync(join(binDir, entry), { recursive: true, force: true });
+			}
+		}
+	}
 
 	const staged: string[] = [];
 	const missing: string[] = [];

@@ -108,7 +108,9 @@ use agentos_kernel::network_policy::{
 use agentos_kernel::permissions::NetworkOperation;
 use agentos_kernel::poll::{PollEvents, PollFd, PollTargetEntry, POLLERR, POLLHUP, POLLIN};
 use agentos_kernel::process_table::{ProcessStatus, WaitPidFlags, SIGKILL, SIGTERM};
-use agentos_kernel::pty::{LineDisciplineConfig, MAX_PTY_BUFFER_BYTES};
+use agentos_kernel::pty::{
+    LineDisciplineConfig, PartialTermios, PartialTermiosControlChars, Termios, MAX_PTY_BUFFER_BYTES,
+};
 use agentos_kernel::resource_accounting::ResourceLimits;
 use agentos_kernel::root_fs::RootFilesystemMode;
 use agentos_kernel::socket_table::{
@@ -511,6 +513,7 @@ impl ActiveProcess {
             sqlite_statements: BTreeMap::new(),
             next_sqlite_statement_id: 0,
             tty_master_owner: None,
+            tty_restore_termios: None,
             deferred_kernel_wait_rpc: None,
             module_resolution_cache: agentos_execution::LocalModuleResolutionCache::default(),
         }
@@ -4106,6 +4109,12 @@ where
                 payload.rows,
             )
             .map_err(kernel_error)?;
+        // The kernel delivers SIGWINCH to its process table, but embedded V8
+        // executions are not host processes and cannot observe that table on
+        // their own. Mirror native terminal behavior by forwarding the signal
+        // into the runtime so readline/full-screen applications invalidate
+        // cached dimensions and query the resized PTY.
+        dispatch_v8_process_signal(process, libc::SIGWINCH)?;
 
         Ok(DispatchResult {
             response: self.respond(
@@ -6577,28 +6586,86 @@ where
         })
     }
 
+    fn resolve_javascript_child_process_with_shebang(
+        &mut self,
+        vm_id: &str,
+        parent_env: &BTreeMap<String, String>,
+        parent_guest_cwd: &str,
+        parent_host_cwd: &Path,
+        request: &mut JavascriptChildProcessSpawnRequest,
+    ) -> Result<ResolvedChildProcessExecution, SidecarError> {
+        const MAX_SHEBANG_REDIRECTS: usize = 4;
+
+        let mut resolved = {
+            let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
+            self.resolve_javascript_child_process_execution(
+                vm,
+                parent_env,
+                parent_guest_cwd,
+                parent_host_cwd,
+                request,
+            )?
+        };
+
+        for depth in 0..MAX_SHEBANG_REDIRECTS {
+            let redirected = {
+                let vm = self
+                    .vms
+                    .get_mut(vm_id)
+                    .ok_or_else(|| missing_vm_error(vm_id))?;
+                rewrite_javascript_shebang_request(vm, &resolved, request)?
+            };
+            if !redirected {
+                return Ok(resolved);
+            }
+            if depth + 1 == MAX_SHEBANG_REDIRECTS {
+                return Err(SidecarError::Execution(format!(
+                    "ELOOP: exceeded {MAX_SHEBANG_REDIRECTS} shebang redirects"
+                )));
+            }
+            resolved = {
+                let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
+                self.resolve_javascript_child_process_execution(
+                    vm,
+                    parent_env,
+                    parent_guest_cwd,
+                    parent_host_cwd,
+                    request,
+                )?
+            };
+        }
+
+        Ok(resolved)
+    }
+
     pub(crate) fn spawn_javascript_child_process(
         &mut self,
         vm_id: &str,
         process_id: &str,
         request: JavascriptChildProcessSpawnRequest,
     ) -> Result<Value, SidecarError> {
+        let mut request = request;
         let total_start = Instant::now();
         let phase_start = Instant::now();
-        let mut resolved = {
+        let (parent_env, parent_guest_cwd, parent_host_cwd) = {
             let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
             let parent = vm
                 .active_processes
                 .get(process_id)
                 .ok_or_else(|| missing_process_error(vm_id, process_id))?;
-            self.resolve_javascript_child_process_execution(
-                vm,
-                &parent.env,
-                &parent.guest_cwd,
-                &parent.host_cwd,
-                &request,
-            )?
+            (
+                parent.env.clone(),
+                parent.guest_cwd.clone(),
+                parent.host_cwd.clone(),
+            )
         };
+        let mut resolved = self.resolve_javascript_child_process_with_shebang(
+            vm_id,
+            &parent_env,
+            &parent_guest_cwd,
+            &parent_host_cwd,
+            &mut request,
+        )?;
         {
             let vm = self
                 .vms
@@ -6898,6 +6965,13 @@ where
             .kernel
             .isatty(EXECUTION_DRIVER_NAME, kernel_pid, 1)
             .unwrap_or(false);
+        let inherited_tty_restore_termios = child_fd1_is_tty
+            .then(|| {
+                vm.kernel
+                    .tcgetattr(EXECUTION_DRIVER_NAME, kernel_pid, 0)
+                    .map_err(kernel_error)
+            })
+            .transpose()?;
         let process = vm
             .active_processes
             .get_mut(process_id)
@@ -6928,6 +7002,7 @@ where
                     ))
                 })?;
             child.tty_master_owner = inherited_tty_master_owner;
+            child.tty_restore_termios = inherited_tty_restore_termios;
             if let Some(kernel_stdin_writer_fd) = kernel_stdin_writer_fd {
                 child.kernel_stdin_writer_fd = Some(kernel_stdin_writer_fd);
             }
@@ -7075,11 +7150,12 @@ where
         current_process_path: &[&str],
         request: JavascriptChildProcessSpawnRequest,
     ) -> Result<Value, SidecarError> {
+        let mut request = request;
         let total_start = Instant::now();
         let current_process_label =
             Self::child_process_path_label(process_id, current_process_path);
         let phase_start = Instant::now();
-        let (mut resolved, parent_kernel_pid) = {
+        let (parent_env, parent_guest_cwd, parent_host_cwd, parent_kernel_pid) = {
             let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
             let root = vm
                 .active_processes
@@ -7092,16 +7168,19 @@ where
                     ))
                 })?;
             (
-                self.resolve_javascript_child_process_execution(
-                    vm,
-                    &parent.env,
-                    &parent.guest_cwd,
-                    &parent.host_cwd,
-                    &request,
-                )?,
+                parent.env.clone(),
+                parent.guest_cwd.clone(),
+                parent.host_cwd.clone(),
                 parent.kernel_pid,
             )
         };
+        let mut resolved = self.resolve_javascript_child_process_with_shebang(
+            vm_id,
+            &parent_env,
+            &parent_guest_cwd,
+            &parent_host_cwd,
+            &mut request,
+        )?;
         {
             let vm = self
                 .vms
@@ -7401,6 +7480,13 @@ where
             .kernel
             .isatty(EXECUTION_DRIVER_NAME, kernel_pid, 1)
             .unwrap_or(false);
+        let inherited_tty_restore_termios = child_fd1_is_tty
+            .then(|| {
+                vm.kernel
+                    .tcgetattr(EXECUTION_DRIVER_NAME, kernel_pid, 0)
+                    .map_err(kernel_error)
+            })
+            .transpose()?;
         let root = vm
             .active_processes
             .get_mut(process_id)
@@ -7437,6 +7523,7 @@ where
                     ))
                 })?;
             child.tty_master_owner = inherited_tty_master_owner;
+            child.tty_restore_termios = inherited_tty_restore_termios;
             if let Some(kernel_stdin_writer_fd) = kernel_stdin_writer_fd {
                 child.kernel_stdin_writer_fd = Some(kernel_stdin_writer_fd);
             }
@@ -7793,12 +7880,11 @@ where
         Ok(true)
     }
 
-    /// Service `__kernel_stdio_write` for a process writing to the SHARED
-    /// terminal (`tty_master_owner` set): write through the process's own PTY
-    /// slave (line discipline applies), then drain the master and surface the
-    /// drained bytes as the OWNER's ordered output stream — the single
-    /// host-facing path. No child stdout event is queued, so nothing gets
-    /// relayed (and re-rendered) by the parent shell.
+    /// Service `__kernel_stdio_write` for a process writing to the shared PTY.
+    /// Apply the slave line discipline once, then enqueue the drained bytes on
+    /// the owning process before acknowledging the write. The owner's local
+    /// queue is drained before its next runtime event, keeping child output
+    /// ahead of the next shell prompt.
     pub(crate) fn service_shared_tty_stdio_write(
         &mut self,
         vm_id: &str,
@@ -7826,7 +7912,7 @@ where
                 .map_err(kernel_error)?
         };
         let (owner_pid, master_fd) = owner;
-        let mut drained: Vec<u8> = Vec::new();
+        let mut drained = Vec::new();
         loop {
             match vm.kernel.fd_read_with_timeout_result(
                 EXECUTION_DRIVER_NAME,
@@ -7842,14 +7928,16 @@ where
             }
         }
         if !drained.is_empty() {
-            if let Some(owner_process) = vm
+            let Some(owner_process) = vm
                 .active_processes
                 .values_mut()
                 .find(|process| process.kernel_pid == owner_pid)
-            {
-                owner_process
-                    .queue_pending_execution_event(ActiveExecutionEvent::Stdout(drained))?;
-            }
+            else {
+                return Err(SidecarError::InvalidState(format!(
+                    "shared PTY owner pid {owner_pid} is not active"
+                )));
+            };
+            owner_process.queue_pending_execution_event(ActiveExecutionEvent::Stdout(drained))?;
         }
         Ok(json!(written))
     }
@@ -8096,6 +8184,7 @@ where
                     let detached_children =
                         Self::adopt_detached_child_processes(&child_process_label, &mut child);
                     sync_process_host_writes_to_kernel(vm, &child)?;
+                    restore_inherited_child_tty(&mut vm.kernel, &child)?;
                     let kernel_readiness = Arc::clone(&vm.kernel_socket_readiness);
                     terminate_child_process_tree(&mut vm.kernel, &mut child, &kernel_readiness);
                     child.kernel_handle.finish(exit_code);
@@ -10537,6 +10626,78 @@ fn build_host_node_cli_eval(cli: &ResolvedHostNodeCliEntrypoint) -> String {
                 .unwrap_or_else(|_| format!("\"{guest_package_json}\"")),
         ),
     }
+}
+
+fn rewrite_javascript_shebang_request(
+    vm: &mut VmState,
+    resolved: &ResolvedChildProcessExecution,
+    request: &mut JavascriptChildProcessSpawnRequest,
+) -> Result<bool, SidecarError> {
+    const MAX_SHEBANG_LINE_BYTES: usize = 256;
+
+    if !matches!(resolved.runtime, GuestRuntimeKind::WebAssembly) {
+        return Ok(false);
+    }
+    let Some(script_path) = resolved
+        .env
+        .get("AGENTOS_GUEST_ENTRYPOINT")
+        .filter(|path| path.starts_with('/'))
+        .map(|path| normalize_path(path))
+    else {
+        return Ok(false);
+    };
+    let Ok(header) = vm
+        .kernel
+        .pread_file(&script_path, 0, MAX_SHEBANG_LINE_BYTES + 1)
+    else {
+        return Ok(false);
+    };
+    if !header.starts_with(b"#!") {
+        return Ok(false);
+    }
+
+    let line_end = match header.iter().position(|byte| *byte == b'\n') {
+        Some(index) if index > MAX_SHEBANG_LINE_BYTES => {
+            return Err(SidecarError::Execution(format!(
+                "ENOEXEC: shebang line exceeds {MAX_SHEBANG_LINE_BYTES} bytes: {script_path}"
+            )));
+        }
+        Some(index) => index,
+        None if header.len() > MAX_SHEBANG_LINE_BYTES => {
+            return Err(SidecarError::Execution(format!(
+                "ENOEXEC: shebang line exceeds {MAX_SHEBANG_LINE_BYTES} bytes: {script_path}"
+            )));
+        }
+        None => header.len(),
+    };
+    let line = header[2..line_end]
+        .strip_suffix(b"\r")
+        .unwrap_or(&header[2..line_end]);
+    let text = std::str::from_utf8(line).map_err(|_| {
+        SidecarError::Execution(format!("ENOEXEC: invalid shebang line: {script_path}"))
+    })?;
+    let mut parts = text.split_ascii_whitespace();
+    let interpreter = parts.next().ok_or_else(|| {
+        SidecarError::Execution(format!("ENOEXEC: invalid shebang line: {script_path}"))
+    })?;
+    let mut interpreter_args = parts.map(ToOwned::to_owned).collect::<Vec<_>>();
+    let command = if interpreter == "/usr/bin/env" || interpreter == "/bin/env" {
+        if interpreter_args.is_empty() {
+            return Err(SidecarError::Execution(format!(
+                "ENOENT: missing interpreter after /usr/bin/env in shebang: {script_path}"
+            )));
+        }
+        interpreter_args.remove(0)
+    } else {
+        interpreter.to_owned()
+    };
+
+    interpreter_args.push(script_path);
+    interpreter_args.extend(resolved.execution_args.iter().cloned());
+    request.command = command;
+    request.args = interpreter_args;
+    request.options.shell = false;
+    Ok(true)
 }
 
 fn resolve_guest_command_entrypoint(
@@ -19090,6 +19251,7 @@ fn service_javascript_pty_set_raw_mode_sync_rpc(
             // cursor/CRLF is not mangled by the line discipline; cooked mode
             // re-enables it so the line shell gets LF->CRLF.
             LineDisciplineConfig {
+                icrnl: Some(!enabled),
                 canonical: Some(!enabled),
                 echo: Some(!enabled),
                 isig: Some(!enabled),
@@ -19099,6 +19261,47 @@ fn service_javascript_pty_set_raw_mode_sync_rpc(
         )
         .map_err(kernel_error)?;
     Ok(Value::Null)
+}
+
+fn restore_inherited_child_tty(
+    kernel: &mut SidecarKernel,
+    child: &ActiveProcess,
+) -> Result<(), SidecarError> {
+    let Some(termios) = child.tty_restore_termios.as_ref() else {
+        return Ok(());
+    };
+    let restore_pid = child
+        .tty_master_owner
+        .map(|(owner_pid, _)| owner_pid)
+        .unwrap_or(child.kernel_pid);
+    kernel
+        .tcsetattr(
+            EXECUTION_DRIVER_NAME,
+            restore_pid,
+            0,
+            partial_termios_from_snapshot(termios),
+        )
+        .map_err(kernel_error)
+}
+
+fn partial_termios_from_snapshot(termios: &Termios) -> PartialTermios {
+    PartialTermios {
+        icrnl: Some(termios.icrnl),
+        opost: Some(termios.opost),
+        onlcr: Some(termios.onlcr),
+        icanon: Some(termios.icanon),
+        echo: Some(termios.echo),
+        isig: Some(termios.isig),
+        cc: Some(PartialTermiosControlChars {
+            vintr: Some(termios.cc.vintr),
+            vquit: Some(termios.cc.vquit),
+            vsusp: Some(termios.cc.vsusp),
+            veof: Some(termios.cc.veof),
+            verase: Some(termios.cc.verase),
+            vkill: Some(termios.cc.vkill),
+            vwerase: Some(termios.cc.vwerase),
+        }),
+    }
 }
 
 fn service_javascript_kernel_isatty_sync_rpc(

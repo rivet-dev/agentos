@@ -1,0 +1,10 @@
+--- a/src/sys/stubs/process.rs
++++ b/src/sys/stubs/process.rs
+@@ -13,7 +13,7 @@ impl Child {
+     /// Returns the process ID of the child process, if available.
+     pub fn id(&self) -> Option<u32> {
+-        None
++        Some(self.inner.id())
+     }
+ 
+     /// Asynchronously waits for the child process to exit.

@@ -5,20 +5,29 @@
 	"type": "module",
 	"description": "Browser terminal for Agent OS VMs — RivetKit actor + xterm.js.",
 	"scripts": {
+		"prepare:commands": "node ./scripts/prepare-commands.mjs",
+		"prepare:browser-assets": "pnpm prepare:commands && pnpm --dir ../../packages/runtime-browser build && pnpm --dir ../../packages/browser build:wasm-test-assets",
 		"server": "tsx server.ts",
 		"web": "vite",
-		"dev": "concurrently -k -n server,web -c blue,magenta \"tsx server.ts\" \"vite\"",
-		"build": "vite build",
+		"dev:ready": "concurrently -k -n server,web -c blue,magenta \"tsx server.ts\" \"vite\"",
+		"dev": "pnpm prepare:browser-assets && pnpm dev:ready",
+		"build": "tsc --noEmit",
+		"build:demo": "pnpm prepare:browser-assets && vite build",
 		"preview": "vite preview",
-		"check-types": "tsc --noEmit"
+		"check-types": "tsc --noEmit",
+		"test:e2e": "node ./scripts/run-e2e.mjs",
+		"test:e2e:connected": "playwright test"
 	},
 	"dependencies": {
 		"@agentos-software/common": "workspace:*",
+		"@agentos-software/fd": "workspace:*",
+		"@agentos-software/pi": "workspace:*",
 		"@agentos-software/curl": "workspace:*",
 		"@agentos-software/git": "workspace:*",
 		"@agentos-software/jq": "workspace:*",
 		"@agentos-software/ripgrep": "workspace:*",
 		"@agentos-software/sqlite3": "workspace:*",
+		"@agentos-software/vim": "workspace:*",
 		"@rivet-dev/agentos": "workspace:*",
 		"@rivetkit/react": "catalog:rivetkit",
 		"@xterm/addon-fit": "^0.10.0",
@@ -28,6 +37,7 @@
 		"rivetkit": "catalog:rivetkit"
 	},
 	"devDependencies": {
+		"@playwright/test": "^1.57.0",
 		"@types/react": "^19.0.0",
 		"@types/react-dom": "^19.0.0",
 		"@vitejs/plugin-react": "^4.3.4",

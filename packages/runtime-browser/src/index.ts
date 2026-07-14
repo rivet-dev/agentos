@@ -9,10 +9,12 @@ export {
 } from "./driver.js";
 export { InMemoryFileSystem } from "./os-filesystem.js";
 export type {
+	CommandExecutor,
 	ExecOptions,
 	ExecResult,
 	NetworkAdapter,
 	NodeRuntimeDriver,
+	ProcessConfig,
 	PtyOpenResult,
 	StdioChannel,
 	StdioEvent,

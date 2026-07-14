@@ -91,6 +91,30 @@ describe("stage", () => {
 		expect(result.missing).toEqual(["no-such-cmd"]);
 	});
 
+	test("if-missing=skip overlays a partial target without deleting declared commands", () => {
+		const commandsDir = makeCommandsDir();
+		const pkg = makePackageDir({ commands: ["sh", "cat", "old-only"] });
+		mkdirSync(join(pkg, "bin"));
+		writeFileSync(join(pkg, "bin", "sh"), "old-sh");
+		writeFileSync(join(pkg, "bin", "cat"), "old-cat");
+		writeFileSync(join(pkg, "bin", "old-only"), "old-only");
+		writeFileSync(join(pkg, "bin", "undeclared"), "remove-me");
+
+		const result = stage({
+			packageDir: pkg,
+			commandsDir,
+			ifMissing: "skip",
+		});
+
+		expect(result.missing).toEqual(["old-only"]);
+		expect(readFileSync(join(pkg, "bin", "sh"), "utf8")).toBe("\0asm-sh");
+		expect(readFileSync(join(pkg, "bin", "cat"), "utf8")).toBe("\0asm-cat");
+		expect(readFileSync(join(pkg, "bin", "old-only"), "utf8")).toBe(
+			"old-only",
+		);
+		expect(existsSync(join(pkg, "bin", "undeclared"))).toBe(false);
+	});
+
 	test("missing commands dir with if-missing=skip leaves a placeholder", () => {
 		const pkg = makePackageDir({ commands: ["sh"] });
 		const result = stage({

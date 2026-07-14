@@ -480,6 +480,11 @@ var process2 = {
   },
   pid: config2.pid,
   ppid: config2.ppid,
+  uid: config2.uid,
+  gid: config2.gid,
+  euid: config2.uid,
+  egid: config2.gid,
+  groups: [config2.gid],
   execPath: config2.execPath,
   execArgv: [],
   argv: config2.argv,
@@ -871,6 +876,11 @@ function applyProcessConfig(nextConfig) {
   process2.version = nextConfig.version;
   process2.pid = nextConfig.pid;
   process2.ppid = nextConfig.ppid;
+  process2.uid = nextConfig.uid;
+  process2.gid = nextConfig.gid;
+  process2.euid = nextConfig.uid;
+  process2.egid = nextConfig.gid;
+  process2.groups = [nextConfig.gid];
   process2.execPath = nextConfig.execPath;
   process2.argv = nextConfig.argv;
   process2.argv0 = nextConfig.argv[0] || "node";

@@ -43,8 +43,10 @@ function _resolveRuntimeTtyConfig() {
       rows: 24
     };
   } catch {
-    _cachedRuntimeTtyConfig = DEFAULT_RUNTIME_TTY_CONFIG;
-    return _cachedRuntimeTtyConfig;
+    // Snapshot/bootstrap evaluation can touch process stdio before the kernel
+    // sync bridge is attached. Return the safe default for that early read, but
+    // do not cache it: the execution must retry once the bridge is available.
+    return DEFAULT_RUNTIME_TTY_CONFIG;
   }
   for (const fd of [1, 0]) {
     try {

@@ -286,18 +286,27 @@ importers:
       '@agentos-software/curl':
         specifier: workspace:*
         version: link:../../registry/software/curl
+      '@agentos-software/fd':
+        specifier: workspace:*
+        version: link:../../registry/software/fd
       '@agentos-software/git':
         specifier: workspace:*
         version: link:../../registry/software/git
       '@agentos-software/jq':
         specifier: workspace:*
         version: link:../../registry/software/jq
+      '@agentos-software/pi':
+        specifier: workspace:*
+        version: link:../../registry/agent/pi
       '@agentos-software/ripgrep':
         specifier: workspace:*
         version: link:../../registry/software/ripgrep
       '@agentos-software/sqlite3':
         specifier: workspace:*
         version: link:../../registry/software/sqlite3
+      '@agentos-software/vim':
+        specifier: workspace:*
+        version: link:../../registry/software/vim
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -320,6 +329,9 @@ importers:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
     devDependencies:
+      '@playwright/test':
+        specifier: ^1.57.0
+        version: 1.59.1
       '@types/react':
         specifier: ^19.0.0
         version: 19.2.17
@@ -712,6 +724,34 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+
+  examples/experiments/browser-base-shell:
+    dependencies:
+      '@rivet-dev/agentos-browser':
+        specifier: workspace:*
+        version: link:../../../packages/browser
+      '@rivet-dev/agentos-runtime-browser':
+        specifier: workspace:*
+        version: link:../../../packages/runtime-browser
+      buffer:
+        specifier: ^6.0.3
+        version: 6.0.3
+      playwright-core:
+        specifier: ^1.57.0
+        version: 1.59.1
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vite:
+        specifier: ^6.0.0
+        version: 6.4.3(@types/node@22.19.15)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0)
 
   examples/filesystem:
     dependencies:
@@ -2988,6 +3028,9 @@ importers:
       '@agentclientprotocol/sdk':
         specifier: ^0.16.1
         version: 0.16.1(zod@4.3.6)
+      '@mariozechner/pi-agent-core':
+        specifier: 0.60.0
+        version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.21.0(bufferutil@4.1.0))(zod@4.3.6)
       '@mariozechner/pi-ai':
         specifier: 0.60.0
         version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.21.0(bufferutil@4.1.0))(zod@4.3.6)
