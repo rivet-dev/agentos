@@ -1894,7 +1894,7 @@ fn sidecar_to_core_error(error: SidecarError) -> AcpCoreError {
             source: Box::new(sidecar_to_core_error(*source)),
         },
         SidecarError::SessionNotFound(session_id) => {
-            AcpCoreError::InvalidState(format!("unknown ACP session {session_id}"))
+            AcpCoreError::SessionNotFound(format!("unknown ACP session {session_id}"))
         }
         SidecarError::InvalidState(message)
         | SidecarError::ProtocolVersionMismatch(message)

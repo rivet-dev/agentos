@@ -1356,7 +1356,7 @@ where
             )?;
             let remaining = deadline.saturating_duration_since(Instant::now());
             if let Some(event) = self
-                .poll_event(&ownership, remaining.min(Duration::from_millis(10)))
+                .poll_event_for_cleanup(&ownership, remaining.min(Duration::from_millis(10)))
                 .await?
             {
                 self.vm_disposal_progress

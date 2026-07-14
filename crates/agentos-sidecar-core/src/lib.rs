@@ -29,6 +29,7 @@ pub use session::AcpSessionRecord;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AcpCoreError {
     InvalidState(String),
+    SessionNotFound(String),
     LimitExceeded(String),
     Unauthorized(String),
     Unsupported(String),
@@ -50,6 +51,7 @@ impl AcpCoreError {
     pub fn code(&self) -> &'static str {
         match self {
             AcpCoreError::InvalidState(_) => "invalid_state",
+            AcpCoreError::SessionNotFound(_) => "session_not_found",
             AcpCoreError::LimitExceeded(_) => "limit_exceeded",
             AcpCoreError::Unauthorized(_) => "unauthorized",
             AcpCoreError::Unsupported(_) => "unsupported",
@@ -65,6 +67,7 @@ impl fmt::Display for AcpCoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AcpCoreError::InvalidState(message)
+            | AcpCoreError::SessionNotFound(message)
             | AcpCoreError::LimitExceeded(message)
             | AcpCoreError::Unauthorized(message)
             | AcpCoreError::Unsupported(message)
@@ -109,6 +112,10 @@ mod tests {
         assert_eq!(
             AcpCoreError::InvalidState("x".into()).code(),
             "invalid_state"
+        );
+        assert_eq!(
+            AcpCoreError::SessionNotFound("missing".into()).code(),
+            "session_not_found"
         );
         assert_eq!(AcpCoreError::Unsupported("x".into()).code(), "unsupported");
         assert_eq!(

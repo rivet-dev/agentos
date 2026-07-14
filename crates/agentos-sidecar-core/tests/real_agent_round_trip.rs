@@ -257,5 +257,5 @@ fn acp_core_runs_a_real_session_round_trip_against_the_echo_agent() {
     let err = core
         .session_request(&mut host, "conn-other", &prompt)
         .expect_err("non-owner prompt must fail closed");
-    assert_eq!(err.code(), "invalid_state");
+    assert_eq!(err.code(), "session_not_found");
 }

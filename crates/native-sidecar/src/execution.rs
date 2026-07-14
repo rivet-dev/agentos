@@ -4823,6 +4823,15 @@ where
         &mut self,
         ownership: &OwnershipScope,
     ) -> Result<bool, SidecarError> {
+        self.pump_process_events_with_admission(ownership, false)
+            .await
+    }
+
+    pub(crate) async fn pump_process_events_with_admission(
+        &mut self,
+        ownership: &OwnershipScope,
+        allow_closing: bool,
+    ) -> Result<bool, SidecarError> {
         let mut emitted_any = false;
 
         let mut queued_envelopes = Vec::new();
@@ -4852,7 +4861,7 @@ where
             self.queue_pending_process_event(envelope)?;
         }
 
-        let vm_ids = self.vm_ids_for_scope(ownership)?;
+        let vm_ids = self.vm_ids_for_scope_with_admission(ownership, allow_closing)?;
         for vm_id in vm_ids {
             while let Some(vm) = self.vms.get(&vm_id) {
                 let connection_id = vm.connection_id.clone();

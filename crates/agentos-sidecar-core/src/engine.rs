@@ -984,7 +984,7 @@ impl AcpCore {
         request: &AcpGetSessionStateRequest,
     ) -> Result<AcpResponse, AcpCoreError> {
         let unknown =
-            || AcpCoreError::InvalidState(format!("unknown ACP session {}", request.session_id));
+            || AcpCoreError::SessionNotFound(format!("unknown ACP session {}", request.session_id));
         let session = self
             .session(caller_connection_id, &request.session_id)
             .ok_or_else(unknown)?;
@@ -1996,7 +1996,7 @@ impl AcpCore {
         );
 
         let unknown =
-            || AcpCoreError::InvalidState(format!("unknown ACP session {}", request.session_id));
+            || AcpCoreError::SessionNotFound(format!("unknown ACP session {}", request.session_id));
         let session = self
             .session(caller_connection_id, &request.session_id)
             .ok_or_else(unknown)?;
@@ -3540,7 +3540,7 @@ impl AcpCore {
         // SAME error as `get_session_state` so the victim session is not revealed
         // and no state is mutated on a rejected attempt.
         let unknown =
-            || AcpCoreError::InvalidState(format!("unknown ACP session {}", request.session_id));
+            || AcpCoreError::SessionNotFound(format!("unknown ACP session {}", request.session_id));
         let session = self
             .session_mut(caller_connection_id, &request.session_id)
             .ok_or_else(unknown)?;
@@ -3949,7 +3949,7 @@ impl AcpCore {
         request: &AcpSetSessionConfigRequest,
     ) -> Result<PreparedSessionConfig, AcpCoreError> {
         let unknown =
-            || AcpCoreError::InvalidState(format!("unknown ACP session {}", request.session_id));
+            || AcpCoreError::SessionNotFound(format!("unknown ACP session {}", request.session_id));
         let session = self
             .session(caller_connection_id, &request.session_id)
             .ok_or_else(unknown)?;
@@ -4902,7 +4902,7 @@ mod tests {
         assert!(core.get_session_state("conn-a", &req).is_ok());
         // Non-owner gets the same "unknown" error (no cross-tenant leak).
         let err = core.get_session_state("conn-b", &req).unwrap_err();
-        assert_eq!(err.code(), "invalid_state");
+        assert_eq!(err.code(), "session_not_found");
         assert!(err.to_string().contains("unknown ACP session"));
     }
 
@@ -5050,13 +5050,13 @@ mod tests {
             core.begin_session_request(&mut host, "conn-a", &prompt)
                 .expect_err("cleanup-only session cannot start a resumable request")
                 .code(),
-            "invalid_state"
+            "session_not_found"
         );
         assert_eq!(
             core.session_request(&mut host, "conn-a", &prompt)
                 .expect_err("cleanup-only session cannot run a blocking request")
                 .code(),
-            "invalid_state"
+            "session_not_found"
         );
         let config_error = core
             .prepare_session_config(
@@ -5069,7 +5069,7 @@ mod tests {
             )
             .err()
             .expect("cleanup-only session cannot mutate configuration");
-        assert_eq!(config_error.code(), "invalid_state");
+        assert_eq!(config_error.code(), "session_not_found");
         assert_eq!(
             host.finalized.len(),
             1,
@@ -5340,7 +5340,7 @@ mod tests {
             params: None,
         };
         let err = core.session_request(&mut host, "conn-b", &req).unwrap_err();
-        assert_eq!(err.code(), "invalid_state");
+        assert_eq!(err.code(), "session_not_found");
         assert!(err.to_string().contains("unknown ACP session"));
         // next_request_id untouched (no id consumed on the rejected attempt).
         assert_eq!(core.session("conn-a", "s1").unwrap().next_request_id, 1);
@@ -7028,7 +7028,7 @@ mod tests {
         let err = core
             .begin_session_request(&mut host, "conn-b", &req)
             .expect_err("non-owner must be rejected");
-        assert_eq!(err.code(), "invalid_state");
+        assert_eq!(err.code(), "session_not_found");
         assert_eq!(core.pending_prompt_count(), 0);
     }
 

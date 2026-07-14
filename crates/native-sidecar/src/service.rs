@@ -2059,6 +2059,25 @@ where
         ownership: &OwnershipScope,
         timeout: Duration,
     ) -> Result<Option<EventFrame>, SidecarError> {
+        self.poll_event_with_admission(ownership, timeout, false)
+            .await
+    }
+
+    pub(crate) async fn poll_event_for_cleanup(
+        &mut self,
+        ownership: &OwnershipScope,
+        timeout: Duration,
+    ) -> Result<Option<EventFrame>, SidecarError> {
+        self.poll_event_with_admission(ownership, timeout, true)
+            .await
+    }
+
+    async fn poll_event_with_admission(
+        &mut self,
+        ownership: &OwnershipScope,
+        timeout: Duration,
+        allow_closing: bool,
+    ) -> Result<Option<EventFrame>, SidecarError> {
         let deadline = Instant::now() + timeout;
         loop {
             if let Some(index) = self
@@ -2079,7 +2098,8 @@ where
             // zero timeout to drive guest execution without parking the
             // current-thread sidecar runtime, and the pump itself performs
             // only non-blocking execution polls.
-            self.pump_process_events(ownership).await?;
+            self.pump_process_events_with_admission(ownership, allow_closing)
+                .await?;
 
             let queued_envelopes = {
                 let pending_capacity = self.pending_process_event_capacity();
@@ -3461,13 +3481,30 @@ where
         })
     }
 
-    pub(crate) fn vm_ids_for_scope(
+    pub(crate) fn vm_ids_for_scope_with_admission(
         &self,
         ownership: &OwnershipScope,
+        allow_closing: bool,
     ) -> Result<Vec<String>, SidecarError> {
         match ownership {
             OwnershipScope::SessionOwnership(inner) => {
-                self.require_owned_session(&inner.connection_id, &inner.session_id)?;
+                if allow_closing {
+                    self.require_authenticated_connection(&inner.connection_id)?;
+                    let session = self.sessions.get(&inner.session_id).ok_or_else(|| {
+                        SidecarError::InvalidState(format!(
+                            "unknown sidecar session {}",
+                            inner.session_id
+                        ))
+                    })?;
+                    if session.connection_id != inner.connection_id {
+                        return Err(SidecarError::InvalidState(format!(
+                            "session {} is not owned by connection {}",
+                            inner.session_id, inner.connection_id
+                        )));
+                    }
+                } else {
+                    self.require_owned_session(&inner.connection_id, &inner.session_id)?;
+                }
                 Ok(self
                     .sessions
                     .get(&inner.session_id)
@@ -3478,7 +3515,15 @@ where
                     .collect())
             }
             OwnershipScope::VmOwnership(inner) => {
-                self.require_owned_vm(&inner.connection_id, &inner.session_id, &inner.vm_id)?;
+                if allow_closing {
+                    self.require_owned_vm_for_cleanup(
+                        &inner.connection_id,
+                        &inner.session_id,
+                        &inner.vm_id,
+                    )?;
+                } else {
+                    self.require_owned_vm(&inner.connection_id, &inner.session_id, &inner.vm_id)?;
+                }
                 Ok(vec![inner.vm_id.clone()])
             }
             OwnershipScope::ConnectionOwnership(..) => Err(SidecarError::InvalidState(
