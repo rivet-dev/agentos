@@ -787,7 +787,9 @@ export class NativeSidecarKernelProxy {
 			...(entry.env !== undefined ? { env: entry.env } : {}),
 			...(entry.requestedCwd !== undefined ? { cwd: entry.requestedCwd } : {}),
 			...(entry.pty ? { pty: entry.pty } : {}),
-			...(entry.keepStdinOpen ? { keepStdinOpen: true } : {}),
+			...(entry.keepStdinOpen !== undefined
+				? { keepStdinOpen: entry.keepStdinOpen }
+				: {}),
 			...(entry.timeoutMs !== undefined ? { timeoutMs: entry.timeoutMs } : {}),
 			...(entry.captureOutput !== undefined
 				? { captureOutput: entry.captureOutput }

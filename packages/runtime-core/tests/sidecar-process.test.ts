@@ -78,6 +78,19 @@ class MemorySidecarTransport implements SidecarProcessTransport {
 				},
 			};
 		}
+		if (input.payload.type === "execute") {
+			return {
+				frame_type: "response",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: this.requests.length,
+				ownership: input.ownership,
+				payload: {
+					type: "process_started",
+					process_id: `process-${this.requests.length}`,
+					pid: 42,
+				},
+			};
+		}
 		if (input.payload.type !== "create_layer") {
 			throw new Error(`unexpected request ${input.payload.type}`);
 		}
@@ -175,5 +188,42 @@ describe("sidecar process transport injection", () => {
 		).rejects.toThrow(
 			"sidecar returned no recursive directory entries for /empty",
 		);
+	});
+
+	test("preserves false, true, and omission for keepStdinOpen", async () => {
+		const transport = new MemorySidecarTransport();
+		const process = SidecarProcess.fromClient(transport);
+		const session = { connectionId: "conn", sessionId: "session" };
+		const vm = { vmId: "vm" };
+
+		await process.execute(session, vm, {
+			command: "false-case",
+			keepStdinOpen: false,
+		});
+		await process.execute(session, vm, {
+			command: "true-case",
+			keepStdinOpen: true,
+		});
+		await process.execute(session, vm, { command: "omitted-case" });
+
+		const executePayloads = transport.requests
+			.map((request) => request.payload)
+			.filter((payload) => payload.type === "execute");
+		expect(executePayloads).toHaveLength(3);
+		expect(executePayloads[0]).toEqual(
+			expect.objectContaining({
+				type: "execute",
+				command: "false-case",
+				keep_stdin_open: false,
+			}),
+		);
+		expect(executePayloads[1]).toEqual(
+			expect.objectContaining({
+				type: "execute",
+				command: "true-case",
+				keep_stdin_open: true,
+			}),
+		);
+		expect(executePayloads[2]).not.toHaveProperty("keep_stdin_open");
 	});
 });

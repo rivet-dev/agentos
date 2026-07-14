@@ -1455,7 +1455,9 @@ export class SidecarProcess {
 					? { wasm_permission_tier: options.wasmPermissionTier }
 					: {}),
 				...(options.pty ? { pty: options.pty } : {}),
-				...(options.keepStdinOpen ? { keep_stdin_open: true } : {}),
+				...(options.keepStdinOpen !== undefined
+					? { keep_stdin_open: options.keepStdinOpen }
+					: {}),
 				...(options.timeoutMs !== undefined
 					? { timeout_ms: options.timeoutMs }
 					: {}),

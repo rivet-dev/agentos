@@ -365,11 +365,12 @@ describe("request payload conversion", () => {
 				type: "execute",
 				command: "node",
 				args: [],
+				keep_stdin_open: false,
 				capture_output: false,
 			}),
 		).toMatchObject({
 			tag: "ExecuteRequest",
-			val: { captureOutput: false },
+			val: { keepStdinOpen: false, captureOutput: false },
 		});
 
 		expect(

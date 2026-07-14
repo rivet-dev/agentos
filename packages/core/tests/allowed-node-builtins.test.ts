@@ -179,4 +179,48 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 		expect(execute.mock.calls[0]?.[2]).toMatchObject({ args: [] });
 		expect(execute.mock.calls[0]?.[2]).not.toHaveProperty("command");
 	});
+
+	test("spawn preserves false, true, and omission for streamStdin", async () => {
+		const cases = [
+			{ label: "false", value: false, expected: false },
+			{ label: "true", value: true, expected: true },
+			{ label: "omitted", value: undefined, expected: undefined },
+		] as const;
+
+		for (const testCase of cases) {
+			const { client, execute } = createMockClient();
+			proxy = new NativeSidecarKernelProxy({
+				client,
+				session: {
+					connectionId: "conn-1",
+					sessionId: "session-1",
+				} as AuthenticatedSession,
+				vm: { vmId: "vm-1" } as CreatedVm,
+				env: { HOME: "/workspace" },
+				cwd: "/workspace",
+				localMounts: [],
+				sidecarMounts: [],
+				commandGuestPaths: new Map(),
+			});
+
+			const options =
+				testCase.value === undefined
+					? undefined
+					: { streamStdin: testCase.value };
+			const process = await proxy.spawn("node", [`${testCase.label}.mjs`], options);
+			await expect(process.wait()).resolves.toBe(0);
+			const payload = execute.mock.calls[0]?.[2];
+			if (testCase.expected === undefined) {
+				expect(payload).not.toHaveProperty("keepStdinOpen");
+			} else {
+				expect(payload).toHaveProperty(
+					"keepStdinOpen",
+					testCase.expected,
+				);
+			}
+
+			await proxy.dispose();
+			proxy = null;
+		}
+	});
 });

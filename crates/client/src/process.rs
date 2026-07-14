@@ -223,7 +223,7 @@ impl AgentOs {
                 resolved_args,
                 options.env.clone(),
                 options.cwd.clone(),
-                false,
+                None,
                 timeout_ms,
                 Some(capture_stdio),
             )
@@ -343,7 +343,7 @@ impl AgentOs {
                 args.clone(),
                 options.base.env.clone(),
                 options.base.cwd.clone(),
-                options.stream_stdin.unwrap_or(false),
+                options.stream_stdin,
                 timeout_to_wire(options.base.timeout)?,
                 None,
             )
@@ -712,7 +712,7 @@ impl AgentOs {
         args: Vec<String>,
         env: BTreeMap<String, String>,
         cwd: Option<String>,
-        keep_stdin_open: bool,
+        keep_stdin_open: Option<bool>,
         timeout_ms: Option<u64>,
         capture_output: Option<bool>,
     ) -> std::result::Result<(wire::ProcessStartedResponse, WireEventSubscription), ClientError>
@@ -722,21 +722,16 @@ impl AgentOs {
             .transport()
             .request_wire_with_process_events(
                 ownership,
-                wire::RequestPayload::ExecuteRequest(wire::ExecuteRequest {
-                    process_id: None,
+                wire::RequestPayload::ExecuteRequest(build_process_execute_request(
                     command,
                     shell_command,
-                    runtime: None,
-                    entrypoint: None,
                     args,
-                    env: (!env.is_empty()).then(|| env.into_iter().collect()),
+                    env,
                     cwd,
-                    wasm_permission_tier: None,
-                    pty: None,
-                    keep_stdin_open: keep_stdin_open.then_some(true),
+                    keep_stdin_open,
                     timeout_ms,
                     capture_output,
-                }),
+                )),
             )
             .await?;
         match response {
@@ -915,6 +910,33 @@ impl AgentOs {
         }
         let _guard = self.inner().process_registry_lock.lock();
         self.prune_exited_processes_locked(0);
+    }
+}
+
+fn build_process_execute_request(
+    command: Option<String>,
+    shell_command: Option<String>,
+    args: Vec<String>,
+    env: BTreeMap<String, String>,
+    cwd: Option<String>,
+    keep_stdin_open: Option<bool>,
+    timeout_ms: Option<u64>,
+    capture_output: Option<bool>,
+) -> wire::ExecuteRequest {
+    wire::ExecuteRequest {
+        process_id: None,
+        command,
+        shell_command,
+        runtime: None,
+        entrypoint: None,
+        args,
+        env: (!env.is_empty()).then(|| env.into_iter().collect()),
+        cwd,
+        wasm_permission_tier: None,
+        pty: None,
+        keep_stdin_open,
+        timeout_ms,
+        capture_output,
     }
 }
 
@@ -1223,9 +1245,9 @@ pub(crate) fn drain_process_output_tasks(processes: &SccHashMap<u32, ProcessEntr
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_exec_event, byte_stream_for_process_route, drain_process_output_tasks,
-        exited_pids_to_prune, handle_route_failure_abort_result, install_output_callback,
-        process_exit_result, timeout_to_wire, ExecOptions, OutputCallback,
+        apply_exec_event, build_process_execute_request, byte_stream_for_process_route,
+        drain_process_output_tasks, exited_pids_to_prune, handle_route_failure_abort_result,
+        install_output_callback, process_exit_result, timeout_to_wire, ExecOptions, OutputCallback,
         ROUTE_FAILURE_KILL_SIGNAL,
     };
     use crate::agent_os::{ProcessEntry, ProcessExit};
@@ -1295,6 +1317,26 @@ mod tests {
             error,
             crate::error::ClientError::EventStreamLagged { skipped: 3 }
         ));
+    }
+
+    #[test]
+    fn execute_request_preserves_false_true_and_omitted_stream_stdin() {
+        let build = |keep_stdin_open| {
+            build_process_execute_request(
+                Some("node".to_string()),
+                None,
+                Vec::new(),
+                std::collections::BTreeMap::new(),
+                None,
+                keep_stdin_open,
+                None,
+                None,
+            )
+        };
+
+        assert_eq!(build(Some(false)).keep_stdin_open, Some(false));
+        assert_eq!(build(Some(true)).keep_stdin_open, Some(true));
+        assert_eq!(build(None).keep_stdin_open, None);
     }
 
     #[test]
