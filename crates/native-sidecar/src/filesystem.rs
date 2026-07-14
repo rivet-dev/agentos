@@ -41,6 +41,7 @@ use agentos_execution::{
 use agentos_kernel::vfs::{VirtualStat, VirtualTimeSpec, VirtualUtimeSpec};
 use agentos_native_sidecar_core::{
     decode_guest_filesystem_content, handle_guest_filesystem_call as core_guest_filesystem_call,
+    resolve_guest_filesystem_request,
 };
 use nix::sys::stat::{utimensat, Mode, UtimensatFlags};
 use nix::sys::time::TimeSpec;
@@ -428,6 +429,8 @@ where
                 ));
             }
         };
+        let payload = resolve_guest_filesystem_request(&vm.guest_cwd, payload)
+            .map_err(native_guest_filesystem_core_error)?;
         sync_guest_filesystem_shadow_before_call(vm, &payload)?;
         let response = core_guest_filesystem_call(&mut vm.kernel, payload.clone())
             .map_err(native_guest_filesystem_core_error)?;
@@ -911,7 +914,7 @@ impl ModuleFsReader for KernelModuleFsReader<'_> {
     }
 }
 
-/// Module reader for live JavaScript processes. In the NodeRuntime embedding,
+/// Module reader for live JavaScript processes. In the JavaScript runtime,
 /// guest filesystem calls operate on the process' mapped host shadow first and
 /// reconcile back to the kernel on exit. Module resolution must therefore check
 /// that same process shadow before falling back to the sidecar kernel, otherwise
@@ -1925,6 +1928,19 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .read_link_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path)
                 .map(Value::String)
                 .map_err(kernel_error)
+        }
+        "fs.realpathSync" | "fs.promises.realpath" => {
+            let path = javascript_sync_rpc_path_arg(
+                process,
+                &request.args,
+                0,
+                "filesystem realpath path",
+            )?;
+            let path = normalized_process_guest_path(process, &path);
+            kernel
+                .realpath_for_process(EXECUTION_DRIVER_NAME, kernel_pid, &path)
+                .map(Value::String)
+                .map_err(|error| kernel_path_error("fs.realpath", &path, error))
         }
         "fs.symlinkSync" | "fs.promises.symlink" => {
             let target =
@@ -4127,6 +4143,20 @@ fn mirror_guest_subtree_to_shadow(vm: &mut VmState, guest_path: &str) -> Result<
         .map_err(kernel_error)?;
     for entry in entries {
         ensure_guest_path_materialized_in_shadow(vm, &entry.path)?;
+    }
+    Ok(())
+}
+
+/// Rebuild a shadow-root subtree from the currently visible kernel VFS state.
+/// Used after unmount so files mirrored from the detached filesystem cannot
+/// leak through the newly revealed lower filesystem.
+pub(crate) fn refresh_guest_shadow_subtree(
+    vm: &mut VmState,
+    guest_path: &str,
+) -> Result<(), SidecarError> {
+    remove_guest_shadow_path(vm, guest_path)?;
+    if vm.kernel.exists(guest_path).map_err(kernel_error)? {
+        mirror_guest_subtree_to_shadow(vm, guest_path)?;
     }
     Ok(())
 }

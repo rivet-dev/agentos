@@ -78,9 +78,19 @@ export interface CronEventPayload {
 	event: SerializableCronEvent;
 }
 
+export interface StreamErrorPayload {
+	scope: "process" | "shell" | "session" | "cron";
+	id?: string;
+	code: "event_stream_lagged" | "event_stream_closed" | "stream_failed";
+	skipped?: number;
+	message: string;
+}
+
 // --- Event schema map (used by actor() events config) ---
 
 export interface AgentOsEvents {
+	/** A bounded actor stream lost continuity or closed before its terminal event. */
+	streamError: StreamErrorPayload;
 	sessionEvent: SessionEventPayload;
 	permissionRequest: PermissionRequestPayload;
 	agentCrashed: AgentCrashedPayload;

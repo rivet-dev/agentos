@@ -62,6 +62,18 @@ impl Default for crate::generated_protocol::v1::RootFilesystemDescriptor {
     }
 }
 
+impl crate::generated_protocol::v1::MountDescriptor {
+    pub fn effective_read_only(&self) -> bool {
+        self.read_only.unwrap_or(false)
+    }
+}
+
+impl crate::generated_protocol::v1::MountPluginDescriptor {
+    pub fn effective_config(&self) -> &str {
+        self.config.as_deref().unwrap_or("{}")
+    }
+}
+
 impl crate::generated_protocol::v1::PermissionsPolicy {
     pub fn deny_all() -> Self {
         use crate::generated_protocol::v1::{
@@ -126,18 +138,21 @@ impl crate::generated_protocol::v1::CreateVmRequest {
         permissions: Option<crate::generated_protocol::v1::PermissionsPolicy>,
     ) -> Self {
         let metadata: std::collections::BTreeMap<_, _> = metadata.into_iter().collect();
-        let mut config = agentos_vm_config::CreateVmConfig {
+        let env = legacy_env_config(&metadata);
+        let loopback_exempt_ports = legacy_loopback_exempt_ports(&env);
+        let config = agentos_vm_config::CreateVmConfig {
             cwd: metadata.get("cwd").cloned(),
-            env: legacy_env_config(&metadata),
-            root_filesystem: legacy_root_filesystem_config(root_filesystem),
+            env: (!env.is_empty()).then_some(env),
+            root_filesystem: Some(legacy_root_filesystem_config(root_filesystem)),
             permissions: permissions.map(permissions_policy_config_from_wire),
             limits: legacy_limits_config(&metadata),
             dns: legacy_dns_config(&metadata),
             native_root: legacy_native_root_config(&metadata),
             listen: legacy_listen_config(&metadata),
+            loopback_exempt_ports: (!loopback_exempt_ports.is_empty())
+                .then_some(loopback_exempt_ports),
             ..Default::default()
         };
-        config.loopback_exempt_ports = legacy_loopback_exempt_ports(&config.env);
         Self::json_config(runtime, config)
     }
 }
@@ -158,25 +173,29 @@ fn legacy_root_filesystem_config(
     descriptor: crate::generated_protocol::v1::RootFilesystemDescriptor,
 ) -> agentos_vm_config::RootFilesystemConfig {
     agentos_vm_config::RootFilesystemConfig {
-        mode: match descriptor.mode {
+        mode: Some(match descriptor.mode {
             crate::generated_protocol::v1::RootFilesystemMode::Ephemeral => {
                 agentos_vm_config::RootFilesystemMode::Ephemeral
             }
             crate::generated_protocol::v1::RootFilesystemMode::ReadOnly => {
                 agentos_vm_config::RootFilesystemMode::ReadOnly
             }
-        },
-        disable_default_base_layer: descriptor.disable_default_base_layer,
-        lowers: descriptor
-            .lowers
-            .into_iter()
-            .map(legacy_root_lower_config)
-            .collect(),
-        bootstrap_entries: descriptor
-            .bootstrap_entries
-            .into_iter()
-            .map(legacy_root_entry_config)
-            .collect(),
+        }),
+        disable_default_base_layer: Some(descriptor.disable_default_base_layer),
+        lowers: Some(
+            descriptor
+                .lowers
+                .into_iter()
+                .map(legacy_root_lower_config)
+                .collect(),
+        ),
+        bootstrap_entries: Some(
+            descriptor
+                .bootstrap_entries
+                .into_iter()
+                .map(legacy_root_entry_config)
+                .collect(),
+        ),
     }
 }
 
@@ -358,8 +377,7 @@ fn legacy_native_root_config(
     let id = metadata.get("rootFilesystem.nativePlugin.id")?;
     let config = metadata
         .get("rootFilesystem.nativePlugin.config")
-        .map(|value| serde_json::from_str(value).expect("parse native root plugin config"))
-        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+        .map(|value| serde_json::from_str(value).expect("parse native root plugin config"));
     let read_only = metadata
         .get("rootFilesystem.nativePlugin.readOnly")
         .map(|value| value.parse::<bool>().expect("parse native root readOnly"))
@@ -369,7 +387,7 @@ fn legacy_native_root_config(
             id: id.clone(),
             config,
         },
-        read_only,
+        read_only: Some(read_only),
     })
 }
 
@@ -420,6 +438,7 @@ fn legacy_limits_config(
     let resources = agentos_vm_config::ResourceLimitsConfig {
         cpu_count: legacy_u64(metadata, "resource.cpu_count"),
         max_processes: legacy_u64(metadata, "resource.max_processes"),
+        max_captured_output_bytes: legacy_u64(metadata, "resource.max_captured_output_bytes"),
         max_open_fds: legacy_u64(metadata, "resource.max_open_fds"),
         max_pipes: legacy_u64(metadata, "resource.max_pipes"),
         max_ptys: legacy_u64(metadata, "resource.max_ptys"),
@@ -493,15 +512,6 @@ fn legacy_limits_config(
             metadata,
             "limits.js_runtime.captured_output_limit_bytes",
         ),
-        stdin_buffer_limit_bytes: legacy_u64(
-            metadata,
-            "limits.js_runtime.stdin_buffer_limit_bytes",
-        ),
-        event_payload_limit_bytes: legacy_u64(
-            metadata,
-            "limits.js_runtime.event_payload_limit_bytes",
-        ),
-        v8_ipc_max_frame_bytes: legacy_u64(metadata, "limits.js_runtime.v8_ipc_max_frame_bytes"),
     };
     let python = agentos_vm_config::PythonLimitsConfig {
         output_buffer_max_bytes: legacy_u64(metadata, "limits.python.output_buffer_max_bytes"),
@@ -604,9 +614,6 @@ fn legacy_has_js_runtime_limits(config: &agentos_vm_config::JsRuntimeLimitsConfi
         || config.wall_clock_limit_ms.is_some()
         || config.import_cache_materialize_timeout_ms.is_some()
         || config.captured_output_limit_bytes.is_some()
-        || config.stdin_buffer_limit_bytes.is_some()
-        || config.event_payload_limit_bytes.is_some()
-        || config.v8_ipc_max_frame_bytes.is_some()
 }
 
 fn legacy_has_python_limits(config: &agentos_vm_config::PythonLimitsConfig) -> bool {
@@ -658,9 +665,10 @@ impl crate::generated_protocol::v1::OwnershipScope {
 
 pub const PROTOCOL_NAME: &str = "agentos-native-sidecar";
 pub const PROTOCOL_VERSION: u16 = 7;
-// 16 MiB: large enough to carry a trusted-client CreateVm config that inlines an
-// entire base-filesystem snapshot, while still bounding a single frame.
-pub const DEFAULT_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+// 64 MiB: large enough for one terminal event containing the default bounded
+// 16 MiB stdout and stderr captures plus protocol overhead, while still
+// bounding every individual frame.
+pub const DEFAULT_MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProtocolCodecError {
@@ -1262,6 +1270,40 @@ mod tests {
                     PermissionMode::Allow
                 ))
             ));
+        }
+    }
+
+    #[test]
+    fn mount_defaults_are_resolved_by_the_sidecar_wire_model() {
+        let mount = MountDescriptor {
+            guest_path: String::from("/workspace"),
+            read_only: None,
+            plugin: MountPluginDescriptor {
+                id: String::from("js_bridge"),
+                config: None,
+            },
+        };
+
+        assert!(!mount.effective_read_only());
+        assert_eq!(mount.plugin.effective_config(), "{}");
+    }
+
+    #[test]
+    fn package_sources_round_trip_as_paths_or_opaque_bytes() {
+        let descriptors = [
+            PackageDescriptor::PackagePath(PackagePath {
+                path: String::from("/packages/demo.aospkg"),
+            }),
+            PackageDescriptor::PackageInline(PackageInline {
+                content: vec![0, 1, 2, 255],
+            }),
+        ];
+
+        for descriptor in descriptors {
+            let encoded = serde_bare::to_vec(&descriptor).expect("encode package source");
+            let decoded: PackageDescriptor =
+                serde_bare::from_slice(&encoded).expect("decode package source");
+            assert_eq!(decoded, descriptor);
         }
     }
 }

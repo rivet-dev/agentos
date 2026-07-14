@@ -55,6 +55,7 @@ use crate::tools::{
 };
 use crate::wire::{ProtocolFrame as WireProtocolFrame, WireFrameCodec};
 use crate::{DispatchResult, NativeSidecar, NativeSidecarBridge, SidecarError};
+use agentos_native_sidecar_core::{CaptureChunkOutcome, CapturedOutputState};
 
 use base64::Engine;
 use bytes::Bytes;
@@ -123,11 +124,11 @@ use agentos_native_sidecar_core::{
     listener_snapshot_response, local_endpoint_value, parse_kernel_http_fetch_response,
     parse_process_signal_state_request, process_killed_response,
     process_snapshot_entry_from_kernel, process_snapshot_response, process_started_response,
-    remote_endpoint_value, shared_guest_runtime_identity, signal_state_response,
-    socket_addr_family, socket_address_value, stdin_closed_response, stdin_written_response,
-    tcp_socket_info_value, unix_socket_info_value, zombie_timer_count_response,
-    SharedProcessSnapshotEntry, SharedProcessSnapshotStatus, SidecarCoreError,
-    VM_FETCH_BUFFER_LIMIT_BYTES,
+    remote_endpoint_value, resolve_command_line, resolve_guest_path, shared_guest_runtime_identity,
+    signal_state_response, socket_addr_family, socket_address_value, stdin_closed_response,
+    stdin_written_response, tcp_socket_info_value, unix_socket_info_value,
+    zombie_timer_count_response, SharedProcessSnapshotEntry, SharedProcessSnapshotStatus,
+    SidecarCoreError, VM_FETCH_BUFFER_LIMIT_BYTES,
 };
 use rusqlite::types::ValueRef as SqliteValueRef;
 use rusqlite::{
@@ -335,8 +336,6 @@ const DEFAULT_ALLOWED_NODE_BUILTINS: &[&str] = &[
     "util",
     "zlib",
 ];
-const EXECUTION_REQUEST_TTY_ENV: &str = "AGENTOS_EXEC_TTY";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum JavascriptCryptoDigestAlgorithm {
     Md5,
@@ -483,6 +482,8 @@ impl ActiveProcess {
             next_mapped_host_fd: MAPPED_HOST_FD_START,
             pending_execution_events: VecDeque::new(),
             pending_self_signal_exit: None,
+            timeout_at: None,
+            captured_output: None,
             child_processes: BTreeMap::new(),
             next_child_process_id: 0,
             http_servers: BTreeMap::new(),
@@ -530,6 +531,19 @@ impl ActiveProcess {
 
     pub(crate) fn with_host_cwd(mut self, host_cwd: PathBuf) -> Self {
         self.host_cwd = host_cwd;
+        self
+    }
+
+    pub(crate) fn with_timeout_at(mut self, timeout_at: Option<Instant>) -> Self {
+        self.timeout_at = timeout_at;
+        self
+    }
+
+    pub(crate) fn with_captured_output(
+        mut self,
+        captured_output: Option<CapturedOutputState>,
+    ) -> Self {
+        self.captured_output = captured_output;
         self
     }
 
@@ -774,7 +788,9 @@ fn missing_process_error(vm_id: &str, process_id: &str) -> SidecarError {
 /// Map a shared guest-kernel-call dispatcher error into a sidecar error,
 /// preserving POSIX errno codes (`ECODE: message`) as kernel errors so guest
 /// callers observe Linux-faithful failures, mirroring the filesystem path.
-fn guest_kernel_core_error(error: agentos_native_sidecar_core::SidecarCoreError) -> SidecarError {
+pub(crate) fn guest_kernel_core_error(
+    error: agentos_native_sidecar_core::SidecarCoreError,
+) -> SidecarError {
     let message = error.to_string();
     let is_errno = message.split_once(':').is_some_and(|(code, _)| {
         code.len() >= 2
@@ -3604,6 +3620,27 @@ fn spawn_tool_process_events(request: ToolProcessEventRequest) {
         events_overflowed,
     } = request;
     std::thread::spawn(move || match tool_resolution {
+        ToolCommandResolution::Output(value) => {
+            let stdout = serde_json::to_vec(&json!({
+                "ok": true,
+                "result": value,
+            }))
+            .unwrap_or_else(|error| {
+                format_tool_failure_output(&format!("failed to serialize tool result: {error}"))
+            });
+            if !send_tool_process_event(
+                &pending_events,
+                &events_overflowed,
+                ActiveExecutionEvent::Stdout(stdout),
+            ) {
+                return;
+            }
+            let _ = send_tool_process_event(
+                &pending_events,
+                &events_overflowed,
+                ActiveExecutionEvent::Exited(0),
+            );
+        }
         ToolCommandResolution::Failure(message) => {
             if !send_tool_process_event(
                 &pending_events,
@@ -3717,32 +3754,74 @@ where
     pub(crate) async fn execute(
         &mut self,
         request: &RequestFrame,
-        payload: ExecuteRequest,
+        mut payload: ExecuteRequest,
     ) -> Result<DispatchResult, SidecarError> {
         let execute_total_start = Instant::now();
+        agentos_native_sidecar_core::apply_execute_defaults(&mut payload);
+        let capture_output = payload.capture_output.unwrap_or(false);
+        let timeout_at = payload
+            .timeout_ms
+            .map(|timeout_ms| {
+                Instant::now()
+                    .checked_add(Duration::from_millis(timeout_ms))
+                    .ok_or_else(|| {
+                        SidecarError::InvalidState(String::from(
+                            "execute timeout is too large for the host clock",
+                        ))
+                    })
+            })
+            .transpose()?;
         let (connection_id, session_id, vm_id) = self.vm_scope_for(&request.ownership)?;
         self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
+
+        let process_id = match payload.process_id.take() {
+            Some(process_id) => process_id,
+            None => loop {
+                self.next_process_id = self.next_process_id.checked_add(1).ok_or_else(|| {
+                    SidecarError::InvalidState(String::from("sidecar process id space exhausted"))
+                })?;
+                let candidate = format!("sidecar-process-{}", self.next_process_id);
+                let vm = self
+                    .vms
+                    .get(&vm_id)
+                    .ok_or_else(|| missing_vm_error(&vm_id))?;
+                if !vm_has_process_id(vm, &candidate) {
+                    break candidate;
+                }
+            },
+        };
+        agentos_native_sidecar_core::validate_process_id(&process_id)
+            .map_err(|error| SidecarError::InvalidState(error.to_string()))?;
 
         let vm = self
             .vms
             .get_mut(&vm_id)
             .ok_or_else(|| missing_vm_error(&vm_id))?;
-        if vm.active_processes.contains_key(&payload.process_id) {
+        if vm_has_process_id(vm, &process_id) {
             return Err(SidecarError::InvalidState(format!(
-                "VM {vm_id} already has an active process with id {}",
-                payload.process_id
+                "VM {vm_id} already has a current or retained process with id {process_id}"
             )));
         }
 
-        if let Some(command) = payload.command.as_deref() {
+        if let Some(command) = payload
+            .command
+            .as_deref()
+            .filter(|command| is_tool_command(vm, command))
+        {
+            let guest_cwd = resolve_guest_execution_cwd(vm, payload.cwd.as_deref())?;
+            vm.kernel
+                .validate_process_cwd(&guest_cwd)
+                .map_err(kernel_error)?;
             if let Some(tool_resolution) =
-                resolve_tool_command(vm, command, &payload.args, payload.cwd.as_deref())?
+                resolve_tool_command(vm, command, &payload.args, Some(&guest_cwd))?
             {
-                let guest_cwd = payload
-                    .cwd
-                    .as_deref()
-                    .map(normalize_path)
-                    .unwrap_or_else(|| vm.guest_cwd.clone());
+                let captured_output = capture_output.then(|| {
+                    CapturedOutputState::for_runtime(
+                        &vm.limits,
+                        GuestRuntimeKind::JavaScript,
+                        Arc::clone(&vm.captured_output_budget),
+                    )
+                });
                 let kernel_handle = vm
                     .kernel
                     .create_virtual_process(
@@ -3765,13 +3844,15 @@ where
                 let pending_events = tool_execution.pending_events.clone();
                 let events_overflowed = tool_execution.events_overflowed.clone();
                 vm.active_processes.insert(
-                    payload.process_id.clone(),
+                    process_id.clone(),
                     ActiveProcess::new(
                         kernel_pid,
                         kernel_handle,
                         GuestRuntimeKind::JavaScript,
                         ActiveExecution::Tool(tool_execution),
                     )
+                    .with_timeout_at(timeout_at)
+                    .with_captured_output(captured_output)
                     .with_guest_cwd(guest_cwd.clone())
                     .with_host_cwd(resolve_vm_guest_path_to_host(vm, &guest_cwd)),
                 );
@@ -3788,34 +3869,35 @@ where
                 });
 
                 return Ok(DispatchResult {
-                    response: process_started_response(
-                        request,
-                        payload.process_id,
-                        Some(kernel_pid),
-                    ),
+                    response: process_started_response(request, process_id, Some(kernel_pid)),
                     events: Vec::new(),
                 });
             }
         }
 
-        let requested_tty = payload
-            .env
-            .get(EXECUTION_REQUEST_TTY_ENV)
-            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+        let requested_pty = payload.pty.clone();
         let phase_start = Instant::now();
         let mut resolved = resolve_execute_request(vm, &payload)?;
         stage_agentos_package_command(vm, &mut resolved)?;
         let resolved = resolved;
+        let captured_output = capture_output.then(|| {
+            CapturedOutputState::for_runtime(
+                &vm.limits,
+                resolved.runtime.clone(),
+                Arc::clone(&vm.captured_output_budget),
+            )
+        });
         record_execute_phase("resolve_execute_request", phase_start.elapsed());
         let phase_start = Instant::now();
         let mut env = resolved.env.clone();
-        env.remove(EXECUTION_REQUEST_TTY_ENV);
         let sandbox_root = normalize_host_path(&vm.cwd);
         env.insert(
             String::from(EXECUTION_SANDBOX_ROOT_ENV),
             sandbox_root.to_string_lossy().into_owned(),
         );
-        if resolved.runtime == GuestRuntimeKind::JavaScript {
+        if resolved.runtime == GuestRuntimeKind::JavaScript
+            || payload.keep_stdin_open.unwrap_or(false)
+        {
             env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
             // A TTY guest-node process reads stdin through the kernel PTY: host
             // input is written to the PTY master (write_kernel_process_stdin),
@@ -3829,21 +3911,18 @@ where
             env.insert(String::from(WASM_STDIO_SYNC_RPC_ENV), String::from("1"));
         }
         let launch_entrypoint = if resolved.runtime == GuestRuntimeKind::JavaScript {
-            resolve_agentos_package_javascript_launch_entrypoint(vm, &mut env)
+            resolve_agentos_package_javascript_launch_entrypoint(vm, &mut env)?
                 .unwrap_or_else(|| resolved.entrypoint.clone())
         } else {
             resolved.entrypoint.clone()
         };
-        let argv = std::iter::once(launch_entrypoint.clone())
-            .chain(resolved.execution_args.iter().cloned())
-            .collect::<Vec<_>>();
         record_execute_phase("env_argv_setup", phase_start.elapsed());
         let phase_start = Instant::now();
         let kernel_handle = vm
             .kernel
             .spawn_process(
                 &resolved.command,
-                argv,
+                resolved.process_args.clone(),
                 SpawnOptions {
                     requester_driver: Some(String::from(EXECUTION_DRIVER_NAME)),
                     cwd: Some(resolved.guest_cwd.clone()),
@@ -3853,7 +3932,7 @@ where
             .map_err(kernel_error)?;
         let kernel_pid = kernel_handle.pid();
         record_execute_phase("kernel_spawn_process", phase_start.elapsed());
-        let tty_master_fd = if requested_tty {
+        let tty_master_fd = if let Some(pty) = requested_pty {
             let (master_fd, slave_fd, _) = vm
                 .kernel
                 .open_pty(EXECUTION_DRIVER_NAME, kernel_pid)
@@ -3870,9 +3949,19 @@ where
             vm.kernel
                 .pty_set_foreground_pgid(EXECUTION_DRIVER_NAME, kernel_pid, master_fd, kernel_pid)
                 .map_err(kernel_error)?;
-            if let Some((cols, rows)) = requested_pty_window_size(&env) {
+            if pty.cols.is_some() || pty.rows.is_some() {
+                let current = vm
+                    .kernel
+                    .pty_window_size(EXECUTION_DRIVER_NAME, kernel_pid, master_fd)
+                    .map_err(kernel_error)?;
                 vm.kernel
-                    .pty_resize(EXECUTION_DRIVER_NAME, kernel_pid, master_fd, cols, rows)
+                    .pty_resize(
+                        EXECUTION_DRIVER_NAME,
+                        kernel_pid,
+                        master_fd,
+                        pty.cols.unwrap_or(current.cols),
+                        pty.rows.unwrap_or(current.rows),
+                    )
                     .map_err(kernel_error)?;
             }
             Some(master_fd)
@@ -4044,8 +4133,10 @@ where
             install_kernel_stdin_pipe(&mut vm.kernel, kernel_pid)?
         };
         vm.active_processes.insert(
-            payload.process_id.clone(),
+            process_id.clone(),
             ActiveProcess::new(kernel_pid, kernel_handle, resolved.runtime, execution)
+                .with_timeout_at(timeout_at)
+                .with_captured_output(captured_output)
                 .with_kernel_stdin_writer_fd(kernel_stdin_writer_fd)
                 .with_tty_master_fd(tty_master_fd)
                 .with_guest_cwd(resolved.guest_cwd.clone())
@@ -4053,14 +4144,14 @@ where
                 .with_host_cwd(resolved.host_cwd.clone()),
         );
         self.bridge.emit_lifecycle(&vm_id, LifecycleState::Busy)?;
-        mark_execute_response_ready(&vm_id, &payload.process_id);
+        mark_execute_response_ready(&vm_id, &process_id);
         record_execute_phase("process_register_and_lifecycle", phase_start.elapsed());
         record_execute_phase("execute_total", execute_total_start.elapsed());
 
         Ok(DispatchResult {
             response: process_started_response(
                 request,
-                payload.process_id,
+                process_id,
                 Some(if child_pid == 0 {
                     kernel_pid
                 } else {
@@ -4147,30 +4238,42 @@ where
         let (connection_id, session_id, vm_id) = self.vm_scope_for(&request.ownership)?;
         self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
 
-        let vm = self
-            .vms
-            .get_mut(&vm_id)
-            .ok_or_else(|| missing_vm_error(&vm_id))?;
-        let process = vm
-            .active_processes
-            .get_mut(&payload.process_id)
-            .ok_or_else(|| {
-                SidecarError::InvalidState(format!(
-                    "VM {vm_id} has no active process {}",
-                    payload.process_id
-                ))
-            })?;
-        // For a TTY JavaScript process, host stdin must go ONLY to the kernel PTY
-        // master (so line discipline + echo apply); feeding the in-process local
-        // stdin bridge as well would double-deliver the input. Non-TTY JS (piped
-        // stdin) still uses the local bridge; wasm/python always take the
-        // streaming/no-op `write_stdin` path plus the kernel master write below.
-        let tty_js =
-            process.runtime == GuestRuntimeKind::JavaScript && process.tty_master_fd.is_some();
-        if !tty_js {
-            process.execution.write_stdin(&payload.chunk)?;
+        let terminal_signal = {
+            let vm = self
+                .vms
+                .get_mut(&vm_id)
+                .ok_or_else(|| missing_vm_error(&vm_id))?;
+            let process = vm
+                .active_processes
+                .get_mut(&payload.process_id)
+                .ok_or_else(|| {
+                    SidecarError::InvalidState(format!(
+                        "VM {vm_id} has no active process {}",
+                        payload.process_id
+                    ))
+                })?;
+            let terminal_signal = terminal_signal_for_input(&vm.kernel, process, &payload.chunk);
+            // For a TTY JavaScript process, host stdin must go ONLY to the kernel PTY
+            // master (so line discipline + echo apply); feeding the in-process local
+            // stdin bridge as well would double-deliver the input. Non-TTY JS (piped
+            // stdin) still uses the local bridge; wasm/python always take the
+            // streaming/no-op `write_stdin` path plus the kernel master write below.
+            let tty_js =
+                process.runtime == GuestRuntimeKind::JavaScript && process.tty_master_fd.is_some();
+            if !tty_js {
+                process.execution.write_stdin(&payload.chunk)?;
+            }
+            write_kernel_process_stdin(&mut vm.kernel, process, &payload.chunk)?;
+            terminal_signal
+        };
+        if let Some(signal) = terminal_signal {
+            self.kill_process_internal_with_source(
+                &vm_id,
+                &payload.process_id,
+                signal,
+                "terminal_line_discipline",
+            )?;
         }
-        write_kernel_process_stdin(&mut vm.kernel, process, &payload.chunk)?;
 
         Ok(DispatchResult {
             response: stdin_written_response(
@@ -4581,12 +4684,29 @@ where
         process_id: &str,
         signal: &str,
     ) -> Result<(), SidecarError> {
+        self.kill_process_internal_with_source(vm_id, process_id, signal, "control_plane")
+    }
+
+    fn kill_process_internal_with_source(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+        signal: &str,
+        source: &str,
+    ) -> Result<(), SidecarError> {
         let signal_name = signal.to_owned();
         let signal = parse_signal(signal)?;
         let vm = self
             .vms
             .get_mut(vm_id)
             .ok_or_else(|| SidecarError::InvalidState(format!("unknown sidecar VM {vm_id}")))?;
+        if vm
+            .exited_process_snapshots
+            .iter()
+            .any(|snapshot| snapshot.process.process_id == process_id)
+        {
+            return Ok(());
+        }
         let process = vm.active_processes.get_mut(process_id).ok_or_else(|| {
             SidecarError::InvalidState(format!("VM {vm_id} has no active process {process_id}"))
         })?;
@@ -4716,7 +4836,7 @@ where
             vm_id,
             "security.process.kill",
             audit_fields([
-                (String::from("source"), String::from("control_plane")),
+                (String::from("source"), source.to_owned()),
                 (String::from("source_pid"), String::from("0")),
                 (String::from("target_pid"), process.kernel_pid.to_string()),
                 (String::from("process_id"), process_id.to_owned()),
@@ -4733,6 +4853,15 @@ where
     pub async fn pump_process_events(
         &mut self,
         ownership: &OwnershipScope,
+    ) -> Result<bool, SidecarError> {
+        self.pump_process_events_with_admission(ownership, false)
+            .await
+    }
+
+    pub(crate) async fn pump_process_events_with_admission(
+        &mut self,
+        ownership: &OwnershipScope,
+        allow_closing: bool,
     ) -> Result<bool, SidecarError> {
         let mut emitted_any = false;
 
@@ -4763,7 +4892,7 @@ where
             self.queue_pending_process_event(envelope)?;
         }
 
-        let vm_ids = self.vm_ids_for_scope(ownership)?;
+        let vm_ids = self.vm_ids_for_scope_with_admission(ownership, allow_closing)?;
         for vm_id in vm_ids {
             while let Some(vm) = self.vms.get(&vm_id) {
                 let connection_id = vm.connection_id.clone();
@@ -4782,6 +4911,22 @@ where
                         .is_some_and(|vm| vm.detached_child_processes.contains(&process_id))
                     {
                         continue;
+                    }
+                    let timed_out = self
+                        .vms
+                        .get(&vm_id)
+                        .and_then(|vm| vm.active_processes.get(&process_id))
+                        .and_then(|process| process.timeout_at)
+                        .is_some_and(|timeout_at| Instant::now() >= timeout_at);
+                    if timed_out {
+                        if let Some(process) = self
+                            .vms
+                            .get_mut(&vm_id)
+                            .and_then(|vm| vm.active_processes.get_mut(&process_id))
+                        {
+                            process.timeout_at = None;
+                        }
+                        self.kill_process_internal(&vm_id, &process_id, "SIGKILL")?;
                     }
                     enum ProcessPollResult {
                         Event(Box<Option<ActiveExecutionEvent>>),
@@ -5382,27 +5527,49 @@ where
         let (connection_id, session_id) = { (vm.connection_id.clone(), vm.session_id.clone()) };
         let ownership = OwnershipScope::vm(&connection_id, &session_id, vm_id);
 
-        if self.capture_extension_process_output_event(vm_id, process_id, &event) {
+        let extension_captured =
+            self.capture_extension_process_output_event(vm_id, process_id, &event);
+        if extension_captured && !matches!(&event, ActiveExecutionEvent::Exited(_)) {
             return Ok(None);
         }
 
         match event {
-            ActiveExecutionEvent::Stdout(chunk) => Ok(Some(EventFrame::new(
-                ownership,
-                EventPayload::ProcessOutput(ProcessOutputEvent {
-                    process_id: process_id.to_owned(),
-                    channel: StreamChannel::Stdout,
-                    chunk,
-                }),
-            ))),
-            ActiveExecutionEvent::Stderr(chunk) => Ok(Some(EventFrame::new(
-                ownership,
-                EventPayload::ProcessOutput(ProcessOutputEvent {
-                    process_id: process_id.to_owned(),
-                    channel: StreamChannel::Stderr,
-                    chunk,
-                }),
-            ))),
+            ActiveExecutionEvent::Stdout(chunk) => {
+                if self.captured_output_suppressed(
+                    vm_id,
+                    process_id,
+                    StreamChannel::Stdout,
+                    &chunk,
+                )? {
+                    return Ok(None);
+                }
+                Ok(Some(EventFrame::new(
+                    ownership,
+                    EventPayload::ProcessOutput(ProcessOutputEvent {
+                        process_id: process_id.to_owned(),
+                        channel: StreamChannel::Stdout,
+                        chunk,
+                    }),
+                )))
+            }
+            ActiveExecutionEvent::Stderr(chunk) => {
+                if self.captured_output_suppressed(
+                    vm_id,
+                    process_id,
+                    StreamChannel::Stderr,
+                    &chunk,
+                )? {
+                    return Ok(None);
+                }
+                Ok(Some(EventFrame::new(
+                    ownership,
+                    EventPayload::ProcessOutput(ProcessOutputEvent {
+                        process_id: process_id.to_owned(),
+                        channel: StreamChannel::Stderr,
+                        chunk,
+                    }),
+                )))
+            }
             ActiveExecutionEvent::JavascriptSyncRpcRequest(request) => {
                 self.handle_javascript_sync_rpc_request(vm_id, process_id, request)?;
                 Ok(None)
@@ -5428,6 +5595,16 @@ where
                 Ok(None)
             }
             ActiveExecutionEvent::Exited(exit_code) => {
+                let capture_result = self
+                    .vms
+                    .get_mut(vm_id)
+                    .and_then(|vm| vm.active_processes.get_mut(process_id))
+                    .and_then(|process| process.captured_output.take())
+                    .map(CapturedOutputState::into_result);
+                let (stdout, stderr, capture_error) = match capture_result {
+                    Some(result) => (Some(result.stdout), Some(result.stderr), result.error),
+                    None => (None, None, None),
+                };
                 record_execute_response_to_exit_milestone(
                     "execute_response_to_exit_event_handle",
                     vm_id,
@@ -5446,15 +5623,54 @@ where
                 }
                 record_execute_phase("process_exit_lifecycle_emit", phase_start.elapsed());
 
-                Ok(Some(EventFrame::new(
-                    ownership,
-                    EventPayload::ProcessExited(ProcessExitedEvent {
-                        process_id: process_id.to_owned(),
-                        exit_code,
-                    }),
-                )))
+                if extension_captured {
+                    Ok(None)
+                } else {
+                    Ok(Some(EventFrame::new(
+                        ownership,
+                        EventPayload::ProcessExited(ProcessExitedEvent {
+                            process_id: process_id.to_owned(),
+                            exit_code,
+                            stdout,
+                            stderr,
+                            error: capture_error,
+                        }),
+                    )))
+                }
             }
         }
+    }
+
+    fn captured_output_suppressed(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+        channel: StreamChannel,
+        chunk: &[u8],
+    ) -> Result<bool, SidecarError> {
+        let outcome = {
+            let Some(process) = self
+                .vms
+                .get_mut(vm_id)
+                .and_then(|vm| vm.active_processes.get_mut(process_id))
+            else {
+                return Ok(false);
+            };
+            let Some(capture) = process.captured_output.as_mut() else {
+                return Ok(false);
+            };
+            capture.record_chunk(process_id, channel, chunk)
+        };
+
+        if outcome == CaptureChunkOutcome::LimitExceeded {
+            self.kill_process_internal_with_source(
+                vm_id,
+                process_id,
+                "SIGKILL",
+                "captured_output_limit",
+            )?;
+        }
+        Ok(outcome != CaptureChunkOutcome::Forward)
     }
 
     pub(crate) fn finish_active_process_exit(
@@ -5473,32 +5689,24 @@ where
         }
 
         let phase_start = Instant::now();
-        prune_exited_process_snapshots(vm);
-        record_execute_phase(
-            "process_exit_cleanup_prune_snapshots",
-            phase_start.elapsed(),
-        );
-        let phase_start = Instant::now();
-        let process_table = vm.kernel.list_processes();
-        record_execute_phase("process_exit_cleanup_list_processes", phase_start.elapsed());
-        let phase_start = Instant::now();
         let Some(mut process) = vm.active_processes.remove(process_id) else {
             return Ok(None);
         };
         record_execute_phase("process_exit_cleanup_remove_active", phase_start.elapsed());
         let phase_start = Instant::now();
+        process.kernel_handle.finish(exit_code);
+        record_execute_phase("process_exit_cleanup_kernel_finish", phase_start.elapsed());
+        let phase_start = Instant::now();
+        let process_table = vm.kernel.list_processes();
+        record_execute_phase("process_exit_cleanup_list_processes", phase_start.elapsed());
+        let phase_start = Instant::now();
         if let Some(info) = process_table.get(&process.kernel_pid) {
             vm.exited_process_snapshots
                 .push_back(ExitedProcessSnapshot {
-                    captured_at: Instant::now(),
-                    process: build_process_snapshot_entry(
-                        process_id,
-                        &process,
-                        info,
-                        Some(exit_code),
-                    ),
+                    process: build_process_snapshot_entry(process_id, info, Some(exit_code)),
                 });
         }
+        prune_exited_process_snapshots(vm);
         record_execute_phase("process_exit_cleanup_build_snapshot", phase_start.elapsed());
         let phase_start = Instant::now();
         let detached_children = Self::adopt_detached_child_processes(process_id, &mut process);
@@ -5526,9 +5734,6 @@ where
             "process_exit_cleanup_terminate_child_tree",
             phase_start.elapsed(),
         );
-        let phase_start = Instant::now();
-        process.kernel_handle.finish(exit_code);
-        record_execute_phase("process_exit_cleanup_kernel_finish", phase_start.elapsed());
         let phase_start = Instant::now();
         let _ = vm.kernel.wait_and_reap(process.kernel_pid);
         record_execute_phase("process_exit_cleanup_wait_and_reap", phase_start.elapsed());
@@ -6220,8 +6425,7 @@ where
     }
 
     pub(crate) fn resolve_javascript_child_process_execution(
-        &self,
-        vm: &VmState,
+        vm: &mut VmState,
         parent_env: &BTreeMap<String, String>,
         parent_guest_cwd: &str,
         parent_host_cwd: &Path,
@@ -6229,56 +6433,16 @@ where
     ) -> Result<ResolvedChildProcessExecution, SidecarError> {
         let mut runtime_env = parent_env.clone();
         runtime_env.extend(request.options.internal_bootstrap_env.clone());
-        let (guest_cwd, host_cwd_override) = request
-            .options
-            .cwd
-            .as_deref()
-            .map(|cwd| {
-                let normalized_parent_host_cwd = normalize_host_path(parent_host_cwd);
-                let requested_host_cwd = normalize_host_path(Path::new(cwd));
-                if path_is_within_root(&requested_host_cwd, &normalized_parent_host_cwd) {
-                    let relative = requested_host_cwd
-                        .strip_prefix(&normalized_parent_host_cwd)
-                        .unwrap_or_else(|_| Path::new(""));
-                    let relative = relative.to_string_lossy().replace('\\', "/");
-                    let guest_cwd = if relative.is_empty() {
-                        parent_guest_cwd.to_owned()
-                    } else {
-                        normalize_path(&format!("{parent_guest_cwd}/{relative}"))
-                    };
-                    (guest_cwd, Some(requested_host_cwd))
-                } else if Path::new(cwd).is_relative() {
-                    (
-                        normalize_path(&format!("{parent_guest_cwd}/{cwd}")),
-                        Some(normalize_host_path(&parent_host_cwd.join(cwd))),
-                    )
-                } else {
-                    (normalize_path(cwd), None)
-                }
-            })
-            .unwrap_or_else(|| (parent_guest_cwd.to_owned(), None));
-        let inherited_host_cwd = (host_cwd_override.is_none() && guest_cwd == parent_guest_cwd)
-            .then(|| normalize_host_path(parent_host_cwd));
-        let host_cwd = host_cwd_override
-            .or(inherited_host_cwd)
-            .or_else(|| {
-                host_runtime_path_for_guest_path_with_env(
-                    vm,
-                    &runtime_env,
-                    &guest_cwd,
-                    parent_host_cwd,
-                )
-            })
-            .unwrap_or_else(|| {
-                let candidate = PathBuf::from(&guest_cwd);
-                if guest_cwd == parent_guest_cwd {
-                    normalize_host_path(parent_host_cwd)
-                } else if candidate.is_absolute() {
-                    shadow_path_for_guest(vm, &guest_cwd)
-                } else {
-                    vm.host_cwd.clone()
-                }
-            });
+        let guest_cwd = request.options.cwd.as_deref().map_or_else(
+            || Ok(parent_guest_cwd.to_owned()),
+            |cwd| resolve_guest_path(parent_guest_cwd, cwd).map_err(guest_kernel_core_error),
+        )?;
+        let host_cwd = if guest_cwd == parent_guest_cwd {
+            normalize_host_path(parent_host_cwd)
+        } else {
+            host_runtime_path_for_guest_path_with_env(vm, &runtime_env, &guest_cwd, parent_host_cwd)
+                .unwrap_or_else(|| shadow_path_for_guest(vm, &guest_cwd))
+        };
         let mut env = parent_env.clone();
         env.extend(request.options.env.clone());
         // Child JavaScript executions must resolve their own entrypoint/eval state.
@@ -6287,32 +6451,20 @@ where
         env.remove("AGENTOS_NODE_EVAL");
 
         let (command, process_args) = if request.options.shell {
-            let tokens = tokenize_shell_free_command(&request.command);
-            let requires_shell = command_requires_shell(&request.command)
-                || tokens.first().is_some_and(|command| {
-                    is_posix_shell_builtin(command) || shell_first_token_requires_shell(command)
-                });
-            if requires_shell {
-                if !vm.command_guest_paths.contains_key("sh") {
-                    return Err(SidecarError::InvalidState(format!(
-                        "shell-mode child_process command requires /bin/sh, which is not \
-                         installed in this VM (install a software package that provides sh, \
-                         for example @agentos-software/coreutils): {}",
-                        request.command
-                    )));
-                }
-                (
-                    String::from("sh"),
-                    vec![String::from("-c"), request.command.clone()],
-                )
-            } else {
-                let Some((command, args)) = tokens.split_first() else {
-                    return Err(SidecarError::InvalidState(String::from(
-                        "child_process shell command must not be empty",
-                    )));
-                };
-                (command.clone(), args.to_vec())
+            let resolved = resolve_command_line(&request.command).ok_or_else(|| {
+                SidecarError::InvalidState(String::from(
+                    "child_process shell command must not be empty",
+                ))
+            })?;
+            if resolved.command == "sh" && !vm.command_guest_paths.contains_key("sh") {
+                return Err(SidecarError::InvalidState(format!(
+                    "shell-mode child_process command requires /bin/sh, which is not \
+                     installed in this VM (install a software package that provides sh, \
+                     for example @agentos-software/coreutils): {}",
+                    request.command
+                )));
             }
+            (resolved.command, resolved.args)
         } else {
             (request.command.clone(), request.args.clone())
         };
@@ -6341,34 +6493,18 @@ where
                 Some("js" | "mjs" | "cjs" | "ts" | "mts" | "cts")
             )
         {
-            let guest_entrypoint = if command.starts_with('/') {
-                normalize_path(&command)
-            } else if command.starts_with("file:") {
-                normalize_path(command.trim_start_matches("file:"))
-            } else {
-                normalize_path(&format!("{guest_cwd}/{command}"))
-            };
-            let host_entrypoint = if command.starts_with("./") || command.starts_with("../") {
-                normalize_host_path(&host_cwd.join(&command))
-            } else {
-                host_runtime_path_for_guest_path_with_env(
-                    vm,
-                    &runtime_env,
-                    &guest_entrypoint,
-                    parent_host_cwd,
-                )
-                .unwrap_or_else(|| {
-                    let candidate = PathBuf::from(&guest_entrypoint);
-                    if candidate.is_absolute() {
-                        candidate
-                    } else {
-                        host_cwd.join(&guest_entrypoint)
-                    }
-                })
-            };
-            env.insert(String::from("AGENTOS_GUEST_ENTRYPOINT"), guest_entrypoint);
-            let guest_entrypoint = env.get("AGENTOS_GUEST_ENTRYPOINT").cloned();
-            prepare_guest_runtime_env(vm, &mut env, &guest_cwd, &host_cwd, guest_entrypoint)?;
+            let guest_entrypoint = resolve_existing_guest_entrypoint(vm, &guest_cwd, &command)?;
+            env.insert(
+                String::from("AGENTOS_GUEST_ENTRYPOINT"),
+                guest_entrypoint.clone(),
+            );
+            prepare_guest_runtime_env(
+                vm,
+                &mut env,
+                &guest_cwd,
+                &host_cwd,
+                Some(guest_entrypoint.clone()),
+            )?;
 
             return Ok(ResolvedChildProcessExecution {
                 command: command.clone(),
@@ -6376,7 +6512,7 @@ where
                     .chain(process_args.iter().cloned())
                     .collect(),
                 runtime: GuestRuntimeKind::JavaScript,
-                entrypoint: host_entrypoint.to_string_lossy().into_owned(),
+                entrypoint: guest_entrypoint,
                 execution_args: process_args,
                 env,
                 guest_cwd,
@@ -6464,37 +6600,17 @@ where
                 )));
             };
 
-            let (entrypoint, execution_args) = if is_path_like_specifier(entrypoint_specifier) {
-                let guest_entrypoint = if entrypoint_specifier.starts_with('/') {
-                    normalize_path(entrypoint_specifier)
-                } else if entrypoint_specifier.starts_with("file:") {
-                    normalize_path(entrypoint_specifier.trim_start_matches("file:"))
-                } else {
-                    normalize_path(&format!("{guest_cwd}/{entrypoint_specifier}"))
-                };
-                let host_entrypoint = if entrypoint_specifier.starts_with("./")
-                    || entrypoint_specifier.starts_with("../")
-                {
-                    normalize_host_path(&host_cwd.join(entrypoint_specifier))
-                } else {
-                    host_runtime_path_for_guest_path_with_env(
-                        vm,
-                        &runtime_env,
-                        &guest_entrypoint,
-                        parent_host_cwd,
-                    )
-                    .unwrap_or_else(|| {
-                        let candidate = PathBuf::from(&guest_entrypoint);
-                        if candidate.is_absolute() {
-                            candidate
-                        } else {
-                            host_cwd.join(&guest_entrypoint)
-                        }
-                    })
-                };
-                env.insert(String::from("AGENTOS_GUEST_ENTRYPOINT"), guest_entrypoint);
+            let (entrypoint, execution_args) = if is_path_like_specifier(entrypoint_specifier)
+                || !entrypoint_specifier.starts_with('-')
+            {
+                let guest_entrypoint =
+                    resolve_existing_guest_entrypoint(vm, &guest_cwd, entrypoint_specifier)?;
+                env.insert(
+                    String::from("AGENTOS_GUEST_ENTRYPOINT"),
+                    guest_entrypoint.clone(),
+                );
                 (
-                    host_entrypoint.to_string_lossy().into_owned(),
+                    guest_entrypoint,
                     process_args.iter().skip(1).cloned().collect(),
                 )
             } else {
@@ -6559,7 +6675,7 @@ where
             )?;
 
             return Ok(ResolvedChildProcessExecution {
-                command: command.clone(),
+                command: String::from(JAVASCRIPT_COMMAND),
                 process_args: std::iter::once(command)
                     .chain(process_args.iter().cloned())
                     .collect(),
@@ -6608,8 +6724,11 @@ where
         const MAX_SHEBANG_REDIRECTS: usize = 4;
 
         let mut resolved = {
-            let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
-            self.resolve_javascript_child_process_execution(
+            let vm = self
+                .vms
+                .get_mut(vm_id)
+                .ok_or_else(|| missing_vm_error(vm_id))?;
+            Self::resolve_javascript_child_process_execution(
                 vm,
                 parent_env,
                 parent_guest_cwd,
@@ -6635,8 +6754,11 @@ where
                 )));
             }
             resolved = {
-                let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
-                self.resolve_javascript_child_process_execution(
+                let vm = self
+                    .vms
+                    .get_mut(vm_id)
+                    .ok_or_else(|| missing_vm_error(vm_id))?;
+                Self::resolve_javascript_child_process_execution(
                     vm,
                     parent_env,
                     parent_guest_cwd,
@@ -6658,6 +6780,13 @@ where
         let mut request = request;
         let total_start = Instant::now();
         let phase_start = Instant::now();
+        {
+            let vm = self
+                .vms
+                .get_mut(vm_id)
+                .ok_or_else(|| missing_vm_error(vm_id))?;
+            sync_active_process_host_writes_to_kernel(vm)?;
+        }
         let (parent_env, parent_guest_cwd, parent_host_cwd) = {
             let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
             let parent = vm
@@ -6682,6 +6811,9 @@ where
                 .vms
                 .get_mut(vm_id)
                 .ok_or_else(|| missing_vm_error(vm_id))?;
+            vm.kernel
+                .validate_process_cwd(&resolved.guest_cwd)
+                .map_err(kernel_error)?;
             stage_agentos_package_command(vm, &mut resolved)?;
         }
         let resolved = resolved;
@@ -6794,7 +6926,7 @@ where
                     let launch_entrypoint = resolve_agentos_package_javascript_launch_entrypoint(
                         vm,
                         &mut execution_env,
-                    )
+                    )?
                     .unwrap_or_else(|| resolved.entrypoint.clone());
                     let context =
                         self.javascript_engine
@@ -7162,6 +7294,13 @@ where
         let current_process_label =
             Self::child_process_path_label(process_id, current_process_path);
         let phase_start = Instant::now();
+        {
+            let vm = self
+                .vms
+                .get_mut(vm_id)
+                .ok_or_else(|| missing_vm_error(vm_id))?;
+            sync_active_process_host_writes_to_kernel(vm)?;
+        }
         let (parent_env, parent_guest_cwd, parent_host_cwd, parent_kernel_pid) = {
             let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
             let root = vm
@@ -7193,6 +7332,9 @@ where
                 .vms
                 .get_mut(vm_id)
                 .ok_or_else(|| missing_vm_error(vm_id))?;
+            vm.kernel
+                .validate_process_cwd(&resolved.guest_cwd)
+                .map_err(kernel_error)?;
             stage_agentos_package_command(vm, &mut resolved)?;
         }
         let resolved = resolved;
@@ -7309,7 +7451,7 @@ where
                     let launch_entrypoint = resolve_agentos_package_javascript_launch_entrypoint(
                         vm,
                         &mut execution_env,
-                    )
+                    )?
                     .unwrap_or_else(|| resolved.entrypoint.clone());
                     let context =
                         self.javascript_engine
@@ -9132,6 +9274,29 @@ where
     }
 }
 
+fn terminal_signal_for_input(
+    kernel: &SidecarKernel,
+    process: &ActiveProcess,
+    chunk: &[u8],
+) -> Option<&'static str> {
+    let master_fd = process.tty_master_fd?;
+    let termios = kernel
+        .tcgetattr(EXECUTION_DRIVER_NAME, process.kernel_pid, master_fd)
+        .ok()?;
+    if !termios.isig {
+        return None;
+    }
+    for byte in chunk {
+        if *byte == termios.cc.vintr {
+            return Some("SIGINT");
+        }
+        if *byte == termios.cc.vquit {
+            return Some("SIGQUIT");
+        }
+    }
+    None
+}
+
 /// Applies a kill signal to a tracked child execution. Shared-runtime
 /// executions for lethal signals are terminated directly with a synthetic
 /// signal exit so child polls observe a prompt close; everything else routes
@@ -9255,14 +9420,34 @@ fn javascript_child_process_sync_input_bytes(
 // reconcile_mounts, resolve_cwd moved to crate::vm
 
 fn resolve_execute_request(
-    vm: &VmState,
+    vm: &mut VmState,
     payload: &ExecuteRequest,
 ) -> Result<ResolvedChildProcessExecution, SidecarError> {
     let payload_env: BTreeMap<String, String> = payload
         .env
-        .iter()
+        .as_ref()
+        .into_iter()
+        .flatten()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
+    if let Some(shell_command) = payload.shell_command.as_deref() {
+        if payload.command.is_some() || payload.runtime.is_some() || payload.entrypoint.is_some() {
+            return Err(SidecarError::InvalidState(String::from(
+                "execute shellCommand cannot be combined with command, runtime, or entrypoint",
+            )));
+        }
+        let resolved = resolve_command_line(shell_command).ok_or_else(|| {
+            SidecarError::InvalidState(String::from("execute shellCommand must not be empty"))
+        })?;
+        return resolve_command_execution(
+            vm,
+            &resolved.command,
+            &resolved.args,
+            &payload_env,
+            payload.cwd.as_deref(),
+            payload.wasm_permission_tier,
+        );
+    }
     if let Some(command) = payload.command.as_deref() {
         return resolve_command_execution(
             vm,
@@ -9282,27 +9467,23 @@ fn resolve_execute_request(
             "execute requires either command or entrypoint",
         ))
     })?;
-    let (guest_cwd, host_cwd, allow_host_path_overrides) =
-        resolve_execution_cwds(vm, payload.cwd.as_deref());
+    let (guest_cwd, host_cwd) = resolve_execution_cwds(vm, payload.cwd.as_deref())?;
+    vm.kernel
+        .validate_process_cwd(&guest_cwd)
+        .map_err(kernel_error)?;
     let mut env = vm.guest_env.clone();
     env.extend(payload_env.clone());
-
-    let requested_host_entrypoint = resolve_host_entrypoint_within_vm_host_cwd(vm, &entrypoint);
-    if requested_host_entrypoint.is_some() && !allow_host_path_overrides {
-        let requested_cwd = payload.cwd.as_deref().unwrap_or(guest_cwd.as_str());
-        return Err(SidecarError::InvalidState(format!(
-            "execution cwd {requested_cwd} is outside sandbox root {}",
-            vm.host_cwd.to_string_lossy()
-        )));
-    }
-    let host_entrypoint_override = allow_host_path_overrides
-        .then(|| resolve_host_entrypoint_within_vm_host_cwd(vm, &entrypoint))
-        .flatten();
-
-    let guest_entrypoint = host_entrypoint_override
-        .as_ref()
-        .map(|(guest_entrypoint, _)| guest_entrypoint.clone())
-        .or_else(|| guest_entrypoint_for_specifier(&guest_cwd, &entrypoint));
+    let (resolved_entrypoint, guest_entrypoint) = match runtime {
+        GuestRuntimeKind::JavaScript | GuestRuntimeKind::WebAssembly => {
+            let guest_entrypoint = resolve_existing_guest_entrypoint(vm, &guest_cwd, &entrypoint)?;
+            (guest_entrypoint.clone(), Some(guest_entrypoint))
+        }
+        GuestRuntimeKind::Python if python_file_entrypoint(&entrypoint).is_some() => {
+            let guest_entrypoint = resolve_existing_guest_entrypoint(vm, &guest_cwd, &entrypoint)?;
+            (guest_entrypoint.clone(), Some(guest_entrypoint))
+        }
+        GuestRuntimeKind::Python => (entrypoint.clone(), None),
+    };
     prepare_guest_runtime_env(vm, &mut env, &guest_cwd, &host_cwd, guest_entrypoint)?;
 
     Ok(ResolvedChildProcessExecution {
@@ -9315,9 +9496,7 @@ fn resolve_execute_request(
             .chain(payload.args.iter().cloned())
             .collect(),
         runtime,
-        entrypoint: host_entrypoint_override
-            .map(|(_, host_entrypoint)| host_entrypoint)
-            .unwrap_or(entrypoint),
+        entrypoint: resolved_entrypoint,
         execution_args: payload.args.clone(),
         env,
         guest_cwd,
@@ -9328,14 +9507,17 @@ fn resolve_execute_request(
 }
 
 fn resolve_command_execution(
-    vm: &VmState,
+    vm: &mut VmState,
     command: &str,
     args: &[String],
     extra_env: &BTreeMap<String, String>,
     cwd: Option<&str>,
     explicit_wasm_permission_tier: Option<WasmPermissionTier>,
 ) -> Result<ResolvedChildProcessExecution, SidecarError> {
-    let (guest_cwd, host_cwd, allow_host_path_overrides) = resolve_execution_cwds(vm, cwd);
+    let (guest_cwd, host_cwd) = resolve_execution_cwds(vm, cwd)?;
+    vm.kernel
+        .validate_process_cwd(&guest_cwd)
+        .map_err(kernel_error)?;
     let mut env = vm.guest_env.clone();
     env.extend(extra_env.clone());
     let args = apply_shell_cwd_prefix(command, args.to_vec(), &guest_cwd);
@@ -9440,44 +9622,16 @@ fn resolve_command_execution(
             )));
         };
 
-        let (entrypoint, execution_args, guest_entrypoint) = {
-            let requested_host_entrypoint =
-                resolve_host_entrypoint_within_vm_host_cwd(vm, entrypoint_specifier);
-            if requested_host_entrypoint.is_some() && !allow_host_path_overrides {
-                let requested_cwd = cwd.unwrap_or(guest_cwd.as_str());
-                return Err(SidecarError::InvalidState(format!(
-                    "execution cwd {requested_cwd} is outside sandbox root {}",
-                    vm.host_cwd.to_string_lossy()
-                )));
-            }
-            let host_entrypoint_override = allow_host_path_overrides
-                .then(|| resolve_host_entrypoint_within_vm_host_cwd(vm, entrypoint_specifier))
-                .flatten();
-            let guest_entrypoint = host_entrypoint_override
-                .as_ref()
-                .map(|(guest_entrypoint, _)| guest_entrypoint.clone())
-                .or_else(|| guest_entrypoint_for_specifier(&guest_cwd, entrypoint_specifier));
-            let entrypoint = host_entrypoint_override.map_or_else(
-                || {
-                    guest_entrypoint.as_ref().map_or_else(
-                        || entrypoint_specifier.clone(),
-                        |guest_entrypoint| {
-                            resolve_vm_guest_path_to_host(vm, guest_entrypoint)
-                                .to_string_lossy()
-                                .into_owned()
-                        },
-                    )
-                },
-                |(_, host_entrypoint)| host_entrypoint,
-            );
-            (
-                entrypoint,
-                args.iter().skip(1).cloned().collect(),
-                guest_entrypoint,
-            )
-        };
-
-        prepare_guest_runtime_env(vm, &mut env, &guest_cwd, &host_cwd, guest_entrypoint)?;
+        let guest_entrypoint =
+            resolve_existing_guest_entrypoint(vm, &guest_cwd, entrypoint_specifier)?;
+        let execution_args = args.iter().skip(1).cloned().collect();
+        prepare_guest_runtime_env(
+            vm,
+            &mut env,
+            &guest_cwd,
+            &host_cwd,
+            Some(guest_entrypoint.clone()),
+        )?;
 
         return Ok(ResolvedChildProcessExecution {
             command: String::from(JAVASCRIPT_COMMAND),
@@ -9485,7 +9639,7 @@ fn resolve_command_execution(
                 .chain(args.iter().cloned())
                 .collect(),
             runtime: GuestRuntimeKind::JavaScript,
-            entrypoint,
+            entrypoint: guest_entrypoint,
             execution_args,
             env,
             guest_cwd,
@@ -9496,35 +9650,14 @@ fn resolve_command_execution(
     }
 
     if command.ends_with(".js") || command.ends_with(".mjs") || command.ends_with(".cjs") {
-        let requested_host_entrypoint = resolve_host_entrypoint_within_vm_host_cwd(vm, command);
-        if requested_host_entrypoint.is_some() && !allow_host_path_overrides {
-            let requested_cwd = cwd.unwrap_or(guest_cwd.as_str());
-            return Err(SidecarError::InvalidState(format!(
-                "execution cwd {requested_cwd} is outside sandbox root {}",
-                vm.host_cwd.to_string_lossy()
-            )));
-        }
-        let host_entrypoint_override = allow_host_path_overrides
-            .then(|| resolve_host_entrypoint_within_vm_host_cwd(vm, command))
-            .flatten();
-        let guest_entrypoint = host_entrypoint_override
-            .as_ref()
-            .map(|(guest_entrypoint, _)| guest_entrypoint.clone())
-            .or_else(|| guest_entrypoint_for_specifier(&guest_cwd, command));
-        let entrypoint = host_entrypoint_override.map_or_else(
-            || {
-                guest_entrypoint.as_ref().map_or_else(
-                    || command.to_owned(),
-                    |guest_entrypoint| {
-                        resolve_vm_guest_path_to_host(vm, guest_entrypoint)
-                            .to_string_lossy()
-                            .into_owned()
-                    },
-                )
-            },
-            |(_, host_entrypoint)| host_entrypoint,
-        );
-        prepare_guest_runtime_env(vm, &mut env, &guest_cwd, &host_cwd, guest_entrypoint)?;
+        let guest_entrypoint = resolve_existing_guest_entrypoint(vm, &guest_cwd, command)?;
+        prepare_guest_runtime_env(
+            vm,
+            &mut env,
+            &guest_cwd,
+            &host_cwd,
+            Some(guest_entrypoint.clone()),
+        )?;
 
         return Ok(ResolvedChildProcessExecution {
             command: String::from(JAVASCRIPT_COMMAND),
@@ -9532,7 +9665,7 @@ fn resolve_command_execution(
                 .chain(args.iter().cloned())
                 .collect(),
             runtime: GuestRuntimeKind::JavaScript,
-            entrypoint,
+            entrypoint: guest_entrypoint,
             execution_args: args.to_vec(),
             env,
             guest_cwd,
@@ -9575,7 +9708,7 @@ fn resolve_command_execution(
         )?;
 
         return Ok(ResolvedChildProcessExecution {
-            command: command.to_owned(),
+            command: String::from(JAVASCRIPT_COMMAND),
             process_args: std::iter::once(command.to_owned())
                 .chain(args.iter().cloned())
                 .collect(),
@@ -9616,22 +9749,24 @@ fn resolve_command_execution(
 const MAX_JAVASCRIPT_COMMAND_REDIRECT_DEPTH: usize = 4;
 
 fn resolve_javascript_command_entrypoint(
-    vm: &VmState,
+    vm: &mut VmState,
     guest_entrypoint: &str,
     host_entrypoint: &Path,
 ) -> Option<(String, PathBuf)> {
     // agentOS package content is served guest-native (tar + single-symlink
-    // mounts) and is never materialized on the host, so the shebang-reading
-    // fallback below (which reads the host path) cannot classify these
-    // entrypoints. Within the package mount the only runtimes are WebAssembly
-    // (`*.wasm`) and JavaScript, and `bin/<cmd>` launchers are frequently
-    // extensionless — so classify by extension here: `.wasm` is WASM (fall
-    // through), everything else in the mount is JavaScript.
+    // mounts) and is never materialized on the host. Classify it from VFS bytes
+    // so extensionless launchers follow their actual format/shebang instead of
+    // assuming every non-`.wasm` package command is JavaScript.
     if guest_path_is_within_agentos_package_mount(vm, guest_entrypoint) {
-        let extension = Path::new(guest_entrypoint)
-            .extension()
-            .and_then(|extension| extension.to_str());
-        if extension != Some("wasm") {
+        let preview = vm.kernel.pread_file(guest_entrypoint, 0, 16 * 1024).ok()?;
+        if preview.starts_with(b"\0asm") {
+            return None;
+        }
+        let script = String::from_utf8_lossy(&preview);
+        let interpreter = parse_script_interpreter_name(&script);
+        if interpreter.as_deref() == Some("node")
+            || is_probable_javascript_entrypoint(Path::new(guest_entrypoint), &script)
+        {
             return Some((guest_entrypoint.to_owned(), host_entrypoint.to_path_buf()));
         }
         return None;
@@ -9794,37 +9929,20 @@ fn is_probable_javascript_entrypoint(path: &Path, script: &str) -> bool {
             || preview.starts_with("require("))
 }
 
-fn resolve_guest_execution_cwd(vm: &VmState, value: Option<&str>) -> String {
-    value
-        .map(normalize_path)
-        .unwrap_or_else(|| vm.guest_cwd.clone())
+fn resolve_guest_execution_cwd(vm: &VmState, value: Option<&str>) -> Result<String, SidecarError> {
+    value.map_or_else(
+        || Ok(vm.guest_cwd.clone()),
+        |value| resolve_guest_path(&vm.guest_cwd, value).map_err(guest_kernel_core_error),
+    )
 }
 
-fn resolve_execution_cwds(vm: &VmState, value: Option<&str>) -> (String, PathBuf, bool) {
-    if let Some(raw_cwd) = value {
-        let normalized_vm_host_cwd = normalize_host_path(&vm.host_cwd);
-        let requested_host_cwd = normalize_host_path(Path::new(raw_cwd));
-        if path_is_within_root(&requested_host_cwd, &normalized_vm_host_cwd) {
-            let relative = requested_host_cwd
-                .strip_prefix(&normalized_vm_host_cwd)
-                .unwrap_or_else(|_| Path::new(""));
-            let relative = relative.to_string_lossy().replace('\\', "/");
-            let guest_cwd = if relative.is_empty() {
-                String::from("/")
-            } else {
-                normalize_path(&format!("/{relative}"))
-            };
-            return (guest_cwd, requested_host_cwd, true);
-        }
-    }
-
-    let guest_cwd = resolve_guest_execution_cwd(vm, value);
-    let host_cwd = if value.is_none() {
-        vm.host_cwd.clone()
-    } else {
-        resolve_vm_guest_path_to_host(vm, &guest_cwd)
-    };
-    (guest_cwd, host_cwd, value.is_none())
+fn resolve_execution_cwds(
+    vm: &VmState,
+    value: Option<&str>,
+) -> Result<(String, PathBuf), SidecarError> {
+    let guest_cwd = resolve_guest_execution_cwd(vm, value)?;
+    let host_cwd = resolve_vm_guest_path_to_host(vm, &guest_cwd);
+    Ok((guest_cwd, host_cwd))
 }
 
 fn resolve_vm_guest_path_to_host(vm: &VmState, guest_path: &str) -> PathBuf {
@@ -9889,62 +10007,16 @@ pub(crate) fn sync_active_process_host_writes_to_kernel(
         sync_host_directory_tree_to_kernel(vm, &shadow_root, "/")?;
     }
 
-    let normalized_vm_root = normalize_host_path(&vm.cwd);
-    let extra_roots = collect_active_process_host_sync_roots(vm, &normalized_vm_root);
-    for (host_cwd, guest_cwd) in extra_roots {
-        sync_host_directory_tree_to_kernel(vm, &host_cwd, &guest_cwd)?;
-    }
-
     Ok(())
-}
-
-fn collect_active_process_host_sync_roots(
-    vm: &VmState,
-    normalized_vm_root: &Path,
-) -> Vec<(PathBuf, String)> {
-    let mut roots = Vec::new();
-    let mut seen = BTreeSet::new();
-
-    for process in vm.active_processes.values() {
-        collect_process_host_sync_roots(process, normalized_vm_root, &mut seen, &mut roots);
-    }
-
-    roots
-}
-
-fn collect_process_host_sync_roots(
-    process: &ActiveProcess,
-    normalized_vm_root: &Path,
-    seen: &mut BTreeSet<(PathBuf, String)>,
-    roots: &mut Vec<(PathBuf, String)>,
-) {
-    let normalized_host_cwd = normalize_host_path(&process.host_cwd);
-    if !path_is_within_root(&normalized_host_cwd, normalized_vm_root) {
-        let guest_cwd = normalize_path(&process.guest_cwd);
-        if seen.insert((normalized_host_cwd.clone(), guest_cwd.clone())) {
-            roots.push((normalized_host_cwd, guest_cwd));
-        }
-    }
-
-    for child in process.child_processes.values() {
-        collect_process_host_sync_roots(child, normalized_vm_root, seen, roots);
-    }
 }
 
 fn sync_process_host_writes_to_kernel(
     vm: &mut VmState,
-    process: &ActiveProcess,
+    _process: &ActiveProcess,
 ) -> Result<(), SidecarError> {
     if vm.root_filesystem_mode != RootFilesystemMode::ReadOnly {
         let shadow_root = vm.cwd.clone();
         sync_host_directory_tree_to_kernel(vm, &shadow_root, "/")?;
-    }
-
-    if !path_is_within_root(
-        &normalize_host_path(&process.host_cwd),
-        &normalize_host_path(&vm.cwd),
-    ) {
-        sync_host_directory_tree_to_kernel(vm, &process.host_cwd, &process.guest_cwd)?;
     }
 
     Ok(())
@@ -10369,8 +10441,14 @@ fn resolve_path_like_guest_specifier(cwd: &str, specifier: &str) -> String {
     }
 }
 
-fn guest_entrypoint_for_specifier(cwd: &str, specifier: &str) -> Option<String> {
-    is_path_like_specifier(specifier).then(|| resolve_path_like_guest_specifier(cwd, specifier))
+fn resolve_existing_guest_entrypoint(
+    vm: &VmState,
+    guest_cwd: &str,
+    specifier: &str,
+) -> Result<String, SidecarError> {
+    let guest_path = resolve_path_like_guest_specifier(guest_cwd, specifier);
+    vm.kernel.lstat(&guest_path).map_err(kernel_error)?;
+    Ok(guest_path)
 }
 
 fn is_node_runtime_command(command: &str) -> bool {
@@ -10459,8 +10537,7 @@ fn resolve_python_command_execution(
                 argv.extend(rest.iter().skip(1).cloned());
             }
             Some(spec) if !spec.starts_with('-') => {
-                let resolved_guest = guest_entrypoint_for_specifier(&guest_cwd, spec)
-                    .unwrap_or_else(|| spec.to_string());
+                let resolved_guest = resolve_existing_guest_entrypoint(vm, &guest_cwd, spec)?;
                 entrypoint = resolved_guest.clone();
                 env.insert(String::from("AGENTOS_PYTHON_FILE"), resolved_guest.clone());
                 guest_entrypoint = Some(resolved_guest);
@@ -10961,40 +11038,7 @@ fn resolve_guest_command_path_candidate(vm: &VmState, candidate: &str) -> Option
         return Some(normalize_path(candidate));
     }
 
-    resolve_vm_guest_path_to_host(vm, candidate)
-        .is_file()
-        .then(|| normalize_path(candidate))
-}
-
-fn resolve_host_entrypoint_within_vm_host_cwd(
-    vm: &VmState,
-    specifier: &str,
-) -> Option<(String, String)> {
-    let candidate = Path::new(specifier);
-    if !candidate.is_absolute() {
-        return None;
-    }
-
-    let normalized_entrypoint = normalize_host_path(candidate);
-    let normalized_host_cwd = normalize_host_path(&vm.host_cwd);
-    if !path_is_within_root(&normalized_entrypoint, &normalized_host_cwd) {
-        return None;
-    }
-
-    let relative = normalized_entrypoint
-        .strip_prefix(&normalized_host_cwd)
-        .ok()?
-        .to_string_lossy()
-        .replace('\\', "/");
-    let guest_entrypoint = if relative.is_empty() {
-        String::from("/")
-    } else {
-        normalize_path(&format!("/{relative}"))
-    };
-    Some((
-        guest_entrypoint,
-        normalized_entrypoint.to_string_lossy().into_owned(),
-    ))
+    None
 }
 
 fn prepare_guest_runtime_env(
@@ -11109,7 +11153,7 @@ fn prepare_guest_runtime_env(
         vm.guest_env
             .get("PATH")
             .cloned()
-            .unwrap_or_else(|| crate::vm::DEFAULT_GUEST_PATH_ENV.to_owned())
+            .unwrap_or_else(|| agentos_native_sidecar_core::DEFAULT_GUEST_PATH_ENV.to_owned())
     });
     env.entry(String::from("TMPDIR"))
         .or_insert_with(|| String::from("/tmp"));
@@ -11232,7 +11276,7 @@ fn js_runtime_platform(vm: &VmState) -> vm_config::JsRuntimePlatform {
     vm.configuration
         .js_runtime
         .as_ref()
-        .map(|cfg| cfg.platform)
+        .and_then(|cfg| cfg.platform)
         .unwrap_or(vm_config::JsRuntimePlatform::Node)
 }
 
@@ -11254,7 +11298,7 @@ fn js_runtime_module_resolution_env(vm: &VmState) -> Option<&'static str> {
         .configuration
         .js_runtime
         .as_ref()
-        .map(|cfg| cfg.module_resolution)
+        .and_then(|cfg| cfg.module_resolution)
         .unwrap_or(vm_config::JsModuleResolution::Node);
     match resolution {
         vm_config::JsModuleResolution::Node => None,
@@ -11338,10 +11382,10 @@ fn runtime_guest_writable_host_paths(vm: &VmState) -> Vec<PathBuf> {
     vm.configuration
         .mounts
         .iter()
-        .filter(|mount| !mount.read_only)
+        .filter(|mount| !mount.effective_read_only())
         .filter_map(|mount| {
-            ((mount.plugin.id == "host_dir") || (mount.plugin.id == "module_access"))
-                .then(|| mount_config_host_path(&mount.plugin.config))
+            (mount.plugin.id == "host_dir")
+                .then(|| mount_config_host_path(mount.plugin.effective_config()))
                 .flatten()
                 .map(PathBuf::from)
         })
@@ -11354,13 +11398,13 @@ fn runtime_guest_path_mappings(vm: &VmState) -> Vec<RuntimeGuestPathMapping> {
         .mounts
         .iter()
         .filter_map(|mount| {
-            ((mount.plugin.id == "host_dir") || (mount.plugin.id == "module_access"))
+            (mount.plugin.id == "host_dir")
                 .then(|| {
-                    mount_config_host_path(&mount.plugin.config).map(|host_path| {
+                    mount_config_host_path(mount.plugin.effective_config()).map(|host_path| {
                         RuntimeGuestPathMapping {
                             guest_path: normalize_path(&mount.guest_path),
                             host_path,
-                            read_only: mount.read_only,
+                            read_only: mount.effective_read_only(),
                         }
                     })
                 })
@@ -11414,7 +11458,7 @@ fn runtime_guest_path_mappings(vm: &VmState) -> Vec<RuntimeGuestPathMapping> {
 }
 
 /// Build a `Send`-able, read-only VFS module reader over the VM's read-only
-/// `host_dir`/`module_access` mounts (and the derived `/root/node_modules` root
+/// `host_dir` mounts (and the derived `/root/node_modules` root
 /// for nested mounts). When present, the V8 bridge thread resolves modules
 /// inline against this reader — concurrently with the service loop — so a large
 /// cold-start module graph never serializes behind / starves an in-flight ACP
@@ -11431,10 +11475,10 @@ fn build_module_reader(
         .configuration
         .mounts
         .iter()
-        .filter(|mount| mount.read_only)
-        .filter(|mount| (mount.plugin.id == "host_dir") || (mount.plugin.id == "module_access"))
+        .filter(|mount| mount.effective_read_only())
+        .filter(|mount| mount.plugin.id == "host_dir")
         .filter_map(|mount| {
-            mount_config_host_path(&mount.plugin.config)
+            mount_config_host_path(mount.plugin.effective_config())
                 .map(|host_path| (normalize_path(&mount.guest_path), PathBuf::from(host_path)))
         })
         .collect();
@@ -11449,7 +11493,7 @@ fn build_module_reader(
         .iter()
         .filter(|mount| mount.plugin.id == "agentos_packages")
         .filter_map(|mount| {
-            let config = serde_json::from_str::<Value>(&mount.plugin.config).ok()?;
+            let config = serde_json::from_str::<Value>(mount.plugin.effective_config()).ok()?;
             if config.get("kind").and_then(Value::as_str) != Some("tar") {
                 return None;
             }
@@ -11471,7 +11515,7 @@ fn build_module_reader(
         .iter()
         .filter(|mount| mount.plugin.id == "agentos_packages")
         .filter_map(|mount| {
-            let config = serde_json::from_str::<Value>(&mount.plugin.config).ok()?;
+            let config = serde_json::from_str::<Value>(mount.plugin.effective_config()).ok()?;
             if config.get("kind").and_then(Value::as_str) != Some("singleSymlink") {
                 return None;
             }
@@ -11809,17 +11853,9 @@ fn expand_host_access_paths(paths: &[PathBuf]) -> Vec<PathBuf> {
     expanded
 }
 
-/// Package content is tar-mounted guest-native and never materialized on the
-/// host, so command resolution classifies package-mount entrypoints by
-/// extension only (`resolve_javascript_command_entrypoint`) and the resolved
-/// host path for a WebAssembly module may not exist. Correct both here, where
-/// the kernel is available: sniff the real entrypoint's magic through the
-/// kernel VFS, flip misclassified extensionless WebAssembly binaries from
-/// JavaScript to WebAssembly, and stage the module bytes into the VM shadow
-/// tree so the wasm engine (which loads modules from a host path) can read
-/// them. Staging is per-VM and write-once per resolved version path — package
-/// versions are immutable — and only commands that actually execute are
-/// materialized; filesystem reads stay on the zero-extraction tar mount.
+/// Derive the host path consumed by Wasmtime from an already-authorized guest
+/// path. Package commands are also sniffed through the VFS because their
+/// extensionless entrypoints cannot be classified from an unstaged host path.
 fn stage_agentos_package_command(
     vm: &mut VmState,
     resolved: &mut ResolvedChildProcessExecution,
@@ -11841,90 +11877,56 @@ fn stage_agentos_package_command(
     else {
         return Ok(());
     };
-    if !guest_path_is_within_agentos_package_mount(vm, &guest_entrypoint) {
-        return Ok(());
-    }
-    let Ok(real_entrypoint) = vm.kernel.realpath(&guest_entrypoint) else {
-        return Ok(());
-    };
-    let real_entrypoint = normalize_path(&real_entrypoint);
-    let Ok(magic) = vm.kernel.pread_file(&real_entrypoint, 0, WASM_MAGIC.len()) else {
-        return Ok(());
-    };
-    if magic != WASM_MAGIC {
-        return Ok(());
-    }
-    let shadow_path = shadow_path_for_guest(vm, &real_entrypoint);
-    if !shadow_path.is_file() {
-        let bytes = vm
-            .kernel
-            .read_file(&real_entrypoint)
-            .map_err(kernel_error)?;
-        if let Some(parent) = shadow_path.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                SidecarError::Io(format!("failed to create wasm shadow parent: {error}"))
-            })?;
+    let real_entrypoint = if resolved.runtime == GuestRuntimeKind::JavaScript {
+        if !guest_path_is_within_agentos_package_mount(vm, &guest_entrypoint) {
+            return Ok(());
         }
-        fs::write(&shadow_path, &bytes).map_err(|error| {
-            SidecarError::Io(format!(
-                "failed to stage wasm module {}: {error}",
-                shadow_path.display()
-            ))
-        })?;
-    }
-    resolved.runtime = GuestRuntimeKind::WebAssembly;
-    resolved.entrypoint = shadow_path.to_string_lossy().into_owned();
+        let real_entrypoint = resolve_agentos_package_real_entrypoint(vm, &guest_entrypoint)?;
+        let Ok(magic) = vm.kernel.pread_file(&real_entrypoint, 0, WASM_MAGIC.len()) else {
+            return Ok(());
+        };
+        if magic != WASM_MAGIC {
+            return Ok(());
+        }
+        resolved.runtime = GuestRuntimeKind::WebAssembly;
+        real_entrypoint
+    } else {
+        normalize_path(
+            &vm.kernel
+                .realpath(&guest_entrypoint)
+                .map_err(kernel_error)?,
+        )
+    };
+
+    resolved.env.insert(
+        String::from("AGENTOS_GUEST_ENTRYPOINT"),
+        real_entrypoint.clone(),
+    );
+    let host_entrypoint =
+        if let Some(host_path) = host_mount_path_for_guest_path(vm, &real_entrypoint) {
+            host_path
+        } else {
+            materialize_guest_path_to_shadow(vm, &real_entrypoint)?;
+            shadow_path_for_guest(vm, &real_entrypoint)
+        };
+    resolved.entrypoint = host_entrypoint.to_string_lossy().into_owned();
     Ok(())
 }
 
 fn prepare_javascript_shadow(
     vm: &mut VmState,
-    resolved: &ResolvedChildProcessExecution,
+    _resolved: &ResolvedChildProcessExecution,
     env: &BTreeMap<String, String>,
 ) -> Result<(), SidecarError> {
     let guest_entrypoint = env
         .get("AGENTOS_GUEST_ENTRYPOINT")
-        .cloned()
-        // An absolute `entrypoint` may be a host path that lives inside the VM's
-        // host cwd (callers can pass a fully-qualified host path). The guest sees
-        // it at its translated guest path (host_cwd -> guest_cwd), so the shadow
-        // must be keyed by that guest path rather than the raw host path. Falling
-        // back to the host path here would materialize the file at the wrong guest
-        // location and the runtime's `require()` would fail with "Cannot find
-        // module".
-        .or_else(|| {
-            resolve_host_entrypoint_within_vm_host_cwd(vm, &resolved.entrypoint)
-                .map(|(guest_entrypoint, _)| guest_entrypoint)
-        })
-        .or_else(|| {
-            resolved
-                .entrypoint
-                .starts_with('/')
-                .then(|| normalize_path(&resolved.entrypoint))
-        });
+        .filter(|entrypoint| entrypoint.starts_with('/'))
+        .map(|entrypoint| normalize_path(entrypoint));
     let Some(guest_entrypoint) = guest_entrypoint else {
         return Ok(());
     };
     if host_mount_path_for_guest_path(vm, &guest_entrypoint).is_some() {
         return Ok(());
-    }
-    if vm.kernel.lstat(&guest_entrypoint).is_err() {
-        let host_entrypoint = {
-            let candidate = Path::new(&resolved.entrypoint);
-            if candidate.is_absolute() {
-                candidate.to_path_buf()
-            } else {
-                resolved.host_cwd.join(candidate)
-            }
-        };
-        if host_entrypoint.exists() {
-            materialize_host_path_to_shadow(vm, &guest_entrypoint, &host_entrypoint)?;
-            // The shadow write only stages the file on the host side; the runtime
-            // resolves modules against the kernel VFS, so the staged entrypoint
-            // must be synced into the kernel before execution starts (otherwise
-            // `require()` reports "Cannot find module").
-            return sync_shadow_entrypoint_into_kernel(vm, &guest_entrypoint);
-        }
     }
     materialize_guest_path_to_shadow(vm, &guest_entrypoint)
 }
@@ -11932,18 +11934,23 @@ fn prepare_javascript_shadow(
 fn resolve_agentos_package_javascript_launch_entrypoint(
     vm: &mut VmState,
     env: &mut BTreeMap<String, String>,
-) -> Option<String> {
-    let guest_entrypoint = env
+) -> Result<Option<String>, SidecarError> {
+    let Some(guest_entrypoint) = env
         .get("AGENTOS_GUEST_ENTRYPOINT")
         .filter(|path| path.starts_with('/'))
-        .map(|path| normalize_path(path))?;
+        .map(|path| normalize_path(path))
+    else {
+        return Ok(None);
+    };
     if !guest_path_is_within_agentos_package_mount(vm, &guest_entrypoint) {
-        return None;
+        return Ok(None);
     }
 
-    let real_entrypoint = normalize_path(&vm.kernel.realpath(&guest_entrypoint).ok()?);
+    let real_entrypoint = resolve_agentos_package_real_entrypoint(vm, &guest_entrypoint)?;
     if !guest_path_is_within_agentos_package_mount(vm, &real_entrypoint) {
-        return None;
+        return Err(SidecarError::InvalidState(format!(
+            "agentOS package entrypoint resolved outside the package mount: {real_entrypoint}"
+        )));
     }
 
     env.insert(
@@ -11958,7 +11965,83 @@ fn resolve_agentos_package_javascript_launch_entrypoint(
     } else {
         env.remove("AGENTOS_GUEST_ENTRYPOINT_MODULE_MODE");
     }
-    Some(real_entrypoint)
+    Ok(Some(real_entrypoint))
+}
+
+fn resolve_agentos_package_real_entrypoint(
+    vm: &mut VmState,
+    guest_path: &str,
+) -> Result<String, SidecarError> {
+    const MAX_PACKAGE_SYMLINK_DEPTH: usize = 40;
+    let mut current = normalize_path(guest_path);
+    let mut visited = BTreeSet::new();
+
+    for _ in 0..MAX_PACKAGE_SYMLINK_DEPTH {
+        if !visited.insert(current.clone()) {
+            return Err(SidecarError::Kernel(format!(
+                "ELOOP: package entrypoint symlink cycle at {current}"
+            )));
+        }
+        let mut rewritten_mount = None;
+        for mount in &vm.configuration.mounts {
+            if mount.plugin.id != "agentos_packages" {
+                continue;
+            }
+            let guest_root = normalize_path(&mount.guest_path);
+            if current != guest_root && !current.starts_with(&format!("{guest_root}/")) {
+                continue;
+            }
+            let config = serde_json::from_str::<Value>(mount.plugin.effective_config()).map_err(
+                |error| {
+                    SidecarError::InvalidState(format!(
+                        "invalid agentOS package mount config at {}: {error}",
+                        mount.guest_path
+                    ))
+                },
+            )?;
+            if config.get("kind").and_then(Value::as_str) != Some("singleSymlink") {
+                continue;
+            }
+            let target = config
+                .get("target")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    SidecarError::InvalidState(format!(
+                        "agentOS singleSymlink mount at {} is missing target",
+                        mount.guest_path
+                    ))
+                })?;
+            let suffix = current
+                .strip_prefix(&guest_root)
+                .unwrap_or_default()
+                .trim_start_matches('/');
+            let parent = dirname(&guest_root);
+            let mut rewritten = if target.starts_with('/') {
+                normalize_path(target)
+            } else {
+                normalize_path(&format!("{parent}/{target}"))
+            };
+            if !suffix.is_empty() {
+                rewritten = normalize_path(&format!("{rewritten}/{suffix}"));
+            }
+            rewritten_mount = Some(rewritten);
+            break;
+        }
+        if let Some(rewritten) = rewritten_mount {
+            current = rewritten;
+            continue;
+        }
+
+        return vm
+            .kernel
+            .realpath(&current)
+            .map(|path| normalize_path(&path))
+            .map_err(kernel_error);
+    }
+
+    Err(SidecarError::Kernel(format!(
+        "ELOOP: package entrypoint exceeds {MAX_PACKAGE_SYMLINK_DEPTH} symlink rewrites"
+    )))
 }
 
 fn guest_path_is_within_agentos_package_mount(vm: &VmState, guest_path: &str) -> bool {
@@ -12002,115 +12085,6 @@ fn nearest_guest_package_json_type(vm: &mut VmState, guest_path: &str) -> Option
         }
         dir = dirname(&dir);
     }
-}
-
-/// Sync a freshly-staged shadow entrypoint into the kernel VFS so the runtime's
-/// kernel-backed module resolver can read it. Mirrors the host->kernel file sync
-/// used by the broader shadow reconciliation, but scoped to the single
-/// entrypoint we just materialized.
-fn sync_shadow_entrypoint_into_kernel(
-    vm: &mut VmState,
-    guest_entrypoint: &str,
-) -> Result<(), SidecarError> {
-    if vm.kernel.exists(guest_entrypoint).unwrap_or(false) {
-        return Ok(());
-    }
-    let shadow_path = shadow_path_for_guest(vm, guest_entrypoint);
-    let bytes = match fs::read(&shadow_path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(SidecarError::Io(format!(
-                "failed to read staged shadow entrypoint {}: {error}",
-                shadow_path.display()
-            )));
-        }
-    };
-    if let Some(parent) = guest_parent_path(guest_entrypoint) {
-        if !vm.kernel.exists(&parent).unwrap_or(false) {
-            vm.kernel.mkdir(&parent, true).map_err(kernel_error)?;
-        }
-    }
-    vm.kernel
-        .write_file(guest_entrypoint, bytes)
-        .map_err(kernel_error)?;
-    Ok(())
-}
-
-fn guest_parent_path(guest_path: &str) -> Option<String> {
-    let parent = Path::new(guest_path).parent()?;
-    let parent = parent.to_string_lossy();
-    if parent.is_empty() || parent == "/" {
-        None
-    } else {
-        Some(parent.into_owned())
-    }
-}
-
-fn materialize_host_path_to_shadow(
-    vm: &VmState,
-    guest_path: &str,
-    host_path: &Path,
-) -> Result<(), SidecarError> {
-    let shadow_path = shadow_path_for_guest(vm, guest_path);
-    let metadata = fs::symlink_metadata(host_path)
-        .map_err(|error| SidecarError::Io(format!("failed to stat host entrypoint: {error}")))?;
-
-    if metadata.file_type().is_symlink() {
-        if let Some(parent) = shadow_path.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                SidecarError::Io(format!("failed to create shadow symlink parent: {error}"))
-            })?;
-        }
-        let _ = fs::remove_file(&shadow_path);
-        let _ = fs::remove_dir_all(&shadow_path);
-        let target = fs::read_link(host_path)
-            .map_err(|error| SidecarError::Io(format!("failed to read host symlink: {error}")))?;
-        std::os::unix::fs::symlink(&target, &shadow_path)
-            .map_err(|error| SidecarError::Io(format!("failed to mirror host symlink: {error}")))?;
-        return Ok(());
-    }
-
-    if metadata.is_dir() {
-        fs::create_dir_all(&shadow_path).map_err(|error| {
-            SidecarError::Io(format!("failed to create shadow directory: {error}"))
-        })?;
-        fs::set_permissions(
-            &shadow_path,
-            fs::Permissions::from_mode(metadata.permissions().mode() & 0o7777),
-        )
-        .map_err(|error| {
-            SidecarError::Io(format!(
-                "failed to set shadow directory mode on {}: {error}",
-                shadow_path.display()
-            ))
-        })?;
-        return Ok(());
-    }
-
-    if let Some(parent) = shadow_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            SidecarError::Io(format!("failed to create shadow parent: {error}"))
-        })?;
-    }
-    let bytes = fs::read(host_path)
-        .map_err(|error| SidecarError::Io(format!("failed to read host entrypoint: {error}")))?;
-    fs::write(&shadow_path, bytes).map_err(|error| {
-        SidecarError::Io(format!(
-            "failed to mirror host file into shadow root: {error}"
-        ))
-    })?;
-    fs::set_permissions(
-        &shadow_path,
-        fs::Permissions::from_mode(metadata.permissions().mode() & 0o7777),
-    )
-    .map_err(|error| {
-        SidecarError::Io(format!(
-            "failed to set shadow file mode on {}: {error}",
-            shadow_path.display()
-        ))
-    })?;
-    Ok(())
 }
 
 fn materialize_guest_path_to_shadow(
@@ -12205,10 +12179,7 @@ fn load_javascript_entrypoint_source(
     };
     let normalized_entrypoint = normalize_host_path(&host_entrypoint);
     let sandbox_root = normalize_host_path(&vm.cwd);
-    let host_cwd = normalize_host_path(&vm.host_cwd);
-    if !path_is_within_root(&normalized_entrypoint, &sandbox_root)
-        && !path_is_within_root(&normalized_entrypoint, &host_cwd)
-    {
+    if !path_is_within_root(&normalized_entrypoint, &sandbox_root) {
         return None;
     }
 
@@ -12885,6 +12856,14 @@ fn snapshot_vm_processes(vm: &VmState) -> Vec<ProcessSnapshotEntry> {
     snapshot_vm_processes_inner(vm, &process_table)
 }
 
+fn vm_has_process_id(vm: &VmState, process_id: &str) -> bool {
+    vm.active_processes.contains_key(process_id)
+        || vm
+            .exited_process_snapshots
+            .iter()
+            .any(|snapshot| snapshot.process.process_id == process_id)
+}
+
 fn snapshot_vm_processes_inner(
     vm: &VmState,
     process_table: &BTreeMap<u32, agentos_kernel::process_table::ProcessInfo>,
@@ -12903,27 +12882,19 @@ fn snapshot_vm_processes_inner(
 }
 
 fn prune_exited_process_snapshots(vm: &mut VmState) {
-    let cutoff = Instant::now() - EXITED_PROCESS_SNAPSHOT_RETENTION;
-    while vm
-        .exited_process_snapshots
-        .front()
-        .is_some_and(|snapshot| snapshot.captured_at < cutoff)
-    {
+    let retention = agentos_native_sidecar_core::process_route_retention(&vm.limits);
+    while vm.exited_process_snapshots.len() > retention {
         vm.exited_process_snapshots.pop_front();
     }
 }
 
 fn build_process_snapshot_entry(
     process_id: &str,
-    process: &ActiveProcess,
     info: &agentos_kernel::process_table::ProcessInfo,
     exit_code: Option<i32>,
 ) -> ProcessSnapshotEntry {
     wire_process_snapshot_entry_from_shared(process_snapshot_entry_from_kernel(
-        process_id,
-        info,
-        process.guest_cwd.clone(),
-        exit_code,
+        process_id, info, exit_code,
     ))
 }
 
@@ -12946,6 +12917,8 @@ fn wire_process_snapshot_entry_from_shared(
             SharedProcessSnapshotStatus::Exited => ProcessSnapshotStatus::Exited,
         },
         exit_code: entry.exit_code,
+        start_time_ms: entry.start_time_ms,
+        exit_time_ms: entry.exit_time_ms,
     }
 }
 
@@ -12956,9 +12929,7 @@ fn collect_process_snapshot_entries(
     entries: &mut Vec<ProcessSnapshotEntry>,
 ) {
     if let Some(info) = process_table.get(&process.kernel_pid) {
-        entries.push(build_process_snapshot_entry(
-            process_id, process, info, None,
-        ));
+        entries.push(build_process_snapshot_entry(process_id, info, None));
     }
 
     for (child_id, child) in &process.child_processes {
@@ -13614,93 +13585,6 @@ fn resolve_wasm_permission_tier(
         .unwrap_or(WasmPermissionTier::Full)
 }
 
-fn tokenize_shell_free_command(command: &str) -> Vec<String> {
-    command
-        .split_whitespace()
-        .filter(|segment| !segment.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
-
-fn is_posix_shell_builtin(command: &str) -> bool {
-    matches!(
-        command,
-        "." | ":"
-            | "break"
-            | "cd"
-            | "continue"
-            | "eval"
-            | "exec"
-            | "exit"
-            | "export"
-            | "readonly"
-            | "return"
-            | "set"
-            | "shift"
-            | "times"
-            | "trap"
-            | "umask"
-            | "unset"
-    )
-}
-
-/// Single-token checks for shell-mode commands whose first word forces a real
-/// shell even when the command string has no shell metacharacters. This is not
-/// a parser: env-assignment prefixes (`FOO=bar cmd`) and shell reserved words
-/// have no meaning outside `sh`, so whitespace-tokenizing them would silently
-/// run the wrong program.
-fn shell_first_token_requires_shell(token: &str) -> bool {
-    token.contains('=') || is_shell_reserved_word(token)
-}
-
-fn is_shell_reserved_word(token: &str) -> bool {
-    matches!(
-        token,
-        "if" | "then"
-            | "elif"
-            | "else"
-            | "fi"
-            | "for"
-            | "in"
-            | "do"
-            | "done"
-            | "while"
-            | "until"
-            | "case"
-            | "esac"
-            | "{"
-            | "}"
-            | "!"
-    )
-}
-
-fn command_requires_shell(command: &str) -> bool {
-    command.chars().any(|ch| {
-        matches!(
-            ch,
-            '|' | '&'
-                | ';'
-                | '<'
-                | '>'
-                | '('
-                | ')'
-                | '$'
-                | '`'
-                | '*'
-                | '?'
-                | '['
-                | ']'
-                | '{'
-                | '}'
-                | '~'
-                | '\''
-                | '"'
-                | '\\'
-                | '\n'
-        )
-    })
-}
-
 fn host_mount_path_for_guest_path(vm: &VmState, guest_path: &str) -> Option<PathBuf> {
     let normalized = normalize_path(guest_path);
 
@@ -13709,9 +13593,9 @@ fn host_mount_path_for_guest_path(vm: &VmState, guest_path: &str) -> Option<Path
         .mounts
         .iter()
         .filter_map(|mount| {
-            ((mount.plugin.id == "host_dir") || (mount.plugin.id == "module_access"))
+            (mount.plugin.id == "host_dir")
                 .then(|| {
-                    mount_config_host_backing_path(&mount.plugin.config)
+                    mount_config_host_backing_path(mount.plugin.effective_config())
                         .map(|host_path| (mount.guest_path.as_str(), host_path))
                 })
                 .flatten()
@@ -13935,9 +13819,9 @@ fn host_mount_path_for_guest_path_from_mounts(
     let mut host_mounts = mounts
         .iter()
         .filter_map(|mount| {
-            ((mount.plugin.id == "host_dir") || (mount.plugin.id == "module_access"))
+            (mount.plugin.id == "host_dir")
                 .then(|| {
-                    mount_config_host_backing_path(&mount.plugin.config)
+                    mount_config_host_backing_path(mount.plugin.effective_config())
                         .map(|host_path| (mount.guest_path.as_str(), host_path))
                 })
                 .flatten()
@@ -13972,22 +13856,24 @@ mod host_mount_path_for_guest_path_from_mounts_tests {
     use std::path::PathBuf;
 
     #[test]
-    fn resolves_module_access_mount_paths() {
+    fn resolves_host_dir_mount_paths() {
         let mounts = vec![MountDescriptor {
             guest_path: String::from("/root/node_modules"),
-            read_only: true,
+            read_only: Some(true),
             plugin: MountPluginDescriptor {
-                id: String::from("module_access"),
-                config: json!({
-                    "hostPath": "/tmp/workspace/node_modules",
-                })
-                .to_string(),
+                id: String::from("host_dir"),
+                config: Some(
+                    json!({
+                        "hostPath": "/tmp/workspace/node_modules",
+                    })
+                    .to_string(),
+                ),
             },
         }];
 
         let resolved =
             host_mount_path_for_guest_path_from_mounts(&mounts, "/root/node_modules/pkg/index.js")
-                .expect("module_access mount should resolve");
+                .expect("host_dir mount should resolve");
 
         assert_eq!(
             resolved,
@@ -13999,14 +13885,16 @@ mod host_mount_path_for_guest_path_from_mounts_tests {
     fn does_not_resolve_agentos_packages_as_host_paths() {
         let mounts = vec![MountDescriptor {
             guest_path: String::from("/opt/agentos/bin/pi"),
-            read_only: true,
+            read_only: Some(true),
             plugin: MountPluginDescriptor {
                 id: String::from("agentos_packages"),
-                config: json!({
-                    "kind": "singleSymlink",
-                    "target": "../pkgs/pi/current/bin/pi",
-                })
-                .to_string(),
+                config: Some(
+                    json!({
+                        "kind": "singleSymlink",
+                        "target": "../pkgs/pi/current/bin/pi",
+                    })
+                    .to_string(),
+                ),
             },
         }];
 
@@ -19520,7 +19408,7 @@ pub(crate) fn drain_tty_master_output(
     ) {
         Ok(Some(bytes)) if !bytes.is_empty() => Ok(Some(bytes)),
         Ok(_) => Ok(None),
-        Err(error) if error.code() == "EAGAIN" => Ok(None),
+        Err(error) if matches!(error.code(), "EAGAIN" | "ESRCH") => Ok(None),
         Err(error) => Err(kernel_error(error)),
     }
 }
@@ -19665,18 +19553,6 @@ fn install_kernel_stdin_pipe(kernel: &mut SidecarKernel, pid: u32) -> Result<u32
     Ok(write_fd)
 }
 
-fn requested_pty_window_size(env: &BTreeMap<String, String>) -> Option<(u16, u16)> {
-    let cols = env
-        .get("COLUMNS")
-        .and_then(|value| value.parse::<u16>().ok())
-        .filter(|value| *value > 0)?;
-    let rows = env
-        .get("LINES")
-        .and_then(|value| value.parse::<u16>().ok())
-        .filter(|value| *value > 0)?;
-    Some((cols, rows))
-}
-
 fn javascript_child_process_stdin_mode(request: &JavascriptChildProcessSpawnRequest) -> &str {
     request
         .options
@@ -19748,7 +19624,7 @@ fn forward_tty_slave_input_to_javascript(
                 process.execution.close_stdin()?;
                 return Ok(());
             }
-            Err(error) if error.code() == "EAGAIN" => return Ok(()),
+            Err(error) if matches!(error.code(), "EAGAIN" | "ESRCH") => return Ok(()),
             Err(error) => return Err(kernel_error(error)),
         }
     }
@@ -23258,8 +23134,6 @@ where
 }
 
 const JAVASCRIPT_NET_POLL_MAX_WAIT: Duration = Duration::from_millis(50);
-const EXITED_PROCESS_SNAPSHOT_RETENTION: Duration = Duration::from_secs(2);
-
 fn resolve_http2_file_response_guest_path(process: &ActiveProcess, path: &str) -> String {
     if Path::new(path).is_absolute() {
         normalize_path(path)
@@ -24400,6 +24274,7 @@ fn signal_name_for_stream_event(signal: i32) -> Option<&'static str> {
     match signal {
         libc::SIGHUP => Some("SIGHUP"),
         libc::SIGINT => Some("SIGINT"),
+        libc::SIGQUIT => Some("SIGQUIT"),
         libc::SIGUSR1 => Some("SIGUSR1"),
         libc::SIGALRM => Some("SIGALRM"),
         libc::SIGCONT => Some("SIGCONT"),
@@ -24572,17 +24447,22 @@ pub(crate) fn signal_runtime_process(child_pid: u32, signal: i32) -> Result<(), 
 pub(crate) fn error_code(error: &SidecarError) -> &'static str {
     match error {
         SidecarError::InvalidState(_) => "invalid_state",
+        SidecarError::SessionNotFound(_) => "session_not_found",
         SidecarError::ProtocolVersionMismatch(_) => "protocol_version_mismatch",
         SidecarError::BridgeVersionMismatch(_) => "bridge_version_mismatch",
         SidecarError::Conflict(_) => "conflict",
         SidecarError::Unauthorized(_) => "unauthorized",
         SidecarError::Unsupported(_) => "unsupported",
         SidecarError::FrameTooLarge(_) => "frame_too_large",
+        SidecarError::LimitExceeded { .. } => "limit_exceeded",
+        SidecarError::Timeout(_) => "timeout",
         SidecarError::Kernel(_) => "kernel_error",
         SidecarError::Plugin(_) => "plugin_error",
         SidecarError::Execution(_) => "execution_error",
         SidecarError::Bridge(_) => "bridge_error",
         SidecarError::Io(_) => "io_error",
+        SidecarError::Context { source, .. } => error_code(source),
+        SidecarError::Cleanup { .. } => "cleanup_failed",
     }
 }
 
@@ -24676,7 +24556,31 @@ pub(crate) fn ignore_stale_javascript_sync_rpc_response(
 
 #[cfg(test)]
 mod error_code_tests {
-    use super::{guest_errno_code, javascript_sync_rpc_error_code, SidecarError};
+    use super::{error_code, guest_errno_code, javascript_sync_rpc_error_code, SidecarError};
+
+    #[test]
+    fn cleanup_error_code_and_display_are_stable_and_ordered() {
+        let error = SidecarError::Cleanup {
+            context: "failed cleanup",
+            errors: vec![
+                SidecarError::Execution(String::from("first")),
+                SidecarError::Io(String::from("second")),
+            ],
+        };
+        assert_eq!(error_code(&error), "cleanup_failed");
+        assert_eq!(
+            error.to_string(),
+            "failed cleanup; cleanup error 1 [execution_error]: first; cleanup error 2 [io_error]: second"
+        );
+        let contextual = SidecarError::Context {
+            context: String::from("VM vm-4 process proc-9"),
+            source: Box::new(error),
+        };
+        assert_eq!(error_code(&contextual), "cleanup_failed");
+        assert!(contextual
+            .to_string()
+            .starts_with("VM vm-4 process proc-9: failed cleanup"));
+    }
 
     #[test]
     fn guest_errno_code_rejects_guest_controlled_errno_segments() {

@@ -5,12 +5,30 @@ use std::time::Duration;
 use crate::protocol::{
     CloseStdinRequest, EventFrame, EventPayload, ExecuteRequest, ExtEnvelope,
     GuestFilesystemCallRequest, GuestFilesystemResultResponse, KillProcessRequest, OwnershipScope,
-    ProcessKilledResponse, ProcessStartedResponse, SidecarRequestPayload, SidecarResponsePayload,
-    StdinClosedResponse, StdinWrittenResponse, WriteStdinRequest,
+    ProcessKilledResponse, ProcessStartedResponse, PtyResizedResponse, ResizePtyRequest,
+    SidecarRequestPayload, SidecarResponsePayload, StdinClosedResponse, StdinWrittenResponse,
+    WriteStdinRequest,
 };
-use crate::state::{SharedEventSink, SharedSidecarRequestClient, SidecarError};
+use crate::state::{
+    ExtensionCallbackCancellation, SharedEventSink, SharedSidecarRequestClient, SidecarError,
+};
 
 pub type ExtensionFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, SidecarError>> + 'a>>;
+
+/// A cleanup attempt may commit lifecycle events even when a later phase must
+/// be retried. Returning both prevents callers from losing committed events or
+/// retaining them behind a full cleanup buffer until the retry succeeds.
+#[derive(Debug)]
+pub struct ExtensionCleanupOutcome {
+    pub events: Vec<EventFrame>,
+    pub error: Option<SidecarError>,
+}
+
+#[derive(Debug)]
+pub struct ExtensionWireCleanupOutcome {
+    pub events: Vec<crate::wire::EventFrame>,
+    pub error: Option<SidecarError>,
+}
 
 /// One projected agent package's launch surface, served from sidecar-owned VM
 /// state (sourced from packed vbare manifests; packed packages ship no
@@ -19,15 +37,26 @@ pub type ExtensionFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, SidecarE
 pub struct ProjectedAgentLaunchEntry {
     pub id: String,
     pub acp_entrypoint: String,
+    pub adapter_entrypoint: String,
     pub env: std::collections::BTreeMap<String, String>,
     pub launch_args: Vec<String>,
 }
 
 pub trait ExtensionHost {
+    fn registered_host_tool_reference<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+    ) -> ExtensionFuture<'a, String>;
+
     fn projected_agents<'a>(
         &'a mut self,
         ownership: OwnershipScope,
     ) -> ExtensionFuture<'a, Vec<ProjectedAgentLaunchEntry>>;
+
+    fn agent_additional_instructions<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+    ) -> ExtensionFuture<'a, Option<String>>;
 
     fn spawn_process<'a>(
         &'a mut self,
@@ -52,6 +81,12 @@ pub trait ExtensionHost {
         ownership: OwnershipScope,
         request: KillProcessRequest,
     ) -> ExtensionFuture<'a, ProcessKilledResponse>;
+
+    fn resize_pty<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+        request: ResizePtyRequest,
+    ) -> ExtensionFuture<'a, PtyResizedResponse>;
 
     fn poll_event<'a>(
         &'a mut self,
@@ -85,7 +120,7 @@ pub trait ExtensionHost {
         ownership: OwnershipScope,
         namespace: String,
         ext_session_id: String,
-    ) -> ExtensionFuture<'a, Vec<EventFrame>>;
+    ) -> ExtensionFuture<'a, ExtensionCleanupOutcome>;
 
     fn start_buffering_process_output<'a>(
         &'a mut self,
@@ -101,6 +136,19 @@ pub trait ExtensionHost {
         process_id: String,
         timeout: Duration,
     ) -> ExtensionFuture<'a, ExtensionBufferedProcessOutput>;
+
+    fn drain_buffered_process_output<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+        process_id: String,
+        timeout: Duration,
+    ) -> ExtensionFuture<'a, ExtensionBufferedProcessOutput>;
+
+    fn stop_buffering_process_output<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+        process_id: String,
+    ) -> ExtensionFuture<'a, ()>;
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -109,6 +157,7 @@ pub struct ExtensionBufferedProcessOutput {
     pub stderr: Vec<u8>,
     pub stdout_truncated: bool,
     pub stderr_truncated: bool,
+    pub exit_code: Option<i32>,
 }
 
 impl ExtensionBufferedProcessOutput {
@@ -252,6 +301,24 @@ impl ExtensionSnapshot {
         )?;
         extension_callback_response_payload(&self.namespace, response)
     }
+
+    pub fn invoke_callback_cancellable(
+        &self,
+        payload: Vec<u8>,
+        timeout: Duration,
+        cancellation: &ExtensionCallbackCancellation,
+    ) -> Result<Vec<u8>, SidecarError> {
+        let response = self.sidecar_requests.invoke_cancellable(
+            self.ownership.clone(),
+            SidecarRequestPayload::Ext(ExtEnvelope {
+                namespace: self.namespace.clone(),
+                payload,
+            }),
+            timeout,
+            cancellation,
+        )?;
+        extension_callback_response_payload(&self.namespace, response)
+    }
 }
 
 impl<'a> ExtensionContext<'a> {
@@ -306,6 +373,22 @@ impl<'a> ExtensionContext<'a> {
         timeout: Duration,
     ) -> Result<Vec<u8>, SidecarError> {
         self.snapshot.invoke_callback(payload, timeout)
+    }
+
+    pub fn invoke_callback_cancellable(
+        &self,
+        payload: Vec<u8>,
+        timeout: Duration,
+        cancellation: &ExtensionCallbackCancellation,
+    ) -> Result<Vec<u8>, SidecarError> {
+        self.snapshot
+            .invoke_callback_cancellable(payload, timeout, cancellation)
+    }
+
+    pub async fn registered_host_tool_reference(&mut self) -> Result<String, SidecarError> {
+        self.host
+            .registered_host_tool_reference(self.snapshot.ownership.clone())
+            .await
     }
 
     pub async fn spawn_process(
@@ -440,6 +523,33 @@ impl<'a> ExtensionContext<'a> {
         Ok(response)
     }
 
+    pub async fn resize_pty_wire(
+        &mut self,
+        request: crate::wire::ResizePtyRequest,
+    ) -> Result<crate::wire::PtyResizedResponse, SidecarError> {
+        let payload = crate::wire::request_payload_to_compat(
+            self.snapshot.ownership(),
+            crate::wire::RequestPayload::ResizePtyRequest(request),
+        )
+        .map_err(wire_protocol_error)?;
+        let crate::protocol::RequestPayload::ResizePty(request) = payload else {
+            return Err(unexpected_wire_request_payload("resize PTY"));
+        };
+        let response = self
+            .host
+            .resize_pty(self.snapshot.ownership.clone(), request)
+            .await?;
+        let payload = crate::wire::response_payload_from_compat(
+            self.snapshot.ownership(),
+            crate::protocol::ResponsePayload::PtyResized(response),
+        )
+        .map_err(wire_protocol_error)?;
+        let crate::wire::ResponsePayload::PtyResizedResponse(response) = payload else {
+            return Err(unexpected_wire_response_payload("PTY resized"));
+        };
+        Ok(response)
+    }
+
     pub async fn poll_event(
         &mut self,
         timeout: Duration,
@@ -477,6 +587,11 @@ impl<'a> ExtensionContext<'a> {
     ) -> Result<Vec<ProjectedAgentLaunchEntry>, SidecarError> {
         let ownership = self.snapshot.ownership().clone();
         self.host.projected_agents(ownership).await
+    }
+
+    pub async fn agent_additional_instructions(&mut self) -> Result<Option<String>, SidecarError> {
+        let ownership = self.snapshot.ownership().clone();
+        self.host.agent_additional_instructions(ownership).await
     }
 
     pub async fn guest_filesystem_call_wire(
@@ -534,7 +649,7 @@ impl<'a> ExtensionContext<'a> {
     pub async fn dispose_session_resources(
         &mut self,
         ext_session_id: impl Into<String>,
-    ) -> Result<Vec<EventFrame>, SidecarError> {
+    ) -> Result<ExtensionCleanupOutcome, SidecarError> {
         self.host
             .dispose_session_resources(
                 self.snapshot.ownership.clone(),
@@ -547,13 +662,18 @@ impl<'a> ExtensionContext<'a> {
     pub async fn dispose_session_resources_wire(
         &mut self,
         ext_session_id: impl Into<String>,
-    ) -> Result<Vec<crate::wire::EventFrame>, SidecarError> {
-        self.dispose_session_resources(ext_session_id)
-            .await?
+    ) -> Result<ExtensionWireCleanupOutcome, SidecarError> {
+        let outcome = self.dispose_session_resources(ext_session_id).await?;
+        let events = outcome
+            .events
             .into_iter()
             .map(crate::wire::event_frame_from_compat)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(wire_protocol_error)
+            .map_err(wire_protocol_error)?;
+        Ok(ExtensionWireCleanupOutcome {
+            events,
+            error: outcome.error,
+        })
     }
 
     pub async fn start_buffering_process_output(
@@ -579,6 +699,29 @@ impl<'a> ExtensionContext<'a> {
                 process_id.into(),
                 timeout,
             )
+            .await
+    }
+
+    pub async fn drain_buffered_process_output(
+        &mut self,
+        process_id: impl Into<String>,
+        timeout: Duration,
+    ) -> Result<ExtensionBufferedProcessOutput, SidecarError> {
+        self.host
+            .drain_buffered_process_output(
+                self.snapshot.ownership.clone(),
+                process_id.into(),
+                timeout,
+            )
+            .await
+    }
+
+    pub async fn stop_buffering_process_output(
+        &mut self,
+        process_id: impl Into<String>,
+    ) -> Result<(), SidecarError> {
+        self.host
+            .stop_buffering_process_output(self.snapshot.ownership.clone(), process_id.into())
             .await
     }
 }
@@ -621,6 +764,24 @@ fn extension_callback_response_payload(
 pub enum ExtensionInterruptRequest<'a> {
     ExtensionPayload(&'a [u8]),
     KillProcess,
+    CloseSession,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExtensionInterrupt {
+    ExtensionPayload(Vec<u8>),
+    KillProcess,
+    CloseSession,
+}
+
+impl ExtensionInterrupt {
+    pub fn as_request(&self) -> ExtensionInterruptRequest<'_> {
+        match self {
+            Self::ExtensionPayload(payload) => ExtensionInterruptRequest::ExtensionPayload(payload),
+            Self::KillProcess => ExtensionInterruptRequest::KillProcess,
+            Self::CloseSession => ExtensionInterruptRequest::CloseSession,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -643,13 +804,10 @@ pub trait Extension: Send + Sync {
     }
 
     /// Per-session teardown hook. The host invokes this for every registered
-    /// extension when a session is disposed because its connection closed
-    /// (`DisposeReason::ConnectionClosed`), giving the extension the disposed
-    /// session's ownership scope so it can release the per-session state it
-    /// keyed on that session. Default is a no-op. This is the only signal an
-    /// extension receives that a client has disconnected, so it is what lets an
-    /// ACP-style extension free per-session state instead of leaking it for the
-    /// process lifetime.
+    /// extension whenever a host session is disposed, whether explicitly or
+    /// because its connection closed. The disposed ownership scope lets the
+    /// extension release per-session state instead of retaining it for the
+    /// process lifetime. Default is a no-op.
     fn on_session_disposed<'a>(&'a self, _ctx: ExtensionSnapshot) -> ExtensionFuture<'a, ()> {
         Box::pin(async { Ok(()) })
     }
@@ -664,6 +822,21 @@ pub trait Extension: Send + Sync {
         _interrupt: ExtensionInterruptRequest<'_>,
     ) -> Option<ExtensionInterruptResponse> {
         None
+    }
+
+    /// Perform the host-side effect for an accepted blocking-request interrupt
+    /// after the original dispatch future has been dropped. The fresh context
+    /// carries the original authoritative ownership, allowing an extension to
+    /// notify the exact live process without retaining a borrowed dispatch
+    /// context. Returning a payload replaces the interrupting request's
+    /// synthesized extension response (used to surface a typed delivery error).
+    fn on_blocking_request_interrupted<'a>(
+        &'a self,
+        _ctx: ExtensionContext<'a>,
+        _blocking_payload: Vec<u8>,
+        _interrupt: ExtensionInterrupt,
+    ) -> ExtensionFuture<'a, Option<Vec<u8>>> {
+        Box::pin(async { Ok(None) })
     }
 
     fn on_dispose<'a>(&'a self) -> ExtensionFuture<'a, ()> {

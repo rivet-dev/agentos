@@ -1,6 +1,6 @@
 use agentos_sidecar_protocol::protocol::RegisterHostCallbacksRequest;
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -47,15 +47,6 @@ pub fn validate_toolkit_registration(
         &format!("Toolkit \"{}\"", payload.name),
         &payload.description,
     )?;
-    validate_command_aliases("command alias", &payload.command_aliases)?;
-    validate_command_aliases("registry command alias", &payload.registry_command_aliases)?;
-    for alias in &payload.command_aliases {
-        if payload.registry_command_aliases.contains(alias) {
-            return Err(ToolRegistrationError::InvalidState(format!(
-                "host callback command alias must not also be a registry command alias: {alias}"
-            )));
-        }
-    }
     if payload.callbacks.is_empty() {
         return Err(ToolRegistrationError::InvalidState(format!(
             "toolkit {} must define at least one tool",
@@ -144,36 +135,6 @@ pub fn ensure_toolkit_name_available(
     Ok(())
 }
 
-pub fn ensure_command_aliases_available(
-    toolkits: &BTreeMap<String, RegisterHostCallbacksRequest>,
-    payload: &RegisterHostCallbacksRequest,
-) -> Result<(), ToolRegistrationError> {
-    let requested_command_aliases = payload.command_aliases.iter().collect::<BTreeSet<_>>();
-    let requested_registry_aliases = payload
-        .registry_command_aliases
-        .iter()
-        .collect::<BTreeSet<_>>();
-    for toolkit in toolkits.values() {
-        for alias in &toolkit.command_aliases {
-            if requested_command_aliases.contains(alias)
-                || requested_registry_aliases.contains(alias)
-            {
-                return Err(ToolRegistrationError::Conflict(format!(
-                    "host callback command alias already registered: {alias}"
-                )));
-            }
-        }
-        for alias in &toolkit.registry_command_aliases {
-            if requested_command_aliases.contains(alias) {
-                return Err(ToolRegistrationError::Conflict(format!(
-                    "host callback command alias already registered: {alias}"
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
 pub fn ensure_toolkit_registry_capacity(
     toolkits: &BTreeMap<String, RegisterHostCallbacksRequest>,
     payload: &RegisterHostCallbacksRequest,
@@ -208,20 +169,225 @@ pub fn ensure_toolkit_registry_capacity(
 pub fn registered_tool_command_names(
     toolkits: &BTreeMap<String, RegisterHostCallbacksRequest>,
 ) -> Vec<String> {
-    let mut seen = BTreeSet::new();
-    let mut commands = Vec::new();
-    for toolkit in toolkits.values() {
-        for alias in toolkit
-            .registry_command_aliases
-            .iter()
-            .chain(toolkit.command_aliases.iter())
-        {
-            if seen.insert(alias.clone()) {
-                commands.push(alias.clone());
-            }
-        }
+    if toolkits.is_empty() {
+        return Vec::new();
+    }
+    let mut commands = Vec::with_capacity(toolkits.len() + 1);
+    commands.push(String::from("agentos"));
+    for toolkit_name in toolkits.keys() {
+        commands.push(format!("agentos-{toolkit_name}"));
     }
     commands
+}
+
+/// Render the sidecar-owned CLI reference injected into ACP agent prompts.
+/// Native and browser adapters share this formatter so registered host tools
+/// are described identically on both runtimes.
+pub fn build_host_tool_reference(
+    toolkits: &BTreeMap<String, RegisterHostCallbacksRequest>,
+) -> Result<String, ToolRegistrationError> {
+    if toolkits.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut lines = vec![
+        String::from("## Available Host Tools"),
+        String::new(),
+        String::from("Run `agentos list-tools` to see all available tools."),
+        String::new(),
+    ];
+    for (toolkit_name, toolkit) in toolkits {
+        lines.extend([
+            format!("### {toolkit_name}"),
+            String::new(),
+            toolkit.description.clone(),
+            String::new(),
+        ]);
+        for (tool_name, tool) in &toolkit.callbacks {
+            let schema = serde_json::from_str::<Value>(&tool.input_schema).map_err(|error| {
+                ToolRegistrationError::InvalidState(format!(
+                    "registered tool {toolkit_name}:{tool_name} has an invalid input schema: {error}"
+                ))
+            })?;
+            let signature = describe_tool_flags_payload(&schema)
+                .iter()
+                .filter_map(|flag| {
+                    let name = flag.get("name")?.as_str()?;
+                    let value_type = flag.get("type")?.as_str()?;
+                    let required = flag.get("required")?.as_bool()?;
+                    Some(if required {
+                        format!("{name} <{value_type}>")
+                    } else {
+                        format!("[{name} <{value_type}>]")
+                    })
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            let suffix = if signature.is_empty() {
+                String::new()
+            } else {
+                format!(" {signature}")
+            };
+            lines.push(format!(
+                "- `agentos-{toolkit_name} {tool_name}{suffix}` — {}",
+                tool.description
+            ));
+        }
+        lines.push(String::new());
+
+        let tools_with_examples = toolkit
+            .callbacks
+            .iter()
+            .filter(|(_, tool)| !tool.examples.is_empty())
+            .collect::<Vec<_>>();
+        if !tools_with_examples.is_empty() {
+            lines.extend([String::from("**Examples:**"), String::new()]);
+            for (tool_name, tool) in tools_with_examples {
+                for example in &tool.examples {
+                    let input =
+                        serde_json::from_str::<Value>(&example.input).map_err(|error| {
+                            ToolRegistrationError::InvalidState(format!(
+                                "registered tool {toolkit_name}:{tool_name} has an invalid example input: {error}"
+                            ))
+                        })?;
+                    let arguments = tool_input_to_flags(&input);
+                    let suffix = if arguments.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {arguments}")
+                    };
+                    lines.push(format!(
+                        "- {}: `agentos-{toolkit_name} {tool_name}{suffix}`",
+                        example.description
+                    ));
+                }
+            }
+            lines.push(String::new());
+        }
+        lines.extend([
+            format!("Run `agentos-{toolkit_name} <tool> --help` for details."),
+            String::new(),
+        ]);
+    }
+    Ok(lines.join("\n"))
+}
+
+fn describe_tool_flags_payload(schema: &Value) -> Vec<Value> {
+    let properties = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let required = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<std::collections::BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+    properties
+        .iter()
+        .map(|(field_name, field_schema)| {
+            serde_json::json!({
+                "name": format!("--{}", camel_to_kebab(field_name)),
+                "type": describe_tool_flag_type(field_schema),
+                "required": required.contains(field_name.as_str()),
+            })
+        })
+        .collect()
+}
+
+fn describe_tool_flag_type(schema: &Value) -> String {
+    match json_schema_type(schema) {
+        Some("array") => format!(
+            "{}[]",
+            schema
+                .get("items")
+                .and_then(json_schema_type)
+                .unwrap_or("string")
+        ),
+        Some("string") => schema
+            .get("enum")
+            .and_then(Value::as_array)
+            .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+            .filter(|values| !values.is_empty())
+            .map(|values| values.join("|"))
+            .unwrap_or_else(|| String::from("string")),
+        Some(other) => other.to_owned(),
+        None => String::from("string"),
+    }
+}
+
+fn json_schema_type(schema: &Value) -> Option<&str> {
+    schema.get("type").and_then(Value::as_str)
+}
+
+fn camel_to_kebab(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for (index, ch) in value.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if index > 0 {
+                output.push('-');
+            }
+            output.push(ch.to_ascii_lowercase());
+        } else {
+            output.push(ch);
+        }
+    }
+    output
+}
+
+fn tool_input_to_flags(input: &Value) -> String {
+    let Some(input) = input.as_object() else {
+        return String::new();
+    };
+    input
+        .iter()
+        .flat_map(|(key, value)| {
+            let flag = format!("--{}", camel_to_kebab(key));
+            match value {
+                Value::Bool(true) => vec![flag],
+                Value::Bool(false) => vec![format!("--no-{}", camel_to_kebab(key))],
+                Value::Array(items) => items
+                    .iter()
+                    .map(|item| format!("{flag} {}", tool_cli_string(item)))
+                    .collect(),
+                _ => vec![format!("{flag} {}", tool_cli_string(value))],
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn tool_cli_string(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        other => other.to_string(),
+    }
+}
+
+pub fn toolkit_command_name(toolkit_name: &str) -> String {
+    format!("agentos-{toolkit_name}")
+}
+
+pub fn is_registry_command(command_name: &str) -> bool {
+    command_name == "agentos"
+}
+
+pub fn toolkit_name_for_command<'a>(
+    toolkits: &'a BTreeMap<String, RegisterHostCallbacksRequest>,
+    command_name: &str,
+) -> Option<&'a str> {
+    toolkits.keys().find_map(|toolkit_name| {
+        if toolkit_command_name(toolkit_name) == command_name {
+            Some(toolkit_name.as_str())
+        } else {
+            None
+        }
+    })
 }
 
 fn validate_toolkit_name(name: &str) -> Result<(), ToolRegistrationError> {
@@ -255,33 +421,6 @@ fn validate_tool_name(name: &str) -> Result<(), ToolRegistrationError> {
     {
         return Err(ToolRegistrationError::InvalidState(format!(
             "invalid tool name {name}; expected lowercase alphanumeric characters plus hyphens"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_command_aliases(label: &str, aliases: &[String]) -> Result<(), ToolRegistrationError> {
-    let mut seen = BTreeSet::new();
-    for alias in aliases {
-        validate_command_alias(label, alias)?;
-        if !seen.insert(alias) {
-            return Err(ToolRegistrationError::InvalidState(format!(
-                "duplicate host callback {label}: {alias}"
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn validate_command_alias(label: &str, alias: &str) -> Result<(), ToolRegistrationError> {
-    if alias.is_empty()
-        || alias == "."
-        || alias == ".."
-        || alias.contains('/')
-        || alias.contains('\0')
-    {
-        return Err(ToolRegistrationError::InvalidState(format!(
-            "invalid host callback {label}: {alias:?}"
         )));
     }
     Ok(())

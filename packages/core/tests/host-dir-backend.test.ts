@@ -3,9 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs, createHostDirBackend } from "../src/index.js";
-import {
-	REGISTRY_SOFTWARE,
-} from "./helpers/registry-commands.js";
+import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
 
 describe("host_dir native mount integration", () => {
 	let vm: AgentOs;
@@ -26,7 +24,7 @@ describe("host_dir native mount integration", () => {
 		fs.rmSync(tmpDir, { recursive: true, force: true });
 	});
 
-	test("path traversal attempt (../../etc/passwd) is blocked", async () => {
+	test("dotdot traversal resolves against the VM root like Linux", async () => {
 		vm = await AgentOs.create({
 			mounts: [
 				{
@@ -35,7 +33,9 @@ describe("host_dir native mount integration", () => {
 				},
 			],
 		});
-		await expect(vm.readFile("/hostmnt/../../etc/passwd")).rejects.toThrow();
+		expect(await vm.readFile("/hostmnt/../../etc/passwd")).toEqual(
+			await vm.readFile("/etc/passwd"),
+		);
 	});
 
 	test("mounted host directory exposes existing host files", async () => {
@@ -54,18 +54,18 @@ describe("host_dir native mount integration", () => {
 	});
 
 	test("mounted host directory is readable from guest exec", async () => {
-			vm = await AgentOs.create({
-				software: REGISTRY_SOFTWARE,
-				mounts: [
-					{
-						path: "/hostmnt",
-						plugin: createHostDirBackend({ hostPath: tmpDir }),
-					},
-				],
-			});
-			const result = await vm.exec("cat /hostmnt/hello.txt");
-			expect(result.exitCode).toBe(0);
-			expect(result.stdout).toContain("hello from host");
+		vm = await AgentOs.create({
+			software: REGISTRY_SOFTWARE,
+			mounts: [
+				{
+					path: "/hostmnt",
+					plugin: createHostDirBackend({ hostPath: tmpDir }),
+				},
+			],
+		});
+		const result = await vm.exec("cat /hostmnt/hello.txt");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("hello from host");
 	});
 
 	test("symlink escape attempt is blocked", async () => {
@@ -85,7 +85,7 @@ describe("host_dir native mount integration", () => {
 		);
 	});
 
-	test("write blocked when helper defaults to readOnly", async () => {
+	test("omitted readOnly follows the sidecar's writable Linux default", async () => {
 		vm = await AgentOs.create({
 			mounts: [
 				{
@@ -94,9 +94,10 @@ describe("host_dir native mount integration", () => {
 				},
 			],
 		});
-		await expect(
-			vm.writeFile("/hostmnt/new.txt", "should fail"),
-		).rejects.toThrow("EROFS");
+		await vm.writeFile("/hostmnt/new.txt", "written");
+		expect(fs.readFileSync(path.join(tmpDir, "new.txt"), "utf8")).toBe(
+			"written",
+		);
 	});
 
 	test("write works when readOnly: false", async () => {

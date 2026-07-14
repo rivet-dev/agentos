@@ -1,14 +1,12 @@
 //! Process execution & management methods + supporting types.
 //!
-//! Ported from `packages/core/src/agent-os.ts` (process methods) and `runtime-compat.ts`
-//! (`ExecOptions`, `ExecResult`, `ProcessInfo`, etc.).
+//! Thin process protocol forwarding plus host callback/event routes.
 //!
 //! Two distinct process views: SDK-spawned processes (`processes` map, keyed by user-facing pid)
 //! back `spawn` + the stdin/stdout/stderr/exit subscriptions + `wait/list/get/stop/kill`; the kernel
-//! process table backs `exec`, `all_processes`, `process_tree`.
+//! process table backs `exec` and `all_processes`.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::Ordering;
 
 use anyhow::{Context, Result};
 use scc::HashMap as SccHashMap;
@@ -17,43 +15,22 @@ use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 
 use agentos_sidecar_client::wire::{self, EventPayload, ProcessSnapshotStatus, StreamChannel};
+use agentos_sidecar_client::{WireEventRecvError, WireEventSubscription};
 
-use crate::agent_os::{AgentOs, ProcessEntry};
-use crate::command_line::resolve_exec_command;
+use crate::agent_os::{AgentOs, ProcessEntry, ProcessExit};
 use crate::error::ClientError;
-use crate::stream::{ByteStream, Subscription};
+use crate::stream::{ByteStream, RoutedStreamEvent, Subscription};
 
 /// Broadcast channel capacity for a spawned process's stdout/stderr fan-out.
 const PROCESS_STREAM_CAPACITY: usize = 1024;
 
-/// Maximum SDK-spawned process entries retained per VM.
-const PROCESS_REGISTRY_LIMIT: usize = 1024;
-
-/// Maximum first-observed process timestamp entries retained per VM.
-const OBSERVED_PROCESS_TIME_LIMIT: usize = 4096;
-
-/// Maximum bytes captured by `exec` across stdout and stderr.
-const EXEC_OUTPUT_CAPTURE_LIMIT_BYTES: usize = 16 * 1024 * 1024;
-
-/// Default guest working directory for `exec`/`spawn`, matching the TS sidecar client.
-pub(crate) const DEFAULT_EXEC_CWD: &str = "/workspace";
-
-/// Base value for the synthetic display-pid sequence used by `spawn` (TS `SYNTHETIC_PID_BASE`). The
-/// first spawned process is assigned exactly this value.
-pub(crate) const SYNTHETIC_PID_BASE: u64 = 1_000_000;
+/// A lost output/exit route leaves the host unable to supervise the guest, so cleanup is always
+/// forceful and does not inherit a caller-selected graceful signal.
+const ROUTE_FAILURE_KILL_SIGNAL: &str = "SIGKILL";
 
 // ---------------------------------------------------------------------------
 // Supporting types
 // ---------------------------------------------------------------------------
-
-/// Timing-mitigation mode for an execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TimingMitigation {
-    #[default]
-    Off,
-    Freeze,
-}
 
 /// `stdin` value: a string or raw bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,11 +43,9 @@ pub enum StdinInput {
 /// per output chunk as it arrives. Never assume UTF-8: chunks are delivered as raw bytes.
 pub type OutputCallback = Box<dyn FnMut(&[u8]) + Send>;
 
-/// Base options shared by `exec` and `spawn`.
-///
 /// `on_stdout`/`on_stderr` mirror the TS `ExecOptions.onStdout`/`onStderr` raw-byte streaming
-/// callbacks. For `exec` they fire for the duration of the call; for `spawn` they are seeded into the
-/// stdout/stderr fan-out at spawn time (matching the TS initial-handler-set behavior).
+/// callbacks. They fire for the duration of the call.
+#[derive(Default)]
 pub struct ExecOptions {
     pub env: BTreeMap<String, String>,
     pub cwd: Option<String>,
@@ -79,26 +54,6 @@ pub struct ExecOptions {
     pub on_stdout: Option<OutputCallback>,
     pub on_stderr: Option<OutputCallback>,
     pub capture_stdio: Option<bool>,
-    pub file_path: Option<String>,
-    pub cpu_time_limit_ms: Option<f64>,
-    pub timing_mitigation: Option<TimingMitigation>,
-}
-
-impl Default for ExecOptions {
-    fn default() -> Self {
-        Self {
-            env: BTreeMap::new(),
-            cwd: Some(DEFAULT_EXEC_CWD.to_string()),
-            stdin: None,
-            timeout: None,
-            on_stdout: None,
-            on_stderr: None,
-            capture_stdio: None,
-            file_path: None,
-            cpu_time_limit_ms: None,
-            timing_mitigation: None,
-        }
-    }
 }
 
 /// Result of `exec`.
@@ -109,23 +64,14 @@ pub struct ExecResult {
     pub stderr: String,
 }
 
-/// `stdio` mode for a spawn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SpawnStdio {
-    #[default]
-    Pipe,
-    Inherit,
-}
-
-/// Options for `spawn` (extends [`ExecOptions`]).
+/// Options for a streaming spawned process.
 #[derive(Default)]
 pub struct SpawnOptions {
-    pub base: ExecOptions,
-    pub stdio: Option<SpawnStdio>,
-    pub stdin_fd: Option<i32>,
-    pub stdout_fd: Option<i32>,
-    pub stderr_fd: Option<i32>,
+    pub env: BTreeMap<String, String>,
+    pub cwd: Option<String>,
+    pub timeout: Option<f64>,
+    pub on_stdout: Option<OutputCallback>,
+    pub on_stderr: Option<OutputCallback>,
     pub stream_stdin: Option<bool>,
 }
 
@@ -154,6 +100,7 @@ pub struct SpawnHandle {
 #[serde(rename_all = "lowercase")]
 pub enum ProcessStatus {
     Running,
+    Stopped,
     Exited,
 }
 
@@ -177,69 +124,66 @@ pub struct ProcessInfo {
     pub exit_time: Option<f64>,
 }
 
-/// A node in the process forest (`ProcessInfo` + children).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ProcessTreeNode {
-    #[serde(flatten)]
-    pub info: ProcessInfo,
-    pub children: Vec<ProcessTreeNode>,
-}
-
 // ---------------------------------------------------------------------------
 // Methods
 // ---------------------------------------------------------------------------
 
 impl AgentOs {
     /// Run a command to completion. The wire `Execute` request starts the process and returns a
-    /// process id immediately; stdout/stderr are accumulated and the call resolves once the matching
-    /// `ProcessExited` event arrives. This mirrors the TS pass-through to `kernel.exec` semantically:
-    /// the result is the full captured stdout/stderr plus exit code.
+    /// process id immediately; the sidecar owns bounded stdout/stderr capture and returns it on the
+    /// matching `ProcessExited` event. The client only forwards callbacks and deserializes the
+    /// terminal result.
     pub async fn exec(&self, command: &str, options: ExecOptions) -> Result<ExecResult> {
-        // Parse the command line into a `(command, args)` pair the same way the sidecar's
-        // child_process path does: shell-free argv lists spawn directly (preserving the command's
-        // real exit code), while shell syntax or a builtin head runs under `sh -c <line>`.
-        let (resolved_command, resolved_args) = resolve_exec_command(command)?;
-        self.exec_argv(&resolved_command, &resolved_args, options)
-            .await
+        self.exec_request(None, Some(command), &[], options).await
     }
 
-    /// Run a command to completion from an already-structured `(command, args)` argv, bypassing the
-    /// `exec` command-line parser. Each `args` element is sent verbatim as a distinct argv element —
-    /// no whitespace re-splitting, no shell metacharacter detection, and no routing through
-    /// `sh -c`. Callers that already hold a structured argv (for example the cron `Exec` action)
-    /// must use this so the structured-argv contract is preserved end to end.
+    /// Run a command to completion from an already-structured `(command, args)` argv. Each `args`
+    /// element is sent verbatim as a distinct argv element. Callers that already hold structured
+    /// argv (for example the cron `Exec` action) use this instead of the raw command-line API.
     pub async fn exec_argv(
         &self,
         command: &str,
         args: &[String],
+        options: ExecOptions,
+    ) -> Result<ExecResult> {
+        self.exec_request(Some(command), None, args, options).await
+    }
+
+    async fn exec_request(
+        &self,
+        command: Option<&str>,
+        shell_command: Option<&str>,
+        args: &[String],
         mut options: ExecOptions,
     ) -> Result<ExecResult> {
-        let process_id = self.next_process_id();
+        let ownership = self.vm_scope();
 
-        // Subscribe to events BEFORE issuing the request so no output/exit is missed between the
-        // request landing and the subscription being installed.
-        let mut events = self.transport().subscribe_wire_events();
-
-        let resolved_command = command.to_owned();
+        let resolved_command = command.map(str::to_owned);
+        let resolved_shell_command = shell_command.map(str::to_owned);
         let resolved_args = args.to_vec();
-        let started = self
+        let timeout_ms = timeout_to_wire(options.timeout)?;
+        let capture_stdio = options.capture_stdio.unwrap_or(true);
+        let (started, mut events) = self
             .send_execute(
-                &process_id,
-                Some(resolved_command),
+                resolved_command,
+                resolved_shell_command,
                 resolved_args,
                 options.env.clone(),
                 options.cwd.clone(),
+                None,
+                timeout_ms,
+                Some(capture_stdio),
             )
             .await
             .context("exec: Execute request failed")?;
-        debug_assert_eq!(started.process_id, process_id);
+        let process_id = started.process_id;
 
         // Deliver any provided stdin, then close stdin so a non-interactive run observes EOF. This
         // mirrors the TS `runAndCapture` path (`proc.writeStdin(options.stdin); proc.closeStdin()`).
         if let Some(stdin) = options.stdin.take() {
             let chunk = stdin_to_bytes(stdin);
             let ownership = self.vm_scope();
-            let _ = self
+            let response = self
                 .transport()
                 .request_wire(
                     ownership,
@@ -248,11 +192,15 @@ impl AgentOs {
                         chunk,
                     }),
                 )
-                .await;
+                .await
+                .map_err(ClientError::from)?;
+            map_process_control_response(response, "exec write stdin", |response| {
+                matches!(response, wire::ResponsePayload::StdinWrittenResponse(_))
+            })?;
         }
         {
             let ownership = self.vm_scope();
-            let _ = self
+            let response = self
                 .transport()
                 .request_wire(
                     ownership,
@@ -260,198 +208,127 @@ impl AgentOs {
                         process_id: process_id.clone(),
                     }),
                 )
-                .await;
+                .await
+                .map_err(ClientError::from)?;
+            map_process_control_response(response, "exec close stdin", |response| {
+                matches!(response, wire::ResponsePayload::StdinClosedResponse(_))
+            })?;
         }
 
         let mut on_stdout = options.on_stdout.take();
         let mut on_stderr = options.on_stderr.take();
 
-        // A `timeout` (ms) bounds the run: when it elapses, SIGKILL the process and keep draining
-        // until the exit event lands. This mirrors the TS `runAndCapture` timeout race that kills the
-        // process and then awaits its exit code.
-        let timeout_deadline = options
-            .timeout
-            .filter(|ms| ms.is_finite() && *ms >= 0.0)
-            .map(|ms| {
-                tokio::time::Instant::now() + std::time::Duration::from_secs_f64(ms / 1000.0)
-            });
-        let mut killed_for_timeout = false;
-
-        let capture_stdio = options.capture_stdio.unwrap_or(true);
-        let mut stdout = Vec::<u8>::new();
-        let mut stderr = Vec::<u8>::new();
-        let mut captured_output_bytes = 0usize;
-        let mut capture_error: Option<ClientError> = None;
-        let exit_code = loop {
-            let recv = events.recv();
-            let frame = match timeout_deadline {
-                Some(deadline) => {
-                    tokio::select! {
-                        result = recv => result,
-                        _ = tokio::time::sleep_until(deadline), if !killed_for_timeout => {
-                            killed_for_timeout = true;
-                            self.kill_wire_process(&process_id, "SIGKILL");
-                            continue;
-                        }
-                    }
-                }
-                None => recv.await,
-            };
-            let (_, payload) = match frame {
-                Ok(frame) => frame,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => {
-                    return Err(ClientError::Sidecar(
-                        "exec: event stream closed before process exit".to_owned(),
-                    )
-                    .into());
-                }
-            };
-            match payload {
-                EventPayload::ProcessOutputEvent(output) if output.process_id == process_id => {
-                    match output.channel {
-                        StreamChannel::Stdout => {
-                            if let Some(cb) = on_stdout.as_mut() {
-                                cb(&output.chunk);
-                            }
-                            if capture_stdio && capture_error.is_none() {
-                                match append_exec_output(
-                                    &mut stdout,
-                                    &output.chunk,
-                                    &mut captured_output_bytes,
-                                    "stdout",
-                                ) {
-                                    Ok(()) => {}
-                                    Err(error) => {
-                                        self.kill_wire_process(&process_id, "SIGKILL");
-                                        capture_error = Some(error);
-                                    }
-                                }
-                            }
-                        }
-                        StreamChannel::Stderr => {
-                            if let Some(cb) = on_stderr.as_mut() {
-                                cb(&output.chunk);
-                            }
-                            if capture_stdio && capture_error.is_none() {
-                                match append_exec_output(
-                                    &mut stderr,
-                                    &output.chunk,
-                                    &mut captured_output_bytes,
-                                    "stderr",
-                                ) {
-                                    Ok(()) => {}
-                                    Err(error) => {
-                                        self.kill_wire_process(&process_id, "SIGKILL");
-                                        capture_error = Some(error);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                EventPayload::ProcessExitedEvent(exited) if exited.process_id == process_id => {
-                    break exited.exit_code;
-                }
-                EventPayload::ProcessOutputEvent(_)
-                | EventPayload::ProcessExitedEvent(_)
-                | EventPayload::VmLifecycleEvent(_)
-                | EventPayload::StructuredEvent(_)
-                | EventPayload::ExtEnvelope(_) => {}
+        let collected = collect_exec_events(
+            &ownership,
+            &process_id,
+            &mut events,
+            &mut on_stdout,
+            &mut on_stderr,
+        )
+        .await;
+        let (exit_code, stdout, stderr) = match collected {
+            Ok(result) => result,
+            Err(error @ ClientError::EventStreamLagged { .. }) => {
+                self.abort_wire_process_after_route_failure(&process_id, "exec")
+                    .await;
+                return Err(error.into());
             }
+            Err(error) => return Err(error.into()),
         };
-
-        if let Some(error) = capture_error {
-            return Err(error.into());
-        }
 
         Ok(ExecResult {
             exit_code,
-            stdout: String::from_utf8_lossy(&stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            stdout,
+            stderr,
         })
     }
 
-    /// Spawn a process. SYNC; returns `{ pid }` only. Installs stdout/stderr fan-out over broadcast
-    /// channels and wires exit via a background event-pump task. The user-facing `pid` is the
-    /// SDK-allocated map key (the wire `process_id` is held inside the [`ProcessEntry`]).
-    pub fn spawn(
+    /// Spawn a process and return the authoritative kernel pid supplied by the sidecar. Installs
+    /// stdout/stderr fan-out over broadcast channels and wires exit via a background event-pump task.
+    pub async fn spawn(
         &self,
         command: &str,
         args: Vec<String>,
         mut options: SpawnOptions,
     ) -> Result<SpawnHandle> {
-        let registry_guard = self.inner().process_registry_lock.lock();
-        self.prune_exited_processes_locked(1);
-        if self.process_registry_len_locked() >= PROCESS_REGISTRY_LIMIT {
-            return Err(ClientError::Sidecar(format!(
-                "process registry limit exceeded: at most {PROCESS_REGISTRY_LIMIT} processes can be tracked per VM"
-            ))
-            .into());
+        {
+            let _registry_guard = self.inner().process_registry_lock.lock();
+            self.prune_exited_processes_locked();
         }
 
-        // Draw the public pid from the dedicated synthetic-pid space (TS `nextSyntheticPid`), seeded
-        // at `SYNTHETIC_PID_BASE`. `exec` uses a separate counter so it never perturbs this sequence.
-        let pid = self
-            .inner()
-            .synthetic_pid_counter
-            .fetch_add(1, Ordering::SeqCst) as u32;
-        let process_id = format!("proc-{pid}-{}", uuid::Uuid::new_v4());
-
-        let (stdout_tx, _) = broadcast::channel::<Vec<u8>>(PROCESS_STREAM_CAPACITY);
-        let (stderr_tx, _) = broadcast::channel::<Vec<u8>>(PROCESS_STREAM_CAPACITY);
+        let (stdout_tx, _) =
+            broadcast::channel::<RoutedStreamEvent<Vec<u8>>>(PROCESS_STREAM_CAPACITY);
+        let (stderr_tx, _) =
+            broadcast::channel::<RoutedStreamEvent<Vec<u8>>>(PROCESS_STREAM_CAPACITY);
         // Seeded `None`; the already-exited branch of `on_process_exit` fires immediately once this
         // watch holds `Some(code)`.
-        let (exit_tx, _) = watch::channel::<Option<i32>>(None);
-        // Seeded `None`; filled with the kernel pid once the `Execute` response lands so
-        // `all_processes`/`process_tree` can remap the kernel snapshot back to this display pid.
-        let (kernel_pid_tx, _) = watch::channel::<Option<u32>>(None);
+        let (exit_tx, _) = watch::channel::<Option<ProcessExit>>(None);
 
         // Seed any caller-provided initial stdout/stderr callbacks into the fan-out, matching the TS
         // initial-handler-set behavior (`stdoutHandlers.add(options.onStdout)`). The spawned task
         // handles are retained on the entry so `shutdown` can abort them (the entry's own sender
         // clones keep the channel open, so the tasks never observe `Closed` on their own).
         let mut output_tasks = Vec::new();
-        if let Some(cb) = options.base.on_stdout.take() {
+        if let Some(cb) = options.on_stdout.take() {
             output_tasks.push(install_output_callback(stdout_tx.clone(), cb));
         }
-        if let Some(cb) = options.base.on_stderr.take() {
+        if let Some(cb) = options.on_stderr.take() {
             output_tasks.push(install_output_callback(stderr_tx.clone(), cb));
         }
 
+        let ownership = self.vm_scope();
+        let (started, events) = self
+            .send_execute(
+                Some(command.to_owned()),
+                None,
+                args.clone(),
+                options.env.clone(),
+                options.cwd.clone(),
+                options.stream_stdin,
+                timeout_to_wire(options.timeout)?,
+                None,
+            )
+            .await
+            .context("spawn: Execute request failed")?;
+        let process_id = started.process_id;
+        let pid = started.pid.ok_or_else(|| {
+            ClientError::Sidecar("spawn: sidecar did not return a kernel pid".to_owned())
+        })?;
+
         let entry = ProcessEntry {
-            command: command.to_owned(),
-            args: args.clone(),
             stdout_tx: stdout_tx.clone(),
             stderr_tx: stderr_tx.clone(),
             exit_tx: exit_tx.clone(),
             process_id: process_id.clone(),
-            kernel_pid: kernel_pid_tx.clone(),
+            terminal_sequence: std::sync::atomic::AtomicU64::new(0),
             output_tasks,
-            started_at: epoch_ms_now() as i64,
         };
-        // `spawn` is documented as overwriting any prior entry for a freshly allocated pid; the pid
-        // is monotonic so a collision is not expected.
-        let _ = self.inner().processes.insert(pid, entry);
-        drop(registry_guard);
-
-        // Subscribe to events before issuing the request so the pump sees everything.
-        let events = self.transport().subscribe_wire_events();
+        let registration_error = {
+            let _registry_guard = self.inner().process_registry_lock.lock();
+            self.prune_exited_processes_locked();
+            if self.inner().processes.insert(pid, entry).is_err() {
+                Some(ClientError::Sidecar(format!(
+                    "spawn: kernel pid {pid} is already tracked"
+                )))
+            } else {
+                None
+            }
+        };
+        if let Some(registration_error) = registration_error {
+            self.kill_wire_process(&process_id, "SIGKILL")
+                .await
+                .map_err(|cleanup_error| {
+                    ClientError::Sidecar(format!(
+                        "{registration_error}; process cleanup failed: {cleanup_error}"
+                    ))
+                })?;
+            return Err(registration_error.into());
+        }
 
         let this = self.clone();
-        let command = command.to_owned();
         tokio::spawn(async move {
-            this.run_spawn(
-                pid,
-                process_id,
-                command,
-                args,
-                options,
-                events,
-                stdout_tx,
-                stderr_tx,
-                exit_tx,
-                kernel_pid_tx,
+            this.run_spawn_events(
+                pid, ownership, process_id, events, stdout_tx, stderr_tx, exit_tx,
             )
             .await;
         });
@@ -459,67 +336,68 @@ impl AgentOs {
         Ok(SpawnHandle { pid })
     }
 
-    /// Write to a spawned process's stdin. SYNC. Errors with `ProcessNotFound`.
-    pub fn write_process_stdin(
+    /// Write to a spawned process's stdin and await the sidecar response.
+    pub async fn write_process_stdin(
         &self,
         pid: u32,
         data: StdinInput,
     ) -> std::result::Result<(), ClientError> {
         let process_id = self.lookup_process_id(pid)?;
         let chunk: Vec<u8> = stdin_to_bytes(data);
-        let this = self.clone();
-        // Fire-and-forget: the TS API is synchronous and does not surface a write error.
-        tokio::spawn(async move {
-            let ownership = this.vm_scope();
-            let _ = this
-                .transport()
-                .request_wire(
-                    ownership,
-                    wire::RequestPayload::WriteStdinRequest(wire::WriteStdinRequest {
-                        process_id,
-                        chunk,
-                    }),
-                )
-                .await;
-        });
-        Ok(())
+        let response = self
+            .transport()
+            .request_wire(
+                self.vm_scope(),
+                wire::RequestPayload::WriteStdinRequest(wire::WriteStdinRequest {
+                    process_id,
+                    chunk,
+                }),
+            )
+            .await
+            .map_err(ClientError::from)?;
+        map_process_control_response(response, "write_process_stdin", |response| {
+            matches!(response, wire::ResponsePayload::StdinWrittenResponse(_))
+        })
     }
 
-    /// Close a spawned process's stdin. SYNC. Errors with `ProcessNotFound`.
-    pub fn close_process_stdin(&self, pid: u32) -> std::result::Result<(), ClientError> {
+    /// Close a spawned process's stdin and await the sidecar response.
+    pub async fn close_process_stdin(&self, pid: u32) -> std::result::Result<(), ClientError> {
         let process_id = self.lookup_process_id(pid)?;
-        let this = self.clone();
-        tokio::spawn(async move {
-            let ownership = this.vm_scope();
-            let _ = this
-                .transport()
-                .request_wire(
-                    ownership,
-                    wire::RequestPayload::CloseStdinRequest(wire::CloseStdinRequest { process_id }),
-                )
-                .await;
-        });
-        Ok(())
+        let response = self
+            .transport()
+            .request_wire(
+                self.vm_scope(),
+                wire::RequestPayload::CloseStdinRequest(wire::CloseStdinRequest { process_id }),
+            )
+            .await
+            .map_err(ClientError::from)?;
+        map_process_control_response(response, "close_process_stdin", |response| {
+            matches!(response, wire::ResponsePayload::StdinClosedResponse(_))
+        })
     }
 
     /// Subscribe to a spawned process's stdout. No replay; multi-subscriber. Errors if unknown.
     pub fn on_process_stdout(&self, pid: u32) -> std::result::Result<ByteStream, ClientError> {
-        let rx = self
+        let (rx, exit) = self
             .inner()
             .processes
-            .read(&pid, |_, entry| entry.stdout_tx.subscribe())
+            .read(&pid, |_, entry| {
+                (entry.stdout_tx.subscribe(), entry.exit_tx.borrow().clone())
+            })
             .ok_or(ClientError::ProcessNotFound(pid))?;
-        Ok(ByteStream::new(rx))
+        Ok(byte_stream_for_process_route(rx, exit))
     }
 
     /// Subscribe to a spawned process's stderr. No replay; multi-subscriber. Errors if unknown.
     pub fn on_process_stderr(&self, pid: u32) -> std::result::Result<ByteStream, ClientError> {
-        let rx = self
+        let (rx, exit) = self
             .inner()
             .processes
-            .read(&pid, |_, entry| entry.stderr_tx.subscribe())
+            .read(&pid, |_, entry| {
+                (entry.stderr_tx.subscribe(), entry.exit_tx.borrow().clone())
+            })
             .ok_or(ClientError::ProcessNotFound(pid))?;
-        Ok(ByteStream::new(rx))
+        Ok(byte_stream_for_process_route(rx, exit))
     }
 
     /// Register a once-only exit handler. If the process has already exited, the handler fires
@@ -538,8 +416,18 @@ impl AgentOs {
             .ok_or(ClientError::ProcessNotFound(pid))?;
 
         // Already-exited branch: fire immediately + synchronously, return a no-op unsubscribe.
-        if let Some(code) = *rx.borrow() {
-            handler(code);
+        if let Some(exit) = rx.borrow().clone() {
+            match exit {
+                ProcessExit::Exited(code) => handler(code),
+                ProcessExit::EventStreamLagged { skipped } => tracing::error!(
+                    pid,
+                    skipped,
+                    "process exit subscription failed because its event route lagged"
+                ),
+                ProcessExit::EventStreamClosed => {
+                    tracing::error!(pid, "process exit subscription event route closed")
+                }
+            }
             return Ok(Subscription::noop());
         }
 
@@ -547,8 +435,18 @@ impl AgentOs {
         // returned `Subscription` cancels the waiting task on drop (= unsubscribe).
         let task = tokio::spawn(async move {
             while rx.changed().await.is_ok() {
-                if let Some(code) = *rx.borrow() {
-                    handler(code);
+                if let Some(exit) = rx.borrow().clone() {
+                    match exit {
+                        ProcessExit::Exited(code) => handler(code),
+                        ProcessExit::EventStreamLagged { skipped } => tracing::error!(
+                            pid,
+                            skipped,
+                            "process exit subscription failed because its event route lagged"
+                        ),
+                        ProcessExit::EventStreamClosed => {
+                            tracing::error!(pid, "process exit subscription event route closed")
+                        }
+                    }
                     return;
                 }
             }
@@ -565,12 +463,12 @@ impl AgentOs {
             .read(&pid, |_, entry| entry.exit_tx.subscribe())
             .ok_or(ClientError::ProcessNotFound(pid))?;
 
-        if let Some(code) = *rx.borrow() {
-            return Ok(code);
+        if let Some(exit) = rx.borrow().clone() {
+            return process_exit_result(exit);
         }
         while rx.changed().await.is_ok() {
-            if let Some(code) = *rx.borrow() {
-                return Ok(code);
+            if let Some(exit) = rx.borrow().clone() {
+                return process_exit_result(exit);
             }
         }
         Err(ClientError::Sidecar(format!(
@@ -578,270 +476,126 @@ impl AgentOs {
         )))
     }
 
-    /// List SDK-spawned processes only. `running = exit_code.is_none()`.
-    pub fn list_processes(&self) -> Vec<SpawnedProcessInfo> {
-        let mut out = Vec::new();
-        self.inner().processes.scan(|pid, entry| {
-            let exit_code = *entry.exit_tx.borrow();
-            out.push(SpawnedProcessInfo {
-                pid: *pid,
-                command: entry.command.clone(),
-                args: entry.args.clone(),
-                running: exit_code.is_none(),
-                exit_code,
-                started_at: entry.started_at,
-            });
+    /// List SDK-spawned processes using the sidecar's authoritative process snapshot.
+    pub async fn list_processes(
+        &self,
+    ) -> std::result::Result<Vec<SpawnedProcessInfo>, ClientError> {
+        let mut tracked_pids = std::collections::BTreeSet::new();
+        self.inner().processes.scan(|pid, _| {
+            tracked_pids.insert(*pid);
         });
-        out
+
+        let mut process_by_pid: BTreeMap<u32, ProcessInfo> = self
+            .process_snapshot()
+            .await?
+            .into_iter()
+            .map(|process| (process.pid, process))
+            .collect();
+        tracked_pids
+            .into_iter()
+            .map(|pid| {
+                process_by_pid
+                    .remove(&pid)
+                    .map(spawned_process_info_from_snapshot)
+                    .ok_or_else(|| {
+                        ClientError::Sidecar(format!(
+                            "sidecar process snapshot is missing tracked process: {pid}"
+                        ))
+                    })
+            })
+            .collect()
     }
 
     /// List ALL kernel processes (native sidecar process snapshot).
     ///
-    /// The kernel snapshot keys processes by their raw kernel pid. SDK-spawned root processes carry a
-    /// synthetic display pid (the `spawn` return value); this remaps each snapshot entry's
-    /// pid/ppid/pgid/sid back to that display pid via the per-process `kernel_pid` watch, so a caller
-    /// can correlate `spawn()` with `all_processes()`/`process_tree()`. Results are sorted ascending
-    /// by display pid (TS `snapshotProcesses` `.sort((l,r) => l.pid - r.pid)`).
+    /// Results use the kernel pid/ppid/pgid/sid returned by the sidecar without client remapping.
     pub async fn all_processes(&self) -> Result<Vec<ProcessInfo>> {
+        self.process_snapshot().await.map_err(Into::into)
+    }
+
+    async fn process_snapshot(&self) -> std::result::Result<Vec<ProcessInfo>, ClientError> {
         let ownership = self.vm_scope();
         let response = self
             .transport()
             .request_wire(ownership, wire::RequestPayload::GetProcessSnapshotRequest)
             .await
-            .context("all_processes: GetProcessSnapshot request failed")?;
+            .map_err(ClientError::from)?;
         let snapshot = match response {
             wire::ResponsePayload::ProcessSnapshotResponse(snapshot) => snapshot,
             wire::ResponsePayload::RejectedResponse(wire::RejectedResponse { code, message }) => {
-                return Err(ClientError::Kernel { code, message }.into());
+                return Err(ClientError::Kernel { code, message });
             }
             other => {
                 return Err(ClientError::Sidecar(format!(
                     "all_processes: unexpected response {other:?}"
-                ))
-                .into());
+                )));
             }
         };
 
-        // Snapshot the SDK process registry, keyed by wire `process_id`, capturing exit code,
-        // command, and args. This mirrors the TS `trackedProcessesById` lookup used to build
-        // `displayPidByKernelPid` and override fields.
-        struct Tracked {
-            exit_code: Option<i32>,
-            command: String,
-            args: Vec<String>,
-        }
-        let mut tracked_by_process_id: BTreeMap<String, Tracked> = BTreeMap::new();
-        let mut display_pid_by_kernel_pid: BTreeMap<u32, u32> = BTreeMap::new();
-        self.inner().processes.scan(|display_pid, entry| {
-            let exit_code = *entry.exit_tx.borrow();
-            if let Some(kernel_pid) = *entry.kernel_pid.borrow() {
-                display_pid_by_kernel_pid.insert(kernel_pid, *display_pid);
-            }
-            tracked_by_process_id.insert(
-                entry.process_id.clone(),
-                Tracked {
-                    exit_code,
-                    command: entry.command.clone(),
-                    args: entry.args.clone(),
-                },
-            );
-        });
-
-        let now_ms = epoch_ms_now();
-        let mut seen_display_pids: std::collections::BTreeSet<u32> =
-            std::collections::BTreeSet::new();
-        let mut out: Vec<ProcessInfo> = Vec::new();
-
-        for entry in snapshot.processes {
-            let tracked = tracked_by_process_id.get(&entry.process_id);
-            let display_pid = display_pid_by_kernel_pid
-                .get(&entry.pid)
-                .copied()
-                .unwrap_or(entry.pid);
-            let display_ppid = display_pid_by_kernel_pid
-                .get(&entry.ppid)
-                .copied()
-                .unwrap_or(entry.ppid);
-            let display_pgid = display_pid_by_kernel_pid
-                .get(&entry.pgid)
-                .copied()
-                .unwrap_or(entry.pgid);
-            let display_sid = display_pid_by_kernel_pid
-                .get(&entry.sid)
-                .copied()
-                .unwrap_or(entry.sid);
-
-            // First-observed start time, keyed by `"<process_id>:<kernel_pid>"` (TS `processKey`).
-            let process_key = format!("{}:{}", entry.process_id, entry.pid);
-            let start_time = self.observed_start_time(&process_key, now_ms);
-
-            // Status/exit code: a tracked process whose SDK exit code is known is `exited`; otherwise
-            // a tracked process is `running`; an untracked process uses the snapshot status.
-            let (status, exit_code) = match tracked {
-                Some(t) => match t.exit_code {
-                    Some(code) => (ProcessStatus::Exited, Some(code)),
-                    None => (ProcessStatus::Running, entry.exit_code),
-                },
-                None => {
-                    let status = match entry.status {
-                        ProcessSnapshotStatus::Running | ProcessSnapshotStatus::Stopped => {
-                            ProcessStatus::Running
-                        }
-                        ProcessSnapshotStatus::Exited => ProcessStatus::Exited,
-                    };
-                    (status, entry.exit_code)
-                }
-            };
-
-            // Exit time: only tracked-and-exited processes carry one (TS `tracked?.exitTime`).
-            let exit_time = match (tracked, status) {
-                (Some(_), ProcessStatus::Exited) => {
-                    Some(self.observed_exit_time(&entry.process_id, now_ms))
-                }
-                _ => None,
-            };
-
-            let (command, args) = match tracked {
-                Some(t) => (t.command.clone(), t.args.clone()),
-                None => (entry.command, entry.args),
-            };
-
-            seen_display_pids.insert(display_pid);
-            out.push(ProcessInfo {
-                pid: display_pid,
-                ppid: display_ppid,
-                pgid: display_pgid,
-                sid: display_sid,
-                driver: entry.driver,
-                command,
-                args,
-                cwd: entry.cwd,
-                status,
-                exit_code,
-                start_time,
-                exit_time,
-            });
-        }
-
-        // Tracked processes not yet present in the snapshot (the spawn `Execute` has not surfaced in
-        // the kernel table yet). TS fills these with `ppid:0, pgid/sid = pid`.
-        self.inner().processes.scan(|display_pid, entry| {
-            if seen_display_pids.contains(display_pid) {
-                return;
-            }
-            let exit_code = *entry.exit_tx.borrow();
-            let process_key = format!("{}:{}", entry.process_id, display_pid);
-            let start_time = self.observed_start_time(&process_key, now_ms);
-            let (status, exit_time) = match exit_code {
-                Some(_) => (
-                    ProcessStatus::Exited,
-                    Some(self.observed_exit_time(&entry.process_id, now_ms)),
-                ),
-                None => (ProcessStatus::Running, None),
-            };
-            out.push(ProcessInfo {
-                pid: *display_pid,
-                ppid: 0,
-                pgid: *display_pid,
-                sid: *display_pid,
-                driver: String::new(),
-                command: entry.command.clone(),
-                args: entry.args.clone(),
-                cwd: String::new(),
-                status,
-                exit_code,
-                start_time,
-                exit_time,
-            });
-        });
+        let mut out: Vec<ProcessInfo> = snapshot
+            .processes
+            .into_iter()
+            .map(process_info_from_snapshot_entry)
+            .collect();
 
         out.sort_by_key(|info| info.pid);
         Ok(out)
     }
 
-    /// Return the first-observed start time for a process key, recording `now` the first time it is
-    /// seen so later snapshots report a stable timestamp (TS `observedProcessStartTimes`).
-    fn observed_start_time(&self, process_key: &str, now_ms: f64) -> f64 {
-        let _guard = self.inner().observed_process_time_lock.lock();
-        if let Some(existing) = self
-            .inner()
-            .observed_process_start_times
-            .read(process_key, |_, value| *value)
-        {
-            return existing;
+    pub(crate) async fn process_snapshot_entry_by_id(
+        &self,
+        process_id: &str,
+    ) -> std::result::Result<Option<wire::ProcessSnapshotEntry>, ClientError> {
+        let response = self
+            .transport()
+            .request_wire(
+                self.vm_scope(),
+                wire::RequestPayload::GetProcessSnapshotRequest,
+            )
+            .await
+            .map_err(ClientError::from)?;
+        match response {
+            wire::ResponsePayload::ProcessSnapshotResponse(snapshot) => Ok(snapshot
+                .processes
+                .into_iter()
+                .find(|process| process.process_id == process_id)),
+            wire::ResponsePayload::RejectedResponse(wire::RejectedResponse { code, message }) => {
+                Err(ClientError::Kernel { code, message })
+            }
+            other => Err(ClientError::Sidecar(format!(
+                "process snapshot lookup: unexpected response {other:?}"
+            ))),
         }
-        let _ = self
-            .inner()
-            .observed_process_start_times
-            .insert(process_key.to_owned(), now_ms);
-        prune_string_f64_map(
-            &self.inner().observed_process_start_times,
-            OBSERVED_PROCESS_TIME_LIMIT,
-        );
-        // Re-read to honor a racing insert that may have won; either value is a valid first-observed
-        // timestamp.
-        self.inner()
-            .observed_process_start_times
-            .read(process_key, |_, value| *value)
-            .unwrap_or(now_ms)
     }
 
-    /// Return the first-observed exit time for an SDK process id, recording `now` on first sight.
-    fn observed_exit_time(&self, process_id: &str, now_ms: f64) -> f64 {
-        let _guard = self.inner().observed_process_time_lock.lock();
-        if let Some(existing) = self
-            .inner()
-            .observed_process_exit_times
-            .read(process_id, |_, value| *value)
-        {
-            return existing;
+    /// Get one SDK-spawned process from the sidecar's authoritative process snapshot.
+    pub async fn get_process(
+        &self,
+        pid: u32,
+    ) -> std::result::Result<SpawnedProcessInfo, ClientError> {
+        if !self.inner().processes.contains(&pid) {
+            return Err(ClientError::ProcessNotFound(pid));
         }
-        let _ = self
-            .inner()
-            .observed_process_exit_times
-            .insert(process_id.to_owned(), now_ms);
-        prune_string_f64_map(
-            &self.inner().observed_process_exit_times,
-            OBSERVED_PROCESS_TIME_LIMIT,
-        );
-        self.inner()
-            .observed_process_exit_times
-            .read(process_id, |_, value| *value)
-            .unwrap_or(now_ms)
-    }
-
-    /// Build the process forest from `all_processes`, linked by `ppid`.
-    pub async fn process_tree(&self) -> Result<Vec<ProcessTreeNode>> {
-        let processes = self.all_processes().await?;
-        Ok(build_process_forest(processes))
-    }
-
-    /// Get a single SDK-spawned process's info. Errors (not None) when not found.
-    pub fn get_process(&self, pid: u32) -> std::result::Result<SpawnedProcessInfo, ClientError> {
-        self.inner()
-            .processes
-            .read(&pid, |pid, entry| {
-                let exit_code = *entry.exit_tx.borrow();
-                SpawnedProcessInfo {
-                    pid: *pid,
-                    command: entry.command.clone(),
-                    args: entry.args.clone(),
-                    running: exit_code.is_none(),
-                    exit_code,
-                    started_at: entry.started_at,
-                }
+        self.process_snapshot()
+            .await?
+            .into_iter()
+            .find(|process| process.pid == pid)
+            .map(spawned_process_info_from_snapshot)
+            .ok_or_else(|| {
+                ClientError::Sidecar(format!(
+                    "sidecar process snapshot is missing tracked process: {pid}"
+                ))
             })
-            .ok_or(ClientError::ProcessNotFound(pid))
     }
 
     /// SIGTERM a spawned process. No-op if already exited; errors if unknown.
-    pub fn stop_process(&self, pid: u32) -> std::result::Result<(), ClientError> {
-        self.signal_process(pid, "SIGTERM")
+    pub async fn stop_process(&self, pid: u32) -> std::result::Result<(), ClientError> {
+        self.signal_process(pid, "SIGTERM").await
     }
 
     /// SIGKILL a spawned process. No-op if already exited; errors if unknown.
-    pub fn kill_process(&self, pid: u32) -> std::result::Result<(), ClientError> {
-        self.signal_process(pid, "SIGKILL")
+    pub async fn kill_process(&self, pid: u32) -> std::result::Result<(), ClientError> {
+        self.signal_process(pid, "SIGKILL").await
     }
 
     // -----------------------------------------------------------------------
@@ -857,12 +611,6 @@ impl AgentOs {
         })
     }
 
-    /// Allocate a fresh wire `process_id` (used by `exec`, which does not register in the SDK map).
-    fn next_process_id(&self) -> String {
-        let n = self.inner().process_counter.fetch_add(1, Ordering::SeqCst);
-        format!("proc-{n}-{}", uuid::Uuid::new_v4())
-    }
-
     /// Resolve the wire `process_id` for an SDK pid, erroring with `ProcessNotFound` if unknown.
     fn lookup_process_id(&self, pid: u32) -> std::result::Result<String, ClientError> {
         self.inner()
@@ -872,33 +620,45 @@ impl AgentOs {
     }
 
     /// Send the `Execute` wire request, mapping a rejection into [`ClientError::Kernel`].
+    #[allow(clippy::too_many_arguments)]
     async fn send_execute(
         &self,
-        process_id: &str,
         command: Option<String>,
+        shell_command: Option<String>,
         args: Vec<String>,
         env: BTreeMap<String, String>,
         cwd: Option<String>,
-    ) -> std::result::Result<wire::ProcessStartedResponse, ClientError> {
+        keep_stdin_open: Option<bool>,
+        timeout_ms: Option<u64>,
+        capture_output: Option<bool>,
+    ) -> std::result::Result<(wire::ProcessStartedResponse, WireEventSubscription), ClientError>
+    {
         let ownership = self.vm_scope();
-        let response = self
+        let (response, events) = self
             .transport()
-            .request_wire(
+            .request_wire_with_process_events(
                 ownership,
-                wire::RequestPayload::ExecuteRequest(wire::ExecuteRequest {
-                    process_id: process_id.to_owned(),
+                wire::RequestPayload::ExecuteRequest(build_process_execute_request(
                     command,
-                    runtime: None,
-                    entrypoint: None,
+                    shell_command,
                     args,
-                    env: env.into_iter().collect(),
+                    env,
                     cwd,
-                    wasm_permission_tier: None,
-                }),
+                    keep_stdin_open,
+                    timeout_ms,
+                    capture_output,
+                )),
             )
             .await?;
         match response {
-            wire::ResponsePayload::ProcessStartedResponse(started) => Ok(started),
+            wire::ResponsePayload::ProcessStartedResponse(started) => {
+                let events = events.ok_or_else(|| {
+                    ClientError::Sidecar(String::from(
+                        "Execute: sidecar response did not bind a process event route",
+                    ))
+                })?;
+                Ok((started, events))
+            }
             wire::ResponsePayload::RejectedResponse(wire::RejectedResponse { code, message }) => {
                 Err(ClientError::Kernel { code, message })
             }
@@ -908,240 +668,361 @@ impl AgentOs {
         }
     }
 
-    /// Fire-and-forget kill of a wire process by its `process_id` (used by `exec` timeout). The TS
-    /// timeout path calls `proc.kill(9)`, which maps to a `SIGKILL` kill request.
-    fn kill_wire_process(&self, process_id: &str, signal: &str) {
-        let process_id = process_id.to_owned();
-        let signal = signal.to_owned();
-        let this = self.clone();
-        tokio::spawn(async move {
-            let ownership = this.vm_scope();
-            let _ = this
-                .transport()
-                .request_wire(
-                    ownership,
-                    wire::RequestPayload::KillProcessRequest(wire::KillProcessRequest {
-                        process_id,
-                        signal,
-                    }),
-                )
-                .await;
+    /// Kill a wire process and await the sidecar response.
+    pub(crate) async fn kill_wire_process(
+        &self,
+        process_id: &str,
+        signal: &str,
+    ) -> std::result::Result<(), ClientError> {
+        let response = self
+            .transport()
+            .request_wire(
+                self.vm_scope(),
+                wire::RequestPayload::KillProcessRequest(wire::KillProcessRequest {
+                    process_id: process_id.to_owned(),
+                    signal: signal.to_owned(),
+                }),
+            )
+            .await
+            .map_err(ClientError::from)?;
+        map_process_control_response(response, "kill_process", |response| {
+            matches!(response, wire::ResponsePayload::ProcessKilledResponse(_))
+        })
+    }
+
+    pub(crate) async fn abort_wire_process_after_route_failure(
+        &self,
+        process_id: &str,
+        route: &'static str,
+    ) {
+        let result = self
+            .kill_wire_process(process_id, ROUTE_FAILURE_KILL_SIGNAL)
+            .await;
+        handle_route_failure_abort_result(result, process_id, route, || {
+            self.transport().kill_child();
         });
     }
 
     /// Send a kill signal for an SDK pid. No-op if already exited; errors with `ProcessNotFound` if
     /// the pid is unknown.
-    fn signal_process(&self, pid: u32, signal: &str) -> std::result::Result<(), ClientError> {
-        let (process_id, already_exited) = self
-            .inner()
-            .processes
-            .read(&pid, |_, entry| {
-                (entry.process_id.clone(), entry.exit_tx.borrow().is_some())
-            })
-            .ok_or(ClientError::ProcessNotFound(pid))?;
-        if already_exited {
-            return Ok(());
-        }
-        let signal = signal.to_owned();
-        let this = self.clone();
-        tokio::spawn(async move {
-            let ownership = this.vm_scope();
-            let _ = this
-                .transport()
-                .request_wire(
-                    ownership,
-                    wire::RequestPayload::KillProcessRequest(wire::KillProcessRequest {
-                        process_id,
-                        signal,
-                    }),
-                )
-                .await;
-        });
-        Ok(())
-    }
-
-    fn process_registry_len_locked(&self) -> usize {
-        let mut count = 0usize;
-        self.inner().processes.scan(|_, _| {
-            count += 1;
-        });
-        count
-    }
-
-    fn prune_exited_processes_locked(&self, reserve_slots: usize) {
-        let mut entries = Vec::new();
-        self.inner().processes.scan(|pid, entry| {
-            entries.push((*pid, entry.exit_tx.borrow().is_some()));
-        });
-        let target_len = PROCESS_REGISTRY_LIMIT.saturating_sub(reserve_slots);
-        if entries.len() <= target_len {
-            return;
-        }
-
-        for pid in exited_pids_to_prune(entries, target_len) {
-            self.remove_process_tracking_locked(pid);
-        }
-    }
-
-    fn remove_process_tracking_locked(&self, pid: u32) {
-        if let Some((_, entry)) = self.inner().processes.remove(&pid) {
-            let _time_guard = self.inner().observed_process_time_lock.lock();
-            let _ = self
-                .inner()
-                .observed_process_exit_times
-                .remove(&entry.process_id);
-            let fallback_start_key = format!("{}:{pid}", entry.process_id);
-            let _ = self
-                .inner()
-                .observed_process_start_times
-                .remove(&fallback_start_key);
-            if let Some(kernel_pid) = *entry.kernel_pid.borrow() {
-                let start_key = format!("{}:{kernel_pid}", entry.process_id);
-                let _ = self.inner().observed_process_start_times.remove(&start_key);
+    async fn signal_process(&self, pid: u32, signal: &str) -> std::result::Result<(), ClientError> {
+        let process_id = self.lookup_process_id(pid)?;
+        let response = self
+            .transport()
+            .request_wire(
+                self.vm_scope(),
+                wire::RequestPayload::KillProcessRequest(wire::KillProcessRequest {
+                    process_id,
+                    signal: signal.to_owned(),
+                }),
+            )
+            .await
+            .map_err(ClientError::from)?;
+        match response {
+            wire::ResponsePayload::ProcessKilledResponse(_) => Ok(()),
+            wire::ResponsePayload::RejectedResponse(wire::RejectedResponse { code, message }) => {
+                Err(ClientError::Kernel { code, message })
             }
+            other => Err(ClientError::Sidecar(format!(
+                "kill_process: unexpected response {other:?}"
+            ))),
         }
     }
 
-    /// Background pump for a spawned process: issue the `Execute` request, then fan kernel
-    /// `ProcessOutput`/`ProcessExited` events for this process id into the per-process broadcast and
+    fn prune_exited_processes_locked(&self) {
+        prune_terminal_processes(
+            &self.inner().processes,
+            self.inner().process_route_retention,
+        );
+    }
+
+    /// Background pump for a spawned process: fan kernel `ProcessOutput`/`ProcessExited` events for
+    /// this process id into the per-process broadcast and
     /// watch channels. Exited entries are retained for post-exit inspection, then pruned oldest-first
     /// under registry pressure.
     #[allow(clippy::too_many_arguments)]
-    async fn run_spawn(
+    async fn run_spawn_events(
         self,
         pid: u32,
+        ownership: wire::OwnershipScope,
         process_id: String,
-        command: String,
-        args: Vec<String>,
-        options: SpawnOptions,
-        mut events: broadcast::Receiver<(wire::OwnershipScope, EventPayload)>,
-        stdout_tx: broadcast::Sender<Vec<u8>>,
-        stderr_tx: broadcast::Sender<Vec<u8>>,
-        exit_tx: watch::Sender<Option<i32>>,
-        kernel_pid_tx: watch::Sender<Option<u32>>,
+        mut events: WireEventSubscription,
+        stdout_tx: broadcast::Sender<RoutedStreamEvent<Vec<u8>>>,
+        stderr_tx: broadcast::Sender<RoutedStreamEvent<Vec<u8>>>,
+        exit_tx: watch::Sender<Option<ProcessExit>>,
     ) {
-        match self
-            .send_execute(
-                &process_id,
-                Some(command),
-                args,
-                options.base.env.clone(),
-                options.base.cwd.clone(),
-            )
-            .await
-        {
-            Ok(started) => {
-                // Seed the kernel pid so `all_processes`/`process_tree` can remap this process's
-                // kernel-snapshot entry back to its display pid.
-                if let Some(kernel_pid) = started.pid {
-                    let _ = kernel_pid_tx.send(Some(kernel_pid));
-                }
-            }
-            Err(error) => {
-                // The native TS launch-failure path emits the error message (plus a trailing
-                // newline) on stderr and resolves the wait with exit code 1 (`startTrackedProcess`
-                // catch -> stderr handlers + `finishProcess(entry, 1)`).
-                let message = format!("{error}\n");
-                let _ = stderr_tx.send(message.into_bytes());
-                tracing::error!(?error, pid, %process_id, "spawn: Execute request failed");
-                let _ = exit_tx.send(Some(1));
-                let _guard = self.inner().process_registry_lock.lock();
-                self.prune_exited_processes_locked(0);
-                return;
-            }
-        }
-
         loop {
-            let (_, payload) = match events.recv().await {
-                Ok(frame) => frame,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => {
-                    // The event stream closed before an exit event landed. The TS fallback treats a
-                    // process that has fully disappeared from the VM snapshot as reaped with exit
-                    // code 0; mirror that terminal value so waiters resolve instead of hanging.
-                    let _ = exit_tx.send(Some(0));
+            let event = match events.recv().await {
+                Ok(event) => event,
+                Err(WireEventRecvError::Lagged { skipped }) => {
+                    let _ = stdout_tx.send(RoutedStreamEvent::Lagged { skipped });
+                    let _ = stderr_tx.send(RoutedStreamEvent::Lagged { skipped });
+                    let _ = exit_tx.send(Some(ProcessExit::EventStreamLagged { skipped }));
+                    self.abort_wire_process_after_route_failure(&process_id, "spawn")
+                        .await;
+                    break;
+                }
+                Err(WireEventRecvError::Closed) => {
+                    let _ = stdout_tx.send(RoutedStreamEvent::Closed {
+                        context: "process output route closed before process exit",
+                    });
+                    let _ = stderr_tx.send(RoutedStreamEvent::Closed {
+                        context: "process output route closed before process exit",
+                    });
+                    let _ = exit_tx.send(Some(ProcessExit::EventStreamClosed));
                     break;
                 }
             };
-            match payload {
+            if event.ownership != ownership {
+                continue;
+            }
+            match &event.payload {
                 EventPayload::ProcessOutputEvent(output) if output.process_id == process_id => {
-                    let bytes = output.chunk;
+                    let bytes = output.chunk.clone();
                     match output.channel {
                         StreamChannel::Stdout => {
-                            let _ = stdout_tx.send(bytes);
+                            let _ = stdout_tx.send(RoutedStreamEvent::Data(bytes));
                         }
                         StreamChannel::Stderr => {
-                            let _ = stderr_tx.send(bytes);
+                            let _ = stderr_tx.send(RoutedStreamEvent::Data(bytes));
                         }
                     }
                 }
                 EventPayload::ProcessExitedEvent(exited) if exited.process_id == process_id => {
-                    let _ = exit_tx.send(Some(exited.exit_code));
+                    let _ = exit_tx.send(Some(ProcessExit::Exited(exited.exit_code)));
                     break;
                 }
                 EventPayload::ProcessOutputEvent(_)
                 | EventPayload::ProcessExitedEvent(_)
+                | EventPayload::CronDispatchEvent(_)
                 | EventPayload::VmLifecycleEvent(_)
                 | EventPayload::StructuredEvent(_)
                 | EventPayload::ExtEnvelope(_) => {}
             }
         }
         let _guard = self.inner().process_registry_lock.lock();
-        self.prune_exited_processes_locked(0);
+        let terminal_sequence = self
+            .inner()
+            .next_process_terminal_sequence
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        record_process_terminal_and_prune(
+            &self.inner().processes,
+            pid,
+            terminal_sequence,
+            self.inner().process_route_retention,
+        );
     }
 }
 
-/// Assemble a process forest from a flat process list, linking children by `ppid`.
-///
-/// Mirrors the TS `processTree` `nodeMap` algorithm exactly: a process is a root iff its `ppid` is
-/// NOT present among the listed pids. A self-parented process (`ppid == pid`) finds itself as its
-/// parent, so it is attached as its own child and is excluded from the roots (effectively dropped
-/// from the output tree). A `seen` guard prevents the self-cycle from recursing forever.
-fn build_process_forest(processes: Vec<ProcessInfo>) -> Vec<ProcessTreeNode> {
-    use std::collections::BTreeMap as Map;
+#[allow(clippy::too_many_arguments)]
+fn build_process_execute_request(
+    command: Option<String>,
+    shell_command: Option<String>,
+    args: Vec<String>,
+    env: BTreeMap<String, String>,
+    cwd: Option<String>,
+    keep_stdin_open: Option<bool>,
+    timeout_ms: Option<u64>,
+    capture_output: Option<bool>,
+) -> wire::ExecuteRequest {
+    wire::ExecuteRequest {
+        process_id: None,
+        command,
+        shell_command,
+        runtime: None,
+        entrypoint: None,
+        args,
+        env: (!env.is_empty()).then(|| env.into_iter().collect()),
+        cwd,
+        wasm_permission_tier: None,
+        pty: None,
+        keep_stdin_open,
+        timeout_ms,
+        capture_output,
+    }
+}
 
-    let pids: std::collections::BTreeSet<u32> = processes.iter().map(|p| p.pid).collect();
-    // Children adjacency keyed by parent pid, preserving input (sorted) order.
-    let mut children_of: Map<u32, Vec<usize>> = Map::new();
-    let mut roots: Vec<usize> = Vec::new();
-    for (index, proc) in processes.iter().enumerate() {
-        if pids.contains(&proc.ppid) {
-            children_of.entry(proc.ppid).or_default().push(index);
-        } else {
-            roots.push(index);
+fn handle_route_failure_abort_result(
+    result: std::result::Result<(), ClientError>,
+    process_id: &str,
+    route: &'static str,
+    fail_closed: impl FnOnce(),
+) {
+    match result {
+        Ok(()) => {}
+        Err(ClientError::Kernel { code, .. }) if code == "ENOENT" || code == "ESRCH" => {}
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                process_id,
+                route,
+                "failed to abort process after event-route loss; killing the sidecar to avoid an orphaned guest"
+            );
+            fail_closed();
         }
     }
+}
 
-    fn build_node(
-        index: usize,
-        processes: &[ProcessInfo],
-        children_of: &Map<u32, Vec<usize>>,
-        seen: &mut std::collections::BTreeSet<usize>,
-    ) -> ProcessTreeNode {
-        let info = processes[index].clone();
-        seen.insert(index);
-        let child_indices: Vec<usize> = children_of
-            .get(&info.pid)
-            .map(|indices| {
-                indices
-                    .iter()
-                    .copied()
-                    .filter(|child_index| !seen.contains(child_index))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let children = child_indices
-            .into_iter()
-            .map(|child_index| build_node(child_index, processes, children_of, seen))
-            .collect();
-        ProcessTreeNode { info, children }
+async fn collect_exec_events(
+    ownership: &wire::OwnershipScope,
+    process_id: &str,
+    events: &mut WireEventSubscription,
+    on_stdout: &mut Option<OutputCallback>,
+    on_stderr: &mut Option<OutputCallback>,
+) -> std::result::Result<(i32, String, String), ClientError> {
+    loop {
+        let event = match events.recv().await {
+            Ok(event) => event,
+            Err(WireEventRecvError::Lagged { skipped }) => {
+                return Err(ClientError::EventStreamLagged { skipped });
+            }
+            Err(WireEventRecvError::Closed) => {
+                return Err(ClientError::EventStreamClosed {
+                    context: "exec process exit",
+                });
+            }
+        };
+        if &event.ownership != ownership {
+            continue;
+        }
+        if let Some(result) = apply_exec_event(&event, process_id, on_stdout, on_stderr)? {
+            return Ok(result);
+        }
     }
+}
 
-    let mut seen = std::collections::BTreeSet::new();
-    roots
-        .into_iter()
-        .map(|index| build_node(index, &processes, &children_of, &mut seen))
-        .collect()
+fn apply_exec_event(
+    event: &wire::EventFrame,
+    process_id: &str,
+    on_stdout: &mut Option<OutputCallback>,
+    on_stderr: &mut Option<OutputCallback>,
+) -> std::result::Result<Option<(i32, String, String)>, ClientError> {
+    match &event.payload {
+        EventPayload::ProcessOutputEvent(output) if output.process_id == process_id => {
+            match output.channel {
+                StreamChannel::Stdout => {
+                    if let Some(cb) = on_stdout.as_mut() {
+                        cb(&output.chunk);
+                    }
+                }
+                StreamChannel::Stderr => {
+                    if let Some(cb) = on_stderr.as_mut() {
+                        cb(&output.chunk);
+                    }
+                }
+            }
+            Ok(None)
+        }
+        EventPayload::ProcessExitedEvent(exited) if exited.process_id == process_id => {
+            if let Some(error) = &exited.error {
+                return Err(ClientError::Kernel {
+                    code: error.code.clone(),
+                    message: error.message.clone(),
+                });
+            }
+            Ok(Some((
+                exited.exit_code,
+                String::from_utf8_lossy(exited.stdout.as_deref().unwrap_or_default()).into_owned(),
+                String::from_utf8_lossy(exited.stderr.as_deref().unwrap_or_default()).into_owned(),
+            )))
+        }
+        EventPayload::ProcessOutputEvent(_)
+        | EventPayload::ProcessExitedEvent(_)
+        | EventPayload::CronDispatchEvent(_)
+        | EventPayload::VmLifecycleEvent(_)
+        | EventPayload::StructuredEvent(_)
+        | EventPayload::ExtEnvelope(_) => Ok(None),
+    }
+}
+
+fn spawned_process_info_from_snapshot(process: ProcessInfo) -> SpawnedProcessInfo {
+    SpawnedProcessInfo {
+        pid: process.pid,
+        command: process.command,
+        args: process.args.into_iter().skip(1).collect(),
+        running: process.status != ProcessStatus::Exited,
+        exit_code: process.exit_code,
+        started_at: process.start_time as i64,
+    }
+}
+
+fn process_exit_result(exit: ProcessExit) -> std::result::Result<i32, ClientError> {
+    match exit {
+        ProcessExit::Exited(code) => Ok(code),
+        ProcessExit::EventStreamLagged { skipped } => {
+            Err(ClientError::EventStreamLagged { skipped })
+        }
+        ProcessExit::EventStreamClosed => Err(ClientError::EventStreamClosed {
+            context: "process exit",
+        }),
+    }
+}
+
+fn byte_stream_for_process_route(
+    rx: broadcast::Receiver<RoutedStreamEvent<Vec<u8>>>,
+    exit: Option<ProcessExit>,
+) -> ByteStream {
+    match exit {
+        Some(ProcessExit::EventStreamLagged { skipped }) => {
+            ByteStream::failed(RoutedStreamEvent::Lagged { skipped })
+        }
+        Some(ProcessExit::EventStreamClosed) => ByteStream::failed(RoutedStreamEvent::Closed {
+            context: "process output",
+        }),
+        Some(ProcessExit::Exited(_)) | None => ByteStream::new(rx),
+    }
+}
+
+fn timeout_to_wire(timeout: Option<f64>) -> std::result::Result<Option<u64>, ClientError> {
+    let Some(timeout) = timeout else {
+        return Ok(None);
+    };
+    if !timeout.is_finite() || timeout < 0.0 || timeout > u64::MAX as f64 {
+        return Err(ClientError::InvalidArgument(String::from(
+            "process timeout must be a finite non-negative number representable as u64 milliseconds",
+        )));
+    }
+    Ok(Some(timeout.trunc() as u64))
+}
+
+fn map_process_control_response(
+    response: wire::ResponsePayload,
+    operation: &str,
+    accepted: impl FnOnce(&wire::ResponsePayload) -> bool,
+) -> std::result::Result<(), ClientError> {
+    if accepted(&response) {
+        return Ok(());
+    }
+    match response {
+        wire::ResponsePayload::RejectedResponse(wire::RejectedResponse { code, message }) => {
+            Err(ClientError::Kernel { code, message })
+        }
+        other => Err(ClientError::Sidecar(format!(
+            "{operation}: unexpected response {other:?}"
+        ))),
+    }
+}
+
+fn process_info_from_snapshot_entry(entry: wire::ProcessSnapshotEntry) -> ProcessInfo {
+    let status = match entry.status {
+        ProcessSnapshotStatus::Running => ProcessStatus::Running,
+        ProcessSnapshotStatus::Stopped => ProcessStatus::Stopped,
+        ProcessSnapshotStatus::Exited => ProcessStatus::Exited,
+    };
+    ProcessInfo {
+        pid: entry.pid,
+        ppid: entry.ppid,
+        pgid: entry.pgid,
+        sid: entry.sid,
+        driver: entry.driver,
+        command: entry.command,
+        args: entry.args,
+        cwd: entry.cwd,
+        status,
+        exit_code: entry.exit_code,
+        start_time: entry.start_time_ms as f64,
+        exit_time: entry.exit_time_ms.map(|time| time as f64),
+    }
 }
 
 /// Convert a [`StdinInput`] to raw bytes. A string is delivered as its UTF-8 bytes; raw bytes are
@@ -1153,62 +1034,48 @@ fn stdin_to_bytes(input: StdinInput) -> Vec<u8> {
     }
 }
 
-fn append_exec_output(
-    buffer: &mut Vec<u8>,
-    chunk: &[u8],
-    captured_output_bytes: &mut usize,
-    channel: &str,
-) -> std::result::Result<(), ClientError> {
-    let next_total = captured_output_bytes
-        .checked_add(chunk.len())
-        .ok_or_else(|| exec_output_limit_error(channel, usize::MAX))?;
-    if next_total > EXEC_OUTPUT_CAPTURE_LIMIT_BYTES {
-        return Err(exec_output_limit_error(channel, next_total));
-    }
-    buffer.extend_from_slice(chunk);
-    *captured_output_bytes = next_total;
-    Ok(())
-}
-
-fn exec_output_limit_error(channel: &str, size: usize) -> ClientError {
-    ClientError::Sidecar(format!(
-        "exec {channel} capture is {size} bytes, limit is {EXEC_OUTPUT_CAPTURE_LIMIT_BYTES}"
-    ))
-}
-
-fn exited_pids_to_prune(mut entries: Vec<(u32, bool)>, target_len: usize) -> Vec<u32> {
-    if entries.len() <= target_len {
+fn terminal_pids_to_prune(entries: Vec<(u32, u64)>, terminal_retention: usize) -> Vec<u32> {
+    let mut terminal_entries: Vec<(u32, u64)> = entries
+        .into_iter()
+        .filter(|(_, sequence)| *sequence != 0)
+        .collect();
+    if terminal_entries.len() <= terminal_retention {
         return Vec::new();
     }
-    let mut remove_count = entries.len() - target_len;
-    entries.sort_by_key(|(pid, _)| *pid);
-    let mut out = Vec::new();
-    for (pid, exited) in entries {
-        if remove_count == 0 {
-            break;
-        }
-        if !exited {
-            continue;
-        }
-        out.push(pid);
-        remove_count -= 1;
-    }
-    out
+    terminal_entries.sort_by_key(|(_, sequence)| *sequence);
+    let remove_count = terminal_entries.len() - terminal_retention;
+    terminal_entries
+        .into_iter()
+        .take(remove_count)
+        .map(|(pid, _)| pid)
+        .collect()
 }
 
-fn prune_string_f64_map(map: &SccHashMap<String, f64>, limit: usize) {
-    let mut keys = Vec::new();
-    map.scan(|key, _| {
-        keys.push(key.clone());
+fn prune_terminal_processes(processes: &SccHashMap<u32, ProcessEntry>, terminal_retention: usize) {
+    let mut entries = Vec::new();
+    processes.scan(|pid, entry| {
+        let terminal_sequence = entry
+            .terminal_sequence
+            .load(std::sync::atomic::Ordering::Acquire);
+        entries.push((*pid, terminal_sequence));
     });
-    if keys.len() <= limit {
-        return;
+    for pid in terminal_pids_to_prune(entries, terminal_retention) {
+        let _ = processes.remove(&pid);
     }
-    let remove_count = keys.len() - limit;
-    keys.sort();
-    for key in keys.into_iter().take(remove_count) {
-        let _ = map.remove(&key);
-    }
+}
+
+fn record_process_terminal_and_prune(
+    processes: &SccHashMap<u32, ProcessEntry>,
+    pid: u32,
+    terminal_sequence: u64,
+    terminal_retention: usize,
+) {
+    let _ = processes.update(&pid, |_, entry| {
+        entry
+            .terminal_sequence
+            .store(terminal_sequence, std::sync::atomic::Ordering::Release);
+    });
+    prune_terminal_processes(processes, terminal_retention);
 }
 
 /// Drive a caller-supplied output callback from a fresh subscription on the given broadcast channel.
@@ -1220,15 +1087,35 @@ fn prune_string_f64_map(map: &SccHashMap<String, f64>, limit: usize) {
 /// never closes (and this task never observes `Closed`) until the entry is dropped. `shutdown`
 /// drains the registry and aborts these handles rather than waiting on the channel close.
 pub(crate) fn install_output_callback(
-    tx: broadcast::Sender<Vec<u8>>,
+    tx: broadcast::Sender<RoutedStreamEvent<Vec<u8>>>,
     mut callback: OutputCallback,
 ) -> JoinHandle<()> {
     let mut rx = tx.subscribe();
     tokio::spawn(async move {
         loop {
             match rx.recv().await {
-                Ok(chunk) => callback(&chunk),
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Ok(RoutedStreamEvent::Data(chunk)) => callback(&chunk),
+                Ok(RoutedStreamEvent::Lagged { skipped }) => {
+                    tracing::error!(
+                        skipped,
+                        "process output callback stopped because its upstream route lagged"
+                    );
+                    break;
+                }
+                Ok(RoutedStreamEvent::Closed { context }) => {
+                    tracing::error!(
+                        context,
+                        "process output callback stopped because its upstream route closed"
+                    );
+                    break;
+                }
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::error!(
+                        skipped,
+                        "process output callback stopped because its stream lagged"
+                    );
+                    break;
+                }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
         }
@@ -1250,25 +1137,226 @@ pub(crate) fn drain_process_output_tasks(processes: &SccHashMap<u32, ProcessEntr
     }
 }
 
-/// Current wall-clock time as epoch milliseconds (TS `Date.now()`).
-fn epoch_ms_now() -> f64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs_f64() * 1000.0)
-        .unwrap_or(0.0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        append_exec_output, drain_process_output_tasks, exited_pids_to_prune,
-        install_output_callback, prune_string_f64_map, ExecOptions, OutputCallback,
-        DEFAULT_EXEC_CWD, EXEC_OUTPUT_CAPTURE_LIMIT_BYTES,
+        apply_exec_event, build_process_execute_request, byte_stream_for_process_route,
+        drain_process_output_tasks, handle_route_failure_abort_result, install_output_callback,
+        process_exit_result, process_info_from_snapshot_entry, record_process_terminal_and_prune,
+        terminal_pids_to_prune, timeout_to_wire, ExecOptions, OutputCallback, SpawnOptions,
+        ROUTE_FAILURE_KILL_SIGNAL,
     };
-    use crate::agent_os::ProcessEntry;
+    use crate::agent_os::{ProcessEntry, ProcessExit};
+    use crate::stream::RoutedStreamEvent;
+    use agentos_sidecar_client::wire;
+    use futures::StreamExt;
     use scc::HashMap as SccHashMap;
+    use std::sync::{Arc, Mutex};
     use tokio::sync::{broadcast, watch};
+
+    fn snapshot_entry(pid: u32, ppid: u32) -> wire::ProcessSnapshotEntry {
+        wire::ProcessSnapshotEntry {
+            process_id: format!("process-{pid}"),
+            pid,
+            ppid,
+            pgid: pid,
+            sid: 1,
+            driver: String::from("test"),
+            command: format!("command-{pid}"),
+            args: vec![format!("command-{pid}")],
+            cwd: String::from("/workspace"),
+            status: wire::ProcessSnapshotStatus::Running,
+            exit_code: None,
+            start_time_ms: u64::from(pid),
+            exit_time_ms: None,
+        }
+    }
+
+    #[test]
+    fn process_snapshot_preserves_sidecar_parent_child_lineage() {
+        let parent = process_info_from_snapshot_entry(snapshot_entry(40, 1));
+        let child = process_info_from_snapshot_entry(snapshot_entry(41, 40));
+
+        assert_eq!(child.ppid, parent.pid);
+        assert_eq!(parent.ppid, 1);
+    }
+
+    #[tokio::test]
+    async fn exec_callbacks_precede_terminal_result_and_do_not_build_it() {
+        let callback_chunks = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+        let callback_chunks_ref = Arc::clone(&callback_chunks);
+        let mut on_stdout: Option<OutputCallback> = Some(Box::new(move |chunk| {
+            callback_chunks_ref.lock().unwrap().push(chunk.to_vec());
+        }));
+        let mut on_stderr = None;
+        let ownership = wire::OwnershipScope::VmOwnership(wire::VmOwnership {
+            connection_id: "conn-test".to_owned(),
+            session_id: "session-test".to_owned(),
+            vm_id: "vm-test".to_owned(),
+        });
+
+        let streamed = wire::EventFrame {
+            schema: wire::protocol_schema(),
+            ownership: ownership.clone(),
+            payload: wire::EventPayload::ProcessOutputEvent(wire::ProcessOutputEvent {
+                process_id: "proc-test".to_owned(),
+                channel: wire::StreamChannel::Stdout,
+                chunk: b"streamed".to_vec(),
+            }),
+        };
+        let terminal = wire::EventFrame {
+            schema: wire::protocol_schema(),
+            ownership,
+            payload: wire::EventPayload::ProcessExitedEvent(wire::ProcessExitedEvent {
+                process_id: "proc-test".to_owned(),
+                exit_code: 7,
+                stdout: Some(b"terminal".to_vec()),
+                stderr: Some(b"terminal-error".to_vec()),
+                error: None,
+            }),
+        };
+
+        assert!(
+            apply_exec_event(&streamed, "proc-test", &mut on_stdout, &mut on_stderr)
+                .expect("stream event")
+                .is_none()
+        );
+        let result = apply_exec_event(&terminal, "proc-test", &mut on_stdout, &mut on_stderr)
+            .expect("terminal event")
+            .expect("terminal result");
+
+        assert_eq!(*callback_chunks.lock().unwrap(), vec![b"streamed".to_vec()]);
+        assert_eq!(
+            result,
+            (7, "terminal".to_owned(), "terminal-error".to_owned())
+        );
+    }
+
+    #[test]
+    fn process_exit_preserves_typed_event_lag() {
+        let error = process_exit_result(ProcessExit::EventStreamLagged { skipped: 3 })
+            .expect_err("lagged stream must fail wait_process");
+        assert!(matches!(
+            error,
+            crate::error::ClientError::EventStreamLagged { skipped: 3 }
+        ));
+    }
+
+    #[test]
+    fn execute_request_preserves_false_true_and_omitted_stream_stdin() {
+        let build = |keep_stdin_open| {
+            build_process_execute_request(
+                Some("node".to_string()),
+                None,
+                Vec::new(),
+                std::collections::BTreeMap::new(),
+                None,
+                keep_stdin_open,
+                None,
+                None,
+            )
+        };
+
+        assert_eq!(build(Some(false)).keep_stdin_open, Some(false));
+        assert_eq!(build(Some(true)).keep_stdin_open, Some(true));
+        assert_eq!(build(None).keep_stdin_open, None);
+    }
+
+    #[test]
+    fn reduced_process_options_forward_only_implemented_fields() {
+        let exec = ExecOptions {
+            env: std::collections::BTreeMap::from([(String::from("EXEC"), String::from("1"))]),
+            cwd: Some(String::from("/workspace/exec")),
+            timeout: Some(100.0),
+            capture_stdio: Some(false),
+            ..ExecOptions::default()
+        };
+        let spawn = SpawnOptions {
+            env: std::collections::BTreeMap::from([(String::from("SPAWN"), String::from("1"))]),
+            cwd: Some(String::from("/workspace/spawn")),
+            timeout: Some(250.0),
+            stream_stdin: Some(true),
+            ..SpawnOptions::default()
+        };
+
+        let request = build_process_execute_request(
+            Some(String::from("node")),
+            None,
+            Vec::new(),
+            spawn.env,
+            spawn.cwd,
+            spawn.stream_stdin,
+            spawn.timeout.map(|value| value as u64),
+            None,
+        );
+        assert_eq!(
+            request
+                .env
+                .as_ref()
+                .and_then(|env| env.get("SPAWN"))
+                .map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(request.cwd.as_deref(), Some("/workspace/spawn"));
+        assert_eq!(request.keep_stdin_open, Some(true));
+        assert_eq!(request.timeout_ms, Some(250));
+        assert_eq!(request.pty, None);
+        assert_eq!(request.capture_output, None);
+        assert_eq!(exec.env.get("EXEC").map(String::as_str), Some("1"));
+        assert_eq!(exec.cwd.as_deref(), Some("/workspace/exec"));
+        assert_eq!(exec.timeout, Some(100.0));
+        assert_eq!(exec.capture_stdio, Some(false));
+    }
+
+    #[test]
+    fn route_failure_cleanup_is_sigkill_and_fails_closed_on_rejection() {
+        assert_eq!(ROUTE_FAILURE_KILL_SIGNAL, "SIGKILL");
+        let sidecar_killed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sidecar_killed_ref = Arc::clone(&sidecar_killed);
+        handle_route_failure_abort_result(
+            Err(crate::error::ClientError::Sidecar(
+                "kill route rejected".to_string(),
+            )),
+            "process-1",
+            "exec",
+            move || {
+                sidecar_killed_ref.store(true, std::sync::atomic::Ordering::SeqCst);
+            },
+        );
+        assert!(sidecar_killed.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn route_failure_cleanup_accepts_an_already_exited_process() {
+        let sidecar_killed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sidecar_killed_ref = Arc::clone(&sidecar_killed);
+        handle_route_failure_abort_result(
+            Err(crate::error::ClientError::Kernel {
+                code: "ESRCH".to_string(),
+                message: "gone".to_string(),
+            }),
+            "process-1",
+            "shell",
+            move || {
+                sidecar_killed_ref.store(true, std::sync::atomic::Ordering::SeqCst);
+            },
+        );
+        assert!(!sidecar_killed.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn late_process_output_subscriber_receives_retained_route_failure() {
+        let (_tx, rx) = broadcast::channel(1);
+        let mut stream =
+            byte_stream_for_process_route(rx, Some(ProcessExit::EventStreamLagged { skipped: 6 }));
+        assert!(matches!(
+            stream.next().await,
+            Some(Err(crate::error::ClientError::EventStreamLagged {
+                skipped: 6
+            }))
+        ));
+        assert!(stream.next().await.is_none());
+    }
 
     /// Regression for the per-process output-callback leak (H3): a `ProcessEntry` retains clones of
     /// its `stdout_tx`/`stderr_tx`, so the output tasks never observe the broadcast `Closed` and hang
@@ -1278,10 +1366,9 @@ mod tests {
     async fn drain_process_output_tasks_clears_registry_and_aborts_tasks() {
         let processes: SccHashMap<u32, ProcessEntry> = SccHashMap::new();
 
-        let (stdout_tx, _) = broadcast::channel::<Vec<u8>>(8);
-        let (stderr_tx, _) = broadcast::channel::<Vec<u8>>(8);
-        let (exit_tx, _) = watch::channel::<Option<i32>>(None);
-        let (kernel_pid_tx, _) = watch::channel::<Option<u32>>(None);
+        let (stdout_tx, _) = broadcast::channel::<RoutedStreamEvent<Vec<u8>>>(8);
+        let (stderr_tx, _) = broadcast::channel::<RoutedStreamEvent<Vec<u8>>>(8);
+        let (exit_tx, _) = watch::channel::<Option<ProcessExit>>(None);
 
         // A task that never completes on its own, standing in for an output-callback task that is
         // waiting on a `Closed` that the retained sender clone prevents.
@@ -1293,15 +1380,12 @@ mod tests {
         let abort_handle = task.abort_handle();
 
         let entry = ProcessEntry {
-            command: "sleep".to_string(),
-            args: vec!["3600".to_string()],
             stdout_tx,
             stderr_tx,
             exit_tx,
             process_id: "proc-test".to_string(),
-            kernel_pid: kernel_pid_tx,
+            terminal_sequence: std::sync::atomic::AtomicU64::new(0),
             output_tasks: vec![task],
-            started_at: 0,
         };
         let _ = processes.insert(1, entry);
 
@@ -1334,10 +1418,9 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
 
-        let (stdout_tx, _) = broadcast::channel::<Vec<u8>>(8);
-        let (stderr_tx, _) = broadcast::channel::<Vec<u8>>(8);
-        let (exit_tx, _) = watch::channel::<Option<i32>>(None);
-        let (kernel_pid_tx, _) = watch::channel::<Option<u32>>(None);
+        let (stdout_tx, _) = broadcast::channel::<RoutedStreamEvent<Vec<u8>>>(8);
+        let (stderr_tx, _) = broadcast::channel::<RoutedStreamEvent<Vec<u8>>>(8);
+        let (exit_tx, _) = watch::channel::<Option<ProcessExit>>(None);
 
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_cb = Arc::clone(&calls);
@@ -1349,15 +1432,12 @@ mod tests {
         let output_tasks = vec![install_output_callback(stdout_tx.clone(), cb)];
 
         let entry = ProcessEntry {
-            command: "sleep".to_string(),
-            args: vec!["3600".to_string()],
             stdout_tx: stdout_tx.clone(),
             stderr_tx,
             exit_tx,
             process_id: "proc-test".to_string(),
-            kernel_pid: kernel_pid_tx,
+            terminal_sequence: std::sync::atomic::AtomicU64::new(0),
             output_tasks,
-            started_at: 0,
         };
 
         assert_eq!(
@@ -1368,7 +1448,7 @@ mod tests {
 
         // Prove the captured handle is the live callback task: a chunk on the channel runs it.
         stdout_tx
-            .send(b"hello".to_vec())
+            .send(RoutedStreamEvent::Data(b"hello".to_vec()))
             .expect("broadcast send to subscribed callback task");
         for _ in 0..100 {
             if calls.load(Ordering::SeqCst) > 0 {
@@ -1390,49 +1470,80 @@ mod tests {
     }
 
     #[test]
-    fn exec_options_default_uses_workspace_cwd() {
-        assert_eq!(
-            ExecOptions::default().cwd.as_deref(),
-            Some(DEFAULT_EXEC_CWD)
-        );
+    fn exec_options_default_omits_cwd_for_sidecar_resolution() {
+        assert_eq!(ExecOptions::default().cwd, None);
     }
 
     #[test]
-    fn append_exec_output_rejects_capture_over_limit() {
-        let mut buffer = vec![0u8; EXEC_OUTPUT_CAPTURE_LIMIT_BYTES - 1];
-        let mut captured = buffer.len();
-
-        append_exec_output(&mut buffer, &[1], &mut captured, "stdout")
-            .expect("chunk at limit should fit");
-        assert_eq!(captured, EXEC_OUTPUT_CAPTURE_LIMIT_BYTES);
-
-        let error = append_exec_output(&mut buffer, &[2], &mut captured, "stdout")
-            .expect_err("chunk over limit should fail");
-        assert!(
-            error.to_string().contains("exec stdout capture is"),
-            "unexpected error: {error}"
-        );
-        assert_eq!(captured, EXEC_OUTPUT_CAPTURE_LIMIT_BYTES);
-        assert_eq!(buffer.len(), EXEC_OUTPUT_CAPTURE_LIMIT_BYTES);
+    fn closed_process_event_stream_is_an_error_not_exit_zero() {
+        let error = process_exit_result(ProcessExit::EventStreamClosed)
+            .expect_err("closed stream must fail wait_process");
+        assert!(error.to_string().contains("event stream closed"));
     }
 
     #[test]
-    fn exited_pid_pruning_keeps_live_entries_and_removes_oldest_exited() {
-        let pids = exited_pids_to_prune(vec![(3, true), (1, false), (2, true), (4, true)], 2);
-        assert_eq!(pids, vec![2, 3]);
+    fn timeout_conversion_rejects_invalid_values() {
+        assert_eq!(timeout_to_wire(None).expect("omitted timeout"), None);
+        assert_eq!(timeout_to_wire(Some(1.9)).expect("finite timeout"), Some(1));
+        assert!(timeout_to_wire(Some(f64::NAN)).is_err());
+        assert!(timeout_to_wire(Some(-1.0)).is_err());
     }
 
     #[test]
-    fn observed_time_pruning_enforces_limit() {
-        let map = SccHashMap::new();
-        let _ = map.insert("b".to_string(), 2.0);
-        let _ = map.insert("a".to_string(), 1.0);
-        let _ = map.insert("c".to_string(), 3.0);
+    fn terminal_pid_pruning_keeps_live_entries_and_uses_completion_order() {
+        let pids = terminal_pids_to_prune(vec![(30, 3), (10, 0), (20, 1), (40, 2), (50, 0)], 2);
+        assert_eq!(pids, vec![20]);
+    }
 
-        prune_string_f64_map(&map, 2);
+    #[tokio::test]
+    async fn terminal_pruning_preserves_an_in_flight_wait_receiver() {
+        let processes: SccHashMap<u32, ProcessEntry> = SccHashMap::new();
+        let make_entry = |process_id: &str| {
+            let (stdout_tx, _) = broadcast::channel(1);
+            let (stderr_tx, _) = broadcast::channel(1);
+            let (exit_tx, _) = watch::channel(None);
+            ProcessEntry {
+                stdout_tx,
+                stderr_tx,
+                exit_tx,
+                process_id: process_id.to_owned(),
+                terminal_sequence: std::sync::atomic::AtomicU64::new(0),
+                output_tasks: Vec::new(),
+            }
+        };
 
-        assert!(map.read("a", |_, _| ()).is_none());
-        assert!(map.read("b", |_, _| ()).is_some());
-        assert!(map.read("c", |_, _| ()).is_some());
+        let _ = processes.insert(10, make_entry("proc-10"));
+        let _ = processes.insert(20, make_entry("proc-20"));
+        let mut in_flight_wait = processes
+            .read(&10, |_, entry| entry.exit_tx.subscribe())
+            .expect("first process route");
+
+        processes
+            .read(&10, |_, entry| {
+                entry
+                    .exit_tx
+                    .send(Some(ProcessExit::Exited(7)))
+                    .expect("in-flight waiter keeps the channel open");
+            })
+            .expect("first process route");
+        record_process_terminal_and_prune(&processes, 10, 1, 1);
+
+        processes
+            .read(&20, |_, entry| {
+                let _ = entry.exit_tx.send(Some(ProcessExit::Exited(0)));
+            })
+            .expect("second process route");
+        record_process_terminal_and_prune(&processes, 20, 2, 1);
+
+        assert!(!processes.contains(&10), "oldest terminal route pruned");
+        assert!(processes.contains(&20), "newest terminal route retained");
+        in_flight_wait
+            .changed()
+            .await
+            .expect("terminal value remains observable after route pruning");
+        assert!(matches!(
+            in_flight_wait.borrow_and_update().clone(),
+            Some(ProcessExit::Exited(7))
+        ));
     }
 }

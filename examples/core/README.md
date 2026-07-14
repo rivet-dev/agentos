@@ -15,7 +15,7 @@ how it is configured.
 
 `AgentOs.create({ ... })` boots a VM in-process with its mounts, software, and
 network settings, and returns an `AgentOs` instance. Everything runs through that
-instance: `exec`/`spawn` for processes, `readFile`/`writeFiles`/`readdirRecursive`
+instance: `exec`/`spawn` for processes, `readFile`/`writeFile`/`readdirRecursive`
 for the filesystem, `createSession`/`prompt` for agents, `fetch` for in-VM
 servers, and `scheduleCron` for jobs. Process output and session/permission/cron
 events are delivered through callbacks (`spawn({ onStdout })`, `onProcessExit`,

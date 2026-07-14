@@ -225,7 +225,9 @@ async fn actor_loop(
     // Ensure the agent-os schema exists before handling events (best-effort;
     // mirrors rivetkit-agent-os run.rs).
     if host.sql_is_enabled() {
-        let _ = persistence::migrate(&host).await;
+        if let Err(error) = persistence::migrate(&host).await {
+            host.log_warn(&format!("agent-os persistence migration failed: {error}"));
+        }
     }
     // The VM handle + actor vars live on a dedicated worker task that drains
     // stateful jobs (Action/Http/Sleep/Destroy) serially in submission order.
@@ -358,6 +360,7 @@ async fn actor_worker(
                     let _ = host.reply_err(token, "vm unavailable after bring-up");
                     continue;
                 };
+                actions::cron::ensure_cron_event_pump(&host, vm_ref, &mut vars);
                 match abi::decode_action_payload(&payload) {
                     Ok((name, action_args)) => {
                         tracing::debug!(action = %name, "agent-os action start");
@@ -385,6 +388,13 @@ async fn actor_worker(
                 let _ = host.reply_ok(token, response);
             }
             ActorJob::Sleep { token } => {
+                if let Some(vm_ref) = vm.as_ref() {
+                    if let Err(error) = vm::persist_cron_state(&host, vm_ref).await {
+                        host.log_warn(&format!(
+                            "failed to persist cron state before sleep: {error}"
+                        ));
+                    }
+                }
                 vars.clear();
                 vm::shutdown_vm(&host, &mut vm, "sleep").await;
                 let _ = host.reply_ok(token, Vec::new());
@@ -392,11 +402,23 @@ async fn actor_worker(
             ActorJob::Destroy { token } => {
                 vars.clear();
                 vm::shutdown_vm(&host, &mut vm, "destroy").await;
+                if let Err(error) = vm::delete_cron_state(&host).await {
+                    host.log_warn(&format!(
+                        "failed to delete persisted cron state during destroy: {error}"
+                    ));
+                }
                 let _ = host.reply_ok(token, Vec::new());
             }
         }
     }
     // Stream closed (cancel/teardown): best-effort VM shutdown.
+    if let Some(vm_ref) = vm.as_ref() {
+        if let Err(error) = vm::persist_cron_state(&host, vm_ref).await {
+            host.log_warn(&format!(
+                "failed to persist cron state during actor teardown: {error}"
+            ));
+        }
+    }
     vars.clear();
     vm::shutdown_vm(&host, &mut vm, "error").await;
 }

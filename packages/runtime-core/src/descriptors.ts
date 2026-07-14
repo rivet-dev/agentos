@@ -1,4 +1,5 @@
 import type * as protocol from "./generated-protocol.js";
+import { toExactArrayBuffer } from "./bytes.js";
 import { stringifyJsonUtf8 } from "./json.js";
 
 export type LiveSidecarPlacement =
@@ -12,7 +13,7 @@ export type MountConfigJsonValue =
 	| MountConfigJsonValue[];
 
 export interface MountConfigJsonObject {
-	[key: string]: MountConfigJsonValue;
+	[key: string]: MountConfigJsonValue | undefined;
 }
 
 export interface NativeMountPluginDescriptor<
@@ -98,23 +99,16 @@ export function chunkedLocalMountPlugin(
 
 export interface LiveMountDescriptor {
 	guest_path: string;
-	read_only: boolean;
+	read_only?: boolean;
 	plugin: NativeMountPluginDescriptor;
 }
 
-export interface LiveSoftwareDescriptor {
-	package_name: string;
-	root: string;
-}
-
-export interface LiveProjectedModuleDescriptor {
-	package_name: string;
-	entrypoint: string;
-}
-
-export interface LivePackageDescriptor {
-	path: string;
-}
+/** Opaque package transport. Native callers forward a trusted host path;
+ * browser package managers forward the complete `.aospkg` bytes. Neither form
+ * carries parsed package metadata. */
+export type LivePackageDescriptor =
+	| { path: string; content?: never }
+	| { content: Uint8Array; path?: never };
 
 export function toGeneratedSidecarPlacement(
 	placement: LiveSidecarPlacement,
@@ -138,39 +132,27 @@ export function toGeneratedMountDescriptor(
 ): protocol.MountDescriptor {
 	return {
 		guestPath: descriptor.guest_path,
-		readOnly: descriptor.read_only,
+		readOnly: descriptor.read_only ?? null,
 		plugin: {
 			id: descriptor.plugin.id,
-			config: stringifyJsonUtf8(
-				descriptor.plugin.config ?? {},
-				"mount plugin config",
-			),
+			config:
+				descriptor.plugin.config === undefined
+					? null
+					: stringifyJsonUtf8(descriptor.plugin.config, "mount plugin config"),
 		},
-	};
-}
-
-export function toGeneratedSoftwareDescriptor(
-	descriptor: LiveSoftwareDescriptor,
-): protocol.SoftwareDescriptor {
-	return {
-		packageName: descriptor.package_name,
-		root: descriptor.root,
-	};
-}
-
-export function toGeneratedProjectedModuleDescriptor(
-	descriptor: LiveProjectedModuleDescriptor,
-): protocol.ProjectedModuleDescriptor {
-	return {
-		packageName: descriptor.package_name,
-		entrypoint: descriptor.entrypoint,
 	};
 }
 
 export function toGeneratedPackageDescriptor(
 	descriptor: LivePackageDescriptor,
 ): protocol.PackageDescriptor {
-	return {
-		path: descriptor.path,
-	};
+	return "path" in descriptor && descriptor.path !== undefined
+		? {
+				tag: "PackagePath",
+				val: { path: descriptor.path },
+			}
+		: {
+				tag: "PackageInline",
+				val: { content: toExactArrayBuffer(descriptor.content) },
+			};
 }

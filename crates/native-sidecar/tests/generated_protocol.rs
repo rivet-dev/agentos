@@ -1,15 +1,15 @@
 use agentos_native_sidecar::generated_protocol::v1::{
     AuthenticateRequest, ConfigureVmRequest, ConnectionOwnership, ExtEnvelope, FsPermissionScope,
     GuestFilesystemCallRequest, GuestFilesystemOperation, MountDescriptor, MountPluginDescriptor,
-    OwnershipScope, PermissionMode, PermissionsPolicy, ProjectedModuleDescriptor, ProtocolFrame,
-    ProtocolSchema, RequestFrame, RequestPayload, ResponseFrame, ResponsePayload,
-    VmConfiguredResponse, VmOwnership, WasmPermissionTier,
+    OwnershipScope, PackageDescriptor, PackageInline, PackagePath, PermissionMode,
+    PermissionsPolicy, ProtocolFrame, ProtocolSchema, RequestFrame, RequestPayload, ResponseFrame,
+    ResponsePayload, VmConfiguredResponse, VmOwnership, WasmPermissionTier,
 };
 use agentos_native_sidecar::protocol as live_protocol;
 use serde_json::json;
 use std::collections::HashMap;
 
-const GENERATED_AUTH_FRAME_HEX: &str = "00137365637572652d657865632d73696465636172070007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e070001000000";
+const GENERATED_AUTH_FRAME_HEX: &str = "00166167656e746f732d6e61746976652d73696465636172070007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e070001000000";
 
 #[test]
 fn generated_protocol_round_trips_request_frame() {
@@ -75,19 +75,20 @@ fn live_bare_codec_matches_generated_request_bytes() {
         9,
         live_protocol::OwnershipScope::vm("conn-1", "session-1", "vm-1"),
         live_protocol::RequestPayload::ConfigureVm(live_protocol::ConfigureVmRequest {
-            mounts: vec![live_protocol::MountDescriptor {
+            mounts: Some(vec![live_protocol::MountDescriptor {
                 guest_path: "/node_modules".to_string(),
-                read_only: true,
+                read_only: Some(true),
                 plugin: live_protocol::MountPluginDescriptor {
                     id: "host_dir".to_string(),
-                    config: json!({
-                        "hostPath": "/tmp/deps",
-                        "readOnly": true,
-                    })
-                    .to_string(),
+                    config: Some(
+                        json!({
+                            "hostPath": "/tmp/deps",
+                            "readOnly": true,
+                        })
+                        .to_string(),
+                    ),
                 },
-            }],
-            software: Vec::new(),
+            }]),
             permissions: Some(live_protocol::PermissionsPolicy {
                 fs: Some(live_protocol::FsPermissionScope::PermissionMode(
                     live_protocol::PermissionMode::Allow,
@@ -98,21 +99,13 @@ fn live_bare_codec_matches_generated_request_bytes() {
                 env: None,
                 binding: None,
             }),
-            module_access_cwd: Some("/workspace".to_string()),
-            instructions: vec!["keep it generic".to_string()],
-            projected_modules: vec![live_protocol::ProjectedModuleDescriptor {
-                package_name: "workspace".to_string(),
-                entrypoint: "/workspace/index.js".to_string(),
-            }],
-            command_permissions: std::collections::HashMap::from([(
+            command_permissions: Some(std::collections::HashMap::from([(
                 "cat".to_string(),
                 live_protocol::WasmPermissionTier::ReadOnly,
-            )]),
-            loopback_exempt_ports: vec![3000],
-            packages: Vec::new(),
-            packages_mount_at: String::new(),
-            bootstrap_commands: Vec::new(),
-            tool_shim_commands: Vec::new(),
+            )])),
+            loopback_exempt_ports: Some(vec![3000]),
+            packages: None,
+            packages_mount_at: None,
         }),
     ));
     let live_configure_payload =
@@ -147,7 +140,6 @@ fn live_bare_codec_decodes_generated_response_bytes() {
         ownership: generated_vm_ownership(),
         payload: ResponsePayload::VmConfiguredResponse(VmConfiguredResponse {
             applied_mounts: 2,
-            applied_software: 0,
             projected_commands: Vec::new(),
             agents: Vec::new(),
         }),
@@ -164,7 +156,6 @@ fn live_bare_codec_decodes_generated_response_bytes() {
             live_protocol::OwnershipScope::vm("conn-1", "session-1", "vm-1"),
             live_protocol::ResponsePayload::VmConfigured(live_protocol::VmConfiguredResponse {
                 applied_mounts: 2,
-                applied_software: 0,
                 projected_commands: Vec::new(),
                 agents: Vec::new(),
             }),
@@ -176,7 +167,7 @@ fn live_bare_codec_decodes_generated_response_bytes() {
 fn generated_protocol_preserves_json_utf8_strings() {
     let descriptor = MountPluginDescriptor {
         id: "chunked_s3".to_string(),
-        config: r#"{"bucket":"demo","prefix":"workspace"}"#.to_string(),
+        config: Some(r#"{"bucket":"demo","prefix":"workspace"}"#.to_string()),
     };
 
     let encoded = serde_bare::to_vec(&descriptor).expect("encode generated descriptor");
@@ -184,6 +175,23 @@ fn generated_protocol_preserves_json_utf8_strings() {
         serde_bare::from_slice(&encoded).expect("decode generated descriptor");
 
     assert_eq!(decoded, descriptor);
+}
+
+#[test]
+fn generated_protocol_preserves_both_opaque_package_sources() {
+    for descriptor in [
+        PackageDescriptor::PackagePath(PackagePath {
+            path: String::from("/packages/demo.aospkg"),
+        }),
+        PackageDescriptor::PackageInline(PackageInline {
+            content: vec![0, 1, 2, 255],
+        }),
+    ] {
+        let encoded = serde_bare::to_vec(&descriptor).expect("encode generated package source");
+        let decoded: PackageDescriptor =
+            serde_bare::from_slice(&encoded).expect("decode generated package source");
+        assert_eq!(decoded, descriptor);
+    }
 }
 
 #[test]
@@ -195,7 +203,7 @@ fn generated_protocol_preserves_guest_filesystem_call_offsets() {
         target: None,
         content: None,
         encoding: None,
-        recursive: false,
+        recursive: None,
         max_depth: None,
         mode: None,
         uid: None,
@@ -253,15 +261,14 @@ fn generated_configure_frame() -> ProtocolFrame {
         request_id: 9,
         ownership: generated_vm_ownership(),
         payload: RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-            mounts: vec![MountDescriptor {
+            mounts: Some(vec![MountDescriptor {
                 guest_path: "/node_modules".to_string(),
-                read_only: true,
+                read_only: Some(true),
                 plugin: MountPluginDescriptor {
                     id: "host_dir".to_string(),
-                    config: r#"{"hostPath":"/tmp/deps","readOnly":true}"#.to_string(),
+                    config: Some(r#"{"hostPath":"/tmp/deps","readOnly":true}"#.to_string()),
                 },
-            }],
-            software: Vec::new(),
+            }]),
             permissions: Some(PermissionsPolicy {
                 fs: Some(FsPermissionScope::PermissionMode(PermissionMode::Allow)),
                 network: None,
@@ -270,18 +277,13 @@ fn generated_configure_frame() -> ProtocolFrame {
                 env: None,
                 binding: None,
             }),
-            module_access_cwd: Some("/workspace".to_string()),
-            instructions: vec!["keep it generic".to_string()],
-            projected_modules: vec![ProjectedModuleDescriptor {
-                package_name: "workspace".to_string(),
-                entrypoint: "/workspace/index.js".to_string(),
-            }],
-            command_permissions: HashMap::from([("cat".to_string(), WasmPermissionTier::ReadOnly)]),
-            loopback_exempt_ports: vec![3000],
-            packages: Vec::new(),
-            packages_mount_at: String::new(),
-            bootstrap_commands: Vec::new(),
-            tool_shim_commands: Vec::new(),
+            command_permissions: Some(HashMap::from([(
+                "cat".to_string(),
+                WasmPermissionTier::ReadOnly,
+            )])),
+            loopback_exempt_ports: Some(vec![3000]),
+            packages: None,
+            packages_mount_at: None,
         }),
     })
 }

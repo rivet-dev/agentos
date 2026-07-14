@@ -17,6 +17,8 @@ test("demo page runs a live ACP round-trip through the wasm sidecar in Chromium"
 
 	const transcript = await page.locator("#out").textContent();
 	expect(transcript ?? "").toContain("authenticated");
+	expect(transcript ?? "").toContain("session_opened");
+	expect(transcript ?? "").toContain("vm_initialized");
 	expect(transcript ?? "").toContain("ext_result");
 	expect(transcript ?? "").toContain("AcpErrorResponse");
 	expect(transcript ?? "").toContain("unknown ACP session");

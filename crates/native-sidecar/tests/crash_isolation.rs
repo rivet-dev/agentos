@@ -56,7 +56,7 @@ fn guest_failure_in_one_vm_does_not_break_peer_vm_execution() {
         &crash_vm_id,
         "proc-crash",
         GuestRuntimeKind::JavaScript,
-        &crash_entry,
+        "/workspace/crash.cjs",
         Vec::new(),
     );
     execute_wire(
@@ -67,7 +67,7 @@ fn guest_failure_in_one_vm_does_not_break_peer_vm_execution() {
         &healthy_vm_id,
         "proc-healthy",
         GuestRuntimeKind::JavaScript,
-        &healthy_entry,
+        "/workspace/healthy.cjs",
         Vec::new(),
     );
 
@@ -130,7 +130,8 @@ fn guest_failure_in_one_vm_does_not_break_peer_vm_execution() {
             EventPayload::ProcessExitedEvent(exited) => {
                 result.exit_code = Some(exited.exit_code);
             }
-            EventPayload::VmLifecycleEvent(_)
+            EventPayload::CronDispatchEvent(_)
+            | EventPayload::VmLifecycleEvent(_)
             | EventPayload::StructuredEvent(_)
             | EventPayload::ExtEnvelope(_) => {}
         }
@@ -160,7 +161,7 @@ fn guest_failure_in_one_vm_does_not_break_peer_vm_execution() {
         &healthy_vm_id,
         "proc-healthy-2",
         GuestRuntimeKind::JavaScript,
-        &healthy_entry,
+        "/workspace/healthy.cjs",
         Vec::new(),
     );
     let (_stdout, stderr, exit_code) = collect_crash_process_output(
@@ -217,6 +218,7 @@ fn collect_crash_process_output(
                 }
                 EventPayload::ProcessOutputEvent(_)
                 | EventPayload::ProcessExitedEvent(_)
+                | EventPayload::CronDispatchEvent(_)
                 | EventPayload::VmLifecycleEvent(_)
                 | EventPayload::StructuredEvent(_)
                 | EventPayload::ExtEnvelope(_) => {}

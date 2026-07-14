@@ -43,6 +43,47 @@ function writeJson(
 	res.end(payload);
 }
 
+function writeSse(res: ServerResponse, response: Record<string, unknown>): void {
+	res.statusCode = 200;
+	res.setHeader("content-type", "text/event-stream");
+	res.setHeader("cache-control", "no-cache");
+	res.setHeader("connection", "keep-alive");
+
+	const send = (event: Record<string, unknown>) => {
+		res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+	};
+	const responseId =
+		typeof response.id === "string" ? response.id : "resp_mock";
+	const output = Array.isArray(response.output)
+		? (response.output as Array<Record<string, unknown>>)
+		: [];
+
+	send({ type: "response.created", response: { id: responseId } });
+	for (const item of output) {
+		if (item.type === "function_call" || item.type === "local_shell_call") {
+			send({ type: "response.output_item.done", item });
+			continue;
+		}
+		const content = Array.isArray(item.content)
+			? (item.content as Array<Record<string, unknown>>)
+			: [];
+		for (const part of content) {
+			if (part.type === "output_text" && typeof part.text === "string") {
+				send({ type: "response.output_text.delta", delta: part.text });
+			}
+		}
+		send({ type: "response.output_item.done", item });
+	}
+	send({
+		type: "response.completed",
+		response: {
+			id: responseId,
+			usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+		},
+	});
+	res.end();
+}
+
 export async function startResponsesMock(
 	fixtures: ResponsesFixture[],
 ): Promise<RunningResponsesMock> {
@@ -69,7 +110,7 @@ export async function startResponsesMock(
 			if (fixture.delayMs) {
 				await new Promise((resolve) => setTimeout(resolve, fixture.delayMs));
 			}
-			writeJson(res, 200, fixture.response);
+			writeSse(res, fixture.response);
 		} catch (error) {
 			writeJson(res, 500, {
 				error: "invalid_request",

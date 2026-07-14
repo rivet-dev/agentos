@@ -376,7 +376,7 @@ fn v8_guest_process_receives_sigterm_delivery() {
         &vm_id,
         "sigterm-guest",
         GuestRuntimeKind::JavaScript,
-        &entry,
+        "/workspace/sigterm.mjs",
         Vec::new(),
     );
 

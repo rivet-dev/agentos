@@ -74,7 +74,7 @@ fn kill_process_terminates_running_guest_execution() {
         &vm_id,
         "proc-hang",
         GuestRuntimeKind::JavaScript,
-        &entry,
+        "/workspace/hang.mjs",
         Vec::new(),
     );
 
@@ -115,7 +115,7 @@ fn kill_process_terminates_running_guest_execution() {
         &vm_id,
         "proc-rerun",
         GuestRuntimeKind::JavaScript,
-        &rerun,
+        "/workspace/rerun.mjs",
         Vec::new(),
     );
     let (stdout, stderr, rerun_exit) = collect_kill_cleanup_process_output(
@@ -157,7 +157,7 @@ fn sigkill_synthesizes_exit_for_shared_v8_guest_execution() {
         &vm_id,
         "proc-sigkill",
         GuestRuntimeKind::JavaScript,
-        &entry,
+        "/workspace/hang.mjs",
         Vec::new(),
     );
 
@@ -231,6 +231,7 @@ fn collect_kill_cleanup_process_output(
                 }
                 EventPayload::ProcessOutputEvent(_)
                 | EventPayload::ProcessExitedEvent(_)
+                | EventPayload::CronDispatchEvent(_)
                 | EventPayload::VmLifecycleEvent(_)
                 | EventPayload::StructuredEvent(_)
                 | EventPayload::ExtEnvelope(_) => {}
@@ -307,7 +308,7 @@ fn kill_process_terminates_running_wasm_execution() {
         &vm_id,
         "proc-hang-wasm",
         GuestRuntimeKind::WebAssembly,
-        &entry,
+        "/workspace/hang.wasm",
         Vec::new(),
     );
 
@@ -366,7 +367,7 @@ fn dispose_vm_succeeds_even_when_a_guest_process_is_running() {
         &vm_id,
         "proc-hang",
         GuestRuntimeKind::JavaScript,
-        &entry,
+        "/workspace/hang.mjs",
         Vec::new(),
     );
 
@@ -447,7 +448,7 @@ fn close_session_removes_the_session_and_disposes_owned_vms() {
             RequestPayload::CreateVmRequest(
                 agentos_native_sidecar::wire::CreateVmRequest::legacy_test_config(
                     GuestRuntimeKind::JavaScript,
-                    HashMap::from([(String::from("cwd"), cwd.to_string_lossy().into_owned())]),
+                    HashMap::from([(String::from("cwd"), String::from("/workspace"))]),
                     agentos_native_sidecar::wire::RootFilesystemDescriptor {
                         mode: agentos_native_sidecar::wire::RootFilesystemMode::Ephemeral,
                         disable_default_base_layer: false,
@@ -475,7 +476,6 @@ fn close_session_removes_the_session_and_disposes_owned_vms() {
                 placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
                     pool: None,
                 }),
-                metadata: HashMap::new(),
             }),
         ))
         .expect("open replacement session");
@@ -528,7 +528,6 @@ fn remove_connection_disposes_owned_sessions_and_vms() {
                 placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
                     pool: None,
                 }),
-                metadata: HashMap::new(),
             }),
         ))
         .expect("attempt open session after connection removal");

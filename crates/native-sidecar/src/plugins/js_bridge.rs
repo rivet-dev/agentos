@@ -143,12 +143,7 @@ impl JsBridgeFilesystem {
     }
 
     fn sidecar_error_to_vfs(operation: &str, path: &str, error: SidecarError) -> VfsError {
-        match error {
-            SidecarError::Io(message) if message.contains("timed out") => {
-                VfsError::io(format!("{operation} {path}: {message}"))
-            }
-            other => VfsError::io(format!("{operation} {path}: {other}")),
-        }
+        VfsError::io(format!("{operation} {path}: {error}"))
     }
 
     fn js_error_to_vfs(operation: &str, path: &str, error: &str) -> VfsError {

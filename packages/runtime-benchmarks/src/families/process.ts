@@ -31,7 +31,7 @@ async function runGuestStdoutCapture(
 	for (let i = 0; i < warmup + iters; i++) {
 		let stdout = "";
 		const start = process.hrtime.bigint();
-		const proc = vm.spawn("node", NODE_CAPTURE_ARGS, {
+		const proc = await vm.spawn("node", NODE_CAPTURE_ARGS, {
 			onStdout: (data) => {
 				stdout += Buffer.from(data).toString("utf8");
 			},
@@ -85,7 +85,7 @@ async function runGuestStdoutListenerOnly(
 	for (let i = 0; i < warmup + iters; i++) {
 		let bytes = 0;
 		const start = process.hrtime.bigint();
-		const proc = vm.spawn("node", NODE_CAPTURE_ARGS, {
+		const proc = await vm.spawn("node", NODE_CAPTURE_ARGS, {
 			onStdout: (data) => {
 				bytes += data.byteLength;
 			},
@@ -131,7 +131,9 @@ async function runGuestFanout(vm: Parameters<NonNullable<BenchmarkOp["runGuest"]
 	const samples: number[] = [];
 	for (let i = 0; i < warmup + iters; i++) {
 		const start = process.hrtime.bigint();
-		const children = Array.from({ length: 8 }, () => vm.spawn("node", NODE_EXIT_ARGS));
+		const children = await Promise.all(
+			Array.from({ length: 8 }, () => vm.spawn("node", NODE_EXIT_ARGS)),
+		);
 		await Promise.all(children.map((child) => vm.waitProcess(child.pid)));
 		if (i >= warmup) {
 			samples.push(Number(process.hrtime.bigint() - start) / 1e6);

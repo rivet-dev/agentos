@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
+import claude from "@agentos-software/claude-code";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AgentOs } from "../src/index.js";
 import { getAgentOsKernel } from "../src/test/runtime.js";
@@ -9,10 +9,15 @@ import {
 	startLlmock,
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
-import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
+import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { ALLOW_ALL_VM_PERMISSIONS } from "./helpers/permissions.js";
+import {
+	REGISTRY_SOFTWARE,
+	requireBuilt,
+} from "./helpers/registry-commands.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
+const CLAUDE_SOFTWARE = requireBuilt(claude, "claude-code");
 function hasToolResult(req: unknown): boolean {
 	const directMessages = (
 		req as {
@@ -81,7 +86,7 @@ describe("filesystem operations", () => {
 
 		expect(existsSpy).not.toHaveBeenCalled();
 		expect(mkdirSpy).toHaveBeenCalledTimes(1);
-		expect(mkdirSpy).toHaveBeenCalledWith(deepPath);
+		expect(mkdirSpy).toHaveBeenCalledWith(deepPath, { recursive: true });
 
 		existsSpy.mockRestore();
 		mkdirSpy.mockRestore();
@@ -89,10 +94,16 @@ describe("filesystem operations", () => {
 		// Behavior is preserved: every intermediate dir exists and is writable, and
 		// repeating the call is a no-op (idempotent).
 		await vm.writeFile(`${deepPath}/leaf.txt`, "ok");
-		expect(new TextDecoder().decode(await vm.readFile(`${deepPath}/leaf.txt`))).toBe(
-			"ok",
-		);
+		expect(
+			new TextDecoder().decode(await vm.readFile(`${deepPath}/leaf.txt`)),
+		).toBe("ok");
 		await vm.mkdir(deepPath, { recursive: true });
+	});
+
+	test("relative paths resolve against the VM cwd in the sidecar", async () => {
+		await vm.writeFile("relative.txt", "cwd-relative");
+		const data = await vm.readFile("nested/../relative.txt");
+		expect(new TextDecoder().decode(data)).toBe("cwd-relative");
 	});
 
 	test("writeFile is visible to WASM guest commands", async () => {
@@ -132,7 +143,7 @@ describe("filesystem operations", () => {
 			loopbackExemptPorts: [mockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
 			permissions: ALLOW_ALL_VM_PERMISSIONS,
-			software: [...REGISTRY_SOFTWARE],
+			software: [...REGISTRY_SOFTWARE, CLAUDE_SOFTWARE],
 		});
 
 		let sessionId: string | undefined;
@@ -161,7 +172,7 @@ describe("filesystem operations", () => {
 			).toBe("agent-shadow-ok");
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await stopLlmock(mock);
 		}

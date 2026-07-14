@@ -8,8 +8,8 @@
 use std::sync::Arc;
 
 use agentos_client::{
-    AgentOs, AgentOsConfig, MountPlugin, RootFilesystemConfig, RootFilesystemKind,
-    SidecarJsBridgeCall, SidecarJsBridgeCallback,
+    AgentOs, AgentOsConfig, CronAlarmHandler, MountPlugin, RootFilesystemConfig,
+    RootFilesystemKind, SidecarJsBridgeCall, SidecarJsBridgeCallback,
 };
 use serde_json::{json, Value};
 
@@ -74,6 +74,50 @@ pub(crate) async fn ensure_vm(
     let handle = AgentOs::create(config)
         .await
         .map_err(|error| format!("agent-os vm bring-up failed: {error}"))?;
+    let alarm_host = host.clone();
+    let alarm_handler: CronAlarmHandler = Arc::new(move |alarm| {
+        let host = alarm_host.clone();
+        Box::pin(async move {
+            let Some(timestamp_ms) = alarm.next_alarm_ms else {
+                return Ok(());
+            };
+            let timestamp_ms = i64::try_from(timestamp_ms)
+                .map_err(|_| "cron alarm exceeds the actor timestamp range".to_string())?;
+            let args =
+                rivet_actor_plugin_abi::codec::encode_json_compat_to_vec(&(alarm.generation,))
+                    .map_err(|error| format!("encode cron wake action: {error}"))?;
+            host.schedule_at(
+                timestamp_ms,
+                crate::actions::cron::INTERNAL_CRON_WAKE_ACTION.to_string(),
+                args,
+            )
+            .await
+        })
+    });
+    handle.set_cron_alarm_handler(alarm_handler);
+    if host.sql_is_enabled() {
+        let stored_state = match crate::persistence::load_cron_state(host).await {
+            Ok(state) => state,
+            Err(error) => {
+                if let Err(shutdown_error) = handle.shutdown().await {
+                    host.log_warn(&format!(
+                        "agent-os vm shutdown after cron-state load failure: {shutdown_error}"
+                    ));
+                }
+                return Err(format!("load persisted cron state: {error}"));
+            }
+        };
+        if let Some(state) = stored_state {
+            if let Err(error) = handle.import_cron_state(state).await {
+                if let Err(shutdown_error) = handle.shutdown().await {
+                    host.log_warn(&format!(
+                        "agent-os vm shutdown after cron restore failure: {shutdown_error}"
+                    ));
+                }
+                return Err(format!("restore persisted cron state: {error}"));
+            }
+        }
+    }
     *vm = Some(handle);
     // CBOR array of handler args (`handler(...body)`): the listener takes one
     // object argument, so the body is `[{}]`. JSON bytes / a bare object trip the
@@ -87,6 +131,30 @@ pub(crate) async fn ensure_vm(
         }
     }
     Ok(())
+}
+
+/// Capture the scheduler in its sidecar-owned opaque format. The actor stores
+/// the bytes but never interprets schedule or run state.
+pub(crate) async fn persist_cron_state(host: &HostCtx, vm: &AgentOs) -> Result<(), String> {
+    if !host.sql_is_enabled() {
+        return Ok(());
+    }
+    let state = vm
+        .export_cron_state()
+        .await
+        .map_err(|error| format!("export sidecar cron state: {error}"))?;
+    crate::persistence::save_cron_state(host, &state)
+        .await
+        .map_err(|error| format!("persist sidecar cron state: {error}"))
+}
+
+pub(crate) async fn delete_cron_state(host: &HostCtx) -> Result<(), String> {
+    if !host.sql_is_enabled() {
+        return Ok(());
+    }
+    crate::persistence::delete_cron_state(host)
+        .await
+        .map_err(|error| format!("delete persisted cron state: {error}"))
 }
 
 /// Tear down the VM if running; broadcast `vmShutdown` afterward.

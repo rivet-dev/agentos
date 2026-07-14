@@ -59,7 +59,10 @@ type SidecarPlacement union {
 
 type OpenSessionRequest struct {
   placement: SidecarPlacement
-  metadata: map<str><str>
+}
+
+type CloseSessionRequest struct {
+  sessionId: str
 }
 
 type GuestRuntimeKind enum {
@@ -122,8 +125,8 @@ type PermissionMode enum {
 
 type FsPermissionRule struct {
   mode: PermissionMode
-  operations: list<str>
-  paths: list<str>
+  operations: optional<list<str>>
+  paths: optional<list<str>>
 }
 
 type FsPermissionRuleSet struct {
@@ -138,8 +141,8 @@ type FsPermissionScope union {
 
 type PatternPermissionRule struct {
   mode: PermissionMode
-  operations: list<str>
-  patterns: list<str>
+  operations: optional<list<str>>
+  patterns: optional<list<str>>
 }
 
 type PatternPermissionRuleSet struct {
@@ -182,23 +185,13 @@ type BootstrapRootFilesystemRequest struct {
 
 type MountPluginDescriptor struct {
   id: str
-  config: JsonUtf8
+  config: optional<JsonUtf8>
 }
 
 type MountDescriptor struct {
   guestPath: str
-  readOnly: bool
+  readOnly: optional<bool>
   plugin: MountPluginDescriptor
-}
-
-type SoftwareDescriptor struct {
-  packageName: str
-  root: str
-}
-
-type ProjectedModuleDescriptor struct {
-  packageName: str
-  entrypoint: str
 }
 
 type WasmPermissionTier enum {
@@ -208,17 +201,24 @@ type WasmPermissionTier enum {
   ISOLATED
 }
 
-# agentOS package descriptor. `path` is the trusted host path of the package:
-# normally the packed `.aospkg` file (header + vbare manifest + mount index +
-# mount tar; see crates/vfs/package-format/v1.bare). The sidecar reads the
-# vbare chunk1 manifest, projects the package read-only under
-# `<packagesMountAt>/pkgs/<name>/<version>`, and links its `bin/` commands onto
-# $PATH. A directory path is accepted only for local transition fixtures and is
-# projected as a read-only host-dir leaf (manifest read from the dir's
-# `agentos-package.json`, a toolchain-input file that packed packages no longer
-# ship at runtime).
-type PackageDescriptor struct {
+# Native sidecars accept a trusted host path. It normally names the packed
+# `.aospkg`; a directory is accepted only for local transition fixtures.
+type PackagePath struct {
   path: str
+}
+
+# Browser sidecars cannot dereference host paths. Their package manager forwards
+# the complete opaque `.aospkg` bytes; only the sidecar decodes metadata.
+type PackageInline struct {
+  content: data
+}
+
+# agentOS package input. The sidecar reads the vbare manifest and mount index,
+# projects the package read-only under `<packagesMountAt>/pkgs/<name>/<version>`,
+# and links its commands onto $PATH. Clients never send parsed package metadata.
+type PackageDescriptor union {
+  PackagePath |
+  PackageInline
 }
 
 type AgentosProjectedAgent struct {
@@ -253,18 +253,12 @@ type PackageLinkedResponse struct {
 }
 
 type ConfigureVmRequest struct {
-  mounts: list<MountDescriptor>
-  software: list<SoftwareDescriptor>
+  mounts: optional<list<MountDescriptor>>
   permissions: optional<PermissionsPolicy>
-  moduleAccessCwd: optional<str>
-  instructions: list<str>
-  projectedModules: list<ProjectedModuleDescriptor>
-  commandPermissions: map<str><WasmPermissionTier>
-  loopbackExemptPorts: list<u16>
-  packages: list<PackageDescriptor>
-  packagesMountAt: str
-  bootstrapCommands: list<str>
-  toolShimCommands: list<str>
+  commandPermissions: optional<map<str><WasmPermissionTier>>
+  loopbackExemptPorts: optional<list<u16>>
+  packages: optional<list<PackageDescriptor>>
+  packagesMountAt: optional<str>
 }
 
 type RegisteredHostCallbackExample struct {
@@ -282,9 +276,19 @@ type RegisteredHostCallbackDefinition struct {
 type RegisterHostCallbacksRequest struct {
   name: str
   description: str
-  commandAliases: list<str>
-  registryCommandAliases: list<str>
   callbacks: map<str><RegisteredHostCallbackDefinition>
+}
+
+# Atomic AgentOS VM initialization. The sidecar creates the VM, reaches ready,
+# applies explicit mounts/packages, and registers host callback metadata before
+# returning one resolved VM view. Omitted collections remain sidecar defaults.
+type InitializeVmRequest struct {
+  runtime: GuestRuntimeKind
+  config: JsonUtf8
+  mounts: optional<list<MountDescriptor>>
+  packages: optional<list<PackageDescriptor>>
+  packagesMountAt: optional<str>
+  hostCallbacks: optional<list<RegisterHostCallbacksRequest>>
 }
 
 type CreateLayerRequest void
@@ -302,7 +306,7 @@ type ExportSnapshotRequest struct {
 }
 
 type CreateOverlayRequest struct {
-  mode: RootFilesystemMode
+  mode: optional<RootFilesystemMode>
   upperLayerId: optional<str>
   lowerLayerIds: list<str>
 }
@@ -342,7 +346,7 @@ type GuestFilesystemCallRequest struct {
   target: optional<str>
   content: optional<str>
   encoding: optional<RootFilesystemEntryEncoding>
-  recursive: bool
+  recursive: optional<bool>
   maxDepth: optional<u32>
   mode: optional<u32>
   uid: optional<u32>
@@ -361,15 +365,25 @@ type GuestKernelCallRequest struct {
 
 type SnapshotRootFilesystemRequest void
 
+type PtyOptions struct {
+  cols: optional<u16>
+  rows: optional<u16>
+}
+
 type ExecuteRequest struct {
-  processId: str
+  processId: optional<str>
   command: optional<str>
+  shellCommand: optional<str>
   runtime: optional<GuestRuntimeKind>
   entrypoint: optional<str>
   args: list<str>
-  env: map<str><str>
+  env: optional<map<str><str>>
   cwd: optional<str>
   wasmPermissionTier: optional<WasmPermissionTier>
+  pty: optional<PtyOptions>
+  keepStdinOpen: optional<bool>
+  timeoutMs: optional<u64>
+  captureOutput: optional<bool>
 }
 
 type WriteStdinRequest struct {
@@ -446,6 +460,45 @@ type VmFetchRequest struct {
   body: optional<str>
 }
 
+type CronOverlap enum {
+  ALLOW
+  SKIP
+  QUEUE
+}
+
+# `action` is an opaque, client-authored JSON value. The sidecar owns schedule
+# parsing and lifecycle state; the client only retains/runs host resources that
+# cannot cross the protocol (notably callback closures).
+type ScheduleCronRequest struct {
+  id: optional<str>
+  schedule: str
+  action: JsonUtf8
+  overlap: optional<CronOverlap>
+}
+
+type ListCronJobsRequest void
+
+type CancelCronJobRequest struct {
+  id: str
+}
+
+type WakeCronRequest struct {
+  generation: u64
+}
+
+type CompleteCronRunRequest struct {
+  runId: str
+  error: optional<str>
+}
+
+# Opaque sidecar-owned persistence. Hosts may store and return this value but
+# must not inspect, merge, or manufacture it.
+type ExportCronStateRequest void
+
+type ImportCronStateRequest struct {
+  state: JsonUtf8
+}
+
 type RequestPayload union {
   AuthenticateRequest |
   OpenSessionRequest |
@@ -479,7 +532,16 @@ type RequestPayload union {
   ResizePtyRequest |
   GetResourceSnapshotRequest |
   LinkPackageRequest |
-  ProvidedCommandsRequest
+  ProvidedCommandsRequest |
+  ScheduleCronRequest |
+  ListCronJobsRequest |
+  CancelCronJobRequest |
+  WakeCronRequest |
+  CompleteCronRunRequest |
+  ExportCronStateRequest |
+  ImportCronStateRequest |
+  InitializeVmRequest |
+  CloseSessionRequest
 }
 
 type RequestFrame struct {
@@ -500,8 +562,17 @@ type SessionOpenedResponse struct {
   ownerConnectionId: str
 }
 
+type SessionClosedResponse struct {
+  sessionId: str
+}
+
 type VmCreatedResponse struct {
   vmId: str
+  guestCwd: str
+  guestEnv: map<str><str>
+  # Sidecar-resolved bound for completed host process callback routes. Clients
+  # retain only lightweight terminal correlation up to this count.
+  processRouteRetention: u64
 }
 
 type VmDisposedResponse struct {
@@ -514,7 +585,6 @@ type RootFilesystemBootstrappedResponse struct {
 
 type VmConfiguredResponse struct {
   appliedMounts: u32
-  appliedSoftware: u32
   projectedCommands: list<ProjectedCommand>
   agents: list<AgentosProjectedAgent>
 }
@@ -522,6 +592,17 @@ type VmConfiguredResponse struct {
 type HostCallbacksRegisteredResponse struct {
   registration: str
   commandCount: u32
+}
+
+type VmInitializedResponse struct {
+  vmId: str
+  guestCwd: str
+  guestEnv: map<str><str>
+  processRouteRetention: u64
+  appliedMounts: u32
+  projectedCommands: list<ProjectedCommand>
+  agents: list<AgentosProjectedAgent>
+  hostCallbacks: list<HostCallbacksRegisteredResponse>
 }
 
 type LayerCreatedResponse struct {
@@ -632,6 +713,8 @@ type ProcessSnapshotEntry struct {
   cwd: str
   status: ProcessSnapshotStatus
   exitCode: optional<i32>
+  startTimeMs: u64
+  exitTimeMs: optional<u64>
 }
 
 type ProcessSnapshotResponse struct {
@@ -732,6 +815,80 @@ type VmFetchResponse struct {
   responseJson: str
 }
 
+type CronAlarm struct {
+  generation: u64
+  nextAlarmMs: optional<u64>
+}
+
+type CronJobEntry struct {
+  id: str
+  schedule: str
+  action: JsonUtf8
+  overlap: CronOverlap
+  lastRunMs: optional<u64>
+  nextRunMs: optional<u64>
+  runCount: u64
+  running: bool
+}
+
+type CronRun struct {
+  runId: str
+  jobId: str
+  action: JsonUtf8
+}
+
+type CronEventKind enum {
+  FIRE
+  COMPLETE
+  ERROR
+}
+
+type CronEventRecord struct {
+  kind: CronEventKind
+  jobId: str
+  timeMs: u64
+  durationMs: optional<u64>
+  error: optional<str>
+}
+
+type CronScheduledResponse struct {
+  id: str
+  alarm: CronAlarm
+}
+
+type CronJobsResponse struct {
+  jobs: list<CronJobEntry>
+  alarm: CronAlarm
+}
+
+type CronCancelledResponse struct {
+  id: str
+  cancelled: bool
+  alarm: CronAlarm
+}
+
+type CronWakeResponse struct {
+  alarm: CronAlarm
+  runs: list<CronRun>
+  events: list<CronEventRecord>
+}
+
+type CronRunCompletedResponse struct {
+  alarm: CronAlarm
+  runs: list<CronRun>
+  events: list<CronEventRecord>
+}
+
+type CronStateExportedResponse struct {
+  state: JsonUtf8
+}
+
+type CronStateImportedResponse struct {
+  alarm: CronAlarm
+  runs: list<CronRun>
+  events: list<CronEventRecord>
+}
+
 type ResponsePayload union {
   AuthenticatedResponse |
   SessionOpenedResponse |
@@ -767,7 +924,16 @@ type ResponsePayload union {
   PtyResizedResponse |
   ResourceSnapshotResponse |
   PackageLinkedResponse |
-  ProvidedCommandsResponse
+  ProvidedCommandsResponse |
+  CronScheduledResponse |
+  CronJobsResponse |
+  CronCancelledResponse |
+  CronWakeResponse |
+  CronRunCompletedResponse |
+  CronStateExportedResponse |
+  CronStateImportedResponse |
+  VmInitializedResponse |
+  SessionClosedResponse
 }
 
 type ResponseFrame struct {
@@ -803,6 +969,18 @@ type ProcessOutputEvent struct {
 type ProcessExitedEvent struct {
   processId: str
   exitCode: i32
+  stdout: optional<data>
+  stderr: optional<data>
+  error: optional<RejectedResponse>
+}
+
+# Asynchronous cron state produced after a sidecar-owned action finishes. Hosts
+# use the alarm to arm their one wake primitive, deliver lifecycle records, and
+# invoke only the callback runs whose closures cannot cross the protocol.
+type CronDispatchEvent struct {
+  alarm: CronAlarm
+  runs: list<CronRun>
+  events: list<CronEventRecord>
 }
 
 type StructuredEvent struct {
@@ -814,6 +992,7 @@ type EventPayload union {
   VmLifecycleEvent |
   ProcessOutputEvent |
   ProcessExitedEvent |
+  CronDispatchEvent |
   StructuredEvent |
   ExtEnvelope
 }

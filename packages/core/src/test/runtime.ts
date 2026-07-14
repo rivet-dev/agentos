@@ -10,32 +10,6 @@ export {
 	getAgentOsKernel,
 	getAgentOsRuntimeAdmin,
 } from "../agent-os.js";
-export type {
-	PermissionTier,
-	WasmVmRuntimeOptions,
-} from "../runtime.js";
-export type {
-	DriverProcess,
-	Kernel,
-	KernelInterface,
-	KernelRuntimeDriver,
-	ProcessContext,
-	VirtualFileSystem,
-} from "../runtime-compat.js";
-export {
-	AF_INET,
-	AF_UNIX,
-	allowAll,
-	createInMemoryFileSystem,
-	createKernel,
-	createNodeHostNetworkAdapter,
-	createNodeRuntime,
-	createWasmVmRuntime,
-	DEFAULT_FIRST_PARTY_TIERS,
-	NodeFileSystem,
-	SIGTERM,
-	SOCK_DGRAM,
-	SOCK_STREAM,
-	WASMVM_COMMANDS,
-} from "../runtime-compat.js";
+export type { VirtualFileSystem } from "../runtime.js";
+export { createInMemoryFileSystem } from "../memory-filesystem.js";
 export { TerminalHarness } from "./terminal-harness.js";

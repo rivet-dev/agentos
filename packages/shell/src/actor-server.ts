@@ -8,7 +8,6 @@
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { agentOS } from "@rivet-dev/agentos";
-import { allowAll } from "@rivet-dev/agentos-core/internal/runtime-compat";
 import { setup } from "rivetkit";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -18,7 +17,7 @@ const r6Root =
 
 const options = JSON.parse(process.env.AGENTOS_SHELL_ACTOR_OPTIONS ?? "{}");
 
-const vm = agentOS({ permissions: allowAll, ...options });
+const vm = agentOS(options);
 const registry = setup({
 	use: { vm },
 	endpoint: process.env.AGENTOS_SHELL_ENDPOINT,

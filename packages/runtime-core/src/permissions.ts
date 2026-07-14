@@ -1,7 +1,7 @@
-import * as protocol from "./generated-protocol.js";
+import type * as protocol from "./generated-protocol.js";
 import {
-	toGeneratedPermissionMode,
 	type LivePermissionMode,
+	toGeneratedPermissionMode,
 } from "./protocol-maps.js";
 
 export type { LivePermissionMode } from "./protocol-maps.js";
@@ -88,8 +88,8 @@ export function toGeneratedFilesystemPermissionScope(
 					: toGeneratedPermissionMode(scope.default),
 			rules: scope.rules.map((rule) => ({
 				mode: toGeneratedPermissionMode(rule.mode),
-				operations: rule.operations ?? [],
-				paths: rule.paths ?? [],
+				operations: rule.operations ?? null,
+				paths: rule.paths ?? null,
 			})),
 		},
 	};
@@ -113,8 +113,8 @@ export function toGeneratedPatternPermissionScope(
 					: toGeneratedPermissionMode(scope.default),
 			rules: scope.rules.map((rule) => ({
 				mode: toGeneratedPermissionMode(rule.mode),
-				operations: rule.operations ?? [],
-				patterns: rule.patterns ?? [],
+				operations: rule.operations ?? null,
+				patterns: rule.patterns ?? null,
 			})),
 		},
 	};

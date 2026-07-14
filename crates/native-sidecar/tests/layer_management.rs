@@ -3,8 +3,9 @@ mod support;
 use agentos_native_sidecar::wire::{
     ConfigureVmRequest, CreateOverlayRequest, CreateVmRequest, ExportSnapshotRequest,
     GuestFilesystemCallRequest, GuestFilesystemOperation, GuestRuntimeKind, ImportSnapshotRequest,
-    RequestPayload, ResponsePayload, RootFilesystemDescriptor, RootFilesystemEntry,
-    RootFilesystemEntryKind, RootFilesystemLowerDescriptor, RootFilesystemMode, SealLayerRequest,
+    MountDescriptor, MountPluginDescriptor, RequestPayload, ResponsePayload,
+    RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemEntryKind,
+    RootFilesystemLowerDescriptor, RootFilesystemMode, SealLayerRequest,
     SnapshotRootFilesystemLower,
 };
 use std::collections::HashMap;
@@ -339,7 +340,7 @@ fn vm_layer_store_rejects_new_layers_at_limit() {
         (
             2,
             RequestPayload::CreateOverlayRequest(CreateOverlayRequest {
-                mode: RootFilesystemMode::Ephemeral,
+                mode: Some(RootFilesystemMode::Ephemeral),
                 upper_layer_id: None,
                 lower_layer_ids: vec![first_layer_id.clone()],
             }),
@@ -347,7 +348,7 @@ fn vm_layer_store_rejects_new_layers_at_limit() {
         (
             3,
             RequestPayload::CreateOverlayRequest(CreateOverlayRequest {
-                mode: RootFilesystemMode::Ephemeral,
+                mode: Some(RootFilesystemMode::Ephemeral),
                 upper_layer_id: None,
                 lower_layer_ids: vec![String::from("missing-layer")],
             }),
@@ -393,8 +394,6 @@ fn vm_layer_store_rejects_new_layers_at_limit() {
 #[test]
 fn create_vm_root_filesystem_composes_multiple_lowers_with_bootstrap_upper() {
     let mut sidecar = new_sidecar("vm-root-multi-layer");
-    let cwd = temp_dir("vm-root-multi-layer-cwd");
-
     let connection_id = authenticate_wire(&mut sidecar, "conn-1");
     let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
     let create = sidecar
@@ -403,7 +402,7 @@ fn create_vm_root_filesystem_composes_multiple_lowers_with_bootstrap_upper() {
             wire_session(&connection_id, &session_id),
             RequestPayload::CreateVmRequest(CreateVmRequest::legacy_test_config(
                 GuestRuntimeKind::JavaScript,
-                HashMap::from([(String::from("cwd"), cwd.to_string_lossy().into_owned())]),
+                HashMap::from([(String::from("cwd"), String::from("/workspace"))]),
                 RootFilesystemDescriptor {
                     disable_default_base_layer: true,
                     lowers: vec![
@@ -460,7 +459,7 @@ fn create_vm_root_filesystem_composes_multiple_lowers_with_bootstrap_upper() {
                     target: None,
                     content: None,
                     encoding: None,
-                    recursive: false,
+                    recursive: None,
                     max_depth: None,
                     mode: None,
                     uid: None,
@@ -483,12 +482,12 @@ fn create_vm_root_filesystem_composes_multiple_lowers_with_bootstrap_upper() {
 }
 
 #[test]
-fn vm_layer_rpcs_and_module_access_mounts_are_scoped_per_vm() {
+fn vm_layer_rpcs_and_host_dir_mounts_are_scoped_per_vm() {
     let mut sidecar = new_sidecar("layer-management");
     let cwd = temp_dir("layer-management-cwd");
-    let module_access_cwd = temp_dir("layer-management-module-access");
-    let package_root = module_access_cwd.join("node_modules/fixture-pkg");
-    create_dir_all(&package_root).expect("create module access package root");
+    let node_modules_root = temp_dir("layer-management-node-modules");
+    let package_root = node_modules_root.join("fixture-pkg");
+    create_dir_all(&package_root).expect("create package root");
     write(
         package_root.join("package.json"),
         r#"{"name":"fixture-pkg","version":"1.0.0"}"#,
@@ -511,24 +510,31 @@ fn vm_layer_rpcs_and_module_access_mounts_are_scoped_per_vm() {
             4,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts: Vec::new(),
-                software: Vec::new(),
+                mounts: Some(vec![MountDescriptor {
+                    guest_path: String::from("/root/node_modules"),
+                    read_only: Some(true),
+                    plugin: MountPluginDescriptor {
+                        id: String::from("host_dir"),
+                        config: Some(
+                            serde_json::json!({
+                                "hostPath": node_modules_root,
+                                "readOnly": true,
+                            })
+                            .to_string(),
+                        ),
+                    },
+                }]),
                 permissions: None,
-                module_access_cwd: Some(module_access_cwd.to_string_lossy().into_owned()),
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
-                command_permissions: HashMap::new(),
-                loopback_exempt_ports: Vec::new(),
-                packages: Vec::new(),
-                packages_mount_at: String::new(),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                command_permissions: None,
+                loopback_exempt_ports: None,
+                packages: None,
+                packages_mount_at: None,
             }),
         ))
         .expect("configure vm");
     match configure.response.payload {
         ResponsePayload::VmConfiguredResponse(response) => {
-            // 1 = just the module_access node_modules mount. With no packages
+            // 1 = the explicit host_dir node_modules mount. With no packages
             // configured there are no granular `/opt/agentos` leaf mounts (the
             // projection adds a tar/bin/current mount per package, not a single
             // always-present staging mount).
@@ -548,7 +554,7 @@ fn vm_layer_rpcs_and_module_access_mounts_are_scoped_per_vm() {
                 target: None,
                 content: None,
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 max_depth: None,
                 mode: None,
                 uid: None,
@@ -559,15 +565,15 @@ fn vm_layer_rpcs_and_module_access_mounts_are_scoped_per_vm() {
                 offset: None,
             }),
         ))
-        .expect("read module access file");
+        .expect("read host_dir file");
     match module_read.response.payload {
         ResponsePayload::GuestFilesystemResultResponse(response) => {
             assert!(response
                 .content
-                .expect("module access content")
+                .expect("host_dir content")
                 .contains("\"fixture-pkg\""));
         }
-        other => panic!("unexpected module access response: {other:?}"),
+        other => panic!("unexpected host_dir response: {other:?}"),
     }
 
     let writable_layer_id = match sidecar
@@ -658,7 +664,7 @@ fn vm_layer_rpcs_and_module_access_mounts_are_scoped_per_vm() {
             11,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::CreateOverlayRequest(CreateOverlayRequest {
-                mode: RootFilesystemMode::Ephemeral,
+                mode: Some(RootFilesystemMode::Ephemeral),
                 upper_layer_id: Some(upper_layer_id),
                 lower_layer_ids: vec![lower_layer_id],
             }),

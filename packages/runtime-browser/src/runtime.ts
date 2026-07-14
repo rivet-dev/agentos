@@ -3227,6 +3227,11 @@ export const POLYFILL_CODE_MAP: Record<string, string> = {
 						},
 					},
 					host_fs: {
+						// Match the native runner's advisory-lock import so Rust WASI
+						// modules using File::lock instantiate in the browser runtime.
+						flock(_fd, _operation) {
+							return errnoSuccess;
+						},
 						fd_mode(fd) {
 							const descriptor = fd >>> 0;
 							if (descriptor <= 2) return 0o020666;

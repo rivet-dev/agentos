@@ -60,10 +60,7 @@ const C_PROBE_SOURCE = join(FIXTURE_DIR, "pty_probe.c");
 const NODE_PROBE_SOURCE = join(FIXTURE_DIR, "pty_probe.mjs");
 const NODE_PROBE_GUEST_PATH = "/pty_probe.mjs";
 
-const WASI_SDK = resolve(
-	REPO_ROOT,
-	"registry/native/c/vendor/wasi-sdk",
-);
+const WASI_SDK = resolve(REPO_ROOT, "registry/native/c/vendor/wasi-sdk");
 const SIDECAR_BINARY = resolve(REPO_ROOT, "target/debug/agentos-sidecar");
 
 const SETTLE_MS = 80;
@@ -106,8 +103,17 @@ function buildCProbe(binDir: string): void {
 	}
 	// Validate wasm magic so a bad build fails loudly here, not in the resolver.
 	const magic = readFileSync(out).subarray(0, 4);
-	if (!(magic[0] === 0x00 && magic[1] === 0x61 && magic[2] === 0x73 && magic[3] === 0x6d)) {
-		throw new Error(`pty_probe build is not a wasm module (magic=${magic.toString("hex")})`);
+	if (
+		!(
+			magic[0] === 0x00 &&
+			magic[1] === 0x61 &&
+			magic[2] === 0x73 &&
+			magic[3] === 0x6d
+		)
+	) {
+		throw new Error(
+			`pty_probe build is not a wasm module (magic=${magic.toString("hex")})`,
+		);
 	}
 }
 
@@ -141,7 +147,9 @@ function ensureSidecarBuilt(): void {
 		);
 		if (prep.status !== 0) {
 			throw new Error(
-				["failed prepare-build", prep.stdout, prep.stderr].filter(Boolean).join("\n"),
+				["failed prepare-build", prep.stdout, prep.stderr]
+					.filter(Boolean)
+					.join("\n"),
 			);
 		}
 		const build = spawnSync("cargo", ["build", "-q", "-p", "agentos-sidecar"], {
@@ -209,7 +217,7 @@ interface Ctx {
 	term: Terminal;
 	expect: typeof expect;
 	writeShell(data: string | Uint8Array): Promise<void>;
-	resizeShell(cols: number, rows: number): void;
+	resizeShell(cols: number, rows: number): Promise<void>;
 	waitForScreen(text: string, timeoutMs?: number): Promise<void>;
 	waitShellStatus(timeoutMs?: number): Promise<number | "timeout" | "error">;
 	settle(): Promise<void>;
@@ -252,9 +260,9 @@ const CASES: Case[] = [
 			await ctx.writeShell("\n");
 			await ctx.waitForScreen("#BYTES tag=echo");
 			ctx.snapshot("after-newline");
-			ctx.expect(ctx.screen()).toContain(
-				"#BYTES tag=echo n=4 hex=61 62 63 0A text=abc\\n",
-			);
+			ctx
+				.expect(ctx.screen())
+				.toContain("#BYTES tag=echo n=4 hex=61 62 63 0A text=abc\\n");
 			await ctx.waitForScreen("#DONE id=cooked-echo");
 		},
 	},
@@ -274,9 +282,9 @@ const CASES: Case[] = [
 			await ctx.writeShell("\n");
 			await ctx.waitForScreen("#BYTES tag=ctl");
 			ctx.snapshot("report");
-			ctx.expect(ctx.screen()).toContain(
-				"#BYTES tag=ctl n=2 hex=01 0A text=\\x01\\n",
-			);
+			ctx
+				.expect(ctx.screen())
+				.toContain("#BYTES tag=ctl n=2 hex=01 0A text=\\x01\\n");
 		},
 	},
 	{
@@ -296,9 +304,9 @@ const CASES: Case[] = [
 			await ctx.writeShell("!");
 			await ctx.waitForScreen("#BYTES tag=raw");
 			ctx.snapshot("done");
-			ctx.expect(ctx.screen()).toContain(
-				"#BYTES tag=raw n=4 hex=61 62 63 21 text=abc!",
-			);
+			ctx
+				.expect(ctx.screen())
+				.toContain("#BYTES tag=raw n=4 hex=61 62 63 21 text=abc!");
 			await ctx.waitForScreen("#DONE id=raw-no-echo");
 		},
 	},
@@ -320,9 +328,9 @@ const CASES: Case[] = [
 			ctx.snapshot("report");
 			// Load-bearing: VERASE drops the last buffered char, so the delivered
 			// line is "a\n" (n=2), independent of the broken cooked screen echo.
-			ctx.expect(ctx.markerLine("#BYTES tag=erase")).toBe(
-				"#BYTES tag=erase n=2 hex=61 0A text=a\\n",
-			);
+			ctx
+				.expect(ctx.markerLine("#BYTES tag=erase"))
+				.toBe("#BYTES tag=erase n=2 hex=61 0A text=a\\n");
 		},
 	},
 	{
@@ -361,9 +369,9 @@ const CASES: Case[] = [
 			await ctx.writeShell("\n");
 			await ctx.waitForScreen("#BYTES tag=werase");
 			ctx.snapshot("report");
-			ctx.expect(ctx.screen()).toContain(
-				"#BYTES tag=werase n=5 hex=66 6F 6F 20 0A text=foo \\n",
-			);
+			ctx
+				.expect(ctx.screen())
+				.toContain("#BYTES tag=werase n=5 hex=66 6F 6F 20 0A text=foo \\n");
 		},
 	},
 	{
@@ -384,9 +392,9 @@ const CASES: Case[] = [
 			await ctx.writeShell("\n");
 			await ctx.waitForScreen("#BYTES tag=canon");
 			ctx.snapshot("delivered");
-			ctx.expect(ctx.screen()).toContain(
-				"#BYTES tag=canon n=6 hex=68 65 6C 6C 6F 0A text=hello\\n",
-			);
+			ctx
+				.expect(ctx.screen())
+				.toContain("#BYTES tag=canon n=6 hex=68 65 6C 6C 6F 0A text=hello\\n");
 		},
 	},
 	{
@@ -394,7 +402,8 @@ const CASES: Case[] = [
 		// neither delivered nor echoed. Both runtimes prove this via process
 		// death: guest-node stdin is now a real kernel PTY (slave on fd 0), so
 		// the discipline consumes the byte as a signal and SIGINT terminates the
-		// shell process exactly like wasm-c.
+		// JavaScript signal handler, which exits the probe cleanly after proving
+		// delivery.
 		id: "sigint",
 		knownBroken: false,
 		ttyDependent: false,
@@ -404,28 +413,20 @@ const CASES: Case[] = [
 			const status = await ctx.waitShellStatus();
 			ctx.snapshot("after");
 			// Correct: VINTR is consumed as a signal -> the byte is neither echoed
-			// nor delivered (no #BYTES) and the probe is killed mid-read so it never
-			// reaches #DONE.
+			// nor delivered, and the registered JavaScript handler runs.
 			ctx.expect(ctx.screen()).not.toContain("#BYTES tag=sigint");
-			ctx.expect(ctx.screen()).not.toContain("#DONE id=sigint");
+			ctx.expect(ctx.screen()).toContain("#SIG name=SIGINT");
+			ctx.expect(ctx.screen()).toContain("#DONE id=sigint");
 			ctx.expect(ctx.screen()).not.toContain("^C");
-			// POSITIVE proof of death (fixes the prior weakness where a merely-HUNG
-			// process — signal silently dropped — also satisfied the negatives above):
-			// waitShell RESOLVED, so SIGINT actually TERMINATED the process instead of
-			// the read blocking the full 15s — `status` is a real exit status, never
-			// "timeout"/"error". Combined with the missing #DONE that means it died
-			// mid-read. (The wasm PTY-signal kill surfaces a racy/zero exit code, so
-			// death is proven by termination + no #DONE, not a 128+sig code.) guest-node
-			// survives the signal and reaches #DONE via EOF, so `not #DONE` throws and
-			// the cell stays correctly RED under it.fails until signal->isolate lands.
+			// Positive proof that the handler completed rather than the read hanging.
 			ctx.expect(status).not.toBe("timeout");
 			ctx.expect(status).not.toBe("error");
 		},
 	},
 	{
 		// ISIG VQUIT (^\ 0x1C) raises SIGQUIT. Same shape as sigint: the byte is
-		// consumed as a signal (no #BYTES, no echo) and the signal terminates the
-		// shell process on both runtimes.
+		// consumed as a signal (no #BYTES, no echo) and reaches the registered
+		// JavaScript signal handler.
 		id: "sigquit",
 		knownBroken: false,
 		ttyDependent: false,
@@ -434,13 +435,10 @@ const CASES: Case[] = [
 			await ctx.writeShell(Uint8Array.of(0x1c));
 			const status = await ctx.waitShellStatus();
 			ctx.snapshot("after");
-			// Correct: VQUIT is consumed as a signal (no #BYTES, no #DONE).
+			// Correct: VQUIT is consumed as a signal and delivered to the handler.
 			ctx.expect(ctx.screen()).not.toContain("#BYTES tag=sigquit");
-			ctx.expect(ctx.screen()).not.toContain("#DONE id=sigquit");
-			// POSITIVE proof of death: waitShell RESOLVED, so SIGQUIT terminated the
-			// process (status is never a 15s "timeout"); with the missing #DONE that
-			// means it died mid-read. (js-node survives -> reaches #DONE -> the `not
-			// #DONE` check throws -> stays correctly RED under it.fails.)
+			ctx.expect(ctx.screen()).toContain("#SIG name=SIGQUIT");
+			ctx.expect(ctx.screen()).toContain("#DONE id=sigquit");
 			ctx.expect(status).not.toBe("timeout");
 			ctx.expect(status).not.toBe("error");
 		},
@@ -457,7 +455,9 @@ const CASES: Case[] = [
 			await ctx.writeShell("\x03");
 			await ctx.waitForScreen("#BYTES tag=rawc");
 			ctx.snapshot("after");
-			ctx.expect(ctx.screen()).toContain("#BYTES tag=rawc n=1 hex=03 text=\\x03");
+			ctx
+				.expect(ctx.screen())
+				.toContain("#BYTES tag=rawc n=1 hex=03 text=\\x03");
 			ctx.expect(ctx.screen()).not.toContain("^C");
 			await ctx.waitForScreen("#DONE id=raw-ctrlc-byte");
 		},
@@ -504,9 +504,9 @@ const CASES: Case[] = [
 			ctx.snapshot("report");
 			// Load-bearing: ^H erased the last buffered byte exactly like DEL, so the
 			// delivered line is "a\n" (n=2), independent of the screen echo.
-			ctx.expect(ctx.markerLine("#BYTES tag=eraseh")).toBe(
-				"#BYTES tag=eraseh n=2 hex=61 0A text=a\\n",
-			);
+			ctx
+				.expect(ctx.markerLine("#BYTES tag=eraseh"))
+				.toBe("#BYTES tag=eraseh n=2 hex=61 0A text=a\\n");
 		},
 	},
 	{
@@ -525,7 +525,6 @@ const CASES: Case[] = [
 			await ctx.writeShell("abc");
 			await ctx.settle();
 			await ctx.writeShell("\x03");
-			await ctx.writeShell("de\n");
 			const status = await ctx.waitShellStatus();
 			ctx.snapshot("after");
 			// Killed by SIGINT mid-read: "abc" is never delivered (no #BYTES) and
@@ -573,9 +572,9 @@ const CASES: Case[] = [
 			ctx.snapshot("final");
 			// Load-bearing: the typed CR (0x0D) was mapped by ICRNL to NL (0x0A),
 			// terminating the line AND being the byte delivered -> "x\n" (78 0A).
-			ctx.expect(ctx.screen()).toContain(
-				"#BYTES tag=icrnl n=2 hex=78 0A text=x\\n",
-			);
+			ctx
+				.expect(ctx.screen())
+				.toContain("#BYTES tag=icrnl n=2 hex=78 0A text=x\\n");
 		},
 	},
 	{
@@ -611,14 +610,15 @@ const CASES: Case[] = [
 		async run(ctx) {
 			await ctx.waitForScreen("#SIZE tag=before");
 			await ctx.waitForScreen("#READY tag=resize");
-			ctx.resizeShell(120, 40);
+			await ctx.resizeShell(120, 40);
+			await ctx.waitForScreen("#SIZE tag=after rc=0 cols=120 rows=40");
 			// Sentinel '!' + CR (ICRNL -> NL flushes the cooked line).
 			await ctx.writeShell("!\r");
-			await ctx.waitForScreen("#SIZE tag=after rc=0 cols=120 rows=40");
+			await ctx.waitForScreen("#DONE id=resize-sigwinch");
 			ctx.snapshot("resize");
-			ctx.expect(ctx.screen()).toContain(
-				"#SIZE tag=before rc=0 cols=80 rows=24",
-			);
+			ctx
+				.expect(ctx.screen())
+				.toContain("#SIZE tag=before rc=0 cols=80 rows=24");
 		},
 	},
 	{
@@ -633,9 +633,7 @@ const CASES: Case[] = [
 			await ctx.waitForScreen("#CPR sent=1");
 			await ctx.waitForScreen("#CPRREPLY");
 			ctx.snapshot("cpr-reply");
-			const m = ctx
-				.screen()
-				.match(/#CPRREPLY n=\d+ hex=[0-9A-F ]+ text=(\S+)/);
+			const m = ctx.screen().match(/#CPRREPLY n=\d+ hex=[0-9A-F ]+ text=(\S+)/);
 			ctx.expect(m, "expected a #CPRREPLY marker line").toBeTruthy();
 			ctx.expect(m?.[1] ?? "").toMatch(/^\\e\[\d+;\d+R$/);
 		},
@@ -670,9 +668,9 @@ const CASES: Case[] = [
 			await ctx.waitForScreen("#SIZE tag=open");
 			await ctx.waitForScreen("#DONE id=winsize");
 			ctx.snapshot("winsize");
-			ctx.expect(ctx.screen()).toContain(
-				"#SIZE tag=open rc=0 cols=100 rows=37",
-			);
+			ctx
+				.expect(ctx.screen())
+				.toContain("#SIZE tag=open rc=0 cols=100 rows=37");
 		},
 	},
 ];
@@ -725,7 +723,7 @@ describe("PTY line discipline matrix", () => {
 				disposeOnData = undefined;
 				if (vm && shellId) {
 					try {
-						vm.closeShell(shellId);
+						await vm.closeShell(shellId);
 					} catch {
 						// probe may already have exited
 					}
@@ -789,14 +787,11 @@ function registerCase(
 			const term = new Terminal({ cols, rows, allowProposedApi: true });
 			const rawBytes = hooks.getRawBytes();
 
-			const command =
-				rt.name === "wasm-c" ? "pty_probe" : "node";
+			const command = rt.name === "wasm-c" ? "pty_probe" : "node";
 			const args =
-				rt.name === "wasm-c"
-					? [c.id]
-					: [NODE_PROBE_GUEST_PATH, c.id];
+				rt.name === "wasm-c" ? [c.id] : [NODE_PROBE_GUEST_PATH, c.id];
 
-			const { shellId } = vm.openShell({
+			const { shellId } = await vm.openShell({
 				command,
 				args,
 				cols,
@@ -827,9 +822,9 @@ function registerCase(
 				async writeShell(data) {
 					await vm.writeShell(shellId, data);
 				},
-				resizeShell(c2, r2) {
+				async resizeShell(c2, r2) {
 					term.resize(c2, r2);
-					vm.resizeShell(shellId, c2, r2);
+					await vm.resizeShell(shellId, c2, r2);
 				},
 				async waitForScreen(text, timeoutMs = WAIT_TIMEOUT_MS) {
 					const deadline = Date.now() + timeoutMs;

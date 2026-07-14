@@ -27,18 +27,20 @@ async function createVmCapturingHandler(
 ): Promise<{ vm: AgentOs; handler: CapturedHandler }> {
 	let captured: CapturedHandler | null = null;
 	const original =
-		NativeSidecarProcessClient.prototype.setSidecarRequestHandler;
+		NativeSidecarProcessClient.prototype.registerSidecarRequestHandler;
 	const spy = vi
-		.spyOn(NativeSidecarProcessClient.prototype, "setSidecarRequestHandler")
+		.spyOn(
+			NativeSidecarProcessClient.prototype,
+			"registerSidecarRequestHandler",
+		)
 		.mockImplementation(function (
 			this: NativeSidecarProcessClient,
+			ownership: any,
 			handler: any,
 		) {
-			if (handler) {
-				captured = handler as CapturedHandler;
-			}
+			captured = handler as CapturedHandler;
 			// Still install on the real client so the VM behaves normally.
-			return original.call(this, handler);
+			return original.call(this, ownership, handler);
 		});
 	try {
 		const vm = await AgentOs.create(options);
@@ -67,11 +69,9 @@ function hostCallbackFrame(callbackKey: string, input: unknown) {
 	};
 }
 
-// A forged *command-shaped* host_callback. `handleHostCallback` dispatches any
-// input that parses as `{type:'command',command,args,cwd}` through the SECOND
-// branch (`handleHostCommandCallback` -> `handleAgentOsToolkitCommand` ->
-// `invokeHostTool`), bypassing the `callback_key`/Zod path entirely. We forge a
-// CLI-style command frame to confirm THAT branch also enforces binding.invoke.
+// A forged legacy command-shaped host callback. Registry and toolkit command
+// parsing is sidecar-owned, so the client must reject this shape instead of
+// reviving the deleted client command dispatcher.
 function commandHostCallbackFrame(command: string, args: string[]) {
 	return {
 		frame_type: "sidecar_request" as const,
@@ -79,8 +79,8 @@ function commandHostCallbackFrame(command: string, args: string[]) {
 		payload: {
 			type: "host_callback" as const,
 			invocation_id: "guest-forged-cmd-1",
-			// callback_key is irrelevant on the command branch; set it to a tool
-			// that DOES exist to prove the command branch is what runs.
+			// Use a real tool key: the legacy command object must be treated only as
+			// that tool's direct input and rejected by its Zod schema.
 			callback_key: "math:add",
 			input: {
 				type: "command",
@@ -126,7 +126,7 @@ const duplicateMathToolKit = toolKit({
 async function runCommand(vm: AgentOs, command: string, args: string[]) {
 	const stdoutChunks: string[] = [];
 	const stderrChunks: string[] = [];
-	const { pid } = vm.spawn(command, args, {
+	const { pid } = await vm.spawn(command, args, {
 		onStdout: (chunk) => {
 			stdoutChunks.push(new TextDecoder().decode(chunk));
 		},
@@ -155,7 +155,7 @@ describe("toolkit permissions", () => {
 			AgentOs.create({
 				toolKits: [mathToolKit, duplicateMathToolKit],
 			}),
-		).rejects.toThrow(/conflict: toolkit already registered: math/);
+		).rejects.toThrow(/toolkit already registered: math/);
 	});
 
 	test("allows toolkit invocation with default permissions", async () => {
@@ -417,6 +417,48 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 		).toBe(false);
 	});
 
+	test("host_callback applies a non-idempotent Zod transform exactly once", async () => {
+		let transformCount = 0;
+		let executedInput: { value: number } | undefined;
+		const registrationSchema = z.object({ value: z.number() });
+		const tool = hostTool({
+			description: "Transform one value",
+			inputSchema: registrationSchema,
+			execute: (input) => {
+				executedInput = input;
+				return input;
+			},
+		});
+		const kit = toolKit({
+			name: "transform",
+			description: "Transform utilities",
+			tools: { once: tool },
+		});
+		const created = await createVmCapturingHandler({ toolKits: [kit] });
+		vm = created.vm;
+
+		// Registration converts the representable schema to JSON Schema. The parsed options retain
+		// that Zod schema object, so replace only its host-side parser with a real transform that makes
+		// a second parse observable without asking the sidecar to represent the transform.
+		const transformSchema = z
+			.object({ value: z.number() })
+			.transform(({ value }) => {
+				transformCount += 1;
+				return { value: value + 1 };
+			});
+		registrationSchema.safeParse =
+			transformSchema.safeParse.bind(transformSchema);
+
+		const response = await created.handler(
+			hostCallbackFrame("transform:once", { value: 1 }),
+		);
+
+		expect(response.error).toBeUndefined();
+		expect(response.result).toEqual({ value: 2 });
+		expect(executedInput).toEqual({ value: 2 });
+		expect(transformCount).toBe(1);
+	});
+
 	// AOSFS-2 (P2): a guest can send schema-failing input on the raw host_callback
 	// RPC path (which does NOT go through the CLI argv parser / sidecar-tool
 	// dispatch validation at sidecar-tool-dispatch:108). The handler must
@@ -466,12 +508,9 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 		expect(response.error).toMatch(/number|expected|required|invalid|nan/i);
 	});
 
-	// AOS-SESS-4 (N-014, P2, J.1/J.2): the *command-shaped* host_callback dispatch
-	// branch (handleHostCommandCallback -> invokeHostTool) must ALSO honor
-	// binding.invoke deny — defense-in-depth on the second dispatch path that the
-	// callback_key/Zod branch does not cover. (Hold-as-regression; not a
-	// re-discovery — assert the gate holds on this branch.)
-	test("forged {type:'command'} host_callback is denied by binding.invoke on the command dispatch branch", async () => {
+	// AOS-SESS-4 (N-014, P2, J.1/J.2): a forged legacy command
+	// callback must not revive the deleted client command dispatcher.
+	test("forged legacy command callbacks are rejected by Zod without executing a tool", async () => {
 		const executed: unknown[] = [];
 		const spyKit = toolKit({
 			name: "math",
@@ -504,12 +543,12 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 			commandHostCallbackFrame("agentos-math", ["add", "--a", "2", "--b", "3"]),
 		);
 
-		// The attacker must be denied on the command branch too: execute MUST NOT
-		// have run and the response must surface a policy denial, not a result.
+		// The client only accepts a registered callback key with already-parsed
+		// input. Sidecar binding policy is covered on the real command path above.
 		expect(executed).toHaveLength(0);
 		expect(response.type).toBe("host_callback_result");
 		expect(response.result).toBeUndefined();
 		expect(typeof response.error).toBe("string");
-		expect(response.error).toMatch(/tool\.invoke|EACCES|denied|permission/i);
+		expect(response.error).toMatch(/number|expected|required|invalid/i);
 	});
 });

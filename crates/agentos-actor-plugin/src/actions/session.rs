@@ -7,7 +7,7 @@
 //! via `ctx.db_*`, so the set of sessions survives actor sleep/wake. The live
 //! ACP session itself lives in the VM and is recreated on demand.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::host_ctx::HostCtx;
@@ -97,6 +97,11 @@ fn spawn_event_capture(
         Ok(sub) => sub,
         Err(error) => {
             tracing::warn!(?error, live_session_id, "on_session_event subscribe failed");
+            super::broadcast_stream_error(
+                ctx,
+                super::StreamErrorSource::SessionEvent(external_session_id),
+                &error,
+            );
             return;
         }
     };
@@ -110,7 +115,19 @@ fn spawn_event_capture(
         // Keep the RAII guard alive for the lifetime of the pump; dropping the
         // stream (on abort / channel close) is the unsubscribe.
         let _subscription = subscription;
-        while let Some(notification) = stream.next().await {
+        while let Some(result) = stream.next().await {
+            let notification = match result {
+                Ok(notification) => notification,
+                Err(error) => {
+                    tracing::error!(?error, external, "session event stream failed");
+                    super::broadcast_stream_error(
+                        &ctx,
+                        super::StreamErrorSource::SessionEvent(&external),
+                        &error,
+                    );
+                    break;
+                }
+            };
             let event_value = match serde_json::to_value(&notification) {
                 Ok(value) => value,
                 Err(error) => {
@@ -237,6 +254,11 @@ fn spawn_permission_pump(
                 live_session_id,
                 "on_permission_request subscribe failed"
             );
+            super::broadcast_stream_error(
+                ctx,
+                super::StreamErrorSource::PermissionRequest(external_session_id),
+                &error,
+            );
             return;
         }
     };
@@ -249,7 +271,19 @@ fn spawn_permission_pump(
         // Keep the RAII guard alive for the pump's lifetime; dropping the stream
         // (on abort / channel close) is the unsubscribe.
         let _subscription = subscription;
-        while let Some(request) = stream.next().await {
+        while let Some(result) = stream.next().await {
+            let request = match result {
+                Ok(request) => request,
+                Err(error) => {
+                    tracing::error!(?error, external, "permission request stream failed");
+                    super::broadcast_stream_error(
+                        &ctx,
+                        super::StreamErrorSource::PermissionRequest(&external),
+                        &error,
+                    );
+                    break;
+                }
+            };
             let body = encode_permission_request_event(
                 &external,
                 &request.permission_id,
@@ -313,6 +347,11 @@ fn spawn_exit_capture(
         Ok(sub) => sub,
         Err(error) => {
             tracing::warn!(?error, live_session_id, "on_agent_exit subscribe failed");
+            super::broadcast_stream_error(
+                ctx,
+                super::StreamErrorSource::AgentExit(external_session_id),
+                &error,
+            );
             return;
         }
     };
@@ -326,7 +365,19 @@ fn spawn_exit_capture(
         // Keep the RAII guard alive for the lifetime of the pump; dropping the
         // stream (on abort / channel close) is the unsubscribe.
         let _subscription = subscription;
-        while let Some(event) = stream.next().await {
+        while let Some(result) = stream.next().await {
+            let event = match result {
+                Ok(event) => event,
+                Err(error) => {
+                    tracing::error!(?error, external, "agent exit stream failed");
+                    super::broadcast_stream_error(
+                        &ctx,
+                        super::StreamErrorSource::AgentExit(&external),
+                        &error,
+                    );
+                    break;
+                }
+            };
             tracing::warn!(
                 external,
                 agent_type = event.agent_type,
@@ -377,10 +428,12 @@ pub async fn create_session(
     // `resume_session` for how these are read back.
     let capabilities = vm
         .get_session_capabilities(&session_id)
+        .await?
         .and_then(|caps| serde_json::to_string(&caps).ok())
         .unwrap_or_else(|| "{}".to_owned());
     let agent_info = vm
         .get_session_agent_info(&session_id)
+        .await?
         .and_then(|info| serde_json::to_string(&info).ok());
     run_stmt(
         ctx,
@@ -453,7 +506,7 @@ pub async fn send_prompt(
     // in `crates/agentos-sidecar/src/acp_extension.rs` (spec §6); this is just
     // the actor-side trigger that drives it.
     if !vars.live_sessions.contains_key(session_id)
-        && !is_session_live(vm, session_id)
+        && !is_session_live(vm, session_id).await?
         && session_is_persisted(ctx, session_id).await?
     {
         resume_session(ctx, vm, vars, session_id).await?;
@@ -501,7 +554,9 @@ pub async fn close_session(
         task.abort();
     }
     vars.live_sessions.remove(session_id);
-    vm.close_session(&live_session_id).map_err(|e| anyhow!(e))?;
+    vm.close_session(&live_session_id)
+        .await
+        .map_err(|e| anyhow!(e))?;
     // Drop persisted metadata + events (explicit, since SQLite FK cascade is
     // only enforced when `PRAGMA foreign_keys = ON`).
     run_stmt(
@@ -525,6 +580,12 @@ pub async fn list_persisted_sessions(
     ctx: &HostCtx,
     vm: &AgentOs,
 ) -> Result<Vec<PersistedSessionDto>> {
+    let live_session_ids = vm
+        .list_sessions()
+        .await?
+        .into_iter()
+        .map(|session| session.session_id)
+        .collect::<BTreeSet<_>>();
     let rows = query_rows(
         ctx,
         "SELECT session_id, agent_type, created_at FROM agent_os_sessions \
@@ -540,7 +601,7 @@ pub async fn list_persisted_sessions(
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_owned();
-            let status = if is_session_live(vm, &session_id) {
+            let status = if live_session_ids.contains(&session_id) {
                 "running"
             } else {
                 "idle"
@@ -596,10 +657,12 @@ pub async fn get_session_events(
 }
 
 /// True when an ACP session with this id is currently live in the VM.
-fn is_session_live(vm: &AgentOs, session_id: &str) -> bool {
-    vm.list_sessions()
+async fn is_session_live(vm: &AgentOs, session_id: &str) -> Result<bool> {
+    Ok(vm
+        .list_sessions()
+        .await?
         .iter()
-        .any(|info| info.session_id == session_id)
+        .any(|info| info.session_id == session_id))
 }
 
 /// True when `external_session_id` has a persisted registry row in

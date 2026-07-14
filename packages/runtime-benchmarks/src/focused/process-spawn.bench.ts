@@ -33,8 +33,12 @@ import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createBenchSidecar, createBenchVm, type BenchVm } from "../lib/vm.js";
-import type { SidecarProcess } from "@rivet-dev/agentos-runtime-core";
+import {
+	createBenchSidecar,
+	createBenchVm,
+	type BenchSidecar,
+	type BenchVm,
+} from "../lib/vm.js";
 import {
 	forceGC,
 	getHardware,
@@ -171,18 +175,18 @@ function runNodeLayer(): number[] {
 }
 
 /** Guest layer: spawn node inside one reused VM (a fresh V8 isolate per spawn). */
-async function runGuestLayer(sidecar: SidecarProcess): Promise<number[]> {
+async function runGuestLayer(sidecar: BenchSidecar): Promise<number[]> {
 	const vm = await createBenchVm({ sidecar });
 	try {
 		for (let i = 0; i < WARMUP; i++) {
-			const p = vm.spawn("node", NODE_ARGS);
+			const p = await vm.spawn("node", NODE_ARGS);
 			const code = await vm.waitProcess(p.pid);
 			if (code !== 0) throw new Error(`guest warmup: exit ${code}`);
 		}
 		const samples: number[] = [];
 		for (let i = 0; i < ITERATIONS; i++) {
 			const t = process.hrtime.bigint();
-			const p = vm.spawn("node", NODE_ARGS);
+			const p = await vm.spawn("node", NODE_ARGS);
 			await vm.waitProcess(p.pid);
 			samples.push(nowMs(t));
 		}
@@ -238,14 +242,14 @@ async function runNodeFanoutPhases(): Promise<PhaseSamples> {
 	return samples;
 }
 
-async function runGuestNodeExitPhases(sidecar: SidecarProcess): Promise<PhaseSamples> {
+async function runGuestNodeExitPhases(sidecar: BenchSidecar): Promise<PhaseSamples> {
 	const samples: PhaseSamples = { total: [], spawn: [], wait_reap: [] };
 	const vm = await createBenchVm({ sidecar });
 	try {
 		for (let i = 0; i < WARMUP + ITERATIONS; i++) {
 			const totalStart = process.hrtime.bigint();
 			const spawnStart = process.hrtime.bigint();
-			const child = vm.spawn("node", NODE_ARGS);
+			const child = await vm.spawn("node", NODE_ARGS);
 			const spawnMs = nowMs(spawnStart);
 			const waitStart = process.hrtime.bigint();
 			const code = await vm.waitProcess(child.pid);
@@ -264,7 +268,7 @@ async function runGuestNodeExitPhases(sidecar: SidecarProcess): Promise<PhaseSam
 	}
 }
 
-async function runGuestFanoutPhases(sidecar: SidecarProcess): Promise<PhaseSamples> {
+async function runGuestFanoutPhases(sidecar: BenchSidecar): Promise<PhaseSamples> {
 	const samples: PhaseSamples = {
 		total: [],
 		spawn_batch: [],
@@ -275,8 +279,8 @@ async function runGuestFanoutPhases(sidecar: SidecarProcess): Promise<PhaseSampl
 		for (let i = 0; i < WARMUP + ITERATIONS; i++) {
 			const totalStart = process.hrtime.bigint();
 			const spawnStart = process.hrtime.bigint();
-			const children = Array.from({ length: FANOUT }, () =>
-				vm.spawn("node", NODE_ARGS),
+			const children = await Promise.all(
+				Array.from({ length: FANOUT }, () => vm.spawn("node", NODE_ARGS)),
 			);
 			const spawnMs = nowMs(spawnStart);
 			const waitStart = process.hrtime.bigint();
@@ -302,7 +306,7 @@ async function runGuestFanoutPhases(sidecar: SidecarProcess): Promise<PhaseSampl
 }
 
 async function runGuestFanoutLadderCase(
-	sidecar: SidecarProcess,
+	sidecar: BenchSidecar,
 	executePhasesFile: string,
 	fanout: number,
 ): Promise<FanoutLadderRow> {
@@ -315,8 +319,8 @@ async function runGuestFanoutLadderCase(
 		for (let i = 0; i < WARMUP + ITERATIONS; i++) {
 			const totalStart = process.hrtime.bigint();
 			const spawnStart = process.hrtime.bigint();
-			const children = Array.from({ length: fanout }, () =>
-				vm.spawn("node", NODE_ARGS),
+			const children = await Promise.all(
+				Array.from({ length: fanout }, () => vm.spawn("node", NODE_ARGS)),
 			);
 			const spawnMs = nowMs(spawnStart);
 			const waitStart = process.hrtime.bigint();
@@ -354,7 +358,7 @@ async function runGuestFanoutLadderCase(
 }
 
 async function runGuestFanoutLadderRows(
-	sidecar: SidecarProcess,
+	sidecar: BenchSidecar,
 	executePhasesFile: string,
 ): Promise<FanoutLadderRow[]> {
 	const rows: FanoutLadderRow[] = [];
@@ -514,7 +518,7 @@ function runNodeNestedChildProcessLayer(
 }
 
 async function runGuestNestedChildProcessLayer(
-	sidecar: SidecarProcess,
+	sidecar: BenchSidecar,
 	script: string,
 	fanout: number,
 ): Promise<NestedChildProcessLayerResult> {
@@ -526,7 +530,7 @@ async function runGuestNestedChildProcessLayer(
 			const stdoutChunks: Uint8Array[] = [];
 			const stderrChunks: Uint8Array[] = [];
 			const t = process.hrtime.bigint();
-			const proc = vm.spawn("node", ["-e", script], {
+			const proc = await vm.spawn("node", ["-e", script], {
 				onStdout: (chunk) => stdoutChunks.push(chunk),
 				onStderr: (chunk) => stderrChunks.push(chunk),
 			});
@@ -607,7 +611,7 @@ function assertNestedChildProcessPhaseCoverage(
 }
 
 async function runNestedChildProcessRows(
-	sidecar: SidecarProcess,
+	sidecar: BenchSidecar,
 	executePhasesFile: string,
 ): Promise<NestedChildProcessRow[]> {
 	const fanout = FANOUT;
@@ -641,7 +645,7 @@ async function runNestedChildProcessRows(
 }
 
 async function runGuestHostWriteSyncCase(
-	sidecar: SidecarProcess,
+	sidecar: BenchSidecar,
 	executePhasesFile: string,
 	row: HostWriteSyncRow["row"],
 	options: {
@@ -669,7 +673,7 @@ async function runGuestHostWriteSyncCase(
 		const samples: number[] = [];
 		for (let i = 0; i < WARMUP + ITERATIONS; i++) {
 			const t = process.hrtime.bigint();
-			const proc = vm.spawn("node", options.args, { cwd: options.cwd });
+			const proc = await vm.spawn("node", options.args, { cwd: options.cwd });
 			const code = await vm.waitProcess(proc.pid);
 			const ms = nowMs(t);
 			if (code !== 0) throw new Error(`guest host-write-sync ${row}: exit ${code}`);
@@ -705,7 +709,7 @@ async function runGuestHostWriteSyncCase(
 }
 
 async function runGuestHostWriteSyncRows(
-	sidecar: SidecarProcess,
+	sidecar: BenchSidecar,
 	executePhasesFile: string,
 ): Promise<HostWriteSyncRow[]> {
 	const hostRoot = mkdtempSync(join(tmpdir(), "agentos-host-write-sync-"));

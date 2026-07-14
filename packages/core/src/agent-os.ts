@@ -1,17 +1,6 @@
-import { execFileSync, spawn as spawnChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import {
-	join,
-	posix as posixPath,
-	resolve as resolveHostPath,
-} from "node:path";
-import { fileURLToPath } from "node:url";
-import type {
-	MountConfigJsonObject,
-	MountConfigJsonValue,
-	NativeMountPluginDescriptor,
-} from "@rivet-dev/agentos-runtime-core/descriptors";
+import { posix as posixPath } from "node:path";
+import type { NativeMountPluginDescriptor } from "@rivet-dev/agentos-runtime-core/descriptors";
 import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
 import type {
 	AgentCapabilities,
@@ -21,19 +10,13 @@ import type {
 	PermissionRequestHandler,
 	SessionConfigOption,
 	SessionEventHandler,
-	SessionInitData,
 	SessionModeState,
 } from "./agent-session-types.js";
-import { type HostTool, type ToolKit, validateToolkits } from "./host-tools.js";
+import type { HostTool, ToolKit } from "./host-tools.js";
 import { zodToJsonSchema } from "./host-tools-zod.js";
-import type {
-	JsonRpcNotification,
-	JsonRpcRequest,
-	JsonRpcResponse,
-} from "./json-rpc.js";
+import type { JsonRpcNotification, JsonRpcResponse } from "./json-rpc.js";
 import { parseAgentOsOptions } from "./options-schema.js";
 import type {
-	ConnectTerminalOptions,
 	Kernel,
 	KernelExecOptions,
 	KernelExecResult,
@@ -45,9 +28,8 @@ import type {
 	ShellHandle,
 	VirtualFileSystem,
 	VirtualStat,
-} from "./runtime-compat.js";
+} from "./runtime.js";
 import { resolvePublishedSidecarBinary } from "./sidecar/binary.js";
-import { findCargoBinary, resolveCargoBinary } from "./sidecar/cargo.js";
 
 export type {
 	MountConfigJsonObject,
@@ -76,21 +58,9 @@ export type {
 	JsonRpcResponse,
 } from "./json-rpc.js";
 export { isAcpTimeoutErrorData } from "./json-rpc.js";
-export type { ConnectTerminalOptions } from "./runtime-compat.js";
 
-const ACP_PROTOCOL_VERSION = 1;
 const ACP_EXTENSION_NAMESPACE = "dev.rivet.agent-os.acp";
 const SHELL_DISPOSE_TIMEOUT_MS = 5_000;
-
-function defaultAcpClientCapabilities(): Record<string, unknown> {
-	return {
-		fs: {
-			readTextFile: true,
-			writeTextFile: true,
-		},
-		terminal: true,
-	};
-}
 
 async function waitForTrackedExitPromises(
 	promises: Promise<unknown>[],
@@ -107,11 +77,6 @@ async function waitForTrackedExitPromises(
 	]);
 }
 
-/** Process tree node: extends kernel ProcessInfo with child references. */
-export interface ProcessTreeNode extends KernelProcessInfo {
-	children: ProcessTreeNode[];
-}
-
 /** A directory entry with metadata. */
 export interface DirEntry {
 	/** Absolute path to the entry. */
@@ -124,28 +89,6 @@ export interface DirEntry {
 export interface ReaddirRecursiveOptions {
 	/** Maximum depth to recurse (0 = only immediate children). */
 	maxDepth?: number;
-	/** Directory names to skip. */
-	exclude?: string[];
-}
-
-/** Entry for batch write operations. */
-export interface BatchWriteEntry {
-	path: string;
-	content: string | Uint8Array;
-}
-
-/** Result of a single file in a batch write. */
-export interface BatchWriteResult {
-	path: string;
-	success: boolean;
-	error?: string;
-}
-
-/** Result of a single file in a batch read. */
-export interface BatchReadResult {
-	path: string;
-	content: Uint8Array | null;
-	error?: string;
 }
 
 /** Entry in the agent registry, describing an available agent type. */
@@ -156,24 +99,16 @@ export interface AgentRegistryEntry {
 	adapterEntrypoint: string;
 }
 
-import type { AgentType } from "./types.js";
-import { getBaseEnvironment } from "./base-filesystem.js";
+import type { PackageRef, SoftwarePackageRef } from "./agentos-package.js";
 import { CronManager } from "./cron/cron-manager.js";
-import type { ScheduleDriver } from "./cron/schedule-driver.js";
-import { TimerScheduleDriver } from "./cron/timer-driver.js";
 import type {
-	CronEvent,
 	CronEventHandler,
 	CronJob,
 	CronJobInfo,
 	CronJobOptions,
 } from "./cron/types.js";
-import {
-	type FilesystemEntry,
-	snapshotVirtualFilesystem,
-	sortFilesystemEntries,
-} from "./filesystem-snapshot.js";
-import { createHostDirBackend } from "./host-dir-mount.js";
+import { resolveDefaultSoftware } from "./default-software.js";
+import type { FilesystemEntry } from "./filesystem-snapshot.js";
 import {
 	type LocalCompatMount,
 	serializeMountConfigForSidecar,
@@ -185,20 +120,10 @@ import {
 	type RootSnapshotExport,
 	type SnapshotLayerHandle,
 } from "./layers.js";
-import { type SoftwareInput, type SoftwareRoot } from "./packages.js";
-import {
-	OPT_AGENTOS_ROOT,
-	type PackageRef,
-	type SoftwarePackageRef,
-	tryReadAgentosPackageManifest,
-} from "./agentos-package.js";
-import { resolveDefaultSoftware } from "./default-software.js";
-import type { PermissionTier } from "./runtime.js";
-import { allowAll, createNodeHostNetworkAdapter } from "./runtime-compat.js";
+import type { SoftwareInput } from "./packages.js";
 import {
 	type AcpRequest,
 	type AcpResponse,
-	AcpRuntimeKind,
 	decodeAcpCallback,
 	decodeAcpEvent,
 	decodeAcpResponse,
@@ -220,7 +145,6 @@ import {
 	NativeSidecarKernelProxy,
 	type RootFilesystemEntry,
 	type SidecarMountDescriptor,
-	type SidecarPermissionsPolicy,
 	SidecarProcess,
 	type SidecarRegisteredHostCallbackDefinition,
 	type SidecarRequestFrame,
@@ -228,6 +152,7 @@ import {
 	type SidecarSessionState,
 	serializeRootFilesystemForSidecar,
 } from "./sidecar/rpc-client.js";
+import type { AgentType } from "./types.js";
 
 export interface AgentOsSharedSidecarOptions {
 	pool?: string;
@@ -260,28 +185,16 @@ interface AgentOsSidecarVmLease<TVmAdmin extends InProcessSidecarVmAdmin> {
 	dispose(): Promise<void>;
 }
 
-interface HostMountInfo {
-	vmPath: string;
-	hostPath: string;
-	readOnly: boolean;
-}
-
 interface AgentOsVmAdmin extends InProcessSidecarVmAdmin {
 	kernel: Kernel;
 	rootView: VirtualFileSystem;
-	hostMounts: HostMountInfo[];
 	env: Record<string, string>;
-	permissions: Permissions;
 	sidecarMounts: SidecarMountDescriptor[];
-	sidecarPermissions: SidecarPermissionsPolicy | undefined;
-	commandPermissions: Record<string, PermissionTier>;
-	loopbackExemptPorts: number[] | undefined;
 	sidecarClient: SidecarProcess;
 	sidecarSession: AuthenticatedSession;
 	sidecarVm: CreatedVm;
-	snapshotRootFilesystem?: () => Promise<RootSnapshotExport>;
 	toolKits: ToolKit[];
-	toolReference: string;
+	permissions: Permissions;
 }
 
 interface SessionEventSubscriber {
@@ -293,11 +206,6 @@ interface AgentSessionEntry {
 	agentType: string;
 	processId: string;
 	pid: number | null;
-	closed: boolean;
-	modes: SessionModeState | null;
-	configOptions: SessionConfigOption[];
-	capabilities: AgentCapabilities;
-	agentInfo: AgentInfo | null;
 	eventHandlers: Set<SessionEventSubscriber>;
 	permissionHandlers: Set<PermissionRequestHandler>;
 	/**
@@ -305,30 +213,21 @@ interface AgentSessionEntry {
 	 * this session, so a tool-heavy turn does not re-warn on every request.
 	 */
 	warnedNoPermissionHandler: boolean;
-	configOverrides: Map<string, string>;
 	pendingPermissionReplies: Map<
 		string,
 		{
 			resolve: (reply: PermissionReply) => void;
 			reject: (error: Error) => void;
-			timer: ReturnType<typeof setTimeout>;
+			cleanupTimer: ReturnType<typeof setTimeout>;
 		}
 	>;
-}
-
-interface AcpTerminalEntry {
-	handle: ShellHandle;
-	output: string;
-	truncated: boolean;
-	outputByteLimit: number;
-	exitCode: number | null;
-	waitPromise: Promise<number>;
 }
 
 interface ShellEntry {
 	handle: ShellHandle;
 	dataHandlers: Set<(data: Uint8Array) => void>;
 	exitPromise: Promise<number>;
+	closing: boolean;
 }
 
 export type RootLowerInput =
@@ -389,6 +288,8 @@ export interface AgentOsLimits {
 	resources?: {
 		cpuCount?: number;
 		maxProcesses?: number;
+		/** Aggregate bytes retained by all active captured processes in this VM. Default: 32 MiB. */
+		maxCapturedOutputBytes?: number;
 		maxOpenFds?: number;
 		maxPipes?: number;
 		maxPtys?: number;
@@ -442,9 +343,6 @@ export interface AgentOsLimits {
 		wallClockLimitMs?: number;
 		importCacheMaterializeTimeoutMs?: number;
 		capturedOutputLimitBytes?: number;
-		stdinBufferLimitBytes?: number;
-		eventPayloadLimitBytes?: number;
-		v8IpcMaxFrameBytes?: number;
 	};
 	/** Guest Python runtime limits. */
 	python?: {
@@ -586,13 +484,12 @@ export interface AgentOsOptions {
 	mounts?: MountConfig[];
 	/** Additional instructions appended to the base OS system prompt injected at session start. */
 	additionalInstructions?: string;
-	/** Custom schedule driver for cron jobs. Defaults to TimerScheduleDriver. */
-	scheduleDriver?: ScheduleDriver;
 	/** Host-side toolkits available to agents inside the VM. */
 	toolKits?: ToolKit[];
 	/**
 	 * Custom permission policy for the kernel. Controls access to filesystem,
-	 * network, child process, and environment operations. Defaults to allowAll.
+	 * network, child process, and environment operations. When omitted, the
+	 * sidecar defaults every category to allow.
 	 */
 	permissions?: Permissions;
 	/**
@@ -729,18 +626,6 @@ export interface SpawnedProcessInfo {
 const LEGACY_PERMISSION_METHOD = "request/permission";
 const ACP_PERMISSION_METHOD = "session/request_permission";
 
-class AcpDispatchError extends Error {
-	readonly code: number;
-	readonly data?: Record<string, unknown>;
-
-	constructor(code: number, message: string, data?: Record<string, unknown>) {
-		super(message);
-		this.name = "AcpDispatchError";
-		this.code = code;
-		this.data = data;
-	}
-}
-
 function toJsonRpcNotification(value: unknown): JsonRpcNotification {
 	if (
 		!value ||
@@ -771,24 +656,6 @@ function toJsonRpcResponse(value: unknown): JsonRpcResponse {
 	return value as JsonRpcResponse;
 }
 
-function toJsonRpcRequest(value: unknown): JsonRpcRequest {
-	if (
-		!value ||
-		typeof value !== "object" ||
-		Array.isArray(value) ||
-		(value as { jsonrpc?: unknown }).jsonrpc !== "2.0" ||
-		!(
-			typeof (value as { id?: unknown }).id === "number" ||
-			typeof (value as { id?: unknown }).id === "string" ||
-			(value as { id?: unknown }).id === null
-		) ||
-		typeof (value as { method?: unknown }).method !== "string"
-	) {
-		throw new Error("Invalid JSON-RPC request from ACP callback");
-	}
-	return value as JsonRpcRequest;
-}
-
 function toRecord(value: unknown): Record<string, unknown> {
 	return value && typeof value === "object" && !Array.isArray(value)
 		? (value as Record<string, unknown>)
@@ -799,7 +666,7 @@ interface NormalizedPackageRef {
 	path: string;
 }
 
-function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
+function normalizePackageRef(value: unknown): NormalizedPackageRef {
 	// The single package reference is `packagePath`: the packed `.aospkg` file
 	// (registry-built packages export `{ packagePath }`), or a package dir for
 	// local transition fixtures. A raw string is shorthand for the same path.
@@ -810,18 +677,9 @@ function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
 	if (typeof record.packagePath === "string") {
 		return { path: record.packagePath };
 	}
-	// Recognizably-legacy shapes fail loudly: silently dropping a software
-	// entry boots a VM with missing packages and no diagnostic.
-	for (const legacy of ["packageTar", "packageDir", "dir"]) {
-		if (typeof record[legacy] === "string") {
-			throw new Error(
-				`agentOS package ref uses removed field "${legacy}" (value: ${JSON.stringify(record[legacy])}); ` +
-					"packages are referenced by a single `packagePath` — update the package " +
-					"(rebuild @agentos-software/* dependencies) or pass { packagePath }",
-			);
-		}
-	}
-	return undefined;
+	throw new TypeError(
+		"Invalid software package reference: expected a path string or { packagePath: string }",
+	);
 }
 
 type AcpResponseValue<TTag extends AcpResponse["tag"]> = Extract<
@@ -853,22 +711,6 @@ function parseAcpJsonList(
 	);
 }
 
-function sidecarSessionCreatedFromAcp(
-	response: AcpResponseValue<"AcpSessionCreatedResponse">,
-) {
-	return {
-		sessionId: response.sessionId,
-		...(response.pid !== null ? { pid: response.pid } : {}),
-		modes: parseAcpJson(response.modes, "modes"),
-		configOptions: parseAcpJsonList(response.configOptions, "configOptions"),
-		agentCapabilities: parseAcpJson(
-			response.agentCapabilities,
-			"agentCapabilities",
-		),
-		agentInfo: parseAcpJson(response.agentInfo, "agentInfo"),
-	};
-}
-
 function sidecarSessionStateFromAcp(
 	response: AcpResponseValue<"AcpSessionStateResponse">,
 ): SidecarSessionState {
@@ -886,64 +728,6 @@ function sidecarSessionStateFromAcp(
 		),
 		agentInfo: parseAcpJson(response.agentInfo, "agentInfo"),
 	};
-}
-
-function isLocalCancelledPromptResponse(
-	method: string,
-	response: JsonRpcResponse,
-): boolean {
-	const result = toRecord(response.result);
-	return (
-		method === "session/prompt" &&
-		response.id === null &&
-		response.error === undefined &&
-		result.stopReason === "cancelled"
-	);
-}
-
-const CLOSED_SESSION_ID_RETENTION_LIMIT = 2048;
-const CLOSED_SHELL_ID_RETENTION_LIMIT = 2048;
-
-class BoundedSet<T, V = undefined> {
-	readonly limit: number;
-	#entries = new Map<T, V | undefined>();
-
-	constructor(limit: number) {
-		if (!Number.isInteger(limit) || limit <= 0) {
-			throw new Error(`BoundedSet limit must be a positive integer: ${limit}`);
-		}
-		this.limit = limit;
-	}
-
-	add(value: T, associated?: V): void {
-		if (this.#entries.has(value)) {
-			this.#entries.delete(value);
-		}
-		this.#entries.set(value, associated);
-		if (this.#entries.size <= this.limit) {
-			return;
-		}
-		const oldest = this.#entries.keys().next();
-		if (!oldest.done) {
-			this.#entries.delete(oldest.value);
-		}
-	}
-
-	has(value: T): boolean {
-		return this.#entries.has(value);
-	}
-
-	get(value: T): V | undefined {
-		return this.#entries.get(value);
-	}
-
-	delete(value: T): boolean {
-		return this.#entries.delete(value);
-	}
-
-	get size(): number {
-		return this.#entries.size;
-	}
 }
 
 function shouldDispatchToSessionEventHandlers(
@@ -980,25 +764,20 @@ function toAgentInfo(value: unknown): AgentInfo | null {
 	return value as AgentInfo;
 }
 
-function sessionEntryFromInit(
-	sessionId: string,
-	agentType: string,
-	initData: SessionInitData,
-): AgentSessionEntry {
+function sessionEntryFromRoute(response: {
+	sessionId: string;
+	agentType: string;
+	processId: string;
+	pid: number | null;
+}): AgentSessionEntry {
 	return {
-		sessionId,
-		agentType,
-		processId: "",
-		pid: null,
-		closed: false,
-		modes: initData.modes ?? null,
-		configOptions: initData.configOptions ?? [],
-		capabilities: initData.capabilities ?? {},
-		agentInfo: initData.agentInfo ?? null,
+		sessionId: response.sessionId,
+		agentType: response.agentType,
+		processId: response.processId,
+		pid: response.pid,
 		eventHandlers: new Set(),
 		permissionHandlers: new Set(),
 		warnedNoPermissionHandler: false,
-		configOverrides: new Map(),
 		pendingPermissionReplies: new Map(),
 	};
 }
@@ -1013,421 +792,21 @@ function isNativeMountConfig(config: MountConfig): config is NativeMountConfig {
 	return "plugin" in config;
 }
 
-interface HostDirMountPluginConfig {
-	hostPath: string;
-	readOnly?: boolean;
-}
-
-interface SandboxAgentMountPluginConfig {
-	baseUrl: string;
-	token?: string;
-	headers?: Record<string, string>;
-	basePath?: string;
-	timeoutMs?: number;
-	maxFullReadBytes?: number;
-}
-
-interface S3MountPluginCredentials {
-	accessKeyId: string;
-	secretAccessKey: string;
-}
-
-interface GoogleDriveMountPluginCredentials {
-	clientEmail: string;
-	privateKey: string;
-}
-
-interface S3MountPluginConfig {
-	bucket: string;
-	prefix?: string;
-	region?: string;
-	credentials?: S3MountPluginCredentials;
-	endpoint?: string;
-	chunkSize?: number;
-	inlineThreshold?: number;
-}
-
-interface GoogleDriveMountPluginConfig {
-	credentials: GoogleDriveMountPluginCredentials;
-	folderId: string;
-	keyPrefix?: string;
-	chunkSize?: number;
-	inlineThreshold?: number;
-}
-
-function asMountConfigJsonObject(
-	value: MountConfigJsonValue | undefined,
-): MountConfigJsonObject {
-	if (value && typeof value === "object" && !Array.isArray(value)) {
-		return value as MountConfigJsonObject;
-	}
-	return {};
-}
-
-function getHostDirMountPluginConfig(
-	config: MountConfigJsonValue | undefined,
-): HostDirMountPluginConfig | null {
-	const object = asMountConfigJsonObject(config);
-	if (typeof object.hostPath !== "string") {
-		return null;
-	}
-
-	const hostPathConfig: HostDirMountPluginConfig = {
-		hostPath: object.hostPath,
-	};
-	if (typeof object.readOnly === "boolean") {
-		hostPathConfig.readOnly = object.readOnly;
-	}
-	return hostPathConfig;
-}
-
-function getSandboxAgentMountPluginConfig(
-	config: MountConfigJsonValue | undefined,
-): SandboxAgentMountPluginConfig | null {
-	const object = asMountConfigJsonObject(config);
-	if (typeof object.baseUrl !== "string") {
-		return null;
-	}
-
-	const sandboxConfig: SandboxAgentMountPluginConfig = {
-		baseUrl: object.baseUrl,
-	};
-	if (typeof object.token === "string") {
-		sandboxConfig.token = object.token;
-	}
-	if (typeof object.basePath === "string") {
-		sandboxConfig.basePath = object.basePath;
-	}
-	if (typeof object.timeoutMs === "number") {
-		sandboxConfig.timeoutMs = object.timeoutMs;
-	}
-	if (typeof object.maxFullReadBytes === "number") {
-		sandboxConfig.maxFullReadBytes = object.maxFullReadBytes;
-	}
-	if (
-		object.headers &&
-		typeof object.headers === "object" &&
-		!Array.isArray(object.headers)
-	) {
-		const headers = Object.entries(object.headers)
-			.filter(([, value]) => typeof value === "string")
-			.map(([name, value]) => [name, value as string]);
-		if (headers.length > 0) {
-			sandboxConfig.headers = Object.fromEntries(headers);
-		}
-	}
-
-	return sandboxConfig;
-}
-
-function getS3MountPluginConfig(
-	config: MountConfigJsonValue | undefined,
-): S3MountPluginConfig | null {
-	const object = asMountConfigJsonObject(config);
-	if (typeof object.bucket !== "string") {
-		return null;
-	}
-
-	const s3Config: S3MountPluginConfig = {
-		bucket: object.bucket,
-	};
-	if (typeof object.prefix === "string") {
-		s3Config.prefix = object.prefix;
-	}
-	if (typeof object.region === "string") {
-		s3Config.region = object.region;
-	}
-	if (typeof object.endpoint === "string") {
-		s3Config.endpoint = object.endpoint;
-	}
-	if (typeof object.chunkSize === "number") {
-		s3Config.chunkSize = object.chunkSize;
-	}
-	if (typeof object.inlineThreshold === "number") {
-		s3Config.inlineThreshold = object.inlineThreshold;
-	}
-	if (
-		object.credentials &&
-		typeof object.credentials === "object" &&
-		!Array.isArray(object.credentials) &&
-		typeof object.credentials.accessKeyId === "string" &&
-		typeof object.credentials.secretAccessKey === "string"
-	) {
-		s3Config.credentials = {
-			accessKeyId: object.credentials.accessKeyId,
-			secretAccessKey: object.credentials.secretAccessKey,
-		};
-	}
-
-	return s3Config;
-}
-
-function getGoogleDriveMountPluginConfig(
-	config: MountConfigJsonValue | undefined,
-): GoogleDriveMountPluginConfig | null {
-	const object = asMountConfigJsonObject(config);
-	if (typeof object.folderId !== "string") {
-		return null;
-	}
-	if (
-		!object.credentials ||
-		typeof object.credentials !== "object" ||
-		Array.isArray(object.credentials) ||
-		typeof object.credentials.clientEmail !== "string" ||
-		typeof object.credentials.privateKey !== "string"
-	) {
-		return null;
-	}
-
-	const googleDriveConfig: GoogleDriveMountPluginConfig = {
-		credentials: {
-			clientEmail: object.credentials.clientEmail,
-			privateKey: object.credentials.privateKey,
-		},
-		folderId: object.folderId,
-	};
-	if (typeof object.keyPrefix === "string") {
-		googleDriveConfig.keyPrefix = object.keyPrefix;
-	}
-	if (typeof object.chunkSize === "number") {
-		googleDriveConfig.chunkSize = object.chunkSize;
-	}
-	if (typeof object.inlineThreshold === "number") {
-		googleDriveConfig.inlineThreshold = object.inlineThreshold;
-	}
-
-	return googleDriveConfig;
-}
-
-const KERNEL_POSIX_BOOTSTRAP_DIRS = [
-	"/dev",
-	"/proc",
-	"/tmp",
-	"/bin",
-	"/lib",
-	"/sbin",
-	"/boot",
-	"/etc",
-	"/root",
-	"/run",
-	"/srv",
-	"/sys",
-	"/opt",
-	"/mnt",
-	"/media",
-	"/home",
-	"/home/agentos",
-	"/workspace",
-	"/usr",
-	"/usr/bin",
-	"/usr/games",
-	"/usr/include",
-	"/usr/lib",
-	"/usr/libexec",
-	"/usr/man",
-	"/usr/local",
-	"/usr/local/bin",
-	"/usr/sbin",
-	"/usr/share",
-	"/usr/share/man",
-	"/var",
-	"/var/cache",
-	"/var/empty",
-	"/var/lib",
-	"/var/lock",
-	"/var/log",
-	"/var/run",
-	"/var/spool",
-	"/var/tmp",
-	"/etc/agentos",
-] as const;
-
-// Standard POSIX metadata for the bootstrap dirs whose mode/owner is NOT the
-// default (`755`, root:root). Replicated as a constant so building the no-base
-// bootstrap layer needs no `base-filesystem.json` read — when a base IS present
-// the sidecar's embedded base layer is authoritative and these are never emitted.
-const KERNEL_POSIX_BOOTSTRAP_DIR_METADATA: Record<
-	string,
-	{ mode: string; uid: number; gid: number }
-> = {
-	"/tmp": { mode: "1777", uid: 0, gid: 0 },
-	"/root": { mode: "700", uid: 0, gid: 0 },
-	"/sys": { mode: "555", uid: 0, gid: 0 },
-	"/home/agentos": { mode: "2755", uid: 1000, gid: 1000 },
-	"/workspace": { mode: "755", uid: 1000, gid: 1000 },
-	"/var/empty": { mode: "555", uid: 0, gid: 0 },
-	"/var/lock": { mode: "777", uid: 0, gid: 0 },
-	"/var/run": { mode: "777", uid: 0, gid: 0 },
-	"/var/tmp": { mode: "1777", uid: 0, gid: 0 },
-};
-
-// Runtime commands that get a `/bin/<cmd>` stub at bootstrap so the guest shell
-// resolves them on PATH (e.g. `sh -c "python ..."`, pipelines). The sidecar
-// intercepts these by name and routes them to the embedded V8 / Pyodide runtime.
-const RUNTIME_BOOTSTRAP_COMMANDS = [
-	"node",
-	"npm",
-	"npx",
-	"python",
-	"python3",
-] as const;
-const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agentos-sidecar");
-const SIDECAR_BUILD_INPUTS = [
-	join(REPO_ROOT, "Cargo.toml"),
-	join(REPO_ROOT, "Cargo.lock"),
-	join(REPO_ROOT, "crates/bridge"),
-	join(REPO_ROOT, "crates/execution"),
-	join(REPO_ROOT, "crates/kernel"),
-	join(REPO_ROOT, "crates/sidecar"),
-] as const;
-let ensuredSidecarBinary: string | null = null;
-
-function collectConfiguredLowerPaths(
-	config?: RootFilesystemConfig,
-): Set<string> {
-	const paths = new Set<string>();
-
-	for (const lower of config?.lowers ?? []) {
-		if (lower.kind !== "snapshot-export") {
-			continue;
-		}
-		for (const entry of lower.source.filesystem.entries) {
-			paths.add(entry.path);
-		}
-	}
-
-	return paths;
-}
-
-function findBootstrapSeedEntry(
-	config: RootFilesystemConfig | undefined,
-	path: string,
-): FilesystemEntry | undefined {
-	for (const lower of config?.lowers ?? []) {
-		if (lower.kind !== "snapshot-export") {
-			continue;
-		}
-		const entry = lower.source.filesystem.entries.find(
-			(candidate) => candidate.path === path,
+function requireSnapshotField<K extends keyof RootFilesystemEntry>(
+	entry: RootFilesystemEntry,
+	field: K,
+): NonNullable<RootFilesystemEntry[K]> {
+	const value = entry[field];
+	if (value === undefined || value === null) {
+		throw new Error(
+			`sidecar root snapshot for ${entry.path} is missing ${String(field)}`,
 		);
-		if (entry) {
-			return entry;
-		}
 	}
-
-	// No base-filesystem JSON read: standard non-default dir metadata comes from
-	// the constant table. When a base layer IS present these dirs are never
-	// emitted (see createKernelBootstrapLower), so this only seeds the no-base case.
-	const meta = KERNEL_POSIX_BOOTSTRAP_DIR_METADATA[path];
-	return meta ? { path, type: "directory", ...meta } : undefined;
+	return value as NonNullable<RootFilesystemEntry[K]>;
 }
 
-function createKernelBootstrapLower(
-	config: RootFilesystemConfig | undefined,
-	extraEntries: FilesystemEntry[] = [],
-): RootSnapshotExport | null {
-	const includesBundledBaseLayer = !(config?.disableDefaultBaseLayer ?? false);
-	const existingPaths = collectConfiguredLowerPaths(config);
-	const entries: FilesystemEntry[] = [
-		{
-			path: "/",
-			type: "directory",
-			mode: "755",
-			uid: 0,
-			gid: 0,
-		},
-	];
-
-	// Only run the FS bootstrap (creating the POSIX dir tree) when there is NO
-	// base layer. When the bundled base IS present, the sidecar's embedded base
-	// layer already provides every POSIX dir with the correct mode/owner, so we
-	// emit nothing here and never read its filesystem table.
-	if (!includesBundledBaseLayer) {
-		for (const dir of KERNEL_POSIX_BOOTSTRAP_DIRS) {
-			if (existingPaths.has(dir)) {
-				continue;
-			}
-			const seed = findBootstrapSeedEntry(config, dir);
-			entries.push({
-				path: dir,
-				type: "directory",
-				mode: seed?.type === "directory" ? seed.mode : "755",
-				uid: seed?.uid ?? 0,
-				gid: seed?.gid ?? 0,
-			});
-		}
-	}
-
-	if (!includesBundledBaseLayer && !existingPaths.has("/usr/bin/env")) {
-		entries.push({
-			path: "/usr/bin/env",
-			type: "file",
-			mode: "644",
-			uid: 0,
-			gid: 0,
-			content: "AA==",
-			encoding: "base64",
-		});
-	}
-
-	for (const entry of sortFilesystemEntries(extraEntries)) {
-		if (existingPaths.has(entry.path)) {
-			continue;
-		}
-		entries.push(entry);
-	}
-
-	return entries.length > 1 ? createSnapshotExport(entries) : null;
-}
-
-function buildLiveBootstrapDirectoryEntries(
-	existingPaths: ReadonlySet<string>,
-	config: RootFilesystemConfig | undefined,
-): RootFilesystemEntry[] {
-	const entries: RootFilesystemEntry[] = [];
-	for (const dir of KERNEL_POSIX_BOOTSTRAP_DIRS) {
-		if (existingPaths.has(dir)) {
-			continue;
-		}
-		const seed = findBootstrapSeedEntry(config, dir);
-		entries.push({
-			path: dir,
-			kind: "directory",
-			mode: Number.parseInt(seed?.type === "directory" ? seed.mode : "755", 8),
-			uid: seed?.uid ?? 0,
-			gid: seed?.gid ?? 0,
-			executable: true,
-		});
-	}
-	return entries;
-}
-
-async function bootstrapLiveBootstrapDirectories(
-	client: SidecarProcess,
-	session: AuthenticatedSession,
-	vm: CreatedVm,
-	config: RootFilesystemConfig | undefined,
-): Promise<void> {
-	const existingPaths = new Set(
-		(await client.snapshotRootFilesystem(session, vm)).map(
-			(entry) => entry.path,
-		),
-	);
-	const entries = buildLiveBootstrapDirectoryEntries(existingPaths, config);
-	if (entries.length === 0) {
-		return;
-	}
-	await client.bootstrapRootFilesystem(session, vm, entries);
-}
-
-function toSnapshotModeString(
-	mode: number | undefined,
-	kind: RootFilesystemEntry["kind"],
-): string {
-	const fallback =
-		kind === "directory" ? 0o755 : kind === "symlink" ? 0o777 : 0o644;
-	return `0${((mode ?? fallback) & 0o7777).toString(8)}`;
+function toSnapshotModeString(mode: number): string {
+	return `0${(mode & 0o7777).toString(8)}`;
 }
 
 function convertSidecarRootSnapshotEntries(
@@ -1437,97 +816,28 @@ function convertSidecarRootSnapshotEntries(
 		const baseEntry: FilesystemEntry = {
 			path: entry.path,
 			type: entry.kind,
-			mode: toSnapshotModeString(entry.mode, entry.kind),
-			uid: entry.uid ?? 0,
-			gid: entry.gid ?? 0,
+			mode: toSnapshotModeString(requireSnapshotField(entry, "mode")),
+			uid: requireSnapshotField(entry, "uid"),
+			gid: requireSnapshotField(entry, "gid"),
 		};
 
 		if (entry.kind === "file") {
 			return {
 				...baseEntry,
-				content: entry.content ?? "",
-				encoding: entry.encoding ?? "utf8",
+				content: requireSnapshotField(entry, "content"),
+				encoding: requireSnapshotField(entry, "encoding"),
 			};
 		}
 
 		if (entry.kind === "symlink") {
-			if (entry.target === undefined) {
-				throw new Error(
-					`sidecar root snapshot for ${entry.path} is missing a symlink target`,
-				);
-			}
 			return {
 				...baseEntry,
-				target: entry.target,
+				target: requireSnapshotField(entry, "target"),
 			};
 		}
 
 		return baseEntry;
 	});
-}
-
-function ensureNativeSidecarBinary(): string {
-	// A published install has no in-repo Cargo workspace to build from: resolve
-	// the prebuilt platform binary (or the AGENTOS_SIDECAR_BIN override).
-	if (
-		process.env.AGENTOS_SIDECAR_BIN ||
-		!existsSync(join(REPO_ROOT, "Cargo.toml"))
-	) {
-		return resolvePublishedSidecarBinary();
-	}
-	if (
-		ensuredSidecarBinary &&
-		existsSync(ensuredSidecarBinary) &&
-		!sidecarBinaryNeedsBuild()
-	) {
-		return ensuredSidecarBinary;
-	}
-
-	if (sidecarBinaryNeedsBuild()) {
-		const cargoBinary = findCargoBinary();
-		if (cargoBinary) {
-			execFileSync(cargoBinary, ["build", "-q", "-p", "agentos-sidecar"], {
-				cwd: REPO_ROOT,
-				stdio: "pipe",
-			});
-		} else if (!existsSync(SIDECAR_BINARY)) {
-			execFileSync(
-				resolveCargoBinary(),
-				["build", "-q", "-p", "agentos-sidecar"],
-				{
-					cwd: REPO_ROOT,
-					stdio: "pipe",
-				},
-			);
-		}
-	}
-
-	ensuredSidecarBinary = SIDECAR_BINARY;
-	return ensuredSidecarBinary;
-}
-
-function sidecarBinaryNeedsBuild(): boolean {
-	if (!existsSync(SIDECAR_BINARY)) {
-		return true;
-	}
-
-	const binaryMtimeMs = statSync(SIDECAR_BINARY).mtimeMs;
-	return SIDECAR_BUILD_INPUTS.some(
-		(path) => existsSync(path) && latestMtimeMs(path) > binaryMtimeMs,
-	);
-}
-
-function latestMtimeMs(path: string): number {
-	const stats = statSync(path);
-	if (!stats.isDirectory()) {
-		return stats.mtimeMs;
-	}
-
-	let latest = stats.mtimeMs;
-	for (const entry of readdirSync(path)) {
-		latest = Math.max(latest, latestMtimeMs(join(path, entry)));
-	}
-	return latest;
 }
 
 async function resolveCompatLocalMounts(
@@ -1547,7 +857,7 @@ async function resolveCompatLocalMounts(
 			resolved.push({
 				path: posixPath.normalize(mount.path),
 				fs: mount.driver,
-				readOnly: mount.readOnly ?? false,
+				readOnly: mount.readOnly,
 			});
 			continue;
 		}
@@ -1567,7 +877,8 @@ async function resolveCompatLocalMounts(
 		resolved.push({
 			path: posixPath.normalize(mount.path),
 			fs,
-			readOnly: mode === "read-only",
+			readOnly:
+				mount.filesystem.mode === undefined ? undefined : mode === "read-only",
 		});
 	}
 
@@ -1576,14 +887,10 @@ async function resolveCompatLocalMounts(
 
 function collectSidecarMountPlan(options: { mounts?: MountConfig[] }): {
 	sidecarMounts: Array<ReturnType<typeof serializeMountConfigForSidecar>>;
-	hostMounts: HostMountInfo[];
-	hostPathMappings: HostMountInfo[];
 } {
 	const sidecarMounts: Array<
 		ReturnType<typeof serializeMountConfigForSidecar>
 	> = [];
-	const hostMounts: HostMountInfo[] = [];
-	const hostPathMappings: HostMountInfo[] = [];
 	const seenMounts = new Set<string>();
 
 	function pushMount(mount: NativeMountConfig): void {
@@ -1596,36 +903,20 @@ function collectSidecarMountPlan(options: { mounts?: MountConfig[] }): {
 		}
 		seenMounts.add(key);
 		sidecarMounts.push(serialized);
-
-		if (mount.plugin.id === "host_dir") {
-			const config = getHostDirMountPluginConfig(mount.plugin.config);
-			if (config) {
-				hostPathMappings.push({
-					vmPath: posixPath.normalize(mount.path),
-					hostPath: resolveHostPath(config.hostPath),
-					readOnly: mount.readOnly ?? config.readOnly ?? true,
-				});
-			}
-			if (config && options.mounts?.some((candidate) => candidate === mount)) {
-				hostMounts.push({
-					vmPath: posixPath.normalize(mount.path),
-					hostPath: resolveHostPath(config.hostPath),
-					readOnly: mount.readOnly ?? config.readOnly ?? true,
-				});
-			}
-		}
 	}
 
 	for (const mount of options.mounts ?? []) {
 		if (!isNativeMountConfig(mount)) {
+			const readOnly = isOverlayMountConfig(mount)
+				? mount.filesystem.mode === undefined
+					? undefined
+					: mount.filesystem.mode === "read-only"
+				: mount.readOnly;
 			sidecarMounts.push({
 				guestPath: mount.path,
-				readOnly: isOverlayMountConfig(mount)
-					? (mount.filesystem.mode ?? "ephemeral") === "read-only"
-					: (mount.readOnly ?? false),
+				...(readOnly === undefined ? {} : { readOnly }),
 				plugin: {
 					id: "js_bridge",
-					config: {},
 				},
 			});
 			continue;
@@ -1633,19 +924,7 @@ function collectSidecarMountPlan(options: { mounts?: MountConfig[] }): {
 		pushMount(mount);
 	}
 
-	hostMounts.sort((left, right) => right.vmPath.length - left.vmPath.length);
-	hostPathMappings.sort(
-		(left, right) => right.vmPath.length - left.vmPath.length,
-	);
-	return { sidecarMounts, hostMounts, hostPathMappings };
-}
-
-function collectToolkitBootstrapCommands(toolKits: ToolKit[]): string[] {
-	if (toolKits.length === 0) {
-		return [];
-	}
-
-	return ["agentos", ...toolKits.map((toolKit) => `agentos-${toolKit.name}`)];
+	return { sidecarMounts };
 }
 
 function validationMessage(error: unknown): string {
@@ -1670,6 +949,42 @@ function validationMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+interface VmFetchResponsePayload {
+	status: number;
+	statusText: string;
+	headers: Array<[string, string]>;
+	body: string;
+}
+
+function requireVmFetchResponsePayload(value: unknown): VmFetchResponsePayload {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		throw new Error("sidecar vm.fetch response must be an object");
+	}
+	const payload = value as Record<string, unknown>;
+	if (!Number.isInteger(payload.status)) {
+		throw new Error("sidecar vm.fetch response is missing numeric status");
+	}
+	if (typeof payload.statusText !== "string") {
+		throw new Error("sidecar vm.fetch response is missing statusText");
+	}
+	if (
+		!Array.isArray(payload.headers) ||
+		payload.headers.some(
+			(entry) =>
+				!Array.isArray(entry) ||
+				entry.length !== 2 ||
+				typeof entry[0] !== "string" ||
+				typeof entry[1] !== "string",
+		)
+	) {
+		throw new Error("sidecar vm.fetch response is missing valid headers");
+	}
+	if (typeof payload.body !== "string") {
+		throw new Error("sidecar vm.fetch response is missing base64 body");
+	}
+	return payload as unknown as VmFetchResponsePayload;
+}
+
 function toolToSidecarDefinition(
 	tool: HostTool,
 ): SidecarRegisteredHostCallbackDefinition {
@@ -1688,163 +1003,6 @@ function toolToSidecarDefinition(
 	};
 }
 
-function combineInstructions(
-	additionalInstructions: string | undefined,
-	toolReference: string,
-): string | null {
-	const parts = [additionalInstructions, toolReference]
-		.map((part) => part?.trim())
-		.filter((part): part is string => Boolean(part));
-	if (parts.length === 0) {
-		return null;
-	}
-	return parts.join("\n\n");
-}
-
-function buildHostToolReference(toolKits: ToolKit[]): string {
-	if (toolKits.length === 0) {
-		return "";
-	}
-
-	const lines = [
-		"## Available Host Tools",
-		"",
-		"Run `agentos list-tools` to see all available tools.",
-		"",
-	];
-
-	for (const toolKit of toolKits) {
-		lines.push(`### ${toolKit.name}`);
-		lines.push("");
-		lines.push(toolKit.description);
-		lines.push("");
-		for (const [toolName, tool] of Object.entries(toolKit.tools)) {
-			const sidecarTool = toolToSidecarDefinition(tool);
-			const signature = buildToolFlagSignature(sidecarTool.inputSchema);
-			const suffix = signature.length > 0 ? ` ${signature}` : "";
-			lines.push(
-				`- \`agentos-${toolKit.name} ${toolName}${suffix}\` — ${tool.description}`,
-			);
-		}
-		lines.push("");
-
-		const toolsWithExamples = Object.entries(toolKit.tools).filter(
-			([, tool]) => tool.examples && tool.examples.length > 0,
-		);
-		if (toolsWithExamples.length > 0) {
-			lines.push("**Examples:**");
-			lines.push("");
-			for (const [toolName, tool] of toolsWithExamples) {
-				for (const example of tool.examples ?? []) {
-					const args = inputToToolFlags(example.input);
-					const suffix = args.length > 0 ? ` ${args}` : "";
-					lines.push(
-						`- ${example.description}: \`agentos-${toolKit.name} ${toolName}${suffix}\``,
-					);
-				}
-			}
-			lines.push("");
-		}
-
-		lines.push(`Run \`agentos-${toolKit.name} <tool> --help\` for details.`);
-		lines.push("");
-	}
-
-	return lines.join("\n");
-}
-
-function buildToolFlagSignature(schema: unknown): string {
-	return describeToolFlags(schema)
-		.map((flag) => {
-			if (flag.required) {
-				return `${flag.name} <${flag.type}>`;
-			}
-			return `[${flag.name} <${flag.type}>]`;
-		})
-		.join(" ");
-}
-
-function describeToolFlags(
-	schema: unknown,
-): Array<{ name: string; type: string; required: boolean }> {
-	const schemaObject = asRecord(schema);
-	const properties = asRecord(schemaObject.properties);
-	const required = Array.isArray(schemaObject.required)
-		? new Set(
-				schemaObject.required.filter(
-					(item): item is string => typeof item === "string",
-				),
-			)
-		: new Set<string>();
-
-	return Object.entries(properties).map(([fieldName, fieldSchema]) => ({
-		name: `--${camelToKebab(fieldName)}`,
-		type: describeToolFlagType(fieldSchema),
-		required: required.has(fieldName),
-	}));
-}
-
-function describeToolFlagType(schema: unknown): string {
-	const schemaObject = asRecord(schema);
-	const type =
-		typeof schemaObject.type === "string" ? schemaObject.type : undefined;
-	if (type === "array") {
-		const itemType = describeJsonSchemaScalarType(schemaObject.items);
-		return `${itemType}[]`;
-	}
-	if (type === "string") {
-		const enumValues = Array.isArray(schemaObject.enum)
-			? schemaObject.enum.filter(
-					(item): item is string => typeof item === "string",
-				)
-			: [];
-		return enumValues.length > 0 ? enumValues.join("|") : "string";
-	}
-	return type ?? "string";
-}
-
-function describeJsonSchemaScalarType(schema: unknown): string {
-	const schemaObject = asRecord(schema);
-	return typeof schemaObject.type === "string" ? schemaObject.type : "string";
-}
-
-function inputToToolFlags(input: unknown): string {
-	const inputObject = asRecord(input);
-	return Object.entries(inputObject)
-		.flatMap(([key, value]) => {
-			const flag = `--${camelToKebab(key)}`;
-			if (value === true) {
-				return [flag];
-			}
-			if (value === false) {
-				return [`--no-${camelToKebab(key)}`];
-			}
-			if (Array.isArray(value)) {
-				return value.map((item) => `${flag} ${toolCliString(item)}`);
-			}
-			return [`${flag} ${toolCliString(value)}`];
-		})
-		.join(" ");
-}
-
-function toolCliString(value: unknown): string {
-	return typeof value === "string" ? value : (JSON.stringify(value) ?? "null");
-}
-
-function camelToKebab(value: string): string {
-	return value.replace(
-		/[A-Z]/g,
-		(ch, index) => `${index > 0 ? "-" : ""}${ch.toLowerCase()}`,
-	);
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-	if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-		return value as Record<string, unknown>;
-	}
-	return {};
-}
-
 async function handleHostCallback(
 	request: SidecarRequestFrame,
 	context: HostCallbackContext,
@@ -1858,41 +1016,12 @@ async function handleHostCallback(
 		};
 	}
 
-	const command = parseHostCommandCallbackInput(payload.input);
-	if (command) {
-		try {
-			return {
-				type: "host_callback_result",
-				invocation_id: payload.invocation_id,
-				result: await handleHostCommandCallback(command, context),
-			};
-		} catch (error) {
-			return {
-				type: "host_callback_result",
-				invocation_id: payload.invocation_id,
-				error: validationMessage(error),
-			};
-		}
-	}
-
 	const tool = context.toolMap.get(payload.callback_key);
 	if (!tool) {
 		return {
 			type: "host_callback_result",
 			invocation_id: payload.invocation_id,
 			error: `Unknown tool "${payload.callback_key}"`,
-		};
-	}
-
-	const permissionMode = toolPermissionMode(
-		context.permissions,
-		payload.callback_key,
-	);
-	if (permissionMode !== "allow") {
-		return {
-			type: "host_callback_result",
-			invocation_id: payload.invocation_id,
-			error: `EACCES: blocked by binding.invoke policy for ${payload.callback_key}`,
 		};
 	}
 
@@ -1905,11 +1034,21 @@ async function handleHostCallback(
 		};
 	}
 
+	if (
+		toolPermissionMode(context.permissions, payload.callback_key) !== "allow"
+	) {
+		return {
+			type: "host_callback_result",
+			invocation_id: payload.invocation_id,
+			error: `EACCES: blocked by binding.invoke policy for ${payload.callback_key}`,
+		};
+	}
+
 	try {
 		return {
 			type: "host_callback_result",
 			invocation_id: payload.invocation_id,
-			result: await executeHostTool(tool, payload.callback_key, parsed.data),
+			result: await tool.execute(parsed.data),
 		};
 	} catch (error) {
 		return {
@@ -1930,22 +1069,57 @@ function buildToolMap(toolKits: ToolKit[]): Map<string, HostTool> {
 	return toolMap;
 }
 
-interface HostCommandCallbackInput {
-	type: "command";
-	command: string;
-	args: string[];
-	cwd: string;
-}
-
 interface HostCallbackContext {
-	toolKits: ToolKit[];
 	toolMap: ReadonlyMap<string, HostTool>;
 	permissions: Permissions;
-	readFile(path: string): Promise<Uint8Array>;
+}
+
+function toolPermissionMode(
+	permissions: Permissions,
+	callbackKey: string,
+): "allow" | "deny" {
+	const scope = permissions.binding;
+	if (!scope) {
+		return "deny";
+	}
+	if (typeof scope === "string") {
+		return scope;
+	}
+	let mode: "allow" | "deny" = scope.default ?? "deny";
+	for (const rule of scope.rules) {
+		const operations = rule.operations ?? ["*"];
+		const patterns = rule.patterns ?? ["**"];
+		if (
+			operations.some(
+				(operation) => operation === "*" || operation === "invoke",
+			) &&
+			patterns.some((pattern) => permissionPatternMatches(pattern, callbackKey))
+		) {
+			mode = rule.mode;
+		}
+	}
+	return mode;
+}
+
+function permissionPatternMatches(pattern: string, value: string): boolean {
+	if (pattern === "*" || pattern === "**" || pattern === value) {
+		return true;
+	}
+	const parts = pattern.split(/(\*\*|\*)/u);
+	const source = parts
+		.map((part) => {
+			if (part === "**") return ".*";
+			if (part === "*") return "[^:]*";
+			return part.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+		})
+		.join("");
+	return new RegExp(`^${source}$`).test(value);
 }
 
 interface JsBridgeContext {
-	filesystem: VirtualFileSystem;
+	resolveTarget(
+		mountId: string,
+	): { filesystem: VirtualFileSystem; rootPath: string } | undefined;
 }
 
 function bridgeErrorMessage(error: unknown): string {
@@ -1997,8 +1171,12 @@ async function handleJsBridgeCall(
 ): Promise<SidecarResponsePayload> {
 	try {
 		const args = toBridgeArgs(request.args);
-		const fs = context.filesystem;
-		const path = () => bridgePath(request.mount_id, args.path);
+		const target = context.resolveTarget(request.mount_id);
+		if (!target) {
+			throw new Error(`Unknown js_bridge mount id: ${request.mount_id}`);
+		}
+		const fs = target.filesystem;
+		const path = () => bridgePath(target.rootPath, args.path);
 		let result: unknown;
 
 		switch (request.operation) {
@@ -2034,8 +1212,8 @@ async function handleJsBridgeCall(
 				break;
 			case "rename":
 				await fs.rename(
-					bridgePath(request.mount_id, args.oldPath),
-					bridgePath(request.mount_id, args.newPath),
+					bridgePath(target.rootPath, args.oldPath),
+					bridgePath(target.rootPath, args.newPath),
 				);
 				break;
 			case "realpath":
@@ -2047,7 +1225,7 @@ async function handleJsBridgeCall(
 				}
 				await fs.symlink(
 					args.target,
-					bridgePath(request.mount_id, args.linkPath),
+					bridgePath(target.rootPath, args.linkPath),
 				);
 				break;
 			}
@@ -2059,8 +1237,8 @@ async function handleJsBridgeCall(
 				break;
 			case "link":
 				await fs.link(
-					bridgePath(request.mount_id, args.oldPath),
-					bridgePath(request.mount_id, args.newPath),
+					bridgePath(target.rootPath, args.oldPath),
+					bridgePath(target.rootPath, args.newPath),
 				);
 				break;
 			case "chmod":
@@ -2119,467 +1297,66 @@ async function handleJsBridgeCall(
 	}
 }
 
-function parseHostCommandCallbackInput(
-	input: unknown,
-): HostCommandCallbackInput | null {
-	const value = asRecord(input);
-	if (
-		value.type !== "command" ||
-		typeof value.command !== "string" ||
-		typeof value.cwd !== "string" ||
-		!Array.isArray(value.args) ||
-		!value.args.every((arg): arg is string => typeof arg === "string")
-	) {
-		return null;
-	}
-	return {
-		type: "command",
-		command: value.command,
-		args: value.args,
-		cwd: value.cwd,
-	};
-}
-
-async function handleHostCommandCallback(
-	command: HostCommandCallbackInput,
-	context: HostCallbackContext,
-): Promise<unknown> {
-	const directToolKit = context.toolKits.find(
-		(toolKit) => `agentos-${toolKit.name}` === command.command,
-	);
-	if (command.command === "agentos") {
-		return handleAgentOsRegistryCommand(command, context);
-	}
-	if (directToolKit) {
-		return handleAgentOsToolkitCommand(command, context, directToolKit);
-	}
-	throw new Error(`Unknown host callback command "${command.command}"`);
-}
-
-async function handleAgentOsRegistryCommand(
-	command: HostCommandCallbackInput,
-	context: HostCallbackContext,
-): Promise<unknown> {
-	const [subcommand, toolkitName, toolName, ...toolArgs] = command.args;
-	if (!subcommand || isHelpFlag(subcommand)) {
+function serializeToolkitsForSidecar(toolKits: ToolKit[]): Array<{
+	name: string;
+	description: string;
+	callbacks: Record<string, SidecarRegisteredHostCallbackDefinition>;
+}> {
+	return toolKits.map((toolKit) => {
 		return {
-			usage:
-				"agentos <command>: list-tools [toolkit], <toolkit> --help, or <toolkit> <tool> ...",
-		};
-	}
-	if (subcommand === "list-tools") {
-		return toolkitName
-			? describeToolkitPayload(context.toolKits, toolkitName)
-			: listToolkitsPayload(context.toolKits);
-	}
-	const toolKit = context.toolKits.find((kit) => kit.name === subcommand);
-	if (!toolKit) {
-		throw new Error(
-			`No toolkit "${subcommand}". Available: ${toolkitNames(context.toolKits)}`,
-		);
-	}
-	if (!toolkitName || isHelpFlag(toolkitName)) {
-		return describeToolkitPayload(context.toolKits, subcommand);
-	}
-	if (toolName && isHelpFlag(toolName)) {
-		return describeToolPayload(toolKit, toolkitName);
-	}
-	return invokeHostTool({
-		toolKit,
-		toolName: toolkitName,
-		args: [toolName, ...toolArgs].filter(
-			(value): value is string => typeof value === "string",
-		),
-		cwd: command.cwd,
-		context,
-	});
-}
-
-async function handleAgentOsToolkitCommand(
-	command: HostCommandCallbackInput,
-	context: HostCallbackContext,
-	toolKit: ToolKit,
-): Promise<unknown> {
-	const [toolName, helpOrFirstArg, ...rest] = command.args;
-	if (!toolName || isHelpFlag(toolName)) {
-		return describeToolkitPayload(context.toolKits, toolKit.name);
-	}
-	if (helpOrFirstArg && isHelpFlag(helpOrFirstArg)) {
-		return describeToolPayload(toolKit, toolName);
-	}
-	return invokeHostTool({
-		toolKit,
-		toolName,
-		args: [helpOrFirstArg, ...rest].filter(
-			(value): value is string => typeof value === "string",
-		),
-		cwd: command.cwd,
-		context,
-	});
-}
-
-async function invokeHostTool({
-	toolKit,
-	toolName,
-	args,
-	cwd,
-	context,
-}: {
-	toolKit: ToolKit;
-	toolName: string;
-	args: string[];
-	cwd: string;
-	context: HostCallbackContext;
-}): Promise<unknown> {
-	const tool = toolKit.tools[toolName];
-	if (!tool) {
-		throw new Error(
-			`No tool "${toolName}" in toolkit "${toolKit.name}". Available: ${toolNames(toolKit)}`,
-		);
-	}
-	const callbackKey = `${toolKit.name}:${toolName}`;
-	const permissionMode = toolPermissionMode(context.permissions, callbackKey);
-	if (permissionMode !== "allow") {
-		throw new Error(
-			`EACCES: blocked by binding.invoke policy for ${callbackKey}`,
-		);
-	}
-	const input = await parseHostToolInput(tool, args, cwd, context.readFile);
-	return executeHostTool(tool, callbackKey, input);
-}
-
-async function executeHostTool(
-	tool: HostTool,
-	callbackKey: string,
-	input: unknown,
-): Promise<unknown> {
-	const parsed = tool.inputSchema.safeParse(input);
-	if (!parsed.success) {
-		throw new Error(validationMessage(parsed.error));
-	}
-
-	return Promise.race([
-		Promise.resolve(tool.execute(parsed.data)),
-		new Promise<never>((_, reject) => {
-			if (tool.timeout === undefined) {
-				return;
-			}
-			setTimeout(
-				() =>
-					reject(
-						new Error(
-							`Tool "${callbackKey}" timed out after ${tool.timeout}ms`,
-						),
-					),
-				tool.timeout,
-			);
-		}),
-	]);
-}
-
-async function parseHostToolInput(
-	tool: HostTool,
-	args: string[],
-	cwd: string,
-	readFile: (path: string) => Promise<Uint8Array>,
-): Promise<unknown> {
-	if (args[0] === "--json") {
-		const value = args[1];
-		if (value === undefined) {
-			throw new Error("Flag --json requires a value");
-		}
-		return JSON.parse(value);
-	}
-	if (args[0] === "--json-file") {
-		const value = args[1];
-		if (value === undefined) {
-			throw new Error("Flag --json-file requires a value");
-		}
-		const guestPath = value.startsWith("/")
-			? posixPath.normalize(value)
-			: posixPath.normalize(`${cwd}/${value}`);
-		const text = new TextDecoder().decode(await readFile(guestPath));
-		return JSON.parse(text);
-	}
-	return parseToolArgv(toolToSidecarDefinition(tool).inputSchema, args);
-}
-
-function parseToolArgv(
-	schema: unknown,
-	argv: string[],
-): Record<string, unknown> {
-	const schemaObject = asRecord(schema);
-	const properties = asRecord(schemaObject.properties);
-	const required = Array.isArray(schemaObject.required)
-		? new Set(
-				schemaObject.required.filter(
-					(value): value is string => typeof value === "string",
-				),
-			)
-		: new Set<string>();
-	const flagToField = new Map<string, [string, unknown]>();
-	for (const [fieldName, fieldSchema] of Object.entries(properties)) {
-		flagToField.set(camelToKebab(fieldName), [fieldName, fieldSchema]);
-	}
-
-	const input: Record<string, unknown> = {};
-	for (let index = 0; index < argv.length; ) {
-		const arg = argv[index];
-		if (!arg?.startsWith("--")) {
-			throw new Error(`Unexpected positional argument: "${arg}"`);
-		}
-		const rawFlag = arg.slice(2);
-		const negated = rawFlag.startsWith("no-");
-		const flagName = negated ? rawFlag.slice(3) : rawFlag;
-		const entry = flagToField.get(flagName);
-		if (!entry) {
-			throw new Error(`Unknown flag: --${rawFlag}`);
-		}
-		const [fieldName, fieldSchema] = entry;
-		const fieldType = jsonSchemaType(fieldSchema);
-		if (negated) {
-			if (fieldType !== "boolean") {
-				throw new Error(`Unknown flag: --${rawFlag}`);
-			}
-			input[fieldName] = false;
-			index += 1;
-			continue;
-		}
-		if (fieldType === "boolean") {
-			input[fieldName] = true;
-			index += 1;
-			continue;
-		}
-		const value = argv[index + 1];
-		if (value === undefined) {
-			throw new Error(`Flag --${rawFlag} requires a value`);
-		}
-		if (fieldType === "number" || fieldType === "integer") {
-			const number = Number(value);
-			if (!Number.isFinite(number)) {
-				throw new Error(`Flag --${rawFlag} expects a number, got "${value}"`);
-			}
-			input[fieldName] = number;
-			index += 2;
-			continue;
-		}
-		if (fieldType === "array") {
-			const current = Array.isArray(input[fieldName])
-				? (input[fieldName] as unknown[])
-				: [];
-			const itemSchema = asRecord(fieldSchema).items;
-			const itemType = jsonSchemaType(itemSchema);
-			current.push(
-				itemType === "number" || itemType === "integer" ? Number(value) : value,
-			);
-			input[fieldName] = current;
-			index += 2;
-			continue;
-		}
-		input[fieldName] = value;
-		index += 2;
-	}
-
-	for (const fieldName of required) {
-		if (!(fieldName in input)) {
-			throw new Error(`Missing required flag: --${camelToKebab(fieldName)}`);
-		}
-	}
-	return input;
-}
-
-function listToolkitsPayload(toolKits: ToolKit[]): unknown {
-	return {
-		toolkits: toolKits.map((toolKit) => ({
 			name: toolKit.name,
 			description: toolKit.description,
-			tools: Object.keys(toolKit.tools),
-		})),
-	};
-}
-
-function describeToolkitPayload(
-	toolKits: ToolKit[],
-	toolkitName: string,
-): unknown {
-	const toolKit = toolKits.find((kit) => kit.name === toolkitName);
-	if (!toolKit) {
-		throw new Error(
-			`No toolkit "${toolkitName}". Available: ${toolkitNames(toolKits)}`,
-		);
-	}
-	return {
-		name: toolKit.name,
-		description: toolKit.description,
-		tools: Object.fromEntries(
-			Object.entries(toolKit.tools).map(([toolName, tool]) => [
-				toolName,
-				{
-					description: tool.description,
-					flags: describeToolFlags(toolToSidecarDefinition(tool).inputSchema),
-				},
-			]),
-		),
-	};
-}
-
-function describeToolPayload(toolKit: ToolKit, toolName: string): unknown {
-	const tool = toolKit.tools[toolName];
-	if (!tool) {
-		throw new Error(
-			`No tool "${toolName}" in toolkit "${toolKit.name}". Available: ${toolNames(toolKit)}`,
-		);
-	}
-	return {
-		toolkit: toolKit.name,
-		tool: toolName,
-		description: tool.description,
-		flags: describeToolFlags(toolToSidecarDefinition(tool).inputSchema),
-		examples:
-			tool.examples?.map((example) => ({
-				description: example.description,
-				input: example.input,
-			})) ?? [],
-	};
-}
-
-function toolPermissionMode(
-	permissions: Permissions,
-	callbackKey: string,
-): "allow" | "deny" {
-	const scope = permissions.binding;
-	if (!scope) {
-		return "deny";
-	}
-	if (typeof scope === "string") {
-		return scope;
-	}
-	let mode: "allow" | "deny" = scope.default ?? "deny";
-	for (const rule of scope.rules) {
-		const operations = rule.operations ?? ["*"];
-		const patterns = rule.patterns ?? ["**"];
-		if (
-			operations.some(
-				(operation) => operation === "*" || operation === "invoke",
-			) &&
-			patterns.some((pattern) => permissionPatternMatches(pattern, callbackKey))
-		) {
-			mode = rule.mode;
-		}
-	}
-	return mode;
-}
-
-function permissionPatternMatches(pattern: string, value: string): boolean {
-	if (pattern === "*" || pattern === "**" || pattern === value) {
-		return true;
-	}
-	const parts = pattern.split(/(\*\*|\*)/u);
-	const source = parts
-		.map((part) => {
-			if (part === "**") return ".*";
-			if (part === "*") return "[^:]*";
-			return part.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
-		})
-		.join("");
-	return new RegExp(`^${source}$`).test(value);
-}
-
-function toolkitNames(toolKits: ToolKit[]): string {
-	return toolKits.map((toolKit) => toolKit.name).join(", ");
-}
-
-function toolNames(toolKit: ToolKit): string {
-	return Object.keys(toolKit.tools).join(", ");
-}
-
-function isHelpFlag(value: string): boolean {
-	return value === "--help" || value === "-h";
-}
-
-function jsonSchemaType(schema: unknown): string | undefined {
-	const schemaObject = asRecord(schema);
-	return typeof schemaObject.type === "string" ? schemaObject.type : undefined;
-}
-
-async function registerToolkitsOnSidecar(
-	client: SidecarProcess,
-	session: AuthenticatedSession,
-	vm: CreatedVm,
-	toolKits: ToolKit[],
-): Promise<string> {
-	if (toolKits.length === 0) {
-		return "";
-	}
-
-	for (const toolKit of toolKits) {
-		await client.registerHostCallbacks(session, vm, {
-			name: toolKit.name,
-			description: toolKit.description,
-			commandAliases: [`agentos-${toolKit.name}`],
-			registryCommandAliases: ["agentos"],
 			callbacks: Object.fromEntries(
 				Object.entries(toolKit.tools).map(([toolName, tool]) => [
 					toolName,
 					toolToSidecarDefinition(tool),
 				]),
 			),
-		});
-	}
-
-	return buildHostToolReference(toolKits);
+		};
+	});
 }
+
+type RunningProcessRoute = {
+	state: "running";
+	proc: ManagedProcess;
+	stdoutHandlers: Set<(data: Uint8Array) => void>;
+	stderrHandlers: Set<(data: Uint8Array) => void>;
+	exitHandlers: Set<(exitCode: number) => void>;
+};
+
+type CompletedProcessRoute = {
+	state: "exited";
+	exitCode: number;
+};
+
+type FailedProcessRoute = {
+	state: "failed";
+	error: Error;
+};
+
+type ProcessRoute =
+	| RunningProcessRoute
+	| CompletedProcessRoute
+	| FailedProcessRoute;
 
 export class AgentOs {
 	#kernel: Kernel;
 	readonly sidecar: AgentOsSidecar;
 	private _sessions = new Map<string, AgentSessionEntry>();
-	private _closedSessionIds = new BoundedSet<string>(
-		CLOSED_SESSION_ID_RETENTION_LIMIT,
-	);
-	private _sessionClosePromises = new Map<string, Promise<void>>();
-	private _pendingSessionRequestResolvers = new Map<
-		string,
-		Set<{
-			method: string;
-			resolve: (response: JsonRpcResponse) => void;
-		}>
-	>();
-	private _processes = new Map<
-		number,
-		{
-			proc: ManagedProcess;
-			command: string;
-			args: string[];
-			stdoutHandlers: Set<(data: Uint8Array) => void>;
-			stderrHandlers: Set<(data: Uint8Array) => void>;
-			exitHandlers: Set<(exitCode: number) => void>;
-		}
-	>();
+	private _processes = new Map<number, ProcessRoute>();
 	private _shells = new Map<string, ShellEntry>();
-	// Value is the recorded exit code (undefined until/unless the exit
-	// resolves) so waitShell can still report it after the entry is dropped.
-	private _closedShellIds = new BoundedSet<string, number>(
-		CLOSED_SHELL_ID_RETENTION_LIMIT,
-	);
-	private _pendingShellExitPromises = new Set<Promise<number>>();
-	private _shellCounter = 0;
-	private _acpTerminals = new Map<string, AcpTerminalEntry>();
-	private _acpTerminalCounter = 0;
-	private _softwareRoots: SoftwareRoot[];
+	private _pendingShellExitPromises = new Map<string, Promise<number>>();
+	private _disposed = false;
+	private _disposePromise: Promise<void> | null = null;
 	private _cronManager!: CronManager;
 	private _toolKits: ToolKit[] = [];
-	private _toolReference = "";
-	private _permissions: Permissions = allowAll;
-	private _hostMounts: HostMountInfo[];
-	private _env: Record<string, string>;
-	private _rootFilesystem: VirtualFileSystem;
-	private readonly _additionalInstructions: string | undefined;
+	private _permissions: Permissions = { binding: "allow" };
 	private _sidecarLease: AgentOsSidecarVmLease<AgentOsVmAdmin> | null = null;
 	private readonly _sidecarClient: SidecarProcess;
 	private readonly _sidecarSession: AuthenticatedSession;
 	private readonly _sidecarVm: CreatedVm;
 	private readonly _disposeSidecarEventListener: () => void;
+	private _disposeSidecarRequestHandler: (() => void) | null = null;
 	private readonly _agentStderrHandler?: AgentStderrHandler;
 	private readonly _agentExitHandler?: AgentExitHandler;
 	private readonly _limitWarningHandler?: LimitWarningHandler;
@@ -2587,34 +1364,34 @@ export class AgentOs {
 	private constructor(
 		kernel: Kernel,
 		sidecar: AgentOsSidecar,
-		softwareRoots: SoftwareRoot[],
-		hostMounts: HostMountInfo[],
 		env: Record<string, string>,
 		rootFilesystem: VirtualFileSystem,
 		sidecarClient: SidecarProcess,
 		sidecarSession: AuthenticatedSession,
 		sidecarVm: CreatedVm,
-		additionalInstructions?: string,
 		agentStderrHandler?: AgentStderrHandler,
 		agentExitHandler?: AgentExitHandler,
 		limitWarningHandler?: LimitWarningHandler,
 	) {
 		this.#kernel = kernel;
 		this.sidecar = sidecar;
-		this._softwareRoots = softwareRoots;
-		this._hostMounts = hostMounts;
-		this._env = env;
-		this._rootFilesystem = rootFilesystem;
 		this._sidecarClient = sidecarClient;
 		this._sidecarSession = sidecarSession;
 		this._sidecarVm = sidecarVm;
-		this._additionalInstructions = additionalInstructions;
 		this._agentStderrHandler = agentStderrHandler;
 		this._agentExitHandler = agentExitHandler;
 		this._limitWarningHandler = limitWarningHandler;
-		this._disposeSidecarEventListener = this._sidecarClient.onEvent((event) => {
-			this._handleSidecarEvent(event);
-		});
+		this._disposeSidecarEventListener = this._sidecarClient.onEvent(
+			(event) => {
+				this._handleSidecarEvent(event);
+			},
+			{
+				scope: "vm",
+				connection_id: sidecarSession.connectionId,
+				session_id: sidecarSession.sessionId,
+				vm_id: sidecarVm.vmId,
+			},
+		);
 		agentOsRuntimeAdmins.set(this, {
 			kernel,
 			rootView: rootFilesystem,
@@ -2639,10 +1416,9 @@ export class AgentOs {
 		options = parseAgentOsOptions(options);
 		// Default software is FULLY DYNAMIC: this package's own NON-agent
 		// @agentos-software/* dependencies (e.g. common), each default-exporting
-		// its registry-built descriptor. Agent packages are NOT projected here —
-		// createSession(id) links the matching agent dependency into the running
-		// VM on first use, so agent closures (and pi's V8 snapshot bundle) only
-		// enter VMs that run them. Unbuilt packages throw with build
+		// its registry-built descriptor. Agent packages are NOT projected here;
+		// callers or an upper package-manager layer must pass those packages in
+		// `software` before createSession(id). Unbuilt packages throw with build
 		// instructions; opt out via defaultSoftware: false.
 		const defaultSoftware =
 			options?.defaultSoftware === false ? [] : resolveDefaultSoftware();
@@ -2651,7 +1427,7 @@ export class AgentOs {
 				? (options.software ?? [])
 				: [...defaultSoftware, ...(options?.software ?? [])];
 		// Packages are projected by the SIDECAR: the client forwards only the
-		// package `path` over `configureVm` and the sidecar reads metadata from
+		// package `path` over `initializeVm` and the sidecar reads metadata from
 		// the packed vbare manifest (chunk1 of the `.aospkg`).
 		const flatSoftware = software.flat();
 		// Honor the AgentOsOptions.defaultSoftware contract ("entries already present
@@ -2662,7 +1438,7 @@ export class AgentOs {
 		const seenPackagePaths = new Set<string>();
 		const sidecarPackages = flatSoftware.flatMap((entry) => {
 			const ref = normalizePackageRef(entry);
-			if (!ref || seenPackagePaths.has(ref.path)) {
+			if (seenPackagePaths.has(ref.path)) {
 				return [];
 			}
 			seenPackagePaths.add(ref.path);
@@ -2674,9 +1450,7 @@ export class AgentOs {
 		// bundle loading from the projected package dirs.
 		const localMounts = await resolveCompatLocalMounts(options?.mounts);
 		const toolKits = options?.toolKits;
-		if (toolKits && toolKits.length > 0) {
-			validateToolkits(toolKits);
-		}
+		const permissions = options?.permissions ?? { binding: "allow" as const };
 
 		// Resolve the sidecar handle up front so every VM created here leases the
 		// one shared native sidecar process owned by that handle.
@@ -2687,17 +1461,6 @@ export class AgentOs {
 			// forwarded `packages` (it owns the staging dir + read-only mount, and
 			// runtime `linkSoftware` appends to that live dir). The client no longer
 			// stages packages host-side.
-			const toolBootstrapCommands = collectToolkitBootstrapCommands(
-				toolKits ?? [],
-			);
-			const bootstrapCommands = [
-				...RUNTIME_BOOTSTRAP_COMMANDS,
-				...toolBootstrapCommands,
-			];
-			const bootstrapLower = createKernelBootstrapLower(
-				options?.rootFilesystem,
-			);
-			let toolReference = "";
 			let rootBridge: NativeSidecarKernelProxy | null = null;
 			let kernel: Kernel | null = null;
 			let client: SidecarProcess | null = null;
@@ -2713,37 +1476,32 @@ export class AgentOs {
 			};
 
 			try {
-				const env: Record<string, string> = getBaseEnvironment();
-				// Guest command paths. The sidecar owns the `/opt/agentos` projection and
-				// reports the exact projected package commands after `configureVm`.
-				// Tool-shim commands are added below.
-				const commandGuestPaths = new Map<string, string>();
-				const { sidecarMounts, hostMounts, hostPathMappings } =
-					collectSidecarMountPlan({
-						mounts: options?.mounts,
-					});
+				let env: Record<string, string> = {};
+				const { sidecarMounts } = collectSidecarMountPlan({
+					mounts: options?.mounts,
+				});
 				// Reuse the sidecar handle's single shared native process; this VM
 				// becomes another tenant of it rather than spawning its own process.
 				const shared = await ensureSharedSidecarNativeProcess(sidecar);
 				client = shared.client;
 				const session = shared.session;
 				nativeSession = session;
-				const hostPermissions = options?.permissions ?? {
-					...allowAll,
-					binding: "allow",
-				};
-				const sidecarPermissions =
-					serializePermissionsForSidecar(hostPermissions);
+				const sidecarPermissions = options?.permissions
+					? serializePermissionsForSidecar(options.permissions)
+					: undefined;
 				const createVmConfig: CreateVmConfig = {
-					env,
-					rootFilesystem: serializeRootFilesystemForSidecar(
-						options?.rootFilesystem,
-						bootstrapLower,
-					),
+					...(options?.rootFilesystem !== undefined
+						? {
+								rootFilesystem: serializeRootFilesystemForSidecar(
+									options.rootFilesystem,
+								),
+							}
+						: {}),
 					permissions: sidecarPermissions,
 					limits: options?.limits,
-					loopbackExemptPorts: options?.loopbackExemptPorts ?? [],
-					bootstrapCommands,
+					...(options?.loopbackExemptPorts !== undefined
+						? { loopbackExemptPorts: options.loopbackExemptPorts }
+						: {}),
 					// 0.3: the Node builtin allow-list moved from configureVm to
 					// VM creation. `undefined` => engine default allow-list;
 					// `[]` => deny all; `[..]` => exactly those. Platform and
@@ -2754,8 +1512,6 @@ export class AgentOs {
 					options?.highResolutionTime !== undefined
 						? {
 								jsRuntime: {
-									platform: "node" as const,
-									moduleResolution: "node" as const,
 									...(options?.allowedNodeBuiltins !== undefined
 										? { allowedBuiltins: options.allowedNodeBuiltins }
 										: {}),
@@ -2765,104 +1521,47 @@ export class AgentOs {
 								},
 							}
 						: {}),
+					...(options?.additionalInstructions === undefined
+						? {}
+						: {
+								agentAdditionalInstructions: options.additionalInstructions,
+							}),
 				};
-				const nativeVm = await client.createVm(session, {
+				const nativeVm = await client.initializeVm(session, {
 					runtime: "java_script",
 					config: createVmConfig,
+					...(sidecarMounts.length > 0 ? { mounts: sidecarMounts } : {}),
+					...(sidecarPackages.length > 0 ? { packages: sidecarPackages } : {}),
+					...(toolKits === undefined || toolKits.length === 0
+						? {}
+						: { hostCallbacks: serializeToolkitsForSidecar(toolKits) }),
 				});
+				env = { ...nativeVm.guestEnv };
 				createdNativeVm = nativeVm;
-				// Scope the readiness wait to THIS VM's ownership; on a shared process
-				// other VMs are emitting their own lifecycle events concurrently.
-				await client.waitForEvent(
-					(event) =>
-						event.payload.type === "vm_lifecycle" &&
-						event.payload.state === "ready" &&
-						event.ownership.scope === "vm" &&
-						event.ownership.vm_id === nativeVm.vmId,
-					10_000,
-				);
-				const configuredVm = await client.configureVm(session, nativeVm, {
-					mounts: sidecarMounts,
-					permissions: sidecarPermissions,
-					commandPermissions: {},
-					loopbackExemptPorts: options?.loopbackExemptPorts,
-					packages: sidecarPackages,
-					packagesMountAt: OPT_AGENTOS_ROOT,
-					toolShimCommands: toolBootstrapCommands,
-				});
-				for (const command of configuredVm.projectedCommands) {
-					commandGuestPaths.set(command.name, command.guestPath);
-				}
-				if (toolKits && toolKits.length > 0) {
-					toolReference = await registerToolkitsOnSidecar(
-						client,
-						session,
-						nativeVm,
-						toolKits,
-					);
-					commandGuestPaths.set("agentos", "/bin/agentos");
-					for (const toolKit of toolKits) {
-						commandGuestPaths.set(
-							`agentos-${toolKit.name}`,
-							`/bin/agentos-${toolKit.name}`,
-						);
-					}
-				}
-
 				rootBridge = new NativeSidecarKernelProxy({
 					client,
 					session,
 					vm: nativeVm,
-					env,
-					cwd: "/workspace",
+					env: nativeVm.guestEnv,
+					cwd: nativeVm.guestCwd,
 					localMounts,
 					sidecarMounts,
-					permissions: sidecarPermissions,
-					commandPermissions: {},
-					loopbackExemptPorts: options?.loopbackExemptPorts,
-					// Retained for runtime mount reconfigures: `configure_vm` is
-					// replace-on-write for the whole payload, so post-boot mountFs
-					// must resend the boot packages and tool shims.
-					packages: sidecarPackages,
-					packagesMountAt: OPT_AGENTOS_ROOT,
-					toolShimCommands: toolBootstrapCommands,
-					commandGuestPaths,
 					onDispose: cleanup,
 					// The native process is owned by the AgentOsSidecar handle and
 					// shared across VMs; disposing this VM must not kill the process.
 					ownsClient: false,
 				});
-				await bootstrapLiveBootstrapDirectories(
-					client,
-					session,
-					nativeVm,
-					options?.rootFilesystem,
-				);
-
 				kernel = rootBridge as unknown as Kernel;
-				const snapshotClient = client;
-
 				return {
 					env,
-					hostMounts,
 					kernel,
 					rootView: rootBridge.createRootView(),
 					sidecarMounts,
-					sidecarPermissions,
-					commandPermissions: {},
-					loopbackExemptPorts: options?.loopbackExemptPorts,
 					sidecarClient: client,
 					sidecarSession: session,
 					sidecarVm: nativeVm,
-					permissions: hostPermissions,
-					snapshotRootFilesystem: async () =>
-						createSnapshotExport(
-							convertSidecarRootSnapshotEntries(
-								await snapshotClient.snapshotRootFilesystem(session, nativeVm),
-							),
-						),
 					toolKits: toolKits ?? [],
-					toolReference,
+					permissions,
 					async dispose() {
 						if (kernel) {
 							const currentKernel = kernel;
@@ -2882,15 +1581,30 @@ export class AgentOs {
 				// The native process is shared and owned by the sidecar handle, so
 				// never dispose the client here — only tear down this VM's resources.
 				if (kernel) {
-					await kernel.dispose().catch(() => {});
+					await kernel.dispose().catch((cleanupError) => {
+						console.warn(
+							"failed to dispose kernel after VM startup failure",
+							cleanupError,
+						);
+					});
 				}
 				if (rootBridge) {
-					await rootBridge.dispose().catch(() => {});
+					await rootBridge.dispose().catch((cleanupError) => {
+						console.warn(
+							"failed to dispose root bridge after VM startup failure",
+							cleanupError,
+						);
+					});
 				} else {
 					if (createdNativeVm && nativeSession && client) {
 						await client
 							.disposeVm(nativeSession, createdNativeVm)
-							.catch(() => {});
+							.catch((cleanupError) => {
+								console.warn(
+									"failed to dispose sidecar VM after startup failure",
+									cleanupError,
+								);
+							});
 					}
 					await cleanup();
 				}
@@ -2909,31 +1623,33 @@ export class AgentOs {
 			const vm = new AgentOs(
 				vmAdmin.kernel,
 				sidecar,
-				[],
-				vmAdmin.hostMounts,
 				vmAdmin.env,
 				vmAdmin.rootView,
 				vmAdmin.sidecarClient,
 				vmAdmin.sidecarSession,
 				vmAdmin.sidecarVm,
-				options?.additionalInstructions,
 				options?.onAgentStderr ?? defaultAgentStderrHandler,
 				options?.onAgentExit ?? defaultAgentExitHandler,
 				options?.onLimitWarning,
 			);
 			vm._sidecarLease = sidecarLease;
 			vm._toolKits = vmAdmin.toolKits;
-			vm._toolReference = vmAdmin.toolReference;
 			vm._permissions = vmAdmin.permissions;
 			vm._installSidecarRequestHandler();
 			vm._cronManager = new CronManager(
-				vm,
-				options?.scheduleDriver ?? new TimerScheduleDriver(),
+				vmAdmin.sidecarClient,
+				vmAdmin.sidecarSession,
+				vmAdmin.sidecarVm,
 			);
 
 			return vm;
 		} catch (error) {
-			await sidecarLease?.dispose().catch(() => {});
+			await sidecarLease?.dispose().catch((cleanupError) => {
+				console.warn(
+					"failed to dispose sidecar lease after AgentOs.create failure",
+					cleanupError,
+				);
+			});
 			throw error;
 		}
 	}
@@ -2960,41 +1676,93 @@ export class AgentOs {
 		return kernel.execArgv(command, args, options);
 	}
 
-	private _trackProcess(
+	private _pruneCompletedProcessRoutes(): void {
+		let completedRoutes = 0;
+		for (const entry of this._processes.values()) {
+			if (entry.state !== "running") completedRoutes++;
+		}
+		let removeCount = Math.max(
+			0,
+			completedRoutes - this._sidecarVm.processRouteRetention,
+		);
+		for (const [pid, entry] of this._processes) {
+			if (removeCount === 0) break;
+			if (entry.state !== "running") {
+				this._processes.delete(pid);
+				removeCount--;
+			}
+		}
+	}
+
+	private async _trackProcess(
 		proc: ManagedProcess,
-		command: string,
-		args: string[],
 		stdoutHandlers: Set<(data: Uint8Array) => void>,
 		stderrHandlers: Set<(data: Uint8Array) => void>,
 		exitHandlers: Set<(exitCode: number) => void>,
-	): { pid: number } {
-		const entry = {
+	): Promise<{ pid: number }> {
+		const existing = this._processes.get(proc.pid);
+		if (existing?.state === "running") {
+			const duplicateError = new Error(
+				`Sidecar returned an already-active kernel pid: ${proc.pid}`,
+			);
+			try {
+				await proc.kill(9);
+			} catch (cleanupError) {
+				throw new AggregateError(
+					[duplicateError, cleanupError],
+					"Sidecar returned a duplicate active pid and cleanup failed",
+				);
+			}
+			throw duplicateError;
+		}
+		this._processes.delete(proc.pid);
+		const entry: RunningProcessRoute = {
+			state: "running",
 			proc,
-			command,
-			args,
 			stdoutHandlers,
 			stderrHandlers,
 			exitHandlers,
 		};
 		this._processes.set(proc.pid, entry);
 
-		// NOTE: do NOT delete from `_processes` on exit — the public API contract
-		// (getProcess/listProcesses/stopProcess, see process-management.test.ts)
-		// requires exited processes to stay queryable (running:false, exitCode set).
-		// `_processes` is a process table for this VM's lifetime; it is freed wholesale
-		// in dispose(). (H5: the leak was that dispose() never cleared it.)
-		void proc.wait().then((code) => {
-			for (const h of exitHandlers) h(code);
-		});
+		void proc
+			.wait()
+			.then((code) => {
+				if (this._processes.get(proc.pid) !== entry) return;
+				const handlers = [...exitHandlers];
+				stdoutHandlers.clear();
+				stderrHandlers.clear();
+				exitHandlers.clear();
+				this._processes.delete(proc.pid);
+				this._processes.set(proc.pid, { state: "exited", exitCode: code });
+				this._pruneCompletedProcessRoutes();
+				for (const handler of handlers) handler(code);
+			})
+			.catch((error) => {
+				if (this._processes.get(proc.pid) === entry) {
+					const routeError =
+						error instanceof Error ? error : new Error(String(error));
+					stdoutHandlers.clear();
+					stderrHandlers.clear();
+					exitHandlers.clear();
+					this._processes.delete(proc.pid);
+					this._processes.set(proc.pid, {
+						state: "failed",
+						error: routeError,
+					});
+					this._pruneCompletedProcessRoutes();
+				}
+				console.error(`[agent-os] process ${proc.pid} wait failed`, error);
+			});
 
 		return { pid: proc.pid };
 	}
 
-	spawn(
+	async spawn(
 		command: string,
 		args: string[],
 		options?: KernelSpawnOptions,
-	): { pid: number } {
+	): Promise<{ pid: number }> {
 		const stdoutHandlers = new Set<(data: Uint8Array) => void>();
 		const stderrHandlers = new Set<(data: Uint8Array) => void>();
 		const exitHandlers = new Set<(exitCode: number) => void>();
@@ -3003,7 +1771,7 @@ export class AgentOs {
 		if (options?.onStdout) stdoutHandlers.add(options.onStdout);
 		if (options?.onStderr) stderrHandlers.add(options.onStderr);
 
-		const proc = this.#kernel.spawn(command, args, {
+		const proc = await this.#kernel.spawn(command, args, {
 			...options,
 			onStdout: (data) => {
 				for (const h of stdoutHandlers) h(data);
@@ -3013,10 +1781,8 @@ export class AgentOs {
 			},
 		});
 
-		return this._trackProcess(
+		return await this._trackProcess(
 			proc,
-			command,
-			args,
 			stdoutHandlers,
 			stderrHandlers,
 			exitHandlers,
@@ -3027,6 +1793,8 @@ export class AgentOs {
 	writeProcessStdin(pid: number, data: string | Uint8Array): Promise<void> {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
+		if (entry.state === "exited") return Promise.resolve();
+		if (entry.state === "failed") return Promise.reject(entry.error);
 		return entry.proc.writeStdin(data);
 	}
 
@@ -3034,6 +1802,8 @@ export class AgentOs {
 	closeProcessStdin(pid: number): Promise<void> {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
+		if (entry.state === "exited") return Promise.resolve();
+		if (entry.state === "failed") return Promise.reject(entry.error);
 		return entry.proc.closeStdin();
 	}
 
@@ -3044,6 +1814,8 @@ export class AgentOs {
 	): () => void {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
+		if (entry.state === "exited") return () => {};
+		if (entry.state === "failed") throw entry.error;
 		entry.stdoutHandlers.add(handler);
 		return () => {
 			entry.stdoutHandlers.delete(handler);
@@ -3057,6 +1829,8 @@ export class AgentOs {
 	): () => void {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
+		if (entry.state === "exited") return () => {};
+		if (entry.state === "failed") throw entry.error;
 		entry.stderrHandlers.add(handler);
 		return () => {
 			entry.stderrHandlers.delete(handler);
@@ -3068,10 +1842,11 @@ export class AgentOs {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
 		// If already exited, call immediately.
-		if (entry.proc.exitCode !== null) {
-			handler(entry.proc.exitCode);
+		if (entry.state === "exited") {
+			handler(entry.exitCode);
 			return () => {};
 		}
+		if (entry.state === "failed") throw entry.error;
 		entry.exitHandlers.add(handler);
 		return () => {
 			entry.exitHandlers.delete(handler);
@@ -3082,102 +1857,24 @@ export class AgentOs {
 	waitProcess(pid: number): Promise<number> {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
+		if (entry.state === "exited") return Promise.resolve(entry.exitCode);
+		if (entry.state === "failed") return Promise.reject(entry.error);
 		return entry.proc.wait();
 	}
 
-	private _assertSafeAbsolutePath(path: string): void {
-		if (!path.startsWith("/")) {
-			throw new Error(`Path must be absolute: ${path}`);
-		}
-		if (posixPath.normalize(path) !== path) {
-			throw new Error(`Path must be normalized: ${path}`);
-		}
-	}
-
-	private _assertWritableAbsolutePath(path: string): void {
-		this._assertSafeAbsolutePath(path);
-		if (path === "/proc" || path.startsWith("/proc/")) {
-			throw new Error(`Path is read-only: ${path}`);
-		}
-	}
-
-	private _vfs(): VirtualFileSystem {
-		return (this.#kernel as unknown as { vfs: VirtualFileSystem }).vfs;
-	}
-
 	async readFile(path: string): Promise<Uint8Array> {
-		this._assertSafeAbsolutePath(path);
 		return this.#kernel.readFile(path);
 	}
 
 	async writeFile(path: string, content: string | Uint8Array): Promise<void> {
-		this._assertWritableAbsolutePath(path);
 		return this.#kernel.writeFile(path, content);
 	}
 
-	async writeFiles(entries: BatchWriteEntry[]): Promise<BatchWriteResult[]> {
-		const results: BatchWriteResult[] = [];
-		for (const entry of entries) {
-			try {
-				this._assertWritableAbsolutePath(entry.path);
-				// Create parent directories as needed
-				const parentDir = entry.path.substring(0, entry.path.lastIndexOf("/"));
-				if (parentDir) {
-					await this._mkdirp(parentDir);
-				}
-				await this.#kernel.writeFile(entry.path, entry.content);
-				results.push({ path: entry.path, success: true });
-			} catch (err: unknown) {
-				results.push({
-					path: entry.path,
-					success: false,
-					error: err instanceof Error ? err.message : String(err),
-				});
-			}
-		}
-		return results;
-	}
-
-	async readFiles(paths: string[]): Promise<BatchReadResult[]> {
-		const results: BatchReadResult[] = [];
-		for (const path of paths) {
-			try {
-				this._assertSafeAbsolutePath(path);
-				const content = await this.#kernel.readFile(path);
-				results.push({ path, content });
-			} catch (err: unknown) {
-				results.push({
-					path,
-					content: null,
-					error: err instanceof Error ? err.message : String(err),
-				});
-			}
-		}
-		return results;
-	}
-
-	/** Recursively create directories (mkdir -p). */
-	private async _mkdirp(path: string): Promise<void> {
-		this._assertWritableAbsolutePath(path);
-		// `kernel.mkdir` is already recursive (it defaults to recursive=true on both
-		// the native sidecar and compat kernels) and creating an existing directory is
-		// a no-op, so a single call is sufficient. Do NOT probe each ancestor with
-		// `exists()` first: on the native sidecar every read-side op
-		// (exists/stat/readFile) triggers a full shadow-tree walk, so a per-component
-		// exists() loop makes `mkdir -p` cost O(components * tree).
-		await this.#kernel.mkdir(path);
-	}
-
 	async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
-		if (options?.recursive) {
-			return this._mkdirp(path);
-		}
-		this._assertSafeAbsolutePath(path);
-		return this.#kernel.mkdir(path);
+		return this.#kernel.mkdir(path, options);
 	}
 
 	async readdir(path: string): Promise<string[]> {
-		this._assertSafeAbsolutePath(path);
 		return this.#kernel.readdir(path);
 	}
 
@@ -3185,61 +1882,36 @@ export class AgentOs {
 		path: string,
 		options?: ReaddirRecursiveOptions,
 	): Promise<DirEntry[]> {
-		this._assertSafeAbsolutePath(path);
-		const exclude = options?.exclude ? new Set(options.exclude) : undefined;
 		const entries = await this.#kernel.readdirRecursive(path, {
 			maxDepth: options?.maxDepth,
 		});
-		const excludedPrefixes: string[] = [];
-		const results: DirEntry[] = [];
-
-		for (const entry of entries) {
-			if (
-				excludedPrefixes.some(
-					(prefix) =>
-						entry.path === prefix || entry.path.startsWith(`${prefix}/`),
-				)
-			) {
-				continue;
-			}
-			if (exclude?.has(entry.name)) {
-				if (entry.isDirectory && !entry.isSymbolicLink) {
-					excludedPrefixes.push(entry.path);
-				}
-				continue;
-			}
-			results.push({
-				path: entry.path,
-				type: entry.isSymbolicLink
-					? "symlink"
-					: entry.isDirectory
-						? "directory"
-						: "file",
-				size: entry.size,
-			});
-		}
-
-		return results;
+		return entries.map((entry) => ({
+			path: entry.path,
+			type: entry.isSymbolicLink
+				? "symlink"
+				: entry.isDirectory
+					? "directory"
+					: "file",
+			size: entry.size,
+		}));
 	}
 
 	async stat(path: string): Promise<VirtualStat> {
-		this._assertSafeAbsolutePath(path);
 		return this.#kernel.stat(path);
 	}
 
 	async exists(path: string): Promise<boolean> {
-		this._assertSafeAbsolutePath(path);
 		return this.#kernel.exists(path);
 	}
 
 	async snapshotRootFilesystem(): Promise<RootSnapshotExport> {
-		const nativeSnapshot = this._sidecarLease?.admin.snapshotRootFilesystem;
-		if (nativeSnapshot) {
-			return nativeSnapshot();
-		}
-
 		return createSnapshotExport(
-			await snapshotVirtualFilesystem(this._rootFilesystem),
+			convertSidecarRootSnapshotEntries(
+				await this._sidecarClient.snapshotRootFilesystem(
+					this._sidecarSession,
+					this._sidecarVm,
+				),
+			),
 		);
 	}
 
@@ -3254,65 +1926,58 @@ export class AgentOs {
 		driver: VirtualFileSystem,
 		options?: { readOnly?: boolean },
 	): Promise<void> {
-		this._assertSafeAbsolutePath(path);
 		await this.#kernel.mountFs(path, driver, { readOnly: options?.readOnly });
 	}
 
 	async unmountFs(path: string): Promise<void> {
-		this._assertSafeAbsolutePath(path);
 		await this.#kernel.unmountFs(path);
 	}
 
 	async move(from: string, to: string): Promise<void> {
-		this._assertWritableAbsolutePath(from);
-		this._assertWritableAbsolutePath(to);
 		await this.#kernel.movePath(from, to);
 	}
 
 	async delete(path: string, options?: { recursive?: boolean }): Promise<void> {
-		this._assertWritableAbsolutePath(path);
-		await this.#kernel.removePath(path, {
-			recursive: options?.recursive ?? false,
-		});
+		await this.#kernel.removePath(path, options);
 	}
 
 	async fetch(port: number, request: Request): Promise<Response> {
 		const url = new URL(request.url);
-		const responsePayload = JSON.parse(
-			await this._sidecarClient.vmFetch(this._sidecarSession, this._sidecarVm, {
-				port,
-				method: request.method,
-				path: `${url.pathname}${url.search}`,
-				headersJson: JSON.stringify(
-					Object.fromEntries(request.headers.entries()),
+		const responsePayload = requireVmFetchResponsePayload(
+			JSON.parse(
+				await this._sidecarClient.vmFetch(
+					this._sidecarSession,
+					this._sidecarVm,
+					{
+						port,
+						method: request.method,
+						path: `${url.pathname}${url.search}`,
+						headersJson: JSON.stringify(
+							Object.fromEntries(request.headers.entries()),
+						),
+						...(request.method !== "GET" && request.method !== "HEAD"
+							? { body: await request.text() }
+							: {}),
+					},
 				),
-				...(request.method !== "GET" && request.method !== "HEAD"
-					? { body: await request.text() }
-					: {}),
-			}),
-		) as {
-			status: number;
-			statusText?: string;
-			headers?: Array<[string, string]>;
-			body?: string;
-		};
+			),
+		);
 		const headers = new Headers();
-		for (const [key, value] of responsePayload.headers ?? []) {
+		for (const [key, value] of responsePayload.headers) {
 			headers.append(key, value);
 		}
-		return new Response(Buffer.from(responsePayload.body ?? "", "base64"), {
+		return new Response(Buffer.from(responsePayload.body, "base64"), {
 			status: responsePayload.status,
 			statusText: responsePayload.statusText,
 			headers,
 		});
 	}
 
-	openShell(options?: OpenShellOptions): { shellId: string } {
-		const shellId = `shell-${++this._shellCounter}`;
-		this._closedShellIds.delete(shellId);
+	async openShell(options?: OpenShellOptions): Promise<{ shellId: string }> {
 		const dataHandlers = new Set<(data: Uint8Array) => void>();
 
-		const handle = this.#kernel.openShell(options);
+		const handle = await this.#kernel.openShell(options);
+		const shellId = handle.processId;
 		handle.onData = (data) => {
 			for (const h of dataHandlers) h(data);
 		};
@@ -3321,20 +1986,18 @@ export class AgentOs {
 			handle,
 			dataHandlers,
 			exitPromise: Promise.resolve(0),
+			closing: false,
 		};
 		const exitPromise = handle.wait();
-		const finalize = (exitCode?: number) => {
-			this._pendingShellExitPromises.delete(entry.exitPromise);
+		const finalize = () => {
+			this._pendingShellExitPromises.delete(shellId);
 			if (this._shells.get(shellId) === entry) {
 				this._shells.delete(shellId);
 			}
-			// Record the exit code even when closeShell already dropped the
-			// entry, so a waitShell issued after exit still resolves with it.
-			this._closedShellIds.add(shellId, exitCode);
 		};
 		entry.exitPromise = exitPromise.then(
 			(exitCode) => {
-				finalize(exitCode);
+				finalize();
 				return exitCode;
 			},
 			(error) => {
@@ -3342,176 +2005,169 @@ export class AgentOs {
 				throw error;
 			},
 		);
-		this._pendingShellExitPromises.add(entry.exitPromise);
+		this._pendingShellExitPromises.set(shellId, entry.exitPromise);
 		this._shells.set(shellId, entry);
 		return { shellId };
-	}
-
-	async connectTerminal(options?: ConnectTerminalOptions): Promise<number> {
-		return this.#kernel.connectTerminal(options);
 	}
 
 	/** Write data to a shell's PTY input. */
 	writeShell(shellId: string, data: string | Uint8Array): Promise<void> {
 		const entry = this._shells.get(shellId);
-		if (!entry) throw new Error(`Shell not found: ${shellId}`);
+		if (!entry || entry.closing) throw new Error(`Shell not found: ${shellId}`);
 		return entry.handle.write(data);
 	}
 
-	/**
-	 * Subscribe to ordered PTY output (stdout and stderr). Returns an unsubscribe
-	 * function. `OpenShellOptions.onStderr` is a diagnostic tap for callers that
-	 * need channel identity; do not render both surfaces.
-	 */
+	/** Subscribe to data output from a shell. Returns an unsubscribe function. */
 	onShellData(
 		shellId: string,
 		handler: (data: Uint8Array) => void,
 	): () => void {
 		const entry = this._shells.get(shellId);
-		if (!entry) throw new Error(`Shell not found: ${shellId}`);
+		if (!entry || entry.closing) throw new Error(`Shell not found: ${shellId}`);
 		entry.dataHandlers.add(handler);
 		return () => {
 			entry.dataHandlers.delete(handler);
 		};
 	}
 
-	/** Notify a shell of terminal resize. */
-	resizeShell(shellId: string, cols: number, rows: number): void {
+	/** Notify a shell of terminal resize and await the sidecar response. */
+	async resizeShell(
+		shellId: string,
+		cols: number,
+		rows: number,
+	): Promise<void> {
 		const entry = this._shells.get(shellId);
-		if (!entry) throw new Error(`Shell not found: ${shellId}`);
-		entry.handle.resize(cols, rows);
+		if (!entry || entry.closing) throw new Error(`Shell not found: ${shellId}`);
+		await entry.handle.resize(cols, rows);
 	}
 
 	/**
-	 * Wait for a shell to exit and return its process exit code. Resolves
-	 * immediately for a shell that has already exited (within the closed-shell
-	 * retention window).
+	 * Wait for a shell to exit and return its sidecar-authoritative exit code.
+	 * A late wait reads the retained sidecar process snapshot.
 	 */
-	waitShell(shellId: string): Promise<number> {
+	async waitShell(shellId: string): Promise<number> {
 		const entry = this._shells.get(shellId);
-		if (!entry) {
-			const exitCode = this._closedShellIds.get(shellId);
-			if (exitCode !== undefined) return Promise.resolve(exitCode);
-			throw new Error(`Shell not found: ${shellId}`);
+		if (entry) {
+			return entry.exitPromise;
 		}
-		return entry.exitPromise;
-	}
-
-	/** Kill a shell process and remove it from tracking. */
-	closeShell(shellId: string): void {
-		const entry = this._shells.get(shellId);
-		if (!entry) {
-			if (this._closedShellIds.has(shellId)) {
-				return;
+		const pending = this._pendingShellExitPromises.get(shellId);
+		if (pending) {
+			return pending;
+		}
+		if (this.#kernel instanceof NativeSidecarKernelProxy) {
+			const process = await this.#kernel.processSnapshotById(shellId);
+			if (process?.status === "exited" && process.exitCode !== null) {
+				return process.exitCode;
 			}
-			throw new Error(`Shell not found: ${shellId}`);
 		}
-		entry.handle.kill();
-		this._shells.delete(shellId);
-		this._closedShellIds.add(shellId);
+		throw new Error(`Shell not found: ${shellId}`);
 	}
 
-	private _resolveVmPathToHostPath(vmPath: string): string | null {
-		const normalizedVmPath = posixPath.normalize(vmPath);
-		for (const mount of this._hostMounts) {
-			if (
-				normalizedVmPath === mount.vmPath ||
-				normalizedVmPath.startsWith(`${mount.vmPath}/`)
-			) {
-				const relativePath = posixPath.relative(mount.vmPath, normalizedVmPath);
-				if (!relativePath) {
-					return mount.hostPath;
+	/** Kill a shell process, await the sidecar response, and remove it from tracking. */
+	async closeShell(shellId: string): Promise<void> {
+		const entry = this._shells.get(shellId);
+		if (!entry) {
+			if (this.#kernel instanceof NativeSidecarKernelProxy) {
+				const process = await this.#kernel.processSnapshotById(shellId);
+				if (process?.status === "exited") {
+					return;
 				}
-				return join(mount.hostPath, ...relativePath.split("/").filter(Boolean));
 			}
+			throw new Error(`Shell not found: ${shellId}`);
 		}
-		return null;
+		if (entry.closing) {
+			return;
+		}
+		await entry.handle.kill();
+		entry.closing = true;
 	}
 
-	/** Returns info about all processes spawned via spawn(). */
-	listProcesses(): SpawnedProcessInfo[] {
-		return [...this._processes.values()].map(({ proc, command, args }) => ({
-			pid: proc.pid,
-			command,
-			args,
-			running: proc.exitCode === null,
-			exitCode: proc.exitCode,
-		}));
+	/** Returns sidecar-authoritative info for processes spawned via spawn(). */
+	async listProcesses(): Promise<SpawnedProcessInfo[]> {
+		const processByPid = new Map(
+			(await this.allProcesses()).map((process) => [process.pid, process]),
+		);
+		return [...this._processes.keys()].map((pid) => {
+			const process = processByPid.get(pid);
+			if (!process) {
+				throw new Error(
+					`Sidecar process snapshot is missing tracked process: ${pid}`,
+				);
+			}
+			return {
+				pid: process.pid,
+				command: process.command,
+				args: process.args.slice(1),
+				running: process.status !== "exited",
+				exitCode: process.exitCode,
+			};
+		});
 	}
 
 	/** Returns all kernel processes across all active runtimes (WASM and Node). */
-	allProcesses(): KernelProcessInfo[] {
+	async allProcesses(): Promise<KernelProcessInfo[]> {
 		if (this.#kernel instanceof NativeSidecarKernelProxy) {
-			return this.#kernel.snapshotProcesses();
+			return await this.#kernel.snapshotProcesses();
 		}
 		return [...this.#kernel.processes.values()];
 	}
 
-	/** Returns processes organized as a tree using ppid relationships. */
-	processTree(): ProcessTreeNode[] {
-		const all = this.allProcesses();
-		const nodeMap = new Map<number, ProcessTreeNode>();
-
-		// Index: create a tree node for each process
-		for (const proc of all) {
-			nodeMap.set(proc.pid, { ...proc, children: [] });
-		}
-
-		// Wire: attach each node to its parent
-		const roots: ProcessTreeNode[] = [];
-		for (const node of nodeMap.values()) {
-			const parent = nodeMap.get(node.ppid);
-			if (parent) {
-				parent.children.push(node);
-			} else {
-				roots.push(node);
-			}
-		}
-
-		return roots;
-	}
-
 	/** Returns info about a specific process by PID. Throws if not found. */
-	getProcess(pid: number): SpawnedProcessInfo {
-		const entry = this._processes.get(pid);
-		if (!entry) {
+	async getProcess(pid: number): Promise<SpawnedProcessInfo> {
+		if (!this._processes.has(pid)) {
 			throw new Error(`Process not found: ${pid}`);
 		}
+		const process = (await this.allProcesses()).find(
+			(candidate) => candidate.pid === pid,
+		);
+		if (!process) {
+			throw new Error(
+				`Sidecar process snapshot is missing tracked process: ${pid}`,
+			);
+		}
 		return {
-			pid: entry.proc.pid,
-			command: entry.command,
-			args: entry.args,
-			running: entry.proc.exitCode === null,
-			exitCode: entry.proc.exitCode,
+			pid: process.pid,
+			command: process.command,
+			args: process.args.slice(1),
+			running: process.status !== "exited",
+			exitCode: process.exitCode,
 		};
 	}
 
 	/** Send SIGTERM to gracefully stop a process. No-op if already exited. */
-	stopProcess(pid: number): void {
+	async stopProcess(pid: number): Promise<void> {
 		const entry = this._processes.get(pid);
 		if (!entry) {
 			throw new Error(`Process not found: ${pid}`);
 		}
-		if (entry.proc.exitCode !== null) return;
-		entry.proc.kill();
+		if (entry.state === "exited") return;
+		if (entry.state === "failed") throw entry.error;
+		await entry.proc.kill();
 	}
 
 	/** Send SIGKILL to force-kill a process. No-op if already exited. */
-	killProcess(pid: number): void {
+	async killProcess(pid: number): Promise<void> {
 		const entry = this._processes.get(pid);
 		if (!entry) {
 			throw new Error(`Process not found: ${pid}`);
 		}
-		if (entry.proc.exitCode !== null) return;
-		entry.proc.kill(9);
+		if (entry.state === "exited") return;
+		if (entry.state === "failed") throw entry.error;
+		await entry.proc.kill(9);
 	}
 
-	/** Returns all active sessions with their IDs and agent types. */
-	listSessions(): SessionInfo[] {
-		return [...this._sessions.values()].map((s) => ({
-			sessionId: s.sessionId,
-			agentType: s.agentType,
-		}));
+	/** Returns the sidecar's authoritative active-session list. */
+	async listSessions(): Promise<SessionInfo[]> {
+		const response = await this._sendAcpRequest({
+			tag: "AcpListSessionsRequest",
+			val: { reserved: false },
+		});
+		if (response.tag !== "AcpListSessionsResponse") {
+			throw new Error(
+				`unexpected response to AcpListSessionsRequest: ${response.tag}`,
+			);
+		}
+		return response.val.sessions.map((session) => ({ ...session }));
 	}
 
 	/** Internal helper: retrieve a session or throw. */
@@ -3535,32 +2191,15 @@ export class AgentOs {
 		descriptor: PackageRef | SoftwarePackageRef,
 	): Promise<void> {
 		const ref = normalizePackageRef(descriptor);
-		if (!ref) {
-			throw new Error("Invalid agentOS package reference");
-		}
 		// Forward to the sidecar, which owns the `/opt/agentos` projection and
 		// appends the package to its live host-backed staging dir; the commands
 		// appear under `/opt/agentos/bin` immediately. The sidecar rejects a
 		// duplicate command, surfaced here as a thrown error.
-		const commands = await this._sidecarClient.linkPackage(
+		await this._sidecarClient.linkPackage(
 			this._sidecarSession,
 			this._sidecarVm,
 			{ path: ref.path },
 		);
-		if (this.#kernel instanceof NativeSidecarKernelProxy) {
-			this.#kernel.registerCommandGuestPaths(
-				new Map(
-					commands.projectedCommands.map((command) => [
-						command.name,
-						command.guestPath,
-					]),
-				),
-			);
-			// Retain the linked package for runtime mount reconfigures:
-			// `configure_vm` is replace-on-write, so a later `mountFs` that
-			// resent only the boot packages would unproject this one.
-			this.#kernel.registerLinkedPackage({ path: ref.path });
-		}
 		// The client parses no manifests: an `agent` block in the linked package is
 		// picked up by the sidecar (it owns the projected `/opt/agentos` and answers
 		// createSession/listAgents from it). Nothing to record client-side.
@@ -3596,67 +2235,10 @@ export class AgentOs {
 		}));
 	}
 
-	private _syncSessionState(
-		session: AgentSessionEntry,
-		state: Pick<
-			SidecarSessionState,
-			| "processId"
-			| "pid"
-			| "closed"
-			| "modes"
-			| "configOptions"
-			| "agentCapabilities"
-			| "agentInfo"
-		>,
-	): void {
-		session.processId = state.processId;
-		session.pid = state.pid ?? null;
-		session.closed = state.closed;
-		session.modes = toSessionModes(state.modes);
-		session.configOptions = toSessionConfigOptions(state.configOptions);
-		this._applySyntheticConfigOverrides(session);
-		session.capabilities = toAgentCapabilities(state.agentCapabilities);
-		session.agentInfo = toAgentInfo(state.agentInfo);
-	}
-
-	private _applySessionUpdate(
-		session: AgentSessionEntry,
-		notification: JsonRpcNotification,
-	): void {
-		if (notification.method !== "session/update") {
-			return;
-		}
-
-		const params = toRecord(notification.params);
-		const update = toRecord(params.update ?? params);
-		const sessionUpdate = update.sessionUpdate;
-
-		if (
-			sessionUpdate === "current_mode_update" &&
-			typeof update.currentModeId === "string" &&
-			session.modes
-		) {
-			session.modes = {
-				...session.modes,
-				currentModeId: update.currentModeId,
-			};
-		}
-
-		if (
-			(sessionUpdate === "config_option_update" ||
-				sessionUpdate === "config_options_update") &&
-			Array.isArray(update.configOptions)
-		) {
-			session.configOptions = update.configOptions as SessionConfigOption[];
-		}
-	}
-
 	private _recordSessionNotification(
 		session: AgentSessionEntry,
 		notification: JsonRpcNotification,
 	): void {
-		this._applySessionUpdate(session, notification);
-
 		if (shouldDispatchToSessionEventHandlers(notification)) {
 			this._dispatchSessionEvent(session, notification);
 		}
@@ -3696,8 +2278,11 @@ export class AgentOs {
 		for (const subscriber of [...session.eventHandlers]) {
 			try {
 				subscriber.handler(notification);
-			} catch {
-				// Ignore subscriber callback failures and keep event delivery moving.
+			} catch (error) {
+				console.warn(
+					`ACP session event subscriber failed for ${session.sessionId}`,
+					error,
+				);
 			}
 		}
 	}
@@ -3777,8 +2362,11 @@ export class AgentOs {
 				pid: session.pid,
 				chunk: new TextEncoder().encode(`${message}\n`),
 			});
-		} catch {
-			// A warning sink failure must never affect permission handling.
+		} catch (error) {
+			console.warn(
+				`ACP warning handler failed for ${session.sessionId}`,
+				error,
+			);
 		}
 	}
 
@@ -3788,29 +2376,21 @@ export class AgentOs {
 		processId: string;
 		chunk: ArrayBuffer;
 	}): void {
-		const session =
-			(event.sessionId ? this._sessions.get(event.sessionId) : undefined) ??
-			[...this._sessions.values()].find(
-				(candidate) => candidate.processId === event.processId,
-			);
-		const sessionId = event.sessionId || session?.sessionId;
-		if (!sessionId) {
-			return;
-		}
+		const session = this._sessions.get(event.sessionId);
 		const handler = this._agentStderrHandler;
 		if (!handler) {
 			return;
 		}
 		try {
 			handler({
-				sessionId,
-				agentType: event.agentType || session?.agentType || "",
+				sessionId: event.sessionId,
+				agentType: event.agentType,
 				processId: event.processId,
 				pid: session?.pid ?? null,
 				chunk: new Uint8Array(event.chunk),
 			});
-		} catch {
-			// Ignore subscriber callback failures and keep event delivery moving.
+		} catch (error) {
+			console.warn(`ACP stderr handler failed for ${event.sessionId}`, error);
 		}
 	}
 
@@ -3831,7 +2411,7 @@ export class AgentOs {
 		try {
 			handler({
 				sessionId: event.sessionId,
-				agentType: event.agentType || session?.agentType || "",
+				agentType: event.agentType,
 				processId: event.processId,
 				pid: session?.pid ?? null,
 				exitCode: event.exitCode,
@@ -3839,26 +2419,9 @@ export class AgentOs {
 				restartCount: event.restartCount,
 				maxRestarts: event.maxRestarts,
 			});
-		} catch {
-			// Ignore subscriber callback failures and keep event delivery moving.
+		} catch (error) {
+			console.warn(`ACP exit handler failed for ${event.sessionId}`, error);
 		}
-	}
-
-	private _applySyntheticConfigOverrides(session: AgentSessionEntry): void {
-		if (session.configOverrides.size === 0) {
-			return;
-		}
-
-		session.configOptions = session.configOptions.map((option) => {
-			const override =
-				session.configOverrides.get(option.id) ??
-				(typeof option.category === "string"
-					? session.configOverrides.get(option.category)
-					: undefined);
-			return override === undefined
-				? option
-				: { ...option, currentValue: override };
-		});
 	}
 
 	private _handleSidecarEvent(
@@ -3870,6 +2433,32 @@ export class AgentOs {
 	): void {
 		if (event.payload.type === "ext") {
 			this._handleAcpExtEvent(event.payload.envelope);
+			return;
+		}
+		if (event.payload.type === "cron_dispatch") {
+			const dispatch = event.payload.dispatch;
+			this._cronManager.consumeDispatch({
+				alarm: {
+					generation: dispatch.alarm.generation,
+					...(dispatch.alarm.next_alarm_ms === undefined
+						? {}
+						: { nextAlarmMs: dispatch.alarm.next_alarm_ms }),
+				},
+				runs: dispatch.runs.map((run) => ({
+					runId: run.run_id,
+					jobId: run.job_id,
+					action: run.action,
+				})),
+				events: dispatch.events.map((record) => ({
+					kind: record.kind,
+					jobId: record.job_id,
+					timeMs: record.time_ms,
+					...(record.duration_ms === undefined
+						? {}
+						: { durationMs: record.duration_ms }),
+					...(record.error === undefined ? {} : { error: record.error }),
+				})),
+			});
 			return;
 		}
 		if (event.payload.type !== "structured") {
@@ -3899,8 +2488,8 @@ export class AgentOs {
 				session,
 				toJsonRpcNotification(JSON.parse(notificationText)),
 			);
-		} catch {
-			// Ignore malformed event payloads from the sidecar.
+		} catch (error) {
+			console.warn("invalid ACP session event from sidecar", error);
 		}
 	}
 
@@ -3908,20 +2497,37 @@ export class AgentOs {
 		if (!this._limitWarningHandler) {
 			return;
 		}
-		const toNumber = (value: string | undefined): number => {
-			const parsed = Number(value);
-			return Number.isFinite(parsed) ? parsed : 0;
-		};
+		let warning: LimitWarning;
 		try {
-			this._limitWarningHandler({
-				limit: detail.limit ?? "",
-				category: detail.category ?? "",
-				observed: toNumber(detail.observed),
-				capacity: toNumber(detail.capacity),
-				fillPercent: toNumber(detail.fillPercent),
-			});
-		} catch {
-			// A throwing handler must never break the sidecar event loop.
+			const requireString = (name: string): string => {
+				const value = detail[name];
+				if (value === undefined) {
+					throw new Error(`missing ${name}`);
+				}
+				return value;
+			};
+			const requireNumber = (name: string): number => {
+				const value = Number(requireString(name));
+				if (!Number.isFinite(value)) {
+					throw new Error(`invalid ${name}`);
+				}
+				return value;
+			};
+			warning = {
+				limit: requireString("limit"),
+				category: requireString("category"),
+				observed: requireNumber("observed"),
+				capacity: requireNumber("capacity"),
+				fillPercent: requireNumber("fillPercent"),
+			};
+		} catch (error) {
+			console.warn("invalid limit warning from sidecar", error);
+			return;
+		}
+		try {
+			this._limitWarningHandler(warning);
+		} catch (error) {
+			console.warn("limit warning handler failed", error);
 		}
 	}
 
@@ -3955,38 +2561,15 @@ export class AgentOs {
 					return;
 				}
 			}
-		} catch {
-			// Ignore malformed event payloads from the sidecar.
+		} catch (error) {
+			console.warn("invalid ACP extension event from sidecar", error);
 		}
 	}
 
-	private _unsupportedConfigResponse(
-		agentType: string,
-		category: string,
-	): JsonRpcResponse {
-		const message =
-			agentType === "opencode" && category === "model"
-				? "OpenCode reports available models, but model switching must be configured before createSession() because ACP session/set_config_option is not implemented."
-				: `The ${category} config option is read-only for ${agentType} sessions.`;
-		return {
-			jsonrpc: "2.0",
-			id: null,
-			error: {
-				code: -32601,
-				message,
-			},
-		};
-	}
-
-	private async _sendAcpRequest(request: AcpRequest): Promise<AcpResponse> {
-		const envelope = await this._sidecarClient.extensionRequest(
-			this._sidecarSession,
-			this._sidecarVm,
-			{
-				namespace: ACP_EXTENSION_NAMESPACE,
-				payload: encodeAcpRequest(request),
-			},
-		);
+	private _decodeAcpResponseEnvelope(envelope: {
+		namespace: string;
+		payload: Uint8Array;
+	}): AcpResponse {
 		if (envelope.namespace !== ACP_EXTENSION_NAMESPACE) {
 			throw new Error(`unexpected ACP Ext namespace: ${envelope.namespace}`);
 		}
@@ -4001,89 +2584,66 @@ export class AgentOs {
 		return response;
 	}
 
+	private async _sendAcpRequest(
+		request: AcpRequest,
+		onResponse?: (response: AcpResponse) => void,
+	): Promise<AcpResponse> {
+		let hookResponse: AcpResponse | undefined;
+		const envelope = await this._sidecarClient.extensionRequest(
+			this._sidecarSession,
+			this._sidecarVm,
+			{
+				namespace: ACP_EXTENSION_NAMESPACE,
+				payload: encodeAcpRequest(request),
+			},
+			onResponse
+				? {
+						onResponse: (responseEnvelope) => {
+							hookResponse = this._decodeAcpResponseEnvelope(responseEnvelope);
+							onResponse(hookResponse);
+						},
+					}
+				: undefined,
+		);
+		if (hookResponse) {
+			return hookResponse;
+		}
+		const response = this._decodeAcpResponseEnvelope(envelope);
+		onResponse?.(response);
+		return response;
+	}
+
 	private async _sendSessionRequest(
 		sessionId: string,
 		method: string,
 		params?: Record<string, unknown>,
 	): Promise<JsonRpcResponse> {
-		const session = this._requireSession(sessionId);
-		const response = await new Promise<JsonRpcResponse>((resolve, reject) => {
-			const resolvers =
-				this._pendingSessionRequestResolvers.get(sessionId) ?? new Set();
-			const resolver = {
-				method,
-				resolve: (response: JsonRpcResponse) => {
-					resolve(response);
-				},
-			};
-			resolvers.add(resolver);
-			this._pendingSessionRequestResolvers.set(sessionId, resolvers);
+		return (await this._sendSessionRequestWithText(sessionId, method, params))
+			.response;
+	}
 
-			void this._sendAcpRequest({
-				tag: "AcpSessionRequest",
-				val: {
-					sessionId,
-					method,
-					params: params === undefined ? null : JSON.stringify(params),
-				},
-			})
-				.then((response) => {
-					if (response.tag !== "AcpSessionRpcResponse") {
-						throw new Error(
-							`unexpected response to AcpSessionRequest: ${response.tag}`,
-						);
-					}
-					return toJsonRpcResponse(JSON.parse(response.val.response));
-				})
-				.then(resolve, reject)
-				.finally(() => {
-					const nextResolvers =
-						this._pendingSessionRequestResolvers.get(sessionId);
-					if (!nextResolvers) {
-						return;
-					}
-					nextResolvers.delete(resolver);
-					if (nextResolvers.size === 0) {
-						this._pendingSessionRequestResolvers.delete(sessionId);
-					}
-				});
+	private async _sendSessionRequestWithText(
+		sessionId: string,
+		method: string,
+		params?: Record<string, unknown>,
+	): Promise<{ response: JsonRpcResponse; text: string | null }> {
+		const acpResponse = await this._sendAcpRequest({
+			tag: "AcpSessionRequest",
+			val: {
+				sessionId,
+				method,
+				params: params === undefined ? null : JSON.stringify(params),
+			},
 		});
-		const liveSession = this._sessions.get(sessionId);
-		if (liveSession && !isLocalCancelledPromptResponse(method, response)) {
-			await this._hydrateSessionState(liveSession).catch(() => {});
+		if (acpResponse.tag !== "AcpSessionRpcResponse") {
+			throw new Error(
+				`unexpected response to AcpSessionRequest: ${acpResponse.tag}`,
+			);
 		}
-		if (!response.error) {
-			if (
-				method === "session/set_mode" &&
-				typeof params?.modeId === "string" &&
-				session.modes
-			) {
-				session.modes = {
-					...session.modes,
-					currentModeId: params.modeId,
-				};
-			}
-			if (
-				method === "session/set_config_option" &&
-				typeof params?.configId === "string" &&
-				typeof params?.value === "string"
-			) {
-				const nextValue = params.value;
-				const updatedOption = session.configOptions.find(
-					(option) => option.id === params.configId,
-				);
-				session.configOverrides.set(params.configId, nextValue);
-				if (typeof updatedOption?.category === "string") {
-					session.configOverrides.set(updatedOption.category, nextValue);
-				}
-				session.configOptions = session.configOptions.map((option) =>
-					option.id === params.configId
-						? { ...option, currentValue: nextValue }
-						: option,
-				);
-			}
-		}
-		return response;
+		return {
+			response: toJsonRpcResponse(JSON.parse(acpResponse.val.response)),
+			text: acpResponse.val.text,
+		};
 	}
 
 	private async _setSessionConfigByCategory(
@@ -4091,76 +2651,20 @@ export class AgentOs {
 		category: string,
 		value: string,
 	): Promise<JsonRpcResponse> {
-		const session = this._requireSession(sessionId);
-		const option = session.configOptions.find(
-			(entry) => entry.category === category,
-		);
-		if (option?.readOnly) {
-			return this._unsupportedConfigResponse(session.agentType, category);
+		const response = await this._sendAcpRequest({
+			tag: "AcpSetSessionConfigRequest",
+			val: { sessionId, category, value },
+		});
+		if (response.tag !== "AcpSessionRpcResponse") {
+			throw new Error(
+				`unexpected response to AcpSetSessionConfigRequest: ${response.tag}`,
+			);
 		}
-		const response = await this._sendSessionRequest(
-			sessionId,
-			"session/set_config_option",
-			{
-				configId: option?.id ?? category,
-				value,
-			},
-		);
-		return response;
+		return toJsonRpcResponse(JSON.parse(response.val.response));
 	}
 
 	private _removeSession(sessionId: string): void {
 		this._sessions.delete(sessionId);
-	}
-
-	private _abortPendingSessionRequests(sessionId: string): void {
-		const resolvers = this._pendingSessionRequestResolvers.get(sessionId);
-		if (!resolvers) {
-			return;
-		}
-		this._pendingSessionRequestResolvers.delete(sessionId);
-		const response: JsonRpcResponse = {
-			jsonrpc: "2.0",
-			id: null,
-			error: {
-				code: -32_000,
-				message: `Session closed: ${sessionId}`,
-			},
-		};
-		for (const resolver of resolvers) {
-			resolver.resolve(response);
-		}
-	}
-
-	private _cancelPendingPromptRequests(sessionId: string): boolean {
-		const resolvers = this._pendingSessionRequestResolvers.get(sessionId);
-		if (!resolvers) {
-			return false;
-		}
-
-		const response: JsonRpcResponse = {
-			jsonrpc: "2.0",
-			id: null,
-			result: {
-				stopReason: "cancelled",
-			},
-		};
-
-		let cancelledPrompt = false;
-		for (const resolver of [...resolvers]) {
-			if (resolver.method !== "session/prompt") {
-				continue;
-			}
-			resolvers.delete(resolver);
-			resolver.resolve(response);
-			cancelledPrompt = true;
-		}
-
-		if (resolvers.size === 0) {
-			this._pendingSessionRequestResolvers.delete(sessionId);
-		}
-
-		return cancelledPrompt;
 	}
 
 	private _rejectPendingPermissionReplies(sessionId: string): void {
@@ -4178,7 +2682,7 @@ export class AgentOs {
 			permissionId,
 			pendingReply,
 		] of session.pendingPermissionReplies) {
-			clearTimeout(pendingReply.timer);
+			clearTimeout(pendingReply.cleanupTimer);
 			pendingReply.reject(
 				new Error(`Session closed before permission reply: ${permissionId}`),
 			);
@@ -4187,53 +2691,37 @@ export class AgentOs {
 	}
 
 	private async _closeSessionInternal(sessionId: string): Promise<void> {
-		const closing = this._sessionClosePromises.get(sessionId);
-		if (closing) {
-			return closing;
-		}
-		if (this._closedSessionIds.has(sessionId)) {
-			return;
-		}
-
-		this._abortPendingSessionRequests(sessionId);
-		this._rejectPendingPermissionReplies(sessionId);
-
-		this._requireSession(sessionId);
-		this._removeSession(sessionId);
-		this._closedSessionIds.add(sessionId);
-
-		const closePromise = this._sendAcpRequest({
+		const response = await this._sendAcpRequest({
 			tag: "AcpCloseSessionRequest",
 			val: { sessionId },
-		})
-			.then((response) => {
-				if (response.tag !== "AcpSessionClosedResponse") {
-					throw new Error(
-						`unexpected response to AcpCloseSessionRequest: ${response.tag}`,
-					);
-				}
-			})
-			.finally(() => {
-				this._sessionClosePromises.delete(sessionId);
-			});
-		this._sessionClosePromises.set(sessionId, closePromise);
-		await closePromise;
+		});
+		if (response.tag !== "AcpSessionClosedResponse") {
+			throw new Error(
+				`unexpected response to AcpCloseSessionRequest: ${response.tag}`,
+			);
+		}
+		if (response.val.sessionId !== sessionId) {
+			throw new Error(
+				`unexpected session id in AcpSessionClosedResponse: expected ${sessionId}, received ${response.val.sessionId}`,
+			);
+		}
+		this._rejectPendingPermissionReplies(sessionId);
+		this._removeSession(sessionId);
 	}
 
-	private async _hydrateSessionState(
-		session: AgentSessionEntry,
-	): Promise<void> {
+	private async _getSessionState(
+		sessionId: string,
+	): Promise<SidecarSessionState> {
 		const response = await this._sendAcpRequest({
 			tag: "AcpGetSessionStateRequest",
-			val: { sessionId: session.sessionId },
+			val: { sessionId },
 		});
 		if (response.tag !== "AcpSessionStateResponse") {
 			throw new Error(
 				`unexpected response to AcpGetSessionStateRequest: ${response.tag}`,
 			);
 		}
-		const state = sidecarSessionStateFromAcp(response.val);
-		this._syncSessionState(session, state);
+		return sidecarSessionStateFromAcp(response.val);
 	}
 
 	async createSession(
@@ -4247,67 +2735,40 @@ export class AgentOs {
 		// System-prompt assembly/injection (launch args / OPENCODE_CONTEXTPATHS) is
 		// owned by the sidecar; the host only forwards additionalInstructions /
 		// skipOsInstructions plus the caller's env.
-		const launchEnv = { ...options?.env };
-		const sessionCwd = options?.cwd ?? "/workspace";
-
-		const response = await this._sendAcpRequest({
-			tag: "AcpCreateSessionRequest",
-			val: {
-				agentType: String(agentType),
-				runtime: AcpRuntimeKind.JavaScript,
-				args: [],
-				env: new Map(Object.entries(launchEnv)),
-				cwd: sessionCwd,
-				mcpServers: JSON.stringify(options?.mcpServers ?? []),
-				protocolVersion: ACP_PROTOCOL_VERSION,
-				clientCapabilities: JSON.stringify(defaultAcpClientCapabilities()),
-				additionalInstructions: combineInstructions(
-					[this._additionalInstructions, options?.additionalInstructions]
-						.map((part) => part?.trim())
-						.filter((part): part is string => Boolean(part))
-						.join("\n\n") || undefined,
-					this._toolReference,
-				),
-				skipOsInstructions: options?.skipOsInstructions ?? false,
+		const response = await this._sendAcpRequest(
+			{
+				tag: "AcpCreateSessionRequest",
+				val: {
+					agentType: String(agentType),
+					runtime: null,
+					args: null,
+					env: options?.env ? new Map(Object.entries(options.env)) : null,
+					cwd: options?.cwd ?? null,
+					mcpServers: options?.mcpServers
+						? JSON.stringify(options.mcpServers)
+						: null,
+					protocolVersion: null,
+					clientCapabilities: null,
+					additionalInstructions: options?.additionalInstructions ?? null,
+					skipOsInstructions:
+						options?.skipOsInstructions === true ? true : null,
+				},
 			},
-		});
+			(created) => {
+				if (created.tag !== "AcpSessionCreatedResponse") {
+					throw new Error(`unexpected create_session response: ${created.tag}`);
+				}
+				this._sessions.set(
+					created.val.sessionId,
+					sessionEntryFromRoute(created.val),
+				);
+			},
+		);
 		if (response.tag !== "AcpSessionCreatedResponse") {
 			throw new Error(`unexpected create_session response: ${response.tag}`);
 		}
-		const created = sidecarSessionCreatedFromAcp(response.val);
 
-		// The sessionId is chosen by the (untrusted/buggy) ACP adapter or sidecar. If it collides
-		// with a live session already in `_sessions`, blindly overwriting the entry would orphan the
-		// first session's event/permission handlers and pending permission replies. Fail closed:
-		// reject the colliding create and leave the original session intact. (A previously-closed,
-		// evicted id may still be re-used; only a live, non-closed entry is a collision.)
-		const existing = this._sessions.get(created.sessionId);
-		if (existing !== undefined && !existing.closed) {
-			throw new Error(`session id collision: ${created.sessionId}`);
-		}
-
-		const initData: SessionInitData = {
-			modes: toSessionModes(created.modes) ?? undefined,
-			configOptions: toSessionConfigOptions(created.configOptions),
-			capabilities: toAgentCapabilities(created.agentCapabilities),
-			agentInfo: toAgentInfo(created.agentInfo) ?? undefined,
-		};
-		const session = sessionEntryFromInit(
-			created.sessionId,
-			String(agentType),
-			initData,
-		);
-		this._closedSessionIds.delete(created.sessionId);
-		this._sessions.set(created.sessionId, session);
-
-		try {
-			await this._hydrateSessionState(session);
-		} catch (error) {
-			this._removeSession(created.sessionId);
-			throw error;
-		}
-
-		return { sessionId: created.sessionId };
+		return { sessionId: response.val.sessionId };
 	}
 
 	/**
@@ -4319,8 +2780,8 @@ export class AgentOs {
 	 * it, else `session/new` + a transcript-continuation preamble). The returned
 	 * `sessionId` is the live id in this VM (equal to the requested id for native
 	 * loads, freshly assigned for the fallback); the caller remaps `external -> live`.
-	 * The new live session is registered + hydrated locally so subsequent prompts
-	 * route to it.
+	 * The new live session is registered locally only for host callbacks/events;
+	 * authoritative state remains in the sidecar.
 	 *
 	 * Resume depends on a durable root; on a non-durable (default in-memory) root
 	 * there is no surviving store and the fallback tier always runs.
@@ -4333,62 +2794,79 @@ export class AgentOs {
 		// The client is npm-agnostic: it sends only the agent NAME. The sidecar
 		// resolves the name -> package -> entrypoint/env/launchArgs from the
 		// projected manifest, exactly as createSession does.
-		const sessionCwd = options?.cwd ?? "/workspace";
-		const launchEnv = { ...options?.env };
-
-		const response = await this._sendAcpRequest({
-			tag: "AcpResumeSessionRequest",
-			val: {
-				sessionId,
-				agentType: String(agentType),
-				transcriptPath: options?.transcriptPath ?? null,
-				cwd: sessionCwd,
-				env: new Map(Object.entries(launchEnv)),
+		const response = await this._sendAcpRequest(
+			{
+				tag: "AcpResumeSessionRequest",
+				val: {
+					sessionId,
+					agentType: String(agentType),
+					transcriptPath: options?.transcriptPath ?? null,
+					cwd: options?.cwd ?? null,
+					env: options?.env ? new Map(Object.entries(options.env)) : null,
+				},
 			},
-		});
+			(resumed) => {
+				if (resumed.tag !== "AcpSessionResumedResponse") {
+					throw new Error(`unexpected resume_session response: ${resumed.tag}`);
+				}
+				this._sessions.set(
+					resumed.val.sessionId,
+					sessionEntryFromRoute(resumed.val),
+				);
+			},
+		);
 		if (response.tag !== "AcpSessionResumedResponse") {
 			throw new Error(`unexpected resume_session response: ${response.tag}`);
 		}
 		const { sessionId: liveSessionId, mode } = response.val;
-
-		// Register + hydrate the live session so subsequent prompts route to it.
-		const existing = this._sessions.get(liveSessionId);
-		if (existing !== undefined && !existing.closed) {
-			throw new Error(`session id collision: ${liveSessionId}`);
-		}
-
-		const session = sessionEntryFromInit(liveSessionId, String(agentType), {});
-		this._closedSessionIds.delete(liveSessionId);
-		this._sessions.set(liveSessionId, session);
-		try {
-			await this._hydrateSessionState(session);
-		} catch (error) {
-			this._removeSession(liveSessionId);
-			throw error;
-		}
-
 		return { sessionId: liveSessionId, mode };
 	}
 
 	private _installSidecarRequestHandler(): void {
 		const context: HostCallbackContext = {
-			toolKits: this._toolKits,
 			toolMap: buildToolMap(this._toolKits),
 			permissions: this._permissions,
-			readFile: (path) => this.readFile(path),
 		};
-		this._sidecarClient.setSidecarRequestHandler((request) => {
-			switch (request.payload.type) {
-				case "host_callback":
-					return handleHostCallback(request, context);
-				case "js_bridge_call":
-					return handleJsBridgeCall(request.payload, {
-						filesystem: this.#kernel.vfs,
-					});
-				case "ext":
-					return this._handleAcpExtSidecarRequest(request.payload.envelope);
-			}
-		});
+		this._disposeSidecarRequestHandler?.();
+		this._disposeSidecarRequestHandler =
+			this._sidecarClient.registerSidecarRequestHandler(
+				{
+					scope: "vm",
+					connection_id: this._sidecarSession.connectionId,
+					session_id: this._sidecarSession.sessionId,
+					vm_id: this._sidecarVm.vmId,
+				},
+				(request) => {
+					switch (request.payload.type) {
+						case "host_callback":
+							return handleHostCallback(request, context);
+						case "js_bridge_call":
+							return handleJsBridgeCall(request.payload, {
+								resolveTarget: (mountId) => {
+									const hostMountResolver = (
+										this.#kernel as unknown as {
+											hostFilesystemForMount?: (
+												mountId: string,
+											) => VirtualFileSystem | undefined;
+										}
+									).hostFilesystemForMount;
+									if (hostMountResolver) {
+										const filesystem = hostMountResolver.call(
+											this.#kernel,
+											mountId,
+										);
+										return filesystem
+											? { filesystem, rootPath: "/" }
+											: undefined;
+									}
+									return { filesystem: this.#kernel.vfs, rootPath: mountId };
+								},
+							});
+						case "ext":
+							return this._handleAcpExtSidecarRequest(request.payload.envelope);
+					}
+				},
+			);
 	}
 
 	private async _handleAcpExtSidecarRequest(envelope: {
@@ -4405,658 +2883,67 @@ export class AgentOs {
 			};
 		}
 		const callback = decodeAcpCallback(envelope.payload);
-		switch (callback.tag) {
-			case "AcpPermissionCallback": {
-				const reply = await this._handleAcpPermissionCallback(
-					callback.val.sessionId,
-					callback.val.permissionId,
-					{
-						...toRecord(JSON.parse(callback.val.params)),
-						_acpMethod: ACP_PERMISSION_METHOD,
-					},
-				);
-				return {
-					type: "ext_result",
-					envelope: {
-						namespace: ACP_EXTENSION_NAMESPACE,
-						payload: encodeAcpCallbackResponse({
-							tag: "AcpPermissionCallbackResponse",
-							val: {
-								permissionId: callback.val.permissionId,
-								reply,
-							},
-						}),
-					},
-				};
-			}
-			case "AcpHostRequestCallback": {
-				const response = await this._dispatchAcpSidecarRequest(
-					toJsonRpcRequest(JSON.parse(callback.val.request)),
-				);
-				return {
-					type: "ext_result",
-					envelope: {
-						namespace: ACP_EXTENSION_NAMESPACE,
-						payload: encodeAcpCallbackResponse({
-							tag: "AcpHostRequestCallbackResponse",
-							val: {
-								response: JSON.stringify(response),
-							},
-						}),
-					},
-				};
-			}
-		}
-	}
-
-	private async _dispatchAcpSidecarRequest(
-		request: JsonRpcRequest,
-	): Promise<JsonRpcResponse> {
-		try {
-			const result = await this._handleSupportedAcpSidecarRequest(request);
-			return {
-				jsonrpc: "2.0",
-				id: request.id,
-				result,
-			};
-		} catch (error) {
-			if (error instanceof AcpDispatchError) {
-				return {
-					jsonrpc: "2.0",
-					id: request.id,
-					error: {
-						code: error.code,
-						message: error.message,
-						...(error.data ? { data: error.data } : {}),
-					},
-				};
-			}
-			return {
-				jsonrpc: "2.0",
-				id: request.id,
-				error: {
-					code: -32603,
-					message: error instanceof Error ? error.message : String(error),
-				},
-			};
-		}
-	}
-
-	private async _handleSupportedAcpSidecarRequest(
-		request: JsonRpcRequest,
-	): Promise<unknown> {
-		const params = this._acpParams(request);
-		switch (request.method) {
-			case ACP_PERMISSION_METHOD:
-				return this._handleAcpPermissionRequest(request, params);
-			case "fs/read":
-			case "fs/read_text_file":
-				return this._handleAcpReadFile(params);
-			case "fs/write":
-			case "fs/write_text_file":
-				return this._handleAcpWriteFile(params);
-			case "fs/readDir":
-			case "fs/read_dir":
-				return this._handleAcpReadDir(params);
-			case "terminal/create":
-				return this._handleAcpCreateTerminal(params);
-			case "terminal/write":
-				return this._handleAcpWriteTerminal(params);
-			case "terminal/output":
-			case "terminal/read":
-				return this._handleAcpReadTerminal(params);
-			case "terminal/wait_for_exit":
-			case "terminal/waitForExit":
-				return this._handleAcpWaitForTerminalExit(params);
-			case "terminal/kill":
-				return this._handleAcpKillTerminal(params);
-			case "terminal/release":
-			case "terminal/close":
-				return this._handleAcpReleaseTerminal(params);
-			case "terminal/resize":
-				return this._handleAcpResizeTerminal(params);
-			default:
-				throw new AcpDispatchError(
-					-32601,
-					`Method not found: ${request.method}`,
-					{
-						method: request.method,
-					},
-				);
-		}
-	}
-
-	private _normalizeAcpPermissionOptionId(
-		options: Array<Record<string, unknown>> | undefined,
-		reply: PermissionReply,
-	): string | null {
-		const optionTargets =
-			reply === "always"
-				? {
-						optionIds: new Set(["always", "allow_always"]),
-						kinds: new Set(["allow_always"]),
-					}
-				: reply === "once"
-					? {
-							optionIds: new Set(["once", "allow_once"]),
-							kinds: new Set(["allow_once"]),
-						}
-					: {
-							optionIds: new Set(["reject", "reject_once"]),
-							kinds: new Set(["reject_once"]),
-						};
-
-		const matched = options?.find((option) => {
-			const optionId =
-				typeof option.optionId === "string" ? option.optionId : undefined;
-			const kind = typeof option.kind === "string" ? option.kind : undefined;
-			return (
-				(optionId !== undefined && optionTargets.optionIds.has(optionId)) ||
-				(kind !== undefined && optionTargets.kinds.has(kind))
+		if (callback.val.cleanupAfterMs > BigInt(Number.MAX_SAFE_INTEGER)) {
+			throw new Error(
+				"ACP permission callback cleanup deadline exceeds JS range",
 			);
-		});
-		if (matched && typeof matched.optionId === "string") {
-			return matched.optionId;
 		}
-		if (reply === "always") {
-			return "allow_always";
-		}
-		if (reply === "once") {
-			return "allow_once";
-		}
-		return "reject_once";
-	}
-
-	private _buildAcpPermissionResult(
-		reply: PermissionReply,
-		params: Record<string, unknown>,
-	): Record<string, unknown> {
-		const options = Array.isArray(params.options)
-			? params.options.filter(
-					(option): option is Record<string, unknown> =>
-						typeof option === "object" && option !== null,
-				)
-			: undefined;
-		const optionId = this._normalizeAcpPermissionOptionId(options, reply);
+		const reply = await this._handleAcpPermissionCallback(
+			callback.val.sessionId,
+			callback.val.permissionId,
+			{
+				...toRecord(JSON.parse(callback.val.params)),
+				_acpMethod: ACP_PERMISSION_METHOD,
+			},
+			Number(callback.val.cleanupAfterMs),
+		);
 		return {
-			outcome: optionId
-				? {
-						outcome: "selected",
-						optionId,
-					}
-				: {
-						outcome: "cancelled",
+			type: "ext_result",
+			envelope: {
+				namespace: ACP_EXTENSION_NAMESPACE,
+				payload: encodeAcpCallbackResponse({
+					tag: "AcpPermissionCallbackResponse",
+					val: {
+						permissionId: callback.val.permissionId,
+						reply: reply ?? null,
 					},
+				}),
+			},
 		};
-	}
-
-	private async _handleAcpPermissionRequest(
-		request: JsonRpcRequest,
-		params: Record<string, unknown>,
-	): Promise<unknown> {
-		const sessionId =
-			typeof params.sessionId === "string" ? params.sessionId : undefined;
-		if (!sessionId) {
-			throw new AcpDispatchError(
-				-32602,
-				`${ACP_PERMISSION_METHOD} requires a sessionId`,
-			);
-		}
-
-		const session = this._sessions.get(sessionId);
-		if (!session) {
-			throw new AcpDispatchError(-32602, `Session not found: ${sessionId}`);
-		}
-
-		const permissionId = String(request.id);
-		const permissionParams: Record<string, unknown> = {
-			...params,
-			permissionId,
-			_acpMethod: request.method,
-		};
-		if (session.permissionHandlers.size === 0) {
-			// Default-closed deny; warn once (host-visible) so a forgotten
-			// onPermissionRequest handler is an observable cause rather than a
-			// silent denial. See _warnNoPermissionHandlerOnce.
-			this._warnNoPermissionHandlerOnce(session, permissionParams);
-			return this._buildAcpPermissionResult("reject", permissionParams);
-		}
-
-		const reply = await new Promise<PermissionReply>((resolve, reject) => {
-			const timer = setTimeout(() => {
-				session.pendingPermissionReplies.delete(permissionId);
-				reject(
-					new Error(`Timed out waiting for permission reply: ${permissionId}`),
-				);
-			}, 120_000);
-			session.pendingPermissionReplies.set(permissionId, {
-				resolve,
-				reject,
-				timer,
-			});
-
-			const permissionRequest: PermissionRequest = {
-				permissionId,
-				description:
-					typeof permissionParams["description"] === "string"
-						? permissionParams["description"]
-						: undefined,
-				params: permissionParams,
-			};
-			for (const handler of session.permissionHandlers) {
-				handler(permissionRequest);
-			}
-		});
-
-		return this._buildAcpPermissionResult(reply, permissionParams);
-	}
-
-	private _acpParams(request: JsonRpcRequest): Record<string, unknown> {
-		if (!request.params) {
-			return {};
-		}
-		if (
-			typeof request.params !== "object" ||
-			request.params === null ||
-			Array.isArray(request.params)
-		) {
-			throw new AcpDispatchError(
-				-32602,
-				`${request.method} requires object params`,
-			);
-		}
-		return request.params as Record<string, unknown>;
-	}
-
-	private _requireAcpStringParam(
-		params: Record<string, unknown>,
-		name: string,
-		method: string,
-	): string {
-		const value = params[name];
-		if (typeof value !== "string") {
-			throw new AcpDispatchError(-32602, `${method} requires a string ${name}`);
-		}
-		return value;
-	}
-
-	private _optionalAcpStringParam(
-		params: Record<string, unknown>,
-		name: string,
-		method: string,
-	): string | undefined {
-		const value = params[name];
-		if (value === undefined || value === null) {
-			return undefined;
-		}
-		if (typeof value !== "string") {
-			throw new AcpDispatchError(
-				-32602,
-				`${method} requires ${name} to be a string when provided`,
-			);
-		}
-		return value;
-	}
-
-	private _optionalAcpNumberParam(
-		params: Record<string, unknown>,
-		name: string,
-		method: string,
-	): number | undefined {
-		const value = params[name];
-		if (value === undefined || value === null) {
-			return undefined;
-		}
-		if (typeof value !== "number" || !Number.isFinite(value)) {
-			throw new AcpDispatchError(
-				-32602,
-				`${method} requires ${name} to be a number when provided`,
-			);
-		}
-		return value;
-	}
-
-	private _optionalAcpStringArrayParam(
-		params: Record<string, unknown>,
-		name: string,
-		method: string,
-	): string[] | undefined {
-		const value = params[name];
-		if (value === undefined || value === null) {
-			return undefined;
-		}
-		if (
-			!Array.isArray(value) ||
-			value.some((entry) => typeof entry !== "string")
-		) {
-			throw new AcpDispatchError(
-				-32602,
-				`${method} requires ${name} to be an array of strings when provided`,
-			);
-		}
-		return [...value];
-	}
-
-	private _optionalAcpEnvParam(
-		params: Record<string, unknown>,
-		name: string,
-		method: string,
-	): Record<string, string> | undefined {
-		const value = params[name];
-		if (value === undefined || value === null) {
-			return undefined;
-		}
-		if (Array.isArray(value)) {
-			const env: Record<string, string> = {};
-			for (const entry of value) {
-				if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-					throw new AcpDispatchError(
-						-32602,
-						`${method} requires ${name} entries to be { name, value } objects`,
-					);
-				}
-				const record = entry as Record<string, unknown>;
-				if (
-					typeof record.name !== "string" ||
-					typeof record.value !== "string"
-				) {
-					throw new AcpDispatchError(
-						-32602,
-						`${method} requires ${name} entries to be { name, value } objects`,
-					);
-				}
-				env[record.name] = record.value;
-			}
-			return env;
-		}
-		if (typeof value !== "object") {
-			throw new AcpDispatchError(
-				-32602,
-				`${method} requires ${name} to be an object or name/value array`,
-			);
-		}
-		const env: Record<string, string> = {};
-		for (const [key, entryValue] of Object.entries(
-			value as Record<string, unknown>,
-		)) {
-			if (typeof entryValue !== "string") {
-				throw new AcpDispatchError(
-					-32602,
-					`${method} requires ${name} values to be strings`,
-				);
-			}
-			env[key] = entryValue;
-		}
-		return env;
-	}
-
-	private _requireAcpTerminal(
-		params: Record<string, unknown>,
-		method: string,
-	): AcpTerminalEntry {
-		const terminalId = this._requireAcpStringParam(
-			params,
-			"terminalId",
-			method,
-		);
-		const terminal = this._acpTerminals.get(terminalId);
-		if (!terminal) {
-			throw new AcpDispatchError(
-				-32602,
-				`ACP terminal not found: ${terminalId}`,
-			);
-		}
-		return terminal;
-	}
-
-	private _appendAcpTerminalOutput(
-		terminal: AcpTerminalEntry,
-		data: Uint8Array,
-	): void {
-		const chunk = Buffer.from(data).toString("utf8");
-		if (!chunk) {
-			return;
-		}
-		terminal.output += chunk;
-		if (
-			Number.isFinite(terminal.outputByteLimit) &&
-			terminal.outputByteLimit >= 0 &&
-			terminal.output.length > terminal.outputByteLimit
-		) {
-			terminal.output = terminal.output.slice(
-				terminal.output.length - terminal.outputByteLimit,
-			);
-			terminal.truncated = true;
-		}
-	}
-
-	private async _handleAcpReadFile(
-		params: Record<string, unknown>,
-	): Promise<{ content: string }> {
-		const method = "fs/read";
-		const path = this._requireAcpStringParam(params, "path", method);
-		const line = this._optionalAcpNumberParam(params, "line", method);
-		const limit = this._optionalAcpNumberParam(params, "limit", method);
-		const encoding = this._optionalAcpStringParam(params, "encoding", method);
-		const bytes = await this.readFile(path);
-		if (encoding === "base64") {
-			return { content: Buffer.from(bytes).toString("base64") };
-		}
-		const text = new TextDecoder().decode(bytes);
-		if (line === undefined && limit === undefined) {
-			return { content: text };
-		}
-		const startLine = Math.max(1, Math.trunc(line ?? 1));
-		const lineLimit =
-			limit === undefined
-				? Number.POSITIVE_INFINITY
-				: Math.max(0, Math.trunc(limit));
-		return {
-			content: text
-				.split("\n")
-				.slice(startLine - 1, startLine - 1 + lineLimit)
-				.join("\n"),
-		};
-	}
-
-	private async _handleAcpWriteFile(
-		params: Record<string, unknown>,
-	): Promise<null> {
-		const method = "fs/write";
-		const path = this._requireAcpStringParam(params, "path", method);
-		const content = this._requireAcpStringParam(params, "content", method);
-		const encoding = this._optionalAcpStringParam(params, "encoding", method);
-		await this.writeFile(
-			path,
-			encoding === "base64" ? Buffer.from(content, "base64") : content,
-		);
-		return null;
-	}
-
-	private async _handleAcpReadDir(params: Record<string, unknown>): Promise<{
-		entries: Array<{
-			name: string;
-			path: string;
-			type: "file" | "directory" | "symlink";
-		}>;
-	}> {
-		const method = "fs/readDir";
-		const path = this._requireAcpStringParam(params, "path", method);
-		const entries = await this._vfs().readDirWithTypes(path);
-		return {
-			entries: entries
-				.filter((entry) => entry.name !== "." && entry.name !== "..")
-				.map((entry) => ({
-					name: entry.name,
-					path: path === "/" ? `/${entry.name}` : `${path}/${entry.name}`,
-					type: entry.isSymbolicLink
-						? "symlink"
-						: entry.isDirectory
-							? "directory"
-							: "file",
-				})),
-		};
-	}
-
-	private _handleAcpCreateTerminal(params: Record<string, unknown>): {
-		terminalId: string;
-	} {
-		const method = "terminal/create";
-		const command = this._requireAcpStringParam(params, "command", method);
-		const args = this._optionalAcpStringArrayParam(params, "args", method);
-		const env = this._optionalAcpEnvParam(params, "env", method);
-		const cwd = this._optionalAcpStringParam(params, "cwd", method);
-		const cols = this._optionalAcpNumberParam(params, "cols", method);
-		const rows = this._optionalAcpNumberParam(params, "rows", method);
-		const outputByteLimit = Math.max(
-			0,
-			Math.trunc(
-				this._optionalAcpNumberParam(params, "outputByteLimit", method) ??
-					1_048_576,
-			),
-		);
-		const terminalId = `acp-terminal-${++this._acpTerminalCounter}`;
-		const terminal: AcpTerminalEntry = {
-			handle: this.#kernel.openShell({
-				command,
-				...(args ? { args } : {}),
-				...(env ? { env } : {}),
-				...(cwd ? { cwd } : {}),
-				...(cols !== undefined ? { cols: Math.trunc(cols) } : {}),
-				...(rows !== undefined ? { rows: Math.trunc(rows) } : {}),
-			}),
-			output: "",
-			truncated: false,
-			outputByteLimit,
-			exitCode: null,
-			waitPromise: Promise.resolve(0),
-		};
-		terminal.handle.onData = (data) => {
-			this._appendAcpTerminalOutput(terminal, data);
-		};
-		terminal.waitPromise = terminal.handle.wait().then((exitCode) => {
-			terminal.exitCode = exitCode;
-			return exitCode;
-		});
-		this._acpTerminals.set(terminalId, terminal);
-		return { terminalId };
-	}
-
-	private _handleAcpWriteTerminal(params: Record<string, unknown>): null {
-		const method = "terminal/write";
-		const terminal = this._requireAcpTerminal(params, method);
-		const data = this._requireAcpStringParam(params, "data", method);
-		const encoding = this._optionalAcpStringParam(params, "encoding", method);
-		terminal.handle.write(
-			encoding === "base64" ? Buffer.from(data, "base64") : data,
-		);
-		return null;
-	}
-
-	private _handleAcpReadTerminal(params: Record<string, unknown>): {
-		output: string;
-		truncated: boolean;
-		exitStatus?: { exitCode: number; signal: null };
-	} {
-		const terminal = this._requireAcpTerminal(params, "terminal/output");
-		return {
-			output: terminal.output,
-			truncated: terminal.truncated,
-			...(terminal.exitCode !== null
-				? {
-						exitStatus: {
-							exitCode: terminal.exitCode,
-							signal: null,
-						},
-					}
-				: {}),
-		};
-	}
-
-	private async _handleAcpWaitForTerminalExit(
-		params: Record<string, unknown>,
-	): Promise<{ exitCode: number; signal: null }> {
-		const terminal = this._requireAcpTerminal(params, "terminal/wait_for_exit");
-		const exitCode = await terminal.waitPromise;
-		return { exitCode, signal: null };
-	}
-
-	private _handleAcpKillTerminal(params: Record<string, unknown>): null {
-		const method = "terminal/kill";
-		const terminal = this._requireAcpTerminal(params, method);
-		const signal = this._optionalAcpNumberParam(params, "signal", method) ?? 15;
-		terminal.handle.kill(Math.trunc(signal));
-		return null;
-	}
-
-	private _handleAcpReleaseTerminal(params: Record<string, unknown>): null {
-		const method = "terminal/release";
-		const terminalId = this._requireAcpStringParam(
-			params,
-			"terminalId",
-			method,
-		);
-		const terminal = this._acpTerminals.get(terminalId);
-		if (!terminal) {
-			throw new AcpDispatchError(
-				-32602,
-				`ACP terminal not found: ${terminalId}`,
-			);
-		}
-		if (terminal.exitCode === null) {
-			terminal.handle.kill();
-		}
-		this._acpTerminals.delete(terminalId);
-		return null;
-	}
-
-	private _handleAcpResizeTerminal(params: Record<string, unknown>): null {
-		const method = "terminal/resize";
-		const terminal = this._requireAcpTerminal(params, method);
-		const cols = this._optionalAcpNumberParam(params, "cols", method);
-		const rows = this._optionalAcpNumberParam(params, "rows", method);
-		if (cols === undefined || rows === undefined) {
-			throw new AcpDispatchError(
-				-32602,
-				`${method} requires numeric cols and rows`,
-			);
-		}
-		terminal.handle.resize(Math.trunc(cols), Math.trunc(rows));
-		return null;
 	}
 
 	private async _handleAcpPermissionCallback(
 		sessionId: string,
 		permissionId: string,
 		params: Record<string, unknown>,
-	): Promise<PermissionReply> {
+		cleanupAfterMs: number,
+	): Promise<PermissionReply | undefined> {
 		const session = this._sessions.get(sessionId);
 		if (!session) {
-			return "reject";
+			return undefined;
 		}
 
 		if (session.permissionHandlers.size === 0) {
-			// Default-closed: deny when no host hook is listening, and warn once
-			// (host-visible) so a forgotten onPermissionRequest handler is not an
-			// invisible cause of an agent that cannot use any tool.
+			// Surface the absent host route, then let the sidecar apply its ACP
+			// permission default. The client does not manufacture a policy answer.
 			this._warnNoPermissionHandlerOnce(session, params);
-			return "reject";
+			return undefined;
 		}
 
 		try {
 			return await new Promise<PermissionReply>((resolve, reject) => {
-				const timer = setTimeout(() => {
+				const cleanupTimer = setTimeout(() => {
 					session.pendingPermissionReplies.delete(permissionId);
 					reject(
 						new Error(
-							`Timed out waiting for permission reply: ${permissionId}`,
+							`Permission reply route expired after the sidecar deadline: ${permissionId}`,
 						),
 					);
-				}, 120_000);
+				}, cleanupAfterMs);
 				session.pendingPermissionReplies.set(permissionId, {
 					resolve,
 					reject,
-					timer,
+					cleanupTimer,
 				});
 
 				const permissionRequest: PermissionRequest = {
@@ -5071,8 +2958,12 @@ export class AgentOs {
 					handler(permissionRequest);
 				}
 			});
-		} catch {
-			return "reject";
+		} catch (error) {
+			console.warn(
+				`ACP permission callback route closed for ${sessionId}/${permissionId}; the sidecar owns the outcome`,
+				error,
+			);
+			return undefined;
 		}
 	}
 
@@ -5082,100 +2973,32 @@ export class AgentOs {
 	 * a graceful shutdown sequence.
 	 */
 	async destroySession(sessionId: string): Promise<void> {
-		this._requireSession(sessionId);
-		try {
-			await this.cancelSession(sessionId);
-		} catch {
-			// Ignore cancellation failures during teardown.
-		}
 		await this._closeSessionInternal(sessionId);
 	}
 
 	// ── Flat session API (ID-based) ───────────────────────────────
 
 	async prompt(sessionId: string, text: string): Promise<PromptResult> {
-		const session = this._requireSession(sessionId);
-		let agentText = "";
-		const handler: SessionEventHandler = (event) => {
-			const params = toRecord(event.params);
-			const update = toRecord(params.update);
-			if (update?.sessionUpdate === "agent_message_chunk") {
-				const content = toRecord(update.content);
-				if (typeof content.text === "string") {
-					agentText += content.text;
-				}
-			}
-		};
-		const unsubscribe = this._subscribeSessionEvents(session, handler);
-
-		try {
-			const response = await this._sendSessionRequest(
-				sessionId,
-				"session/prompt",
-				{
-					prompt: [{ type: "text", text }],
-				},
-			);
-			return { response, text: agentText };
-		} finally {
-			unsubscribe();
+		const result = await this._sendSessionRequestWithText(
+			sessionId,
+			"session/prompt",
+			{
+				prompt: [{ type: "text", text }],
+			},
+		);
+		if (result.text === null) {
+			throw new Error("sidecar prompt response is missing accumulated text");
 		}
+		return { response: result.response, text: result.text };
 	}
 
 	/** Cancel ongoing agent work for a session. */
 	async cancelSession(sessionId: string): Promise<JsonRpcResponse> {
-		this._requireSession(sessionId);
-		const cancelledPendingPrompt = this._cancelPendingPromptRequests(sessionId);
-		if (cancelledPendingPrompt) {
-			// Session control requests share the same framed sidecar transport as an
-			// in-flight prompt request. If the adapter is blocked in prompt I/O, a
-			// synchronous cancel RPC can wedge behind that prompt until the transport
-			// timeout fires. Resolve the local prompt immediately, then let the sidecar
-			// cancellation continue in the background as best effort.
-			void this._sendSessionRequest(sessionId, "session/cancel").catch(
-				() => {},
-			);
-			return {
-				jsonrpc: "2.0",
-				id: null,
-				result: {
-					cancelled: true,
-					requested: true,
-					via: "prompt-fallback",
-				},
-			};
-		}
-		const response = await this._sendSessionRequest(
-			sessionId,
-			"session/cancel",
-		);
-		if (response.error?.code === -32601) {
-			return {
-				jsonrpc: "2.0",
-				id: null,
-				result: {
-					cancelled: false,
-					requested: true,
-					via: "unsupported",
-				},
-			};
-		}
-		return response;
+		return this._sendSessionRequest(sessionId, "session/cancel");
 	}
 
-	closeSession(sessionId: string): void {
-		if (
-			!this._sessions.has(sessionId) &&
-			!this._closedSessionIds.has(sessionId) &&
-			!this._sessionClosePromises.has(sessionId)
-		) {
-			throw new Error(`Session not found: ${sessionId}`);
-		}
-		const closePromise = this._closeSessionInternal(sessionId);
-		// `closeSession()` is intentionally fire-and-forget; suppress unhandled
-		// rejections here and let tracked close promises surface errors to any
-		// internal/test callers awaiting `_sessionClosePromises`.
-		void closePromise.catch(() => {});
+	async closeSession(sessionId: string): Promise<void> {
+		await this._closeSessionInternal(sessionId);
 	}
 
 	async respondPermission(
@@ -5183,11 +3006,11 @@ export class AgentOs {
 		permissionId: string,
 		reply: PermissionReply,
 	): Promise<JsonRpcResponse> {
-		const session = this._requireSession(sessionId);
-		const pendingReply = session.pendingPermissionReplies.get(permissionId);
+		const session = this._sessions.get(sessionId);
+		const pendingReply = session?.pendingPermissionReplies.get(permissionId);
 		if (pendingReply) {
-			session.pendingPermissionReplies.delete(permissionId);
-			clearTimeout(pendingReply.timer);
+			session?.pendingPermissionReplies.delete(permissionId);
+			clearTimeout(pendingReply.cleanupTimer);
 			pendingReply.resolve(reply);
 			return {
 				jsonrpc: "2.0",
@@ -5200,10 +3023,7 @@ export class AgentOs {
 			};
 		}
 
-		return this._sendSessionRequest(sessionId, LEGACY_PERMISSION_METHOD, {
-			permissionId,
-			reply,
-		});
+		throw new Error(`Permission request is not pending: ${permissionId}`);
 	}
 
 	async setSessionMode(
@@ -5215,8 +3035,8 @@ export class AgentOs {
 		});
 	}
 
-	getSessionModes(sessionId: string): SessionModeState | null {
-		return this._requireSession(sessionId).modes;
+	async getSessionModes(sessionId: string): Promise<SessionModeState | null> {
+		return toSessionModes((await this._getSessionState(sessionId)).modes);
 	}
 
 	async setSessionModel(
@@ -5233,17 +3053,25 @@ export class AgentOs {
 		return this._setSessionConfigByCategory(sessionId, "thought_level", level);
 	}
 
-	getSessionConfigOptions(sessionId: string): SessionConfigOption[] {
-		return [...this._requireSession(sessionId).configOptions];
+	async getSessionConfigOptions(
+		sessionId: string,
+	): Promise<SessionConfigOption[]> {
+		return toSessionConfigOptions(
+			(await this._getSessionState(sessionId)).configOptions,
+		);
 	}
 
-	getSessionCapabilities(sessionId: string): AgentCapabilities | null {
-		const caps = this._requireSession(sessionId).capabilities;
+	async getSessionCapabilities(
+		sessionId: string,
+	): Promise<AgentCapabilities | null> {
+		const caps = toAgentCapabilities(
+			(await this._getSessionState(sessionId)).agentCapabilities,
+		);
 		return Object.keys(caps).length > 0 ? caps : null;
 	}
 
-	getSessionAgentInfo(sessionId: string): AgentInfo | null {
-		return this._requireSession(sessionId).agentInfo;
+	async getSessionAgentInfo(sessionId: string): Promise<AgentInfo | null> {
+		return toAgentInfo((await this._getSessionState(sessionId)).agentInfo);
 	}
 
 	async rawSessionSend(
@@ -5281,18 +3109,18 @@ export class AgentOs {
 	// ── Cron ────────────────────────────────────────────────────
 
 	/** Schedule a cron job. Returns a handle with the job ID and a cancel method. */
-	scheduleCron(options: CronJobOptions): CronJob {
+	async scheduleCron(options: CronJobOptions): Promise<CronJob> {
 		return this._cronManager.schedule(options);
 	}
 
 	/** List all registered cron jobs. */
-	listCronJobs(): CronJobInfo[] {
+	async listCronJobs(): Promise<CronJobInfo[]> {
 		return this._cronManager.list();
 	}
 
 	/** Cancel a cron job by ID. */
-	cancelCronJob(id: string): void {
-		this._cronManager.cancel(id);
+	async cancelCronJob(id: string): Promise<void> {
+		await this._cronManager.cancel(id);
 	}
 
 	/** Subscribe to cron lifecycle events (fire, complete, error). */
@@ -5301,42 +3129,72 @@ export class AgentOs {
 	}
 
 	async dispose(): Promise<void> {
-		this._cronManager.dispose();
+		if (this._disposed) {
+			return;
+		}
+		if (this._disposePromise) {
+			return this._disposePromise;
+		}
+		const attempt = this._disposeOnce();
+		this._disposePromise = attempt;
+		try {
+			await attempt;
+		} finally {
+			if (this._disposePromise === attempt) {
+				this._disposePromise = null;
+			}
+		}
+	}
 
+	private async _disposeOnce(): Promise<void> {
 		for (const sessionId of [...this._sessions.keys()]) {
-			await this._closeSessionInternal(sessionId).catch(() => {});
+			try {
+				await this._closeSessionInternal(sessionId);
+			} catch (error) {
+				console.warn(
+					`failed to close ACP session ${sessionId} during dispose`,
+					error,
+				);
+			}
 		}
 
-		for (const [id, entry] of this._shells) {
-			entry.handle.kill();
+		const shellKillResults = await Promise.allSettled(
+			[...this._shells.values()].map((entry) => entry.handle.kill()),
+		);
+		for (const result of shellKillResults) {
+			if (result.status === "rejected") {
+				console.warn("failed to close shell during dispose", result.reason);
+			}
 		}
-		const shellExitPromises = [...this._pendingShellExitPromises];
-		this._shells.clear();
-		const terminalExitPromises: Promise<unknown>[] = [];
-		for (const terminal of this._acpTerminals.values()) {
-			terminal.handle.kill();
-			terminalExitPromises.push(
-				terminal.waitPromise.then(
-					() => undefined,
-					() => undefined,
-				),
-			);
-		}
-		this._acpTerminals.clear();
-		this._processes.clear();
+		const shellExitPromises = [...this._pendingShellExitPromises.values()];
 		await waitForTrackedExitPromises(
-			[...shellExitPromises, ...terminalExitPromises],
+			shellExitPromises,
 			SHELL_DISPOSE_TIMEOUT_MS,
 		);
 
-		this._disposeSidecarEventListener();
-
 		const sidecarLease = this._sidecarLease;
-		this._sidecarLease = null;
 		if (sidecarLease) {
-			return sidecarLease.dispose();
+			await sidecarLease.dispose();
+		} else {
+			await this.#kernel.dispose();
 		}
-		return this.#kernel.dispose();
+
+		// Only release local correlation after authoritative remote teardown. A
+		// failed close leaves these routes and the lease intact for a safe retry.
+		for (const session of this._sessions.values()) {
+			this._rejectPendingPermissionRepliesFromSession(session);
+		}
+		this._sessions.clear();
+		this._cronManager.dispose();
+		this._shells.clear();
+		this._processes.clear();
+		this._disposeSidecarEventListener();
+		this._disposeSidecarRequestHandler?.();
+		this._disposeSidecarRequestHandler = null;
+		if (this._sidecarLease === sidecarLease) {
+			this._sidecarLease = null;
+		}
+		this._disposed = true;
 	}
 }
 
@@ -5393,6 +3251,7 @@ interface AgentOsSidecarState {
 	description: AgentOsSidecarDescription;
 	activeLeases: Set<AgentOsSidecarLeaseRecord>;
 	sharedPool?: string;
+	disposePromise?: Promise<void>;
 	/**
 	 * The single native sidecar process shared by every VM leased from this
 	 * handle. Spawned lazily on first VM creation and reused thereafter so VMs
@@ -5531,8 +3390,7 @@ function ensureSharedSidecarNativeProcess(
 		ensureSidecarProcessExitCleanup();
 		state.nativeProcess = (async () => {
 			const client = SidecarProcess.spawn({
-				cwd: REPO_ROOT,
-				command: ensureNativeSidecarBinary(),
+				command: resolvePublishedSidecarBinary(),
 				args: [],
 			});
 			// Track the child immediately — BEFORE the handshake await — so a
@@ -5581,6 +3439,13 @@ async function disposeSharedSidecarNativeProcess(
 	if (!pending) {
 		return;
 	}
+	const { client, session } = await pending;
+	// The TS handle shares one real wire session across all leased VMs. Close it
+	// only after every VM lease has confirmed disposal, then terminate transport.
+	// A rejected close retains the live process/session handle so the caller can
+	// retry the idempotent sidecar operation.
+	await client.closeSession(session);
+	await client.dispose();
 	state.nativeProcess = undefined;
 	// The cached child is now dead; drop it (symmetric with the assignment in
 	// ensureSharedSidecarNativeProcess). We deliberately do NOT zero
@@ -5590,12 +3455,6 @@ async function disposeSharedSidecarNativeProcess(
 	// zeroing a shared counter could clobber a hold on a freshly re-acquired
 	// process generation, so it is left to the balanced acquire/release pairs.
 	state.sharedChild = undefined;
-	try {
-		const { client } = await pending;
-		await client.dispose();
-	} catch {
-		// Process may have already exited; nothing to reclaim.
-	}
 }
 
 export class AgentOsSidecar {
@@ -5626,7 +3485,21 @@ export class AgentOsSidecar {
 		if (state.description.state === "disposed") {
 			return;
 		}
+		if (state.disposePromise) {
+			return state.disposePromise;
+		}
+		const attempt = this.disposeOnce(state);
+		state.disposePromise = attempt;
+		try {
+			await attempt;
+		} finally {
+			if (state.disposePromise === attempt) {
+				state.disposePromise = undefined;
+			}
+		}
+	}
 
+	private async disposeOnce(state: AgentOsSidecarState): Promise<void> {
 		state.description.state = "disposing";
 		const errors: Error[] = [];
 		for (const lease of [...state.activeLeases]) {
@@ -5636,16 +3509,17 @@ export class AgentOsSidecar {
 				errors.push(error instanceof Error ? error : new Error(String(error)));
 			}
 		}
-		state.activeLeases.clear();
-		state.description.activeVmCount = 0;
+		if (errors.length > 0) {
+			throw new AggregateError(
+				errors,
+				`failed to dispose sidecar ${state.description.sidecarId}`,
+			);
+		}
 		// Tear down the shared native process after all leased VMs are gone.
 		await disposeSharedSidecarNativeProcess(state);
 		state.description.state = "disposed";
 		if (state.sharedPool && sharedSidecars.get(state.sharedPool) === this) {
 			sharedSidecars.delete(state.sharedPool);
-		}
-		if (errors.length > 0) {
-			throw new Error(errors.map((error) => error.message).join("; "));
 		}
 	}
 }
@@ -5738,6 +3612,7 @@ async function leaseAgentOsSidecarVm<TVmAdmin extends InProcessSidecarVmAdmin>(
 	};
 
 	let disposed = false;
+	let disposePromise: Promise<void> | null = null;
 	let leaseRecord: AgentOsSidecarLeaseRecord | undefined;
 
 	try {
@@ -5759,14 +3634,26 @@ async function leaseAgentOsSidecarVm<TVmAdmin extends InProcessSidecarVmAdmin>(
 				if (disposed) {
 					return;
 				}
-				disposed = true;
-				state.activeLeases.delete(leaseRecord!);
-				state.description.activeVmCount = state.activeLeases.size;
-				await client.dispose();
-				// Release this lease's hold; the shared sidecar is unref'd only
-				// once the last hold (across all in-flight + active leases) drops,
-				// so a one-shot host process can then exit on its own.
-				releaseHold();
+				if (!disposePromise) {
+					disposePromise = (async () => {
+						await client.dispose();
+						disposed = true;
+						state.activeLeases.delete(leaseRecord!);
+						state.description.activeVmCount = state.activeLeases.size;
+						// Release this lease's hold; the shared sidecar is unref'd only
+						// once the last hold (across all in-flight + active leases) drops,
+						// so a one-shot host process can then exit on its own.
+						releaseHold();
+					})();
+				}
+				const attempt = disposePromise;
+				try {
+					await attempt;
+				} finally {
+					if (disposePromise === attempt) {
+						disposePromise = null;
+					}
+				}
 			},
 		};
 
@@ -5777,7 +3664,12 @@ async function leaseAgentOsSidecarVm<TVmAdmin extends InProcessSidecarVmAdmin>(
 		state.description.activeVmCount = state.activeLeases.size;
 		return lease;
 	} catch (error) {
-		await client.dispose().catch(() => {});
+		await client.dispose().catch((cleanupError) => {
+			console.warn(
+				"failed to dispose sidecar client after lease creation failure",
+				cleanupError,
+			);
+		});
 		releaseHold();
 		throw error;
 	}
@@ -5791,6 +3683,7 @@ async function createInProcessSidecarTransport<
 ): Promise<InProcessSidecarTransport<TVmAdmin>> {
 	const vmAdmins = new Map<string, TVmAdmin>();
 	let disposed = false;
+	let disposePromise: Promise<void> | null = null;
 
 	async function disposeVmAdmin(vmId: string): Promise<void> {
 		const admin = vmAdmins.get(vmId);
@@ -5798,8 +3691,23 @@ async function createInProcessSidecarTransport<
 			return;
 		}
 
-		vmAdmins.delete(vmId);
 		await admin.dispose();
+		vmAdmins.delete(vmId);
+	}
+
+	async function disposeTransport(): Promise<void> {
+		const errors: Error[] = [];
+		for (const vmId of [...vmAdmins.keys()]) {
+			try {
+				await disposeVmAdmin(vmId);
+			} catch (error) {
+				errors.push(error instanceof Error ? error : new Error(String(error)));
+			}
+		}
+		if (errors.length > 0) {
+			throw new AggregateError(errors, "failed to dispose sidecar session");
+		}
+		disposed = true;
 	}
 
 	return {
@@ -5822,21 +3730,16 @@ async function createInProcessSidecarTransport<
 			if (disposed) {
 				return;
 			}
-			disposed = true;
-
-			const errors: Error[] = [];
-			for (const vmId of [...vmAdmins.keys()]) {
-				try {
-					await disposeVmAdmin(vmId);
-				} catch (error) {
-					errors.push(
-						error instanceof Error ? error : new Error(String(error)),
-					);
-				}
+			if (!disposePromise) {
+				disposePromise = disposeTransport();
 			}
-
-			if (errors.length > 0) {
-				throw new Error(errors.map((error) => error.message).join("; "));
+			const attempt = disposePromise;
+			try {
+				await attempt;
+			} finally {
+				if (disposePromise === attempt) {
+					disposePromise = null;
+				}
 			}
 		},
 

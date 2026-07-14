@@ -3,6 +3,7 @@
 Agent OS keeps only product-surface benchmarks here:
 
 - `session.bench.ts` - deterministic llmock-backed session VM tax (`vm` vs `bare-node` PI SDK session creation).
+- `actor-session.bench.ts` - warmed Rivet actor session startup and first-message latency for Claude Code, Pi, Codex, and OpenCode against llmock.
 - `coldstart.bench.ts` - Agent OS VM cold-start product workloads.
 - `memory.bench.ts` - shared-sidecar per-VM memory overhead.
 - `bench-utils.ts` - shared helpers for cold-start and memory workloads.
@@ -32,6 +33,7 @@ Run a single lane with `BENCH_ONLY=<lane>`:
 - `memory-sleep`
 - `memory-pi-session`
 - `session`
+- `actor-session`
 
 Results are written under `scripts/benchmarks/results/` as `<lane>.json` and
 `<lane>.log`.
@@ -57,3 +59,22 @@ BENCH_UPDATE_BASELINE=1 bash scripts/benchmarks/run-benchmarks.sh
 ```
 
 Only refresh `baseline.json` intentionally and review the resulting diff.
+
+## Actor Session Startup + First Message
+
+This informational benchmark starts a temporary Rivet actor server and a local
+llmock provider, verifies end-to-end filesystem and exec operations, then uses a
+fresh agent session for every measured first message. It reports session
+creation separately from provider-request, first-text, and prompt-completion
+latency:
+
+```bash
+pnpm exec tsx scripts/benchmarks/actor-session.bench.ts
+pnpm exec tsx scripts/benchmarks/actor-session.bench.ts \
+	--agents=claude,pi,codex,opencode --iterations=3 --warmup=1 \
+  --output=/tmp/actor-session.json
+BENCH_ONLY=actor-session bash scripts/benchmarks/run-benchmarks.sh
+```
+
+The direct command expects the local actor package, actor plugin, sidecar, and
+selected agent packages to be built. The standard suite command builds them.

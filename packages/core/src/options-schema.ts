@@ -71,6 +71,7 @@ export const agentOsLimitsSchema = z
 			.object({
 				cpuCount: positiveInteger.optional(),
 				maxProcesses: nonNegativeInteger.optional(),
+				maxCapturedOutputBytes: positiveInteger.optional(),
 				maxOpenFds: nonNegativeInteger.optional(),
 				maxPipes: nonNegativeInteger.optional(),
 				maxPtys: nonNegativeInteger.optional(),
@@ -131,9 +132,6 @@ export const agentOsLimitsSchema = z
 				wallClockLimitMs: nonNegativeInteger.optional(),
 				importCacheMaterializeTimeoutMs: positiveInteger.optional(),
 				capturedOutputLimitBytes: positiveInteger.optional(),
-				stdinBufferLimitBytes: positiveInteger.optional(),
-				eventPayloadLimitBytes: positiveInteger.optional(),
-				v8IpcMaxFrameBytes: positiveInteger.optional(),
 			})
 			.strict()
 			.optional(),
@@ -264,6 +262,15 @@ export const toolKitSchema = z
 	})
 	.strict() as z.ZodType<ToolKit>;
 
+const softwarePackageRefSchema = z.union([
+	z.string(),
+	z.object({ packagePath: z.string() }),
+]);
+const softwareInputSchema = z.union([
+	softwarePackageRefSchema,
+	z.array(softwarePackageRefSchema),
+]);
+
 /**
  * Shared AgentOsOptions field schemas.
  *
@@ -273,7 +280,7 @@ export const toolKitSchema = z
  * adding options that cross the native boundary.
  */
 export const agentOsOptionFieldSchemas = {
-	software: z.array(z.unknown()).optional(),
+	software: z.array(softwareInputSchema).optional(),
 	defaultSoftware: z.boolean().optional(),
 	loopbackExemptPorts: z.array(z.number().int().min(0).max(65535)).optional(),
 	allowedNodeBuiltins: stringArray.optional(),
@@ -281,11 +288,6 @@ export const agentOsOptionFieldSchemas = {
 	rootFilesystem: rootFilesystemConfigSchema.optional(),
 	mounts: z.array(mountConfigSchema).optional(),
 	additionalInstructions: z.string().optional(),
-	scheduleDriver: z
-		.custom((value) => typeof value === "object" && value !== null, {
-			message: "Expected schedule driver object",
-		})
-		.optional(),
 	toolKits: z.array(toolKitSchema).optional(),
 	permissions: permissionsSchema.optional(),
 	sidecar: sidecarConfigSchema.optional(),

@@ -9,8 +9,8 @@ Agents run inside isolated VMs with their own filesystem, process table, and net
 - **VM lifecycle** — create, configure, and dispose isolated virtual machines
 - **Sidecar placement** — reuse the default shared sidecar or inject an explicit sidecar handle
 - **Agent sessions (ACP)** — launch coding agents (Pi, Pi CLI, OpenCode, Claude) via JSON-RPC over stdio
-- **Filesystem operations** — read, write, mkdir, stat, move, delete, recursive listing, batch read/write
-- **Process management** — spawn, exec, stop, kill processes; inspect process trees across all runtimes
+- **Filesystem operations** — read, write, mkdir, stat, move, delete, and recursive listing
+- **Process management** — spawn, exec, stop, and kill processes; inspect the kernel process table
 - **Agent registry** — discover available agents and their installation status
 - **Networking** — reach services running inside the VM via `fetch()`
 - **Shell access** — open interactive shells with PTY support
@@ -19,26 +19,37 @@ Agents run inside isolated VMs with their own filesystem, process table, and net
 ## Quick Start
 
 ```bash
-npm install @rivet-dev/agentos-core
-# Install an agent adapter + its underlying agent
-npm install @agentos-software/pi @mariozechner/pi-coding-agent
+npm install @rivet-dev/agentos-core @agentos-software/pi
 ```
 
 ```typescript
+import pi from "@agentos-software/pi";
 import { AgentOs } from "@rivet-dev/agentos-core";
 
-// 1. Create a VM
-const vm = await AgentOs.create();
+const apiKey = process.env.ANTHROPIC_API_KEY;
+if (!apiKey) {
+	throw new Error("ANTHROPIC_API_KEY is required");
+}
 
-// 2. Create an agent session
-const { sessionId } = await vm.createSession("pi");
+const vm = await AgentOs.create({ software: [pi] });
 
-// 3. Send a prompt
-const response = await vm.prompt(sessionId, "Write a hello world in TypeScript");
+try {
+	const { sessionId } = await vm.createSession("pi", {
+		env: { ANTHROPIC_API_KEY: apiKey },
+	});
 
-// 4. Clean up
-vm.closeSession(sessionId);
-await vm.dispose();
+	try {
+		const { text } = await vm.prompt(
+			sessionId,
+			"Write a hello world in TypeScript",
+		);
+		console.log(text);
+	} finally {
+		await vm.closeSession(sessionId);
+	}
+} finally {
+	await vm.dispose();
+}
 ```
 
 ## API Reference
@@ -66,8 +77,6 @@ await vm.dispose();
 |--------|-----------|-------------|
 | `readFile` | `readFile(path: string): Promise<Uint8Array>` | Read a file |
 | `writeFile` | `writeFile(path: string, content: string \| Uint8Array): Promise<void>` | Write a file |
-| `readFiles` | `readFiles(paths: string[]): Promise<BatchReadResult[]>` | Batch read multiple files |
-| `writeFiles` | `writeFiles(entries: BatchWriteEntry[]): Promise<BatchWriteResult[]>` | Batch write multiple files (creates parent dirs) |
 | `mkdir` | `mkdir(path: string): Promise<void>` | Create a directory |
 | `readdir` | `readdir(path: string): Promise<string[]>` | List directory entries |
 | `readdirRecursive` | `readdirRecursive(path: string, options?: ReaddirRecursiveOptions): Promise<DirEntry[]>` | Recursively list directory contents with metadata |
@@ -83,13 +92,12 @@ await vm.dispose();
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `exec` | `exec(command: string, options?: ExecOptions): Promise<ExecResult>` | Execute a shell command and wait for completion |
-| `spawn` | `spawn(command: string, args: string[], options?: SpawnOptions): { pid: number }` | Spawn a long-running process |
-| `listProcesses` | `listProcesses(): SpawnedProcessInfo[]` | List processes started via `spawn()` |
-| `allProcesses` | `allProcesses(): ProcessInfo[]` | List all kernel processes across all runtimes |
-| `processTree` | `processTree(): ProcessTreeNode[]` | Get processes organized as a parent-child tree |
-| `getProcess` | `getProcess(pid: number): SpawnedProcessInfo` | Get info about a specific spawned process |
-| `stopProcess` | `stopProcess(pid: number): void` | Send SIGTERM to a process |
-| `killProcess` | `killProcess(pid: number): void` | Send SIGKILL to a process |
+| `spawn` | `spawn(command: string, args: string[], options?: SpawnOptions): Promise<{ pid: number }>` | Spawn a long-running process and return its kernel PID |
+| `listProcesses` | `listProcesses(): Promise<SpawnedProcessInfo[]>` | List processes started via `spawn()` from a fresh sidecar snapshot |
+| `allProcesses` | `allProcesses(): Promise<ProcessInfo[]>` | List all kernel processes across all runtimes |
+| `getProcess` | `getProcess(pid: number): Promise<SpawnedProcessInfo>` | Get sidecar-authoritative info about a specific spawned process |
+| `stopProcess` | `stopProcess(pid: number): Promise<void>` | Send SIGTERM and await the sidecar result |
+| `killProcess` | `killProcess(pid: number): Promise<void>` | Send SIGKILL and await the sidecar result |
 
 ### Network
 
@@ -101,20 +109,19 @@ await vm.dispose();
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `connectTerminal` | `connectTerminal(options?: ConnectTerminalOptions): Promise<number>` | Attach a shell directly to the host terminal and wait for exit |
-| `openShell` | `openShell(options?: OpenShellOptions): { shellId: string }` | Open an interactive shell with PTY support |
-| `writeShell` | `writeShell(shellId: string, data: string \| Uint8Array): void` | Write data to a shell's PTY input |
-| `onShellData` | `onShellData(shellId: string, handler: (data: Uint8Array) => void): () => void` | Subscribe to ordered PTY output (stdout and stderr exactly once) |
-| `resizeShell` | `resizeShell(shellId: string, cols: number, rows: number): void` | Notify terminal resize |
-| `closeShell` | `closeShell(shellId: string): void` | Kill the shell process |
+| `openShell` | `openShell(options?: OpenShellOptions): Promise<{ shellId: string }>` | Open an interactive shell with PTY support |
+| `writeShell` | `writeShell(shellId: string, data: string \| Uint8Array): Promise<void>` | Write data to a shell's PTY input |
+| `onShellData` | `onShellData(shellId: string, handler: (data: Uint8Array) => void): () => void` | Subscribe to shell output data |
+| `resizeShell` | `resizeShell(shellId: string, cols: number, rows: number): Promise<void>` | Notify terminal resize and await the sidecar response |
+| `closeShell` | `closeShell(shellId: string): Promise<void>` | Kill the shell process and await the sidecar response |
 
 ### Agent Sessions
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `createSession` | `createSession(agentType: AgentType, options?: CreateSessionOptions): Promise<{ sessionId: string }>` | Launch an agent and return a session ID |
-| `listSessions` | `listSessions(): SessionInfo[]` | List active sessions |
-| `destroySession` | `destroySession(sessionId: string): Promise<void>` | Gracefully cancel and close a session |
+| `listSessions` | `listSessions(): Promise<SessionInfo[]>` | List active sessions |
+| `destroySession` | `destroySession(sessionId: string): Promise<void>` | Ask the sidecar to gracefully close a session |
 
 ### Agent Registry
 
@@ -128,15 +135,15 @@ await vm.dispose();
 |--------|-----------|-------------|
 | `prompt` | `prompt(sessionId: string, text: string): Promise<PromptResult>` | Send a prompt and collect the agent text |
 | `cancelSession` | `cancelSession(sessionId: string): Promise<JsonRpcResponse>` | Cancel ongoing agent work |
-| `closeSession` | `closeSession(sessionId: string): void` | Kill the agent process and clean up |
+| `closeSession` | `closeSession(sessionId: string): Promise<void>` | Kill the agent process and clean up |
 | `onSessionEvent` | `onSessionEvent(sessionId: string, handler: SessionEventHandler): () => void` | Subscribe to session update notifications |
 | `onPermissionRequest` | `onPermissionRequest(sessionId: string, handler: PermissionRequestHandler): () => void` | Subscribe to permission requests |
 | `respondPermission` | `respondPermission(sessionId: string, permissionId: string, reply: PermissionReply): Promise<JsonRpcResponse>` | Reply to a permission request |
 | `setSessionMode` | `setSessionMode(sessionId: string, modeId: string): Promise<JsonRpcResponse>` | Set the session mode |
-| `getSessionModes` | `getSessionModes(sessionId: string): SessionModeState \| null` | Get available modes |
+| `getSessionModes` | `getSessionModes(sessionId: string): Promise<SessionModeState \| null>` | Get available modes from the sidecar |
 | `setSessionModel` | `setSessionModel(sessionId: string, model: string): Promise<JsonRpcResponse>` | Set the model |
 | `setSessionThoughtLevel` | `setSessionThoughtLevel(sessionId: string, level: string): Promise<JsonRpcResponse>` | Set reasoning level |
-| `getSessionConfigOptions` | `getSessionConfigOptions(sessionId: string): SessionConfigOption[]` | Get available config options |
+| `getSessionConfigOptions` | `getSessionConfigOptions(sessionId: string): Promise<SessionConfigOption[]>` | Get available config options from the sidecar |
 | `rawSend` | `rawSend(sessionId: string, method: string, params?: Record<string, unknown>): Promise<JsonRpcResponse>` | Send an arbitrary ACP request |
 
 ### Exported Types
@@ -167,14 +174,10 @@ await vm.dispose();
 **Process**
 - `ProcessInfo` — Kernel process info (pid, ppid, pgid, sid, driver, command, args, cwd, status, exitCode, startTime, exitTime)
 - `SpawnedProcessInfo` — Info for processes created via `spawn()` (pid, command, args, running, exitCode)
-- `ProcessTreeNode` — ProcessInfo with `children: ProcessTreeNode[]`
 
 **Filesystem**
 - `DirEntry` — Directory entry (path, type, size)
-- `ReaddirRecursiveOptions` — Options for recursive listing (maxDepth, exclude)
-- `BatchWriteEntry` — Entry for batch writes (path, content)
-- `BatchWriteResult` — Result of a batch write (path, success, error?)
-- `BatchReadResult` — Result of a batch read (path, content, error?)
+- `ReaddirRecursiveOptions` — Options for recursive listing (maxDepth)
 
 **Agent**
 - `AgentType` — `string` (a package manifest `name`, e.g. `"pi"`, `"claude"`); agents are resolved dynamically from the configured `/opt/agentos` package manifests, so any manifest `name` is valid

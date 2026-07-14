@@ -1,17 +1,10 @@
 import { describe, expect, test } from "vitest";
-import type { Permissions } from "../src/runtime-compat.js";
+import type { Permissions } from "../src/runtime.js";
 import { serializePermissionsForSidecar } from "../src/sidecar/permissions.js";
 
 describe("serializePermissionsForSidecar", () => {
-	test("uses deny-all policy when permissions are omitted", () => {
-		expect(serializePermissionsForSidecar()).toEqual({
-			fs: "deny",
-			network: "deny",
-			childProcess: "deny",
-			process: "deny",
-			env: "deny",
-			binding: "deny",
-		});
+	test("preserves omission so the sidecar owns the default policy", () => {
+		expect(serializePermissionsForSidecar()).toBeUndefined();
 	});
 
 	test("passes structured declarative policies through unchanged", () => {
@@ -105,7 +98,7 @@ describe("serializePermissionsForSidecar", () => {
 		});
 	});
 
-	test("preserves partial policies so unspecified domains can be denied in Rust", () => {
+	test("preserves partial policies so the sidecar can apply domain defaults", () => {
 		const permissions: Permissions = {
 			env: {
 				rules: [
@@ -136,7 +129,7 @@ describe("serializePermissionsForSidecar", () => {
 		});
 	});
 
-	test("expands omitted rule operations and resources to explicit wildcards", () => {
+	test("preserves omitted rule fields for sidecar wildcard defaults", () => {
 		const permissions: Permissions = {
 			fs: {
 				default: "deny",
@@ -165,7 +158,6 @@ describe("serializePermissionsForSidecar", () => {
 					{
 						mode: "allow",
 						operations: ["read"],
-						paths: ["**"],
 					},
 				],
 			},
@@ -174,7 +166,6 @@ describe("serializePermissionsForSidecar", () => {
 				rules: [
 					{
 						mode: "allow",
-						operations: ["*"],
 						patterns: ["tcp://localhost:443"],
 					},
 				],

@@ -12,18 +12,18 @@ describe("process management", () => {
 		await vm.dispose();
 	});
 
-	test("listProcesses() returns empty when no processes spawned", () => {
-		expect(vm.listProcesses()).toEqual([]);
+	test("listProcesses() returns empty when no processes spawned", async () => {
+		expect(await vm.listProcesses()).toEqual([]);
 	});
 
 	test("listProcesses() includes processes started via spawn()", async () => {
 		// Write a script that stays alive for a few seconds
 		await vm.writeFile("/tmp/long-running.mjs", "setTimeout(() => {}, 30000);");
-		const { pid } = vm.spawn("node", ["/tmp/long-running.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/long-running.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
-		const list = vm.listProcesses();
+		const list = await vm.listProcesses();
 		expect(list.length).toBe(1);
 		expect(list[0].pid).toBe(pid);
 		expect(list[0].command).toBe("node");
@@ -31,71 +31,71 @@ describe("process management", () => {
 		expect(list[0].running).toBe(true);
 		expect(list[0].exitCode).toBeNull();
 
-		vm.killProcess(pid);
+		await vm.killProcess(pid);
 	}, 30_000);
 
 	test("getProcess(pid) returns correct ProcessInfo for a running process", async () => {
 		await vm.writeFile("/tmp/alive.mjs", "setTimeout(() => {}, 30000);");
-		const { pid } = vm.spawn("node", ["/tmp/alive.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/alive.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
-		const info = vm.getProcess(pid);
+		const info = await vm.getProcess(pid);
 		expect(info.pid).toBe(pid);
 		expect(info.command).toBe("node");
 		expect(info.args).toEqual(["/tmp/alive.mjs"]);
 		expect(info.running).toBe(true);
 		expect(info.exitCode).toBeNull();
 
-		vm.killProcess(pid);
+		await vm.killProcess(pid);
 	}, 30_000);
 
-	test("getProcess with invalid pid throws", () => {
-		expect(() => vm.getProcess(99999)).toThrow("Process not found");
+	test("getProcess with invalid pid throws", async () => {
+		await expect(vm.getProcess(99999)).rejects.toThrow("Process not found");
 	});
 
 	test("stopProcess(pid) terminates the process gracefully", async () => {
 		await vm.writeFile("/tmp/stop-me.mjs", "setTimeout(() => {}, 30000);");
-		const { pid } = vm.spawn("node", ["/tmp/stop-me.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/stop-me.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
-		expect(vm.getProcess(pid).running).toBe(true);
+		expect((await vm.getProcess(pid)).running).toBe(true);
 
-		vm.stopProcess(pid);
+		await vm.stopProcess(pid);
 
 		// Wait for process to exit
 		await vm.waitProcess(pid);
-		expect(vm.getProcess(pid).running).toBe(false);
-		expect(vm.getProcess(pid).exitCode).not.toBeNull();
+		expect((await vm.getProcess(pid)).running).toBe(false);
+		expect((await vm.getProcess(pid)).exitCode).not.toBeNull();
 	}, 30_000);
 
 	test("killProcess(pid) force-kills the process", async () => {
 		await vm.writeFile("/tmp/kill-me.mjs", "setTimeout(() => {}, 30000);");
-		const { pid } = vm.spawn("node", ["/tmp/kill-me.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/kill-me.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
-		expect(vm.getProcess(pid).running).toBe(true);
+		expect((await vm.getProcess(pid)).running).toBe(true);
 
-		vm.killProcess(pid);
+		await vm.killProcess(pid);
 
 		// Wait for process to exit
 		await vm.waitProcess(pid);
-		expect(vm.getProcess(pid).running).toBe(false);
+		expect((await vm.getProcess(pid)).running).toBe(false);
 	}, 30_000);
 
 	test("listProcesses() reflects process exit (running: false, exitCode set)", async () => {
 		// Write a script that exits immediately with code 0
 		await vm.writeFile("/tmp/quick-exit.mjs", "process.exit(0);");
-		const { pid } = vm.spawn("node", ["/tmp/quick-exit.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/quick-exit.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
 		// Wait for it to exit
 		await vm.waitProcess(pid);
 
-		const list = vm.listProcesses();
+		const list = await vm.listProcesses();
 		expect(list.length).toBe(1);
 		expect(list[0].running).toBe(false);
 		expect(list[0].exitCode).toBe(0);
@@ -103,14 +103,14 @@ describe("process management", () => {
 
 	test("stopProcess on already-exited process is a no-op", async () => {
 		await vm.writeFile("/tmp/already-done.mjs", "process.exit(0);");
-		const { pid } = vm.spawn("node", ["/tmp/already-done.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/already-done.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
 		await vm.waitProcess(pid);
 
 		// Should not throw — just a no-op
-		expect(() => vm.stopProcess(pid)).not.toThrow();
+		await expect(vm.stopProcess(pid)).resolves.toBeUndefined();
 	}, 30_000);
 
 	test("nested child_process.spawn executes the requested child entrypoint", async () => {
@@ -149,7 +149,7 @@ describe("process management", () => {
 
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn("node", ["/tmp/parent.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/parent.mjs"], {
 			env: { HOME: "/home/agentos" },
 			onStdout: (chunk) => {
 				stdout += Buffer.from(chunk).toString("utf8");
@@ -184,5 +184,4 @@ describe("process management", () => {
 			].join("\n"),
 		);
 	}, 30_000);
-
 });

@@ -58,13 +58,11 @@ export type {
 	AgentOsActions,
 	CreateSessionOptions,
 	DirEntry,
-	ReadFileResult,
 	ScheduledCronJob,
 	SignedPreviewUrl,
 	SpawnedProcess,
 	VmFetchOptions,
 	VmFetchResponse,
-	WriteFileResult,
 } from "./generated/actor-actions.generated.js";
 export { getPluginPath } from "./plugin-binary.js";
 export type {
@@ -82,6 +80,7 @@ export type {
 	PromptResult,
 	SerializableCronAction,
 	SerializableCronEvent,
+	StreamErrorPayload,
 	SerializableCronJobInfo,
 	SerializableCronJobOptions,
 	SessionEventPayload,

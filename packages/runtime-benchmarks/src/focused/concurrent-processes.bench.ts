@@ -86,7 +86,6 @@ async function main(): Promise<void> {
 					counts,
 					durationMs,
 					rows,
-					vmResourceSnapshot: await vm.getResourceSnapshot(),
 					regressionRows: concurrencyRegressionRows("concurrent-processes", rows),
 				},
 				null,

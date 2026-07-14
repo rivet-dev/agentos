@@ -18,7 +18,9 @@ use std::time::Instant;
 use agentos_protocol::generated::v1::{
     AcpCreateSessionRequest, AcpResponse, AcpRuntimeKind, AcpSessionRequest,
 };
-use agentos_sidecar_core::host::{AcpHost, AgentOutput, SpawnAgentRequest, SpawnedAgent};
+use agentos_sidecar_core::host::{
+    AcpHost, AgentOutput, ProjectedAgentLaunch, SpawnAgentRequest, SpawnedAgent,
+};
 use agentos_sidecar_core::{AcpCore, AcpCoreError};
 
 /// Native `AcpHost` that runs the agent as a `node` child process, reading its
@@ -40,10 +42,26 @@ impl NodeChildAcpHost {
 }
 
 impl AcpHost for NodeChildAcpHost {
+    fn resolve_projected_agent(
+        &mut self,
+        id: &str,
+    ) -> Result<Option<ProjectedAgentLaunch>, AcpCoreError> {
+        Ok((id == "echo").then(echo_projected_agent))
+    }
+
+    fn list_projected_agents(&mut self) -> Result<Vec<ProjectedAgentLaunch>, AcpCoreError> {
+        Ok(vec![echo_projected_agent()])
+    }
+
     fn spawn_agent(&mut self, request: SpawnAgentRequest) -> Result<SpawnedAgent, AcpCoreError> {
         let entrypoint = request
             .entrypoint
             .ok_or_else(|| AcpCoreError::InvalidState("missing agent entrypoint".into()))?;
+        let entrypoint = if entrypoint == "/opt/agentos/bin/echo-agent" {
+            echo_agent_path()
+        } else {
+            PathBuf::from(entrypoint)
+        };
         let mut command = Command::new("node");
         command
             .arg(&entrypoint)
@@ -146,18 +164,20 @@ impl AcpHost for NodeChildAcpHost {
     }
 
     fn read_file(&mut self, _: &str) -> Result<Vec<u8>, AcpCoreError> {
-        let manifest = serde_json::json!({
-            "name": "echo",
-            "agent": {
-                "acpEntrypoint": echo_agent_path().to_string_lossy(),
-            },
-        });
-        serde_json::to_vec(&manifest)
-            .map_err(|error| AcpCoreError::Execution(format!("encode echo manifest: {error}")))
+        Ok(Vec::new())
     }
 
     fn now_ms(&self) -> u64 {
         self.elapsed_ms()
+    }
+}
+
+fn echo_projected_agent() -> ProjectedAgentLaunch {
+    ProjectedAgentLaunch {
+        id: String::from("echo"),
+        adapter_entrypoint: String::from("/opt/agentos/bin/echo-agent"),
+        env: BTreeMap::new(),
+        launch_args: Vec::new(),
     }
 }
 
@@ -189,15 +209,15 @@ fn acp_core_runs_a_real_session_round_trip_against_the_echo_agent() {
     let mut host = NodeChildAcpHost::default();
     let request = AcpCreateSessionRequest {
         agent_type: "echo".into(),
-        runtime: AcpRuntimeKind::JavaScript,
-        protocol_version: 1,
-        cwd: ".".into(),
-        args: Vec::new(),
-        env: BTreeMap::new().into_iter().collect(),
-        client_capabilities: "{}".into(),
-        mcp_servers: "[]".into(),
+        runtime: Some(AcpRuntimeKind::JavaScript),
+        protocol_version: Some(1),
+        cwd: Some(".".into()),
+        args: Some(Vec::new()),
+        env: Some(BTreeMap::new().into_iter().collect()),
+        client_capabilities: Some("{}".into()),
+        mcp_servers: Some("[]".into()),
         additional_instructions: None,
-        skip_os_instructions: false,
+        skip_os_instructions: Some(false),
     };
 
     // Real round-trip: spawn node, run initialize + session/new over real pipes.
@@ -237,5 +257,5 @@ fn acp_core_runs_a_real_session_round_trip_against_the_echo_agent() {
     let err = core
         .session_request(&mut host, "conn-other", &prompt)
         .expect_err("non-owner prompt must fail closed");
-    assert_eq!(err.code(), "invalid_state");
+    assert_eq!(err.code(), "session_not_found");
 }

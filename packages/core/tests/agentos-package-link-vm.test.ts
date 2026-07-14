@@ -31,7 +31,11 @@ describe("agentos linkSoftware (VM)", () => {
 		);
 		writeFileSync(
 			join(pkgDir, "agentos-package.json"),
-			JSON.stringify({ name: "linked-tool", version: "1.0.0" }),
+			JSON.stringify({
+				name: "linked-tool",
+				version: "1.0.0",
+				agent: { acpEntrypoint: "linked-cmd" },
+			}),
 		);
 		const binPath = join(pkgDir, "bin", "linked-cmd");
 		writeFileSync(
@@ -51,14 +55,25 @@ describe("agentos linkSoftware (VM)", () => {
 
 	test("command does not exist before linking", async () => {
 		expect(await vm.exists("/opt/agentos/bin/linked-cmd")).toBe(false);
+		expect(await vm.providedCommands()).toEqual([]);
+		expect(await vm.listAgents()).not.toContainEqual(
+			expect.objectContaining({ id: "linked-tool" }),
+		);
 	});
 
-	test("linkSoftware makes the command resolve live via $PATH", async () => {
+	test("linkSoftware makes live command and agent queries observe the package", async () => {
 		await vm.linkSoftware(pkgDir);
 		expect(await vm.exists("/opt/agentos/bin/linked-cmd")).toBe(true);
+		expect(await vm.providedCommands()).toContainEqual({
+			packageName: "linked-tool",
+			commands: ["linked-cmd"],
+		});
+		expect(await vm.listAgents()).toContainEqual(
+			expect.objectContaining({ id: "linked-tool", installed: true }),
+		);
 
 		let out = "";
-		const { pid } = vm.spawn("linked-cmd", [], {
+		const { pid } = await vm.spawn("linked-cmd", [], {
 			onStdout: (d) => {
 				out += new TextDecoder().decode(d);
 			},

@@ -4,10 +4,9 @@ import {
 	AgentOsSidecar,
 	CronManager,
 	KernelError,
-	MAX_TOOL_DESCRIPTION_LENGTH,
 	InvalidScheduleError,
 	PastScheduleError,
-	TimerScheduleDriver,
+	SidecarRequestRejected,
 	agentOsLimitsSchema,
 	agentOsOptionsSchema,
 	createHostDirBackend,
@@ -28,7 +27,6 @@ import {
 	rootFilesystemConfigSchema,
 	toolKit,
 	toolKitSchema,
-	validateToolkits,
 	type AcpTimeoutErrorData,
 	type AgentOsLimits,
 	type ExecOptions,
@@ -45,25 +43,22 @@ import {
 	type ResumeSessionOptions,
 	type ResumeSessionResult,
 	type StdioChannel,
-	type TimingMitigation,
 	type UnknownSessionErrorData,
 } from "../src/index.js";
 
 describe("root public API exports", () => {
 	test("re-exports the main public value surface from the root entrypoint", () => {
 		expect(AgentOs).toBeTypeOf("function");
+		expect("processTree" in AgentOs.prototype).toBe(false);
 		expect(AgentOsSidecar).toBeTypeOf("function");
 		expect(CronManager).toBeTypeOf("function");
-		expect(TimerScheduleDriver).toBeTypeOf("function");
 		expect(createHostDirBackend).toBeTypeOf("function");
 		expect(hostTool).toBeTypeOf("function");
 		expect(toolKit).toBeTypeOf("function");
-		expect(validateToolkits).toBeTypeOf("function");
-		expect(MAX_TOOL_DESCRIPTION_LENGTH).toBeGreaterThan(0);
 		expect(agentOsLimitsSchema.safeParse({}).success).toBe(true);
-		expect(agentOsOptionsSchema.safeParse({ defaultSoftware: false }).success).toBe(
-			true,
-		);
+		expect(
+			agentOsOptionsSchema.safeParse({ defaultSoftware: false }).success,
+		).toBe(true);
 		expect(hostToolSchema).toBeTypeOf("object");
 		expect(toolKitSchema).toBeTypeOf("object");
 		expect(mountConfigSchema).toBeTypeOf("object");
@@ -73,6 +68,7 @@ describe("root public API exports", () => {
 		});
 		expect(createInMemoryFileSystem).toBeTypeOf("function");
 		expect(KernelError).toBeTypeOf("function");
+		expect(SidecarRequestRejected).toBeTypeOf("function");
 		expect(createInMemoryLayerStore).toBeTypeOf("function");
 		expect(createSnapshotExport).toBeTypeOf("function");
 		// Package dirs are the public software descriptor.
@@ -99,7 +95,6 @@ describe("root public API exports", () => {
 		void (null as ResumeSessionOptions | null);
 		void (null as ResumeSessionResult | null);
 		void (null as StdioChannel | null);
-		void (null as TimingMitigation | null);
 		void (null as UnknownSessionErrorData | null);
 
 		expect(true).toBe(true);
@@ -108,10 +103,10 @@ describe("root public API exports", () => {
 	test("re-exports nodeModulesMount helper from the root entrypoint", () => {
 		const mount = nodeModulesMount("/host/project/node_modules");
 		expect(mount.path).toBe("/root/node_modules");
-		expect(mount.readOnly).toBe(true);
+		expect(mount.readOnly).toBeUndefined();
 		expect(mount.plugin.id).toBe("host_dir");
 		expect(mount.plugin.config.hostPath).toBe("/host/project/node_modules");
-		expect(mount.plugin.config.readOnly).toBe(true);
+		expect(mount.plugin.config.readOnly).toBeUndefined();
 
 		const writable = nodeModulesMount("/host/project/node_modules", {
 			readOnly: false,

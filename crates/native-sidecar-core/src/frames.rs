@@ -1,3 +1,4 @@
+use crate::CapturedOutputResult;
 use agentos_sidecar_protocol::protocol::{
     AgentosProjectedAgent, AuthenticateRequest, AuthenticatedResponse, BoundUdpSnapshotResponse,
     EventFrame, EventPayload, LayerCreatedResponse, LayerSealedResponse, ListenerSnapshotResponse,
@@ -6,11 +7,11 @@ use agentos_sidecar_protocol::protocol::{
     ProcessSnapshotResponse, ProcessStartedResponse, ProjectedCommand, ProtocolSchema,
     ProvidedCommandsResponse, RejectedResponse, RequestFrame, RequestId, ResponseFrame,
     ResponsePayload, RootFilesystemBootstrappedResponse, RootFilesystemEntry,
-    RootFilesystemSnapshotResponse, SessionOpenedResponse, SignalHandlerRegistration,
-    SignalStateResponse, SnapshotExportedResponse, SnapshotImportedResponse, SocketStateEntry,
-    StdinClosedResponse, StdinWrittenResponse, StreamChannel, StructuredEvent,
-    VmConfiguredResponse, VmCreatedResponse, VmDisposedResponse, VmLifecycleEvent,
-    VmLifecycleState, ZombieTimerCountResponse, PROTOCOL_VERSION,
+    RootFilesystemSnapshotResponse, SessionClosedResponse, SessionOpenedResponse,
+    SignalHandlerRegistration, SignalStateResponse, SnapshotExportedResponse,
+    SnapshotImportedResponse, SocketStateEntry, StdinClosedResponse, StdinWrittenResponse,
+    StreamChannel, StructuredEvent, VmConfiguredResponse, VmCreatedResponse, VmDisposedResponse,
+    VmLifecycleEvent, VmLifecycleState, ZombieTimerCountResponse, PROTOCOL_VERSION,
 };
 use std::collections::HashMap;
 
@@ -111,6 +112,18 @@ pub fn session_opened_response(
     )
 }
 
+pub fn session_closed_response(
+    request: &RequestFrame,
+    session_id: impl Into<String>,
+) -> ResponseFrame {
+    respond(
+        request,
+        ResponsePayload::SessionClosed(SessionClosedResponse {
+            session_id: session_id.into(),
+        }),
+    )
+}
+
 pub fn respond(request: &RequestFrame, payload: ResponsePayload) -> ResponseFrame {
     response_with_ownership(request.request_id, request.ownership.clone(), payload)
 }
@@ -125,10 +138,21 @@ pub fn reject(request: &RequestFrame, code: &str, message: &str) -> ResponseFram
     )
 }
 
-pub fn vm_created_response(request: &RequestFrame, vm_id: String) -> ResponseFrame {
+pub fn vm_created_response(
+    request: &RequestFrame,
+    vm_id: String,
+    guest_cwd: String,
+    guest_env: std::collections::HashMap<String, String>,
+    process_route_retention: u64,
+) -> ResponseFrame {
     respond(
         request,
-        ResponsePayload::VmCreated(VmCreatedResponse { vm_id }),
+        ResponsePayload::VmCreated(VmCreatedResponse {
+            vm_id,
+            guest_cwd,
+            guest_env,
+            process_route_retention,
+        }),
     )
 }
 
@@ -154,7 +178,6 @@ pub fn root_filesystem_bootstrapped_response(
 pub fn vm_configured_response(
     request: &RequestFrame,
     applied_mounts: u32,
-    applied_software: u32,
     projected_commands: Vec<ProjectedCommand>,
     agents: Vec<AgentosProjectedAgent>,
 ) -> ResponseFrame {
@@ -162,7 +185,6 @@ pub fn vm_configured_response(
         request,
         ResponsePayload::VmConfigured(VmConfiguredResponse {
             applied_mounts,
-            applied_software,
             projected_commands,
             agents,
         }),
@@ -369,11 +391,27 @@ pub fn process_exited_event(
     process_id: &str,
     exit_code: i32,
 ) -> EventFrame {
+    process_exited_event_with_result(ownership, process_id, exit_code, None)
+}
+
+pub fn process_exited_event_with_result(
+    ownership: OwnershipScope,
+    process_id: &str,
+    exit_code: i32,
+    capture: Option<CapturedOutputResult>,
+) -> EventFrame {
+    let (stdout, stderr, error) = match capture {
+        Some(capture) => (Some(capture.stdout), Some(capture.stderr), capture.error),
+        None => (None, None, None),
+    };
     event(
         ownership,
         EventPayload::ProcessExited(ProcessExitedEvent {
             process_id: process_id.to_owned(),
             exit_code,
+            stdout,
+            stderr,
+            error,
         }),
     )
 }
@@ -510,6 +548,26 @@ mod tests {
     }
 
     #[test]
+    fn session_closed_response_preserves_connection_ownership() {
+        let request = RequestFrame::new(
+            9,
+            OwnershipScope::connection("conn-1"),
+            RequestPayload::CloseSession(agentos_sidecar_protocol::protocol::CloseSessionRequest {
+                session_id: String::from("session-1"),
+            }),
+        );
+        let response = session_closed_response(&request, "session-1");
+
+        assert_eq!(response.request_id, 9);
+        assert_eq!(response.ownership, OwnershipScope::connection("conn-1"));
+        assert!(matches!(
+            response.payload,
+            ResponsePayload::SessionClosed(SessionClosedResponse { session_id })
+                if session_id == "session-1"
+        ));
+    }
+
+    #[test]
     fn lifecycle_response_helpers_preserve_request_ownership() {
         let request = RequestFrame::new(
             43,
@@ -517,11 +575,25 @@ mod tests {
             RequestPayload::Authenticate(authenticate_request()),
         );
 
-        let created = vm_created_response(&request, String::from("vm-1"));
+        let created = vm_created_response(
+            &request,
+            String::from("vm-1"),
+            String::from("/workspace"),
+            std::collections::HashMap::from([(String::from("HOME"), String::from("/root"))]),
+            1_024,
+        );
         assert_eq!(created.request_id, request.request_id);
         assert_eq!(created.ownership, request.ownership);
         match created.payload {
-            ResponsePayload::VmCreated(created) => assert_eq!(created.vm_id, "vm-1"),
+            ResponsePayload::VmCreated(created) => {
+                assert_eq!(created.vm_id, "vm-1");
+                assert_eq!(created.guest_cwd, "/workspace");
+                assert_eq!(created.process_route_retention, 1_024);
+                assert_eq!(
+                    created.guest_env.get("HOME").map(String::as_str),
+                    Some("/root")
+                );
+            }
             other => panic!("unexpected response payload: {other:?}"),
         }
 
@@ -581,10 +653,9 @@ mod tests {
             RequestPayload::Authenticate(authenticate_request()),
         );
 
-        match vm_configured_response(&request, 2, 3, Vec::new(), Vec::new()).payload {
+        match vm_configured_response(&request, 2, Vec::new(), Vec::new()).payload {
             ResponsePayload::VmConfigured(configured) => {
                 assert_eq!(configured.applied_mounts, 2);
-                assert_eq!(configured.applied_software, 3);
                 assert!(configured.projected_commands.is_empty());
             }
             other => panic!("unexpected response payload: {other:?}"),

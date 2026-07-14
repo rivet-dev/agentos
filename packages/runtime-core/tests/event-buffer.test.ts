@@ -49,11 +49,10 @@ describe("event buffer helpers", () => {
 		expect(buffer.buffer(vmReadyEvent)).toBe(null);
 		expect(buffer.size).toBe(1);
 
-		const readyMatcher =
-			normalizeSidecarEventMatcher<LiveSidecarEventFrame>({
-				type: "vm_lifecycle",
-				state: "ready",
-			});
+		const readyMatcher = normalizeSidecarEventMatcher<LiveSidecarEventFrame>({
+			type: "vm_lifecycle",
+			state: "ready",
+		});
 		expect(buffer.take(readyMatcher)).toBe(vmReadyEvent);
 		expect(buffer.take(readyMatcher)).toBe(null);
 		expect(buffer.size).toBe(0);
@@ -150,17 +149,18 @@ describe("event buffer helpers", () => {
 	});
 
 	it("normalizes selector and function matchers", () => {
-		const selectorMatcher = normalizeSidecarEventMatcher<LiveSidecarEventFrame>({
-			type: "vm_lifecycle",
-			state: "ready",
-		});
+		const selectorMatcher = normalizeSidecarEventMatcher<LiveSidecarEventFrame>(
+			{
+				type: "vm_lifecycle",
+				state: "ready",
+			},
+		);
 		expect(selectorMatcher.matches(vmReadyEvent)).toBe(true);
 		expect(selectorMatcher.bufferKey).toBe("type:vm_lifecycle|state:ready");
 
-		const functionMatcher =
-			normalizeSidecarEventMatcher<LiveSidecarEventFrame>(
-				(event) => event.payload.type === "vm_lifecycle",
-			);
+		const functionMatcher = normalizeSidecarEventMatcher<LiveSidecarEventFrame>(
+			(event) => event.payload.type === "vm_lifecycle",
+		);
 		expect(functionMatcher.matches(vmReadyEvent)).toBe(true);
 		expect(functionMatcher.bufferKey).toBe(null);
 	});
@@ -190,6 +190,75 @@ describe("event buffer helpers", () => {
 			process_id: "proc",
 			channel: "stdout",
 			chunk: Buffer.from([1, 2, 3]),
+		});
+
+		expect(
+			fromGeneratedEventPayload({
+				tag: "ProcessExitedEvent",
+				val: {
+					processId: "proc",
+					exitCode: 137,
+					stdout: new TextEncoder().encode("partial stdout").buffer,
+					stderr: new TextEncoder().encode("partial stderr").buffer,
+					error: {
+						code: "ERR_CAPTURED_OUTPUT_LIMIT_EXCEEDED",
+						message: "captured output exceeded 8 bytes",
+					},
+				},
+			}),
+		).toEqual({
+			type: "process_exited",
+			process_id: "proc",
+			exit_code: 137,
+			stdout: Buffer.from("partial stdout"),
+			stderr: Buffer.from("partial stderr"),
+			error_code: "ERR_CAPTURED_OUTPUT_LIMIT_EXCEEDED",
+			error_message: "captured output exceeded 8 bytes",
+		});
+
+		expect(
+			fromGeneratedEventPayload({
+				tag: "CronDispatchEvent",
+				val: {
+					alarm: { generation: 7n, nextAlarmMs: 500n },
+					runs: [
+						{
+							runId: "run-1",
+							jobId: "job-1",
+							action: '{"type":"callback","callbackId":"route"}',
+						},
+					],
+					events: [
+						{
+							kind: protocol.CronEventKind.Complete,
+							jobId: "job-1",
+							timeMs: 400n,
+							durationMs: 25n,
+							error: null,
+						},
+					],
+				},
+			}),
+		).toEqual({
+			type: "cron_dispatch",
+			dispatch: {
+				alarm: { generation: 7, next_alarm_ms: 500 },
+				runs: [
+					{
+						run_id: "run-1",
+						job_id: "job-1",
+						action: { type: "callback", callbackId: "route" },
+					},
+				],
+				events: [
+					{
+						kind: "complete",
+						job_id: "job-1",
+						time_ms: 400,
+						duration_ms: 25,
+					},
+				],
+			},
 		});
 
 		expect(

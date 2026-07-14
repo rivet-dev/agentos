@@ -1,5 +1,4 @@
 export type StdioChannel = "stdout" | "stderr";
-export type TimingMitigation = "off" | "freeze";
 export type PermissionMode = "allow" | "deny";
 export type PermissionDecision = PermissionMode;
 
@@ -106,7 +105,7 @@ export interface ProcessInfo {
 	command: string;
 	args: string[];
 	cwd: string;
-	status: "running" | "exited";
+	status: "running" | "stopped" | "exited";
 	exitCode: number | null;
 	startTime: number;
 	exitTime: number | null;
@@ -116,18 +115,20 @@ export interface ManagedProcess {
 	pid: number;
 	writeStdin(data: Uint8Array | string): Promise<void>;
 	closeStdin(): Promise<void>;
-	kill(signal?: number): void;
+	kill(signal?: number): void | Promise<void>;
 	wait(): Promise<number>;
 	readonly exitCode: number | null;
 }
 
 export interface ShellHandle {
 	pid: number;
+	/** Sidecar-owned process correlation id. */
+	processId: string;
 	write(data: Uint8Array | string): Promise<void>;
 	/** Ordered PTY output containing stdout and stderr exactly once. */
 	onData: ((data: Uint8Array) => void) | null;
-	resize(cols: number, rows: number): void;
-	kill(signal?: number): void;
+	resize(cols: number, rows: number): void | Promise<void>;
+	kill(signal?: number): void | Promise<void>;
 	wait(): Promise<number>;
 }
 
@@ -142,21 +143,17 @@ export interface OpenShellOptions {
 	onStderr?: (data: Uint8Array) => void;
 }
 
-export interface ConnectTerminalOptions extends OpenShellOptions {
-	onData?: (data: Uint8Array) => void;
-}
-
-export interface ExecOptions {
+interface ProcessLaunchOptions {
 	env?: Record<string, string>;
 	cwd?: string;
-	stdin?: string | Uint8Array;
 	timeout?: number;
 	onStdout?: (data: Uint8Array) => void;
 	onStderr?: (data: Uint8Array) => void;
+}
+
+export interface ExecOptions extends ProcessLaunchOptions {
+	stdin?: string | Uint8Array;
 	captureStdio?: boolean;
-	filePath?: string;
-	cpuTimeLimitMs?: number;
-	timingMitigation?: TimingMitigation;
 }
 
 export interface ExecResult {
@@ -165,27 +162,12 @@ export interface ExecResult {
 	stderr: string;
 }
 
-export interface RunResult<T = unknown> {
-	value?: T;
-	code: number;
-	errorMessage?: string;
-}
-
-export interface KernelSpawnOptions extends ExecOptions {
-	stdio?: "pipe" | "inherit";
-	stdinFd?: number;
-	stdoutFd?: number;
-	stderrFd?: number;
+export interface KernelSpawnOptions extends ProcessLaunchOptions {
 	streamStdin?: boolean;
 }
 
 export type KernelExecOptions = ExecOptions;
 export type KernelExecResult = ExecResult;
-export type StatInfo = VirtualStat;
-export type DirEntry = VirtualDirEntry;
-export type StdioEvent = { channel: StdioChannel; message: string };
-export type StdioHook = (event: StdioEvent) => void;
-
 export interface Permissions {
 	fs?: FsPermissions;
 	network?: NetworkPermissions;
@@ -193,119 +175,6 @@ export interface Permissions {
 	process?: ProcessPermissions;
 	env?: EnvPermissions;
 	binding?: BindingPermissions;
-}
-
-export interface ResourceBudgets {
-	maxOutputBytes?: number;
-	maxBridgeCalls?: number;
-	maxTimers?: number;
-	maxChildProcesses?: number;
-	maxHandles?: number;
-}
-
-export interface ProcessConfig {
-	cwd?: string;
-	env?: Record<string, string>;
-	argv?: string[];
-	stdinIsTTY?: boolean;
-	stdoutIsTTY?: boolean;
-	stderrIsTTY?: boolean;
-}
-
-export interface OSConfig {
-	homedir?: string;
-	tmpdir?: string;
-}
-
-export interface CommandExecutor {
-	spawn(
-		command: string,
-		args: string[],
-		options?: KernelSpawnOptions,
-	): ManagedProcess;
-}
-
-export interface NetworkAdapter {
-	fetch(
-		url: string,
-		options?: {
-			method?: string;
-			headers?: Record<string, string>;
-			body?: unknown;
-		},
-	): Promise<{
-		ok: boolean;
-		status: number;
-		statusText: string;
-		headers: Record<string, string>;
-		body: string;
-		url: string;
-		redirected: boolean;
-	}>;
-	dnsLookup(hostname: string): Promise<{
-		address?: string;
-		family?: number;
-		error?: string;
-		code?: string;
-	}>;
-	httpRequest(
-		url: string,
-		options?: {
-			method?: string;
-			headers?: Record<string, string>;
-			body?: unknown;
-		},
-	): Promise<{
-		status: number;
-		statusText: string;
-		headers: Record<string, string>;
-		body: string;
-		url: string;
-	}>;
-}
-
-export interface SystemDriver {
-	filesystem?: VirtualFileSystem;
-	network?: NetworkAdapter;
-	commandExecutor?: CommandExecutor;
-	permissions?: Permissions;
-	mounts: readonly NodeModulesMountConfig[];
-	runtime: {
-		process: ProcessConfig;
-		os: OSConfig;
-	};
-}
-
-export interface RuntimeDriverOptions {
-	system: SystemDriver;
-	runtime: {
-		process: ProcessConfig;
-		os: OSConfig;
-	};
-	memoryLimit?: number;
-	cpuTimeLimitMs?: number;
-	timingMitigation?: TimingMitigation;
-	onStdio?: StdioHook;
-	payloadLimits?: {
-		base64TransferBytes?: number;
-		jsonPayloadBytes?: number;
-	};
-	resourceBudgets?: ResourceBudgets;
-}
-
-export interface NodeRuntimeDriver {
-	exec(code: string, options?: ExecOptions): Promise<ExecResult>;
-	run<T = unknown>(code: string, filePath?: string): Promise<RunResult<T>>;
-	dispose(): void;
-	terminate?(): Promise<void>;
-	readonly network?: Pick<
-		NetworkAdapter,
-		"fetch" | "dnsLookup" | "httpRequest"
-	>;
-}
-
-export interface NodeRuntimeDriverFactory {
-	createRuntimeDriver(options: RuntimeDriverOptions): NodeRuntimeDriver;
 }
 
 export interface KernelInterface {
@@ -321,16 +190,14 @@ export interface KernelRecursiveDirEntry {
 }
 
 export interface Kernel extends KernelInterface {
-	mount(driver: KernelRuntimeDriver): Promise<void>;
 	dispose(): Promise<void>;
 	exec(command: string, options?: KernelExecOptions): Promise<KernelExecResult>;
 	spawn(
 		command: string,
 		args: string[],
 		options?: KernelSpawnOptions,
-	): ManagedProcess;
-	openShell(options?: OpenShellOptions): ShellHandle;
-	connectTerminal(options?: ConnectTerminalOptions): Promise<number>;
+	): Promise<ManagedProcess>;
+	openShell(options?: OpenShellOptions): Promise<ShellHandle>;
 	mountFs(
 		path: string,
 		fs: VirtualFileSystem,
@@ -339,7 +206,7 @@ export interface Kernel extends KernelInterface {
 	unmountFs(path: string): void | Promise<void>;
 	readFile(path: string): Promise<Uint8Array>;
 	writeFile(path: string, content: string | Uint8Array): Promise<void>;
-	mkdir(path: string): Promise<void>;
+	mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
 	readdir(path: string): Promise<string[]>;
 	readdirRecursive(
 		path: string,
@@ -352,74 +219,7 @@ export interface Kernel extends KernelInterface {
 	removePath(path: string, options?: { recursive?: boolean }): Promise<void>;
 	rename(oldPath: string, newPath: string): Promise<void>;
 	movePath(oldPath: string, newPath: string): Promise<void>;
-	readonly commands: ReadonlyMap<string, string>;
 	readonly processes: ReadonlyMap<number, ProcessInfo>;
 	readonly env: Record<string, string>;
 	readonly cwd: string;
-	readonly socketTable: {
-		hasHostNetworkAdapter(): boolean;
-		findListener(_request: unknown): unknown | null;
-		findBoundUdp(_request: unknown): unknown | null;
-	};
-	readonly processTable: {
-		getSignalState(_pid: number): { handlers: Map<number, unknown> };
-	};
-	readonly timerTable: Record<string, never>;
-	readonly zombieTimerCount: number;
-}
-
-export interface BindingTree {
-	[key: string]: BindingFunction | BindingTree;
-}
-
-export type BindingFunction = (...args: unknown[]) => unknown;
-
-export interface NodeModulesMountConfig {
-	path: string;
-	plugin: { id: "host_dir"; config: { hostPath: string; readOnly: boolean } };
-	readOnly: boolean;
-}
-
-export interface NodeDriverOptions {
-	filesystem?: VirtualFileSystem;
-	networkAdapter?: NetworkAdapter;
-	commandExecutor?: CommandExecutor;
-	permissions?: Permissions;
-	mounts?: readonly NodeModulesMountConfig[];
-	processConfig?: ProcessConfig;
-	osConfig?: OSConfig;
-}
-
-export interface DefaultNetworkAdapterOptions {
-	loopbackExemptPorts?: number[];
-}
-
-export interface NodeRuntimeOptions {
-	systemDriver?: SystemDriver;
-	runtimeDriverFactory?: NodeRuntimeDriverFactory;
-	permissions?: Partial<Permissions>;
-	memoryLimit?: number;
-	bindings?: BindingTree;
-	loopbackExemptPorts?: number[];
-}
-
-export type NodeRuntimeDriverFactoryOptions = Record<string, never>;
-export type NodeExecutionDriverOptions = RuntimeDriverOptions;
-
-export interface KernelRuntimeDriver {
-	readonly kind: "node" | "wasmvm";
-	readonly name: string;
-	readonly commands: string[];
-	readonly commandDirs?: string[];
-}
-
-export type DriverProcess = ManagedProcess;
-export type ProcessContext = Record<string, never>;
-
-export type PermissionTier = "full" | "read-write" | "read-only" | "isolated";
-
-export interface WasmVmRuntimeOptions {
-	wasmBinaryPath?: string;
-	commandDirs?: string[];
-	permissions?: Record<string, PermissionTier>;
 }

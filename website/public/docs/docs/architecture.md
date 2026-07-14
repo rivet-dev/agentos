@@ -167,7 +167,7 @@ An agent (such as [Pi](https://github.com/mariozechner/pi-coding-agent)) is just
 
 ### Permissions & approvals
 
-- **Two layers, different jobs.** The lower-level [permission policy](/docs/permissions) is enforced by the kernel on every guest syscall (nothing is allowed until you opt in). On top of that, [approvals](/docs/approvals) are about an agent asking before it uses a tool.
+- **Two layers, different jobs.** The lower-level [permission policy](/docs/permissions) is enforced by the kernel on every guest syscall. The sidecar resolves omitted top-level scopes to `allow`; pass explicit denies or rule sets when the workload needs restriction. On top of that, [approvals](/docs/approvals) are about an agent asking before it uses a tool.
 - **Human-in-the-loop or automatic.** Subscribe to `permissionRequest` and respond per request, or use a server-side hook to decide without a client round-trip.
 - **Blocks until answered.** If neither your hook nor your client responds, the agent waits rather than proceeding.
 

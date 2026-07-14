@@ -86,7 +86,7 @@ describe.skipIf(!existsSync(VIM_BINARY))("vim full-screen rendering (strict)", (
 		// vim as the PTY's top-level process. This faithfully reproduces the
 		// screen layout a real terminal (tmux) shows for `just shell` → `vim`:
 		// full-screen renders, but the status line lands on the wrong row.
-		const { shellId } = vm.openShell({
+		const { shellId } = await vm.openShell({
 			command: "vim",
 			args: ["-N", "-u", "NONE", "-i", "NONE", "-n", "/work/render.txt"],
 			cols: COLS,

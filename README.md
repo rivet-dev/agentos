@@ -15,7 +15,7 @@
 
 - **Runs inside your process**: No VMs to boot, no containers to pull. Agents start in milliseconds with minimal memory overhead.
 - **Embeds in your backend**: Agents call your functions directly via [bindings](https://agentos-sdk.dev/docs/bindings). No network hops, no complex auth between services.
-- **Granular security**: Deny-by-default permissions for filesystem, network, and process access. The same isolation technology trusted by browsers worldwide.
+- **Granular security**: Sidecar-enforced permissions for filesystem, network, process, environment, and bindings. Omitted permissions allow all VM capabilities; pass explicit denies or allowlists for untrusted workloads.
 - **Deploy anywhere**: Just an npm package. Works on your laptop, Rivet Cloud, Railway, Vercel, Kubernetes, or any container platform.
 - **Open source**: Apache 2.0 licensed. Self-host or use [Rivet Cloud](https://agentos-sdk.dev/docs/deployment) for managed infrastructure.
 
@@ -107,7 +107,7 @@ All benchmarks compare agentOS against the fastest/cheapest mainstream sandbox p
 ## Features
 
 ### Agents
-- **Multi-agent support**: Run built-in Pi, Claude Code, and OpenCode agents with a unified API, plus install registry command packages such as Codex as VM software
+- **Multi-agent support**: Run built-in Pi, Claude Code, Codex, and OpenCode agents with a unified API
 - **[Sessions via ACP](https://agentos-sdk.dev/docs/sessions)**: Create, manage, and resume agent sessions over the [Agent Communication Protocol](https://agentclientprotocol.com)
 - **Universal transcript format**: One transcript format across all agents for debugging, auditing, and comparison
 - **[Automatic persistence](https://agentos-sdk.dev/docs/persistence)**: Every conversation is saved and replayable without extra code
@@ -125,7 +125,7 @@ All benchmarks compare agentOS against the fastest/cheapest mainstream sandbox p
 - **[Authentication](https://agentos-sdk.dev/docs/authentication)**: Integrate with your existing auth model (API keys, OAuth, JWTs)
 
 ### Security
-- **[Deny-by-default permissions](https://agentos-sdk.dev/docs/permissions)**: Granular control over filesystem, network, process, and environment access
+- **[Sidecar-enforced permissions](https://agentos-sdk.dev/docs/permissions)**: Omitted scopes allow access; explicit policies restrict individual scopes and resources
 - **[Programmatic network control](https://agentos-sdk.dev/docs/networking)**: Allow, deny, or proxy any outbound connection
 - **[Resource limits](https://agentos-sdk.dev/docs/resource-limits)**: Set precise CPU and memory limits per agent
 - **[VM isolation](https://agentos-sdk.dev/docs/architecture)**: Each agent runs in its own VM with no shared state

@@ -10,11 +10,11 @@ agentOS is in beta and still undergoing security review. The security model desc
 
 agentOS is a sandbox: it runs **untrusted code safely on behalf of a trusted caller**. Every actor boots its own fully virtualized VM with a virtual filesystem, process table, socket table, pipes, PTYs, a permission policy, and managed language runtimes. Guest JavaScript executes in a V8 isolate, and every guest syscall is serviced by the kernel rather than the host. There are no host escapes: guest code cannot spawn a real host process, touch the real host filesystem, or open a real host network socket.
 
-## Deny by default
+## Sidecar-enforced permissions
 
-No syscalls are bound to the system by default. Everything is denied until explicitly opted in.
+The sidecar resolves omitted permissions to allow-all inside the VM. Callers running untrusted workloads should pass explicit denies or allowlists.
 
-- **Network access** is denied until you opt in with a `network` permission.
+- **Network operations** are allowed when the scope is omitted, but remain confined to the VM network and its configured egress controls.
 - **Filesystem mounts** expose nothing of the host until you configure them.
 - **Process spawning** runs only kernel-managed guest processes, never host processes.
 - **All other host capabilities** must be configured by the host before the VM can use them.
@@ -137,11 +137,11 @@ In every case the guest sees only the subtree you mount, and writes to read-only
 
 ## Permissions
 
-Permissions are the capability gate at the boundary. They merge over a secure default that denies the network and enables the filesystem, child processes, process info, and env. Because the merge is partial, you name only the scope you change.
+Permissions are the capability gate at the boundary. The sidecar resolves omitted permissions to allow-all before installing the policy in the kernel; a partial policy leaves omitted top-level scopes allowed. Permission does not create a host capability: filesystem and process access still address VM-owned resources unless the trusted host explicitly configures more.
 
 ```ts
-// Grant network egress; everything else keeps the secure defaults.
-permissions: { network: "allow" }
+// Restrict the allow-all omission default.
+permissions: { network: "deny" }
 ```
 
 A scope can be `"allow"`, `"deny"`, or a `{ default, rules }` policy that matches request patterns. Guest servers are reachable only over loopback inside the VM unless you exempt a port explicitly. See [Permissions](/docs/permissions) and [Networking](/docs/networking) for the full policy shape.

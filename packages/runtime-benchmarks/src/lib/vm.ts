@@ -1,30 +1,37 @@
-import { statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
-	NodeRuntime,
-	resolveNodeRuntimeSidecarBinary,
-	resolveNodeRuntimeCommandsDir,
-	SidecarProcess,
-	type HostDirectoryMount,
-	type NodeRuntimeCreateOptions,
-	type NodeRuntimeProcess,
-	type NodeRuntimeResourceSnapshot,
-	type SidecarSpawnOptions,
-	type VirtualDirEntry,
-} from "@rivet-dev/agentos-runtime-core";
+	AgentOs,
+	type AgentOsOptions,
+	type AgentOsSidecar,
+} from "@rivet-dev/agentos-core";
+import { resolvePublishedSidecarBinary } from "@rivet-dev/agentos-runtime-core/binary";
 import { hasNativeBaselineWasm, supportsWasmLayer } from "./layers.js";
 import type { BenchmarkOp, CommandBenchmarkOp } from "./layers.js";
 
 const NATIVE_BASELINE_WASM_COMMAND = "native-baseline";
 const NATIVE_BASELINE_WASM_PREWARM_DIR = "/mnt/native-baseline-wasm/prewarm";
+const DEFAULT_COMMANDS_DIR = fileURLToPath(
+	new URL("../../../runtime-core/commands/", import.meta.url),
+);
+const benchSidecarPids = new WeakMap<AgentOsSidecar, number>();
 
 export interface BenchVmOptions {
 	commandsDir?: string;
 	loopbackExemptPorts?: number[];
 	mounts?: HostDirectoryMount[];
-	permissions?: NodeRuntimeCreateOptions["permissions"];
+	permissions?: AgentOsOptions["permissions"];
 	wasmCommandDirs?: string[];
-	sidecar?: SidecarProcess;
+	sidecar?: AgentOsSidecar;
 }
+
+export interface HostDirectoryMount {
+	guestPath: string;
+	hostPath: string;
+	readOnly?: boolean;
+}
+
+export type BenchSidecar = AgentOsSidecar;
 
 export interface BenchVmProcess {
 	pid: number;
@@ -38,7 +45,6 @@ export interface BenchVm {
 	readFile(path: string): Promise<Uint8Array>;
 	readDir(path: string): Promise<string[]>;
 	readdir(path: string): Promise<string[]>;
-	readDirWithTypes(path: string): Promise<VirtualDirEntry[]>;
 	exec(
 		commandLine: string,
 		options?: {
@@ -77,7 +83,7 @@ export interface BenchVm {
 			onStdout?: (data: Uint8Array) => void;
 			onStderr?: (data: Uint8Array) => void;
 		},
-	): BenchVmProcess;
+	): Promise<BenchVmProcess>;
 	waitProcess(pid: number): Promise<number>;
 	execWasmCommand(
 		cmd: string,
@@ -90,7 +96,6 @@ export interface BenchVm {
 			onStderr?: (data: Uint8Array) => void;
 		},
 	): Promise<{ stdout: string; stderr: string; exitCode: number }>;
-	getResourceSnapshot(): Promise<NodeRuntimeResourceSnapshot>;
 	dispose(): Promise<void>;
 	sidecarPid(): number | null;
 }
@@ -104,115 +109,156 @@ export interface SidecarBinaryProvenance {
 }
 
 export async function createBenchVm(options: BenchVmOptions = {}): Promise<BenchVm> {
-	const runtime = await NodeRuntime.create({
-		permissions: {
-			fs: "allow",
-			network: "allow",
-			childProcess: "allow",
-			process: "allow",
-			env: "allow",
-			...options.permissions,
-		},
-		mounts: options.mounts,
-		commandsDir: options.commandsDir,
-		loopbackExemptPorts: options.loopbackExemptPorts,
-		wasmCommandDirs: options.wasmCommandDirs,
-		sidecar: options.sidecar,
+	const commandDirs = [
+		resolveBenchCommandsDir(options.commandsDir),
+		...(options.wasmCommandDirs ?? []),
+	];
+	const guestCommandDirs = commandDirs.map(
+		(_directory, index) => `/opt/agentos/benchmark-commands/${index}`,
+	);
+	const commandPaths = new Map<string, string>();
+	for (const [index, directory] of commandDirs.entries()) {
+		for (const name of readdirSync(directory)) {
+			if (!commandPaths.has(name)) {
+				commandPaths.set(name, `${guestCommandDirs[index]}/${name}`);
+			}
+		}
+	}
+	const sidecar = options.sidecar ?? (await AgentOs.createSidecar());
+	const ownsSidecar = options.sidecar === undefined;
+	const sidecarPidsBefore = findSidecarProcessIds();
+	const runtime = await AgentOs.create({
+		defaultSoftware: false,
+		...(options.permissions === undefined
+			? {}
+			: { permissions: options.permissions }),
+		...(options.loopbackExemptPorts === undefined
+			? {}
+			: { loopbackExemptPorts: options.loopbackExemptPorts }),
+		mounts: [
+			...(options.mounts ?? []).map((mount) => ({
+				path: mount.guestPath,
+				plugin: {
+					id: "host_dir" as const,
+					config: { hostPath: mount.hostPath },
+				},
+				...(mount.readOnly === undefined
+					? {}
+					: { readOnly: mount.readOnly }),
+			})),
+			...commandDirs.map((hostPath, index) => ({
+				path: guestCommandDirs[index],
+				plugin: {
+					id: "host_dir" as const,
+					config: { hostPath },
+				},
+				readOnly: true,
+			})),
+		],
+		sidecar: { kind: "explicit", handle: sidecar },
 		// Benchmark VM: opt in to the us-resolution guest clock so sub-ms guest
-		// samples are real instead of 1ms-floor artifacts. Never enable this for
-		// untrusted workloads (timing side channels); off by default everywhere.
-		jsRuntime: { highResolutionTime: true },
+		// samples are real instead of 1ms-floor artifacts.
+		highResolutionTime: true,
 	});
-	const processes = new Map<number, NodeRuntimeProcess>();
+	const sidecarPidsAfter = findSidecarProcessIds();
+	const newSidecarPids = sidecarPidsAfter.filter(
+		(pid) => !sidecarPidsBefore.includes(pid),
+	);
+	if (newSidecarPids.length === 1) {
+		benchSidecarPids.set(sidecar, newSidecarPids[0]);
+	}
+	const processIds = new Set<number>();
+	const commandPath = guestCommandDirs.join(":");
+	const withCommandPath = (env?: Record<string, string>) => ({
+		PATH: `${commandPath}:/opt/agentos/bin:/usr/local/bin:/usr/bin:/bin`,
+		...(env ?? {}),
+	});
 
 	return {
 		writeFile(path, content) {
 			return runtime.writeFile(path, content);
 		},
 		async mkdir(path, options = {}) {
-			const args = options.recursive ? ["-p", path] : [path];
-			const result = await runtime.execCommand("mkdir", args);
-			if (result.exitCode !== 0) {
-				throw new Error(`mkdir ${path} exited ${result.exitCode}\n${result.stderr}`);
-			}
+			await runtime.mkdir(path, options);
 		},
 		async delete(path, options = {}) {
-			const args = options.recursive ? ["-rf", path] : [path];
-			const result = await runtime.execCommand("rm", args);
-			if (result.exitCode !== 0) {
-				throw new Error(`rm ${path} exited ${result.exitCode}\n${result.stderr}`);
-			}
+			await runtime.delete(path, options);
 		},
 		readFile(path) {
 			return runtime.readFile(path);
 		},
 		readDir(path) {
-			return runtime.readDir(path);
+			return runtime.readdir(path);
 		},
 		readdir(path) {
-			return runtime.readDir(path);
-		},
-		readDirWithTypes(path) {
-			return runtime.readDirWithTypes(path);
+			return runtime.readdir(path);
 		},
 		exec(commandLine, execOptions = {}) {
-			return runtime.execCommand("sh", ["-c", commandLine], execOptions);
+			return runtime.exec(commandLine, {
+				...execOptions,
+				env: withCommandPath(execOptions.env),
+			});
 		},
 		execArgv(command, args, execOptions = {}) {
-			return runtime.execCommand(command, args, execOptions);
+			return runtime.execArgv(commandPaths.get(command) ?? command, args, {
+				...execOptions,
+				env: withCommandPath(execOptions.env),
+			});
 		},
 		async spawnNodeCapture(argsOrProgramPath, env, captureOptions = {}) {
 			const args =
 				typeof argsOrProgramPath === "string"
 					? [argsOrProgramPath]
 					: argsOrProgramPath;
-			return runtime.execCommand("node", args, {
-				env,
+			return runtime.execArgv("node", args, {
+				env: withCommandPath(env),
 				onStdout: captureOptions.onStdout,
 				onStderr: captureOptions.onStderr,
 			});
 		},
-	spawn(command, args, spawnOptions = {}) {
-			const proc = runtime.spawnCommand(command, args, {
-				env: spawnOptions.env,
+		async spawn(command, args, spawnOptions = {}) {
+			const proc = await runtime.spawn(commandPaths.get(command) ?? command, args, {
+				env: withCommandPath(spawnOptions.env),
 				cwd: spawnOptions.cwd,
 				onStdout: spawnOptions.onStdout,
 				onStderr: spawnOptions.onStderr,
 			});
-			processes.set(proc.pid, proc);
+			processIds.add(proc.pid);
 			return {
 				pid: proc.pid,
 				wait: async () => {
 					try {
-						return await proc.wait();
+						return await runtime.waitProcess(proc.pid);
 					} finally {
-						processes.delete(proc.pid);
+						processIds.delete(proc.pid);
 					}
 				},
 			};
 		},
 		async waitProcess(pid) {
-			const proc = processes.get(pid);
-			if (!proc) {
+			if (!processIds.has(pid)) {
 				throw new Error(`unknown benchmark process pid ${pid}`);
 			}
 			try {
-				return await proc.wait();
+				return await runtime.waitProcess(pid);
 			} finally {
-				processes.delete(pid);
+				processIds.delete(pid);
 			}
 		},
 		execWasmCommand(cmd, args, execOptions = {}) {
-			return runtime.execCommand(cmd, args, execOptions);
+			return runtime.execArgv(commandPaths.get(cmd) ?? cmd, args, {
+				...execOptions,
+				env: withCommandPath(execOptions.env),
+			});
 		},
-		getResourceSnapshot() {
-			return runtime.getResourceSnapshot();
-		},
-		dispose() {
-			return runtime.dispose();
+		async dispose() {
+			await runtime.dispose();
+			if (ownsSidecar) {
+				await sidecar.dispose();
+			}
 		},
 		sidecarPid() {
-			return sidecarPidFromRuntime(runtime);
+			return benchSidecarPids.get(sidecar) ?? null;
 		},
 	};
 }
@@ -262,19 +308,16 @@ export async function prewarmBenchVm(
 	}
 }
 
-export function createBenchSidecar(options: SidecarSpawnOptions = {}): SidecarProcess {
-	return SidecarProcess.spawn({
-		...options,
-		command: options.command ?? resolveNodeRuntimeSidecarBinary(),
-	});
+export function createBenchSidecar(): Promise<AgentOsSidecar> {
+	return AgentOs.createSidecar();
 }
 
 export function resolveBenchCommandsDir(explicit?: string): string {
-	return resolveNodeRuntimeCommandsDir(explicit);
+	return explicit ?? DEFAULT_COMMANDS_DIR;
 }
 
 export function resolveBenchSidecarProvenance(): SidecarBinaryProvenance {
-	const path = resolveNodeRuntimeSidecarBinary();
+	const path = resolvePublishedSidecarBinary();
 	const stat = statSync(path);
 	return {
 		path,
@@ -291,23 +334,20 @@ export function formatSidecarProvenance(
 	return `Sidecar binary: ${provenance.path} (${provenance.profile}, mtime ${provenance.mtimeIso}, size ${provenance.sizeBytes} bytes)`;
 }
 
-function sidecarPidFromRuntime(runtime: NodeRuntime): number | null {
-	const kernel = (runtime as unknown as {
-		kernel?: {
-			client?: {
-				child?: { pid?: number };
-				protocolClient?: {
-					child?: { pid?: number };
-					sidecarProcess?: { child?: { pid?: number } };
-				};
-			};
-		};
-	}).kernel;
-	const pid =
-		kernel?.client?.child?.pid ??
-		kernel?.client?.protocolClient?.child?.pid ??
-		kernel?.client?.protocolClient?.sidecarProcess?.child?.pid;
-	return typeof pid === "number" ? pid : null;
+function findSidecarProcessIds(): number[] {
+	const processIds: number[] = [];
+	for (const entry of readdirSync("/proc")) {
+		if (!/^\d+$/.test(entry)) continue;
+		try {
+			const name = readFileSync(`/proc/${entry}/comm`, "utf8").trim();
+			if (name === "agentos-sidecar" || name === "agentos-native-sidecar") {
+				processIds.push(Number(entry));
+			}
+		} catch {
+			// The process may exit between the /proc directory and comm reads.
+		}
+	}
+	return processIds.sort((left, right) => left - right);
 }
 
 function inferSidecarProfile(path: string): "debug" | "release" | "unknown" {

@@ -3,4 +3,4 @@ import type { RootFilesystemEntry } from "./RootFilesystemEntry.js";
 import type { RootFilesystemLowerDescriptor } from "./RootFilesystemLowerDescriptor.js";
 import type { RootFilesystemMode } from "./RootFilesystemMode.js";
 
-export type RootFilesystemConfig = { mode: RootFilesystemMode, disableDefaultBaseLayer: boolean, lowers: Array<RootFilesystemLowerDescriptor>, bootstrapEntries: Array<RootFilesystemEntry>, };
+export type RootFilesystemConfig = { mode?: RootFilesystemMode, disableDefaultBaseLayer?: boolean, lowers?: Array<RootFilesystemLowerDescriptor>, bootstrapEntries?: Array<RootFilesystemEntry>, };

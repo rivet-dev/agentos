@@ -316,7 +316,7 @@ async function runProbeCase(
 		const probePath = `/tmp/pi-sdk-boot-probe-${index}.mjs`;
 		await vm.writeFile(probePath, probe.script);
 
-		const { pid } = vm.spawn("node", [probePath], {
+		const { pid } = await vm.spawn("node", [probePath], {
 			env: PROBE_ENV,
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);

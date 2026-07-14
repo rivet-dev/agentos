@@ -1,43 +1,44 @@
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createTypeScriptTools } from "@rivet-dev/agentos-typescript";
-import {
-	allowAllFs,
-	createInMemoryFileSystem,
-	createKernel,
-	createNodeDriver,
-	createNodeRuntime,
-	createNodeRuntimeDriverFactory,
-	nodeModulesMount,
-	type NodeRuntimeDriverFactory,
-} from "@rivet-dev/agentos-core/internal/runtime-compat";
-import { describe, expect, it } from "vitest";
+import { AgentOs, nodeModulesMount } from "@rivet-dev/agentos-core";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const workspaceRoot = resolve(
 	fileURLToPath(new URL("../../..", import.meta.url)),
 );
-
-function createTools() {
-	const filesystem = createInMemoryFileSystem();
-	return {
-		filesystem,
-		tools: createTypeScriptTools({
-			systemDriver: createNodeDriver({
-				filesystem,
-				mounts: [nodeModulesMount(join(workspaceRoot, "node_modules"))],
-				permissions: allowAllFs,
-			}),
-			runtimeDriverFactory: createNodeRuntimeDriverFactory(),
-		}),
-	};
+const testSidecar = join(workspaceRoot, "target/debug/agentos-sidecar");
+if (!process.env.AGENTOS_SIDECAR_BIN && existsSync(testSidecar)) {
+	process.env.AGENTOS_SIDECAR_BIN = testSidecar;
 }
 
 describe("@rivet-dev/agentos-typescript", () => {
+	let vm: AgentOs;
+
+	beforeEach(async () => {
+		vm = await AgentOs.create({
+			defaultSoftware: false,
+			mounts: [nodeModulesMount(join(workspaceRoot, "node_modules"))],
+			limits: { jsRuntime: { v8HeapLimitMb: 256, cpuTimeLimitMs: 5_000 } },
+		});
+	});
+
+	afterEach(async () => {
+		await vm?.dispose();
+	});
+
+	function createTools(compilerSpecifier?: string) {
+		return createTypeScriptTools({
+			agentOs: vm,
+			...(compilerSpecifier === undefined ? {} : { compilerSpecifier }),
+		});
+	}
+
 	it("typechecks a project with node types from node_modules", async () => {
-		const { filesystem, tools } = createTools();
-		await filesystem.mkdir("/root");
-		await filesystem.mkdir("/root/src");
-		await filesystem.writeFile(
+		const tools = createTools();
+		await vm.mkdir("/root/src", { recursive: true });
+		await vm.writeFile(
 			"/root/tsconfig.json",
 			JSON.stringify({
 				compilerOptions: {
@@ -50,7 +51,7 @@ describe("@rivet-dev/agentos-typescript", () => {
 				include: ["src/**/*.ts"],
 			}),
 		);
-		await filesystem.writeFile(
+		await vm.writeFile(
 			"/root/src/index.ts",
 			'import { Buffer } from "node:buffer";\nexport const output: Buffer = Buffer.from("ok");\n',
 		);
@@ -64,10 +65,9 @@ describe("@rivet-dev/agentos-typescript", () => {
 	});
 
 	it("compiles a project into the virtual filesystem and the output executes", async () => {
-		const { filesystem, tools } = createTools();
-		await filesystem.mkdir("/root");
-		await filesystem.mkdir("/root/src");
-		await filesystem.writeFile(
+		const tools = createTools();
+		await vm.mkdir("/root/src", { recursive: true });
+		await vm.writeFile(
 			"/root/tsconfig.json",
 			JSON.stringify({
 				compilerOptions: {
@@ -78,7 +78,7 @@ describe("@rivet-dev/agentos-typescript", () => {
 				include: ["src/**/*.ts"],
 			}),
 		);
-		await filesystem.writeFile(
+		await vm.writeFile(
 			"/root/src/index.ts",
 			"export const value: number = 7;\n",
 		);
@@ -92,50 +92,23 @@ describe("@rivet-dev/agentos-typescript", () => {
 			emittedFiles: ["/root/dist/index.js"],
 		});
 		expect(compileResult.emittedFiles).toContain("/root/dist/index.js");
-		const emitted = await filesystem.readTextFile("/root/dist/index.js");
+		const emitted = new TextDecoder().decode(
+			await vm.readFile("/root/dist/index.js"),
+		);
 		expect(emitted).toContain("exports.value = 7");
 
-		const kernel = createKernel({
-			filesystem,
-			permissions: {
-				fs: allowAllFs,
-				childProcess: {
-					default: "deny",
-					rules: [{ mode: "allow", operations: ["*"], patterns: ["node"] }],
-				},
-			},
-			syncFilesystemOnDispose: false,
-		});
-		let stdout = "";
-		let stderr = "";
-		try {
-			await kernel.mount(createNodeRuntime());
-			const child = kernel.spawn(
-				"node",
-				[
-					"-e",
-					"const value = require('/root/dist/index.js').value; console.log(JSON.stringify({ value }));",
-				],
-				{
-					onStdout: (chunk) => {
-						stdout += Buffer.from(chunk).toString("utf8");
-					},
-					onStderr: (chunk) => {
-						stderr += Buffer.from(chunk).toString("utf8");
-					},
-				},
-			);
-			expect(await child.wait()).toBe(0);
-		} finally {
-			await kernel.dispose();
-		}
+		const executed = await vm.execArgv("node", [
+			"-e",
+			"const value = require('/root/dist/index.js').value; console.log(JSON.stringify({ value }));",
+		]);
 
-		expect(stderr).toBe("");
-		expect(JSON.parse(stdout)).toEqual({ value: 7 });
+		expect(executed.exitCode).toBe(0);
+		expect(executed.stderr).toBe("");
+		expect(JSON.parse(executed.stdout)).toEqual({ value: 7 });
 	});
 
 	it("typechecks a source string without mutating the filesystem", async () => {
-		const { tools } = createTools();
+		const tools = createTools();
 
 		const result = await tools.typecheckSource({
 			sourceText: "const value: string = 1;\n",
@@ -148,38 +121,89 @@ describe("@rivet-dev/agentos-typescript", () => {
 		).toBe(true);
 	});
 
-	it("uses a supplied runtime driver when one is available", async () => {
-		const filesystem = createInMemoryFileSystem();
-		let runs = 0;
-		let disposed = false;
-		const runtimeDriverFactory: NodeRuntimeDriverFactory = {
-			createRuntimeDriver: () => ({
-				exec: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
-				run: async () => {
-					runs += 1;
-					return {
-						code: 0,
-						value: {
-							ok: true as const,
-							result: {
-								success: true,
-								diagnostics: [],
-							},
+	it("uses stdin without compiler transport files and inherits the VM cwd", async () => {
+		const restrictedVm = await AgentOs.create({
+			defaultSoftware: false,
+			mounts: [nodeModulesMount(join(workspaceRoot, "node_modules"))],
+			permissions: {
+				fs: {
+					default: "allow",
+					rules: [
+						{
+							mode: "deny",
+							operations: ["write", "create_dir", "rm"],
+							paths: ["/tmp", "/tmp/**"],
 						},
-					};
+					],
 				},
-				dispose: () => {
-					disposed = true;
-				},
-			}),
-		};
-		const tools = createTypeScriptTools({
-			systemDriver: createNodeDriver({
-				filesystem,
-				permissions: allowAllFs,
-			}),
-			runtimeDriverFactory,
+			},
+			limits: { jsRuntime: { v8HeapLimitMb: 256, cpuTimeLimitMs: 5_000 } },
 		});
+
+		try {
+			const tools = createTypeScriptTools({ agentOs: restrictedVm });
+			const result = await tools.typecheckSource({
+				sourceText: "const value: string = 1;\n",
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.diagnostics).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						code: 2322,
+						filePath: "/workspace/__agentos_typescript_input__.ts",
+					}),
+				]),
+			);
+			expect(
+				(await restrictedVm.readdir("/tmp")).filter((name) =>
+					name.startsWith("agentos-typescript-"),
+				),
+			).toEqual([]);
+		} finally {
+			await restrictedVm.dispose();
+		}
+	});
+
+	it("resolves a relative project cwd once against the VM cwd", async () => {
+		const relativeVm = await AgentOs.create({
+			defaultSoftware: false,
+			mounts: [nodeModulesMount(join(workspaceRoot, "node_modules"))],
+			limits: { jsRuntime: { v8HeapLimitMb: 256, cpuTimeLimitMs: 5_000 } },
+		});
+
+		try {
+			await relativeVm.mkdir("/workspace/project/src", { recursive: true });
+			await relativeVm.writeFile(
+				"/workspace/project/tsconfig.json",
+				JSON.stringify({
+					compilerOptions: {
+						module: "commonjs",
+						target: "es2022",
+					},
+					include: ["src/**/*.ts"],
+				}),
+			);
+			await relativeVm.writeFile(
+				"/workspace/project/src/index.ts",
+				"export const value: number = 7;\n",
+			);
+
+			const tools = createTypeScriptTools({ agentOs: relativeVm });
+			await expect(tools.typecheckProject({ cwd: "project" })).resolves.toEqual(
+				{
+					success: true,
+					diagnostics: [],
+				},
+			);
+		} finally {
+			await relativeVm.dispose();
+		}
+	});
+
+	it("uses the caller-owned VM without temporary runner files", async () => {
+		const tools = createTools();
+		await vm.writeFile("/tmp/caller-owned.txt", "still here");
 
 		await expect(
 			tools.typecheckSource({
@@ -190,12 +214,18 @@ describe("@rivet-dev/agentos-typescript", () => {
 			success: true,
 			diagnostics: [],
 		});
-		expect(runs).toBe(1);
-		expect(disposed).toBe(true);
+		expect(
+			new TextDecoder().decode(await vm.readFile("/tmp/caller-owned.txt")),
+		).toBe("still here");
+		expect(
+			(await vm.readdir("/tmp")).filter((name) =>
+				name.startsWith("agentos-typescript-"),
+			),
+		).toEqual([]);
 	});
 
 	it("compiles a source string to JavaScript text", async () => {
-		const { tools } = createTools();
+		const tools = createTools();
 
 		const result = await tools.compileSource({
 			sourceText: "export const value: number = 3;\n",
@@ -212,15 +242,7 @@ describe("@rivet-dev/agentos-typescript", () => {
 	});
 
 	it("returns a diagnostic when the compiler module cannot be loaded", async () => {
-		const brokenTools = createTypeScriptTools({
-			systemDriver: createNodeDriver({
-				filesystem: createInMemoryFileSystem(),
-				mounts: [nodeModulesMount(join(workspaceRoot, "node_modules"))],
-				permissions: allowAllFs,
-			}),
-			runtimeDriverFactory: createNodeRuntimeDriverFactory(),
-			compilerSpecifier: "typescript-does-not-exist",
-		});
+		const brokenTools = createTools("typescript-does-not-exist");
 
 		const result = await brokenTools.typecheckSource({
 			sourceText: "export const value = 1;\n",

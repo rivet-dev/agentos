@@ -1,8 +1,0 @@
-{
-	"name": "project-matrix-zod-pass",
-	"private": true,
-	"type": "commonjs",
-	"dependencies": {
-		"zod": "3.24.2"
-	}
-}

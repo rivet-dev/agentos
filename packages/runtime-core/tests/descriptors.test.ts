@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
 	toGeneratedMountDescriptor,
-	toGeneratedProjectedModuleDescriptor,
+	toGeneratedPackageDescriptor,
 	toGeneratedSidecarPlacement,
-	toGeneratedSoftwareDescriptor,
 } from "../src/descriptors.js";
 
 describe("descriptors", () => {
@@ -49,24 +48,31 @@ describe("descriptors", () => {
 		});
 	});
 
-	it("maps software and projected module descriptors", () => {
+	it("preserves omitted mount defaults for sidecar normalization", () => {
 		expect(
-			toGeneratedSoftwareDescriptor({
-				package_name: "node",
-				root: "/software/node",
+			toGeneratedMountDescriptor({
+				guest_path: "/workspace",
+				plugin: { id: "js_bridge" },
 			}),
 		).toEqual({
-			packageName: "node",
-			root: "/software/node",
+			guestPath: "/workspace",
+			readOnly: null,
+			plugin: { id: "js_bridge", config: null },
 		});
-		expect(
-			toGeneratedProjectedModuleDescriptor({
-				package_name: "@acme/tool",
-				entrypoint: "dist/index.js",
-			}),
-		).toEqual({
-			packageName: "@acme/tool",
-			entrypoint: "dist/index.js",
+	});
+
+	it("forwards package paths or exact opaque package bytes without metadata", () => {
+		expect(toGeneratedPackageDescriptor({ path: "/packages/demo.aospkg" })).toEqual({
+			tag: "PackagePath",
+			val: { path: "/packages/demo.aospkg" },
 		});
+
+		const backing = new Uint8Array([99, 1, 2, 3, 88]);
+		const content = backing.subarray(1, 4);
+		const encoded = toGeneratedPackageDescriptor({ content });
+		expect(encoded.tag).toBe("PackageInline");
+		if (encoded.tag !== "PackageInline") throw new Error("expected inline package");
+		expect(new Uint8Array(encoded.val.content)).toEqual(new Uint8Array([1, 2, 3]));
+		expect(encoded.val.content.byteLength).toBe(3);
 	});
 });

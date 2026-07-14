@@ -78,17 +78,6 @@ pub const ACTION_CONTRACTS: &[ActionContract] = &[
             "deleteFile: (c: Ctx, path: string, options?: { recursive?: boolean }) => Promise<void>;",
     },
     ActionContract {
-        name: "writeFiles",
-        reply_shape: ReplyShape::Array,
-        ts_signature:
-            "writeFiles: ( c: Ctx, entries: { path: string; content: string | Uint8Array }[], ) => Promise<WriteFileResult[]>;",
-    },
-    ActionContract {
-        name: "readFiles",
-        reply_shape: ReplyShape::Array,
-        ts_signature: "readFiles: (c: Ctx, paths: string[]) => Promise<ReadFileResult[]>;",
-    },
-    ActionContract {
         name: "readdirRecursive",
         reply_shape: ReplyShape::Array,
         ts_signature: "readdirRecursive: (c: Ctx, path: string) => Promise<DirEntry[]>;",
@@ -127,11 +116,6 @@ pub const ACTION_CONTRACTS: &[ActionContract] = &[
         name: "allProcesses",
         reply_shape: ReplyShape::Array,
         ts_signature: "allProcesses: (c: Ctx) => Promise<ProcessInfo[]>;",
-    },
-    ActionContract {
-        name: "processTree",
-        reply_shape: ReplyShape::Array,
-        ts_signature: "processTree: (c: Ctx) => Promise<ProcessTreeNode[]>;",
     },
     ActionContract {
         name: "getProcess",
@@ -255,6 +239,11 @@ pub const ACTION_CONTRACTS: &[ActionContract] = &[
 #[allow(dead_code)]
 pub const EVENT_CONTRACTS: &[EventContract] = &[
     EventContract {
+        name: "streamError",
+        payload_shape: ReplyShape::Object(&["code", "id", "message", "scope", "skipped"]),
+        ts_signature: "streamError: StreamErrorPayload;",
+    },
+    EventContract {
         name: "sessionEvent",
         payload_shape: ReplyShape::Object(&["event", "sessionId"]),
         ts_signature: "sessionEvent: SessionEventPayload;",
@@ -367,7 +356,6 @@ const TYPE_IMPORTS: &[TsImport] = &[
             "ExecResult",
             "PermissionReply",
             "ProcessInfo",
-            "ProcessTreeNode",
             "SpawnedProcessInfo",
             "VirtualStat",
         ],
@@ -473,22 +461,6 @@ const DTO_INTERFACES: &[TsInterface] = &[
     TsInterface {
         name: "OpenShellResult",
         fields: &[field("shellId", "string")],
-    },
-    TsInterface {
-        name: "WriteFileResult",
-        fields: &[
-            field("path", "string"),
-            field("success", "boolean"),
-            optional_field("error", "string"),
-        ],
-    },
-    TsInterface {
-        name: "ReadFileResult",
-        fields: &[
-            field("path", "string"),
-            optional_field("content", "Uint8Array"),
-            optional_field("error", "string"),
-        ],
     },
     TsInterface {
         name: "MountInfo",

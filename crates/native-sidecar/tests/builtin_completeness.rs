@@ -387,7 +387,7 @@ fn run_guest_probe(entrypoint: &Path, arg: &str) -> Value {
         &vm_id,
         &process_id,
         GuestRuntimeKind::JavaScript,
-        entrypoint,
+        "/workspace/entry.mjs",
         vec![arg.to_owned()],
     );
 

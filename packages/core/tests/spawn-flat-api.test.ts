@@ -18,7 +18,7 @@ describe("flat spawn API", () => {
 			'process.stderr.write("err-data\\n"); process.exit(42);',
 		);
 
-		const { pid } = vm.spawn("node", ["/tmp/stderr-exit.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/stderr-exit.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
@@ -42,7 +42,7 @@ describe("flat spawn API", () => {
 			`process.stdin.on("data", (chunk) => process.stdout.write(chunk));`,
 		);
 
-		const { pid } = vm.spawn("node", ["/tmp/echo-stdin.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/echo-stdin.mjs"], {
 			streamStdin: true,
 			env: { HOME: "/home/agentos" },
 		});
@@ -63,11 +63,11 @@ describe("flat spawn API", () => {
 			});
 		});
 
-		vm.writeProcessStdin(pid, "hello from flat api\n");
+		await vm.writeProcessStdin(pid, "hello from flat api\n");
 
 		await stdoutReceived;
 
-		vm.killProcess(pid);
+		await vm.killProcess(pid);
 		await vm.waitProcess(pid);
 
 		expect(chunks.join("")).toContain(expectedOutput);

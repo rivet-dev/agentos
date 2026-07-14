@@ -1,9 +1,5 @@
 import { describe, expect, test } from "vitest";
 import { AgentOs, agentOsOptionsSchema } from "../src/index.js";
-import {
-	getSandboxDisposeHooks,
-	resolveSandboxOptions,
-} from "../src/sandbox.js";
 
 describe("AgentOsOptions validation", () => {
 	test("rejects unknown top-level options before booting a VM", async () => {
@@ -46,82 +42,57 @@ describe("AgentOsOptions validation", () => {
 		).toBe(true);
 	});
 
-	test("provider sandbox starts a client and owns disposal", async () => {
-		let disposed = false;
-		const client = {
-			baseUrl: "http://127.0.0.1:1234",
-			dispose: () => {
-				disposed = true;
-			},
-		} as never;
-
-		const options = await resolveSandboxOptions(
-			{
-				sandbox: {
-					provider: {
-						start: async () => client,
-					},
-				},
-			} as never,
-		);
-		expect(options).not.toHaveProperty("sandbox");
-		expect(options.mounts?.[0]?.path).toBe("/mnt/sandbox");
-		expect(options.toolKits?.[0]?.name).toBe("sandbox");
-
-		for (const hook of getSandboxDisposeHooks(options)) {
-			await hook();
-		}
-		expect(disposed).toBe(true);
+	test("preserves a positive VM aggregate captured-output budget", () => {
+		const parsed = agentOsOptionsSchema.parse({
+			limits: { resources: { maxCapturedOutputBytes: 2048 } },
+		});
+		expect(parsed.limits?.resources?.maxCapturedOutputBytes).toBe(2048);
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { resources: { maxCapturedOutputBytes: 0 } },
+			}).success,
+		).toBe(false);
 	});
 
-	test("advanced sandbox client leaves disposal manual by default", async () => {
-		const client = { baseUrl: "http://127.0.0.1:1234" } as never;
-		const options = await resolveSandboxOptions({
-			sandbox: {
-				client,
-				mountPath: "/work",
-			},
-		} as never);
-		expect(options.mounts?.[0]?.path).toBe("/work");
-		expect(getSandboxDisposeHooks(options)).toHaveLength(0);
+	test.each([
+		"stdinBufferLimitBytes",
+		"eventPayloadLimitBytes",
+		"v8IpcMaxFrameBytes",
+	])("rejects fixed executor bound limits.jsRuntime.%s", (field) => {
+		expect(
+			agentOsOptionsSchema.safeParse({
+				limits: { jsRuntime: { [field]: 1024 } },
+			}).success,
+		).toBe(false);
 	});
 
-	test("rejects removed sandbox mount and binding toggles", async () => {
-		const client = { baseUrl: "http://127.0.0.1:1234" } as never;
-		await expect(
-			resolveSandboxOptions(
-				{
-					sandbox: {
-						client,
-						mount: false,
-					} as never,
-				} as never,
-			),
-		).rejects.toThrow(/sandbox\.mount has been removed/);
+	test.each([undefined, null, false, 42, {}, { packagePath: 42 }])(
+		"rejects malformed software entry %# instead of dropping it",
+		(entry) => {
+			expect(
+				agentOsOptionsSchema.safeParse({ software: [entry] }).success,
+			).toBe(false);
+		},
+	);
 
-		await expect(
-			resolveSandboxOptions(
-				{
-					sandbox: {
-						client,
-						bindings: false,
-					} as never,
-				} as never,
-			),
-		).rejects.toThrow(/sandbox\.bindings has been removed/);
-	});
-
-	test("rejects old sandbox path option names", async () => {
-		const client = { baseUrl: "http://127.0.0.1:1234" } as never;
-		await expect(
-			resolveSandboxOptions(
-				{
-					sandbox: {
-						client,
-						basePath: "/app",
-					} as never,
-				} as never,
-			),
-		).rejects.toThrow(/sandbox\.basePath has been removed/);
+	test("accepts serializable software refs and meta-package arrays", () => {
+		expect(
+			agentOsOptionsSchema.safeParse({
+				software: [{ packagePath: "/packages/future.aospkg", future: true }],
+			}).success,
+		).toBe(true);
+		expect(
+			agentOsOptionsSchema.parse({
+				software: [
+					"/packages/local",
+					{ packagePath: "/packages/packed.aospkg" },
+					[{ packagePath: "/packages/meta.aospkg" }],
+				],
+			}).software,
+		).toEqual([
+			"/packages/local",
+			{ packagePath: "/packages/packed.aospkg" },
+			[{ packagePath: "/packages/meta.aospkg" }],
+		]);
 	});
 });

@@ -15,8 +15,10 @@ path = "src/main.rs"
 
 [dependencies]
 agentos-protocol = { workspace = true }
+agentos-sidecar-core = { workspace = true }
 serde_json = "1.0"
 serde_bare = "0.5"
+base64 = "0.22"
 agentos-native-sidecar = { workspace = true }
 tokio = { version = "1", features = ["sync", "time", "macros"] }
 tracing = "0.1"
@@ -26,4 +28,8 @@ tracing-appender = "0.2"
 
 [dev-dependencies]
 agentos-bridge = { workspace = true }
+agentos-native-sidecar-browser = { workspace = true }
+agentos-sidecar-browser = { workspace = true }
 agentos-vm-config = { workspace = true }
+tar = "0.4"
+vfs = { workspace = true }

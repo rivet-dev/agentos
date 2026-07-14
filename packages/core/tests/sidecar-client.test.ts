@@ -36,24 +36,19 @@ describe("AgentOsSidecarClient", () => {
 
 		const session = await client.createSession({
 			placement: { kind: "shared", pool: "default" },
-			metadata: { owner: "core-test" },
 		});
 		expect(session.describe()).toMatchObject({
 			sessionId: "id-1",
 			state: "ready",
 			placement: { kind: "shared", pool: "default" },
-			metadata: { owner: "core-test" },
 			vmIds: [],
 		});
 
-		const vm = await session.createVm({
-			metadata: { runtime: "javascript" },
-		});
+		const vm = await session.createVm();
 		expect(vm.describe()).toMatchObject({
 			vmId: "id-2",
 			sessionId: "id-1",
 			state: "ready",
-			metadata: { runtime: "javascript" },
 		});
 		expect(session.listVms()).toEqual([vm.describe()]);
 		expect(client.listSessions()).toEqual([session.describe()]);
@@ -76,7 +71,6 @@ describe("AgentOsSidecarClient", () => {
 				bootstrap: {
 					sessionId: "id-1",
 					placement: { kind: "shared", pool: "default" },
-					metadata: { owner: "core-test" },
 					signal: undefined,
 				},
 			},
@@ -85,7 +79,6 @@ describe("AgentOsSidecarClient", () => {
 				bootstrap: {
 					vmId: "id-2",
 					sessionId: "id-1",
-					metadata: { runtime: "javascript" },
 				},
 			},
 			{
@@ -138,5 +131,29 @@ describe("AgentOsSidecarClient", () => {
 			"dispose:id-1",
 			"dispose:id-2",
 		]);
+	});
+
+	it("retries client disposal after a session transport failure", async () => {
+		let attempts = 0;
+		const client = new AgentOsSidecarClient({
+			async createSessionTransport() {
+				return {
+					async dispose() {
+						attempts++;
+						if (attempts === 1) {
+							throw new Error("session close failed");
+						}
+					},
+				};
+			},
+		});
+		const session = await client.createSession();
+
+		await expect(client.dispose()).rejects.toThrow("session close failed");
+		expect(session.describe().state).toBe("failed");
+
+		await expect(client.dispose()).resolves.toBeUndefined();
+		expect(attempts).toBe(2);
+		expect(session.describe().state).toBe("disposed");
 	});
 });

@@ -1,8 +1,0 @@
-{
-  "name": "rivetkit-fixture-pass",
-  "private": true,
-  "type": "commonjs",
-  "dependencies": {
-    "rivetkit": "file:./vendor/rivetkit"
-  }
-}

@@ -11,11 +11,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
 import { afterEach, describe, expect, test } from "vitest";
-import {
-	NativeSidecarProcessClient,
-	serializeRootFilesystemForSidecar,
-} from "../src/sidecar/rpc-client.js";
-import { findCargoBinary, resolveCargoBinary } from "../src/sidecar/cargo.js";
+import { NativeSidecarProcessClient } from "../src/sidecar/rpc-client.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agentos-sidecar");
@@ -33,12 +29,15 @@ function createJavaScriptVmOptions(options: JavaScriptVmConfigOptions = {}) {
 	return {
 		runtime: "java_script" as const,
 		config: {
-			env: options.env ?? {},
-			rootFilesystem:
-				options.rootFilesystem ?? serializeRootFilesystemForSidecar(),
+			...(options.env !== undefined ? { env: options.env } : {}),
+			...(options.rootFilesystem !== undefined
+				? { rootFilesystem: options.rootFilesystem }
+				: {}),
 			permissions: options.permissions,
 			cwd: options.cwd,
-			loopbackExemptPorts: options.loopbackExemptPorts ?? [],
+			...(options.loopbackExemptPorts !== undefined
+				? { loopbackExemptPorts: options.loopbackExemptPorts }
+				: {}),
 			...(options.jsRuntime ? { jsRuntime: options.jsRuntime } : {}),
 		} satisfies CreateVmConfig,
 	};
@@ -53,25 +52,10 @@ function nodeBuiltinsConfig(...allowedBuiltins: string[]) {
 }
 
 function ensureSidecarBinaryReady(): void {
-	const cargoBinary = findCargoBinary();
-	if (cargoBinary) {
-		execFileSync(cargoBinary, ["build", "-q", "-p", "agentos-sidecar"], {
-			cwd: REPO_ROOT,
-			stdio: "pipe",
-		});
-		return;
-	}
-
-	if (!existsSync(SIDECAR_BINARY)) {
-		execFileSync(
-			resolveCargoBinary(),
-			["build", "-q", "-p", "agentos-sidecar"],
-			{
-				cwd: REPO_ROOT,
-				stdio: "pipe",
-			},
-		);
-	}
+	execFileSync(process.env.CARGO ?? "cargo", ["build", "-q", "-p", "agentos-sidecar"], {
+		cwd: REPO_ROOT,
+		stdio: "pipe",
+	});
 }
 
 async function waitFor<T>(
@@ -153,9 +137,9 @@ describe("native sidecar process client permissions", () => {
 				"    case 'create_vm':",
 				"      {",
 				"        const config = typeof frame.payload.config === 'string' ? JSON.parse(frame.payload.config) : frame.payload.config;",
-				"        captures.push({ type: frame.payload.type, permissions: config.permissions });",
+				"        captures.push({ type: frame.payload.type, permissions: config.permissions, has_env: Object.hasOwn(config, 'env'), has_root_filesystem: Object.hasOwn(config, 'rootFilesystem'), has_loopback_exempt_ports: Object.hasOwn(config, 'loopbackExemptPorts') });",
 				"      }",
-				"      respond(frame.request_id, frame.ownership, { type: 'vm_created', vm_id: 'vm-1' });",
+				"      respond(frame.request_id, frame.ownership, { type: 'vm_created', vm_id: 'vm-1', guest_cwd: '/workspace', guest_env: { HOME: '/root' } });",
 				"      flushCapture();",
 				"      break;",
 				"    case 'configure_vm':",
@@ -163,7 +147,8 @@ describe("native sidecar process client permissions", () => {
 				"      respond(frame.request_id, frame.ownership, {",
 				"        type: 'vm_configured',",
 				"        applied_mounts: 0,",
-				"        applied_software: 0,",
+				"        projected_commands: [],",
+				"        agents: [],",
 				"      });",
 				"      flushCapture();",
 				"      setTimeout(() => process.exit(0), 25);",
@@ -264,6 +249,9 @@ describe("native sidecar process client permissions", () => {
 							process?: unknown;
 							env?: unknown;
 						};
+						has_env?: boolean;
+						has_root_filesystem?: boolean;
+						has_loopback_exempt_ports?: boolean;
 					}>;
 				},
 				{ isReady: (value) => value !== null && value.length === 2 },
@@ -279,6 +267,9 @@ describe("native sidecar process client permissions", () => {
 						process: permissions.process,
 						env: permissions.env,
 					},
+					has_env: false,
+					has_root_filesystem: false,
+					has_loopback_exempt_ports: false,
 				},
 				{
 					type: "configure_vm",

@@ -258,7 +258,6 @@ const FS_ALLOW: &[&str] = &[
     // module docs for why `openat2` was removed.
     "crates/sidecar/src/filesystem.rs",
     "crates/sidecar/src/plugins/host_dir.rs",
-    "crates/sidecar/src/plugins/module_access.rs",
     // agentOS package projection: the sidecar is the host-side TCB that reads a
     // trusted, client-configured package's tar + `agentos-package.json` from the
     // host to build the read-only `/opt/agentos` granular mounts (no extraction,

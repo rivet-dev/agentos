@@ -157,7 +157,7 @@ try {
 	result.error = String(err?.stack || err);
 } finally {
 	try {
-		if (sessionId) vm?.closeSession(sessionId);
+		if (sessionId) await vm?.closeSession(sessionId);
 	} catch {}
 	try {
 		await vm?.dispose();

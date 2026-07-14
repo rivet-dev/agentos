@@ -1,19 +1,12 @@
-//! Filesystem methods + path guards + supporting types + the in-process [`VirtualFileSystem`] mount
-//! contract.
+//! Filesystem methods and supporting types.
 //!
-//! Ported from `packages/core/src/agent-os.ts` (fs methods + `_assertSafeAbsolutePath` /
-//! `_assertWritableAbsolutePath`), `runtime-compat.ts` (`VirtualStat`, `VirtualFileSystem`), and
+//! Ported from `packages/core/src/agent-os.ts` (fs methods), `runtime.ts` (`VirtualStat`), and
 //! `filesystem-snapshot.ts` (snapshot export types).
 //!
-//! Parity notes: every method runs the path guards first; `mkdir` recursive uses the WRITABLE guard,
-//! non-recursive uses the SAFE guard. `writeFile` does NOT create parents; `writeFiles` DOES. Batch
-//! methods NEVER reject (per-entry error strings). Snapshot wire format keeps octal-string `mode`
-//! and `utf8`/`base64` content verbatim.
-
-use std::sync::Arc;
+//! Snapshot wire format keeps octal-string `mode` and `utf8`/`base64` content verbatim. Path
+//! normalization, cwd resolution, and read-only policy belong to the sidecar/kernel.
 
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
@@ -79,35 +72,10 @@ pub enum DirEntryType {
     Symlink,
 }
 
-/// Options for `readdir_recursive`. `max_depth` None = unlimited, Some(0) = immediate children only;
-/// `exclude` matches basenames at any depth.
+/// Options for `readdir_recursive`. `max_depth` None = unlimited, Some(0) = immediate children only.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReaddirRecursiveOptions {
     pub max_depth: Option<u32>,
-    pub exclude: Vec<String>,
-}
-
-/// A batch write entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BatchWriteEntry {
-    pub path: String,
-    pub content: FileContent,
-}
-
-/// Result of a single batch write (never an `Err`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BatchWriteResult {
-    pub path: String,
-    pub success: bool,
-    pub error: Option<String>,
-}
-
-/// Result of a single batch read (never an `Err`). `content` is None on failure.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BatchReadResult {
-    pub path: String,
-    pub content: Option<Vec<u8>>,
-    pub error: Option<String>,
 }
 
 /// Options for `mkdir`.
@@ -120,12 +88,6 @@ pub struct MkdirOptions {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DeleteOptions {
     pub recursive: bool,
-}
-
-/// Options for `mount_fs`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MountFsOptions {
-    pub read_only: bool,
 }
 
 /// Stat result. 16 fields; `*_ms` time fields are `f64` (JS ms, possibly fractional).
@@ -154,17 +116,7 @@ pub struct VirtualStat {
     pub gid: u32,
 }
 
-/// A registered in-process mount: the live [`VirtualFileSystem`] driver plus the `read_only` flag
-/// forwarded from [`MountFsOptions`]. TS `mountFs` passes `{ readOnly }` through to
-/// `kernel.mountFs`, which enforces read-only mount semantics; the flag is retained here so the
-/// option is not structurally dropped before the mount-dispatch path consumes it.
-#[derive(Clone)]
-pub struct MountedFs {
-    pub driver: Arc<dyn VirtualFileSystem>,
-    pub read_only: bool,
-}
-
-/// A directory entry with a known type, returned by `read_dir_with_types` on the mount contract.
+/// A directory entry with a known type, returned by `read_dir_with_types`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VirtualDirEntry {
     pub name: String,
@@ -229,145 +181,10 @@ pub enum FilesystemEntryEncoding {
 }
 
 // ---------------------------------------------------------------------------
-// VirtualFileSystem mount contract (in-process trait object for mount_fs)
-// ---------------------------------------------------------------------------
-
-/// The 25-method mount backend contract. A `mount_fs` driver implements this trait; it is a live
-/// in-process object and cannot cross an RPC boundary.
-///
-/// TODO(parity: confirm exact method set/signatures against runtime-compat.ts before first impl).
-#[async_trait]
-pub trait VirtualFileSystem: Send + Sync {
-    async fn read_file(&self, path: &str) -> Result<Vec<u8>>;
-    async fn read_text_file(&self, path: &str) -> Result<String>;
-    async fn read_dir(&self, path: &str) -> Result<Vec<String>>;
-    async fn read_dir_with_types(&self, path: &str) -> Result<Vec<VirtualDirEntry>>;
-    async fn write_file(&self, path: &str, content: &[u8]) -> Result<()>;
-    async fn create_dir(&self, path: &str) -> Result<()>;
-    async fn mkdir(&self, path: &str, recursive: bool) -> Result<()>;
-    async fn exists(&self, path: &str) -> Result<bool>;
-    async fn stat(&self, path: &str) -> Result<VirtualStat>;
-    async fn lstat(&self, path: &str) -> Result<VirtualStat>;
-    async fn remove_file(&self, path: &str) -> Result<()>;
-    async fn remove_dir(&self, path: &str) -> Result<()>;
-    async fn rename(&self, from: &str, to: &str) -> Result<()>;
-    async fn realpath(&self, path: &str) -> Result<String>;
-    async fn symlink(&self, target: &str, path: &str) -> Result<()>;
-    async fn readlink(&self, path: &str) -> Result<String>;
-    async fn link(&self, existing: &str, new_path: &str) -> Result<()>;
-    async fn chmod(&self, path: &str, mode: u32) -> Result<()>;
-    async fn chown(&self, path: &str, uid: u32, gid: u32) -> Result<()>;
-    async fn utimes(&self, path: &str, atime_ms: f64, mtime_ms: f64) -> Result<()>;
-    async fn truncate(&self, path: &str, len: u64) -> Result<()>;
-    async fn pread(&self, path: &str, offset: u64, length: u64) -> Result<Vec<u8>>;
-    async fn pwrite(&self, path: &str, offset: u64, data: &[u8]) -> Result<u64>;
-}
-
-// ---------------------------------------------------------------------------
-// Path guards
-// ---------------------------------------------------------------------------
-
-impl AgentOs {
-    /// Posix-normalize a path the same way Node's `path.posix.normalize` does.
-    ///
-    /// Matches Node semantics: collapse `.`/`..` segments and duplicate separators, preserve a
-    /// trailing slash when present, keep a leading slash for absolute paths, and return `.` for an
-    /// empty result. Above-root `..` segments on an absolute path are discarded; on a relative path
-    /// they are retained.
-    pub(crate) fn posix_normalize(path: &str) -> String {
-        if path.is_empty() {
-            return String::from(".");
-        }
-
-        let is_absolute = path.starts_with('/');
-        let trailing_slash = path.ends_with('/');
-
-        let mut segments: Vec<&str> = Vec::new();
-        for part in path.split('/') {
-            match part {
-                "" | "." => {}
-                ".." => {
-                    match segments.last().copied() {
-                        Some(last) if last != ".." => {
-                            segments.pop();
-                        }
-                        Some(_) | None => {
-                            // Retain leading `..` only on relative paths; on absolute paths the
-                            // segment is silently discarded (cannot go above root).
-                            if !is_absolute {
-                                segments.push("..");
-                            }
-                        }
-                    }
-                }
-                other => segments.push(other),
-            }
-        }
-
-        let mut joined = segments.join("/");
-        if joined.is_empty() {
-            if is_absolute {
-                return String::from("/");
-            }
-            return String::from(".");
-        }
-
-        if trailing_slash {
-            joined.push('/');
-        }
-        if is_absolute {
-            let mut absolute = String::from("/");
-            absolute.push_str(&joined);
-            absolute
-        } else {
-            joined
-        }
-    }
-
-    /// Throws `PathNotAbsolute` if not absolute, `PathNotNormalized` if not in normalized form.
-    pub(crate) fn assert_safe_absolute_path(path: &str) -> std::result::Result<(), ClientError> {
-        if !path.starts_with('/') {
-            return Err(ClientError::PathNotAbsolute(path.to_string()));
-        }
-        if Self::posix_normalize(path) != path {
-            return Err(ClientError::PathNotNormalized(path.to_string()));
-        }
-        Ok(())
-    }
-
-    /// Runs the safe guard, then rejects writes to read-only paths.
-    pub(crate) fn assert_writable_absolute_path(
-        path: &str,
-    ) -> std::result::Result<(), ClientError> {
-        Self::assert_safe_absolute_path(path)?;
-        if path == "/proc"
-            || path.starts_with("/proc/")
-            || path == "/etc/agentos"
-            || path.starts_with("/etc/agentos/")
-        {
-            return Err(ClientError::PathReadOnly(path.to_string()));
-        }
-        Ok(())
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Internal helpers (guest filesystem RPC + path joins)
 // ---------------------------------------------------------------------------
 
 impl AgentOs {
-    /// Render a batch-method error the way the TypeScript `AgentOs` surfaces `err.message` into
-    /// `BatchWriteResult.error` / `BatchReadResult.error`. The error may be a bare [`ClientError`]
-    /// (path guards) or an [`anyhow::Error`] wrapping one (kernel RPC failures via
-    /// [`Self::guest_fs_call`]), so downcast to recover the exact TS message; otherwise fall back to
-    /// the anyhow chain string.
-    fn batch_error_message(err: &anyhow::Error) -> String {
-        match err.downcast_ref::<ClientError>() {
-            Some(client_error) => client_error.batch_message(),
-            None => err.to_string(),
-        }
-    }
-
     /// Build the VM-scoped ownership for guest filesystem RPCs.
     fn fs_vm_scope(&self) -> wire::OwnershipScope {
         wire::OwnershipScope::VmOwnership(wire::VmOwnership {
@@ -375,16 +192,6 @@ impl AgentOs {
             session_id: self.wire_session_id().to_string(),
             vm_id: self.vm_id().to_string(),
         })
-    }
-
-    /// Join a parent directory with a child basename the way the TS fs code does (special-casing the
-    /// root so it does not produce a leading `//`).
-    fn join_child(dir: &str, child: &str) -> String {
-        if dir == "/" {
-            format!("/{child}")
-        } else {
-            format!("{dir}/{child}")
-        }
     }
 
     /// Issue a single guest filesystem RPC and return the typed result, mapping a sidecar
@@ -425,7 +232,7 @@ impl AgentOs {
             target: None,
             content: None,
             encoding: None,
-            recursive: false,
+            recursive: None,
             max_depth: None,
             mode: None,
             uid: None,
@@ -461,9 +268,8 @@ impl AgentOs {
 
     // --- low-level kernel ops (each maps to one guest filesystem RPC) ---
 
-    /// Mirrors TS `decodeGuestFilesystemContent`: a missing `content` field is a hard error
-    /// (`sidecar returned no file content for <path>`, fail-by-default), `base64` is decoded, and
-    /// any other/absent encoding is treated as utf8 bytes.
+    /// Missing content or encoding is a malformed sidecar response. The sidecar always supplies
+    /// its selected utf8/base64 encoding for a read response.
     async fn kernel_read_file(&self, path: &str) -> Result<Vec<u8>> {
         let result = self
             .guest_fs_call(Self::fs_request(GuestFilesystemOperation::ReadFile, path))
@@ -471,11 +277,14 @@ impl AgentOs {
         let content = result
             .content
             .with_context(|| format!("sidecar returned no file content for {path}"))?;
-        match result.encoding {
-            Some(RootFilesystemEntryEncoding::Base64) => BASE64
+        match result
+            .encoding
+            .with_context(|| format!("sidecar returned no file encoding for {path}"))?
+        {
+            RootFilesystemEntryEncoding::Base64 => BASE64
                 .decode(content.as_bytes())
                 .context("decoding base64 file content"),
-            Some(RootFilesystemEntryEncoding::Utf8) | None => Ok(content.into_bytes()),
+            RootFilesystemEntryEncoding::Utf8 => Ok(content.into_bytes()),
         }
     }
 
@@ -497,14 +306,10 @@ impl AgentOs {
         Ok(())
     }
 
-    /// Single-level directory creation. Mirrors TS `kernel.mkdir(path)` (no options), which the
-    /// native client maps to the `create_dir` guest filesystem operation. This backs BOTH
-    /// `AgentOs::mkdir` (non-recursive) and every `_mkdirp` component, so it always emits
-    /// [`GuestFilesystemOperation::CreateDir`] (never `Mkdir`, which the native client reserves for
-    /// the recursive `kernel.mkdir(path, { recursive: true })` shape that this code path never uses).
-    async fn kernel_mkdir(&self, path: &str) -> Result<()> {
-        self.guest_fs_call(Self::fs_request(GuestFilesystemOperation::CreateDir, path))
-            .await?;
+    async fn kernel_mkdir(&self, path: &str, recursive: bool) -> Result<()> {
+        let mut request = Self::fs_request(GuestFilesystemOperation::Mkdir, path);
+        request.recursive = recursive.then_some(true);
+        self.guest_fs_call(request).await?;
         Ok(())
     }
 
@@ -512,23 +317,14 @@ impl AgentOs {
         let result = self
             .guest_fs_call(Self::fs_request(GuestFilesystemOperation::Exists, path))
             .await?;
-        Ok(result.exists.unwrap_or(false))
+        require_exists_payload(result.exists, path)
     }
 
-    async fn kernel_readdir(&self, path: &str) -> Result<Vec<String>> {
+    async fn kernel_readdir(&self, path: &str) -> Result<Vec<wire::GuestDirEntry>> {
         let result = self
             .guest_fs_call(Self::fs_request(GuestFilesystemOperation::ReadDir, path))
             .await?;
-        // secure-exec's READ_DIR now returns rich entries (`entries:
-        // list<GuestDirEntry>` with name + is_directory + is_symbolic_link);
-        // this name-only accessor projects the basenames. The richer fields back
-        // the typed [`Self::read_dir_with_types`] path.
-        Ok(result
-            .entries
-            .unwrap_or_default()
-            .into_iter()
-            .map(|entry| entry.name)
-            .collect())
+        require_entries_payload(result.entries, "directory", path)
     }
 
     async fn kernel_readdir_recursive(
@@ -539,7 +335,7 @@ impl AgentOs {
         let mut request = Self::fs_request(GuestFilesystemOperation::ReadDirRecursive, path);
         request.max_depth = max_depth;
         let result = self.guest_fs_call(request).await?;
-        Ok(result.entries.unwrap_or_default())
+        require_entries_payload(result.entries, "recursive directory", path)
     }
 
     async fn kernel_stat(&self, path: &str) -> Result<VirtualStat> {
@@ -550,17 +346,9 @@ impl AgentOs {
         Ok(Self::virtual_stat_from(stat))
     }
 
-    async fn kernel_lstat(&self, path: &str) -> Result<VirtualStat> {
-        let result = self
-            .guest_fs_call(Self::fs_request(GuestFilesystemOperation::Lstat, path))
-            .await?;
-        let stat = result.stat.context("lstat response missing stat payload")?;
-        Ok(Self::virtual_stat_from(stat))
-    }
-
     async fn kernel_remove_path(&self, path: &str, recursive: bool) -> Result<()> {
         let mut request = Self::fs_request(GuestFilesystemOperation::Remove, path);
-        request.recursive = recursive;
+        request.recursive = recursive.then_some(true);
         self.guest_fs_call(request).await?;
         Ok(())
     }
@@ -568,24 +356,63 @@ impl AgentOs {
     async fn kernel_move_path(&self, from: &str, to: &str) -> Result<()> {
         let mut request = Self::fs_request(GuestFilesystemOperation::Move, from);
         request.destination_path = Some(to.to_string());
-        request.recursive = true;
         self.guest_fs_call(request).await?;
         Ok(())
     }
+}
 
-    /// Recursively create directories (`mkdir -p`). Uses the WRITABLE guard, then walks each path
-    /// component and creates the ones that do not yet exist (mirrors TS `_mkdirp`).
-    async fn mkdirp(&self, path: &str) -> Result<()> {
-        Self::assert_writable_absolute_path(path)?;
-        let mut current = String::new();
-        for part in path.split('/').filter(|p| !p.is_empty()) {
-            current.push('/');
-            current.push_str(part);
-            if !self.kernel_exists(&current).await? {
-                self.kernel_mkdir(&current).await?;
-            }
-        }
-        Ok(())
+fn require_exists_payload(value: Option<bool>, path: &str) -> Result<bool> {
+    value.with_context(|| format!("sidecar returned no exists result for {path}"))
+}
+
+fn require_entries_payload(
+    value: Option<Vec<wire::GuestDirEntry>>,
+    operation: &str,
+    path: &str,
+) -> Result<Vec<wire::GuestDirEntry>> {
+    value.with_context(|| format!("sidecar returned no {operation} entries for {path}"))
+}
+
+#[allow(clippy::items_after_test_module)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_response_does_not_invent_missing_linux_metadata() {
+        let error = AgentOs::snapshot_entry_from(RootFilesystemEntry {
+            path: String::from("/workspace/file.txt"),
+            kind: RootFilesystemEntryKind::File,
+            mode: None,
+            uid: Some(501),
+            gid: Some(20),
+            content: Some(String::from("hello")),
+            encoding: Some(RootFilesystemEntryEncoding::Utf8),
+            target: None,
+            executable: false,
+        })
+        .expect_err("missing sidecar metadata must fail");
+
+        assert_eq!(
+            error.to_string(),
+            "sidecar root snapshot for /workspace/file.txt is missing mode"
+        );
+    }
+
+    #[test]
+    fn filesystem_responses_do_not_invent_missing_results() {
+        assert_eq!(
+            require_exists_payload(None, "/missing")
+                .expect_err("missing exists payload must fail")
+                .to_string(),
+            "sidecar returned no exists result for /missing"
+        );
+        assert_eq!(
+            require_entries_payload(None, "directory", "/empty")
+                .expect_err("missing directory payload must fail")
+                .to_string(),
+            "sidecar returned no directory entries for /empty"
+        );
     }
 }
 
@@ -596,118 +423,46 @@ impl AgentOs {
 impl AgentOs {
     /// Read a file's raw bytes (no decode).
     pub async fn read_file(&self, path: &str) -> Result<Vec<u8>> {
-        Self::assert_safe_absolute_path(path)?;
         self.kernel_read_file(path).await
     }
 
-    /// Write a file. Writable-path guard; does NOT auto-create parents; `Text` -> UTF-8.
+    /// Write a file. Does not auto-create parents; `Text` becomes UTF-8.
     pub async fn write_file(&self, path: &str, content: impl Into<FileContent>) -> Result<()> {
-        Self::assert_writable_absolute_path(path)?;
         let content = content.into();
         self.kernel_write_file(path, &content).await
     }
 
-    /// Batch write. Sequential; never rejects (per-entry error); auto-creates parent dirs.
-    pub async fn write_files(&self, entries: Vec<BatchWriteEntry>) -> Vec<BatchWriteResult> {
-        let mut results = Vec::with_capacity(entries.len());
-        for entry in entries {
-            let outcome: Result<()> = async {
-                Self::assert_writable_absolute_path(&entry.path)?;
-                // Create parent directories as needed. TS slices off everything after the last `/`;
-                // for a path like `/foo` this yields an empty parent which is skipped.
-                if let Some(idx) = entry.path.rfind('/') {
-                    let parent = &entry.path[..idx];
-                    if !parent.is_empty() {
-                        self.mkdirp(parent).await?;
-                    }
-                }
-                self.kernel_write_file(&entry.path, &entry.content).await?;
-                Ok(())
-            }
-            .await;
-            match outcome {
-                Ok(()) => results.push(BatchWriteResult {
-                    path: entry.path,
-                    success: true,
-                    error: None,
-                }),
-                Err(err) => results.push(BatchWriteResult {
-                    path: entry.path,
-                    success: false,
-                    error: Some(Self::batch_error_message(&err)),
-                }),
-            }
-        }
-        results
-    }
-
-    /// Batch read. Sequential; never rejects; `content` None on failure.
-    pub async fn read_files(&self, paths: Vec<String>) -> Vec<BatchReadResult> {
-        let mut results = Vec::with_capacity(paths.len());
-        for path in paths {
-            let outcome: Result<Vec<u8>> = async {
-                Self::assert_safe_absolute_path(&path)?;
-                self.kernel_read_file(&path).await
-            }
-            .await;
-            match outcome {
-                Ok(content) => results.push(BatchReadResult {
-                    path,
-                    content: Some(content),
-                    error: None,
-                }),
-                Err(err) => results.push(BatchReadResult {
-                    path,
-                    content: None,
-                    error: Some(Self::batch_error_message(&err)),
-                }),
-            }
-        }
-        results
-    }
-
-    /// Make a directory. Recursive -> writable guard + mkdirp; non-recursive -> safe guard + single
-    /// level. The guard asymmetry is load-bearing.
+    /// Make a directory through the sidecar's native mkdir primitive.
     pub async fn mkdir(&self, path: &str, options: MkdirOptions) -> Result<()> {
-        if options.recursive {
-            return self.mkdirp(path).await;
-        }
-        Self::assert_writable_absolute_path(path)?;
-        self.kernel_mkdir(path).await
+        self.kernel_mkdir(path, options.recursive).await
     }
 
     /// List basenames (may include `.`/`..`).
     pub async fn readdir(&self, path: &str) -> Result<Vec<String>> {
-        Self::assert_safe_absolute_path(path)?;
-        self.kernel_readdir(path).await
+        Ok(self
+            .kernel_readdir(path)
+            .await?
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect())
     }
 
-    /// List directory entries with their resolved type, mirroring the TS `readDirWithTypes` used by
-    /// the ACP `fs/readDir` host request. `.`/`..` are filtered by the caller. A symlink is reported
-    /// as a symlink (lstat-style, not followed); other entries are stat'd as directory vs file.
+    /// List directory entries with the types returned by the sidecar/kernel.
     pub(crate) async fn acp_read_dir_with_types(&self, path: &str) -> Result<Vec<VirtualDirEntry>> {
-        Self::assert_safe_absolute_path(path)?;
-        let names = self.kernel_readdir(path).await?;
-        let mut entries = Vec::with_capacity(names.len());
-        for name in names {
-            if name == "." || name == ".." {
-                continue;
-            }
-            let full_path = Self::join_child(path, &name);
-            let stat = self.kernel_lstat(&full_path).await?;
-            entries.push(VirtualDirEntry {
-                name,
-                is_directory: stat.is_directory,
-                is_symbolic_link: stat.is_symbolic_link,
-            });
-        }
-        Ok(entries)
+        Ok(self
+            .kernel_readdir(path)
+            .await?
+            .into_iter()
+            .filter(|entry| entry.name != "." && entry.name != "..")
+            .map(|entry| VirtualDirEntry {
+                name: entry.name,
+                is_directory: entry.is_directory,
+                is_symbolic_link: entry.is_symbolic_link,
+            })
+            .collect())
     }
 
-    /// Typed directory listing: each child reported with its resolved type. secure-exec's native
-    /// `READ_DIR` returns basenames only (`entries: list<str>`), so the type of each entry is derived
-    /// with a per-child `lstat` (a symlink is reported as such, lstat-style, not followed). Goes
-    /// through the kernel, so mounts are listed correctly. `.`/`..` are filtered.
+    /// Typed directory listing. `.`/`..` are filtered.
     pub async fn read_dir_with_types(&self, path: &str) -> Result<Vec<VirtualDirEntry>> {
         self.acp_read_dir_with_types(path).await
     }
@@ -718,54 +473,32 @@ impl AgentOs {
         path: &str,
         options: ReaddirRecursiveOptions,
     ) -> Result<Vec<DirEntry>> {
-        Self::assert_safe_absolute_path(path)?;
-        let exclude: std::collections::HashSet<&str> =
-            options.exclude.iter().map(String::as_str).collect();
         let entries = self
             .kernel_readdir_recursive(path, options.max_depth)
             .await?;
-        let mut excluded_prefixes: Vec<String> = Vec::new();
-        let mut results: Vec<DirEntry> = Vec::new();
-
-        for entry in entries {
-            if excluded_prefixes.iter().any(|prefix| {
-                entry.path == *prefix || entry.path.starts_with(&format!("{prefix}/"))
-            }) {
-                continue;
-            }
-            if exclude.contains(entry.name.as_str()) {
-                if entry.is_directory && !entry.is_symbolic_link {
-                    excluded_prefixes.push(entry.path);
-                }
-                continue;
-            }
-
-            let entry_type = if entry.is_symbolic_link {
-                DirEntryType::Symlink
-            } else if entry.is_directory {
-                DirEntryType::Directory
-            } else {
-                DirEntryType::File
-            };
-            results.push(DirEntry {
+        Ok(entries
+            .into_iter()
+            .map(|entry| DirEntry {
                 path: entry.path,
-                entry_type,
+                entry_type: if entry.is_symbolic_link {
+                    DirEntryType::Symlink
+                } else if entry.is_directory {
+                    DirEntryType::Directory
+                } else {
+                    DirEntryType::File
+                },
                 size: entry.size,
-            });
-        }
-
-        Ok(results)
+            })
+            .collect())
     }
 
     /// Stat (follows symlinks).
     pub async fn stat(&self, path: &str) -> Result<VirtualStat> {
-        Self::assert_safe_absolute_path(path)?;
         self.kernel_stat(path).await
     }
 
-    /// Existence check. Safe-path guard still errors; missing path -> false.
+    /// Existence check. A missing path returns false.
     pub async fn exists(&self, path: &str) -> Result<bool> {
-        Self::assert_safe_absolute_path(path)?;
         self.kernel_exists(path).await
     }
 
@@ -804,80 +537,51 @@ impl AgentOs {
         })
     }
 
-    /// Mount an in-process [`VirtualFileSystem`] driver. SYNC. Safe-path guard. The driver is a live
-    /// trait object and cannot cross an RPC boundary, so it is registered (together with the
-    /// `read_only` flag, mirroring TS `kernel.mountFs({ readOnly })`) in the in-process mount table
-    /// keyed by its normalized guest path.
-    pub fn mount_fs(
-        &self,
-        path: &str,
-        driver: Arc<dyn VirtualFileSystem>,
-        options: MountFsOptions,
-    ) -> std::result::Result<(), ClientError> {
-        Self::assert_safe_absolute_path(path)?;
-        let _ = self.inner().in_process_mounts.insert(
-            path.to_string(),
-            MountedFs {
-                driver,
-                read_only: options.read_only,
-            },
-        );
-        Ok(())
-    }
-
-    /// Unmount a previously mounted path. SYNC.
-    pub fn unmount_fs(&self, path: &str) -> std::result::Result<(), ClientError> {
-        Self::assert_safe_absolute_path(path)?;
-        self.inner().in_process_mounts.remove(path);
-        Ok(())
-    }
-
     /// Move a path through the sidecar primitive. The kernel attempts rename first, then falls back
     /// to recursive copy+remove on EXDEV.
     pub async fn move_path(&self, from: &str, to: &str) -> Result<()> {
-        Self::assert_writable_absolute_path(from)?;
-        Self::assert_writable_absolute_path(to)?;
         self.kernel_move_path(from, to).await
     }
 
     /// Delete a path through the sidecar primitive. Non-recursive directory deletes preserve
     /// ENOTEMPTY semantics.
     pub async fn delete(&self, path: &str, options: DeleteOptions) -> Result<()> {
-        Self::assert_writable_absolute_path(path)?;
         self.kernel_remove_path(path, options.recursive).await
     }
 
     /// Convert a wire [`RootFilesystemEntry`] into the public snapshot [`FilesystemEntry`],
     /// preserving the octal-string `mode` and verbatim utf8/base64 `content`/`target`.
     ///
-    /// Mirrors TS `convertSidecarRootSnapshotEntries` + `toSnapshotModeString` exactly:
-    /// - `mode` falls back kind-dependently when absent (directory 0o755, symlink 0o777, file 0o644).
-    /// - file entries ALWAYS carry `content` (defaulting to `""`) and `encoding` (defaulting to
-    ///   `utf8`); directory/symlink entries carry neither.
-    /// - symlink entries REQUIRE a `target`; a missing target is a hard error (fail-by-default),
-    ///   matching the TS `throw`.
+    /// The sidecar snapshots live Linux state and therefore must supply mode/uid/gid for every
+    /// entry, content/encoding for files, and a target for symlinks. Missing response fields are a
+    /// malformed sidecar response, not a client-owned opportunity to invent filesystem defaults.
     fn snapshot_entry_from(entry: RootFilesystemEntry) -> Result<FilesystemEntry> {
+        let snapshot_path = entry.path.clone();
         let entry_type = match entry.kind {
             RootFilesystemEntryKind::File => DirEntryType::File,
             RootFilesystemEntryKind::Directory => DirEntryType::Directory,
             RootFilesystemEntryKind::Symlink => DirEntryType::Symlink,
         };
-        // Kind-dependent permission-bit fallback, then octal string with leading `0` masked to the
-        // permission bits, matching TS `toSnapshotModeString`.
-        let fallback_mode = match entry.kind {
-            RootFilesystemEntryKind::Directory => 0o755,
-            RootFilesystemEntryKind::Symlink => 0o777,
-            RootFilesystemEntryKind::File => 0o644,
-        };
-        let mode = format!("0{:o}", entry.mode.unwrap_or(fallback_mode) & 0o7777);
-        let uid = entry.uid.unwrap_or(0);
-        let gid = entry.gid.unwrap_or(0);
+        let mode = format!(
+            "0{:o}",
+            entry.mode.with_context(|| {
+                format!("sidecar root snapshot for {snapshot_path} is missing mode")
+            })? & 0o7777
+        );
+        let uid = entry
+            .uid
+            .with_context(|| format!("sidecar root snapshot for {snapshot_path} is missing uid"))?;
+        let gid = entry
+            .gid
+            .with_context(|| format!("sidecar root snapshot for {snapshot_path} is missing gid"))?;
 
         match entry.kind {
             RootFilesystemEntryKind::File => {
-                let encoding = match entry.encoding {
-                    Some(RootFilesystemEntryEncoding::Utf8) | None => FilesystemEntryEncoding::Utf8,
-                    Some(RootFilesystemEntryEncoding::Base64) => FilesystemEntryEncoding::Base64,
+                let encoding = match entry.encoding.with_context(|| {
+                    format!("sidecar root snapshot for {snapshot_path} is missing file encoding")
+                })? {
+                    RootFilesystemEntryEncoding::Utf8 => FilesystemEntryEncoding::Utf8,
+                    RootFilesystemEntryEncoding::Base64 => FilesystemEntryEncoding::Base64,
                 };
                 Ok(FilesystemEntry {
                     path: entry.path,
@@ -885,17 +589,16 @@ impl AgentOs {
                     mode,
                     uid,
                     gid,
-                    content: Some(entry.content.unwrap_or_default()),
+                    content: Some(entry.content.with_context(|| {
+                        format!("sidecar root snapshot for {snapshot_path} is missing file content")
+                    })?),
                     encoding: Some(encoding),
                     target: None,
                 })
             }
             RootFilesystemEntryKind::Symlink => {
                 let target = entry.target.with_context(|| {
-                    format!(
-                        "sidecar root snapshot for {} is missing a symlink target",
-                        entry.path
-                    )
+                    format!("sidecar root snapshot for {snapshot_path} is missing a symlink target")
                 })?;
                 Ok(FilesystemEntry {
                     path: entry.path,

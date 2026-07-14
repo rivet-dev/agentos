@@ -1,55 +1,63 @@
-import {
-	type LiveSidecarRequestPayload,
-	type LiveSidecarResponsePayload,
+import type {
+	LiveSidecarRequestPayload,
+	LiveSidecarResponsePayload,
 } from "./callbacks.js";
-import type { MountConfigJsonObject } from "./descriptors.js";
-import { type LiveSidecarEventSelector } from "./event-buffer.js";
+import type {
+	LivePackageDescriptor,
+	MountConfigJsonObject,
+} from "./descriptors.js";
+import type { LiveSidecarEventSelector } from "./event-buffer.js";
 import {
 	decodeGuestFilesystemContent,
 	encodeGuestFilesystemContent,
 	type LiveRootFilesystemEntry,
-	type LiveRootFilesystemEntryEncoding,
-	type LiveRootFilesystemLowerDescriptor,
 } from "./filesystem.js";
 import type { CreateVmConfig } from "./generated/CreateVmConfig.js";
-import type { SidecarProcessTransport } from "./sidecar-client.js";
-import { type LiveOwnershipScope } from "./ownership.js";
-import {
-	type LiveFsPermissionRule,
-	type LivePatternPermissionRule,
-	type LivePermissionMode,
-	type LivePermissionScope,
-	type LivePermissionsPolicy,
-	type LiveRulePermissions,
+import type { LiveOwnershipScope } from "./ownership.js";
+import type {
+	LiveFsPermissionRule,
+	LivePatternPermissionRule,
+	LivePermissionMode,
+	LivePermissionScope,
+	LivePermissionsPolicy,
+	LiveRulePermissions,
 } from "./permissions.js";
-import { SIDECAR_PROTOCOL_SCHEMA } from "./protocol-schema.js";
+import type {
+	LiveEventFrame,
+	LiveResponseFrame,
+	LiveSidecarRequestFrame,
+	LiveSidecarRequestHandler,
+	LiveSidecarResponseFrame,
+	ProtocolFramePayloadCodec,
+} from "./protocol-frames.js";
 import type {
 	LiveFilesystemOperation,
 	LiveGuestRuntimeKind,
 	LiveWasmPermissionTier,
 } from "./protocol-maps.js";
-import {
-	type LiveEventFrame,
-	type LiveSidecarRequestHandler,
-	type LiveRequestFrame,
-	type LiveResponseFrame,
-	type LiveSidecarRequestFrame,
-	type LiveSidecarResponseFrame,
-	type ProtocolFramePayloadCodec,
-} from "./protocol-frames.js";
-import { type LiveRequestPayload } from "./request-payloads.js";
-import type { LiveGuestDirEntry } from "./response-payloads.js";
-import {
-	type LiveGuestFilesystemStat,
-	type LiveProcessSnapshotEntry,
-	type LiveSocketStateEntry,
+import { SIDECAR_PROTOCOL_SCHEMA } from "./protocol-schema.js";
+import type { LiveRequestPayload } from "./request-payloads.js";
+import type {
+	LiveCronAlarm,
+	LiveCronEventRecord,
+	LiveCronJobEntry,
+	LiveCronRun,
+	LiveGuestDirEntry,
+} from "./response-payloads.js";
+import type { SidecarProcessTransport } from "./sidecar-client.js";
+import type {
+	LiveGuestFilesystemStat,
+	LiveProcessSnapshotEntry,
+	LiveSocketStateEntry,
 } from "./state.js";
+
+export { SidecarEventBufferOverflow } from "./event-buffer.js";
 export {
 	SidecarProcessError,
 	SidecarProcessExited,
+	SidecarRequestRejected,
 	SidecarSilenceTimeout,
 } from "./sidecar-errors.js";
-export { SidecarEventBufferOverflow } from "./event-buffer.js";
 // `Sidecar` is the public name for the native sidecar process client. The class
 // is `SidecarProcess` internally; consumers import it as `Sidecar` via the
 // `@rivet-dev/agentos-runtime-core/sidecar-client` subpath and the package root.
@@ -68,24 +76,8 @@ type GuestRuntimeKind = Extract<
 	"java_script" | "python" | "web_assembly"
 >;
 type WasmPermissionTier = LiveWasmPermissionTier;
-type RootFilesystemEntryEncoding = LiveRootFilesystemEntryEncoding;
-
-type RootFilesystemDescriptor = {
-	mode?: "ephemeral" | "read_only";
-	disableDefaultBaseLayer?: boolean;
-	lowers?: RootFilesystemLowerDescriptor[];
-	bootstrapEntries?: RootFilesystemEntry[];
-};
 
 export interface RootFilesystemEntry extends LiveRootFilesystemEntry {}
-
-export interface RootFilesystemLowerDescriptor {
-	kind: "snapshot" | "bundled_base_filesystem";
-	entries?: RootFilesystemEntry[];
-}
-
-type WireRootFilesystemLowerDescriptor = LiveRootFilesystemLowerDescriptor;
-type WireRootFilesystemEntry = LiveRootFilesystemEntry;
 
 export interface GuestFilesystemStat extends LiveGuestFilesystemStat {}
 
@@ -119,6 +111,8 @@ export interface SidecarProcessSnapshotEntry {
 	cwd: string;
 	status: "running" | "exited" | "stopped";
 	exitCode: number | null;
+	startTime: number;
+	exitTime: number | null;
 }
 
 export interface SidecarQueueSnapshotEntry {
@@ -164,6 +158,12 @@ export interface SidecarRegisteredHostCallbackDefinition {
 	examples?: SidecarRegisteredHostCallbackExample[];
 }
 
+export interface SidecarHostCallbackRegistration {
+	name: string;
+	description: string;
+	callbacks: Record<string, SidecarRegisteredHostCallbackDefinition>;
+}
+
 export interface ExtEnvelope {
 	namespace: string;
 	payload: Uint8Array;
@@ -174,8 +174,6 @@ type RequestPayload = LiveRequestPayload;
 export type SidecarRequestPayload = LiveSidecarRequestPayload;
 
 export type SidecarResponsePayload = LiveSidecarResponsePayload;
-
-type RequestFrame = LiveRequestFrame;
 
 type EventFrame = LiveEventFrame;
 
@@ -237,6 +235,19 @@ export interface AuthenticatedSession {
 
 export interface CreatedVm {
 	vmId: string;
+	guestCwd: string;
+	guestEnv: Record<string, string>;
+	processRouteRetention: number;
+}
+
+export interface InitializedVm extends CreatedVm {
+	appliedMounts: number;
+	projectedCommands: SidecarProjectedCommand[];
+	agents: SidecarProjectedAgent[];
+	hostCallbacks: Array<{
+		registration: string;
+		commandCount: number;
+	}>;
 }
 
 export interface SidecarSessionState {
@@ -258,13 +269,8 @@ export interface SidecarMountPluginDescriptor {
 
 export interface SidecarMountDescriptor {
 	guestPath: string;
-	readOnly: boolean;
+	readOnly?: boolean;
 	plugin: SidecarMountPluginDescriptor;
-}
-
-export interface SidecarSoftwareDescriptor {
-	packageName: string;
-	root: string;
 }
 
 export type SidecarPermissionMode = LivePermissionMode;
@@ -290,14 +296,7 @@ export interface SidecarPermissionsPolicy {
 
 type WirePermissionsPolicy = LivePermissionsPolicy;
 
-export interface SidecarProjectedModuleDescriptor {
-	packageName: string;
-	entrypoint: string;
-}
-
-export interface SidecarPackageDescriptor {
-	path: string;
-}
+export type SidecarPackageDescriptor = LivePackageDescriptor;
 
 export interface SidecarProjectedAgent {
 	id: string;
@@ -320,9 +319,46 @@ export interface SidecarPackageCommands {
 	commands: string[];
 }
 
+export type SidecarCronOverlap = "allow" | "skip" | "queue";
+
+export interface SidecarCronAlarm {
+	generation: number;
+	nextAlarmMs?: number;
+}
+
+export interface SidecarCronJobEntry {
+	id: string;
+	schedule: string;
+	action: unknown;
+	overlap: SidecarCronOverlap;
+	lastRunMs?: number;
+	nextRunMs?: number;
+	runCount: number;
+	running: boolean;
+}
+
+export interface SidecarCronRun {
+	runId: string;
+	jobId: string;
+	action: unknown;
+}
+
+export interface SidecarCronEventRecord {
+	kind: "fire" | "complete" | "error";
+	jobId: string;
+	timeMs: number;
+	durationMs?: number;
+	error?: string;
+}
+
+export interface SidecarCronDispatch {
+	alarm: SidecarCronAlarm;
+	runs: SidecarCronRun[];
+	events: SidecarCronEventRecord[];
+}
+
 export interface SidecarVmConfiguredResponse {
 	appliedMounts: number;
-	appliedSoftware: number;
 	projectedCommands: SidecarProjectedCommand[];
 	agents: SidecarProjectedAgent[];
 }
@@ -353,9 +389,7 @@ export class SidecarProcess {
 		return new SidecarProcess(protocolClient);
 	}
 
-	static spawn(
-		options: SidecarSpawnOptions = {},
-	): SidecarProcess {
+	static spawn(options: SidecarSpawnOptions = {}): SidecarProcess {
 		if (!sidecarProcessSpawnFactory) {
 			throw new Error(
 				"native sidecar spawn is not registered; import @rivet-dev/agentos-runtime-core/native-client before calling SidecarProcess.spawn, or use SidecarProcess.fromClient",
@@ -376,17 +410,24 @@ export class SidecarProcess {
 		return SidecarProcess.fromClient(protocolClient);
 	}
 
-	setSidecarRequestHandler(handler: SidecarRequestHandler | null): void {
-		this.protocolClient.setSidecarRequestHandler(handler);
+	registerSidecarRequestHandler(
+		ownership: OwnershipScope,
+		handler: SidecarRequestHandler,
+	): () => void {
+		return this.protocolClient.registerSidecarRequestHandler(
+			ownership,
+			handler,
+		);
 	}
 
-	onEvent(handler: (event: EventFrame) => void): () => void {
-		return this.protocolClient.onEvent(handler);
+	onEvent(
+		handler: (event: EventFrame) => void,
+		ownership?: OwnershipScope,
+	): () => void {
+		return this.protocolClient.onEvent(handler, ownership);
 	}
 
-	async authenticateAndOpenSession(
-		sessionMetadata: Record<string, string> = {},
-	): Promise<AuthenticatedSession> {
+	async authenticateAndOpenSession(): Promise<AuthenticatedSession> {
 		const authenticated = await this.sendRequest({
 			ownership: {
 				scope: "connection",
@@ -394,8 +435,8 @@ export class SidecarProcess {
 			},
 			payload: {
 				type: "authenticate",
-				client_name: "secure-exec-core-client",
-				auth_token: "secure-exec-core-client-token",
+				client_name: "agentos-client",
+				auth_token: "agentos-client",
 				protocol_version: SIDECAR_PROTOCOL_SCHEMA.version,
 				bridge_version: BRIDGE_CONTRACT_VERSION,
 			},
@@ -417,7 +458,6 @@ export class SidecarProcess {
 					kind: "shared",
 					pool: null,
 				},
-				metadata: sessionMetadata,
 			},
 		});
 		if (opened.payload.type !== "session_opened") {
@@ -459,6 +499,98 @@ export class SidecarProcess {
 
 		return {
 			vmId: response.payload.vm_id,
+			guestCwd: response.payload.guest_cwd,
+			guestEnv: { ...response.payload.guest_env },
+			processRouteRetention: response.payload.process_route_retention,
+		};
+	}
+
+	async closeSession(session: AuthenticatedSession): Promise<void> {
+		const response = await this.sendRequest({
+			ownership: {
+				scope: "connection",
+				connection_id: session.connectionId,
+			},
+			payload: {
+				type: "close_session",
+				session_id: session.sessionId,
+			},
+		});
+		if (response.payload.type !== "session_closed") {
+			throw new Error(
+				`unexpected close_session response: ${response.payload.type}`,
+			);
+		}
+		if (response.payload.session_id !== session.sessionId) {
+			throw new Error(
+				`close_session returned ${response.payload.session_id} for ${session.sessionId}`,
+			);
+		}
+	}
+
+	/**
+	 * Atomically create and configure a VM. Omitted optional fields retain the
+	 * sidecar's defaults; partial initialization is rolled back by the sidecar.
+	 */
+	async initializeVm(
+		session: AuthenticatedSession,
+		options: {
+			runtime: GuestRuntimeKind;
+			config: CreateVmConfig;
+			mounts?: SidecarMountDescriptor[];
+			packages?: SidecarPackageDescriptor[];
+			packagesMountAt?: string;
+			hostCallbacks?: SidecarHostCallbackRegistration[];
+		},
+	): Promise<InitializedVm> {
+		const response = await this.sendRequest({
+			ownership: {
+				scope: "session",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+			},
+			payload: {
+				type: "initialize_vm",
+				runtime: options.runtime,
+				config: options.config,
+				...(options.mounts === undefined
+					? {}
+					: { mounts: options.mounts.map(toWireMountDescriptor) }),
+				...(options.packages === undefined
+					? {}
+					: { packages: options.packages.map(toWirePackageDescriptor) }),
+				...(options.packagesMountAt === undefined
+					? {}
+					: { packages_mount_at: options.packagesMountAt }),
+				...(options.hostCallbacks === undefined
+					? {}
+					: {
+							host_callbacks: options.hostCallbacks.map(
+								toWireHostCallbackRegistration,
+							),
+						}),
+			},
+		});
+		if (response.payload.type !== "vm_initialized") {
+			throw new Error(
+				`unexpected initialize_vm response: ${response.payload.type}`,
+			);
+		}
+		return {
+			vmId: response.payload.vm_id,
+			guestCwd: response.payload.guest_cwd,
+			guestEnv: { ...response.payload.guest_env },
+			processRouteRetention: response.payload.process_route_retention,
+			appliedMounts: response.payload.applied_mounts,
+			projectedCommands: response.payload.projected_commands.map((command) => ({
+				name: command.name,
+				guestPath: command.guest_path,
+			})),
+			agents: response.payload.agents.map(fromWireProjectedAgent),
+			hostCallbacks: response.payload.host_callbacks.map((registration) => ({
+				registration: registration.registration,
+				commandCount: registration.command_count,
+			})),
 		};
 	}
 
@@ -466,6 +598,7 @@ export class SidecarProcess {
 		session: AuthenticatedSession,
 		vm: CreatedVm,
 		envelope: ExtEnvelope,
+		options?: { onResponse?: (envelope: ExtEnvelope) => void },
 	): Promise<ExtEnvelope> {
 		const response = await this.sendRequest({
 			ownership: {
@@ -478,6 +611,18 @@ export class SidecarProcess {
 				type: "ext",
 				envelope,
 			},
+			...(options?.onResponse
+				? {
+						onResponse: (frame: ResponseFrame) => {
+							if (frame.payload.type !== "ext_result") {
+								throw new Error(
+									`unexpected ext response: ${frame.payload.type}`,
+								);
+							}
+							options.onResponse?.(frame.payload.envelope);
+						},
+					}
+				: {}),
 		});
 		if (response.payload.type !== "ext_result") {
 			throw new Error(`unexpected ext response: ${response.payload.type}`);
@@ -490,17 +635,11 @@ export class SidecarProcess {
 		vm: CreatedVm,
 		options: {
 			mounts?: SidecarMountDescriptor[];
-			software?: SidecarSoftwareDescriptor[];
 			permissions?: SidecarPermissionsPolicy;
-			moduleAccessCwd?: string;
-			instructions?: string[];
-			projectedModules?: SidecarProjectedModuleDescriptor[];
 			commandPermissions?: Record<string, WasmPermissionTier>;
 			loopbackExemptPorts?: number[];
 			packages?: SidecarPackageDescriptor[];
 			packagesMountAt?: string;
-			bootstrapCommands?: string[];
-			toolShimCommands?: string[];
 		},
 	): Promise<SidecarVmConfiguredResponse> {
 		const response = await this.sendRequest({
@@ -512,24 +651,22 @@ export class SidecarProcess {
 			},
 			payload: {
 				type: "configure_vm",
-				mounts: (options.mounts ?? []).map(toWireMountDescriptor),
-				software: (options.software ?? []).map(toWireSoftwareDescriptor),
+				...(options.mounts !== undefined
+					? { mounts: options.mounts.map(toWireMountDescriptor) }
+					: {}),
 				permissions: toWirePermissionsPolicy(options.permissions),
-				module_access_cwd: options.moduleAccessCwd,
-				instructions: options.instructions ?? [],
-				projected_modules: (options.projectedModules ?? []).map(
-					toWireProjectedModuleDescriptor,
-				),
-				command_permissions: options.commandPermissions ?? {},
-				...(options.loopbackExemptPorts
+				...(options.commandPermissions !== undefined
+					? { command_permissions: options.commandPermissions }
+					: {}),
+				...(options.loopbackExemptPorts !== undefined
 					? { loopback_exempt_ports: options.loopbackExemptPorts }
 					: {}),
-				packages: (options.packages ?? []).map(toWirePackageDescriptor),
-				...(options.packagesMountAt
+				...(options.packages !== undefined
+					? { packages: options.packages.map(toWirePackageDescriptor) }
+					: {}),
+				...(options.packagesMountAt !== undefined
 					? { packages_mount_at: options.packagesMountAt }
 					: {}),
-				bootstrap_commands: options.bootstrapCommands ?? [],
-				tool_shim_commands: options.toolShimCommands ?? [],
 			},
 		});
 		if (response.payload.type !== "vm_configured") {
@@ -539,7 +676,6 @@ export class SidecarProcess {
 		}
 		return {
 			appliedMounts: response.payload.applied_mounts,
-			appliedSoftware: response.payload.applied_software,
 			projectedCommands: response.payload.projected_commands.map((command) => ({
 				name: command.name,
 				guestPath: command.guest_path,
@@ -609,16 +745,148 @@ export class SidecarProcess {
 		}));
 	}
 
+	async scheduleCron(
+		session: AuthenticatedSession,
+		vm: CreatedVm,
+		options: {
+			id?: string;
+			schedule: string;
+			action: unknown;
+			overlap?: SidecarCronOverlap;
+		},
+	): Promise<{ id: string; alarm: SidecarCronAlarm }> {
+		const response = await this.sendRequest({
+			ownership: vmOwnership(session, vm),
+			payload: { type: "schedule_cron", ...options },
+		});
+		if (response.payload.type !== "cron_scheduled") {
+			throw new Error(
+				`unexpected schedule_cron response: ${response.payload.type}`,
+			);
+		}
+		return {
+			id: response.payload.id,
+			alarm: fromWireCronAlarm(response.payload.alarm),
+		};
+	}
+
+	async listCronJobs(
+		session: AuthenticatedSession,
+		vm: CreatedVm,
+	): Promise<{ jobs: SidecarCronJobEntry[]; alarm: SidecarCronAlarm }> {
+		const response = await this.sendRequest({
+			ownership: vmOwnership(session, vm),
+			payload: { type: "list_cron_jobs" },
+		});
+		if (response.payload.type !== "cron_jobs") {
+			throw new Error(
+				`unexpected list_cron_jobs response: ${response.payload.type}`,
+			);
+		}
+		return {
+			jobs: response.payload.jobs.map(fromWireCronJob),
+			alarm: fromWireCronAlarm(response.payload.alarm),
+		};
+	}
+
+	async cancelCronJob(
+		session: AuthenticatedSession,
+		vm: CreatedVm,
+		id: string,
+	): Promise<{ id: string; cancelled: boolean; alarm: SidecarCronAlarm }> {
+		const response = await this.sendRequest({
+			ownership: vmOwnership(session, vm),
+			payload: { type: "cancel_cron_job", id },
+		});
+		if (response.payload.type !== "cron_cancelled") {
+			throw new Error(
+				`unexpected cancel_cron_job response: ${response.payload.type}`,
+			);
+		}
+		return {
+			id: response.payload.id,
+			cancelled: response.payload.cancelled,
+			alarm: fromWireCronAlarm(response.payload.alarm),
+		};
+	}
+
+	async wakeCron(
+		session: AuthenticatedSession,
+		vm: CreatedVm,
+		generation: number,
+	): Promise<SidecarCronDispatch> {
+		const response = await this.sendRequest({
+			ownership: vmOwnership(session, vm),
+			payload: { type: "wake_cron", generation },
+		});
+		if (response.payload.type !== "cron_wake") {
+			throw new Error(
+				`unexpected wake_cron response: ${response.payload.type}`,
+			);
+		}
+		return fromWireCronDispatch(response.payload);
+	}
+
+	async completeCronRun(
+		session: AuthenticatedSession,
+		vm: CreatedVm,
+		runId: string,
+		error?: string,
+	): Promise<SidecarCronDispatch> {
+		const response = await this.sendRequest({
+			ownership: vmOwnership(session, vm),
+			payload: {
+				type: "complete_cron_run",
+				run_id: runId,
+				...(error === undefined ? {} : { error }),
+			},
+		});
+		if (response.payload.type !== "cron_run_completed") {
+			throw new Error(
+				`unexpected complete_cron_run response: ${response.payload.type}`,
+			);
+		}
+		return fromWireCronDispatch(response.payload);
+	}
+
+	/** Store this value verbatim; its contents are owned by the sidecar. */
+	async exportCronState(
+		session: AuthenticatedSession,
+		vm: CreatedVm,
+	): Promise<string> {
+		const response = await this.sendRequest({
+			ownership: vmOwnership(session, vm),
+			payload: { type: "export_cron_state" },
+		});
+		if (response.payload.type !== "cron_state_exported") {
+			throw new Error(
+				`unexpected export_cron_state response: ${response.payload.type}`,
+			);
+		}
+		return response.payload.state;
+	}
+
+	async importCronState(
+		session: AuthenticatedSession,
+		vm: CreatedVm,
+		state: string,
+	): Promise<SidecarCronDispatch> {
+		const response = await this.sendRequest({
+			ownership: vmOwnership(session, vm),
+			payload: { type: "import_cron_state", state },
+		});
+		if (response.payload.type !== "cron_state_imported") {
+			throw new Error(
+				`unexpected import_cron_state response: ${response.payload.type}`,
+			);
+		}
+		return fromWireCronDispatch(response.payload);
+	}
+
 	async registerHostCallbacks(
 		session: AuthenticatedSession,
 		vm: CreatedVm,
-		registration: {
-			name: string;
-			description: string;
-			commandAliases?: string[];
-			registryCommandAliases?: string[];
-			callbacks: Record<string, SidecarRegisteredHostCallbackDefinition>;
-		},
+		registration: SidecarHostCallbackRegistration,
 	): Promise<{
 		registration: string;
 		commandCount: number;
@@ -632,32 +900,7 @@ export class SidecarProcess {
 			},
 			payload: {
 				type: "register_host_callbacks",
-				name: registration.name,
-				description: registration.description,
-				command_aliases: registration.commandAliases ?? [],
-				registry_command_aliases: registration.registryCommandAliases ?? [],
-				callbacks: Object.fromEntries(
-					Object.entries(registration.callbacks).map(
-						([callbackName, callback]) => [
-							callbackName,
-							{
-								description: callback.description,
-								input_schema: callback.inputSchema,
-								...(callback.timeoutMs !== undefined
-									? { timeout_ms: callback.timeoutMs }
-									: {}),
-								...(callback.examples && callback.examples.length > 0
-									? {
-											examples: callback.examples.map((example) => ({
-												description: example.description,
-												input: example.input,
-											})),
-										}
-									: {}),
-							},
-						],
-					),
-				),
+				...toWireHostCallbackRegistration(registration),
 			},
 		});
 		if (response.payload.type !== "host_callbacks_registered") {
@@ -875,6 +1118,23 @@ export class SidecarProcess {
 		return decodeGuestFilesystemContent(response);
 	}
 
+	async pwrite(
+		session: AuthenticatedSession,
+		vm: CreatedVm,
+		path: string,
+		offset: number,
+		data: Uint8Array,
+	): Promise<void> {
+		const encoded = encodeGuestFilesystemContent(data);
+		await this.guestFilesystemCall(session, vm, {
+			operation: "pwrite",
+			path,
+			offset,
+			content: encoded.content,
+			encoding: encoded.encoding,
+		});
+	}
+
 	async writeFile(
 		session: AuthenticatedSession,
 		vm: CreatedVm,
@@ -897,9 +1157,11 @@ export class SidecarProcess {
 		options?: { recursive?: boolean },
 	): Promise<void> {
 		await this.guestFilesystemCall(session, vm, {
-			operation: options?.recursive ? "mkdir" : "create_dir",
+			operation: "mkdir",
 			path,
-			recursive: options?.recursive ?? false,
+			...(options?.recursive === undefined
+				? {}
+				: { recursive: options.recursive }),
 		});
 	}
 
@@ -912,7 +1174,10 @@ export class SidecarProcess {
 			operation: "read_dir",
 			path,
 		});
-		return (response.entries ?? []).map((entry) => entry.name);
+		if (response.entries === undefined) {
+			throw new Error(`sidecar returned no directory entries for ${path}`);
+		}
+		return response.entries.map((entry) => entry.name);
 	}
 
 	async readdirRecursive(
@@ -926,7 +1191,12 @@ export class SidecarProcess {
 			path,
 			max_depth: options?.maxDepth,
 		});
-		return response.entries ?? [];
+		if (response.entries === undefined) {
+			throw new Error(
+				`sidecar returned no recursive directory entries for ${path}`,
+			);
+		}
+		return response.entries;
 	}
 
 	async exists(
@@ -938,7 +1208,10 @@ export class SidecarProcess {
 			operation: "exists",
 			path,
 		});
-		return response.exists ?? false;
+		if (response.exists === undefined) {
+			throw new Error(`sidecar returned no exists result for ${path}`);
+		}
+		return response.exists;
 	}
 
 	async stat(
@@ -1024,7 +1297,9 @@ export class SidecarProcess {
 		await this.guestFilesystemCall(session, vm, {
 			operation: "remove",
 			path,
-			recursive: options?.recursive ?? false,
+			...(options?.recursive === undefined
+				? {}
+				: { recursive: options.recursive }),
 		});
 	}
 
@@ -1039,7 +1314,9 @@ export class SidecarProcess {
 			operation: "copy",
 			path: fromPath,
 			destination_path: toPath,
-			recursive: options?.recursive ?? false,
+			...(options?.recursive === undefined
+				? {}
+				: { recursive: options.recursive }),
 		});
 	}
 
@@ -1053,7 +1330,6 @@ export class SidecarProcess {
 			operation: "move",
 			path: fromPath,
 			destination_path: toPath,
-			recursive: true,
 		});
 	}
 
@@ -1178,16 +1454,21 @@ export class SidecarProcess {
 		session: AuthenticatedSession,
 		vm: CreatedVm,
 		options: {
-			processId: string;
+			processId?: string;
 			command?: string;
+			shellCommand?: string;
 			runtime?: GuestRuntimeKind;
 			entrypoint?: string;
 			args?: string[];
 			env?: Record<string, string>;
 			cwd?: string;
 			wasmPermissionTier?: WasmPermissionTier;
+			pty?: { cols?: number; rows?: number };
+			keepStdinOpen?: boolean;
+			timeoutMs?: number;
+			captureOutput?: boolean;
 		},
-	): Promise<{ pid: number | null }> {
+	): Promise<{ processId: string; pid: number | null }> {
 		const response = await this.sendRequest({
 			ownership: {
 				scope: "vm",
@@ -1197,15 +1478,32 @@ export class SidecarProcess {
 			},
 			payload: {
 				type: "execute",
-				process_id: options.processId,
+				...(options.processId !== undefined
+					? { process_id: options.processId }
+					: {}),
 				args: options.args ?? [],
 				...(options.command ? { command: options.command } : {}),
+				...(options.shellCommand !== undefined
+					? { shell_command: options.shellCommand }
+					: {}),
 				...(options.runtime ? { runtime: options.runtime } : {}),
 				...(options.entrypoint ? { entrypoint: options.entrypoint } : {}),
-				...(options.env ? { env: options.env } : {}),
+				...(options.env && Object.keys(options.env).length > 0
+					? { env: options.env }
+					: {}),
 				...(options.cwd ? { cwd: options.cwd } : {}),
 				...(options.wasmPermissionTier
 					? { wasm_permission_tier: options.wasmPermissionTier }
+					: {}),
+				...(options.pty ? { pty: options.pty } : {}),
+				...(options.keepStdinOpen !== undefined
+					? { keep_stdin_open: options.keepStdinOpen }
+					: {}),
+				...(options.timeoutMs !== undefined
+					? { timeout_ms: options.timeoutMs }
+					: {}),
+				...(options.captureOutput !== undefined
+					? { capture_output: options.captureOutput }
 					: {}),
 			},
 		});
@@ -1213,6 +1511,7 @@ export class SidecarProcess {
 			throw new Error(`unexpected execute response: ${response.payload.type}`);
 		}
 		return {
+			processId: response.payload.process_id,
 			pid: response.payload.pid ?? null,
 		};
 	}
@@ -1233,7 +1532,8 @@ export class SidecarProcess {
 			payload: {
 				type: "write_stdin",
 				process_id: processId,
-				chunk: typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk,
+				chunk:
+					typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk,
 			},
 		});
 		if (response.payload.type !== "stdin_written") {
@@ -1265,7 +1565,9 @@ export class SidecarProcess {
 			},
 		});
 		if (response.payload.type !== "pty_resized") {
-			throw new Error(`unexpected resize_pty response: ${response.payload.type}`);
+			throw new Error(
+				`unexpected resize_pty response: ${response.payload.type}`,
+			);
 		}
 	}
 
@@ -1545,38 +1847,87 @@ export class SidecarProcess {
 	async hostFilesystemCall(
 		session: AuthenticatedSession,
 		vm: CreatedVm,
-		request: { operation: LiveFilesystemOperation; path: string; payloadSizeBytes: number },
+		request: {
+			operation: LiveFilesystemOperation;
+			path: string;
+			payloadSizeBytes: number;
+		},
 	): Promise<SidecarFilesystemResult> {
 		const response = await this.sendRequest({
-			ownership: { scope: "vm", connection_id: session.connectionId, session_id: session.sessionId, vm_id: vm.vmId },
-			payload: { type: "host_filesystem_call", operation: request.operation, path: request.path, payload_size_bytes: request.payloadSizeBytes },
+			ownership: {
+				scope: "vm",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+				vm_id: vm.vmId,
+			},
+			payload: {
+				type: "host_filesystem_call",
+				operation: request.operation,
+				path: request.path,
+				payload_size_bytes: request.payloadSizeBytes,
+			},
 		});
 		if (response.payload.type !== "filesystem_result") {
-			throw new Error(`unexpected host_filesystem_call response: ${response.payload.type}`);
+			throw new Error(
+				`unexpected host_filesystem_call response: ${response.payload.type}`,
+			);
 		}
-		return { operation: response.payload.operation, status: response.payload.status, payloadSizeBytes: response.payload.payload_size_bytes };
+		return {
+			operation: response.payload.operation,
+			status: response.payload.status,
+			payloadSizeBytes: response.payload.payload_size_bytes,
+		};
 	}
 
-	async persistenceLoad(session: AuthenticatedSession, key: string): Promise<SidecarPersistenceState> {
+	async persistenceLoad(
+		session: AuthenticatedSession,
+		key: string,
+	): Promise<SidecarPersistenceState> {
 		const response = await this.sendRequest({
-			ownership: { scope: "session", connection_id: session.connectionId, session_id: session.sessionId },
+			ownership: {
+				scope: "session",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+			},
 			payload: { type: "persistence_load", key },
 		});
 		if (response.payload.type !== "persistence_state") {
-			throw new Error(`unexpected persistence_load response: ${response.payload.type}`);
+			throw new Error(
+				`unexpected persistence_load response: ${response.payload.type}`,
+			);
 		}
-		return { key: response.payload.key, found: response.payload.found, payloadSizeBytes: response.payload.payload_size_bytes };
+		return {
+			key: response.payload.key,
+			found: response.payload.found,
+			payloadSizeBytes: response.payload.payload_size_bytes,
+		};
 	}
 
-	async persistenceFlush(session: AuthenticatedSession, request: { key: string; payloadSizeBytes: number }): Promise<SidecarPersistenceFlushed> {
+	async persistenceFlush(
+		session: AuthenticatedSession,
+		request: { key: string; payloadSizeBytes: number },
+	): Promise<SidecarPersistenceFlushed> {
 		const response = await this.sendRequest({
-			ownership: { scope: "session", connection_id: session.connectionId, session_id: session.sessionId },
-			payload: { type: "persistence_flush", key: request.key, payload_size_bytes: request.payloadSizeBytes },
+			ownership: {
+				scope: "session",
+				connection_id: session.connectionId,
+				session_id: session.sessionId,
+			},
+			payload: {
+				type: "persistence_flush",
+				key: request.key,
+				payload_size_bytes: request.payloadSizeBytes,
+			},
 		});
 		if (response.payload.type !== "persistence_flushed") {
-			throw new Error(`unexpected persistence_flush response: ${response.payload.type}`);
+			throw new Error(
+				`unexpected persistence_flush response: ${response.payload.type}`,
+			);
 		}
-		return { key: response.payload.key, committedBytes: response.payload.committed_bytes };
+		return {
+			key: response.payload.key,
+			committedBytes: response.payload.committed_bytes,
+		};
 	}
 
 	async waitForEvent(
@@ -1596,6 +1947,7 @@ export class SidecarProcess {
 	private async sendRequest(input: {
 		ownership: OwnershipScope;
 		payload: RequestPayload;
+		onResponse?: (response: ResponseFrame) => void;
 	}): Promise<ResponseFrame> {
 		return await this.protocolClient.sendRequest(input);
 	}
@@ -1657,107 +2009,31 @@ function toSidecarProcessSnapshotEntry(
 		cwd: entry.cwd,
 		status: entry.status,
 		exitCode: entry.exit_code ?? null,
-	};
-}
-
-function toWireRootFilesystemDescriptor(
-	descriptor: RootFilesystemDescriptor | undefined,
-): {
-	mode?: "ephemeral" | "read_only";
-	disable_default_base_layer?: boolean;
-	lowers?: WireRootFilesystemLowerDescriptor[];
-	bootstrap_entries?: Array<{
-		path: string;
-		kind: "file" | "directory" | "symlink";
-		mode?: number;
-		uid?: number;
-		gid?: number;
-		content?: string;
-		encoding?: RootFilesystemEntryEncoding;
-		target?: string;
-		executable?: boolean;
-	}>;
-} {
-	if (!descriptor) {
-		return {};
-	}
-
-	return {
-		...(descriptor.mode ? { mode: descriptor.mode } : {}),
-		...(descriptor.disableDefaultBaseLayer !== undefined
-			? { disable_default_base_layer: descriptor.disableDefaultBaseLayer }
-			: {}),
-		...(descriptor.lowers
-			? {
-					lowers: descriptor.lowers.map((lower) =>
-						lower.kind === "bundled_base_filesystem"
-							? { kind: "bundled_base_filesystem" }
-							: {
-									kind: "snapshot",
-									entries: (lower.entries ?? []).map(toWireRootFilesystemEntry),
-								},
-					),
-				}
-			: {}),
-		...(descriptor.bootstrapEntries
-			? {
-					bootstrap_entries: descriptor.bootstrapEntries.map(
-						toWireRootFilesystemEntry,
-					),
-				}
-			: {}),
-	};
-}
-
-function toWireRootFilesystemEntry(entry: RootFilesystemEntry): {
-	path: string;
-	kind: "file" | "directory" | "symlink";
-	mode?: number;
-	uid?: number;
-	gid?: number;
-	content?: string;
-	encoding?: RootFilesystemEntryEncoding;
-	target?: string;
-	executable?: boolean;
-} {
-	return {
-		path: entry.path,
-		kind: entry.kind,
-		...(entry.mode !== undefined ? { mode: entry.mode } : {}),
-		...(entry.uid !== undefined ? { uid: entry.uid } : {}),
-		...(entry.gid !== undefined ? { gid: entry.gid } : {}),
-		...(entry.content !== undefined ? { content: entry.content } : {}),
-		...(entry.encoding !== undefined ? { encoding: entry.encoding } : {}),
-		...(entry.target !== undefined ? { target: entry.target } : {}),
-		...(entry.executable !== undefined ? { executable: entry.executable } : {}),
+		startTime: Number(entry.start_time_ms),
+		exitTime:
+			entry.exit_time_ms === undefined ? null : Number(entry.exit_time_ms),
 	};
 }
 
 function toWireMountDescriptor(descriptor: SidecarMountDescriptor): {
 	guest_path: string;
-	read_only: boolean;
+	read_only?: boolean;
 	plugin: {
 		id: string;
-		config: MountConfigJsonObject;
+		config?: MountConfigJsonObject;
 	};
 } {
 	return {
 		guest_path: descriptor.guestPath,
-		read_only: descriptor.readOnly,
+		...(descriptor.readOnly === undefined
+			? {}
+			: { read_only: descriptor.readOnly }),
 		plugin: {
 			id: descriptor.plugin.id,
-			config: descriptor.plugin.config ?? {},
+			...(descriptor.plugin.config === undefined
+				? {}
+				: { config: descriptor.plugin.config }),
 		},
-	};
-}
-
-function toWireSoftwareDescriptor(descriptor: SidecarSoftwareDescriptor): {
-	package_name: string;
-	root: string;
-} {
-	return {
-		package_name: descriptor.packageName,
-		root: descriptor.root,
 	};
 }
 
@@ -1777,23 +2053,50 @@ function toWirePermissionsPolicy(
 	};
 }
 
-function toWireProjectedModuleDescriptor(
-	descriptor: SidecarProjectedModuleDescriptor,
-): {
-	package_name: string;
-	entrypoint: string;
-} {
-	return {
-		package_name: descriptor.packageName,
-		entrypoint: descriptor.entrypoint,
-	};
+function toWirePackageDescriptor(
+	descriptor: SidecarPackageDescriptor,
+): LivePackageDescriptor {
+	return descriptor;
 }
 
-function toWirePackageDescriptor(descriptor: SidecarPackageDescriptor): {
-	path: string;
+function toWireHostCallbackRegistration(
+	registration: SidecarHostCallbackRegistration,
+): {
+	name: string;
+	description: string;
+	callbacks: Record<
+		string,
+		{
+			description: string;
+			input_schema: unknown;
+			timeout_ms?: number;
+			examples?: Array<{ description: string; input: unknown }>;
+		}
+	>;
 } {
 	return {
-		path: descriptor.path,
+		name: registration.name,
+		description: registration.description,
+		callbacks: Object.fromEntries(
+			Object.entries(registration.callbacks).map(([callbackName, callback]) => [
+				callbackName,
+				{
+					description: callback.description,
+					input_schema: callback.inputSchema,
+					...(callback.timeoutMs === undefined
+						? {}
+						: { timeout_ms: callback.timeoutMs }),
+					...(callback.examples && callback.examples.length > 0
+						? {
+								examples: callback.examples.map((example) => ({
+									description: example.description,
+									input: example.input,
+								})),
+							}
+						: {}),
+				},
+			]),
+		),
 	};
 }
 
@@ -1806,5 +2109,67 @@ function fromWireProjectedAgent(agent: {
 		id: agent.id,
 		acpEntrypoint: agent.acp_entrypoint,
 		adapterEntrypoint: agent.adapter_entrypoint,
+	};
+}
+
+function vmOwnership(
+	session: AuthenticatedSession,
+	vm: CreatedVm,
+): LiveOwnershipScope {
+	return {
+		scope: "vm",
+		connection_id: session.connectionId,
+		session_id: session.sessionId,
+		vm_id: vm.vmId,
+	};
+}
+
+function fromWireCronAlarm(alarm: LiveCronAlarm): SidecarCronAlarm {
+	return {
+		generation: alarm.generation,
+		...(alarm.next_alarm_ms === undefined
+			? {}
+			: { nextAlarmMs: alarm.next_alarm_ms }),
+	};
+}
+
+function fromWireCronJob(job: LiveCronJobEntry): SidecarCronJobEntry {
+	return {
+		id: job.id,
+		schedule: job.schedule,
+		action: job.action,
+		overlap: job.overlap,
+		...(job.last_run_ms === undefined ? {} : { lastRunMs: job.last_run_ms }),
+		...(job.next_run_ms === undefined ? {} : { nextRunMs: job.next_run_ms }),
+		runCount: job.run_count,
+		running: job.running,
+	};
+}
+
+function fromWireCronRun(run: LiveCronRun): SidecarCronRun {
+	return { runId: run.run_id, jobId: run.job_id, action: run.action };
+}
+
+function fromWireCronEvent(event: LiveCronEventRecord): SidecarCronEventRecord {
+	return {
+		kind: event.kind,
+		jobId: event.job_id,
+		timeMs: event.time_ms,
+		...(event.duration_ms === undefined
+			? {}
+			: { durationMs: event.duration_ms }),
+		...(event.error === undefined ? {} : { error: event.error }),
+	};
+}
+
+function fromWireCronDispatch(value: {
+	alarm: LiveCronAlarm;
+	runs: LiveCronRun[];
+	events: LiveCronEventRecord[];
+}): SidecarCronDispatch {
+	return {
+		alarm: fromWireCronAlarm(value.alarm),
+		runs: value.runs.map(fromWireCronRun),
+		events: value.events.map(fromWireCronEvent),
 	};
 }

@@ -15,7 +15,6 @@ packages:
   - packages/runtime-core
   - packages/runtime-sidecar
   - packages/runtime-sidecar/npm/*
-  - packages/secure-exec
   - packages/secure-exec-example-ai-agent-type-check
   - packages/typescript
   - packages/shell

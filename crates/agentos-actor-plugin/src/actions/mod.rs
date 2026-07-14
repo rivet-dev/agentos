@@ -22,6 +22,7 @@ pub(crate) mod shell;
 use std::collections::HashMap;
 
 use agentos_client::AgentOs;
+use agentos_client::ClientError;
 use anyhow::{Context as _, Result};
 use rivet_actor_plugin_abi as abi;
 use serde::de::DeserializeOwned;
@@ -29,7 +30,7 @@ use serde::Serialize;
 use tokio::task::JoinHandle;
 
 use crate::host_ctx::HostCtx;
-use filesystem::{WriteFileContent, WriteFilesEntryArg};
+use filesystem::WriteFileContent;
 
 /// Ephemeral per-VM-lifetime actor state (session-resume, spec §3/§5/§8),
 /// ported from `rivetkit-agent-os::actor::Vars`. Reconstructed on each wake from
@@ -51,6 +52,188 @@ pub struct Vars {
     /// One cron event pump per VM lifetime. It fans `AgentOs::cron_events()` to
     /// actor clients as `cronEvent` broadcasts.
     pub cron_task: Option<JoinHandle<()>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StreamErrorEvent {
+    scope: &'static str,
+    id: Option<String>,
+    code: &'static str,
+    skipped: Option<u64>,
+    message: String,
+}
+
+/// Identifies the actor event pump that observed a failed client stream.
+///
+/// Keeping these variants distinct makes every pump's failure route explicit
+/// at its call site while preserving the intentionally small public payload
+/// (`scope` + optional resource `id`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum StreamErrorSource<'a> {
+    ProcessOutput(u32),
+    ProcessExit(u32),
+    ShellOutput(&'a str),
+    ShellExit(&'a str),
+    SessionEvent(&'a str),
+    PermissionRequest(&'a str),
+    AgentExit(&'a str),
+    Cron,
+}
+
+impl StreamErrorSource<'_> {
+    fn route(self) -> (&'static str, Option<String>) {
+        match self {
+            Self::ProcessOutput(pid) | Self::ProcessExit(pid) => ("process", Some(pid.to_string())),
+            Self::ShellOutput(shell_id) | Self::ShellExit(shell_id) => {
+                ("shell", Some(shell_id.to_owned()))
+            }
+            Self::SessionEvent(session_id)
+            | Self::PermissionRequest(session_id)
+            | Self::AgentExit(session_id) => ("session", Some(session_id.to_owned())),
+            Self::Cron => ("cron", None),
+        }
+    }
+}
+
+#[cfg(test)]
+mod stream_error_tests {
+    use super::{encode_stream_error_broadcast, StreamErrorSource};
+    use agentos_client::ClientError;
+    use serde_json::{json, Value as JsonValue};
+
+    #[test]
+    fn every_actor_pump_failure_encodes_a_stream_error_broadcast() {
+        let cases = [
+            (
+                "process output",
+                StreamErrorSource::ProcessOutput(42),
+                "process",
+                Some("42"),
+            ),
+            (
+                "process exit",
+                StreamErrorSource::ProcessExit(43),
+                "process",
+                Some("43"),
+            ),
+            (
+                "shell output",
+                StreamErrorSource::ShellOutput("shell-output"),
+                "shell",
+                Some("shell-output"),
+            ),
+            (
+                "shell exit",
+                StreamErrorSource::ShellExit("shell-exit"),
+                "shell",
+                Some("shell-exit"),
+            ),
+            (
+                "session event",
+                StreamErrorSource::SessionEvent("session-events"),
+                "session",
+                Some("session-events"),
+            ),
+            (
+                "permission request",
+                StreamErrorSource::PermissionRequest("session-permission"),
+                "session",
+                Some("session-permission"),
+            ),
+            (
+                "agent exit",
+                StreamErrorSource::AgentExit("session-agent-exit"),
+                "session",
+                Some("session-agent-exit"),
+            ),
+            ("cron", StreamErrorSource::Cron, "cron", None),
+        ];
+        let error = ClientError::EventStreamLagged { skipped: 7 };
+
+        for (pump, source, expected_scope, expected_id) in cases {
+            let (name, encoded) = encode_stream_error_broadcast(source, &error)
+                .unwrap_or_else(|error| panic!("encode {pump} failure: {error}"));
+            assert_eq!(name, b"streamError", "{pump} event name");
+            let args: JsonValue = ciborium::from_reader(std::io::Cursor::new(encoded))
+                .unwrap_or_else(|error| panic!("decode {pump} failure: {error}"));
+            assert_eq!(
+                args,
+                json!([{
+                    "scope": expected_scope,
+                    "id": expected_id,
+                    "code": "event_stream_lagged",
+                    "skipped": 7,
+                    "message": "event stream lagged and skipped 7 event(s)",
+                }]),
+                "{pump} payload",
+            );
+        }
+    }
+
+    #[test]
+    fn closed_streams_have_a_distinct_typed_actor_error() {
+        let error = ClientError::EventStreamClosed {
+            context: "process exit",
+        };
+        let (_, encoded) =
+            encode_stream_error_broadcast(StreamErrorSource::ProcessExit(42), &error)
+                .expect("encode closed stream failure");
+        let args: JsonValue = ciborium::from_reader(std::io::Cursor::new(encoded))
+            .expect("decode closed stream failure");
+
+        assert_eq!(args[0]["code"], json!("event_stream_closed"));
+        assert_eq!(args[0]["skipped"], JsonValue::Null);
+        assert_eq!(
+            args[0]["message"],
+            json!("event stream closed before process exit")
+        );
+    }
+}
+
+fn stream_error_event(source: StreamErrorSource<'_>, error: &ClientError) -> StreamErrorEvent {
+    let (scope, id) = source.route();
+    let (code, skipped) = match error {
+        ClientError::EventStreamLagged { skipped } => ("event_stream_lagged", Some(*skipped)),
+        ClientError::EventStreamClosed { .. } => ("event_stream_closed", None),
+        _ => ("stream_failed", None),
+    };
+    StreamErrorEvent {
+        scope,
+        id,
+        code,
+        skipped,
+        message: error.to_string(),
+    }
+}
+
+fn encode_stream_error_broadcast(
+    source: StreamErrorSource<'_>,
+    error: &ClientError,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    let payload = stream_error_event(source, error);
+    Ok((b"streamError".to_vec(), encode_event_arg(&payload)?))
+}
+
+pub(crate) fn broadcast_stream_error(
+    host: &HostCtx,
+    source: StreamErrorSource<'_>,
+    error: &ClientError,
+) {
+    match encode_stream_error_broadcast(source, error) {
+        Ok((name, payload)) => {
+            let _ = host.broadcast(name, payload);
+        }
+        Err(encode_error) => {
+            let (scope, id) = source.route();
+            tracing::warn!(
+                ?encode_error,
+                scope,
+                id,
+                "failed to encode stream error broadcast"
+            );
+        }
+    }
 }
 
 impl Vars {
@@ -203,7 +386,7 @@ pub mod contract {
 
     use agentos_client::{
         AgentExitEvent, CronEvent, CronOverlap, DirEntry, DirEntryType, JsonRpcResponse,
-        ProcessInfo, ProcessStatus, ProcessTreeNode, SpawnHandle, SpawnedProcessInfo, VirtualStat,
+        ProcessInfo, ProcessStatus, SpawnHandle, SpawnedProcessInfo, VirtualStat,
     };
     use anyhow::{anyhow, Result};
     use ciborium::Value as CborValue;
@@ -234,10 +417,6 @@ pub mod contract {
                     .map(|_| ())
                     .or_else(|_| super::decode_as::<(String,)>(args).map(|_| ()))
             }
-            "writeFiles" => {
-                super::decode_as::<(Vec<filesystem::WriteFilesEntryArg>,)>(args).map(|_| ())
-            }
-            "readFiles" => super::decode_as::<(Vec<String>,)>(args).map(|_| ()),
             "readdirRecursive" => super::decode_as::<(String,)>(args).map(|_| ()),
             "exec" => super::decode_as::<(String, Option<process::ExecActionOptions>)>(args)
                 .map(|_| ())
@@ -252,7 +431,6 @@ pub mod contract {
             }
             "listProcesses"
             | "allProcesses"
-            | "processTree"
             | "listCronJobs"
             | "listPersistedSessions"
             | "listMounts"
@@ -315,8 +493,6 @@ pub mod contract {
                 json!(["/workspace/file.txt"]),
                 json!(["/workspace/file.txt", { "recursive": true }]),
             ],
-            "writeFiles" => vec![json!([[{ "path": "/workspace/a.txt", "content": "a" }]])],
-            "readFiles" => vec![json!([["/workspace/a.txt", "/workspace/b.txt"]])],
             "exec" => vec![
                 json!(["echo hello"]),
                 json!(["echo hello", { "cwd": "/workspace", "env": { "A": "B" } }]),
@@ -330,7 +506,6 @@ pub mod contract {
             }
             "listProcesses"
             | "allProcesses"
-            | "processTree"
             | "listCronJobs"
             | "listPersistedSessions"
             | "listMounts"
@@ -394,11 +569,6 @@ pub mod contract {
                 "recursive option must be boolean",
                 json!(["/workspace/file.txt", { "recursive": "yes" }]),
             )],
-            "writeFiles" => vec![(
-                "entry path must be a string",
-                json!([[{ "path": 42, "content": "a" }]]),
-            )],
-            "readFiles" => vec![("paths must be strings", json!([[42]]))],
             "exec" => vec![(
                 "env option values must be strings",
                 json!(["echo hello", { "env": { "A": 42 } }]),
@@ -409,7 +579,6 @@ pub mod contract {
             }
             "listProcesses"
             | "allProcesses"
-            | "processTree"
             | "listCronJobs"
             | "listPersistedSessions"
             | "listMounts"
@@ -492,16 +661,6 @@ pub mod contract {
                 is_symbolic_link: false,
             }])),
             "exists" => encode(&true),
-            "writeFiles" => encode(&vec![filesystem::BatchWriteResultDto {
-                path: "/workspace/a.txt".to_owned(),
-                success: true,
-                error: None,
-            }]),
-            "readFiles" => encode(&vec![filesystem::BatchReadResultDto {
-                path: "/workspace/a.txt".to_owned(),
-                content: Some(serde_bytes::ByteBuf::from(vec![1, 2, 3])),
-                error: None,
-            }]),
             "readdirRecursive" => encode(&vec![DirEntry {
                 path: "/workspace/a.txt".to_owned(),
                 entry_type: DirEntryType::File,
@@ -516,10 +675,6 @@ pub mod contract {
             "waitProcess" | "waitShell" => encode(&0i32),
             "listProcesses" => encode(&vec![spawned_process_info()]),
             "allProcesses" => encode(&vec![process_info()]),
-            "processTree" => encode(&vec![ProcessTreeNode {
-                info: process_info(),
-                children: Vec::new(),
-            }]),
             "getProcess" => encode(&spawned_process_info()),
             "openShell" => encode(&shell::OpenShellDto {
                 shell_id: "shell-1".to_owned(),
@@ -586,6 +741,13 @@ pub mod contract {
 
     pub fn encode_sample_event(name: &str) -> Result<Vec<u8>> {
         match name {
+            "streamError" => super::encode_event_arg(&super::StreamErrorEvent {
+                scope: "process",
+                id: Some("42".to_owned()),
+                code: "event_stream_lagged",
+                skipped: Some(3),
+                message: String::from("event stream lagged and skipped 3 event(s)"),
+            }),
             "sessionEvent" => session::encode_session_event(
                 "session-1",
                 &json!({ "jsonrpc": "2.0", "method": "session/update", "params": {} }),
@@ -684,6 +846,19 @@ pub(crate) async fn dispatch(
     args: &[u8],
     token: u64,
 ) {
+    if name == cron::INTERNAL_CRON_WAKE_ACTION {
+        match decode_as::<(u64,)>(args) {
+            Ok((generation,)) => match vm.wake_cron_generation(generation).await {
+                Ok(()) => match crate::vm::persist_cron_state(host, vm).await {
+                    Ok(()) => reply_ok(host, token, &()),
+                    Err(error) => reply_err(host, token, anyhow::anyhow!(error)),
+                },
+                Err(error) => reply_err(host, token, anyhow::anyhow!(error)),
+            },
+            Err(error) => reply_err(host, token, error),
+        }
+        return;
+    }
     match name {
         "readFile" => match decode_as::<(String,)>(args) {
             Ok((path,)) => match filesystem::read_file(vm, &path).await {
@@ -760,20 +935,6 @@ pub(crate) async fn dispatch(
                 Err(error) => reply_err(host, token, error),
             }
         }
-        "writeFiles" => match decode_as::<(Vec<WriteFilesEntryArg>,)>(args) {
-            Ok((entries,)) => {
-                let results = filesystem::write_files(vm, entries).await;
-                reply_ok(host, token, &results);
-            }
-            Err(error) => reply_err(host, token, error),
-        },
-        "readFiles" => match decode_as::<(Vec<String>,)>(args) {
-            Ok((paths,)) => {
-                let results = filesystem::read_files(vm, paths).await;
-                reply_ok(host, token, &results);
-            }
-            Err(error) => reply_err(host, token, error),
-        },
         "readdirRecursive" => match decode_as::<(String,)>(args) {
             Ok((path,)) => match filesystem::readdir_recursive(vm, &path).await {
                 Ok(entries) => reply_ok(host, token, &entries),
@@ -813,7 +974,9 @@ pub(crate) async fn dispatch(
                     &command,
                     spawn_args,
                     options.unwrap_or_default(),
-                ) {
+                )
+                .await
+                {
                     Ok(handle) => reply_ok(host, token, &handle),
                     Err(error) => reply_err(host, token, error),
                 },
@@ -838,47 +1001,43 @@ pub(crate) async fn dispatch(
             Err(error) => reply_err(host, token, error),
         },
         "killProcess" => match decode_as::<(u32,)>(args) {
-            Ok((pid,)) => match process::kill_process(vm, pid) {
+            Ok((pid,)) => match process::kill_process(vm, pid).await {
                 Ok(()) => reply_ok(host, token, &()),
                 Err(error) => reply_err(host, token, error),
             },
             Err(error) => reply_err(host, token, error),
         },
         "stopProcess" => match decode_as::<(u32,)>(args) {
-            Ok((pid,)) => match process::stop_process(vm, pid) {
+            Ok((pid,)) => match process::stop_process(vm, pid).await {
                 Ok(()) => reply_ok(host, token, &()),
                 Err(error) => reply_err(host, token, error),
             },
             Err(error) => reply_err(host, token, error),
         },
-        "listProcesses" => {
-            let processes = process::list_processes(vm);
-            reply_ok(host, token, &processes);
-        }
+        "listProcesses" => match process::list_processes(vm).await {
+            Ok(processes) => reply_ok(host, token, &processes),
+            Err(error) => reply_err(host, token, error),
+        },
         "allProcesses" => match process::all_processes(vm).await {
             Ok(processes) => reply_ok(host, token, &processes),
             Err(error) => reply_err(host, token, error),
         },
-        "processTree" => match process::process_tree(vm).await {
-            Ok(tree) => reply_ok(host, token, &tree),
-            Err(error) => reply_err(host, token, error),
-        },
         "getProcess" => match decode_as::<(u32,)>(args) {
-            Ok((pid,)) => match process::get_process(vm, pid) {
+            Ok((pid,)) => match process::get_process(vm, pid).await {
                 Ok(info) => reply_ok(host, token, &info),
                 Err(error) => reply_err(host, token, error),
             },
             Err(error) => reply_err(host, token, error),
         },
         "writeProcessStdin" => match decode_as::<(u32, WriteFileContent)>(args) {
-            Ok((pid, data)) => match process::write_process_stdin(vm, pid, data) {
+            Ok((pid, data)) => match process::write_process_stdin(vm, pid, data).await {
                 Ok(()) => reply_ok(host, token, &()),
                 Err(error) => reply_err(host, token, error),
             },
             Err(error) => reply_err(host, token, error),
         },
         "closeProcessStdin" => match decode_as::<(u32,)>(args) {
-            Ok((pid,)) => match process::close_process_stdin(vm, pid) {
+            Ok((pid,)) => match process::close_process_stdin(vm, pid).await {
                 Ok(()) => reply_ok(host, token, &()),
                 Err(error) => reply_err(host, token, error),
             },
@@ -901,18 +1060,21 @@ pub(crate) async fn dispatch(
             }
         }
         "scheduleCron" => match decode_as::<(cron::CronJobOptionsDto,)>(args) {
-            Ok((options,)) => match cron::schedule_cron(host, vm, vars, options) {
+            Ok((options,)) => match cron::schedule_cron(host, vm, vars, options).await {
                 Ok(handle) => reply_ok(host, token, &handle),
                 Err(error) => reply_err(host, token, error),
             },
             Err(error) => reply_err(host, token, error),
         },
-        "listCronJobs" => reply_ok(host, token, &cron::list_cron_jobs(vm)),
+        "listCronJobs" => match cron::list_cron_jobs(vm).await {
+            Ok(jobs) => reply_ok(host, token, &jobs),
+            Err(error) => reply_err(host, token, error),
+        },
         "cancelCronJob" => match decode_as::<(String,)>(args) {
-            Ok((id,)) => {
-                cron::cancel_cron_job(vm, &id);
-                reply_ok(host, token, &());
-            }
+            Ok((id,)) => match cron::cancel_cron_job(host, vm, &id).await {
+                Ok(()) => reply_ok(host, token, &()),
+                Err(error) => reply_err(host, token, error),
+            },
             Err(error) => reply_err(host, token, error),
         },
         "createSession" => {
@@ -998,7 +1160,7 @@ pub(crate) async fn dispatch(
                 .or_else(|_| decode_as::<()>(args).map(|()| (None,)));
             match decoded {
                 Ok((options,)) => {
-                    match shell::open_shell(host, vm, vars, options.unwrap_or_default()) {
+                    match shell::open_shell(host, vm, vars, options.unwrap_or_default()).await {
                         Ok(dto) => reply_ok(host, token, &dto),
                         Err(error) => reply_err(host, token, error),
                     }
@@ -1014,14 +1176,16 @@ pub(crate) async fn dispatch(
             Err(error) => reply_err(host, token, error),
         },
         "resizeShell" => match decode_as::<(String, u16, u16)>(args) {
-            Ok((shell_id, cols, rows)) => match shell::resize_shell(vm, &shell_id, cols, rows) {
-                Ok(()) => reply_ok(host, token, &()),
-                Err(error) => reply_err(host, token, error),
-            },
+            Ok((shell_id, cols, rows)) => {
+                match shell::resize_shell(vm, &shell_id, cols, rows).await {
+                    Ok(()) => reply_ok(host, token, &()),
+                    Err(error) => reply_err(host, token, error),
+                }
+            }
             Err(error) => reply_err(host, token, error),
         },
         "closeShell" => match decode_as::<(String,)>(args) {
-            Ok((shell_id,)) => match shell::close_shell(vm, &shell_id) {
+            Ok((shell_id,)) => match shell::close_shell(vm, &shell_id).await {
                 Ok(()) => reply_ok(host, token, &()),
                 Err(error) => reply_err(host, token, error),
             },

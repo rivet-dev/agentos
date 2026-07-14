@@ -139,7 +139,7 @@ export interface Workload {
 	/** Start a long-running process so the Worker thread stays alive. */
 	start: (vm: AgentOs) => Promise<WorkloadObservation | void> | WorkloadObservation | void;
 	/** Verify the expected processes are running. Throws if not. */
-	verify: (vm: AgentOs) => void;
+	verify: (vm: AgentOs) => void | Promise<void>;
 	/** Time to wait after start for the process to fully initialize. */
 	settleMs: number;
 }
@@ -171,8 +171,8 @@ function makeAgentSessionWorkload(opts: {
 				},
 			});
 		},
-		verify: (vm) => {
-			const procs = vm.listProcesses();
+		verify: async (vm) => {
+			const procs = await vm.listProcesses();
 			const running = procs.filter((p) => p.running);
 			const hasAgent = running.some(
 				(p) =>
@@ -267,8 +267,8 @@ function makeAgentPromptWorkload(opts: {
 				unsubscribe();
 			}
 		},
-		verify: (vm) => {
-			const procs = vm.listProcesses();
+		verify: async (vm) => {
+			const procs = await vm.listProcesses();
 			const running = procs.filter((p) => p.running);
 			const hasAgent = running.some(
 				(p) =>
@@ -295,8 +295,8 @@ export const WORKLOADS: Record<string, Workload> = {
 				streamStdin: true,
 			});
 		},
-		verify: (vm) => {
-			const procs = vm.listProcesses();
+		verify: async (vm) => {
+			const procs = await vm.listProcesses();
 			const running = procs.filter((p) => p.running);
 			const hasNode = running.some((p) => p.command === "node");
 			if (!hasNode) {

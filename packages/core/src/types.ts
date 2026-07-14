@@ -13,9 +13,6 @@ export type {
 	AgentStderrEvent,
 	AgentStderrHandler,
 	AgentRegistryEntry,
-	BatchReadResult,
-	BatchWriteEntry,
-	BatchWriteResult,
 	CreateSessionOptions,
 	DirEntry,
 	LimitWarning,
@@ -34,7 +31,6 @@ export type {
 	PermissionRequest,
 	PermissionRequestHandler,
 	PlainMountConfig,
-	ProcessTreeNode,
 	PromptResult,
 	ReaddirRecursiveOptions,
 	ResumeSessionOptions,
@@ -63,9 +59,6 @@ export type {
 	CronJob,
 	CronJobInfo,
 	CronJobOptions,
-	ScheduleDriver,
-	ScheduleEntry,
-	ScheduleHandle,
 } from "./cron/index.js";
 export type {
 	HostDirBackendOptions,
@@ -92,7 +85,7 @@ export type {
 	SnapshotLayerHandle,
 	WritableLayerHandle,
 } from "./layers.js";
-export type { SoftwareInput, SoftwareRoot } from "./packages.js";
+export type { SoftwareInput } from "./packages.js";
 export type {
 	AgentBlock,
 	PackageDescriptor,
@@ -101,7 +94,6 @@ export type {
 } from "./agentos-package.js";
 export type {
 	ChildProcessPermissions,
-	ConnectTerminalOptions,
 	EnvPermissions,
 	ExecOptions,
 	ExecResult,
@@ -120,7 +112,6 @@ export type {
 	ProcessInfo,
 	RulePermissions,
 	StdioChannel,
-	TimingMitigation,
 	VirtualDirEntry,
 	VirtualFileSystem,
 	VirtualStat,

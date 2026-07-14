@@ -1,8 +1,0 @@
-{
-	"name": "project-matrix-bun-layout-pass",
-	"private": true,
-	"type": "commonjs",
-	"dependencies": {
-		"left-pad": "0.0.3"
-	}
-}

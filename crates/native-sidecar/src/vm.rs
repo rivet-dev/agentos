@@ -8,6 +8,7 @@ use crate::bootstrap::{
     root_snapshot_entry, root_snapshot_from_entries,
 };
 use crate::bridge::{bridge_permissions, MountPluginContext};
+use crate::filesystem::refresh_guest_shadow_subtree;
 use crate::protocol::{
     AgentosProjectedAgent, ConfigureVmRequest, CreateLayerRequest, CreateOverlayRequest,
     DisposeReason, EventFrame, ExportSnapshotRequest, ImportSnapshotRequest, LinkPackageRequest,
@@ -17,8 +18,10 @@ use crate::protocol::{
     SnapshotRootFilesystemRequest, VmLifecycleState,
 };
 use crate::service::{
-    audit_fields, dirname, emit_security_audit_event, emit_structured_event, kernel_error,
-    normalize_path, plugin_error, root_filesystem_error, validate_permissions_policy, vfs_error,
+    audit_fields, dirname, emit_security_audit_event, emit_structured_event,
+    extension_cleanup_event_limit_error, kernel_error, normalize_path, plugin_error,
+    root_filesystem_error, validate_permissions_policy, vfs_error, VmDisposalOutcome,
+    VmDisposalProgress,
 };
 use crate::state::{
     BridgeError, KernelSocketReadinessEvent, KernelSocketReadinessRegistry,
@@ -43,19 +46,24 @@ use agentos_kernel::root_fs::{
     RootFilesystemImportLimits, ROOT_FILESYSTEM_SNAPSHOT_FORMAT,
 };
 use agentos_kernel::socket_table::{SocketReadiness, SocketReadinessKind};
-use agentos_native_sidecar_core::permissions::{allow_all_policy, deny_all_policy};
+use agentos_native_sidecar_core::permissions::{
+    allow_all_policy, deny_all_policy, permissions_with_allow_all_defaults,
+};
 use agentos_native_sidecar_core::{
-    layer_created_response, layer_sealed_response, overlay_created_response,
-    package_linked_response, protocol_root_filesystem_mode, provided_commands_response,
+    guest_environment_with_overrides, layer_created_response, layer_sealed_response,
+    overlay_created_response, package_linked_response, process_route_retention,
+    protocol_root_filesystem_mode, provided_commands_response,
     root_filesystem_bootstrapped_response, root_filesystem_protocol_descriptor_from_config,
     root_filesystem_snapshot_response, snapshot_exported_response, snapshot_imported_response,
     vm_configured_response, vm_created_response, vm_disposed_response, VmLayerStore,
+    DEFAULT_GUEST_PATH_ENV,
 };
 use agentos_vm_config as vm_config;
 use base64::Engine;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::fs;
+use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -137,23 +145,21 @@ fn send_kernel_socket_readiness_event(
     let _ = target.session.send_stream_event("net_socket", payload);
 }
 
-pub(crate) const DEFAULT_GUEST_PATH_ENV: &str =
-    "/usr/local/sbin:/usr/local/bin:/opt/agentos/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 #[cfg(test)]
 const KERNEL_COMMAND_STUB: &[u8] = b"#!/bin/sh\n# kernel command stub\n";
 
-fn projected_command_guest_path(command: &str) -> String {
-    format!("{}/{command}", crate::package_projection::OPT_AGENTOS_BIN)
+fn projected_command_guest_path(mount_at: &str, command: &str) -> String {
+    crate::package_projection::package_command_path(mount_at, command)
 }
 
 fn projected_commands_from_guest_paths(
     command_guest_paths: &BTreeMap<String, String>,
+    mount_at: &str,
 ) -> Vec<ProjectedCommand> {
+    let bin = crate::package_projection::package_command_path(mount_at, "");
     command_guest_paths
         .iter()
-        .filter(|(_, guest_path)| {
-            guest_path.starts_with(crate::package_projection::OPT_AGENTOS_BIN)
-        })
+        .filter(|(_, guest_path)| guest_path.starts_with(&bin))
         .map(|(name, guest_path)| ProjectedCommand {
             name: name.clone(),
             guest_path: guest_path.clone(),
@@ -186,12 +192,11 @@ where
             .map_err(|error| {
                 SidecarError::InvalidState(format!("invalid create VM config: {error}"))
             })?;
+        let root_filesystem_config = create_config.root_filesystem.clone().unwrap_or_default();
         let root_filesystem =
-            root_filesystem_protocol_descriptor_from_config(&create_config.root_filesystem);
-        let permissions_policy = create_config
-            .permissions
-            .clone()
-            .unwrap_or_else(deny_all_policy);
+            root_filesystem_protocol_descriptor_from_config(&root_filesystem_config);
+        let permissions_policy =
+            permissions_with_allow_all_defaults(create_config.permissions.clone());
         validate_permissions_policy(&permissions_policy)?;
 
         self.next_vm_id += 1;
@@ -209,13 +214,19 @@ where
         let listen_policy = vm_listen_policy_from_config(create_config.listen.as_ref())?;
         let create_loopback_exempt_ports: BTreeSet<u16> = create_config
             .loopback_exempt_ports
+            .as_deref()
+            .unwrap_or_default()
             .iter()
             .copied()
             .collect();
         self.bridge
             .set_vm_permissions(&vm_id, &permissions_policy)?;
         let permissions = bridge_permissions(self.bridge.clone(), &vm_id);
-        let mut guest_env = filter_env(&vm_id, &create_config.env, &permissions);
+        let empty_guest_env = BTreeMap::new();
+        let requested_guest_env = guest_environment_with_overrides(
+            create_config.env.as_ref().unwrap_or(&empty_guest_env),
+        );
+        let mut guest_env = filter_env(&vm_id, &requested_guest_env, &permissions);
         // Sidecar-owned bootstrap work still needs to reconcile command stubs and the root
         // filesystem before the guest-visible policy takes effect.
         self.bridge
@@ -264,7 +275,7 @@ where
             )?
         } else {
             agentos_native_sidecar_core::build_root_mount_table_with_loaded_snapshot(
-                &create_config.root_filesystem,
+                &root_filesystem_config,
                 loaded_snapshot.as_ref(),
                 &resource_limits,
             )
@@ -295,9 +306,6 @@ where
             String::from("python3"),
             String::from(WASM_COMMAND),
         ];
-        if let Some(bootstrap_commands) = &create_config.bootstrap_commands {
-            execution_commands.extend(bootstrap_commands.iter().cloned());
-        }
         execution_commands.extend(command_guest_paths.keys().cloned());
         kernel
             .register_driver(CommandDriver::new(
@@ -324,19 +332,25 @@ where
             .expect("owned session should exist")
             .vm_ids
             .insert(vm_id.clone());
+        let process_route_retention = u64::try_from(process_route_retention(&limits))
+            .expect("process route retention must fit u64");
         self.vms.insert(
             vm_id.clone(),
             VmState {
                 connection_id: connection_id.clone(),
                 session_id: session_id.clone(),
+                captured_output_budget: agentos_native_sidecar_core::CapturedOutputBudget::for_vm(
+                    &limits,
+                ),
                 limits,
                 dns,
                 listen_policy,
                 create_loopback_exempt_ports,
-                guest_env,
+                guest_env: guest_env.clone(),
                 requested_runtime: payload.runtime,
-                root_filesystem_mode: protocol_root_filesystem_mode(root_filesystem.mode),
-                guest_cwd,
+                root_filesystem_mode: protocol_root_filesystem_mode(Some(root_filesystem.mode)),
+                guest_cwd: guest_cwd.clone(),
+                agent_additional_instructions: create_config.agent_additional_instructions.clone(),
                 cwd,
                 host_cwd,
                 kernel,
@@ -373,7 +387,13 @@ where
 
         tracing::info!(target: "agentos_native_sidecar::perf", phase = "create_vm", elapsed_ms = __t.elapsed().as_millis() as u64, "vm phase");
         Ok(DispatchResult {
-            response: vm_created_response(request, vm_id),
+            response: vm_created_response(
+                request,
+                vm_id,
+                guest_cwd,
+                guest_env.into_iter().collect(),
+                process_route_retention,
+            ),
             events,
         })
     }
@@ -384,13 +404,21 @@ where
         payload: crate::protocol::DisposeVmRequest,
     ) -> Result<DispatchResult, SidecarError> {
         let (connection_id, session_id, vm_id) = self.vm_scope_for(&request.ownership)?;
-        let events = self
-            .dispose_vm_internal(&connection_id, &session_id, &vm_id, payload.reason)
+        let outcome = self
+            .dispose_vm_internal_outcome(&connection_id, &session_id, &vm_id, payload.reason)
             .await?;
+        let response = match outcome.error {
+            Some(error) => self.reject(
+                request,
+                crate::execution::error_code(&error),
+                &error.to_string(),
+            ),
+            None => vm_disposed_response(request, vm_id),
+        };
 
         Ok(DispatchResult {
-            response: vm_disposed_response(request, vm_id),
-            events,
+            response,
+            events: outcome.events,
         })
     }
 
@@ -434,56 +462,101 @@ where
             .permissions
             .clone()
             .map(crate::wire::permissions_policy_config_from_wire)
+            .map(|permissions| permissions_with_allow_all_defaults(Some(permissions)))
             .unwrap_or_else(|| original_permissions.clone());
         validate_permissions_policy(&configured_permissions)?;
         bridge.set_vm_permissions(&vm_id, &allow_all_policy())?;
-        let mut effective_mounts = payload.mounts.clone();
-        append_module_access_mount(&mut effective_mounts, payload.module_access_cwd.as_ref())?;
-        let package_descriptors = package_descriptors_from_wire(&payload.packages)?;
-        let mut provided_commands: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for descriptor in &package_descriptors {
-            provided_commands.insert(
-                descriptor.name.clone(),
-                descriptor
-                    .commands
-                    .iter()
-                    .map(|target| target.command.clone())
-                    .collect(),
-            );
-        }
-        let snapshot_userland_code = resolve_agent_snapshot_bundle(&package_descriptors)?;
-        let package_mounts =
-            build_packages_projection(&vm_id, &package_descriptors, &payload.packages_mount_at)?;
+        let operator_mounts = payload
+            .mounts
+            .clone()
+            .unwrap_or_else(|| vm.configuration.operator_mounts.clone());
+        let mut effective_mounts = operator_mounts.clone();
+        let replaces_packages = payload.packages.is_some();
+        let configured_packages_mount_at = if replaces_packages {
+            crate::package_projection::normalize_mount_root(
+                payload.packages_mount_at.as_deref().unwrap_or_default(),
+            )
+        } else {
+            vm.configuration.packages_mount_at.clone()
+        };
+        let package_descriptors =
+            package_descriptors_from_wire(payload.packages.as_deref().unwrap_or_default())?;
+        let provided_commands = if replaces_packages {
+            package_descriptors
+                .iter()
+                .map(|descriptor| {
+                    (
+                        descriptor.name.clone(),
+                        descriptor
+                            .commands
+                            .iter()
+                            .map(|target| target.command.clone())
+                            .collect(),
+                    )
+                })
+                .collect()
+        } else {
+            vm.provided_commands.clone()
+        };
+        let snapshot_userland_code = if replaces_packages {
+            resolve_agent_snapshot_bundle(&package_descriptors)?
+        } else {
+            vm.configuration.snapshot_userland_code.clone()
+        };
+        let package_mounts = if replaces_packages {
+            build_packages_projection(&vm_id, &package_descriptors, &configured_packages_mount_at)?
+        } else {
+            vm.configuration
+                .mounts
+                .iter()
+                .filter(|mount| mount.plugin.id == "agentos_packages")
+                .cloned()
+                .collect()
+        };
         effective_mounts.extend(package_mounts);
         apply_package_provides_env(&mut vm.guest_env, &package_descriptors);
         append_package_provides_mounts(&mut effective_mounts, &package_descriptors)?;
-        let reconfigure_result = reconcile_mounts(
-            mount_plugins,
-            vm,
-            &effective_mounts,
-            MountPluginContext {
-                bridge: bridge.clone(),
-                connection_id: connection_id.clone(),
-                session_id: session_id.clone(),
-                vm_id: vm_id.clone(),
-                sidecar_requests: self.sidecar_requests.clone(),
-                max_pread_bytes,
-            },
-        )
-        .and_then(|()| {
+        let configured_command_permissions = payload
+            .command_permissions
+            .clone()
+            .map(|permissions| permissions.into_iter().collect())
+            .unwrap_or_else(|| vm.command_permissions.clone());
+        let configured_loopback_exempt_ports = payload
+            .loopback_exempt_ports
+            .clone()
+            .unwrap_or_else(|| vm.configuration.loopback_exempt_ports.clone());
+        let mount_context = MountPluginContext {
+            bridge: bridge.clone(),
+            connection_id: connection_id.clone(),
+            session_id: session_id.clone(),
+            vm_id: vm_id.clone(),
+            sidecar_requests: self.sidecar_requests.clone(),
+            max_pread_bytes,
+        };
+        let mount_result = if replaces_packages {
+            reconcile_mounts(mount_plugins, vm, &effective_mounts, mount_context)
+        } else {
+            reconcile_mounts_preserving_agentos_packages(
+                mount_plugins,
+                vm,
+                &operator_mounts,
+                mount_context,
+            )
+        };
+        let reconfigure_result = mount_result.and_then(|()| {
             vm.command_guest_paths = discover_command_guest_paths(&mut vm.kernel);
-            // The `{ packageDir }` projection lands each package's `bin/<cmd>` at
-            // `/opt/agentos/bin/<cmd>` (on `$PATH`) but does NOT populate
+            // The package projection lands each package's `bin/<cmd>` under the
+            // configured package root (on `$PATH`) but does NOT populate
             // `/__secure_exec/commands`, so `discover_command_guest_paths` alone misses
             // projected commands and every projected wasm/js command resolves to
             // ENOEXEC (absolute path) / ENOENT (bare name). Register each projected
-            // command by name -> its `/opt/agentos/bin/<cmd>` entrypoint so both the
+            // command by name -> its projected `bin/<cmd>` entrypoint so both the
             // kernel command table (via `execution_commands` below) and the sidecar
             // entrypoint resolver (`resolve_guest_command_entrypoint`) can find it.
             for commands in provided_commands.values() {
                 for command in commands {
                     let entrypoint =
-                        format!("{}/{command}", crate::package_projection::OPT_AGENTOS_BIN);
+                        projected_command_guest_path(&configured_packages_mount_at, command);
                     vm.command_guest_paths
                         .entry(command.clone())
                         .or_insert(entrypoint);
@@ -492,8 +565,6 @@ where
             refresh_guest_command_path_env(&mut vm.guest_env, &vm.command_guest_paths);
             let mut execution_commands =
                 vec![String::from(JAVASCRIPT_COMMAND), String::from(WASM_COMMAND)];
-            execution_commands.extend(payload.bootstrap_commands.iter().cloned());
-            execution_commands.extend(payload.tool_shim_commands.iter().cloned());
             execution_commands.extend(vm.command_guest_paths.keys().cloned());
             vm.kernel
                 .register_driver(CommandDriver::new(
@@ -501,23 +572,21 @@ where
                     execution_commands,
                 ))
                 .map_err(kernel_error)?;
-            vm.command_permissions = payload.command_permissions.clone().into_iter().collect();
+            vm.command_permissions = configured_command_permissions.clone();
             let mut loopback_exempt_ports = vm.create_loopback_exempt_ports.clone();
-            loopback_exempt_ports.extend(payload.loopback_exempt_ports.iter().copied());
+            loopback_exempt_ports.extend(configured_loopback_exempt_ports.iter().copied());
             vm.kernel.set_loopback_exempt_ports(loopback_exempt_ports);
             vm.configuration = VmConfiguration {
+                operator_mounts: operator_mounts.clone(),
                 mounts: effective_mounts.clone(),
-                software: payload.software.clone(),
                 permissions: configured_permissions.clone(),
-                module_access_cwd: payload.module_access_cwd.clone(),
-                instructions: payload.instructions.clone(),
-                projected_modules: payload.projected_modules.clone(),
-                command_permissions: payload.command_permissions.clone().into_iter().collect(),
+                command_permissions: configured_command_permissions.clone(),
                 provided_commands: provided_commands.clone(),
+                packages_mount_at: configured_packages_mount_at.clone(),
                 // jsRuntime is create-time only; preserve what create_vm stored.
                 js_runtime: vm.configuration.js_runtime.clone(),
                 snapshot_userland_code: snapshot_userland_code.clone(),
-                loopback_exempt_ports: payload.loopback_exempt_ports.clone(),
+                loopback_exempt_ports: configured_loopback_exempt_ports.clone(),
             };
             vm.provided_commands = provided_commands;
             Ok(())
@@ -547,10 +616,28 @@ where
         }
 
         let applied_mounts = effective_mounts.len() as u32;
-        let configured_software = payload.software.len() as u32;
-        let projected_commands = projected_commands_from_guest_paths(&vm.command_guest_paths);
-        let agents = projected_agents_from_descriptors(&package_descriptors);
-        vm.projected_agent_launch = projected_agent_launch_from_descriptors(&package_descriptors);
+        let projected_commands = projected_commands_from_guest_paths(
+            &vm.command_guest_paths,
+            &configured_packages_mount_at,
+        );
+        let agents = if replaces_packages {
+            projected_agents_from_descriptors(&package_descriptors, &configured_packages_mount_at)
+        } else {
+            vm.projected_agent_launch
+                .iter()
+                .map(|(id, launch)| AgentosProjectedAgent {
+                    id: id.clone(),
+                    acp_entrypoint: launch.acp_entrypoint.clone(),
+                    adapter_entrypoint: launch.adapter_entrypoint.clone(),
+                })
+                .collect()
+        };
+        if replaces_packages {
+            vm.projected_agent_launch = projected_agent_launch_from_descriptors(
+                &package_descriptors,
+                &configured_packages_mount_at,
+            );
+        }
         let _ = vm;
         // Pre-warm the agent-SDK snapshot when a configured package opts in with
         // `agent.snapshot`. The sidecar reads the bundle from the host package dir
@@ -567,19 +654,13 @@ where
 
         tracing::info!(target: "agentos_native_sidecar::perf", phase = "configure_vm", elapsed_ms = __t.elapsed().as_millis() as u64, applied_mounts = applied_mounts as u64, "vm phase");
         Ok(DispatchResult {
-            response: vm_configured_response(
-                request,
-                applied_mounts,
-                configured_software,
-                projected_commands,
-                agents,
-            ),
+            response: vm_configured_response(request, applied_mounts, projected_commands, agents),
             events: Vec::new(),
         })
     }
 
     /// Runtime dynamic `linkSoftware`: add one package's tar/current/bin leaf
-    /// mounts to the live VM so commands appear under `/opt/agentos/bin`
+    /// mounts to the live VM so commands appear under the configured package root
     /// immediately, with no reboot. Returns the linked command names.
     pub(crate) async fn link_package(
         &mut self,
@@ -590,12 +671,12 @@ where
         self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
 
         let vm = self.vms.get_mut(&vm_id).expect("owned VM should exist");
-        let descriptor =
-            crate::package_projection::read_package_manifest_from_path(&payload.package.path)?;
+        let packages_mount_at = vm.configuration.packages_mount_at.clone();
+        let descriptor = package_descriptor_from_wire(&payload.package)?;
         let new_mounts = build_packages_projection(
             &vm_id,
             std::slice::from_ref(&descriptor),
-            crate::package_projection::OPT_AGENTOS_ROOT,
+            &packages_mount_at,
         )?;
         if new_mounts.iter().all(|mount| {
             vm.configuration
@@ -608,10 +689,13 @@ where
                 .iter()
                 .map(|target| ProjectedCommand {
                     name: target.command.clone(),
-                    guest_path: projected_command_guest_path(&target.command),
+                    guest_path: projected_command_guest_path(&packages_mount_at, &target.command),
                 })
                 .collect();
-            let agents = projected_agents_from_descriptors(std::slice::from_ref(&descriptor));
+            let agents = projected_agents_from_descriptors(
+                std::slice::from_ref(&descriptor),
+                &packages_mount_at,
+            );
             return Ok(DispatchResult {
                 response: package_linked_response(request, projected_commands, agents),
                 events: Vec::new(),
@@ -626,7 +710,10 @@ where
             {
                 if let Some(command) = mount
                     .guest_path
-                    .strip_prefix(crate::package_projection::OPT_AGENTOS_BIN)
+                    .strip_prefix(&crate::package_projection::package_command_path(
+                        &packages_mount_at,
+                        "",
+                    ))
                     .and_then(|path| path.strip_prefix('/'))
                     .filter(|path| !path.is_empty())
                 {
@@ -662,7 +749,7 @@ where
             .provided_commands
             .insert(descriptor.name.clone(), commands.clone());
         for command in &commands {
-            let entrypoint = projected_command_guest_path(command);
+            let entrypoint = projected_command_guest_path(&packages_mount_at, command);
             vm.command_guest_paths
                 .entry(command.clone())
                 .or_insert(entrypoint);
@@ -681,14 +768,18 @@ where
             .iter()
             .map(|command| ProjectedCommand {
                 name: command.clone(),
-                guest_path: projected_command_guest_path(command),
+                guest_path: projected_command_guest_path(&packages_mount_at, command),
             })
             .collect();
-        let agents = projected_agents_from_descriptors(std::slice::from_ref(&descriptor));
+        let agents = projected_agents_from_descriptors(
+            std::slice::from_ref(&descriptor),
+            &packages_mount_at,
+        );
         if let Some(vm) = self.vms.get_mut(&vm_id) {
             vm.projected_agent_launch
                 .extend(projected_agent_launch_from_descriptors(
                     std::slice::from_ref(&descriptor),
+                    &packages_mount_at,
                 ));
         }
 
@@ -859,21 +950,99 @@ where
         connection_id: &str,
         session_id: &str,
         vm_id: &str,
-        _reason: DisposeReason,
+        reason: DisposeReason,
     ) -> Result<Vec<EventFrame>, SidecarError> {
-        self.require_owned_vm(connection_id, session_id, vm_id)?;
+        self.dispose_vm_internal_outcome(connection_id, session_id, vm_id, reason)
+            .await?
+            .into_result()
+    }
 
-        let mut events = vec![self.vm_lifecycle_event(
+    pub(crate) async fn dispose_vm_internal_outcome(
+        &mut self,
+        connection_id: &str,
+        session_id: &str,
+        vm_id: &str,
+        reason: DisposeReason,
+    ) -> Result<VmDisposalOutcome, SidecarError> {
+        self.dispose_vm_internal_outcome_with_event_limit(
             connection_id,
             session_id,
             vm_id,
-            VmLifecycleState::Disposing,
-        )];
+            reason,
+            self.config.max_extension_session_cleanup_events,
+        )
+        .await
+    }
+
+    pub(crate) async fn dispose_vm_internal_outcome_with_event_limit(
+        &mut self,
+        connection_id: &str,
+        session_id: &str,
+        vm_id: &str,
+        reason: DisposeReason,
+        event_limit: usize,
+    ) -> Result<VmDisposalOutcome, SidecarError> {
+        self.require_owned_vm_for_cleanup(connection_id, session_id, vm_id)?;
+        let force_teardown_on_limit = reason == DisposeReason::ConnectionClosed;
+        let disposing_emitted = self
+            .vm_disposal_progress
+            .get(vm_id)
+            .is_some_and(|progress| progress.disposing_emitted);
+        let required_lifecycle_events = if disposing_emitted { 1 } else { 2 };
+        let mut preflight_limit_error = None;
+        if event_limit < required_lifecycle_events {
+            let error = extension_cleanup_event_limit_error(
+                self.config.max_extension_session_cleanup_events,
+            );
+            if !force_teardown_on_limit {
+                return Err(error);
+            }
+            preflight_limit_error = Some(error);
+        }
+
+        if !disposing_emitted && event_limit >= 2 {
+            let event = self.vm_lifecycle_event(
+                connection_id,
+                session_id,
+                vm_id,
+                VmLifecycleState::Disposing,
+            );
+            let progress = self
+                .vm_disposal_progress
+                .entry(vm_id.to_owned())
+                .or_default();
+            record_disposing_event(progress, event);
+        }
         // Process termination needs the VM live in `self.vms` (it looks up and
         // signals the VM's active processes). Capture its result but keep tearing
         // down: a process that refuses to die must not strand the VM's tracking
         // entries for the process lifetime.
-        let terminate_result = self.terminate_vm_processes(vm_id, &mut events).await;
+        let terminate_result = self
+            .terminate_vm_processes(vm_id, event_limit, force_teardown_on_limit)
+            .await;
+        if terminate_result
+            .as_ref()
+            .is_err_and(contains_cleanup_event_limit)
+            && !force_teardown_on_limit
+        {
+            let events = self
+                .vm_disposal_progress
+                .get_mut(vm_id)
+                .map(|progress| std::mem::take(&mut progress.pending_events))
+                .unwrap_or_default();
+            return Ok(VmDisposalOutcome {
+                events,
+                error: terminate_result.err().map(|error| SidecarError::Context {
+                    context: format!("VM {vm_id} process termination"),
+                    source: Box::new(error),
+                }),
+            });
+        }
+        let mut events = self
+            .vm_disposal_progress
+            .get_mut(vm_id)
+            .map(|progress| std::mem::take(&mut progress.pending_events))
+            .unwrap_or_default();
 
         // Detach the VM from `self.vms` BEFORE the remaining fallible teardown so
         // no `?` below can leave the registry entry (or any per-VM map) behind.
@@ -893,25 +1062,27 @@ where
             sidecar_requests: self.sidecar_requests.clone(),
             max_pread_bytes: vm.kernel.resource_limits().max_pread_bytes,
         };
-        let _ = shutdown_configured_mounts(&mut vm, &mount_context, "dispose_vm", true);
+        let mount_result =
+            shutdown_configured_mounts(&mut vm, &mount_context, "dispose_vm", true, false);
 
         // Snapshot/flush/kernel-dispose/permission-reset can each fail; run them
         // in a helper whose result is captured so cleanup below is unconditional.
-        let teardown_result = self.finish_vm_teardown(vm_id, &mut vm).await;
+        let teardown_result = self.finish_vm_teardown(vm_id, &mut vm);
 
         // Reclaim EVERY per-VM tracking entry on EVERY exit path — even when a
         // teardown step above errored. Pre-fix these ran only after the fallible
         // steps' `?`, so any failure stranded the engine/extension maps (H1) and
         // the output-buffer map was never reclaimed at all (M6).
         self.reclaim_vm_tracking(session_id, vm_id);
-        let _ = fs::remove_dir_all(&vm.cwd);
+        let cwd = vm.cwd.clone();
+        let cwd_result = fs::remove_dir_all(&cwd);
         if let Some(staging_root) = vm.packages_staging_root.take() {
-            let _ = fs::remove_dir_all(&staging_root);
+            if let Err(error) = fs::remove_dir_all(&staging_root) {
+                if error.kind() != io::ErrorKind::NotFound {
+                    tracing::error!(vm_id, path = %staging_root.display(), %error, "failed to remove VM package staging root during cleanup");
+                }
+            }
         }
-
-        // Surface the first failure only AFTER cleanup has completed.
-        terminate_result?;
-        teardown_result?;
 
         events.push(self.vm_lifecycle_event(
             connection_id,
@@ -919,7 +1090,43 @@ where
             vm_id,
             VmLifecycleState::Disposed,
         ));
-        Ok(events)
+        let mut errors = Vec::new();
+        if let Some(error) = preflight_limit_error {
+            errors.push(error);
+        }
+        if let Err(error) = terminate_result {
+            errors.push(SidecarError::Context {
+                context: format!("VM {vm_id} process termination"),
+                source: Box::new(error),
+            });
+        }
+        if let Err(error) = mount_result {
+            tracing::error!(vm_id, error_code = crate::execution::error_code(&error), error = %error, "failed to shut down VM mounts during cleanup");
+            errors.push(SidecarError::Context {
+                context: format!("VM {vm_id} mount shutdown"),
+                source: Box::new(error),
+            });
+        }
+        if let Err(error) = teardown_result {
+            errors.push(error);
+        }
+        if let Err(error) = cwd_result {
+            if error.kind() != io::ErrorKind::NotFound {
+                errors.push(SidecarError::Io(format!(
+                    "failed to remove VM {vm_id} cwd {}: {error}",
+                    cwd.display()
+                )));
+            }
+        }
+        let error = if errors.is_empty() {
+            None
+        } else {
+            Some(SidecarError::Cleanup {
+                context: "failed to dispose native VM completely",
+                errors,
+            })
+        };
+        Ok(VmDisposalOutcome { events, error })
     }
 
     /// Run the fallible second half of VM disposal (root-filesystem snapshot +
@@ -927,42 +1134,83 @@ where
     /// that has already been detached from `self.vms`. Kept separate so its
     /// `?`-propagated errors are captured by the caller and the per-VM tracking
     /// maps are still reclaimed afterward.
-    async fn finish_vm_teardown(
-        &mut self,
-        vm_id: &str,
-        vm: &mut VmState,
-    ) -> Result<(), SidecarError> {
+    fn finish_vm_teardown(&mut self, vm_id: &str, vm: &mut VmState) -> Result<(), SidecarError> {
+        let mut errors = Vec::new();
         let snapshot = if vm.kernel.root_filesystem_mut().is_some() {
-            Some(FilesystemSnapshot {
-                format: String::from(ROOT_FILESYSTEM_SNAPSHOT_FORMAT),
-                bytes: encode_root_snapshot(
-                    &vm.kernel.snapshot_root_filesystem().map_err(kernel_error)?,
-                )
-                .map_err(root_filesystem_error)?,
-            })
+            match vm
+                .kernel
+                .snapshot_root_filesystem()
+                .map_err(kernel_error)
+                .and_then(|snapshot| {
+                    encode_root_snapshot(&snapshot)
+                        .map_err(root_filesystem_error)
+                        .map(|bytes| FilesystemSnapshot {
+                            format: String::from(ROOT_FILESYSTEM_SNAPSHOT_FORMAT),
+                            bytes,
+                        })
+                }) {
+                Ok(snapshot) => Some(snapshot),
+                Err(error) => {
+                    errors.push(SidecarError::Context {
+                        context: format!("VM {vm_id} root filesystem snapshot"),
+                        source: Box::new(error),
+                    });
+                    None
+                }
+            }
         } else {
             None
         };
 
-        self.bridge
-            .emit_lifecycle(vm_id, LifecycleState::Terminated)?;
-        vm.kernel.dispose().map_err(kernel_error)?;
+        if let Err(error) = self
+            .bridge
+            .emit_lifecycle(vm_id, LifecycleState::Terminated)
+        {
+            errors.push(SidecarError::Context {
+                context: format!("VM {vm_id} lifecycle emission"),
+                source: Box::new(error),
+            });
+        }
+        if let Err(error) = vm.kernel.dispose().map_err(kernel_error) {
+            errors.push(SidecarError::Context {
+                context: format!("VM {vm_id} kernel disposal"),
+                source: Box::new(error),
+            });
+        }
         if let Some(snapshot) = snapshot {
-            self.bridge.with_mut(|bridge| {
+            if let Err(error) = self.bridge.with_mut(|bridge| {
                 bridge.flush_filesystem_state(FlushFilesystemStateRequest {
                     vm_id: vm_id.to_owned(),
                     snapshot,
                 })
-            })?;
+            }) {
+                errors.push(SidecarError::Context {
+                    context: format!("VM {vm_id} filesystem snapshot flush"),
+                    source: Box::new(error),
+                });
+            }
         }
-        self.bridge.clear_vm_permissions(vm_id)?;
-        Ok(())
+        if let Err(error) = self.bridge.clear_vm_permissions(vm_id) {
+            errors.push(SidecarError::Context {
+                context: format!("VM {vm_id} permission cleanup"),
+                source: Box::new(error),
+            });
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(SidecarError::Cleanup {
+                context: "failed to finish native VM teardown completely",
+                errors,
+            })
+        }
     }
 
     pub(crate) async fn terminate_vm_processes(
         &mut self,
         vm_id: &str,
-        events: &mut Vec<EventFrame>,
+        event_limit: usize,
+        force_teardown_on_limit: bool,
     ) -> Result<(), SidecarError> {
         let process_ids = self
             .vms
@@ -973,20 +1221,60 @@ where
             return Ok(());
         }
 
+        let mut errors = Vec::new();
         for process_id in process_ids {
-            if self
+            let should_signal = self
                 .vms
                 .get(vm_id)
                 .is_some_and(|vm| vm.active_processes.contains_key(&process_id))
-            {
-                self.kill_process_internal(vm_id, &process_id, "SIGTERM")?;
+                && !self
+                    .vm_disposal_progress
+                    .get(vm_id)
+                    .is_some_and(|progress| progress.sigterm_attempted.contains(&process_id));
+            if should_signal {
+                self.vm_disposal_progress
+                    .entry(vm_id.to_owned())
+                    .or_default()
+                    .sigterm_attempted
+                    .insert(process_id.clone());
+                if let Err(error) = self.kill_process_internal(vm_id, &process_id, "SIGTERM") {
+                    tracing::error!(vm_id, process_id, signal = "SIGTERM", error_code = crate::execution::error_code(&error), error = %error, "failed to signal VM process during cleanup");
+                    errors.push(SidecarError::Context {
+                        context: format!("VM {vm_id} process {process_id} SIGTERM"),
+                        source: Box::new(error),
+                    });
+                }
             }
         }
-        self.wait_for_vm_processes_to_exit(vm_id, DISPOSE_VM_SIGTERM_GRACE, events)
-            .await?;
+        let sigterm_deadline = *self
+            .vm_disposal_progress
+            .entry(vm_id.to_owned())
+            .or_default()
+            .sigterm_deadline
+            .get_or_insert_with(|| Instant::now() + DISPOSE_VM_SIGTERM_GRACE);
+        if let Err(error) = self
+            .wait_for_vm_processes_to_exit(vm_id, sigterm_deadline, event_limit)
+            .await
+        {
+            let limit_exhausted = contains_cleanup_event_limit(&error);
+            errors.push(error);
+            if limit_exhausted && !force_teardown_on_limit {
+                return Err(SidecarError::Cleanup {
+                    context: "failed to terminate native VM processes completely",
+                    errors,
+                });
+            }
+        }
 
         if !self.vm_has_active_processes(vm_id) {
-            return Ok(());
+            return if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(SidecarError::Cleanup {
+                    context: "failed to terminate native VM processes completely",
+                    errors,
+                })
+            };
         }
 
         let remaining = self
@@ -995,42 +1283,87 @@ where
             .map(|vm| vm.active_processes.keys().cloned().collect::<Vec<_>>())
             .unwrap_or_default();
         for process_id in remaining {
-            if self
+            let should_signal = self
                 .vms
                 .get(vm_id)
                 .is_some_and(|vm| vm.active_processes.contains_key(&process_id))
-            {
-                self.kill_process_internal(vm_id, &process_id, "SIGKILL")?;
+                && !self
+                    .vm_disposal_progress
+                    .get(vm_id)
+                    .is_some_and(|progress| progress.sigkill_attempted.contains(&process_id));
+            if should_signal {
+                self.vm_disposal_progress
+                    .entry(vm_id.to_owned())
+                    .or_default()
+                    .sigkill_attempted
+                    .insert(process_id.clone());
+                if let Err(error) = self.kill_process_internal(vm_id, &process_id, "SIGKILL") {
+                    tracing::error!(vm_id, process_id, signal = "SIGKILL", error_code = crate::execution::error_code(&error), error = %error, "failed to signal VM process during cleanup");
+                    errors.push(SidecarError::Context {
+                        context: format!("VM {vm_id} process {process_id} SIGKILL"),
+                        source: Box::new(error),
+                    });
+                }
             }
         }
-        self.wait_for_vm_processes_to_exit(vm_id, DISPOSE_VM_SIGKILL_GRACE, events)
-            .await?;
+        let sigkill_deadline = *self
+            .vm_disposal_progress
+            .entry(vm_id.to_owned())
+            .or_default()
+            .sigkill_deadline
+            .get_or_insert_with(|| Instant::now() + DISPOSE_VM_SIGKILL_GRACE);
+        if let Err(error) = self
+            .wait_for_vm_processes_to_exit(vm_id, sigkill_deadline, event_limit)
+            .await
+        {
+            errors.push(error);
+        }
 
         if self.vm_has_active_processes(vm_id) {
-            return Err(SidecarError::Execution(format!(
+            errors.push(SidecarError::Execution(format!(
                 "failed to terminate active guest executions for VM {vm_id}"
             )));
         }
 
-        Ok(())
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(SidecarError::Cleanup {
+                context: "failed to terminate native VM processes completely",
+                errors,
+            })
+        }
     }
 
     pub(crate) async fn wait_for_vm_processes_to_exit(
         &mut self,
         vm_id: &str,
-        timeout: Duration,
-        events: &mut Vec<EventFrame>,
+        deadline: Instant,
+        event_limit: usize,
     ) -> Result<(), SidecarError> {
         let ownership = self.vm_ownership(vm_id)?;
-        let deadline = Instant::now() + timeout;
 
         while self.vm_has_active_processes(vm_id) && Instant::now() < deadline {
+            // Keep one slot reserved for the final Disposed lifecycle event.
+            // Check before polling so an over-limit event remains in the
+            // bounded process queue and the VM stays live for a retry.
+            ensure_vm_disposal_process_event_capacity(
+                self.vm_disposal_progress
+                    .get(vm_id)
+                    .map_or(0, |progress| progress.pending_events.len()),
+                event_limit,
+                self.config.max_extension_session_cleanup_events,
+            )?;
             let remaining = deadline.saturating_duration_since(Instant::now());
             if let Some(event) = self
-                .poll_event(&ownership, remaining.min(Duration::from_millis(10)))
+                .poll_event_for_cleanup(&ownership, remaining.min(Duration::from_millis(10)))
                 .await?
             {
-                events.push(event);
+                self.vm_disposal_progress
+                    .entry(vm_id.to_owned())
+                    .or_default()
+                    .pending_events
+                    .push(event);
             }
         }
 
@@ -1042,23 +1375,63 @@ where
 // Free functions — VM lifecycle helpers
 // ---------------------------------------------------------------------------
 
+fn contains_cleanup_event_limit(error: &SidecarError) -> bool {
+    match error {
+        SidecarError::LimitExceeded {
+            limit: "max_extension_session_cleanup_events",
+            ..
+        } => true,
+        SidecarError::Context { source, .. } => contains_cleanup_event_limit(source),
+        SidecarError::Cleanup { errors, .. } => errors.iter().any(contains_cleanup_event_limit),
+        _ => false,
+    }
+}
+
+fn record_disposing_event(progress: &mut VmDisposalProgress, event: EventFrame) -> bool {
+    if progress.disposing_emitted {
+        false
+    } else {
+        progress.disposing_emitted = true;
+        progress.pending_events.push(event);
+        true
+    }
+}
+
+fn ensure_vm_disposal_process_event_capacity(
+    event_count: usize,
+    event_limit: usize,
+    configured_capacity: usize,
+) -> Result<(), SidecarError> {
+    if event_count >= event_limit.saturating_sub(1) {
+        Err(extension_cleanup_event_limit_error(configured_capacity))
+    } else {
+        Ok(())
+    }
+}
+
 fn native_root_plugin_from_config(
     config: Option<&vm_config::NativeRootFilesystemConfig>,
 ) -> Result<Option<NativeRootPluginConfig>, SidecarError> {
     let Some(config) = config else {
         return Ok(None);
     };
-    let plugin_config = serde_json::to_string(&config.plugin.config).map_err(|error| {
-        SidecarError::InvalidState(format!(
-            "failed to serialize nativeRoot.plugin.config: {error}"
-        ))
-    })?;
+    let plugin_config = config
+        .plugin
+        .config
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| {
+            SidecarError::InvalidState(format!(
+                "failed to serialize nativeRoot.plugin.config: {error}"
+            ))
+        })?;
     Ok(Some(NativeRootPluginConfig {
         plugin: MountPluginDescriptor {
             id: config.plugin.id.clone(),
             config: plugin_config,
         },
-        read_only: config.read_only,
+        read_only: config.effective_read_only(),
     }))
 }
 
@@ -1141,8 +1514,8 @@ where
         )));
     }
 
-    let config_value: serde_json::Value = serde_json::from_str(&native_root.plugin.config)
-        .map_err(|error| {
+    let config_value: serde_json::Value =
+        serde_json::from_str(native_root.plugin.effective_config()).map_err(|error| {
             SidecarError::InvalidState(format!(
                 "root native plugin config for {} is not valid JSON: {error}",
                 native_root.plugin.id
@@ -1251,7 +1624,21 @@ where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
-    shutdown_configured_mounts(vm, &context, "configure_vm", false)?;
+    shutdown_configured_mounts(vm, &context, "configure_vm", false, false)?;
+    mount_leaf_descriptors(mount_plugins, vm, mounts, context)
+}
+
+fn reconcile_mounts_preserving_agentos_packages<B>(
+    mount_plugins: &agentos_kernel::mount_plugin::FileSystemPluginRegistry<MountPluginContext<B>>,
+    vm: &mut VmState,
+    mounts: &[crate::protocol::MountDescriptor],
+    context: MountPluginContext<B>,
+) -> Result<(), SidecarError>
+where
+    B: NativeSidecarBridge + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    shutdown_configured_mounts(vm, &context, "configure_vm", false, true)?;
     mount_leaf_descriptors(mount_plugins, vm, mounts, context)
 }
 
@@ -1266,8 +1653,9 @@ where
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
     for mount in mounts {
-        let config_value: serde_json::Value =
-            serde_json::from_str(&mount.plugin.config).map_err(|error| {
+        let read_only = mount.effective_read_only();
+        let config_value: serde_json::Value = serde_json::from_str(mount.plugin.effective_config())
+            .map_err(|error| {
                 SidecarError::InvalidState(format!(
                     "mount plugin config for {} is not valid JSON: {error}",
                     mount.plugin.id
@@ -1279,7 +1667,7 @@ where
                 OpenFileSystemPluginRequest {
                     vm_id: &context.vm_id,
                     guest_path: &mount.guest_path,
-                    read_only: mount.read_only,
+                    read_only,
                     config: &config_value,
                     context: &context,
                 },
@@ -1290,7 +1678,7 @@ where
             .mount_boxed_filesystem(
                 &mount.guest_path,
                 filesystem,
-                MountOptions::new(mount.plugin.id.clone()).read_only(mount.read_only),
+                MountOptions::new(mount.plugin.id.clone()).read_only(read_only),
             )
             .map_err(kernel_error)?;
         emit_security_audit_event(
@@ -1300,7 +1688,7 @@ where
             audit_fields([
                 (String::from("guest_path"), mount.guest_path.clone()),
                 (String::from("plugin_id"), mount.plugin.id.clone()),
-                (String::from("read_only"), mount.read_only.to_string()),
+                (String::from("read_only"), read_only.to_string()),
             ]),
         );
     }
@@ -1313,47 +1701,92 @@ fn shutdown_configured_mounts<B>(
     context: &MountPluginContext<B>,
     phase: &str,
     continue_on_error: bool,
+    preserve_agentos_packages: bool,
 ) -> Result<(), SidecarError>
 where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    let mut errors = Vec::new();
     for existing in vm.configuration.mounts.clone() {
+        if preserve_agentos_packages && existing.plugin.id == "agentos_packages" {
+            continue;
+        }
         match vm.kernel.unmount_filesystem(&existing.guest_path) {
-            Ok(()) => emit_security_audit_event(
-                &context.bridge,
-                &context.vm_id,
-                "security.mount.unmounted",
-                audit_fields([
-                    (String::from("guest_path"), existing.guest_path.clone()),
-                    (String::from("plugin_id"), existing.plugin.id.clone()),
-                    (String::from("read_only"), existing.read_only.to_string()),
-                ]),
-            ),
+            Ok(()) => {
+                if phase == "configure_vm" {
+                    refresh_guest_shadow_subtree(vm, &existing.guest_path)?;
+                }
+                emit_security_audit_event(
+                    &context.bridge,
+                    &context.vm_id,
+                    "security.mount.unmounted",
+                    audit_fields([
+                        (String::from("guest_path"), existing.guest_path.clone()),
+                        (String::from("plugin_id"), existing.plugin.id.clone()),
+                        (
+                            String::from("read_only"),
+                            existing.effective_read_only().to_string(),
+                        ),
+                    ]),
+                )
+            }
             Err(error) if error.code() == "EINVAL" => {}
             Err(error) => {
-                let _ = emit_structured_event(
+                tracing::error!(
+                    vm_id = %context.vm_id,
+                    guest_path = %existing.guest_path,
+                    plugin_id = %existing.plugin.id,
+                    phase,
+                    error_code = error.code(),
+                    error = %error,
+                    "failed to unmount configured filesystem during cleanup"
+                );
+                if let Err(event_error) = emit_structured_event(
                     &context.bridge,
                     &context.vm_id,
                     "filesystem.mount.shutdown_failed",
                     audit_fields([
                         (String::from("guest_path"), existing.guest_path.clone()),
                         (String::from("plugin_id"), existing.plugin.id.clone()),
-                        (String::from("read_only"), existing.read_only.to_string()),
+                        (
+                            String::from("read_only"),
+                            existing.effective_read_only().to_string(),
+                        ),
                         (String::from("phase"), String::from(phase)),
                         (String::from("error_code"), String::from(error.code())),
                         (String::from("error"), error.to_string()),
                     ]),
-                );
+                ) {
+                    tracing::error!(
+                        vm_id = %context.vm_id,
+                        guest_path = %existing.guest_path,
+                        plugin_id = %existing.plugin.id,
+                        phase,
+                        error = %event_error,
+                        "failed to emit configured-mount cleanup failure"
+                    );
+                    if continue_on_error {
+                        errors.push(event_error);
+                    }
+                }
 
                 if !continue_on_error {
                     return Err(kernel_error(error));
                 }
+                errors.push(kernel_error(error));
             }
         }
     }
 
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(SidecarError::Cleanup {
+            context: "failed to shut down configured mounts completely",
+            errors,
+        })
+    }
 }
 
 /// Build the `/opt/agentos` package projection for `configure_vm`.
@@ -1387,16 +1820,18 @@ fn package_leaf_mount_to_descriptor(
             root,
         } => MountDescriptor {
             guest_path,
-            read_only: true,
+            read_only: Some(true),
             plugin: MountPluginDescriptor {
                 id: String::from("agentos_packages"),
-                config: serde_json::json!({
-                    "kind": "tar",
-                    "tarPath": tar_path,
-                    "root": root,
-                    "readOnly": true,
-                })
-                .to_string(),
+                config: Some(
+                    serde_json::json!({
+                        "kind": "tar",
+                        "tarPath": tar_path,
+                        "root": root,
+                        "readOnly": true,
+                    })
+                    .to_string(),
+                ),
             },
         },
         crate::package_projection::PackageLeafMount::HostDir {
@@ -1404,29 +1839,33 @@ fn package_leaf_mount_to_descriptor(
             host_path,
         } => MountDescriptor {
             guest_path,
-            read_only: true,
+            read_only: Some(true),
             plugin: MountPluginDescriptor {
                 id: String::from("agentos_packages"),
-                config: serde_json::json!({
-                    "kind": "hostDir",
-                    "hostPath": host_path,
-                    "readOnly": true,
-                })
-                .to_string(),
+                config: Some(
+                    serde_json::json!({
+                        "kind": "hostDir",
+                        "hostPath": host_path,
+                        "readOnly": true,
+                    })
+                    .to_string(),
+                ),
             },
         },
         crate::package_projection::PackageLeafMount::SingleSymlink { guest_path, target } => {
             MountDescriptor {
                 guest_path,
-                read_only: true,
+                read_only: Some(true),
                 plugin: MountPluginDescriptor {
                     id: String::from("agentos_packages"),
-                    config: serde_json::json!({
-                        "kind": "singleSymlink",
-                        "target": target,
-                        "readOnly": true,
-                    })
-                    .to_string(),
+                    config: Some(
+                        serde_json::json!({
+                            "kind": "singleSymlink",
+                            "target": target,
+                            "readOnly": true,
+                        })
+                        .to_string(),
+                    ),
                 },
             }
         }
@@ -1436,14 +1875,26 @@ fn package_leaf_mount_to_descriptor(
 fn package_descriptors_from_wire(
     packages: &[crate::protocol::PackageDescriptor],
 ) -> Result<Vec<crate::package_projection::PackageDescriptor>, SidecarError> {
-    packages
-        .iter()
-        .map(|package| crate::package_projection::read_package_manifest_from_path(&package.path))
-        .collect()
+    packages.iter().map(package_descriptor_from_wire).collect()
+}
+
+fn package_descriptor_from_wire(
+    package: &crate::protocol::PackageDescriptor,
+) -> Result<crate::package_projection::PackageDescriptor, SidecarError> {
+    match package {
+        crate::protocol::PackageDescriptor::PackagePath(package) => {
+            crate::package_projection::read_package_manifest_from_path(&package.path)
+        }
+        crate::protocol::PackageDescriptor::PackageInline(_) => Err(SidecarError::Unsupported(
+            "native package projection requires a trusted host path; inline .aospkg bytes are for the browser sidecar"
+                .to_string(),
+        )),
+    }
 }
 
 fn projected_agent_launch_from_descriptors(
     packages: &[crate::package_projection::PackageDescriptor],
+    mount_at: &str,
 ) -> BTreeMap<String, crate::state::ProjectedAgentLaunch> {
     packages
         .iter()
@@ -1452,6 +1903,10 @@ fn projected_agent_launch_from_descriptors(
             Some((
                 package.name.clone(),
                 crate::state::ProjectedAgentLaunch {
+                    adapter_entrypoint: crate::package_projection::package_command_path(
+                        mount_at,
+                        &acp_entrypoint,
+                    ),
                     acp_entrypoint,
                     env: package.agent_env.clone().into_iter().collect(),
                     launch_args: package.agent_launch_args.clone(),
@@ -1463,6 +1918,7 @@ fn projected_agent_launch_from_descriptors(
 
 fn projected_agents_from_descriptors(
     packages: &[crate::package_projection::PackageDescriptor],
+    mount_at: &str,
 ) -> Vec<AgentosProjectedAgent> {
     packages
         .iter()
@@ -1473,10 +1929,9 @@ fn projected_agents_from_descriptors(
             vec![AgentosProjectedAgent {
                 id: package.name.clone(),
                 acp_entrypoint: acp_entrypoint.clone(),
-                adapter_entrypoint: format!(
-                    "{}/{}",
-                    crate::package_projection::OPT_AGENTOS_BIN,
-                    acp_entrypoint
+                adapter_entrypoint: crate::package_projection::package_command_path(
+                    mount_at,
+                    acp_entrypoint,
                 ),
             }]
         })
@@ -1539,133 +1994,6 @@ fn append_package_provides_mounts(
     Ok(())
 }
 
-fn append_module_access_mount(
-    mounts: &mut Vec<MountDescriptor>,
-    module_access_cwd: Option<&String>,
-) -> Result<(), SidecarError> {
-    if mounts
-        .iter()
-        .any(|mount| mount.guest_path == "/root/node_modules")
-    {
-        return Ok(());
-    }
-
-    let Some(module_access_cwd) = module_access_cwd else {
-        return Ok(());
-    };
-    let root = resolve_host_path(Some(module_access_cwd))?.join("node_modules");
-    if !root.is_dir() {
-        return Ok(());
-    }
-
-    mounts.push(MountDescriptor {
-        guest_path: String::from("/root/node_modules"),
-        read_only: true,
-        plugin: MountPluginDescriptor {
-            id: String::from("module_access"),
-            config: serde_json::json!({
-                "hostPath": root,
-            })
-            .to_string(),
-        },
-    });
-    append_module_access_symlink_mounts(mounts, &root)?;
-    Ok(())
-}
-
-fn append_module_access_symlink_mounts(
-    mounts: &mut Vec<MountDescriptor>,
-    node_modules_root: &Path,
-) -> Result<(), SidecarError> {
-    for entry in fs::read_dir(node_modules_root)
-        .map_err(|error| SidecarError::Io(format!("failed to read module_access root: {error}")))?
-    {
-        let entry = entry.map_err(|error| {
-            SidecarError::Io(format!("failed to inspect module_access root: {error}"))
-        })?;
-        let file_name = entry.file_name();
-        let name = file_name.to_string_lossy();
-        if name.starts_with('.') {
-            continue;
-        }
-        let path = entry.path();
-        let metadata = fs::symlink_metadata(&path).map_err(|error| {
-            SidecarError::Io(format!("failed to stat module_access entry: {error}"))
-        })?;
-        if metadata.file_type().is_symlink() {
-            append_module_access_symlink_mount(
-                mounts,
-                &format!("/root/node_modules/{name}"),
-                &path,
-            )?;
-            continue;
-        }
-        if !metadata.is_dir() || !name.starts_with('@') {
-            continue;
-        }
-        for scoped_entry in fs::read_dir(&path).map_err(|error| {
-            SidecarError::Io(format!("failed to read module_access scope: {error}"))
-        })? {
-            let scoped_entry = scoped_entry.map_err(|error| {
-                SidecarError::Io(format!("failed to inspect module_access scope: {error}"))
-            })?;
-            let scoped_name = scoped_entry.file_name().to_string_lossy().into_owned();
-            if scoped_name.starts_with('.') {
-                continue;
-            }
-            let scoped_path = scoped_entry.path();
-            let scoped_metadata = fs::symlink_metadata(&scoped_path).map_err(|error| {
-                SidecarError::Io(format!(
-                    "failed to stat module_access scoped entry: {error}"
-                ))
-            })?;
-            if scoped_metadata.file_type().is_symlink() {
-                append_module_access_symlink_mount(
-                    mounts,
-                    &format!("/root/node_modules/{name}/{scoped_name}"),
-                    &scoped_path,
-                )?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn append_module_access_symlink_mount(
-    mounts: &mut Vec<MountDescriptor>,
-    guest_path: &str,
-    symlink_path: &Path,
-) -> Result<(), SidecarError> {
-    if mounts.iter().any(|mount| mount.guest_path == guest_path) {
-        return Ok(());
-    }
-
-    let target = fs::canonicalize(symlink_path).map_err(|error| {
-        SidecarError::Io(format!(
-            "failed to resolve module_access package symlink {}: {error}",
-            symlink_path.display()
-        ))
-    })?;
-    if !target.is_dir() {
-        return Ok(());
-    }
-
-    mounts.push(MountDescriptor {
-        guest_path: guest_path.to_owned(),
-        read_only: true,
-        plugin: MountPluginDescriptor {
-            id: String::from("host_dir"),
-            config: serde_json::json!({
-                "hostPath": target,
-                "readOnly": true,
-            })
-            .to_string(),
-        },
-    });
-    Ok(())
-}
-
 fn sidecar_core_error(error: agentos_native_sidecar_core::SidecarCoreError) -> SidecarError {
     SidecarError::InvalidState(error.to_string())
 }
@@ -1680,38 +2008,9 @@ fn resolve_vm_cwds(
     metadata_cwd: Option<&String>,
     shadow_root: &Path,
 ) -> Result<(String, PathBuf), SidecarError> {
-    if let Some(raw_cwd) = metadata_cwd {
-        let candidate = PathBuf::from(raw_cwd);
-        if candidate.is_absolute() || raw_cwd.starts_with('.') {
-            let resolved_host_cwd = resolve_host_path(Some(raw_cwd))?;
-            return Ok((String::from("/"), resolved_host_cwd));
-        }
-    }
-
     let guest_cwd = resolve_guest_cwd(metadata_cwd);
     let host_cwd = shadow_path_for_guest(shadow_root, &guest_cwd);
     Ok((guest_cwd, host_cwd))
-}
-
-fn resolve_host_path(value: Option<&String>) -> Result<PathBuf, SidecarError> {
-    match value {
-        Some(path) => {
-            let cwd = PathBuf::from(path);
-            let resolved = if cwd.is_absolute() {
-                cwd
-            } else {
-                std::env::current_dir()
-                    .map_err(|error| {
-                        SidecarError::Io(format!("failed to resolve current directory: {error}"))
-                    })?
-                    .join(cwd)
-            };
-            Ok(resolved)
-        }
-        None => std::env::current_dir().map_err(|error| {
-            SidecarError::Io(format!("failed to resolve current directory: {error}"))
-        }),
-    }
 }
 
 fn create_vm_shadow_root(vm_id: &str) -> Result<PathBuf, SidecarError> {
@@ -2149,14 +2448,17 @@ fn prune_kernel_command_stub(
 mod tests {
     use super::{
         bootstrap_native_root_filesystem, bootstrap_shadow_root,
+        ensure_vm_disposal_process_event_capacity, guest_environment_with_overrides,
         materialize_shadow_root_snapshot_entries, native_root_plugin_from_config,
-        prune_kernel_command_stub, shadow_path_for_guest, KERNEL_COMMAND_STUB,
+        permissions_with_allow_all_defaults, prune_kernel_command_stub, record_disposing_event,
+        shadow_path_for_guest, DEFAULT_GUEST_PATH_ENV, KERNEL_COMMAND_STUB,
     };
     use crate::plugins::chunked_local::ChunkedLocalMountPlugin;
     use crate::protocol::{
-        RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemEntryKind,
-        RootFilesystemLowerDescriptor,
+        EventFrame, EventPayload, OwnershipScope, RootFilesystemDescriptor, RootFilesystemEntry,
+        RootFilesystemEntryKind, RootFilesystemLowerDescriptor, VmLifecycleEvent, VmLifecycleState,
     };
+    use crate::service::VmDisposalProgress;
     use agentos_bridge::FilesystemSnapshot;
     use agentos_kernel::kernel::{KernelVm, KernelVmConfig};
     use agentos_kernel::mount_plugin::{FileSystemPluginFactory, OpenFileSystemPluginRequest};
@@ -2165,9 +2467,105 @@ mod tests {
     use agentos_kernel::resource_accounting::ResourceLimits;
     use agentos_kernel::root_fs::{encode_snapshot, FilesystemEntry, RootFilesystemSnapshot};
     use agentos_kernel::vfs::VirtualFileSystem;
+    use std::collections::{BTreeMap, VecDeque};
     use std::fs;
+
+    #[test]
+    fn disposal_event_budget_stops_before_polling_a_refillable_queue() {
+        let event_limit = 8;
+        let mut committed = 1; // Disposing lifecycle event.
+        let mut producer = VecDeque::from(["event"]);
+        let mut consumed = 0;
+
+        for _ in 0..100 {
+            let result =
+                ensure_vm_disposal_process_event_capacity(committed, event_limit, event_limit);
+            if let Err(error) = result {
+                assert_eq!(crate::execution::error_code(&error), "limit_exceeded");
+                break;
+            }
+            producer.pop_front().expect("producer keeps refilling");
+            consumed += 1;
+            committed += 1;
+            producer.push_back("event");
+        }
+
+        assert_eq!(consumed, event_limit - 2);
+        assert_eq!(committed, event_limit - 1);
+        assert_eq!(producer.len(), 1, "overflow event was not consumed");
+    }
+
+    #[test]
+    fn disposal_progress_checkpoints_lifecycle_events_and_signals_across_retry() {
+        let disposing = EventFrame::new(
+            OwnershipScope::vm("conn-1", "session-1", "vm-1"),
+            EventPayload::VmLifecycle(VmLifecycleEvent {
+                state: VmLifecycleState::Disposing,
+            }),
+        );
+        let mut progress = VmDisposalProgress::default();
+
+        assert!(record_disposing_event(&mut progress, disposing.clone()));
+        progress.sigterm_attempted.insert(String::from("process-1"));
+        let first_batch = std::mem::take(&mut progress.pending_events);
+        assert_eq!(first_batch, vec![disposing.clone()]);
+
+        assert!(!record_disposing_event(&mut progress, disposing));
+        assert!(progress.pending_events.is_empty());
+        assert!(progress.sigterm_attempted.contains("process-1"));
+        assert!(progress.sigkill_attempted.insert(String::from("process-1")));
+        assert!(!progress.sigkill_attempted.insert(String::from("process-1")));
+    }
     use std::os::unix::fs::PermissionsExt;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn guest_environment_defaults_are_sidecar_owned_and_explicit_values_win() {
+        let environment = guest_environment_with_overrides(&BTreeMap::from([
+            (String::from("HOME"), String::from("/custom-home")),
+            (String::from("CUSTOM"), String::from("value")),
+        ]));
+
+        assert_eq!(
+            environment.get("HOME").map(String::as_str),
+            Some("/custom-home")
+        );
+        assert_eq!(environment.get("CUSTOM").map(String::as_str), Some("value"));
+        assert_eq!(environment.get("USER").map(String::as_str), Some("agentos"));
+        assert_eq!(
+            environment.get("SHELL").map(String::as_str),
+            Some("/bin/sh")
+        );
+        assert_eq!(
+            environment.get("PATH").map(String::as_str),
+            Some(DEFAULT_GUEST_PATH_ENV)
+        );
+        assert_eq!(environment.get("LANG").map(String::as_str), Some("C.UTF-8"));
+    }
+
+    #[test]
+    fn omitted_permission_domains_use_the_sidecar_allow_all_default() {
+        use agentos_vm_config::{FsPermissionScope, PermissionMode, PermissionsPolicy};
+
+        let permissions = permissions_with_allow_all_defaults(Some(PermissionsPolicy {
+            fs: Some(FsPermissionScope::Mode(PermissionMode::Deny)),
+            network: None,
+            child_process: None,
+            process: None,
+            env: None,
+            binding: None,
+        }));
+
+        assert!(matches!(
+            permissions.fs,
+            Some(FsPermissionScope::Mode(PermissionMode::Deny))
+        ));
+        assert!(permissions.network.is_some());
+        assert!(permissions.child_process.is_some());
+        assert!(permissions.process.is_some());
+        assert!(permissions.env.is_some());
+        assert!(permissions.binding.is_some());
+    }
 
     #[test]
     fn bootstrap_shadow_root_seeds_standard_directories() {
@@ -2221,17 +2619,17 @@ mod tests {
             native_root_plugin_from_config(Some(&agentos_vm_config::NativeRootFilesystemConfig {
                 plugin: agentos_vm_config::MountPluginDescriptor {
                     id: "chunked_local".to_string(),
-                    config: serde_json::json!({
+                    config: Some(serde_json::json!({
                         "metadataPath": database_path.to_string_lossy(),
                         "blockRoot": block_root.to_string_lossy(),
-                    }),
+                    })),
                 },
-                read_only: false,
+                read_only: Some(false),
             }))
             .expect("native root config should parse")
             .expect("native root should be present");
-        let config: serde_json::Value =
-            serde_json::from_str(&native_root.plugin.config).expect("valid plugin config");
+        let config: serde_json::Value = serde_json::from_str(native_root.plugin.effective_config())
+            .expect("valid plugin config");
         let plugin = ChunkedLocalMountPlugin;
         let mut filesystem = plugin
             .open(OpenFileSystemPluginRequest {

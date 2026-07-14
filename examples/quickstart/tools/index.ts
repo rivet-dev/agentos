@@ -62,7 +62,7 @@ async function readToolsPort(): Promise<string> {
 		"/tmp/read-tools-port.cjs",
 		'process.stdout.write(process.env.AGENTOS_TOOLS_PORT||"")',
 	);
-	const proc = vm.spawn("node", ["/tmp/read-tools-port.cjs"], {
+	const proc = await vm.spawn("node", ["/tmp/read-tools-port.cjs"], {
 		onStdout: (data) => {
 			stdout += new TextDecoder().decode(data);
 		},
@@ -100,7 +100,7 @@ async function callTool(
 		`w(${JSON.stringify(outFile)},await r.text());`,
 	].join("");
 	await vm.writeFile("/tmp/tool-call.mjs", source);
-	const proc = vm.spawn("node", ["/tmp/tool-call.mjs"], {
+	const proc = await vm.spawn("node", ["/tmp/tool-call.mjs"], {
 		onStderr: (data) => {
 			stderr += new TextDecoder().decode(data);
 		},

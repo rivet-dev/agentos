@@ -1,30 +1,36 @@
 import type { Readable, Writable } from "node:stream";
 import {
+	type LiveSidecarEventSelector,
+	normalizeSidecarEventMatcher,
 	SidecarEventBuffer,
 	SidecarEventBufferOverflow,
-	normalizeSidecarEventMatcher,
 	sidecarEventWaitAbortError,
-	type LiveSidecarEventSelector,
 } from "./event-buffer.js";
 import { FrameRpcTransport } from "./frame-rpc.js";
 import type { FrameTransport } from "./frame-stream.js";
 import {
-	HostProtocolFrameFactory,
+	ownershipMatchesSelector,
+	ownershipSelectorKey,
+	type LiveOwnershipScope,
+} from "./ownership.js";
+import {
 	classifySidecarWrittenProtocolFrame,
 	decodeProtocolFramePayload,
 	encodeProtocolFramePayload,
-	resolveSidecarRequestFramePayload,
+	HostProtocolFrameFactory,
 	type LiveEventFrame,
 	type LiveProtocolFrame,
-	type LiveRequestFrame,
 	type LiveResponseFrame,
 	type LiveSidecarRequestFrame,
 	type LiveSidecarRequestHandler,
 	type ProtocolFramePayloadCodec,
+	resolveSidecarRequestFramePayload,
 } from "./protocol-frames.js";
-import type { LiveOwnershipScope } from "./ownership.js";
 import type { LiveRequestPayload } from "./request-payloads.js";
-import { SidecarSilenceTimeout } from "./sidecar-errors.js";
+import {
+	SidecarRequestRejected,
+	SidecarSilenceTimeout,
+} from "./sidecar-errors.js";
 
 /**
  * How long the host tolerates TOTAL inbound silence (no responses, events,
@@ -58,7 +64,10 @@ export interface SidecarProtocolClientOptions {
 
 export class SidecarProtocolClient {
 	private readonly eventBuffer: SidecarEventBuffer<LiveEventFrame>;
-	private readonly eventListeners = new Set<(event: LiveEventFrame) => void>();
+	private readonly eventListeners = new Set<{
+		handler: (event: LiveEventFrame) => void;
+		ownership?: LiveOwnershipScope;
+	}>();
 	private readonly silenceTimeoutMs: number;
 	private silenceTimer: ReturnType<typeof setInterval> | null = null;
 	private lastInboundAtMs = 0;
@@ -79,7 +88,13 @@ export class SidecarProtocolClient {
 		reject: (error: Error) => void;
 		timer: ReturnType<typeof setTimeout> | null;
 	}>();
-	private sidecarRequestHandler: LiveSidecarRequestHandler | null = null;
+	private readonly sidecarRequestHandlers = new Map<
+		string,
+		{
+			ownership: LiveOwnershipScope;
+			handler: LiveSidecarRequestHandler;
+		}
+	>();
 
 	constructor(options: SidecarProtocolClientOptions) {
 		this.silenceTimeoutMs =
@@ -163,20 +178,38 @@ export class SidecarProtocolClient {
 		}
 	}
 
-	setSidecarRequestHandler(handler: LiveSidecarRequestHandler | null): void {
-		this.sidecarRequestHandler = handler;
+	registerSidecarRequestHandler(
+		ownership: LiveOwnershipScope,
+		handler: LiveSidecarRequestHandler,
+	): () => void {
+		const key = ownershipSelectorKey(ownership);
+		if (this.sidecarRequestHandlers.has(key)) {
+			throw new Error(`sidecar request handler already registered for ${key}`);
+		}
+		const registration = { ownership, handler };
+		this.sidecarRequestHandlers.set(key, registration);
+		return () => {
+			if (this.sidecarRequestHandlers.get(key) === registration) {
+				this.sidecarRequestHandlers.delete(key);
+			}
+		};
 	}
 
-	onEvent(handler: (event: LiveEventFrame) => void): () => void {
-		this.eventListeners.add(handler);
+	onEvent(
+		handler: (event: LiveEventFrame) => void,
+		ownership?: LiveOwnershipScope,
+	): () => void {
+		const registration = { handler, ownership };
+		this.eventListeners.add(registration);
 		return () => {
-			this.eventListeners.delete(handler);
+			this.eventListeners.delete(registration);
 		};
 	}
 
 	async sendRequest(input: {
 		ownership: LiveOwnershipScope;
 		payload: LiveRequestPayload;
+		onResponse?: (response: LiveResponseFrame) => void;
 	}): Promise<LiveResponseFrame> {
 		if (this.closedError) {
 			throw this.closedError;
@@ -189,20 +222,27 @@ export class SidecarProtocolClient {
 		const response = await this.frameTransport.sendFrame(
 			request.request_id,
 			request,
+			(frame) => {
+				this.validateResponse(frame);
+				input.onResponse?.(frame);
+			},
 		);
-
-		if (response.payload.type === "rejected") {
-			throw new Error(
-				`sidecar rejected request ${request.request_id}: ${response.payload.code}: ${response.payload.message}`,
-			);
-		}
+		this.validateResponse(response);
 		return response;
 	}
 
+	private validateResponse(response: LiveResponseFrame): void {
+		if (response.payload.type === "rejected") {
+			throw new SidecarRequestRejected({
+				code: response.payload.code,
+				message: response.payload.message,
+				response,
+			});
+		}
+	}
+
 	async waitForEvent(
-		matcher:
-			| LiveSidecarEventSelector
-			| ((event: LiveEventFrame) => boolean),
+		matcher: LiveSidecarEventSelector | ((event: LiveEventFrame) => boolean),
 		timeoutMs?: number,
 		options?: {
 			signal?: AbortSignal;
@@ -290,6 +330,8 @@ export class SidecarProtocolClient {
 
 	dispose(): void {
 		this.stopSilenceWatchdog();
+		this.sidecarRequestHandlers.clear();
+		this.eventListeners.clear();
 		this.frameTransport.dispose();
 	}
 
@@ -300,9 +342,12 @@ export class SidecarProtocolClient {
 	private async dispatchSidecarRequest(
 		request: LiveSidecarRequestFrame,
 	): Promise<void> {
+		const handler = this.sidecarRequestHandlers.get(
+			ownershipSelectorKey(request.ownership),
+		)?.handler;
 		const payload = await resolveSidecarRequestFramePayload(
 			request,
-			this.sidecarRequestHandler,
+			handler ?? null,
 		);
 
 		try {
@@ -331,8 +376,11 @@ export class SidecarProtocolClient {
 			return;
 		}
 		for (const listener of this.eventListeners) {
+			if (!ownershipMatchesSelector(listener.ownership, event.ownership)) {
+				continue;
+			}
 			try {
-				listener(event);
+				listener.handler(event);
 			} catch {
 				// Event listeners are best-effort observers and must not break framing.
 			}

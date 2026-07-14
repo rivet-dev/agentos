@@ -186,7 +186,7 @@ describe("sidecar resume orchestration (mock ACP adapter)", () => {
 			expect(result.sessionId).toBe(externalSessionId);
 		} finally {
 			if (liveSessionId) {
-				vm.closeSession(liveSessionId);
+				await vm.closeSession(liveSessionId);
 			}
 			await vm.dispose();
 			cleanup();
@@ -208,7 +208,7 @@ describe("sidecar resume orchestration (mock ACP adapter)", () => {
 			expect(result.sessionId).toBe(externalSessionId);
 		} finally {
 			if (liveSessionId) {
-				vm.closeSession(liveSessionId);
+				await vm.closeSession(liveSessionId);
 			}
 			await vm.dispose();
 			cleanup();
@@ -221,7 +221,8 @@ describe("sidecar resume orchestration (mock ACP adapter)", () => {
 
 		try {
 			const externalSessionId = "external-session-fallthrough";
-			const transcriptPath = "/root/.agentos/threads/external-session-fallthrough.md";
+			const transcriptPath =
+				"/root/.agentos/threads/external-session-fallthrough.md";
 			const result = await vm.resumeSession(externalSessionId, "synthetic", {
 				transcriptPath,
 				env: { MOCK_RESUME_SCENARIO: "fallthrough" },
@@ -263,7 +264,7 @@ describe("sidecar resume orchestration (mock ACP adapter)", () => {
 			expect(secondBlocks[0].text).toBe("second turn");
 		} finally {
 			if (liveSessionId) {
-				vm.closeSession(liveSessionId);
+				await vm.closeSession(liveSessionId);
 			}
 			await vm.dispose();
 			cleanup();
@@ -292,7 +293,7 @@ describe("sidecar resume orchestration (mock ACP adapter)", () => {
 			expect(blocks[0].text).toBe("hello");
 		} finally {
 			if (liveSessionId) {
-				vm.closeSession(liveSessionId);
+				await vm.closeSession(liveSessionId);
 			}
 			await vm.dispose();
 			cleanup();

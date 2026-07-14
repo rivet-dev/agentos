@@ -76,7 +76,7 @@ if (exists) {
 		let stdout = "";
 		let stderr = "";
 
-		const { pid } = vm.spawn("node", ["/tmp/check-claude-code.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/check-claude-code.mjs"], {
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);
 			},
@@ -115,7 +115,7 @@ if (exists) {
 		let stdout = "";
 		let stderr = "";
 
-		const { pid } = vm.spawn("node", ["/tmp/check-cli.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/check-cli.mjs"], {
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);
 			},
@@ -131,7 +131,7 @@ if (exists) {
 		expect(stdout).toContain("is-esm:true");
 	}, 30_000);
 
-test("vendor ripgrep binary is projected and fails deterministically if executed in the VM", async () => {
+	test("vendor ripgrep binary is projected and fails deterministically if executed in the VM", async () => {
 		// Claude Code bundles native ripgrep (ELF) for code search.
 		// The binary file is accessible via the /root/node_modules mount,
 		// but projected native binaries are not executable guest-side.
@@ -181,7 +181,7 @@ if (rgExists) {
 		let stdout = "";
 		let stderr = "";
 
-		const { pid } = vm.spawn("node", ["/tmp/check-vendor.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/check-vendor.mjs"], {
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);
 			},
@@ -222,7 +222,7 @@ try {
 
 		let stdout = "";
 
-		const { pid } = vm.spawn("node", ["/tmp/test-meta.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/test-meta.mjs"], {
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);
 			},
@@ -262,7 +262,7 @@ main();
 
 		let stdout = "";
 
-		const { pid } = vm.spawn("node", ["/tmp/try-import.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/try-import.mjs"], {
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);
 			},
@@ -272,7 +272,9 @@ main();
 		// supported session entrypoint, but the import attempt should finish with
 		// either a clean import or an explicit runtime error instead of hanging.
 		const timeout = setTimeout(() => {
-			vm.killProcess(pid);
+			void vm.killProcess(pid).catch((error) => {
+				console.error("failed to kill timed-out import probe", error);
+			});
 		}, 20_000);
 
 		const exitCode = await vm.waitProcess(pid);
@@ -290,7 +292,7 @@ main();
 
 		const cliPath = "/root/node_modules/@anthropic-ai/claude-code/cli.js";
 
-		const { pid } = vm.spawn("node", [cliPath, "--version"], {
+		const { pid } = await vm.spawn("node", [cliPath, "--version"], {
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);
 			},
@@ -300,7 +302,9 @@ main();
 		});
 
 		const timeout = setTimeout(() => {
-			vm.killProcess(pid);
+			void vm.killProcess(pid).catch((error) => {
+				console.error("failed to kill timed-out CLI probe", error);
+			});
 		}, 15_000);
 
 		const exitCode = await vm.waitProcess(pid);

@@ -9,7 +9,7 @@ Every VM gets an isolated virtual filesystem (VFS) that you drive from the host.
 
 ## How it works
 
-The host client exposes file APIs directly on a VM handle — `writeFile`/`readFile` for single files, `writeFiles`/`readFiles` for batches, plus `mkdir`, `readdir`, `readdirRecursive`, `stat`, `exists`, `move`, and `deleteFile`. Bytes you write land in the kernel's in-memory VFS, which the guest sees through the normal `node:fs` API; the real host disk is never exposed, so a path that exists in the VFS does not exist on the host.
+The host client exposes file APIs directly on a VM handle — `writeFile`/`readFile`, plus `mkdir`, `readdir`, `readdirRecursive`, `stat`, `exists`, `move`, and `deleteFile`. Compose independent operations with `Promise.all` when needed. Bytes you write land in the kernel VFS, which the guest sees through the normal `node:fs` API; the real host disk is never exposed unless explicitly mounted.
 
 To bridge in external storage, declare `mounts` on `agentOS({ ... })`. Each mount maps a guest path to a plugin: `memory` for scratch space, `host_dir` for a host directory (optionally `readOnly`), `s3` for a bucket/prefix, or `google_drive` for a Drive folder. The guest reads and writes those paths like any other directory.
 

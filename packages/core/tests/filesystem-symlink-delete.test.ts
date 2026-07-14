@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
+import { getAgentOsRuntimeAdmin } from "../src/test/runtime.js";
 
 describe("filesystem symlink deletion", () => {
 	let vm: AgentOs;
@@ -13,14 +14,7 @@ describe("filesystem symlink deletion", () => {
 	});
 
 	test("delete symlink to directory removes the link, not the target", async () => {
-		const vfs = (
-			vm as unknown as {
-				_vfs(): {
-					symlink(target: string, linkPath: string): Promise<void>;
-					lstat(path: string): Promise<{ isSymbolicLink: boolean }>;
-				};
-			}
-		)._vfs();
+		const vfs = getAgentOsRuntimeAdmin(vm).rootView;
 
 		await vm.mkdir("/tmp/real-dir");
 		await vm.writeFile("/tmp/real-dir/child.txt", "keep me");
@@ -30,8 +24,8 @@ describe("filesystem symlink deletion", () => {
 		await vm.delete("/tmp/dir-link", { recursive: true });
 
 		await expect(vfs.lstat("/tmp/dir-link")).rejects.toThrow("ENOENT");
-		expect(new TextDecoder().decode(await vm.readFile("/tmp/real-dir/child.txt"))).toBe(
-			"keep me",
-		);
+		expect(
+			new TextDecoder().decode(await vm.readFile("/tmp/real-dir/child.txt")),
+		).toBe("keep me");
 	});
 });

@@ -37,7 +37,7 @@ describe("process lifecycle teardown races", () => {
 			await vm.writeFile("/tmp/hold-open.mjs", "setInterval(() => {}, 1_000);");
 			await vm.writeFile("/tmp/seed.txt", "seed");
 
-			vm.spawn("node", ["/tmp/hold-open.mjs"], {
+			await vm.spawn("node", ["/tmp/hold-open.mjs"], {
 				env: { HOME: "/home/agentos" },
 			});
 

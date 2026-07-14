@@ -208,7 +208,7 @@ fn ts_dto_field_names_match_rust_contract_fixture() {
             "VirtualStat",
             "packages/core/src/runtime.ts",
             core_runtime,
-            "export interface VirtualStat { mode: number; size: number; blocks: number; dev: number; rdev: number; isDirectory: boolean; isSymbolicLink: boolean; atimeMs: number; mtimeMs: number; ctimeMs: number; birthtimeMs: number; ino: number; nlink: number; uid: number; gid: number; }",
+            "export interface VirtualStat { mode: number; size: number; sizeExact?: bigint; blocks: number; dev: number; rdev: number; isDirectory: boolean; isSymbolicLink: boolean; atimeMs: number; mtimeMs: number; ctimeMs: number; birthtimeMs: number; ino: number; inoExact?: bigint; nlink: number; nlinkExact?: bigint; uid: number; gid: number; }",
         ),
         (
             "ExecResult",
@@ -220,7 +220,7 @@ fn ts_dto_field_names_match_rust_contract_fixture() {
             "ProcessInfo",
             "packages/core/src/runtime.ts",
             core_runtime,
-            "export interface ProcessInfo { pid: number; ppid: number; pgid: number; sid: number; driver: string; command: string; args: string[]; cwd: string; status: \"running\" | \"exited\"; exitCode: number | null; startTime: number; exitTime: number | null; }",
+            "export interface ProcessInfo { pid: number; ppid: number; pgid: number; sid: number; driver: string; command: string; args: string[]; cwd: string; status: \"running\" | \"stopped\" | \"exited\"; exitCode: number | null; startTime: number; exitTime: number | null; }",
         ),
         (
             "AgentExitEvent",
@@ -263,18 +263,6 @@ fn ts_dto_field_names_match_rust_contract_fixture() {
             "generated actor-actions",
             &actor_actions,
             "export interface VmFetchResponse { status: number; statusText: string; headers: Record<string, string>; body: Uint8Array; }",
-        ),
-        (
-            "WriteFileResult",
-            "generated actor-actions",
-            &actor_actions,
-            "export interface WriteFileResult { path: string; success: boolean; error?: string; }",
-        ),
-        (
-            "ReadFileResult",
-            "generated actor-actions",
-            &actor_actions,
-            "export interface ReadFileResult { path: string; content?: Uint8Array; error?: string; }",
         ),
         (
             "PersistedSessionRecord",

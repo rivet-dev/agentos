@@ -50,7 +50,7 @@ process.stdin.on("data", (chunk) => {
         writeResponse(msg.id, {
           sessionId: "__MOCK_SESSION_ID__",
           modes: { currentModeId: "default", availableModes: [{ id: "default", label: "Default" }] },
-          configOptions: [],
+          configOptions: __MOCK_CONFIG_OPTIONS__,
         });
         break;
       case "session/prompt":
@@ -84,6 +84,10 @@ fn unique_dir(tag: &str) -> PathBuf {
 }
 
 fn write_mock_agent_package(root: &Path) -> PathBuf {
+    write_mock_agent_package_with_config_options(root, "[]")
+}
+
+fn write_mock_agent_package_with_config_options(root: &Path, config_options: &str) -> PathBuf {
     let package = root.join("mock-agent-package");
     std::fs::create_dir_all(package.join("bin")).expect("create package bin");
     std::fs::write(
@@ -93,7 +97,8 @@ fn write_mock_agent_package(root: &Path) -> PathBuf {
     .expect("write agentos-package.json");
     let adapter = MOCK_ACP_ADAPTER
         .replace("__MOCK_SESSION_ID__", MOCK_SESSION_ID)
-        .replace("__MOCK_PROMPT_TEXT__", MOCK_PROMPT_TEXT);
+        .replace("__MOCK_PROMPT_TEXT__", MOCK_PROMPT_TEXT)
+        .replace("__MOCK_CONFIG_OPTIONS__", config_options);
     let bin = package.join("bin/mock-agent-acp");
     std::fs::write(&bin, format!("#!/usr/bin/env node\n{adapter}\n")).expect("write adapter");
     let mut perms = std::fs::metadata(&bin).expect("stat adapter").permissions();
@@ -153,20 +158,19 @@ async fn session_surface_create_prompt_events_close() {
     // --- Runtime-independent session surface (no agents/V8 needed) --------------------------------
     // Real assertions against the real sidecar: the registry starts empty, agents are resolved
     // dynamically from the configured `/opt/agentos` package manifests (there is NO hardcoded
-    // agent registry), and every session operation on an unknown id reports SessionNotFound.
-    assert!(os.list_sessions().is_empty(), "a fresh VM has no sessions");
+    // agent registry). Session close is sidecar-owned and idempotent for unknown ids.
+    assert!(
+        os.list_sessions().await.expect("list sessions").is_empty(),
+        "a fresh VM has no sessions"
+    );
     let agents = os.list_agents().await.expect("list_agents");
     assert!(
         agents.iter().any(|agent| agent.id == MOCK_AGENT_TYPE),
         "the projected mock package must appear in list_agents: {agents:?}"
     );
-    assert!(
-        matches!(
-            os.close_session("nope"),
-            Err(ClientError::SessionNotFound(_))
-        ),
-        "close_session(unknown) must return SessionNotFound"
-    );
+    os.close_session("nope")
+        .await
+        .expect("close_session(unknown) is idempotent");
     assert!(
         os.prompt("nope", "x")
             .await
@@ -202,6 +206,8 @@ async fn session_surface_create_prompt_events_close() {
     // --- list_sessions: the new session is registered --------------------------------------------
     assert!(
         os.list_sessions()
+            .await
+            .expect("list sessions")
             .iter()
             .any(|s| s.session_id == session_id),
         "created session must appear in list_sessions"
@@ -230,6 +236,7 @@ async fn session_surface_create_prompt_events_close() {
     // prompt.
     let live_chunk_text = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while let Some(notification) = events.next().await {
+            let notification = notification.expect("session event stream lagged");
             if let Some(text) = agent_message_chunk_text(&notification) {
                 return Some(text.to_string());
             }
@@ -251,9 +258,8 @@ async fn session_surface_create_prompt_events_close() {
     );
 
     // --- close_session: removes the session; later prompts report SessionNotFound -----------------
-    os.close_session(&session_id).expect("close_session");
-    // close_session is fire-and-forget; the in-memory registry removal is synchronous in the close
-    // path, but the detached internal close runs on a task. Poll briefly for the deregistration.
+    os.close_session(&session_id).await.expect("close_session");
+    // The awaited sidecar close removes the authoritative session before returning.
     let gone = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             if matches!(
@@ -276,4 +282,68 @@ async fn session_surface_create_prompt_events_close() {
 
     os.shutdown().await.expect("shutdown");
     std::fs::remove_dir_all(&package_root).ok();
+}
+
+#[tokio::test]
+async fn session_config_decode_rejects_malformed_entry_without_shortening() {
+    if !common::require_sidecar("session_config_decode_rejects_malformed_entry_without_shortening")
+    {
+        return;
+    }
+    let package_root = unique_dir("malformed-config-pkg");
+    let package_dir = write_mock_agent_package_with_config_options(
+        &package_root,
+        r#"[
+          { "id": "valid", "category": "custom" },
+          { "id": "bad", "category": "custom", "readOnly": "not-a-boolean" }
+        ]"#,
+    );
+    common::ensure_sidecar_env();
+    let os = AgentOs::create(AgentOsConfig {
+        packages: vec![PackageRef {
+            path: package_dir.to_string_lossy().into_owned(),
+        }],
+        ..Default::default()
+    })
+    .await
+    .expect("create VM with malformed-config mock package");
+
+    let workspace_dir = "/home/agentos/workspace";
+    os.mkdir(workspace_dir, Default::default())
+        .await
+        .expect("create workspace");
+    let session_id = match try_create_session_with_options(
+        &os,
+        CreateSessionOptions {
+            cwd: Some(workspace_dir.to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    {
+        Some(id) => id,
+        None => {
+            os.shutdown().await.expect("shutdown");
+            std::fs::remove_dir_all(&package_root).ok();
+            return;
+        }
+    };
+
+    let error = os
+        .get_session_config_options(&session_id)
+        .await
+        .expect_err("a malformed present entry must fail instead of shortening the response");
+    let has_indexed_decode_error = error.downcast_ref::<ClientError>().is_some_and(|error| {
+        error
+            .to_string()
+            .starts_with("failed to decode ACP configOptions[1]:")
+    });
+
+    os.close_session(&session_id).await.expect("close session");
+    os.shutdown().await.expect("shutdown");
+    std::fs::remove_dir_all(&package_root).ok();
+    assert!(
+        has_indexed_decode_error,
+        "malformed configOptions[1] must surface as the indexed typed client decode error"
+    );
 }

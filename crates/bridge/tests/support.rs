@@ -51,7 +51,12 @@ pub struct RecordingBridge {
     execution_events: VecDeque<ExecutionEvent>,
     permission_responses: VecDeque<Result<PermissionDecision, StubError>>,
     worker_create_errors: VecDeque<StubError>,
+    worker_terminate_errors: VecDeque<StubError>,
     execution_start_errors: VecDeque<StubError>,
+    execution_kill_errors: VecDeque<StubError>,
+    structured_event_errors: VecDeque<StubError>,
+    lifecycle_event_errors: VecDeque<StubError>,
+    filesystem_flush_errors: VecDeque<StubError>,
     pub filesystem_permission_requests: Vec<FilesystemPermissionRequest>,
     pub permission_checks: Vec<String>,
     pub log_events: Vec<LogRecord>,
@@ -84,7 +89,12 @@ impl Default for RecordingBridge {
             execution_events: VecDeque::new(),
             permission_responses: VecDeque::new(),
             worker_create_errors: VecDeque::new(),
+            worker_terminate_errors: VecDeque::new(),
             execution_start_errors: VecDeque::new(),
+            execution_kill_errors: VecDeque::new(),
+            structured_event_errors: VecDeque::new(),
+            lifecycle_event_errors: VecDeque::new(),
+            filesystem_flush_errors: VecDeque::new(),
             filesystem_permission_requests: Vec::new(),
             permission_checks: Vec::new(),
             log_events: Vec::new(),
@@ -119,6 +129,10 @@ impl RecordingBridge {
         self.execution_events.push_back(event);
     }
 
+    pub fn pending_execution_event_count(&self) -> usize {
+        self.execution_events.len()
+    }
+
     pub fn push_permission_decision(&mut self, decision: PermissionDecision) {
         self.permission_responses.push_back(Ok(decision));
     }
@@ -132,13 +146,42 @@ impl RecordingBridge {
         self.worker_create_errors.push_back(StubError::new(message));
     }
 
+    pub fn push_worker_terminate_error(&mut self, message: impl Into<String>) {
+        self.worker_terminate_errors
+            .push_back(StubError::new(message));
+    }
+
     pub fn push_execution_start_error(&mut self, message: impl Into<String>) {
         self.execution_start_errors
             .push_back(StubError::new(message));
     }
 
+    pub fn push_execution_kill_error(&mut self, message: impl Into<String>) {
+        self.execution_kill_errors
+            .push_back(StubError::new(message));
+    }
+
+    pub fn push_structured_event_error(&mut self, message: impl Into<String>) {
+        self.structured_event_errors
+            .push_back(StubError::new(message));
+    }
+
+    pub fn push_lifecycle_event_error(&mut self, message: impl Into<String>) {
+        self.lifecycle_event_errors
+            .push_back(StubError::new(message));
+    }
+
+    pub fn push_filesystem_flush_error(&mut self, message: impl Into<String>) {
+        self.filesystem_flush_errors
+            .push_back(StubError::new(message));
+    }
+
     pub fn next_worker_create_error(&mut self) -> Option<StubError> {
         self.worker_create_errors.pop_front()
+    }
+
+    pub fn next_worker_terminate_error(&mut self) -> Option<StubError> {
+        self.worker_terminate_errors.pop_front()
     }
 
     fn next_permission_response(&mut self) -> Result<PermissionDecision, StubError> {
@@ -336,6 +379,9 @@ impl PersistenceBridge for RecordingBridge {
         &mut self,
         request: FlushFilesystemStateRequest,
     ) -> Result<(), Self::Error> {
+        if let Some(error) = self.filesystem_flush_errors.pop_front() {
+            return Err(error);
+        }
         self.snapshots.insert(request.vm_id, request.snapshot);
         Ok(())
     }
@@ -374,6 +420,9 @@ impl RandomBridge for RecordingBridge {
 
 impl EventBridge for RecordingBridge {
     fn emit_structured_event(&mut self, event: StructuredEventRecord) -> Result<(), Self::Error> {
+        if let Some(error) = self.structured_event_errors.pop_front() {
+            return Err(error);
+        }
         self.structured_events.push(event);
         Ok(())
     }
@@ -389,6 +438,9 @@ impl EventBridge for RecordingBridge {
     }
 
     fn emit_lifecycle(&mut self, event: LifecycleEventRecord) -> Result<(), Self::Error> {
+        if let Some(error) = self.lifecycle_event_errors.pop_front() {
+            return Err(error);
+        }
         self.lifecycle_events.push(event);
         Ok(())
     }
@@ -446,6 +498,9 @@ impl ExecutionBridge for RecordingBridge {
 
     fn kill_execution(&mut self, request: KillExecutionRequest) -> Result<(), Self::Error> {
         self.killed_executions.push(request);
+        if let Some(error) = self.execution_kill_errors.pop_front() {
+            return Err(error);
+        }
         Ok(())
     }
 

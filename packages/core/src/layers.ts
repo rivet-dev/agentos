@@ -6,7 +6,7 @@ import {
 	snapshotVirtualFilesystem,
 } from "./filesystem-snapshot.js";
 import { createOverlayBackend } from "./overlay-filesystem.js";
-import type { VirtualFileSystem } from "./runtime-compat.js";
+import type { VirtualFileSystem } from "./runtime.js";
 
 export type OverlayFilesystemMode = "ephemeral" | "read-only";
 

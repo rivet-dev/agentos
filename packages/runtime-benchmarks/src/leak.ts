@@ -41,7 +41,7 @@ async function runLeakStream(stream: "process" | "socket" | "fd") {
 		const samples = [];
 		for (let cycle = 0; cycle < cycles; cycle++) {
 			if (stream === "process") {
-				const proc = vm.spawn("node", ["-e", "process.exit(0)"]);
+				const proc = await vm.spawn("node", ["-e", "process.exit(0)"]);
 				await vm.waitProcess(proc.pid);
 			} else if (stream === "fd") {
 				await runGuestOne(
@@ -81,11 +81,6 @@ await new Promise((resolve, reject) => {
 		const slopes = {
 			guestHeapRss: slope(samples, "guestHeapRss"),
 			sidecarRss: slope(samples, "sidecarRss"),
-			runningProcesses: slope(samples, "runningProcesses"),
-			exitedProcesses: slope(samples, "exitedProcesses"),
-			openFds: slope(samples, "openFds"),
-			sockets: slope(samples, "sockets"),
-			pipes: slope(samples, "pipes"),
 		};
 		return { stream, cycles, idleMs, samples, slopes };
 	} finally {
@@ -97,7 +92,7 @@ async function runGuestOne(vm: BenchVm, source: string, name: string): Promise<v
 	const path = `/tmp/fuzz-perf-leak-${name.replace(/[^a-z0-9_-]/gi, "_")}.mjs`;
 	await vm.writeFile(path, source);
 	let stderr = "";
-	const proc = vm.spawn("node", [path], {
+	const proc = await vm.spawn("node", [path], {
 		onStderr: (data) => {
 			stderr += Buffer.from(data).toString("utf8");
 		},

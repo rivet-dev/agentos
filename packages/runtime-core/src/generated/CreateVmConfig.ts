@@ -10,7 +10,7 @@ import type { VmListenPolicyConfig } from "./VmListenPolicyConfig.js";
 /**
  * Canonical Rust-side VM config. Unknown fields must stay rejected here and in
  * the TS preflight schema at
- * `packages/core/src/node-runtime-options-schema.ts`; update both when a
- * public `NodeRuntime.create(...)` option changes the generated VM config.
+ * the public thin-client VM options; update both when an explicit wire option
+ * changes the generated VM config.
  */
-export type CreateVmConfig = { cwd?: string, env: Record<string, string>, rootFilesystem: RootFilesystemConfig, permissions?: PermissionsPolicy, limits?: VmLimitsConfig, dns?: VmDnsConfig, nativeRoot?: NativeRootFilesystemConfig, listen?: VmListenPolicyConfig, loopbackExemptPorts: Array<number>, jsRuntime?: JsRuntimeConfig, bootstrapCommands?: Array<string>, };
+export type CreateVmConfig = { cwd?: string, env?: Record<string, string>, rootFilesystem?: RootFilesystemConfig, permissions?: PermissionsPolicy, limits?: VmLimitsConfig, dns?: VmDnsConfig, nativeRoot?: NativeRootFilesystemConfig, listen?: VmListenPolicyConfig, loopbackExemptPorts?: Array<number>, jsRuntime?: JsRuntimeConfig, agentAdditionalInstructions?: string, };

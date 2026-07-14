@@ -34,11 +34,9 @@ const interval = setInterval(() => {
 `,
 );
 
-const proc = vm.spawn("node", ["/tmp/counter.mjs"], {
+const proc = await vm.spawn("node", ["/tmp/counter.mjs"], {
 	onStdout: (data: Uint8Array) => {
-		process.stdout.write(
-			`[process ${proc.pid}] ${new TextDecoder().decode(data)}`,
-		);
+		process.stdout.write(`[process] ${new TextDecoder().decode(data)}`);
 	},
 });
 console.log("Spawned process:", proc.pid);
@@ -48,6 +46,6 @@ const exitCode = await vm.waitProcess(proc.pid);
 console.log("Process exited with code:", exitCode);
 
 // List all processes
-console.log("Processes:", vm.listProcesses());
+console.log("Processes:", await vm.listProcesses());
 
 await vm.dispose();

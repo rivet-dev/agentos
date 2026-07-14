@@ -7,13 +7,12 @@
  */
 
 import * as posixPath from "node:path/posix";
-import {
-	createInMemoryFileSystem,
-	KernelError,
-	type VirtualDirEntry,
-	type VirtualFileSystem,
-	type VirtualStat,
-} from "./runtime-compat.js";
+import { createInMemoryFileSystem, KernelError } from "./memory-filesystem.js";
+import type {
+	VirtualDirEntry,
+	VirtualFileSystem,
+	VirtualStat,
+} from "./runtime.js";
 
 export interface OverlayBackendOptions {
 	/** Legacy single lower layer. */
@@ -87,7 +86,7 @@ export function createOverlayBackend(
 		throw new KernelError("EPERM", `operation not permitted, ${op} '${path}'`);
 	}
 
-	async function ensureMetadataDirectoriesInUpper(path: string): Promise<void> {
+	async function ensureMetadataDirectoriesInUpper(): Promise<void> {
 		if (!upper) {
 			throwReadOnly();
 		}
@@ -120,7 +119,7 @@ export function createOverlayBackend(
 
 		const pathForMarker = markerPath(kind, path);
 		if (present) {
-			await ensureMetadataDirectoriesInUpper(path);
+			await ensureMetadataDirectoriesInUpper();
 			await upper.writeFile(pathForMarker, normPath(path));
 			return;
 		}

@@ -27,6 +27,11 @@ impl BrowserExtension for SmokeExtension {
             context.write_file("vm-ext", "/workspace/context.txt", b"from-context")?;
             return context.read_file("vm-ext", "/workspace/context.txt");
         }
+        if payload == b"overflow-events" {
+            for index in 0..3 {
+                context.emit_event(vec![index])?;
+            }
+        }
         let mut response = self.0.as_bytes().to_vec();
         response.push(b':');
         response.extend_from_slice(payload);
@@ -104,6 +109,8 @@ fn browser_sidecar_dispatches_extension_requests_by_namespace() {
             payload: b"ping".to_vec(),
             vm_id: None,
             connection_id: None,
+            wire_session_id: None,
+            event_capacity: 256,
         })
         .expect("dispatch extension request");
     assert_eq!(response.namespace, "dev.rivet.agentos.browser-smoke");
@@ -115,6 +122,8 @@ fn browser_sidecar_dispatches_extension_requests_by_namespace() {
             payload: Vec::new(),
             vm_id: None,
             connection_id: None,
+            wire_session_id: None,
+            event_capacity: 256,
         })
         .expect_err("unknown extension namespace should fail");
     assert!(error
@@ -140,8 +149,35 @@ fn browser_extension_context_exposes_vm_filesystem_primitives() {
             payload: b"context-fs".to_vec(),
             vm_id: Some(String::from("vm-ext")),
             connection_id: Some(String::from("conn-ext")),
+            wire_session_id: Some(String::from("session-ext")),
+            event_capacity: 256,
         })
         .expect("dispatch extension request through context");
 
     assert_eq!(response.payload, b"from-context");
+}
+
+#[test]
+fn browser_extension_context_backpressures_its_bounded_event_batch() {
+    let mut sidecar = BrowserSidecar::with_extensions(
+        RecordingBridge::default(),
+        BrowserSidecarConfig::default(),
+        vec![Box::new(SmokeExtension("dev.rivet.agentos.browser-smoke"))],
+    )
+    .expect("construct browser sidecar with extension");
+
+    let error = sidecar
+        .dispatch_extension_request(BrowserExtensionRequest {
+            namespace: String::from("dev.rivet.agentos.browser-smoke"),
+            payload: b"overflow-events".to_vec(),
+            vm_id: None,
+            connection_id: None,
+            wire_session_id: None,
+            event_capacity: 2,
+        })
+        .expect_err("third event must exceed the request-owned capacity");
+    assert!(error
+        .to_string()
+        .contains("available_extension_event_slots reached at configured capacity 2"));
+    assert!(error.to_string().contains("drain events with pollEvent"));
 }

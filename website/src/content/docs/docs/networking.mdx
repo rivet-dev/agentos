@@ -49,7 +49,7 @@ Mint short-lived preview tokens so access expires automatically; the lifetime is
 
 ## Permissions
 
-Network access is governed by the VM permission policy. By default the guest cannot reach the network; grant it, or allow only specific destinations:
+Network operations are allowed when `permissions` or its `network` scope is omitted. Pass `network: "deny"` or an explicit rule set to restrict destinations. Permission is separate from loopback-only listener exposure and the egress and DNS controls below:
 
 ```ts
 const vm = agentOS({

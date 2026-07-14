@@ -29,7 +29,7 @@ describe("networking", () => {
 			resolvePort = resolve;
 		});
 
-		const { pid } = vm.spawn("node", ["/tmp/network.js"], {
+		const { pid } = await vm.spawn("node", ["/tmp/network.js"], {
 			onStdout: (data: Uint8Array) => {
 				const text = new TextDecoder().decode(data);
 				const match = text.match(/LISTENING:(\d+)/);
@@ -50,6 +50,6 @@ describe("networking", () => {
 		]);
 		expect(port).toBeGreaterThan(0);
 
-		vm.killProcess(pid);
+		await vm.killProcess(pid);
 	});
 });

@@ -86,7 +86,7 @@ console.log(`js:${process.argv.slice(2).join(",")}`);
         &js_vm_id,
         "proc-js",
         GuestRuntimeKind::JavaScript,
-        &js_entry,
+        "/workspace/entry.mjs",
         vec![String::from("alpha"), String::from("beta")],
     );
     let (js_stdout, js_stderr, js_exit) = collect_process_output_wire_with_timeout(
@@ -117,7 +117,7 @@ console.log(`js:${process.argv.slice(2).join(",")}`);
         &wasm_vm_id,
         "proc-wasm",
         GuestRuntimeKind::WebAssembly,
-        &wasm_entry,
+        "/workspace/entry.wasm",
         Vec::new(),
     );
     let (wasm_stdout, wasm_stderr, wasm_exit) = collect_process_output_wire_with_timeout(

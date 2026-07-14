@@ -297,10 +297,10 @@ async function loadPiSoftware(): Promise<unknown> {
 	// dist/sdk-snapshot.js bundle). The published @agentos-software/pi may predate
 	// the snapshot work, so benchmarking against it silently measures the
 	// non-snapshot fallback path and hides the optimization entirely.
-		const local = join(
-			import.meta.dirname,
-			"../../../secure-exec/registry/agent/pi/dist/index.js",
-		);
+	const local = join(
+		import.meta.dirname,
+		"../../registry/agent/pi/dist/index.js",
+	);
 	if (existsSync(local)) return (await import(local)).default;
 	// Fallback: the published/installed software package. Variable specifier so
 	// this typechecks even when the package isn't installed in the dev workspace.
@@ -309,7 +309,7 @@ async function loadPiSoftware(): Promise<unknown> {
 		return (await import(piPkg)).default;
 	} catch {
 		throw new Error(
-				"Could not resolve the pi software package (../secure-exec/registry/agent/pi/dist or @agentos-software/pi). Build it first.",
+			"Could not resolve the pi software package (registry/agent/pi/dist or @agentos-software/pi). Build it first.",
 		);
 	}
 }
@@ -320,12 +320,9 @@ const PI_SDK_PKG = "@mariozechner/pi-coding-agent";
 function findPiSdkRoot(): string | null {
 	const reqs = [
 		createRequire(join(import.meta.dirname, "../../package.json")),
-			createRequire(
-				join(
-					import.meta.dirname,
-					"../../../secure-exec/registry/agent/pi/package.json",
-				),
-			),
+		createRequire(
+			join(import.meta.dirname, "../../registry/agent/pi/package.json"),
+		),
 	];
 	for (const req of reqs) {
 		for (const base of req.resolve.paths(PI_SDK_PKG) ?? []) {
@@ -516,7 +513,7 @@ async function runVmLane(
 			t = performance.now();
 			const { sessionId } = await vm.createSession("pi", { env: sessionEnv });
 			const sessionCreate = performance.now() - t;
-			vm.closeSession(sessionId);
+			await vm.closeSession(sessionId);
 			await vm.dispose();
 			if (warm) continue;
 			vmCreates.push(vmCreate);
@@ -535,20 +532,13 @@ async function runVmLane(
 		loopbackExemptPorts: [port],
 	});
 	vmCreates.push(performance.now() - t);
-	// closeSession() is fire-and-forget; await the internal teardown promise
-	// between iterations so adapter processes/isolates don't pile up in the
-	// shared sidecar and confound the next createSession measurement.
-	const closePromises = (
-		vm as unknown as { _sessionClosePromises: Map<string, Promise<void>> }
-	)._sessionClosePromises;
 	try {
 		for (let i = 0; i < ITERATIONS + WARMUP; i++) {
 			const warm = i < WARMUP;
 			t = performance.now();
 			const { sessionId } = await vm.createSession("pi", { env: sessionEnv });
 			const sessionCreate = performance.now() - t;
-			vm.closeSession(sessionId);
-			await closePromises.get(sessionId)?.catch(() => {});
+			await vm.closeSession(sessionId);
 			if (warm) continue;
 			sessionCreates.push(sessionCreate);
 			console.error(
@@ -608,7 +598,7 @@ async function vmLaneTrace(software: unknown): Promise<TraceEvent[]> {
 	} catch (e) {
 		console.error(`  (no adapter trace: ${(e as Error).message})`);
 	}
-	vm.closeSession(sessionId);
+	await vm.closeSession(sessionId);
 	await vm.dispose();
 	return spans;
 }

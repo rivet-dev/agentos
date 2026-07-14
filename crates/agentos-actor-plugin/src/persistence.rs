@@ -67,7 +67,14 @@ CREATE TABLE IF NOT EXISTS agent_os_session_events (
 );
 CREATE INDEX IF NOT EXISTS idx_session_events_session_seq
 	ON agent_os_session_events(session_id, seq);
+CREATE TABLE IF NOT EXISTS agent_os_runtime_state (
+	key TEXT PRIMARY KEY,
+	value TEXT NOT NULL,
+	updated_at INTEGER NOT NULL
+);
 ";
+
+const CRON_STATE_KEY: &str = "cron";
 
 /// Run the agent-os schema migration against the actor's SQLite database.
 /// Idempotent; called once at the top of the actor run loop.
@@ -124,6 +131,44 @@ pub(crate) async fn run_stmt(host: &HostCtx, sql: &str, params: &[JsonValue]) ->
         .await
         .map_err(|e| anyhow!(e))?;
     Ok(())
+}
+
+/// Persist the sidecar scheduler's opaque blob without decoding it in the
+/// actor. The sidecar remains the sole owner of the format and semantics.
+pub(crate) async fn save_cron_state(host: &HostCtx, state: &str) -> Result<()> {
+    run_stmt(
+        host,
+        "INSERT INTO agent_os_runtime_state (key, value, updated_at) VALUES (?, ?, ?) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        &[json!(CRON_STATE_KEY), json!(state), json!(now_ms())],
+    )
+    .await
+}
+
+pub(crate) async fn load_cron_state(host: &HostCtx) -> Result<Option<String>> {
+    let rows = query_rows(
+        host,
+        "SELECT value FROM agent_os_runtime_state WHERE key = ? LIMIT 1",
+        &[json!(CRON_STATE_KEY)],
+    )
+    .await?;
+    let Some(row) = rows.into_iter().next() else {
+        return Ok(None);
+    };
+    let value = row
+        .get("value")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| anyhow!("stored cron state is not text"))?;
+    Ok(Some(value.to_string()))
+}
+
+pub(crate) async fn delete_cron_state(host: &HostCtx) -> Result<()> {
+    run_stmt(
+        host,
+        "DELETE FROM agent_os_runtime_state WHERE key = ?",
+        &[json!(CRON_STATE_KEY)],
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------

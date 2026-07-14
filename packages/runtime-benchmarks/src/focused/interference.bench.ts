@@ -134,8 +134,6 @@ async function main(): Promise<void> {
 					idle,
 					busy,
 					interferenceTax,
-					probeVmResourceSnapshot: await probeVm.getResourceSnapshot(),
-					busyVmResourceSnapshot: await busyVm.getResourceSnapshot(),
 					regressionRows,
 				},
 				null,

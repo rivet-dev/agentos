@@ -541,12 +541,16 @@ fn push_mount(
     Ok(())
 }
 
-fn normalize_mount_root(mount_at: &str) -> String {
+pub(crate) fn normalize_mount_root(mount_at: &str) -> String {
     if mount_at.is_empty() {
         String::from(OPT_AGENTOS_ROOT)
     } else {
         normalize_path(mount_at)
     }
+}
+
+pub(crate) fn package_command_path(mount_at: &str, command: &str) -> String {
+    normalize_path(&format!("{}/bin/{command}", normalize_mount_root(mount_at)))
 }
 
 fn package_guest_root(mount_at: &str, name: &str) -> String {

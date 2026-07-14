@@ -1,8 +1,0 @@
-{
-	"name": "project-matrix-chalk-pass",
-	"private": true,
-	"type": "module",
-	"dependencies": {
-		"chalk": "5.4.1"
-	}
-}

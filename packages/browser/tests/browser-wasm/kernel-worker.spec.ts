@@ -16,6 +16,8 @@ test("the agentos kernel boots in a worker and answers wire frames via the relay
 
 	expect(result.sidecarId).toBeTruthy();
 	expect(result.authResp.payloadType).toBe("authenticated");
+	expect(result.openResp.payloadType).toBe("session_opened");
+	expect(result.vmResp.payloadType).toBe("vm_initialized");
 	expect(result.acpResp.payloadType).toBe("ext_result");
 	expect(result.acpResp.acpTag).toBe("AcpErrorResponse");
 	expect(result.acpResp.acpMessage ?? "").toContain("unknown ACP session");
@@ -27,6 +29,8 @@ declare global {
 			run(): Promise<{
 				sidecarId: string;
 				authResp: { payloadType?: string };
+				openResp: { payloadType?: string };
+				vmResp: { payloadType?: string };
 				acpResp: { payloadType?: string; acpTag?: string; acpMessage?: string };
 			}>;
 		};

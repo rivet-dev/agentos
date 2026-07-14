@@ -8,10 +8,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveNodeRuntimeCommandsDir } from "@rivet-dev/agentos-runtime-core";
 import type { CommandBenchmarkOp } from "../lib/layers.js";
 import { nowMs } from "../lib/perf-utils.js";
-import type { BenchVm } from "../lib/vm.js";
+import { resolveBenchCommandsDir, type BenchVm } from "../lib/vm.js";
 
 const ECOSYSTEM_SAMPLE_CAP = {
 	maxIterations: 5,
@@ -48,7 +47,7 @@ const REQUIRED_WASM_COMMANDS = [
 ] as const;
 
 export function ecosystemWasmCommandDirs(): string[] {
-	const commandsDir = resolveNodeRuntimeCommandsDir();
+	const commandsDir = resolveBenchCommandsDir();
 	assertWasmCommandsPresent(commandsDir, requiredWasmCommands());
 	return [commandsDir];
 }

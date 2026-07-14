@@ -9,7 +9,8 @@ const BROWSER_BASE_PROJECT_ID = process.env.BROWSER_BASE_PROJECT_ID ?? "";
 const HAS_BROWSERBASE_CREDENTIALS = Boolean(
 	BROWSER_BASE_API_KEY && BROWSER_BASE_PROJECT_ID,
 );
-const REQUIRES_BROWSERBASE_CREDENTIALS = process.env.AGENTOS_E2E_NETWORK === "1";
+const REQUIRES_BROWSERBASE_CREDENTIALS =
+	process.env.AGENTOS_E2E_NETWORK === "1";
 
 if (!HAS_BROWSERBASE_CREDENTIALS && REQUIRES_BROWSERBASE_CREDENTIALS) {
 	throw new Error(
@@ -38,7 +39,8 @@ const BROWSERBASE_PERMISSIONS: Permissions = {
 	},
 };
 
-const BROWSE_PATH = "/root/node_modules/@browserbasehq/browse-cli/dist/index.js";
+const BROWSE_PATH =
+	"/root/node_modules/@browserbasehq/browse-cli/dist/index.js";
 const CLI_PATH = "/root/node_modules/@browserbasehq/cli/dist/main.js";
 const JSON_OUTPUT_TIMEOUT_MS = 60_000;
 const BROWSE_COMMAND_SCRIPT_PATH = "/tmp/browserbase-browse-command.mjs";
@@ -54,7 +56,7 @@ async function runVmNodeCommand(
 ) {
 	let stdout = "";
 	let stderr = "";
-	const { pid } = vm.spawn("node", [scriptPath, ...args], {
+	const { pid } = await vm.spawn("node", [scriptPath, ...args], {
 		env,
 		onStdout: (data: Uint8Array) => {
 			stdout += new TextDecoder().decode(data);
@@ -70,10 +72,17 @@ async function runVmNodeCommand(
 			vm.waitProcess(pid),
 			new Promise<never>((_, reject) => {
 				timeoutHandle = setTimeout(() => {
-					try {
-						vm.killProcess(pid);
-					} catch {}
-					reject(new Error(`${label} timed out after ${JSON_OUTPUT_TIMEOUT_MS}ms`));
+					void vm
+						.killProcess(pid)
+						.then(
+							() =>
+								reject(
+									new Error(
+										`${label} timed out after ${JSON_OUTPUT_TIMEOUT_MS}ms`,
+									),
+								),
+							reject,
+						);
 				}, JSON_OUTPUT_TIMEOUT_MS);
 			}),
 		]);
@@ -94,7 +103,7 @@ async function runVmNodeCommand(
 				error instanceof Error ? error.message : String(error),
 				`stdout:\n${stdout}`,
 				`stderr:\n${stderr}`,
-				`processes:\n${JSON.stringify(vm.allProcesses(), null, 2)}`,
+				`processes:\n${JSON.stringify(await vm.allProcesses(), null, 2)}`,
 			].join("\n\n"),
 		);
 	}
@@ -233,7 +242,7 @@ describe("Browserbase e2e", () => {
 			let stdout = "";
 			let stderr = "";
 
-			const { pid } = vm.spawn("node", ["/tmp/browserbase-e2e.mjs"], {
+			const { pid } = await vm.spawn("node", ["/tmp/browserbase-e2e.mjs"], {
 				env: browseEnv,
 				onStdout: (data: Uint8Array) => {
 					stdout += new TextDecoder().decode(data);
@@ -293,14 +302,7 @@ describe("Browserbase e2e", () => {
 				const screenshotBytes = await vm.readFile(SCREENSHOT_PATH);
 				expect(screenshotBytes.byteLength).toBeGreaterThanOrEqual(1024);
 				expect(Array.from(screenshotBytes.slice(0, 8))).toEqual([
-					0x89,
-					0x50,
-					0x4e,
-					0x47,
-					0x0d,
-					0x0a,
-					0x1a,
-					0x0a,
+					0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
 				]);
 			} finally {
 				await runVmNodeCommand(

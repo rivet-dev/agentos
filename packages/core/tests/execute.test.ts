@@ -36,19 +36,31 @@ describe("command execution", () => {
 
 	test("exec with cwd sets working directory", async () => {
 		await vm.mkdir("/tmp/testdir");
-		const result = await vm.exec("printf found > marker.txt && cat marker.txt", {
-			cwd: "/tmp/testdir",
-		});
+		const result = await vm.exec(
+			"printf found > marker.txt && cat marker.txt",
+			{
+				cwd: "/tmp/testdir",
+			},
+		);
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("found");
 	});
 
 	test("spawn and interact with process", async () => {
-		const { pid } = vm.spawn("cat", []);
-		vm.writeProcessStdin(pid, "hello from stdin\n");
-		vm.closeProcessStdin(pid);
+		const { pid } = await vm.spawn("cat", []);
+		await vm.writeProcessStdin(pid, "hello from stdin\n");
+		await vm.closeProcessStdin(pid);
 		const exitCode = await vm.waitProcess(pid);
 		expect(exitCode).toBe(0);
+	});
+
+	test("spawn timeout is enforced by the sidecar", async () => {
+		const { pid } = await vm.spawn(
+			"node",
+			["-e", "setInterval(() => {}, 1000)"],
+			{ timeout: 25 },
+		);
+		await expect(vm.waitProcess(pid)).resolves.toBe(137);
 	});
 
 	test("exec node script", async () => {
@@ -58,15 +70,75 @@ describe("command execution", () => {
 		expect(result.stdout).toContain("node-output");
 	});
 
-	test(
-		"exec shell pipeline",
-		async () => {
-			for (let attempt = 0; attempt < 5; attempt += 1) {
-				const result = await vm.exec("echo hello | cat");
-				expect(result.exitCode, result.stderr || result.stdout).toBe(0);
-				expect(result.stdout).toContain("hello");
-			}
-		},
-		120_000,
-	);
+	test("execArgv writes all stdin before sending EOF", async () => {
+		const stdin = "x".repeat(1024 * 1024);
+		const result = await vm.execArgv(
+			"node",
+			[
+				"-e",
+				"let n=0; process.stdin.on('data', c => n += c.length); process.stdin.on('end', () => console.log(n));",
+			],
+			{ stdin },
+		);
+
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout.trim()).toBe(String(stdin.length));
+	});
+
+	test("exec shell pipeline", async () => {
+		for (let attempt = 0; attempt < 5; attempt += 1) {
+			const result = await vm.exec("echo hello | cat");
+			expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+			expect(result.stdout).toContain("hello");
+		}
+	}, 120_000);
+
+	test("the sidecar bounds captured output without limiting raw streams", async () => {
+		const limitedVm = await AgentOs.create({
+			defaultSoftware: false,
+			limits: { jsRuntime: { capturedOutputLimitBytes: 8 } },
+		});
+		try {
+			await expect(
+				limitedVm.execArgv("node", ["-e", "process.stdout.write('123456789')"]),
+			).rejects.toMatchObject({
+				code: "ERR_CAPTURED_OUTPUT_LIMIT_EXCEEDED",
+				message: expect.stringContaining(
+					"limits.jsRuntime.capturedOutputLimitBytes",
+				),
+			});
+
+			const streamed: string[] = [];
+			const uncaptured = await limitedVm.execArgv(
+				"node",
+				["-e", "process.stdout.write('123456789')"],
+				{
+					captureStdio: false,
+					onStdout: (chunk) =>
+						streamed.push(Buffer.from(chunk).toString("utf8")),
+				},
+			);
+			expect(uncaptured).toEqual({ exitCode: 0, stdout: "", stderr: "" });
+			expect(streamed.join("")).toBe("123456789");
+
+			const spawned: string[] = [];
+			const { pid } = await limitedVm.spawn(
+				"node",
+				[
+					"-e",
+					"process.stdin.once('data', () => process.stdout.write('123456789'))",
+				],
+				{ streamStdin: true },
+			);
+			limitedVm.onProcessStdout(pid, (chunk) => {
+				spawned.push(Buffer.from(chunk).toString("utf8"));
+			});
+			await limitedVm.writeProcessStdin(pid, "go");
+			await limitedVm.closeProcessStdin(pid);
+			await expect(limitedVm.waitProcess(pid)).resolves.toBe(0);
+			expect(spawned.join("")).toBe("123456789");
+		} finally {
+			await limitedVm.dispose();
+		}
+	});
 });

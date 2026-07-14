@@ -18,8 +18,8 @@ import {
 	createBenchSidecar,
 	createBenchVm as createRuntimeBenchVm,
 	type BenchVm,
+	type BenchSidecar,
 } from "../lib/vm.js";
-import type { SidecarProcess } from "@rivet-dev/agentos-runtime-core";
 import {
 	getHardware,
 	printTable,
@@ -36,9 +36,9 @@ const EXPECTED_OUTPUT = "hello\n";
 
 async function createBenchVm(): Promise<{
 	vm: BenchVm;
-	sidecar: SidecarProcess;
+	sidecar: BenchSidecar;
 }> {
-	const sidecar = createBenchSidecar();
+	const sidecar = await createBenchSidecar();
 	const vm = await createRuntimeBenchVm({
 		sidecar,
 	});

@@ -11,8 +11,12 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createBenchSidecar, createBenchVm, type BenchVm } from "../lib/vm.js";
-import type { SidecarProcess } from "@rivet-dev/agentos-runtime-core";
+import {
+	createBenchSidecar,
+	createBenchVm,
+	type BenchSidecar,
+	type BenchVm,
+} from "../lib/vm.js";
 import { getHardware, printTable, round, stats } from "../lib/perf-utils.js";
 
 interface LsIteration {
@@ -109,7 +113,7 @@ function collectWasmWarmupDiagnostics(
 	}
 }
 
-async function createLsVm(sidecar: SidecarProcess): Promise<BenchVm> {
+async function createLsVm(sidecar: BenchSidecar): Promise<BenchVm> {
 	return createBenchVm({
 		sidecar,
 	});
@@ -127,7 +131,7 @@ async function runCase(
 	iterations: number,
 	warmup: number,
 	serialRuns: number,
-	sidecar: SidecarProcess,
+	sidecar: BenchSidecar,
 	wasmWarmupDebug: boolean,
 ): Promise<LsCaseResult> {
 	const hostDir = createHostFixture(fileCount);

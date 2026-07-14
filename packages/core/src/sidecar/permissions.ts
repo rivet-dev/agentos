@@ -1,19 +1,12 @@
 import type { PermissionsPolicy } from "@rivet-dev/agentos-runtime-core/vm-config";
-import type { Permissions } from "../runtime-compat.js";
-
-const ALL_OPERATIONS = ["*"];
-const ALL_RESOURCES = ["**"];
+import type { Permissions } from "../runtime.js";
 
 function serializeFilesystemScope(
 	scope: Exclude<Permissions["fs"], string | undefined>,
 ) {
 	return {
 		...(scope.default === undefined ? {} : { default: scope.default }),
-		rules: scope.rules.map((rule) => ({
-			...rule,
-			operations: rule.operations ?? ALL_OPERATIONS,
-			paths: rule.paths ?? ALL_RESOURCES,
-		})),
+		rules: scope.rules.map((rule) => ({ ...rule })),
 	};
 }
 
@@ -29,26 +22,19 @@ function serializePatternScope(
 ) {
 	return {
 		...(scope.default === undefined ? {} : { default: scope.default }),
-		rules: scope.rules.map((rule) => ({
-			...rule,
-			operations: rule.operations ?? ALL_OPERATIONS,
-			patterns: rule.patterns ?? ALL_RESOURCES,
-		})),
+		rules: scope.rules.map((rule) => ({ ...rule })),
 	};
 }
 
 export function serializePermissionsForSidecar(
+	permissions: Permissions,
+): PermissionsPolicy;
+export function serializePermissionsForSidecar(): undefined;
+export function serializePermissionsForSidecar(
 	permissions?: Permissions,
-): PermissionsPolicy {
+): PermissionsPolicy | undefined {
 	if (!permissions) {
-		return {
-			fs: "deny",
-			network: "deny",
-			childProcess: "deny",
-			process: "deny",
-			env: "deny",
-			binding: "deny",
-		};
+		return undefined;
 	}
 
 	return {

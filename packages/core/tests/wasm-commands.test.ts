@@ -793,7 +793,7 @@ server.listen(0, "0.0.0.0", () => {
 			const portPromise = new Promise<number>((r) => {
 				resolvePort = r;
 			});
-			const { pid } = testVm.spawn("node", ["/tmp/curl-server.js"], {
+			const { pid } = await testVm.spawn("node", ["/tmp/curl-server.js"], {
 				onStdout: (data: Uint8Array) => {
 					const text = new TextDecoder().decode(data);
 					const match = text.match(/PORT:(\d+)/);
@@ -811,7 +811,7 @@ server.listen(0, "0.0.0.0", () => {
 		}> {
 			let stdout = "";
 			let stderr = "";
-			const { pid } = vm.spawn("curl", args, {
+			const { pid } = await vm.spawn("curl", args, {
 				onStdout: (data) => {
 					stdout += Buffer.from(data).toString("utf8");
 				},
@@ -835,7 +835,7 @@ server.listen(0, "0.0.0.0", () => {
 				expect(r.exitCode).toBe(0);
 				expect(r.stdout).toContain("hello from server");
 			} finally {
-				vm.killProcess(pid);
+				await vm.killProcess(pid);
 			}
 		});
 
@@ -856,23 +856,23 @@ server.listen(0, "0.0.0.0", () => {
 				const json = JSON.parse(r.stdout);
 				expect(json.echo).toBe("test-body");
 			} finally {
-				vm.killProcess(pid);
+				await vm.killProcess(pid);
 			}
 		});
 
 		test("curl exits promptly after a keep-alive response", async () => {
-				const { pid, port } = await startServer(vm, CURL_KEEPALIVE_SCRIPT);
-				try {
-					const startedAt = Date.now();
-					const r = await runCurl(["-s", `http://localhost:${port}/`]);
-					const elapsedMs = Date.now() - startedAt;
-					expect(r.exitCode).toBe(0);
-					expect(r.stdout).toContain("hello from keepalive");
-					expect(r.stderr).not.toContain("i/o error");
-					expect(elapsedMs).toBeLessThan(8000);
-				} finally {
-					vm.killProcess(pid);
-				}
+			const { pid, port } = await startServer(vm, CURL_KEEPALIVE_SCRIPT);
+			try {
+				const startedAt = Date.now();
+				const r = await runCurl(["-s", `http://localhost:${port}/`]);
+				const elapsedMs = Date.now() - startedAt;
+				expect(r.exitCode).toBe(0);
+				expect(r.stdout).toContain("hello from keepalive");
+				expect(r.stderr).not.toContain("i/o error");
+				expect(elapsedMs).toBeLessThan(8000);
+			} finally {
+				await vm.killProcess(pid);
+			}
 		}, 15000);
 	});
 

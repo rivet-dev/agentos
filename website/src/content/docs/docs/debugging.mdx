@@ -40,6 +40,7 @@ The agentOS sidecar emits structured **logfmt** logs for request handling, netwo
 | `AGENTOS_LOG_LEVEL` / `LOG_LEVEL` / `RUST_LOG` | log filter, in that priority. Uses [EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html) syntax, e.g. `debug`, `info`, `agentos_sidecar=debug,info`. Default `info`. |
 | `RUST_LOG_FORMAT` | `logfmt` (default) or `text` |
 | `AGENTOS_LOG_FILE` | append logs to this file instead of stderr (never stdout, which carries the wire protocol) |
+| `AGENTOS_MAX_SESSIONS_PER_CONNECTION` | maximum open wire sessions on one sidecar connection; defaults to `1024`. Raise this only for hosts that intentionally keep more concurrent VMs/sessions. |
 | `RUST_LOG_{SPAN_NAME,SPAN_PATH,TARGET,LOCATION,MODULE_PATH,ANSI_COLOR}` | per-field toggles (`=1` to enable) |
 
 ```bash

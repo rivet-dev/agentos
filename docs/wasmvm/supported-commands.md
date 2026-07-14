@@ -228,11 +228,11 @@
 | Command | just-bash | Status | Implementation | Target |
 |---------|-----------|--------|----------------|--------|
 | codex | — | done | Rust binary (`rivet-dev/codex` fork, TUI mode via ratatui/crossterm, `host_net` + `host_process`) | — |
-| codex-exec | — | partial | Rust binary placeholder; provider-backed headless mode is not wired | — |
+| codex-exec | — | done | Rust binary (`--session-turn` newline-JSON engine backed by `codex-core`, Responses HTTP transport, shell approval events) | — |
 
 - **codex** is the TUI (interactive terminal UI) mode — requires a PTY for rendering
-- **codex-exec** currently accepts prompt arguments only as a placeholder and fails fast for ACP session-turn mode
-- Provider-backed Codex commands require `OPENAI_API_KEY` and network access (`host_net`) when that path is wired
+- **codex-exec** supports the `--session-turn` protocol used by the Codex ACP adapter, including streamed text, resumed history, and approved shell commands
+- Provider-backed Codex commands require `OPENAI_API_KEY` and network access (`host_net`)
 
 ## Package Management (Node Runtime)
 

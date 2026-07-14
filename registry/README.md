@@ -61,7 +61,6 @@ just registry-native-cmd <name> # build ONE command binary, whatever its toolcha
 just registry-build             # stage + assemble every registry package
 pnpm --filter @agentos-software/coreutils build:runtime # assemble runnable coreutils
 just registry-status            # per-package state; --remote adds npm dist-tags
-just registry-test              # registry integration tests (registry/tests)
 ```
 
 ### Building coreutils from a clean checkout

@@ -2185,6 +2185,7 @@ var _fs = {
   link: createBridgeSyncFacade("_fsLink"),
   symlink: createBridgeSyncFacade("_fsSymlink"),
   readlink: createBridgeSyncFacade("_fsReadlink"),
+  realpath: createBridgeSyncFacade("fs.realpathSync"),
   lstat: createBridgeSyncFacade("_fsLstat"),
   truncate: createBridgeSyncFacade("_fsTruncate"),
   utimes: createBridgeSyncFacade("_fsUtimes"),
@@ -3827,59 +3828,12 @@ var fs = {
   realpathSync: Object.assign(
     function realpathSync(path, options) {
       validateEncodingOption(options);
-      const MAX_SYMLINK_DEPTH = 40;
-      let symlinksFollowed = 0;
       const raw = normalizePathLike(path);
-      const pending = [];
-      for (const seg of raw.split("/")) {
-        if (!seg || seg === ".") continue;
-        if (seg === "..") {
-          if (pending.length > 0) pending.pop();
-        } else pending.push(seg);
-      }
-      const resolved = [];
-      while (pending.length > 0) {
-        const seg = pending.shift();
-        if (seg === ".") continue;
-        if (seg === "..") {
-          if (resolved.length > 0) resolved.pop();
-          continue;
-        }
-        resolved.push(seg);
-        const currentPath = "/" + resolved.join("/");
-        try {
-          const stat = fs.lstatSync(currentPath);
-          if (stat.isSymbolicLink()) {
-            if (++symlinksFollowed > MAX_SYMLINK_DEPTH) {
-              const err = new Error(`ELOOP: too many levels of symbolic links, realpath '${raw}'`);
-              err.code = "ELOOP";
-              err.syscall = "realpath";
-              err.path = raw;
-              throw err;
-            }
-            const target = fs.readlinkSync(currentPath);
-            const targetSegs = target.split("/").filter(Boolean);
-            if (target.startsWith("/")) {
-              resolved.length = 0;
-            } else {
-              resolved.pop();
-            }
-            pending.unshift(...targetSegs);
-          }
-        } catch (e) {
-          const err = e;
-          if (err.code === "ELOOP") throw e;
-          if (err.code === "ENOENT" || err.code === "ENOTDIR") {
-            const enoent = new Error(`ENOENT: no such file or directory, realpath '${raw}'`);
-            enoent.code = "ENOENT";
-            enoent.syscall = "realpath";
-            enoent.path = raw;
-            throw enoent;
-          }
-          break;
-        }
-      }
-      return "/" + resolved.join("/") || "/";
+      return bridgeCall(
+        () => _fs.realpath.applySyncPromise(void 0, [raw]),
+        "realpath",
+        raw,
+      );
     },
     {
       native(path, options) {

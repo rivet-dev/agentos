@@ -8,7 +8,6 @@ use agentos_native_sidecar::wire::{
     RequestPayload, ResponsePayload, RootFilesystemEntry, RootFilesystemEntryEncoding,
     RootFilesystemEntryKind,
 };
-use std::collections::HashMap;
 use std::time::Duration;
 use support::{
     assert_node_available, authenticate_wire, authenticate_wire_with_token,
@@ -100,16 +99,15 @@ fn filesystem_permission_denials_emit_security_audit_events() {
             4,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts: Vec::new(),
-                software: Vec::new(),
+                mounts: None,
                 permissions: Some(PermissionsPolicy {
                     fs: Some(FsPermissionScope::FsPermissionRuleSet(
                         FsPermissionRuleSet {
                             default: Some(PermissionMode::Allow),
                             rules: vec![FsPermissionRule {
                                 mode: PermissionMode::Deny,
-                                operations: vec![String::from("read")],
-                                paths: vec![String::from("/blocked.txt")],
+                                operations: Some(vec![String::from("read")]),
+                                paths: Some(vec![String::from("/blocked.txt")]),
                             }],
                         },
                     )),
@@ -119,15 +117,10 @@ fn filesystem_permission_denials_emit_security_audit_events() {
                     env: None,
                     binding: None,
                 }),
-                module_access_cwd: None,
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
-                command_permissions: HashMap::new(),
-                loopback_exempt_ports: Vec::new(),
-                packages: Vec::new(),
-                packages_mount_at: String::new(),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                command_permissions: None,
+                loopback_exempt_ports: None,
+                packages: None,
+                packages_mount_at: None,
             }),
         ))
         .expect("configure vm permissions");
@@ -143,7 +136,7 @@ fn filesystem_permission_denials_emit_security_audit_events() {
                 target: None,
                 content: Some(String::from("blocked")),
                 encoding: Some(RootFilesystemEntryEncoding::Utf8),
-                recursive: false,
+                recursive: None,
                 max_depth: None,
                 mode: None,
                 uid: None,
@@ -171,7 +164,7 @@ fn filesystem_permission_denials_emit_security_audit_events() {
                 target: None,
                 content: None,
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 max_depth: None,
                 mode: None,
                 uid: None,
@@ -249,26 +242,22 @@ fn mount_operations_emit_security_audit_events() {
             5,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts: vec![MountDescriptor {
+                mounts: Some(vec![MountDescriptor {
                     guest_path: String::from("/workspace"),
-                    read_only: false,
+                    read_only: Some(false),
                     plugin: MountPluginDescriptor {
                         id: String::from("memory"),
-                        config: serde_json::to_string(&serde_json::json!({}))
-                            .expect("serialize memory mount config"),
+                        config: Some(
+                            serde_json::to_string(&serde_json::json!({}))
+                                .expect("serialize memory mount config"),
+                        ),
                     },
-                }],
-                software: Vec::new(),
+                }]),
                 permissions: None,
-                module_access_cwd: None,
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
-                command_permissions: HashMap::new(),
-                loopback_exempt_ports: Vec::new(),
-                packages: Vec::new(),
-                packages_mount_at: String::new(),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                command_permissions: None,
+                loopback_exempt_ports: None,
+                packages: None,
+                packages_mount_at: None,
             }),
         ))
         .expect("mount workspace");
@@ -278,18 +267,12 @@ fn mount_operations_emit_security_audit_events() {
             6,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts: Vec::new(),
-                software: Vec::new(),
+                mounts: None,
                 permissions: None,
-                module_access_cwd: None,
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
-                command_permissions: HashMap::new(),
-                loopback_exempt_ports: Vec::new(),
-                packages: Vec::new(),
-                packages_mount_at: String::new(),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                command_permissions: None,
+                loopback_exempt_ports: None,
+                packages: None,
+                packages_mount_at: None,
             }),
         ))
         .expect("unmount workspace");
@@ -302,6 +285,7 @@ fn mount_operations_emit_security_audit_events() {
         .find(|event| {
             event.name == "security.mount.mounted"
                 && event.fields.get("guest_path").map(String::as_str) == Some("/workspace")
+                && event.fields.get("plugin_id").map(String::as_str) == Some("memory")
         })
         .expect("missing /workspace mount audit event");
     assert_eq!(mounted.vm_id, vm_id);
@@ -355,7 +339,7 @@ fn kill_requests_emit_security_audit_events() {
         &vm_id,
         "proc-kill",
         GuestRuntimeKind::JavaScript,
-        &entry,
+        "/workspace/sleep.cjs",
         Vec::new(),
     );
 

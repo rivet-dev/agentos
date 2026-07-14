@@ -5,32 +5,348 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentos_native_sidecar::wire::{
-    AuthenticateRequest, ConfigureVmRequest, ConnectionOwnership, CreateVmRequest, EventFrame,
-    EventPayload, ExtEnvelope, GuestRuntimeKind, OpenSessionRequest, OwnershipScope,
-    PackageDescriptor, RequestFrame, RequestPayload, ResponsePayload, SessionOwnership,
+    AuthenticateRequest, CloseSessionRequest as CloseWireSessionRequest, ConfigureVmRequest,
+    ConnectionOwnership, CreateVmRequest, CronEventKind, EventFrame, EventPayload, ExtEnvelope,
+    GuestRuntimeKind, OpenSessionRequest, OwnershipScope, PackageDescriptor, PackagePath,
+    RegisterHostCallbacksRequest, RegisteredHostCallbackDefinition, RegisteredHostCallbackExample,
+    RequestFrame, RequestPayload, ResponsePayload, ScheduleCronRequest, SessionOwnership,
     SidecarPlacement, SidecarPlacementShared, SidecarRequestPayload, SidecarResponseFrame,
-    SidecarResponsePayload, VmOwnership,
+    SidecarResponsePayload, VmOwnership, WakeCronRequest,
 };
-use agentos_native_sidecar::{NativeSidecar, NativeSidecarConfig};
+use agentos_native_sidecar::{NativeSidecar, NativeSidecarConfig, SidecarError};
 use agentos_protocol::generated::v1::{
     AcpCallback, AcpCallbackResponse, AcpCloseSessionRequest, AcpCreateSessionRequest, AcpEvent,
-    AcpGetSessionStateRequest, AcpHostRequestCallbackResponse, AcpPermissionCallbackResponse,
-    AcpRequest, AcpResponse, AcpRuntimeKind, AcpSessionRequest,
+    AcpGetSessionStateRequest, AcpListSessionsRequest, AcpPermissionCallbackResponse, AcpRequest,
+    AcpResponse, AcpRuntimeKind, AcpSessionRequest,
 };
 use agentos_protocol::{ACP_EXTENSION_NAMESPACE, PROTOCOL_VERSION as ACP_PROTOCOL_VERSION};
 use agentos_vm_config as vm_config;
 use bridge_support::RecordingBridge;
 use serde_json::Value;
 
+const GUEST_CWD: &str = "/workspace";
+
 #[test]
 fn acp_extension_suite() {
     acp_extension_creates_reports_and_closes_session_over_ext();
+    acp_missing_initialize_response_id_fails_closed();
+    acp_terminal_requests_stay_inside_sidecar();
     acp_get_session_state_denies_cross_connection_session_id();
-    acp_close_session_denies_cross_connection_session_id();
+    acp_close_session_is_owner_scoped_and_idempotent();
     acp_session_request_denies_cross_connection_prompt_and_cancel();
+    closing_wire_session_preserves_same_connection_sibling_acp_state();
+    cron_session_actions_execute_inside_the_native_sidecar();
+}
+
+fn acp_missing_initialize_response_id_fails_closed() {
+    assert_node_available();
+    let mut sidecar = new_sidecar("agentos-acp-missing-initialize-id");
+    let connection_id = authenticate(&mut sidecar);
+    let session_id = open_session(&mut sidecar, &connection_id);
+    let fixture_dir = temp_dir("agentos-acp-missing-initialize-id-cwd");
+    fs::write(
+        fixture_dir.join("adapter.mjs"),
+        missing_initialize_response_id_adapter_script(),
+    )
+    .expect("write malformed ACP adapter script");
+    let vm_id = create_vm(&mut sidecar, &connection_id, &session_id, &fixture_dir);
+
+    let response = dispatch_acp(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
+            agent_type: String::from("pi"),
+            runtime: Some(AcpRuntimeKind::JavaScript),
+            cwd: Some(String::from(GUEST_CWD)),
+            args: Some(Vec::new()),
+            env: Some(HashMap::new()),
+            protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
+            client_capabilities: Some(String::from("{}")),
+            mcp_servers: Some(String::from("[]")),
+            skip_os_instructions: Some(true),
+            additional_instructions: None,
+        }),
+    );
+    let AcpResponse::AcpErrorResponse(error) = response else {
+        panic!("missing initialize response id must fail closed: {response:?}");
+    };
+    assert_eq!(error.code, "invalid_state");
+    assert!(error.message.contains("response is missing id"));
+
+    let listed = dispatch_acp(
+        &mut sidecar,
+        5,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        AcpRequest::AcpListSessionsRequest(AcpListSessionsRequest { reserved: false }),
+    );
+    let AcpResponse::AcpListSessionsResponse(listed) = listed else {
+        panic!("unexpected list response after failed bootstrap: {listed:?}");
+    };
+    assert!(listed.sessions.is_empty());
+
+    let closed = sidecar
+        .dispatch_wire_blocking(RequestFrame {
+            schema: agentos_native_sidecar::wire::protocol_schema(),
+            request_id: 6,
+            ownership: OwnershipScope::ConnectionOwnership(ConnectionOwnership {
+                connection_id: connection_id.clone(),
+            }),
+            payload: RequestPayload::CloseSessionRequest(CloseWireSessionRequest { session_id }),
+        })
+        .expect("close owning wire session after failed ACP bootstrap");
+    assert!(
+        matches!(
+            closed.response.payload,
+            ResponsePayload::SessionClosedResponse(_)
+        ),
+        "unexpected failed-bootstrap wire-session close response: {:?}",
+        closed.response.payload
+    );
+}
+
+fn closing_wire_session_preserves_same_connection_sibling_acp_state() {
+    assert_node_available();
+    let mut sidecar = new_sidecar("agentos-acp-wire-session-isolation");
+    install_default_acp_callback_handler(&mut sidecar);
+    let connection_id = authenticate(&mut sidecar);
+    let disposable_session = open_session(&mut sidecar, &connection_id);
+    let live_session = open_session(&mut sidecar, &connection_id);
+    let cwd = temp_dir("agentos-acp-wire-session-isolation-cwd");
+    fs::write(cwd.join("adapter.mjs"), adapter_script()).expect("write adapter script");
+    let vm_id = create_vm(&mut sidecar, &connection_id, &live_session, &cwd);
+
+    let created = dispatch_acp(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &live_session,
+        &vm_id,
+        AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
+            agent_type: String::from("pi"),
+            runtime: Some(AcpRuntimeKind::JavaScript),
+            cwd: Some(String::from(GUEST_CWD)),
+            args: Some(Vec::new()),
+            env: Some(HashMap::new()),
+            protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
+            client_capabilities: Some(String::from(r#"{"fs":{"readTextFile":true}}"#)),
+            mcp_servers: Some(String::from(r#"{"servers":[]}"#)),
+            skip_os_instructions: Some(true),
+            additional_instructions: None,
+        }),
+    );
+    assert!(matches!(created, AcpResponse::AcpSessionCreatedResponse(_)));
+
+    let closed = sidecar
+        .dispatch_wire_blocking(RequestFrame {
+            schema: agentos_native_sidecar::wire::protocol_schema(),
+            request_id: 5,
+            ownership: OwnershipScope::ConnectionOwnership(ConnectionOwnership {
+                connection_id: connection_id.clone(),
+            }),
+            payload: RequestPayload::CloseSessionRequest(CloseWireSessionRequest {
+                session_id: disposable_session,
+            }),
+        })
+        .expect("close sibling wire session");
+    assert!(matches!(
+        closed.response.payload,
+        ResponsePayload::SessionClosedResponse(_)
+    ));
+
+    let state = dispatch_acp(
+        &mut sidecar,
+        6,
+        &connection_id,
+        &live_session,
+        &vm_id,
+        AcpRequest::AcpGetSessionStateRequest(AcpGetSessionStateRequest {
+            session_id: String::from("adapter-session"),
+        }),
+    );
+    assert!(
+        matches!(state, AcpResponse::AcpSessionStateResponse(_)),
+        "closing one wire session must preserve a sibling session on the same connection: {state:?}"
+    );
+    close_owned_session(&mut sidecar, 7, &connection_id, &live_session, &vm_id);
+}
+
+fn cron_session_actions_execute_inside_the_native_sidecar() {
+    assert_node_available();
+    let mut sidecar = new_sidecar("agentos-acp-cron-session");
+    let connection_id = authenticate(&mut sidecar);
+    let session_id = open_session(&mut sidecar, &connection_id);
+    let cwd = temp_dir("agentos-acp-cron-session-cwd");
+    fs::write(cwd.join("adapter.mjs"), cron_adapter_script())
+        .expect("write cron ACP adapter script");
+    let vm_id = create_vm(&mut sidecar, &connection_id, &session_id, &cwd);
+    let ownership = OwnershipScope::VmOwnership(VmOwnership {
+        connection_id: connection_id.clone(),
+        session_id: session_id.clone(),
+        vm_id: vm_id.clone(),
+    });
+
+    let scheduled = sidecar
+        .dispatch_wire_blocking(RequestFrame {
+            schema: agentos_native_sidecar::wire::protocol_schema(),
+            request_id: 40,
+            ownership: ownership.clone(),
+            payload: RequestPayload::ScheduleCronRequest(ScheduleCronRequest {
+                id: Some(String::from("agent-turn")),
+                schedule: String::from("* * * * * *"),
+                action: serde_json::json!({
+                    "type": "session",
+                    "agentType": "pi",
+                    "prompt": "run from cron",
+                    "options": {
+                        "cwd": GUEST_CWD,
+                        "skipOsInstructions": true
+                    }
+                })
+                .to_string(),
+                overlap: None,
+            }),
+        })
+        .expect("schedule cron session action");
+    let ResponsePayload::CronScheduledResponse(scheduled) = scheduled.response.payload else {
+        panic!(
+            "unexpected cron schedule response: {:?}",
+            scheduled.response.payload
+        );
+    };
+    let deadline = scheduled.alarm.next_alarm_ms.expect("next cron alarm");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("unix time")
+        .as_millis() as u64;
+    std::thread::sleep(std::time::Duration::from_millis(
+        deadline.saturating_sub(now).saturating_add(5),
+    ));
+
+    let wake = sidecar
+        .dispatch_wire_blocking(RequestFrame {
+            schema: agentos_native_sidecar::wire::protocol_schema(),
+            request_id: 41,
+            ownership,
+            payload: RequestPayload::WakeCronRequest(WakeCronRequest {
+                generation: scheduled.alarm.generation,
+            }),
+        })
+        .expect("wake cron session action");
+    let ResponsePayload::CronWakeResponse(wake) = wake.response.payload else {
+        panic!("unexpected cron wake response: {:?}", wake.response.payload);
+    };
+    assert!(
+        wake.runs.is_empty(),
+        "session actions must not reach the client"
+    );
+    assert!(wake
+        .events
+        .iter()
+        .any(|event| event.kind == CronEventKind::Complete));
+    assert!(!wake
+        .events
+        .iter()
+        .any(|event| event.kind == CronEventKind::Error));
+}
+
+fn acp_terminal_requests_stay_inside_sidecar() {
+    assert_node_available();
+    let mut sidecar = new_sidecar("agentos-acp-extension-terminal");
+    let unknown_callback_count = Arc::new(AtomicUsize::new(0));
+    let callback_count = Arc::clone(&unknown_callback_count);
+    sidecar.set_wire_sidecar_request_handler(move |_frame| {
+        callback_count.fetch_add(1, Ordering::SeqCst);
+        Err(SidecarError::InvalidState(String::from(
+            "unexpected ACP client callback",
+        )))
+    });
+    let connection_id = authenticate(&mut sidecar);
+    let session_id = open_session(&mut sidecar, &connection_id);
+    let cwd = temp_dir("agentos-acp-extension-terminal-cwd");
+    let adapter = cwd.join("adapter.mjs");
+    fs::write(&adapter, terminal_adapter_script()).expect("write terminal adapter script");
+    let vm_id = create_vm(&mut sidecar, &connection_id, &session_id, &cwd);
+
+    let created = dispatch_acp(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
+            agent_type: String::from("pi"),
+            runtime: Some(AcpRuntimeKind::JavaScript),
+            cwd: Some(String::from(GUEST_CWD)),
+            args: Some(Vec::new()),
+            env: Some(HashMap::new()),
+            protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
+            client_capabilities: Some(String::from(r#"{"terminal":true}"#)),
+            mcp_servers: Some(String::from(r#"{"servers":[]}"#)),
+            skip_os_instructions: Some(true),
+            additional_instructions: None,
+        }),
+    );
+    let AcpResponse::AcpSessionCreatedResponse(created) = created else {
+        panic!("unexpected create response: {created:?}");
+    };
+    let terminal = dispatch_acp(
+        &mut sidecar,
+        5,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        AcpRequest::AcpSessionRequest(AcpSessionRequest {
+            session_id: created.session_id.clone(),
+            method: String::from("session/prompt"),
+            params: Some(String::from(r#"{"prompt":[]}"#)),
+        }),
+    );
+    let AcpResponse::AcpSessionRpcResponse(terminal) = terminal else {
+        panic!("unexpected terminal prompt response: {terminal:?}");
+    };
+    let terminal: Value =
+        serde_json::from_str(&terminal.response).expect("terminal prompt response json");
+    assert!(terminal["result"]["terminalOutput"]
+        .as_str()
+        .unwrap_or_else(|| panic!("terminal output missing from {terminal:?}"))
+        .contains("native-terminal"));
+    assert_eq!(terminal["result"]["exitCode"], 0);
+    assert_eq!(terminal["result"]["truncated"], false);
+    let unknown = &terminal["result"]["unknownMethodResponse"];
+    assert_eq!(unknown["id"], 105);
+    assert_eq!(unknown["error"]["code"], -32601);
+    assert_eq!(
+        unknown["error"]["message"],
+        "method not found: host/not-found"
+    );
+    assert_eq!(unknown["error"]["data"]["method"], "host/not-found");
+    assert_eq!(
+        unknown_callback_count.load(Ordering::SeqCst),
+        0,
+        "unknown native ACP methods must be rejected inside the sidecar"
+    );
+
+    let closed = dispatch_acp(
+        &mut sidecar,
+        6,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        AcpRequest::AcpCloseSessionRequest(AcpCloseSessionRequest {
+            session_id: created.session_id,
+        }),
+    );
+    assert!(matches!(closed, AcpResponse::AcpSessionClosedResponse(_)));
 }
 
 fn acp_extension_creates_reports_and_closes_session_over_ext() {
@@ -41,32 +357,19 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
             assert_eq!(envelope.namespace, ACP_EXTENSION_NAMESPACE);
             let callback: AcpCallback =
                 serde_bare::from_slice(&envelope.payload).expect("decode ACP callback");
-            let response = match callback {
-                AcpCallback::AcpPermissionCallback(callback) => {
-                    assert_eq!(callback.session_id, "adapter-session");
-                    assert_eq!(callback.permission_id, "perm-1");
-                    AcpCallbackResponse::AcpPermissionCallbackResponse(
-                        AcpPermissionCallbackResponse {
-                            permission_id: callback.permission_id,
-                            reply: String::from("once"),
-                        },
-                    )
-                }
-                AcpCallback::AcpHostRequestCallback(callback) => {
-                    assert_eq!(callback.session_id, "adapter-session");
-                    let request: Value =
-                        serde_json::from_str(&callback.request).expect("host callback request");
-                    assert_eq!(request["id"], 100);
-                    assert_eq!(request["method"], "fs/read_text_file");
-                    AcpCallbackResponse::AcpHostRequestCallbackResponse(
-                        AcpHostRequestCallbackResponse {
-                            response: Some(String::from(
-                                r#"{"jsonrpc":"2.0","id":100,"result":{"content":"host callback ok"}}"#,
-                            )),
-                        },
-                    )
-                }
-            };
+            let AcpCallback::AcpPermissionCallback(callback) = callback;
+            assert_eq!(callback.session_id, "adapter-session");
+            assert_eq!(callback.permission_id, "perm-1");
+            assert_eq!(callback.cleanup_after_ms, 125_000);
+            assert!(
+                callback.cleanup_after_ms > 120_000,
+                "client cleanup must occur after the sidecar permission deadline"
+            );
+            let response =
+                AcpCallbackResponse::AcpPermissionCallbackResponse(AcpPermissionCallbackResponse {
+                    permission_id: callback.permission_id,
+                    reply: Some(String::from("once")),
+                });
             Ok(SidecarResponseFrame {
                 schema: frame.schema,
                 request_id: frame.request_id,
@@ -84,32 +387,42 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
     let cwd = temp_dir("agentos-acp-extension-create-cwd");
     let adapter = cwd.join("adapter.mjs");
     fs::write(&adapter, adapter_script()).expect("write adapter script");
-    let vm_id = create_vm(&mut sidecar, &connection_id, &session_id, &cwd);
+    let vm_id = create_vm_with_additional_instructions(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &cwd,
+        Some("VM-level guidance"),
+    );
+    register_math_toolkit(&mut sidecar, &connection_id, &session_id, &vm_id);
 
+    let create_request = AcpCreateSessionRequest {
+        agent_type: String::from("pi"),
+        runtime: Some(AcpRuntimeKind::JavaScript),
+        cwd: Some(String::from(GUEST_CWD)),
+        args: Some(Vec::new()),
+        env: Some(HashMap::new()),
+        protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
+        client_capabilities: Some(String::from(r#"{"fs":{"readTextFile":true}}"#)),
+        mcp_servers: Some(String::from(r#"{"servers":[]}"#)),
+        skip_os_instructions: Some(true),
+        additional_instructions: Some(String::from("extra guidance")),
+    };
     let (created, create_events) = dispatch_acp_with_events(
         &mut sidecar,
         4,
         &connection_id,
         &session_id,
         &vm_id,
-        AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
-            agent_type: String::from("pi"),
-            runtime: AcpRuntimeKind::JavaScript,
-            cwd: cwd.to_string_lossy().into_owned(),
-            args: Vec::new(),
-            env: HashMap::new(),
-            protocol_version: i32::from(ACP_PROTOCOL_VERSION),
-            client_capabilities: String::from(r#"{"fs":{"readTextFile":true}}"#),
-            mcp_servers: String::from(r#"{"servers":[]}"#),
-            skip_os_instructions: true,
-            additional_instructions: Some(String::from("extra guidance")),
-        }),
+        AcpRequest::AcpCreateSessionRequest(create_request.clone()),
     );
 
     let AcpResponse::AcpSessionCreatedResponse(created) = created else {
         panic!("unexpected create response: {created:?}");
     };
     assert_eq!(created.session_id, "adapter-session");
+    assert_eq!(created.agent_type, "pi");
+    assert!(created.process_id.starts_with("acp-agent-"));
     assert!(created.pid.is_some());
     let bootstrap_event = decode_single_acp_session_event(&create_events);
     assert_eq!(
@@ -133,6 +446,12 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
         .as_str()
         .expect("prompt arg")
         .contains("extra guidance"));
+    let prompt = args[1].as_str().expect("prompt arg");
+    assert!(prompt.contains("VM-level guidance"));
+    assert!(prompt.contains("extra guidance"));
+    assert!(prompt.contains("## Available Host Tools"));
+    assert!(prompt.contains("`agentos-math add --a <number> --b <number>`"));
+    assert!(prompt.contains("Add 1 and 2: `agentos-math add --a 1 --b 2`"));
     assert!(created
         .config_options
         .iter()
@@ -155,9 +474,36 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
     assert_eq!(state.agent_type, "pi");
     assert!(!state.closed);
 
-    let (prompt, prompt_events) = dispatch_acp_with_events(
+    let duplicate = dispatch_acp(
         &mut sidecar,
         6,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        AcpRequest::AcpCreateSessionRequest(create_request),
+    );
+    let AcpResponse::AcpErrorResponse(duplicate) = duplicate else {
+        panic!("duplicate session id should be rejected: {duplicate:?}");
+    };
+    assert!(duplicate.message.contains("session id collision"));
+
+    let listed = dispatch_acp(
+        &mut sidecar,
+        7,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        AcpRequest::AcpListSessionsRequest(AcpListSessionsRequest { reserved: false }),
+    );
+    let AcpResponse::AcpListSessionsResponse(listed) = listed else {
+        panic!("unexpected list response: {listed:?}");
+    };
+    assert_eq!(listed.sessions.len(), 1);
+    assert_eq!(listed.sessions[0].session_id, "adapter-session");
+
+    let (prompt, prompt_events) = dispatch_acp_with_events(
+        &mut sidecar,
+        8,
         &connection_id,
         &session_id,
         &vm_id,
@@ -181,23 +527,32 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
         prompt_response["result"]["permissionOutcome"]["optionId"],
         "once"
     );
-    assert_eq!(prompt_events.len(), 1);
-    let EventPayload::ExtEnvelope(envelope) = &prompt_events[0].payload else {
-        panic!("unexpected prompt event: {:?}", prompt_events[0]);
-    };
-    assert_eq!(envelope.namespace, ACP_EXTENSION_NAMESPACE);
-    let event: AcpEvent = serde_bare::from_slice(&envelope.payload).expect("decode ACP event");
-    let AcpEvent::AcpSessionEvent(event) = event else {
-        panic!("expected an AcpSessionEvent, got {event:?}");
-    };
-    assert_eq!(event.session_id, "adapter-session");
-    let notification: Value = serde_json::from_str(&event.notification).expect("notification json");
-    assert_eq!(notification["method"], "session/update");
-    assert_eq!(notification["params"]["update"]["currentModeId"], "ask");
+    assert_eq!(prompt.text.as_deref(), Some("agent says hello"));
+    let notifications = prompt_events
+        .iter()
+        .filter_map(|event| {
+            let EventPayload::ExtEnvelope(envelope) = &event.payload else {
+                return None;
+            };
+            let AcpEvent::AcpSessionEvent(event) =
+                serde_bare::from_slice(&envelope.payload).expect("decode ACP event")
+            else {
+                panic!("expected an AcpSessionEvent");
+            };
+            Some(serde_json::from_str::<Value>(&event.notification).expect("notification json"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(notifications.len(), 2, "{prompt_events:#?}");
+    assert!(notifications
+        .iter()
+        .any(|event| event["params"]["update"]["currentModeId"] == "ask"));
+    assert!(notifications
+        .iter()
+        .any(|event| { event["params"]["update"]["content"]["text"] == "agent says hello" }));
 
     let (mode_update, mode_events) = dispatch_acp_with_events(
         &mut sidecar,
-        7,
+        9,
         &connection_id,
         &session_id,
         &vm_id,
@@ -222,7 +577,7 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
 
     let (config_update, config_events) = dispatch_acp_with_events(
         &mut sidecar,
-        8,
+        10,
         &connection_id,
         &session_id,
         &vm_id,
@@ -250,7 +605,7 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
 
     let updated_state = dispatch_acp(
         &mut sidecar,
-        9,
+        11,
         &connection_id,
         &session_id,
         &vm_id,
@@ -270,7 +625,7 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
 
     let cancel = dispatch_acp(
         &mut sidecar,
-        10,
+        12,
         &connection_id,
         &session_id,
         &vm_id,
@@ -291,7 +646,7 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
 
     let closed = dispatch_acp(
         &mut sidecar,
-        11,
+        13,
         &connection_id,
         &session_id,
         &vm_id,
@@ -338,14 +693,14 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
         &victim_vm,
         AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
             agent_type: String::from("pi"),
-            runtime: AcpRuntimeKind::JavaScript,
-            cwd: cwd.to_string_lossy().into_owned(),
-            args: Vec::new(),
-            env: HashMap::new(),
-            protocol_version: i32::from(ACP_PROTOCOL_VERSION),
-            client_capabilities: String::from(r#"{"fs":{"readTextFile":true}}"#),
-            mcp_servers: String::from(r#"{"servers":[]}"#),
-            skip_os_instructions: true,
+            runtime: Some(AcpRuntimeKind::JavaScript),
+            cwd: Some(String::from(GUEST_CWD)),
+            args: Some(Vec::new()),
+            env: Some(HashMap::new()),
+            protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
+            client_capabilities: Some(String::from(r#"{"fs":{"readTextFile":true}}"#)),
+            mcp_servers: Some(String::from(r#"{"servers":[]}"#)),
+            skip_os_instructions: Some(true),
             additional_instructions: None,
         }),
     );
@@ -369,6 +724,24 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
         "owner connection must still read its own ACP session state, got {owner_state:?}"
     );
 
+    // The owner key includes the VM, not only connection + wire session.
+    let sibling_vm_cwd = temp_dir("agentos-acp-sibling-vm-state-cwd");
+    let sibling_vm = create_vm(&mut sidecar, &victim_conn, &victim_session, &sibling_vm_cwd);
+    let sibling_vm_read = dispatch_acp(
+        &mut sidecar,
+        6,
+        &victim_conn,
+        &victim_session,
+        &sibling_vm,
+        AcpRequest::AcpGetSessionStateRequest(AcpGetSessionStateRequest {
+            session_id: String::from("adapter-session"),
+        }),
+    );
+    assert_indistinguishable_deny(
+        sibling_vm_read,
+        "same-session sibling VM read of another VM's ACP session state",
+    );
+
     // Attacker connection: separate auth + session + vm, then tries to read the
     // victim's ACP session state by its (guessed/known) session id.
     let attacker_conn = authenticate(&mut sidecar);
@@ -387,7 +760,7 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
 
     let leaked = dispatch_acp(
         &mut sidecar,
-        6,
+        7,
         &attacker_conn,
         &attacker_session,
         &attacker_vm,
@@ -403,7 +776,7 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
         "cross-connection read of another connection's ACP session state",
     );
 
-    close_owned_session(&mut sidecar, 7, &victim_conn, &victim_session, &victim_vm);
+    close_owned_session(&mut sidecar, 8, &victim_conn, &victim_session, &victim_vm);
 }
 
 /// AOS-ACP-1 (P1 / J.4 cross-connection ACP close): a second connection
@@ -414,13 +787,11 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
 /// `close_stdin` + `SIGTERM`/`SIGKILL` the victim's adapter process and dispose
 /// its resources — a cross-tenant DoS.
 ///
-/// SECURE expectation: the cross-connection close is DENIED (error response) AND
-/// the victim's session stays alive (the owner can still read its own state and
-/// still drive a prompt afterwards). Today the code is expected to return
-/// `AcpSessionClosedResponse` and tear the victim down (FAIL = vuln present).
+/// SECURE expectation: the cross-connection close is an idempotent success that
+/// reveals no existence information, while the victim's session stays alive.
 ///
 /// Bounded SAFEGUARD-shaped assertion: a single cross-connection close, fast.
-fn acp_close_session_denies_cross_connection_session_id() {
+fn acp_close_session_is_owner_scoped_and_idempotent() {
     assert_node_available();
     let mut sidecar = new_sidecar("agentos-acp-cross-conn-close");
     install_default_acp_callback_handler(&mut sidecar);
@@ -441,14 +812,14 @@ fn acp_close_session_denies_cross_connection_session_id() {
         &victim_vm,
         AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
             agent_type: String::from("pi"),
-            runtime: AcpRuntimeKind::JavaScript,
-            cwd: cwd.to_string_lossy().into_owned(),
-            args: Vec::new(),
-            env: HashMap::new(),
-            protocol_version: i32::from(ACP_PROTOCOL_VERSION),
-            client_capabilities: String::from(r#"{"fs":{"readTextFile":true}}"#),
-            mcp_servers: String::from(r#"{"servers":[]}"#),
-            skip_os_instructions: true,
+            runtime: Some(AcpRuntimeKind::JavaScript),
+            cwd: Some(String::from(GUEST_CWD)),
+            args: Some(Vec::new()),
+            env: Some(HashMap::new()),
+            protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
+            client_capabilities: Some(String::from(r#"{"fs":{"readTextFile":true}}"#)),
+            mcp_servers: Some(String::from(r#"{"servers":[]}"#)),
+            skip_os_instructions: Some(true),
             additional_instructions: None,
         }),
     );
@@ -483,17 +854,29 @@ fn acp_close_session_denies_cross_connection_session_id() {
         }),
     );
 
-    // SECURE expectation: a different connection must be denied, indistinguishably
-    // from a missing session (no existence leak).
-    assert_indistinguishable_deny(
-        close_result,
-        "cross-connection CLOSE of another connection's ACP session",
+    let AcpResponse::AcpSessionClosedResponse(closed) = close_result else {
+        panic!("cross-connection close should be an idempotent response: {close_result:?}");
+    };
+    assert_eq!(closed.session_id, "adapter-session");
+
+    // Listing is scoped to the caller and cannot reveal the victim session.
+    let attacker_list = dispatch_acp(
+        &mut sidecar,
+        7,
+        &attacker_conn,
+        &attacker_session,
+        &attacker_vm,
+        AcpRequest::AcpListSessionsRequest(AcpListSessionsRequest { reserved: false }),
     );
+    let AcpResponse::AcpListSessionsResponse(attacker_list) = attacker_list else {
+        panic!("unexpected attacker list response: {attacker_list:?}");
+    };
+    assert!(attacker_list.sessions.is_empty());
 
     // ...and the victim session must remain alive and usable for its owner.
     let owner_state = dispatch_acp(
         &mut sidecar,
-        7,
+        8,
         &victim_conn,
         &victim_session,
         &victim_vm,
@@ -554,14 +937,14 @@ fn acp_session_request_denies_cross_connection_prompt_and_cancel() {
         &victim_vm,
         AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
             agent_type: String::from("pi"),
-            runtime: AcpRuntimeKind::JavaScript,
-            cwd: cwd.to_string_lossy().into_owned(),
-            args: Vec::new(),
-            env: HashMap::new(),
-            protocol_version: i32::from(ACP_PROTOCOL_VERSION),
-            client_capabilities: String::from(r#"{"fs":{"readTextFile":true}}"#),
-            mcp_servers: String::from(r#"{"servers":[]}"#),
-            skip_os_instructions: true,
+            runtime: Some(AcpRuntimeKind::JavaScript),
+            cwd: Some(String::from(GUEST_CWD)),
+            args: Some(Vec::new()),
+            env: Some(HashMap::new()),
+            protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
+            client_capabilities: Some(String::from(r#"{"fs":{"readTextFile":true}}"#)),
+            mcp_servers: Some(String::from(r#"{"servers":[]}"#)),
+            skip_os_instructions: Some(true),
             additional_instructions: None,
         }),
     );
@@ -678,8 +1061,8 @@ fn acp_session_request_denies_cross_connection_prompt_and_cancel() {
 }
 
 /// Assert an ACP response is a deny that is INDISTINGUISHABLE from a missing
-/// session: same `invalid_state` code and the same "unknown ACP session" message
-/// a non-existent session produces. This locks in the no-existence-leak property
+/// session: the shared ACP core's `session_not_found` code and unknown-session
+/// message. This locks in the no-existence-leak property
 /// — a non-owner must learn nothing (not even that the session exists), so a
 /// regression to a distinguishable error (e.g. an `unauthorized` code) fails here.
 #[track_caller]
@@ -688,7 +1071,7 @@ fn assert_indistinguishable_deny(response: AcpResponse, what: &str) {
         panic!("{what} must be DENIED with an error response, but it returned: {response:?}");
     };
     assert_eq!(
-        error.code, "invalid_state",
+        error.code, "session_not_found",
         "{what} must fail closed with the same code as a missing session (no \
          'unauthorized' existence oracle); got code {:?} / message {:?}",
         error.code, error.message
@@ -706,28 +1089,17 @@ fn install_default_acp_callback_handler(sidecar: &mut NativeSidecar<RecordingBri
             assert_eq!(envelope.namespace, ACP_EXTENSION_NAMESPACE);
             let callback: AcpCallback =
                 serde_bare::from_slice(&envelope.payload).expect("decode ACP callback");
-            let response = match callback {
-                AcpCallback::AcpPermissionCallback(callback) => {
-                    AcpCallbackResponse::AcpPermissionCallbackResponse(
-                        AcpPermissionCallbackResponse {
-                            permission_id: callback.permission_id,
-                            reply: String::from("once"),
-                        },
-                    )
-                }
-                AcpCallback::AcpHostRequestCallback(callback) => {
-                    let request: Value =
-                        serde_json::from_str(&callback.request).expect("host callback request");
-                    assert_eq!(request["method"], "fs/read_text_file");
-                    AcpCallbackResponse::AcpHostRequestCallbackResponse(
-                        AcpHostRequestCallbackResponse {
-                            response: Some(String::from(
-                                r#"{"jsonrpc":"2.0","id":100,"result":{"content":"host callback ok"}}"#,
-                            )),
-                        },
-                    )
-                }
-            };
+            let AcpCallback::AcpPermissionCallback(callback) = callback;
+            assert_eq!(callback.cleanup_after_ms, 125_000);
+            assert!(
+                callback.cleanup_after_ms > 120_000,
+                "client cleanup must occur after the sidecar permission deadline"
+            );
+            let response =
+                AcpCallbackResponse::AcpPermissionCallbackResponse(AcpPermissionCallbackResponse {
+                    permission_id: callback.permission_id,
+                    reply: Some(String::from("once")),
+                });
             Ok(SidecarResponseFrame {
                 schema: frame.schema,
                 request_id: frame.request_id,
@@ -795,6 +1167,49 @@ fn dispatch_acp(
         request,
     )
     .0
+}
+
+fn register_math_toolkit(
+    sidecar: &mut NativeSidecar<RecordingBridge>,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+) {
+    let result = sidecar
+        .dispatch_wire_blocking(RequestFrame {
+            schema: agentos_native_sidecar::wire::protocol_schema(),
+            request_id: 3,
+            ownership: OwnershipScope::VmOwnership(VmOwnership {
+                connection_id: connection_id.to_owned(),
+                session_id: session_id.to_owned(),
+                vm_id: vm_id.to_owned(),
+            }),
+            payload: RequestPayload::RegisterHostCallbacksRequest(
+                RegisterHostCallbacksRequest {
+                    name: String::from("math"),
+                    description: String::from("Math utilities"),
+                    callbacks: HashMap::from([(
+                        String::from("add"),
+                        RegisteredHostCallbackDefinition {
+                            description: String::from("Add two numbers"),
+                            input_schema: String::from(
+                                r#"{"type":"object","properties":{"a":{"type":"number"},"b":{"type":"number"}},"required":["a","b"]}"#,
+                            ),
+                            timeout_ms: None,
+                            examples: vec![RegisteredHostCallbackExample {
+                                description: String::from("Add 1 and 2"),
+                                input: String::from(r#"{"a":1,"b":2}"#),
+                            }],
+                        },
+                    )]),
+                },
+            ),
+        })
+        .expect("register host toolkit");
+    assert!(matches!(
+        result.response.payload,
+        ResponsePayload::HostCallbacksRegisteredResponse(_)
+    ));
 }
 
 fn dispatch_acp_with_events(
@@ -937,6 +1352,16 @@ for await (const line of lines) {
     }));
     console.log(JSON.stringify({
       jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { text: "agent says hello" }
+        }
+      }
+    }));
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
       id: 99,
       method: "session/request_permission",
       params: {
@@ -974,6 +1399,172 @@ for await (const line of lines) {
       jsonrpc: "2.0",
       id: message.id,
       result: {}
+    }));
+  } else {
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: message.id,
+      error: { code: -32601, message: `unknown method ${message.method}` }
+    }));
+  }
+}
+"#
+}
+
+fn missing_initialize_response_id_adapter_script() -> &'static str {
+    r#"
+import readline from "node:readline";
+
+const lines = readline.createInterface({ input: process.stdin });
+for await (const line of lines) {
+  if (!line.trim()) continue;
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      result: { protocolVersion: message.params.protocolVersion }
+    }));
+  }
+}
+"#
+}
+
+fn cron_adapter_script() -> &'static str {
+    r#"
+import readline from "node:readline";
+
+const lines = readline.createInterface({ input: process.stdin });
+for await (const line of lines) {
+  if (!line.trim()) continue;
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: { protocolVersion: message.params.protocolVersion, agentInfo: { name: "cron-adapter" } }
+    }));
+  } else if (message.method === "session/new") {
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: { sessionId: "cron-session", modes: { currentModeId: "default", availableModes: [] } }
+    }));
+  } else if (message.method === "session/prompt") {
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "cron complete" } } }
+    }));
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: { stopReason: "end_turn" }
+    }));
+  } else {
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: message.id,
+      error: { code: -32601, message: `unknown method ${message.method}` }
+    }));
+  }
+}
+"#
+}
+
+fn terminal_adapter_script() -> &'static str {
+    r#"
+import readline from "node:readline";
+
+const lines = readline.createInterface({ input: process.stdin });
+let promptRequestId = null;
+let terminalId = null;
+let exitCode = null;
+let terminalOutput = "";
+let truncated = false;
+let unknownMethodResponse = null;
+
+for await (const line of lines) {
+  if (!line.trim()) continue;
+  const message = JSON.parse(line);
+  if (!message.method && message.id === 105) {
+    unknownMethodResponse = message;
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: promptRequestId,
+      result: {
+        terminalOutput,
+        exitCode,
+        truncated,
+        unknownMethodResponse
+      }
+    }));
+  } else if (!message.method && message.error && promptRequestId !== null) {
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: promptRequestId,
+      result: {
+        sessionId: "terminal-session",
+        agentInfo: { name: "terminal-adapter", terminalError: message.error }
+      }
+    }));
+  } else if (message.method === "initialize") {
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: { protocolVersion: message.params.protocolVersion, agentInfo: { name: "terminal-adapter" } }
+    }));
+  } else if (message.method === "session/new") {
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: { sessionId: "terminal-session" }
+    }));
+  } else if (message.method === "session/prompt") {
+    promptRequestId = message.id;
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 100,
+      method: "terminal/create",
+      params: { command: "terminal-fixture", cols: 80, rows: 24 }
+    }));
+  } else if (message.id === 100) {
+    terminalId = message.result.terminalId;
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 104,
+      method: "terminal/write",
+      params: { terminalId, data: "printf native-terminal; exit 7\n" }
+    }));
+  } else if (message.id === 104) {
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 101,
+      method: "terminal/wait_for_exit",
+      params: { terminalId }
+    }));
+  } else if (message.id === 101) {
+    exitCode = message.result.exitCode;
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 102,
+      method: "terminal/output",
+      params: { terminalId }
+    }));
+  } else if (message.id === 102) {
+    terminalOutput = message.result.output;
+    truncated = message.result.truncated;
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 103,
+      method: "terminal/release",
+      params: { terminalId }
+    }));
+  } else if (message.id === 103) {
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 105,
+      method: "host/not-found",
+      params: {}
     }));
   } else {
     console.log(JSON.stringify({
@@ -1041,7 +1632,6 @@ fn open_session(sidecar: &mut NativeSidecar<RecordingBridge>, connection_id: &st
                 placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
                     pool: None,
                 }),
-                metadata: HashMap::new(),
             }),
         })
         .expect("open session");
@@ -1057,6 +1647,16 @@ fn create_vm(
     session_id: &str,
     cwd: &Path,
 ) -> String {
+    create_vm_with_additional_instructions(sidecar, connection_id, session_id, cwd, None)
+}
+
+fn create_vm_with_additional_instructions(
+    sidecar: &mut NativeSidecar<RecordingBridge>,
+    connection_id: &str,
+    session_id: &str,
+    cwd: &Path,
+    agent_additional_instructions: Option<&str>,
+) -> String {
     let result = sidecar
         .dispatch_wire_blocking(RequestFrame {
             schema: agentos_native_sidecar::wire::protocol_schema(),
@@ -1068,8 +1668,23 @@ fn create_vm(
             payload: RequestPayload::CreateVmRequest(CreateVmRequest {
                 runtime: GuestRuntimeKind::JavaScript,
                 config: serde_json::to_string(&vm_config::CreateVmConfig {
-                    cwd: Some(cwd.to_string_lossy().into_owned()),
+                    cwd: Some(String::from(GUEST_CWD)),
+                    agent_additional_instructions: agent_additional_instructions.map(String::from),
                     permissions: Some(allow_all_permissions()),
+                    root_filesystem: Some(vm_config::RootFilesystemConfig {
+                        bootstrap_entries: Some(vec![vm_config::RootFilesystemEntry {
+                            path: String::from("/tmp/host-callback.txt"),
+                            kind: vm_config::RootFilesystemEntryKind::File,
+                            mode: Some(0o644),
+                            uid: Some(0),
+                            gid: Some(0),
+                            content: Some(String::from("host callback ok")),
+                            encoding: Some(vm_config::RootFilesystemEntryEncoding::Utf8),
+                            target: None,
+                            executable: false,
+                        }]),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 })
                 .expect("serialize create VM config"),
@@ -1108,6 +1723,17 @@ fn bootstrap_mock_agents(
     fs::write(package_dir.join("agentos-package.json"), manifest)
         .expect("write mock agent manifest");
     fs::write(bin_dir.join("pi"), script).expect("write mock agent command");
+    fs::write(
+        bin_dir.join("terminal-fixture"),
+        r#"#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on("data", () => {
+  process.stdout.write("native-terminal");
+  process.exit(0);
+});
+"#,
+    )
+    .expect("write mock terminal command");
     let result = sidecar
         .dispatch_wire_blocking(RequestFrame {
             schema: agentos_native_sidecar::wire::protocol_schema(),
@@ -1118,20 +1744,14 @@ fn bootstrap_mock_agents(
                 vm_id: vm_id.to_owned(),
             }),
             payload: RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts: Vec::new(),
-                software: Vec::new(),
+                mounts: None,
                 permissions: None,
-                module_access_cwd: None,
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
-                command_permissions: HashMap::new(),
-                loopback_exempt_ports: Vec::new(),
-                packages: vec![PackageDescriptor {
+                command_permissions: None,
+                loopback_exempt_ports: None,
+                packages: Some(vec![PackageDescriptor::PackagePath(PackagePath {
                     path: package_dir.to_string_lossy().into_owned(),
-                }],
-                packages_mount_at: String::from("/opt/agentos"),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                })]),
+                packages_mount_at: Some(String::from("/opt/agentos")),
             }),
         })
         .expect("configure mock ACP package");

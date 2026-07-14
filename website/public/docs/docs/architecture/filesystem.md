@@ -54,7 +54,7 @@ The base layer is in-memory and per-VM; the runtime transparently persists it to
 
 When the guest calls, say, `readFileSync("/mnt/data/report.csv")`:
 
-1. **Permission check.** The kernel verifies the filesystem scope is granted for that operation. Nothing is bound by default; access is denied until opted in (see [Permissions](/docs/permissions)).
+1. **Permission check.** The kernel checks the installed filesystem policy. The sidecar installs `allow` when the top-level `fs` scope is omitted; an explicit deny rejects the operation with `EACCES` (see [Permissions](/docs/permissions)).
 2. **Engine resolution.** The VFS walks the namespace and selects the engine owning the longest matching prefix (`/mnt/data` -> the S3 mount engine).
 3. **Path normalization and confinement.** The remainder of the path is normalized within the owning engine's root. `.` and `..` segments are resolved *before* the operation reaches the backend, so the request cannot climb above the engine's root.
 4. **Backend operation.** The owning engine's backend services the read/write/stat/etc. against its store (in-memory pages, the persisted base, a host directory, S3, ...).

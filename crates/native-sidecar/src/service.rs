@@ -14,20 +14,23 @@ pub(crate) use crate::execution::{
     LoopbackHttpDispatchRequest,
 };
 use crate::extension::{
-    Extension, ExtensionBufferedProcessOutput, ExtensionContext, ExtensionFuture, ExtensionHost,
-    ExtensionSnapshot,
+    Extension, ExtensionBufferedProcessOutput, ExtensionCleanupOutcome, ExtensionContext,
+    ExtensionFuture, ExtensionHost, ExtensionSnapshot,
 };
 use crate::filesystem::guest_filesystem_call as filesystem_guest_filesystem_call;
 use crate::limits::DEFAULT_ACP_STDOUT_BUFFER_BYTE_LIMIT;
 use crate::protocol::{
-    CloseStdinRequest, DisposeReason, EventFrame, EventPayload, ExecuteRequest, ExtEnvelope,
-    GuestFilesystemCallRequest, GuestFilesystemResultResponse, JavascriptChildProcessSpawnOptions,
+    CancelCronJobRequest, CloseSessionRequest, CloseStdinRequest, CompleteCronRunRequest,
+    CronAlarm, CronDispatchEvent, CronEventRecord, CronRun, DisposeReason, EventFrame,
+    EventPayload, ExecuteRequest, ExtEnvelope, GuestFilesystemCallRequest,
+    GuestFilesystemResultResponse, JavascriptChildProcessSpawnOptions,
     JavascriptChildProcessSpawnRequest, KillProcessRequest, OpenSessionRequest, OwnershipScope,
-    ProcessKilledResponse, ProcessStartedResponse, RequestFrame, RequestId, RequestPayload,
-    ResponseFrame, ResponsePayload, SidecarRequestFrame, SidecarRequestPayload,
-    SidecarResponseFrame, SidecarResponsePayload, SidecarResponseTracker,
-    SidecarResponseTrackerError, SignalDispositionAction, StdinClosedResponse,
-    StdinWrittenResponse, VmLifecycleState, WriteStdinRequest,
+    ProcessKilledResponse, ProcessStartedResponse, PtyResizedResponse, RequestFrame, RequestId,
+    RequestPayload, ResizePtyRequest, ResponseFrame, ResponsePayload, ScheduleCronRequest,
+    SidecarRequestFrame, SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload,
+    SidecarResponseTracker, SidecarResponseTrackerError, SignalDispositionAction,
+    StdinClosedResponse, StdinWrittenResponse, VmLifecycleState, WakeCronRequest,
+    WriteStdinRequest,
 };
 use crate::state::{
     ActiveExecutionEvent, BridgeError, ConnectionState, EventSinkTransport, JavascriptSocketFamily,
@@ -60,12 +63,22 @@ use agentos_native_sidecar_core::permissions::{
 };
 use agentos_native_sidecar_core::{
     apply_process_signal_state_update, authenticated_response as shared_authenticated_response,
-    parse_process_signal_state_request, reject as shared_reject, request_dispatch_mode,
-    respond as shared_respond, route_request_payload, session_opened_response,
+    parse_process_signal_state_request, record_session_close_outcome, reject as shared_reject,
+    request_dispatch_mode, respond as shared_respond, route_request_payload,
+    session_close_history_capacity, session_closed_response, session_id_was_allocated,
+    session_limit_near_capacity, session_limit_rejection_message, session_opened_response,
     unsupported_host_callback_direction_dispatch, validate_authenticate_versions,
-    vm_lifecycle_event as shared_vm_lifecycle_event, AuthenticateVersionError, RequestDispatchMode,
-    RequestRoute,
+    vm_lifecycle_event as shared_vm_lifecycle_event, AuthenticateVersionError, CronAction,
+    CronScheduler, RequestDispatchMode, RequestRoute, SessionCloseOutcome,
+    CLOSE_SESSION_FAILED_ERROR_CODE, CLOSE_SESSION_HISTORY_EXPIRED_ERROR_CODE,
+    CLOSE_SESSION_INVALID_OWNERSHIP_ERROR_CODE, CLOSE_SESSION_OWNERSHIP_MISMATCH_ERROR_CODE,
+    CLOSE_SESSION_UNAUTHENTICATED_ERROR_CODE, MAX_CRON_JOBS, MAX_CRON_STATE_BYTES,
+    SESSION_LIMIT_ERROR_CODE,
 };
+use agentos_protocol::generated::v1::{
+    AcpCloseSessionRequest, AcpCreateSessionRequest, AcpRequest, AcpResponse, AcpSessionRequest,
+};
+use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use agentos_vm_config::PermissionsPolicy;
 // root_fs types moved to crate::vm
 use agentos_kernel::vfs::VfsError;
@@ -655,10 +668,14 @@ pub struct NativeSidecar<B> {
     pub(crate) next_connection_id: usize,
     pub(crate) next_session_id: usize,
     pub(crate) next_vm_id: usize,
+    pub(crate) next_process_id: u64,
     pub(crate) next_sidecar_request_id: RequestId,
     pub(crate) connections: BTreeMap<String, ConnectionState>,
     pub(crate) sessions: BTreeMap<String, SessionState>,
     pub(crate) vms: BTreeMap<String, VmState>,
+    pub(crate) vm_disposal_progress: BTreeMap<String, VmDisposalProgress>,
+    pub(crate) cron_schedulers: BTreeMap<String, CronScheduler>,
+    pub(crate) cron_process_runs: BTreeMap<(String, String), String>,
     #[allow(dead_code)]
     pub(crate) process_event_sender: Sender<ProcessEventEnvelope>,
     pub(crate) process_event_receiver: Option<Receiver<ProcessEventEnvelope>>,
@@ -674,7 +691,8 @@ pub struct NativeSidecar<B> {
     pub(crate) sidecar_requests: SharedSidecarRequestClient,
     pub(crate) event_sink: SharedEventSink,
     pub(crate) extensions: BTreeMap<String, Arc<dyn Extension>>,
-    pub(crate) extension_sessions: BTreeMap<(String, String), ExtensionSessionResources>,
+    pub(crate) extension_sessions:
+        BTreeMap<(String, String, String, String, String), ExtensionSessionResources>,
     pub(crate) extension_process_output_buffers:
         BTreeMap<(String, String), ExtensionBufferedProcessOutput>,
     /// Session scopes (connection_id, session_id) disposed since the stdio
@@ -688,6 +706,116 @@ pub(crate) struct ExtensionSessionResources {
     pub(crate) ownership: OwnershipScope,
     pub(crate) process_ids: BTreeSet<String>,
     pub(crate) vm_ids: BTreeSet<String>,
+    /// Lifecycle events from cleanup phases that committed before a sibling
+    /// failed. They are returned exactly once when the retained cleanup record
+    /// reaches completion.
+    pub(crate) pending_cleanup_events: Vec<EventFrame>,
+    pub(crate) cleanup_in_progress: bool,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct VmDisposalProgress {
+    pub(crate) disposing_emitted: bool,
+    pub(crate) pending_events: Vec<EventFrame>,
+    /// Signals are recorded before dispatch because a fallible runtime signal
+    /// can commit before a later bookkeeping/event step reports an error.
+    pub(crate) sigterm_attempted: BTreeSet<String>,
+    pub(crate) sigterm_deadline: Option<Instant>,
+    pub(crate) sigkill_attempted: BTreeSet<String>,
+    pub(crate) sigkill_deadline: Option<Instant>,
+}
+
+#[derive(Debug)]
+struct SessionDisposalOutcome {
+    events: Vec<EventFrame>,
+    error: Option<SidecarError>,
+}
+
+#[derive(Debug)]
+pub(crate) struct VmDisposalOutcome {
+    pub(crate) events: Vec<EventFrame>,
+    pub(crate) error: Option<SidecarError>,
+}
+
+impl VmDisposalOutcome {
+    pub(crate) fn into_result(self) -> Result<Vec<EventFrame>, SidecarError> {
+        match self.error {
+            Some(error) => Err(error),
+            None => Ok(self.events),
+        }
+    }
+}
+
+fn merge_vm_disposal_outcome(
+    session_id: &str,
+    vm_id: &str,
+    outcome: VmDisposalOutcome,
+    events: &mut Vec<EventFrame>,
+    errors: &mut Vec<SidecarError>,
+) {
+    events.extend(outcome.events);
+    if let Some(error) = outcome.error {
+        errors.push(SidecarError::Context {
+            context: format!("session {session_id} VM {vm_id}"),
+            source: Box::new(error),
+        });
+    }
+}
+
+fn retain_extension_cleanup_events(
+    resources: &mut ExtensionSessionResources,
+    events: Vec<EventFrame>,
+    limit: usize,
+) -> Result<usize, SidecarError> {
+    let projected = resources
+        .pending_cleanup_events
+        .len()
+        .saturating_add(events.len());
+    if projected > limit {
+        return Err(extension_cleanup_event_limit_error(limit));
+    }
+    resources.pending_cleanup_events.extend(events);
+    Ok(projected)
+}
+
+pub(crate) fn extension_cleanup_event_limit_error(limit: usize) -> SidecarError {
+    SidecarError::LimitExceeded {
+        limit: "max_extension_session_cleanup_events",
+        capacity: limit,
+        how_to_raise: "NativeSidecarConfig::max_extension_session_cleanup_events",
+    }
+}
+
+fn remaining_extension_cleanup_event_capacity(
+    retained: usize,
+    capacity: usize,
+) -> Result<usize, SidecarError> {
+    if retained > capacity {
+        return Err(extension_cleanup_event_limit_error(capacity));
+    }
+    Ok(capacity - retained)
+}
+
+impl SessionDisposalOutcome {
+    fn into_result(self) -> Result<Vec<EventFrame>, SidecarError> {
+        match self.error {
+            Some(error) => Err(error),
+            None => Ok(self.events),
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CronSessionOptions {
+    cwd: Option<String>,
+    #[serde(default)]
+    env: BTreeMap<String, String>,
+    #[serde(default)]
+    mcp_servers: Vec<Value>,
+    #[serde(default)]
+    skip_os_instructions: bool,
+    additional_instructions: Option<String>,
 }
 
 impl<B> fmt::Debug for NativeSidecar<B> {
@@ -698,9 +826,15 @@ impl<B> fmt::Debug for NativeSidecar<B> {
             .field("next_connection_id", &self.next_connection_id)
             .field("next_session_id", &self.next_session_id)
             .field("next_vm_id", &self.next_vm_id)
+            .field("next_process_id", &self.next_process_id)
             .field("connection_count", &self.connections.len())
             .field("session_count", &self.sessions.len())
             .field("vm_count", &self.vms.len())
+            .field(
+                "vm_disposal_progress_count",
+                &self.vm_disposal_progress.len(),
+            )
+            .field("cron_scheduler_count", &self.cron_schedulers.len())
             .field("extension_session_count", &self.extension_sessions.len())
             .field(
                 "extension_process_output_buffer_count",
@@ -723,6 +857,11 @@ where
         if matches!(config.expected_auth_token.as_deref(), Some("")) {
             return Err(SidecarError::InvalidState(String::from(
                 "native sidecar expected_auth_token must not be empty",
+            )));
+        }
+        if config.max_extension_session_cleanup_events == 0 {
+            return Err(SidecarError::InvalidState(String::from(
+                "NativeSidecarConfig::max_extension_session_cleanup_events must be greater than zero",
             )));
         }
 
@@ -755,10 +894,14 @@ where
             next_connection_id: 0,
             next_session_id: 0,
             next_vm_id: 0,
+            next_process_id: 0,
             next_sidecar_request_id: -1,
             connections: BTreeMap::new(),
             sessions: BTreeMap::new(),
             vms: BTreeMap::new(),
+            vm_disposal_progress: BTreeMap::new(),
+            cron_schedulers: BTreeMap::new(),
+            cron_process_runs: BTreeMap::new(),
             process_event_sender,
             process_event_receiver: Some(process_event_receiver),
             pending_process_events: VecDeque::new(),
@@ -806,7 +949,10 @@ where
     pub(crate) fn prune_extension_process_resource(&mut self, process_id: &str) {
         self.extension_sessions.retain(|_, resources| {
             resources.process_ids.remove(process_id);
-            !resources.process_ids.is_empty() || !resources.vm_ids.is_empty()
+            !resources.process_ids.is_empty()
+                || !resources.vm_ids.is_empty()
+                || resources.cleanup_in_progress
+                || !resources.pending_cleanup_events.is_empty()
         });
     }
 
@@ -819,7 +965,10 @@ where
                 resources.process_ids.clear();
             }
             resources.vm_ids.remove(vm_id);
-            !resources.process_ids.is_empty() || !resources.vm_ids.is_empty()
+            !resources.process_ids.is_empty()
+                || !resources.vm_ids.is_empty()
+                || resources.cleanup_in_progress
+                || !resources.pending_cleanup_events.is_empty()
         });
     }
 
@@ -832,9 +981,13 @@ where
     /// which was previously removed only on a successful handoff and leaked on VM
     /// or session disposal (M6).
     pub(crate) fn reclaim_vm_tracking(&mut self, session_id: &str, vm_id: &str) {
+        self.vm_disposal_progress.remove(vm_id);
         self.javascript_engine.dispose_vm(vm_id);
         self.python_engine.dispose_vm(vm_id);
         self.wasm_engine.dispose_vm(vm_id);
+        self.cron_schedulers.remove(vm_id);
+        self.cron_process_runs
+            .retain(|(process_vm_id, _), _| process_vm_id != vm_id);
         self.prune_extension_vm_resource(vm_id);
         self.extension_process_output_buffers
             .retain(|(buffer_vm_id, _process_id), _| buffer_vm_id != vm_id);
@@ -864,10 +1017,13 @@ where
                 buffer.append_stderr(chunk, DEFAULT_ACP_STDOUT_BUFFER_BYTE_LIMIT);
                 true
             }
+            ActiveExecutionEvent::Exited(exit_code) => {
+                buffer.exit_code = Some(*exit_code);
+                true
+            }
             ActiveExecutionEvent::JavascriptSyncRpcRequest(_)
             | ActiveExecutionEvent::PythonVfsRpcRequest(_)
-            | ActiveExecutionEvent::SignalState { .. }
-            | ActiveExecutionEvent::Exited(_) => false,
+            | ActiveExecutionEvent::SignalState { .. } => false,
         }
     }
 
@@ -895,7 +1051,13 @@ where
             )));
         }
 
-        let key = (namespace, ext_session_id);
+        let key = (
+            namespace,
+            ext_session_id,
+            connection_id.clone(),
+            session_id.clone(),
+            vm_id.clone(),
+        );
         if let Some(resources) = self.extension_sessions.get_mut(&key) {
             if resources.ownership != ownership {
                 return Err(SidecarError::InvalidState(String::from(
@@ -910,6 +1072,8 @@ where
                     ownership,
                     process_ids: BTreeSet::from([process_id]),
                     vm_ids: BTreeSet::new(),
+                    pending_cleanup_events: Vec::new(),
+                    cleanup_in_progress: false,
                 },
             );
         }
@@ -930,7 +1094,13 @@ where
         let (connection_id, session_id, vm_id) = self.vm_scope_for(&ownership)?;
         self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
 
-        let key = (namespace, ext_session_id);
+        let key = (
+            namespace,
+            ext_session_id,
+            connection_id.clone(),
+            session_id.clone(),
+            vm_id.clone(),
+        );
         if let Some(resources) = self.extension_sessions.get_mut(&key) {
             if resources.ownership != ownership {
                 return Err(SidecarError::InvalidState(String::from(
@@ -945,6 +1115,8 @@ where
                     ownership,
                     process_ids: BTreeSet::new(),
                     vm_ids: BTreeSet::from([vm_id]),
+                    pending_cleanup_events: Vec::new(),
+                    cleanup_in_progress: false,
                 },
             );
         }
@@ -1171,7 +1343,11 @@ where
                 self.authenticate_connection(&request, payload).await
             }
             RequestRoute::OpenSession(payload) => self.open_session(&request, payload).await,
+            RequestRoute::CloseSession(payload) => {
+                self.close_session_request(&request, payload).await
+            }
             RequestRoute::CreateVm(payload) => self.create_vm(&request, payload).await,
+            RequestRoute::InitializeVm(payload) => self.initialize_vm(&request, payload).await,
             RequestRoute::DisposeVm(payload) => self.dispose_vm(&request, payload).await,
             RequestRoute::BootstrapRootFilesystem(payload) => {
                 self.bootstrap_root_filesystem(&request, payload.entries)
@@ -1217,6 +1393,13 @@ where
             RequestRoute::ProvidedCommands(payload) => {
                 self.provided_commands(&request, payload).await
             }
+            RequestRoute::ScheduleCron(payload) => self.schedule_cron(&request, payload),
+            RequestRoute::ListCronJobs(_) => self.list_cron_jobs(&request),
+            RequestRoute::CancelCronJob(payload) => self.cancel_cron_job(&request, payload),
+            RequestRoute::WakeCron(payload) => self.wake_cron(&request, payload).await,
+            RequestRoute::CompleteCronRun(payload) => self.complete_cron_run(&request, payload),
+            RequestRoute::ExportCronState(_) => self.export_cron_state(&request),
+            RequestRoute::ImportCronState(payload) => self.import_cron_state(&request, payload),
             RequestRoute::UnsupportedHostCallbackDirection => {
                 Ok(unsupported_host_callback_direction_dispatch(&request))
             }
@@ -1260,6 +1443,8 @@ where
         request: &RequestFrame,
         envelope: ExtEnvelope,
     ) -> Result<DispatchResult, SidecarError> {
+        let (connection_id, session_id, vm_id) = self.vm_scope_for(&request.ownership)?;
+        self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
         let namespace = envelope.namespace;
         let Some(extension) = self.extensions.get(&namespace).cloned() else {
             return Ok(DispatchResult {
@@ -1291,10 +1476,607 @@ where
         })
     }
 
+    pub(crate) async fn dispatch_extension_interrupt(
+        &mut self,
+        extension: Arc<dyn Extension>,
+        ownership: crate::wire::OwnershipScope,
+        blocking_payload: Vec<u8>,
+        interrupt: crate::extension::ExtensionInterrupt,
+    ) -> Result<Option<Vec<u8>>, SidecarError> {
+        let snapshot = ExtensionSnapshot::new(
+            extension.namespace().to_owned(),
+            crate::wire::ownership_scope_to_compat(ownership),
+            self.sidecar_requests.clone(),
+            self.event_sink.clone(),
+        );
+        let ctx = ExtensionContext::new(snapshot, self);
+        extension
+            .on_blocking_request_interrupted(ctx, blocking_payload, interrupt)
+            .await
+    }
+
+    async fn initialize_vm(
+        &mut self,
+        request: &RequestFrame,
+        payload: crate::protocol::InitializeVmRequest,
+    ) -> Result<DispatchResult, SidecarError> {
+        let (connection_id, session_id) = self.session_scope_for(&request.ownership)?;
+        self.require_owned_session(&connection_id, &session_id)?;
+
+        let created_dispatch = self
+            .create_vm(
+                request,
+                crate::protocol::CreateVmRequest {
+                    runtime: payload.runtime,
+                    config: payload.config,
+                },
+            )
+            .await?;
+        let DispatchResult {
+            response: created_response,
+            mut events,
+        } = created_dispatch;
+        let ResponsePayload::VmCreated(created) = created_response.payload else {
+            return Err(SidecarError::InvalidState(String::from(
+                "initialize_vm create step returned an unexpected response",
+            )));
+        };
+        let vm_id = created.vm_id.clone();
+        let ownership = OwnershipScope::vm(&connection_id, &session_id, &vm_id);
+
+        let initialization = async {
+            let configure_payload = crate::protocol::ConfigureVmRequest {
+                mounts: payload.mounts,
+                permissions: None,
+                command_permissions: None,
+                loopback_exempt_ports: None,
+                packages: payload.packages,
+                packages_mount_at: payload.packages_mount_at,
+            };
+            let configure_request = RequestFrame {
+                schema: request.schema.clone(),
+                request_id: request.request_id,
+                ownership: ownership.clone(),
+                payload: RequestPayload::ConfigureVm(configure_payload.clone()),
+            };
+            let configured_dispatch = self
+                .configure_vm(&configure_request, configure_payload)
+                .await?;
+            events.extend(configured_dispatch.events);
+            let ResponsePayload::VmConfigured(configured) = configured_dispatch.response.payload
+            else {
+                return Err(SidecarError::InvalidState(String::from(
+                    "initialize_vm configure step returned an unexpected response",
+                )));
+            };
+
+            let registrations = payload.host_callbacks.unwrap_or_default();
+            let mut host_callbacks = Vec::with_capacity(registrations.len());
+            for registration in registrations {
+                let registration_request = RequestFrame {
+                    schema: request.schema.clone(),
+                    request_id: request.request_id,
+                    ownership: ownership.clone(),
+                    payload: RequestPayload::RegisterHostCallbacks(registration.clone()),
+                };
+                let registered =
+                    register_host_callbacks(self, &registration_request, registration)?;
+                events.extend(registered.events);
+                let ResponsePayload::HostCallbacksRegistered(registered) =
+                    registered.response.payload
+                else {
+                    return Err(SidecarError::InvalidState(String::from(
+                        "initialize_vm host-callback step returned an unexpected response",
+                    )));
+                };
+                host_callbacks.push(registered);
+            }
+
+            Ok::<_, SidecarError>((configured, host_callbacks))
+        }
+        .await;
+
+        let (configured, host_callbacks) = match initialization {
+            Ok(result) => result,
+            Err(error) => {
+                if let Err(cleanup_error) = self
+                    .dispose_vm_internal(
+                        &connection_id,
+                        &session_id,
+                        &vm_id,
+                        DisposeReason::Requested,
+                    )
+                    .await
+                {
+                    tracing::error!(
+                        vm_id,
+                        ?cleanup_error,
+                        "failed to clean up partially initialized VM"
+                    );
+                }
+                return Err(error);
+            }
+        };
+
+        Ok(DispatchResult {
+            response: self.respond(
+                request,
+                ResponsePayload::VmInitialized(crate::protocol::VmInitializedResponse {
+                    vm_id,
+                    guest_cwd: created.guest_cwd,
+                    guest_env: created.guest_env,
+                    process_route_retention: created.process_route_retention,
+                    applied_mounts: configured.applied_mounts,
+                    projected_commands: configured.projected_commands,
+                    agents: configured.agents,
+                    host_callbacks,
+                }),
+            ),
+            events,
+        })
+    }
+
+    fn schedule_cron(
+        &mut self,
+        request: &RequestFrame,
+        payload: ScheduleCronRequest,
+    ) -> Result<DispatchResult, SidecarError> {
+        let vm_id = self.require_cron_vm(&request.ownership)?;
+        let response = self
+            .cron_schedulers
+            .entry(vm_id.clone())
+            .or_default()
+            .schedule(payload, unix_time_ms())
+            .map_err(cron_scheduler_error)?;
+        let job_count = self
+            .cron_schedulers
+            .get(&vm_id)
+            .map_or(0, CronScheduler::job_count);
+        if job_count.saturating_mul(100) >= MAX_CRON_JOBS.saturating_mul(80) {
+            tracing::warn!(
+                vm_id,
+                job_count,
+                limit = MAX_CRON_JOBS,
+                "cron job registry is near its configured limit"
+            );
+        }
+        let action_bytes = self
+            .cron_schedulers
+            .get(&vm_id)
+            .map_or(0, CronScheduler::total_action_bytes);
+        if action_bytes.saturating_mul(100) >= MAX_CRON_STATE_BYTES.saturating_mul(80) {
+            tracing::warn!(
+                vm_id,
+                action_bytes,
+                limit = MAX_CRON_STATE_BYTES,
+                "cron action registry is near its configured byte limit"
+            );
+        }
+        Ok(DispatchResult {
+            response: self.respond(request, ResponsePayload::CronScheduled(response)),
+            events: Vec::new(),
+        })
+    }
+
+    fn list_cron_jobs(&mut self, request: &RequestFrame) -> Result<DispatchResult, SidecarError> {
+        let vm_id = self.require_cron_vm(&request.ownership)?;
+        let response = self.cron_schedulers.entry(vm_id).or_default().list();
+        Ok(DispatchResult {
+            response: self.respond(request, ResponsePayload::CronJobs(response)),
+            events: Vec::new(),
+        })
+    }
+
+    fn cancel_cron_job(
+        &mut self,
+        request: &RequestFrame,
+        payload: CancelCronJobRequest,
+    ) -> Result<DispatchResult, SidecarError> {
+        let vm_id = self.require_cron_vm(&request.ownership)?;
+        let response = self
+            .cron_schedulers
+            .entry(vm_id)
+            .or_default()
+            .cancel(payload)
+            .map_err(cron_scheduler_error)?;
+        Ok(DispatchResult {
+            response: self.respond(request, ResponsePayload::CronCancelled(response)),
+            events: Vec::new(),
+        })
+    }
+
+    async fn wake_cron(
+        &mut self,
+        request: &RequestFrame,
+        payload: WakeCronRequest,
+    ) -> Result<DispatchResult, SidecarError> {
+        let vm_id = self.require_cron_vm(&request.ownership)?;
+        let mut response = self
+            .cron_schedulers
+            .entry(vm_id.clone())
+            .or_default()
+            .wake(payload, unix_time_ms())
+            .map_err(cron_scheduler_error)?;
+        response.runs = self
+            .start_cron_runs(
+                request,
+                &vm_id,
+                response.runs,
+                &mut response.alarm,
+                &mut response.events,
+            )
+            .await?;
+        Ok(DispatchResult {
+            response: self.respond(request, ResponsePayload::CronWake(response)),
+            events: Vec::new(),
+        })
+    }
+
+    /// Start every executable run inside the sidecar. Only opaque callback runs
+    /// are returned to the host because their closures cannot cross the protocol.
+    /// Immediate launch failures are completed here so overlap queues and alarm
+    /// changes remain authoritative.
+    async fn start_cron_runs(
+        &mut self,
+        request: &RequestFrame,
+        vm_id: &str,
+        runs: Vec<CronRun>,
+        alarm: &mut CronAlarm,
+        events: &mut Vec<CronEventRecord>,
+    ) -> Result<Vec<CronRun>, SidecarError> {
+        let mut pending = VecDeque::from(runs);
+        let mut host_runs = Vec::new();
+        while let Some(run) = pending.pop_front() {
+            let action = match agentos_native_sidecar_core::decode_cron_action(&run.action) {
+                Ok(action) => action,
+                Err(error) => {
+                    self.complete_failed_cron_run(
+                        vm_id,
+                        run.run_id,
+                        error.to_string(),
+                        alarm,
+                        events,
+                        &mut pending,
+                    )?;
+                    continue;
+                }
+            };
+            match action {
+                CronAction::Callback { .. } => host_runs.push(run),
+                CronAction::Session {
+                    agent_type,
+                    prompt,
+                    options,
+                } => {
+                    let action_result = self
+                        .run_cron_session_action(request, agent_type, prompt, options)
+                        .await;
+                    let completion = self
+                        .cron_schedulers
+                        .entry(vm_id.to_string())
+                        .or_default()
+                        .complete(
+                            CompleteCronRunRequest {
+                                run_id: run.run_id,
+                                error: action_result.err(),
+                            },
+                            unix_time_ms(),
+                        )
+                        .map_err(cron_scheduler_error)?;
+                    *alarm = completion.alarm;
+                    events.extend(completion.events);
+                    pending.extend(completion.runs);
+                }
+                CronAction::Exec { command, args } => {
+                    let process_id = format!("cron-run-{}", run.run_id);
+                    let payload = ExecuteRequest {
+                        process_id: Some(process_id.clone()),
+                        command: Some(command),
+                        shell_command: None,
+                        runtime: None,
+                        entrypoint: None,
+                        args,
+                        env: None,
+                        cwd: None,
+                        wasm_permission_tier: None,
+                        pty: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
+                    };
+                    let internal = RequestFrame::new(
+                        0,
+                        request.ownership.clone(),
+                        RequestPayload::Execute(payload.clone()),
+                    );
+                    let launch = self.execute(&internal, payload).await;
+                    let launch_error = match launch {
+                        Ok(DispatchResult {
+                            response:
+                                ResponseFrame {
+                                    payload: ResponsePayload::ProcessStarted(_),
+                                    ..
+                                },
+                            ..
+                        }) => None,
+                        Ok(DispatchResult {
+                            response:
+                                ResponseFrame {
+                                    payload: ResponsePayload::Rejected(rejected),
+                                    ..
+                                },
+                            ..
+                        }) => Some(format!("{}: {}", rejected.code, rejected.message)),
+                        Ok(dispatch) => Some(format!(
+                            "cron exec returned unexpected response: {:?}",
+                            dispatch.response.payload
+                        )),
+                        Err(error) => Some(error.to_string()),
+                    };
+                    if let Some(error) = launch_error {
+                        self.complete_failed_cron_run(
+                            vm_id,
+                            run.run_id,
+                            error,
+                            alarm,
+                            events,
+                            &mut pending,
+                        )?;
+                    } else {
+                        self.cron_process_runs
+                            .insert((vm_id.to_string(), process_id), run.run_id);
+                    }
+                }
+            }
+        }
+        Ok(host_runs)
+    }
+
+    async fn run_cron_session_action(
+        &mut self,
+        request: &RequestFrame,
+        agent_type: String,
+        prompt: String,
+        options: Option<Value>,
+    ) -> Result<(), String> {
+        let options = options
+            .map(serde_json::from_value::<CronSessionOptions>)
+            .transpose()
+            .map_err(|error| format!("invalid cron session options: {error}"))?
+            .unwrap_or_default();
+        let created = self
+            .dispatch_cron_acp_request(
+                request,
+                AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
+                    agent_type,
+                    runtime: None,
+                    cwd: options.cwd,
+                    args: None,
+                    env: (!options.env.is_empty()).then_some(options.env.into_iter().collect()),
+                    protocol_version: None,
+                    client_capabilities: None,
+                    mcp_servers: (!options.mcp_servers.is_empty())
+                        .then(|| serde_json::to_string(&options.mcp_servers))
+                        .transpose()
+                        .map_err(|error| format!("failed to encode cron MCP servers: {error}"))?,
+                    skip_os_instructions: options.skip_os_instructions.then_some(true),
+                    additional_instructions: options.additional_instructions,
+                }),
+            )
+            .await?;
+        let AcpResponse::AcpSessionCreatedResponse(created) = created else {
+            return Err(format!(
+                "cron ACP create returned unexpected response: {created:?}"
+            ));
+        };
+        let session_id = created.session_id;
+        let prompt_result = self
+            .dispatch_cron_acp_request(
+                request,
+                AcpRequest::AcpSessionRequest(AcpSessionRequest {
+                    session_id: session_id.clone(),
+                    method: String::from("session/prompt"),
+                    params: Some(
+                        serde_json::to_string(&json!({
+                            "prompt": [{ "type": "text", "text": prompt }]
+                        }))
+                        .map_err(|error| format!("failed to encode cron prompt: {error}"))?,
+                    ),
+                }),
+            )
+            .await;
+        let close_result = self
+            .dispatch_cron_acp_request(
+                request,
+                AcpRequest::AcpCloseSessionRequest(AcpCloseSessionRequest {
+                    session_id: session_id.clone(),
+                }),
+            )
+            .await;
+        match (prompt_result, close_result) {
+            (
+                Ok(AcpResponse::AcpSessionRpcResponse(_)),
+                Ok(AcpResponse::AcpSessionClosedResponse(_)),
+            ) => Ok(()),
+            (Err(prompt_error), Err(close_error)) => Err(format!(
+                "{prompt_error}; also failed to close cron ACP session {session_id}: {close_error}"
+            )),
+            (Err(error), _) | (_, Err(error)) => Err(error),
+            (Ok(prompt), Ok(close)) => Err(format!(
+                "cron ACP action returned unexpected responses: prompt={prompt:?}, close={close:?}"
+            )),
+        }
+    }
+
+    async fn dispatch_cron_acp_request(
+        &mut self,
+        request: &RequestFrame,
+        acp_request: AcpRequest,
+    ) -> Result<AcpResponse, String> {
+        let payload = serde_bare::to_vec(&acp_request)
+            .map_err(|error| format!("failed to encode cron ACP request: {error}"))?;
+        let internal = RequestFrame::new(
+            0,
+            request.ownership.clone(),
+            RequestPayload::Ext(ExtEnvelope {
+                namespace: ACP_EXTENSION_NAMESPACE.to_string(),
+                payload: payload.clone(),
+            }),
+        );
+        let dispatch = self
+            .dispatch_extension_request(
+                &internal,
+                ExtEnvelope {
+                    namespace: ACP_EXTENSION_NAMESPACE.to_string(),
+                    payload,
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        let envelope = match dispatch.response.payload {
+            ResponsePayload::ExtResult(envelope) => envelope,
+            ResponsePayload::Rejected(rejected) => {
+                return Err(format!("{}: {}", rejected.code, rejected.message));
+            }
+            other => return Err(format!("cron ACP returned unexpected response: {other:?}")),
+        };
+        let response: AcpResponse = serde_bare::from_slice(&envelope.payload)
+            .map_err(|error| format!("failed to decode cron ACP response: {error}"))?;
+        match response {
+            AcpResponse::AcpErrorResponse(error) => {
+                Err(format!("{}: {}", error.code, error.message))
+            }
+            response => Ok(response),
+        }
+    }
+
+    fn complete_failed_cron_run(
+        &mut self,
+        vm_id: &str,
+        run_id: String,
+        error: String,
+        alarm: &mut CronAlarm,
+        events: &mut Vec<CronEventRecord>,
+        pending: &mut VecDeque<CronRun>,
+    ) -> Result<(), SidecarError> {
+        let completion = self
+            .cron_schedulers
+            .entry(vm_id.to_string())
+            .or_default()
+            .complete(
+                CompleteCronRunRequest {
+                    run_id,
+                    error: Some(error),
+                },
+                unix_time_ms(),
+            )
+            .map_err(cron_scheduler_error)?;
+        *alarm = completion.alarm;
+        events.extend(completion.events);
+        pending.extend(completion.runs);
+        Ok(())
+    }
+
+    fn complete_cron_run(
+        &mut self,
+        request: &RequestFrame,
+        payload: CompleteCronRunRequest,
+    ) -> Result<DispatchResult, SidecarError> {
+        let vm_id = self.require_cron_vm(&request.ownership)?;
+        let response = self
+            .cron_schedulers
+            .entry(vm_id)
+            .or_default()
+            .complete(payload, unix_time_ms())
+            .map_err(cron_scheduler_error)?;
+        Ok(DispatchResult {
+            response: self.respond(request, ResponsePayload::CronRunCompleted(response)),
+            events: Vec::new(),
+        })
+    }
+
+    fn export_cron_state(
+        &mut self,
+        request: &RequestFrame,
+    ) -> Result<DispatchResult, SidecarError> {
+        let vm_id = self.require_cron_vm(&request.ownership)?;
+        let state = self
+            .cron_schedulers
+            .entry(vm_id)
+            .or_default()
+            .export_state()
+            .map_err(cron_scheduler_error)?;
+        Ok(DispatchResult {
+            response: self.respond(
+                request,
+                ResponsePayload::CronStateExported(crate::protocol::CronStateExportedResponse {
+                    state,
+                }),
+            ),
+            events: Vec::new(),
+        })
+    }
+
+    fn import_cron_state(
+        &mut self,
+        request: &RequestFrame,
+        payload: crate::protocol::ImportCronStateRequest,
+    ) -> Result<DispatchResult, SidecarError> {
+        let vm_id = self.require_cron_vm(&request.ownership)?;
+        let response = self
+            .cron_schedulers
+            .entry(vm_id.clone())
+            .or_default()
+            .import_state(&payload.state)
+            .map_err(cron_scheduler_error)?;
+        let scheduler = self
+            .cron_schedulers
+            .get(&vm_id)
+            .expect("cron scheduler was inserted above");
+        let action_bytes = scheduler.total_action_bytes();
+        if action_bytes.saturating_mul(100) >= MAX_CRON_STATE_BYTES.saturating_mul(80) {
+            tracing::warn!(
+                vm_id,
+                action_bytes,
+                limit = MAX_CRON_STATE_BYTES,
+                "cron action registry is near its configured byte limit"
+            );
+        }
+        Ok(DispatchResult {
+            response: self.respond(request, ResponsePayload::CronStateImported(response)),
+            events: Vec::new(),
+        })
+    }
+
+    fn require_cron_vm(&self, ownership: &OwnershipScope) -> Result<String, SidecarError> {
+        let (connection_id, session_id, vm_id) = self.vm_scope_for(ownership)?;
+        self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
+        Ok(vm_id)
+    }
+
     pub async fn poll_event(
         &mut self,
         ownership: &OwnershipScope,
         timeout: Duration,
+    ) -> Result<Option<EventFrame>, SidecarError> {
+        self.poll_event_with_admission(ownership, timeout, false)
+            .await
+    }
+
+    pub(crate) async fn poll_event_for_cleanup(
+        &mut self,
+        ownership: &OwnershipScope,
+        timeout: Duration,
+    ) -> Result<Option<EventFrame>, SidecarError> {
+        self.poll_event_with_admission(ownership, timeout, true)
+            .await
+    }
+
+    async fn poll_event_with_admission(
+        &mut self,
+        ownership: &OwnershipScope,
+        timeout: Duration,
+        allow_closing: bool,
     ) -> Result<Option<EventFrame>, SidecarError> {
         let deadline = Instant::now() + timeout;
         loop {
@@ -1306,15 +2088,18 @@ where
                 let Some(envelope) = self.pending_process_events.remove(index) else {
                     continue;
                 };
-                if let Some(frame) = self.handle_process_event_envelope(envelope)? {
+                if let Some(frame) = self.handle_process_event_envelope(envelope).await? {
                     return Ok(Some(frame));
                 }
                 continue;
             }
 
-            if !timeout.is_zero() {
-                let _ = self.pump_process_events(ownership).await?;
-            }
+            // Pump once even for a non-blocking poll. Extension brokers use a
+            // zero timeout to drive guest execution without parking the
+            // current-thread sidecar runtime, and the pump itself performs
+            // only non-blocking execution polls.
+            self.pump_process_events_with_admission(ownership, allow_closing)
+                .await?;
 
             let queued_envelopes = {
                 let pending_capacity = self.pending_process_event_capacity();
@@ -1350,7 +2135,7 @@ where
             }
 
             if let Some(envelope) = matching_envelope {
-                if let Some(frame) = self.handle_process_event_envelope(envelope)? {
+                if let Some(frame) = self.handle_process_event_envelope(envelope).await? {
                     return Ok(Some(frame));
                 }
                 continue;
@@ -1365,7 +2150,7 @@ where
         }
     }
 
-    pub(crate) fn handle_process_event_envelope(
+    pub(crate) async fn handle_process_event_envelope(
         &mut self,
         envelope: ProcessEventEnvelope,
     ) -> Result<Option<EventFrame>, SidecarError> {
@@ -1444,7 +2229,9 @@ where
                 }
                 record_execute_phase("process_exit_trailing_requeue", phase_start.elapsed());
                 if let Some(event) = emit_now {
-                    let result = self.handle_execution_event(&vm_id, &process_id, event);
+                    let result = self
+                        .handle_cron_execution_event(&vm_id, &process_id, event)
+                        .await;
                     record_execute_phase(
                         "process_exit_event_handle_envelope_total",
                         handle_start.elapsed(),
@@ -1459,7 +2246,9 @@ where
             }
         }
 
-        let result = self.handle_execution_event(&vm_id, &process_id, event);
+        let result = self
+            .handle_cron_execution_event(&vm_id, &process_id, event)
+            .await;
         if is_exit_event {
             record_execute_phase(
                 "process_exit_event_handle_envelope_total",
@@ -1469,6 +2258,79 @@ where
         result
     }
 
+    async fn handle_cron_execution_event(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+        event: ActiveExecutionEvent,
+    ) -> Result<Option<EventFrame>, SidecarError> {
+        let cron_run_id = self
+            .cron_process_runs
+            .get(&(vm_id.to_string(), process_id.to_string()))
+            .cloned();
+        if cron_run_id.is_some()
+            && matches!(
+                event,
+                ActiveExecutionEvent::Stdout(_) | ActiveExecutionEvent::Stderr(_)
+            )
+        {
+            return Ok(None);
+        }
+        let exit_code = match &event {
+            ActiveExecutionEvent::Exited(exit_code) => Some(*exit_code),
+            _ => None,
+        };
+        let ownership = self
+            .vms
+            .get(vm_id)
+            .map(|vm| OwnershipScope::vm(&vm.connection_id, &vm.session_id, vm_id));
+        let normal = self.handle_execution_event(vm_id, process_id, event)?;
+        let (Some(run_id), Some(exit_code), Some(ownership)) = (cron_run_id, exit_code, ownership)
+        else {
+            return Ok(normal);
+        };
+        self.cron_process_runs
+            .remove(&(vm_id.to_string(), process_id.to_string()));
+
+        let mut completion = self
+            .cron_schedulers
+            .entry(vm_id.to_string())
+            .or_default()
+            .complete(
+                CompleteCronRunRequest {
+                    run_id,
+                    error: (exit_code != 0)
+                        .then(|| format!("cron exec exited with status {exit_code}")),
+                },
+                unix_time_ms(),
+            )
+            .map_err(cron_scheduler_error)?;
+        let internal = RequestFrame::new(
+            0,
+            ownership.clone(),
+            RequestPayload::WakeCron(WakeCronRequest {
+                generation: completion.alarm.generation,
+            }),
+        );
+        completion.runs = self
+            .start_cron_runs(
+                &internal,
+                vm_id,
+                completion.runs,
+                &mut completion.alarm,
+                &mut completion.events,
+            )
+            .await?;
+        Ok(Some(EventFrame::new(
+            ownership,
+            EventPayload::CronDispatch(CronDispatchEvent {
+                alarm: completion.alarm,
+                runs: completion.runs,
+                events: completion.events,
+            }),
+        )))
+    }
+
     // try_poll_event moved to crate::execution
 
     pub async fn close_session(
@@ -1476,8 +2338,9 @@ where
         connection_id: &str,
         session_id: &str,
     ) -> Result<Vec<EventFrame>, SidecarError> {
-        self.dispose_session(connection_id, session_id, DisposeReason::Requested)
-            .await
+        self.dispose_session_outcome(connection_id, session_id, DisposeReason::Requested)
+            .await?
+            .into_result()
     }
 
     pub async fn remove_connection(
@@ -1496,26 +2359,40 @@ where
             .collect::<Vec<_>>();
 
         let mut events = Vec::new();
-        let mut first_error: Option<SidecarError> = None;
+        let mut errors = Vec::new();
         for session_id in session_ids {
             // Attempt EVERY session; aggregate errors instead of `?`-ing out on
             // the first so one wedged session cannot abandon the rest (H1).
             match self
-                .dispose_session(connection_id, &session_id, DisposeReason::ConnectionClosed)
+                .dispose_session_outcome(
+                    connection_id,
+                    &session_id,
+                    DisposeReason::ConnectionClosed,
+                )
                 .await
             {
-                Ok(session_events) => events.extend(session_events),
-                Err(error) => {
-                    if first_error.is_none() {
-                        first_error = Some(error);
+                Ok(outcome) => {
+                    events.extend(outcome.events);
+                    if let Some(error) = outcome.error {
+                        errors.push(SidecarError::Context {
+                            context: format!("session {session_id}"),
+                            source: Box::new(error),
+                        });
                     }
                 }
+                Err(error) => errors.push(SidecarError::Context {
+                    context: format!("session {session_id}"),
+                    source: Box::new(error),
+                }),
             }
         }
 
         self.connections.remove(connection_id);
-        if let Some(error) = first_error {
-            return Err(error);
+        if !errors.is_empty() {
+            return Err(SidecarError::Cleanup {
+                context: "failed to remove native sidecar connection completely",
+                errors,
+            });
         }
         Ok(events)
     }
@@ -1560,6 +2437,8 @@ where
             ConnectionState {
                 auth_token: payload.auth_token,
                 sessions: BTreeSet::new(),
+                session_close_outcomes: BTreeMap::new(),
+                session_close_outcome_order: VecDeque::new(),
             },
         );
 
@@ -1583,6 +2462,23 @@ where
         let connection_id = self.connection_id_for(&request.ownership)?;
         self.require_authenticated_connection(&connection_id)?;
 
+        let active_sessions = self
+            .connections
+            .get(&connection_id)
+            .expect("authenticated connection should exist")
+            .sessions
+            .len();
+        if active_sessions >= self.config.max_sessions_per_connection {
+            return Ok(DispatchResult {
+                response: self.reject(
+                    request,
+                    SESSION_LIMIT_ERROR_CODE,
+                    &session_limit_rejection_message(self.config.max_sessions_per_connection),
+                ),
+                events: Vec::new(),
+            });
+        }
+
         self.next_session_id += 1;
         let session_id = format!("session-{}", self.next_session_id);
         self.sessions.insert(
@@ -1590,8 +2486,9 @@ where
             SessionState {
                 connection_id: connection_id.clone(),
                 placement: payload.placement,
-                metadata: payload.metadata.into_iter().collect(),
                 vm_ids: BTreeSet::new(),
+                closing: false,
+                cleaned_extension_namespaces: BTreeSet::new(),
             },
         );
         self.connections
@@ -1599,10 +2496,168 @@ where
             .expect("authenticated connection should exist")
             .sessions
             .insert(session_id.clone());
+        let active_sessions = active_sessions + 1;
+        if session_limit_near_capacity(active_sessions, self.config.max_sessions_per_connection) {
+            tracing::warn!(
+                connection_id,
+                active_sessions,
+                max_sessions_per_connection = self.config.max_sessions_per_connection,
+                "sidecar session registry is near capacity"
+            );
+        }
 
         Ok(DispatchResult {
             response: session_opened_response(request.request_id, connection_id, session_id),
             events: Vec::new(),
+        })
+    }
+
+    async fn close_session_request(
+        &mut self,
+        request: &RequestFrame,
+        payload: CloseSessionRequest,
+    ) -> Result<DispatchResult, SidecarError> {
+        let connection_id = match &request.ownership {
+            OwnershipScope::ConnectionOwnership(scope) => scope.connection_id.clone(),
+            OwnershipScope::SessionOwnership(_) | OwnershipScope::VmOwnership(_) => {
+                return Ok(DispatchResult {
+                    response: self.reject(
+                        request,
+                        CLOSE_SESSION_INVALID_OWNERSHIP_ERROR_CODE,
+                        "close_session requires connection ownership",
+                    ),
+                    events: Vec::new(),
+                });
+            }
+        };
+        if !self.connections.contains_key(&connection_id) {
+            return Ok(DispatchResult {
+                response: self.reject(
+                    request,
+                    CLOSE_SESSION_UNAUTHENTICATED_ERROR_CODE,
+                    "close_session requires an authenticated connection",
+                ),
+                events: Vec::new(),
+            });
+        }
+
+        match self.sessions.get(&payload.session_id) {
+            Some(session) if session.connection_id != connection_id => {
+                return Ok(DispatchResult {
+                    response: self.reject(
+                        request,
+                        CLOSE_SESSION_OWNERSHIP_MISMATCH_ERROR_CODE,
+                        &format!(
+                            "session {} is not owned by connection {connection_id}",
+                            payload.session_id
+                        ),
+                    ),
+                    events: Vec::new(),
+                });
+            }
+            Some(_) => {}
+            None => {
+                let terminal = self.connections.iter().find_map(|(owner_id, state)| {
+                    state
+                        .session_close_outcomes
+                        .get(&payload.session_id)
+                        .cloned()
+                        .map(|outcome| (owner_id.clone(), outcome))
+                });
+                if let Some((owner_id, outcome)) = terminal {
+                    if owner_id != connection_id {
+                        return Ok(DispatchResult {
+                            response: self.reject(
+                                request,
+                                CLOSE_SESSION_OWNERSHIP_MISMATCH_ERROR_CODE,
+                                &format!(
+                                    "session {} is not owned by connection {connection_id}",
+                                    payload.session_id
+                                ),
+                            ),
+                            events: Vec::new(),
+                        });
+                    }
+                    let response = match outcome.error_message {
+                        Some(error) => {
+                            self.reject(request, CLOSE_SESSION_FAILED_ERROR_CODE, &error)
+                        }
+                        None => session_closed_response(request, payload.session_id),
+                    };
+                    return Ok(DispatchResult {
+                        response,
+                        events: Vec::new(),
+                    });
+                }
+                if session_id_was_allocated(&payload.session_id, "session-", self.next_session_id) {
+                    return Ok(DispatchResult {
+                        response: self.reject(
+                            request,
+                            CLOSE_SESSION_HISTORY_EXPIRED_ERROR_CODE,
+                            &format!(
+                                "terminal close outcome for session {} expired; raise max_sessions_per_connection to retain more close retry history",
+                                payload.session_id
+                            ),
+                        ),
+                        events: Vec::new(),
+                    });
+                }
+                return Ok(DispatchResult {
+                    response: session_closed_response(request, payload.session_id),
+                    events: Vec::new(),
+                });
+            }
+        }
+
+        let outcome = self
+            .dispose_session_outcome(
+                &connection_id,
+                &payload.session_id,
+                DisposeReason::Requested,
+            )
+            .await?;
+        if let Some(error) = outcome.error {
+            return Ok(DispatchResult {
+                response: self.reject(request, CLOSE_SESSION_FAILED_ERROR_CODE, &error.to_string()),
+                events: outcome.events,
+            });
+        }
+        let events = outcome.events;
+
+        let history_capacity =
+            session_close_history_capacity(self.config.max_sessions_per_connection);
+        let connection = self
+            .connections
+            .get_mut(&connection_id)
+            .expect("authenticated connection remains present during close");
+        let evicted = record_session_close_outcome(
+            &mut connection.session_close_outcomes,
+            &mut connection.session_close_outcome_order,
+            payload.session_id.clone(),
+            SessionCloseOutcome {
+                error_message: None,
+            },
+            history_capacity,
+        );
+        if session_limit_near_capacity(connection.session_close_outcomes.len(), history_capacity) {
+            tracing::warn!(
+                connection_id,
+                retained_session_close_outcomes = connection.session_close_outcomes.len(),
+                session_close_history_capacity = history_capacity,
+                "sidecar terminal session-close history is near capacity"
+            );
+        }
+        if evicted {
+            tracing::warn!(
+                connection_id,
+                session_close_history_capacity = history_capacity,
+                "sidecar evicted its oldest terminal session-close outcome; raise max_sessions_per_connection to retain more retry history"
+            );
+        }
+
+        Ok(DispatchResult {
+            response: session_closed_response(request, payload.session_id),
+            events,
         })
     }
 
@@ -1621,13 +2676,34 @@ where
     // execute, write_stdin, close_stdin, kill_process, find_listener, find_bound_udp,
     // get_signal_state, get_zombie_timer_count moved to crate::execution
 
+    #[cfg(test)]
     async fn dispose_session(
         &mut self,
         connection_id: &str,
         session_id: &str,
         reason: DisposeReason,
     ) -> Result<Vec<EventFrame>, SidecarError> {
-        self.require_owned_session(connection_id, session_id)?;
+        self.dispose_session_outcome(connection_id, session_id, reason)
+            .await?
+            .into_result()
+    }
+
+    async fn dispose_session_outcome(
+        &mut self,
+        connection_id: &str,
+        session_id: &str,
+        reason: DisposeReason,
+    ) -> Result<SessionDisposalOutcome, SidecarError> {
+        self.require_authenticated_connection(connection_id)?;
+        let session = self.sessions.get_mut(session_id).ok_or_else(|| {
+            SidecarError::InvalidState(format!("unknown sidecar session {session_id}"))
+        })?;
+        if session.connection_id != connection_id {
+            return Err(SidecarError::InvalidState(format!(
+                "session {session_id} is not owned by connection {connection_id}"
+            )));
+        }
+        session.closing = true;
 
         let vm_ids = self
             .sessions
@@ -1639,51 +2715,58 @@ where
             .collect::<Vec<_>>();
 
         let mut events = Vec::new();
-        let mut first_error: Option<SidecarError> = None;
+        let mut errors = Vec::new();
         for vm_id in vm_ids {
             // Attempt EVERY VM; aggregate errors instead of `?`-ing out on the
             // first so one stuck VM cannot strand the remaining VMs' teardown and
             // leave the session permanently un-reclaimed (H1).
             match self
-                .dispose_vm_internal(connection_id, session_id, &vm_id, reason.clone())
+                .dispose_vm_internal_outcome(connection_id, session_id, &vm_id, reason.clone())
                 .await
             {
-                Ok(vm_events) => events.extend(vm_events),
-                Err(error) => {
-                    if first_error.is_none() {
-                        first_error = Some(error);
-                    }
+                Ok(outcome) => {
+                    merge_vm_disposal_outcome(session_id, &vm_id, outcome, &mut events, &mut errors)
                 }
+                Err(error) => errors.push(SidecarError::Context {
+                    context: format!("session {session_id} VM {vm_id}"),
+                    source: Box::new(error),
+                }),
             }
         }
 
-        // On client disconnect, give every registered extension a chance to free
-        // the per-session state it tracks (H4): the host owns the only signal an
-        // extension gets that a session has gone away.
-        if matches!(reason, DisposeReason::ConnectionClosed) {
-            if let Err(error) = self
-                .dispose_extension_session_state(connection_id, session_id)
-                .await
-            {
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
+        // Every terminal host-session path must notify extensions. Requested
+        // closes are just as final as connection loss and otherwise strand
+        // adapter-owned per-session resources.
+        if let Err(error) = self
+            .dispose_extension_session_state(connection_id, session_id)
+            .await
+        {
+            errors.push(SidecarError::Context {
+                context: format!("session {session_id} extension state"),
+                source: Box::new(error),
+            });
+        }
+
+        if errors.is_empty() || reason == DisposeReason::ConnectionClosed {
+            self.sessions.remove(session_id);
+            if let Some(connection) = self.connections.get_mut(connection_id) {
+                connection.sessions.remove(session_id);
             }
+            // Tell the stdio transport this session is gone so it stops iterating a
+            // dead entry every event-pump tick and the set stops growing (M5).
+            self.disposed_sessions
+                .push((connection_id.to_owned(), session_id.to_owned()));
         }
 
-        self.sessions.remove(session_id);
-        if let Some(connection) = self.connections.get_mut(connection_id) {
-            connection.sessions.remove(session_id);
-        }
-        // Tell the stdio transport this session is gone so it stops iterating a
-        // dead entry every event-pump tick and the set stops growing (M5).
-        self.disposed_sessions
-            .push((connection_id.to_owned(), session_id.to_owned()));
-
-        if let Some(error) = first_error {
-            return Err(error);
-        }
-        Ok(events)
+        let error = if errors.is_empty() {
+            None
+        } else {
+            Some(SidecarError::Cleanup {
+                context: "failed to dispose native sidecar session completely",
+                errors,
+            })
+        };
+        Ok(SessionDisposalOutcome { events, error })
     }
 
     /// Invoke each registered extension's per-session teardown hook so it can
@@ -1697,26 +2780,43 @@ where
         let ownership = OwnershipScope::session(connection_id, session_id);
         let extensions = self
             .extensions
-            .values()
-            .cloned()
-            .collect::<Vec<Arc<dyn Extension>>>();
-        let mut first_error: Option<SidecarError> = None;
-        for extension in extensions {
+            .iter()
+            .map(|(namespace, extension)| (namespace.clone(), extension.clone()))
+            .collect::<Vec<(String, Arc<dyn Extension>)>>();
+        let mut errors = Vec::new();
+        for (namespace, extension) in extensions {
+            if self
+                .sessions
+                .get(session_id)
+                .is_some_and(|session| session.cleaned_extension_namespaces.contains(&namespace))
+            {
+                continue;
+            }
             let snapshot = ExtensionSnapshot::new(
-                extension.namespace().to_owned(),
+                namespace.clone(),
                 ownership.clone(),
                 self.sidecar_requests.clone(),
                 self.event_sink.clone(),
             );
-            if let Err(error) = extension.on_session_disposed(snapshot).await {
-                if first_error.is_none() {
-                    first_error = Some(error);
+            match extension.on_session_disposed(snapshot).await {
+                Ok(()) => {
+                    if let Some(session) = self.sessions.get_mut(session_id) {
+                        session.cleaned_extension_namespaces.insert(namespace);
+                    }
                 }
+                Err(error) => errors.push(SidecarError::Context {
+                    context: format!("extension {namespace}"),
+                    source: Box::new(error),
+                }),
             }
         }
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(()),
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(SidecarError::Cleanup {
+                context: "failed to dispose native extension session state completely",
+                errors,
+            })
         }
     }
 
@@ -2381,13 +3481,30 @@ where
         })
     }
 
-    pub(crate) fn vm_ids_for_scope(
+    pub(crate) fn vm_ids_for_scope_with_admission(
         &self,
         ownership: &OwnershipScope,
+        allow_closing: bool,
     ) -> Result<Vec<String>, SidecarError> {
         match ownership {
             OwnershipScope::SessionOwnership(inner) => {
-                self.require_owned_session(&inner.connection_id, &inner.session_id)?;
+                if allow_closing {
+                    self.require_authenticated_connection(&inner.connection_id)?;
+                    let session = self.sessions.get(&inner.session_id).ok_or_else(|| {
+                        SidecarError::InvalidState(format!(
+                            "unknown sidecar session {}",
+                            inner.session_id
+                        ))
+                    })?;
+                    if session.connection_id != inner.connection_id {
+                        return Err(SidecarError::InvalidState(format!(
+                            "session {} is not owned by connection {}",
+                            inner.session_id, inner.connection_id
+                        )));
+                    }
+                } else {
+                    self.require_owned_session(&inner.connection_id, &inner.session_id)?;
+                }
                 Ok(self
                     .sessions
                     .get(&inner.session_id)
@@ -2398,7 +3515,15 @@ where
                     .collect())
             }
             OwnershipScope::VmOwnership(inner) => {
-                self.require_owned_vm(&inner.connection_id, &inner.session_id, &inner.vm_id)?;
+                if allow_closing {
+                    self.require_owned_vm_for_cleanup(
+                        &inner.connection_id,
+                        &inner.session_id,
+                        &inner.vm_id,
+                    )?;
+                } else {
+                    self.require_owned_vm(&inner.connection_id, &inner.session_id, &inner.vm_id)?;
+                }
                 Ok(vec![inner.vm_id.clone()])
             }
             OwnershipScope::ConnectionOwnership(..) => Err(SidecarError::InvalidState(
@@ -2440,8 +3565,12 @@ where
         let session = self.sessions.get(session_id).ok_or_else(|| {
             SidecarError::InvalidState(format!("unknown sidecar session {session_id}"))
         })?;
-        if session.connection_id == connection_id {
+        if session.connection_id == connection_id && !session.closing {
             Ok(())
+        } else if session.connection_id == connection_id {
+            Err(SidecarError::InvalidState(format!(
+                "sidecar session {session_id} is closing"
+            )))
         } else {
             Err(SidecarError::InvalidState(format!(
                 "session {session_id} is not owned by connection {connection_id}"
@@ -2456,6 +3585,35 @@ where
         vm_id: &str,
     ) -> Result<(), SidecarError> {
         self.require_owned_session(connection_id, session_id)?;
+        let vm = self
+            .vms
+            .get(vm_id)
+            .ok_or_else(|| SidecarError::InvalidState(format!("unknown sidecar VM {vm_id}")))?;
+        if vm.connection_id != connection_id || vm.session_id != session_id {
+            return Err(SidecarError::InvalidState(format!(
+                "VM {vm_id} is not owned by {connection_id}/{session_id}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Exact ownership check for an internal cleanup driver. Unlike public VM
+    /// admission, this deliberately accepts a session already marked closing.
+    pub(crate) fn require_owned_vm_for_cleanup(
+        &self,
+        connection_id: &str,
+        session_id: &str,
+        vm_id: &str,
+    ) -> Result<(), SidecarError> {
+        self.require_authenticated_connection(connection_id)?;
+        let session = self.sessions.get(session_id).ok_or_else(|| {
+            SidecarError::InvalidState(format!("unknown sidecar session {session_id}"))
+        })?;
+        if session.connection_id != connection_id {
+            return Err(SidecarError::InvalidState(format!(
+                "session {session_id} is not owned by connection {connection_id}"
+            )));
+        }
         let vm = self
             .vms
             .get(vm_id)
@@ -2593,7 +3751,12 @@ where
         shared_respond(request, payload)
     }
 
-    fn reject(&self, request: &RequestFrame, code: &str, message: &str) -> ResponseFrame {
+    pub(crate) fn reject(
+        &self,
+        request: &RequestFrame,
+        code: &str,
+        message: &str,
+    ) -> ResponseFrame {
         shared_reject(request, code, message)
     }
 
@@ -2768,11 +3931,38 @@ where
     }
 }
 
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
+}
+
+fn cron_scheduler_error(error: agentos_native_sidecar_core::CronSchedulerError) -> SidecarError {
+    SidecarError::InvalidState(error.to_string())
+}
+
 impl<B> ExtensionHost for NativeSidecar<B>
 where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    fn registered_host_tool_reference<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+    ) -> ExtensionFuture<'a, String> {
+        Box::pin(async move {
+            let (connection_id, session_id, vm_id) = self.vm_scope_for(&ownership)?;
+            self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
+            let vm = self
+                .vms
+                .get(&vm_id)
+                .ok_or_else(|| SidecarError::InvalidState(format!("unknown VM {vm_id}")))?;
+            crate::tools::build_host_tool_reference(&vm.toolkits)
+        })
+    }
+
     fn spawn_process<'a>(
         &'a mut self,
         ownership: OwnershipScope,
@@ -2836,6 +4026,22 @@ where
         })
     }
 
+    fn resize_pty<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+        payload: ResizePtyRequest,
+    ) -> ExtensionFuture<'a, PtyResizedResponse> {
+        Box::pin(async move {
+            let request =
+                RequestFrame::new(0, ownership, RequestPayload::ResizePty(payload.clone()));
+            let dispatch = NativeSidecar::resize_pty(self, &request, payload).await?;
+            match dispatch.response.payload {
+                ResponsePayload::PtyResized(response) => Ok(response),
+                other => Err(unexpected_extension_host_response("resize_pty", other)),
+            }
+        })
+    }
+
     fn poll_event<'a>(
         &'a mut self,
         ownership: OwnershipScope,
@@ -2863,12 +4069,27 @@ where
                         crate::extension::ProjectedAgentLaunchEntry {
                             id: id.clone(),
                             acp_entrypoint: launch.acp_entrypoint.clone(),
+                            adapter_entrypoint: launch.adapter_entrypoint.clone(),
                             env: launch.env.clone(),
                             launch_args: launch.launch_args.clone(),
                         }
                     },
                 )
                 .collect())
+        })
+    }
+
+    fn agent_additional_instructions<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+    ) -> ExtensionFuture<'a, Option<String>> {
+        Box::pin(async move {
+            let (connection_id, session_id, vm_id) = self.vm_scope_for(&ownership)?;
+            self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
+            Ok(self
+                .vms
+                .get(&vm_id)
+                .and_then(|vm| vm.agent_additional_instructions.clone()))
         })
     }
 
@@ -2922,46 +4143,166 @@ where
         ownership: OwnershipScope,
         namespace: String,
         ext_session_id: String,
-    ) -> ExtensionFuture<'a, Vec<EventFrame>> {
+    ) -> ExtensionFuture<'a, ExtensionCleanupOutcome> {
         Box::pin(async move {
-            let key = (namespace, ext_session_id);
+            let (connection_id, session_id, vm_id) = self.vm_scope_for(&ownership)?;
+            let key = (
+                namespace,
+                ext_session_id,
+                connection_id.clone(),
+                session_id.clone(),
+                vm_id.clone(),
+            );
             let Some(resources) = self.extension_sessions.get(&key) else {
-                return Ok(Vec::new());
+                return Ok(ExtensionCleanupOutcome {
+                    events: Vec::new(),
+                    error: None,
+                });
             };
             if resources.ownership != ownership {
                 return Err(SidecarError::InvalidState(String::from(
                     "extension session ownership did not match dispose request",
                 )));
             }
-            let resources = self
-                .extension_sessions
-                .remove(&key)
-                .expect("extension resources existed before removal");
-            let (connection_id, session_id, vm_id) = self.vm_scope_for(&ownership)?;
-            for process_id in resources.process_ids {
+            let process_ids = resources.process_ids.iter().cloned().collect::<Vec<_>>();
+            let vm_ids = resources.vm_ids.iter().cloned().collect::<Vec<_>>();
+            if let Some(resources) = self.extension_sessions.get_mut(&key) {
+                resources.cleanup_in_progress = true;
+            }
+            let mut errors = Vec::new();
+            for process_id in process_ids {
                 if self
                     .vms
                     .get(&vm_id)
                     .is_some_and(|vm| vm.active_processes.contains_key(&process_id))
                 {
-                    self.kill_process_internal(&vm_id, &process_id, "SIGTERM")?;
+                    match self.kill_process_internal(&vm_id, &process_id, "SIGKILL") {
+                        Ok(()) => {
+                            if let Some(resources) = self.extension_sessions.get_mut(&key) {
+                                resources.process_ids.remove(&process_id);
+                            }
+                        }
+                        Err(error) if crate::execution::error_code(&error) == "ESRCH" => {
+                            if let Some(resources) = self.extension_sessions.get_mut(&key) {
+                                resources.process_ids.remove(&process_id);
+                            }
+                        }
+                        Err(error) => {
+                            tracing::error!(
+                                connection_id,
+                                session_id,
+                                vm_id,
+                                process_id,
+                                error_code = crate::execution::error_code(&error),
+                                error = %error,
+                                "failed to kill extension session process during cleanup"
+                            );
+                            errors.push(SidecarError::Context {
+                                context: format!(
+                                    "extension session process {process_id} in VM {vm_id}"
+                                ),
+                                source: Box::new(error),
+                            });
+                        }
+                    }
+                } else if let Some(resources) = self.extension_sessions.get_mut(&key) {
+                    resources.process_ids.remove(&process_id);
                 }
             }
-            let mut events = Vec::new();
-            for resource_vm_id in resources.vm_ids {
-                if self.vms.contains_key(&resource_vm_id) {
-                    events.extend(
-                        self.dispose_vm_internal(
-                            &connection_id,
-                            &session_id,
-                            &resource_vm_id,
-                            DisposeReason::Requested,
-                        )
-                        .await?,
-                    );
+            let has_pending_processes = self
+                .extension_sessions
+                .get(&key)
+                .is_some_and(|resources| !resources.process_ids.is_empty());
+            if !has_pending_processes {
+                for resource_vm_id in vm_ids {
+                    if self.vms.contains_key(&resource_vm_id) {
+                        let retained = self
+                            .extension_sessions
+                            .get(&key)
+                            .map_or(0, |resources| resources.pending_cleanup_events.len());
+                        let event_capacity = match remaining_extension_cleanup_event_capacity(
+                            retained,
+                            self.config.max_extension_session_cleanup_events,
+                        ) {
+                            Ok(capacity) => capacity,
+                            Err(error) => {
+                                errors.push(error);
+                                if let Some(resources) = self.extension_sessions.get_mut(&key) {
+                                    resources.cleanup_in_progress = false;
+                                }
+                                continue;
+                            }
+                        };
+                        match self
+                            .dispose_vm_internal_outcome_with_event_limit(
+                                &connection_id,
+                                &session_id,
+                                &resource_vm_id,
+                                DisposeReason::Requested,
+                                event_capacity,
+                            )
+                            .await
+                        {
+                            Ok(outcome) => {
+                                if let Some(resources) = self.extension_sessions.get_mut(&key) {
+                                    let limit = self.config.max_extension_session_cleanup_events;
+                                    let had_events = !outcome.events.is_empty();
+                                    match retain_extension_cleanup_events(
+                                        resources,
+                                        outcome.events,
+                                        limit,
+                                    ) {
+                                        Ok(projected)
+                                            if had_events
+                                                && projected >= limit.saturating_mul(8) / 10 =>
+                                        {
+                                            tracing::warn!(
+                                                connection_id,
+                                                session_id,
+                                                vm_id,
+                                                retained_cleanup_events = projected,
+                                                max_extension_session_cleanup_events = limit,
+                                                "extension session cleanup event retention is near capacity"
+                                            );
+                                        }
+                                        Ok(_) => {}
+                                        Err(error) => errors.push(error),
+                                    }
+                                }
+                                if let Some(error) = outcome.error {
+                                    errors.push(error);
+                                }
+                            }
+                            Err(error) => errors.push(error),
+                        }
+                    }
+                    if !self.vms.contains_key(&resource_vm_id) {
+                        if let Some(resources) = self.extension_sessions.get_mut(&key) {
+                            resources.vm_ids.remove(&resource_vm_id);
+                        }
+                    }
                 }
             }
-            Ok(events)
+            let complete = self.extension_sessions.get(&key).is_none_or(|resources| {
+                resources.process_ids.is_empty() && resources.vm_ids.is_empty()
+            });
+            let events = if let Some(resources) = self.extension_sessions.get_mut(&key) {
+                std::mem::take(&mut resources.pending_cleanup_events)
+            } else {
+                Vec::new()
+            };
+            if complete && errors.is_empty() {
+                self.extension_sessions.remove(&key);
+            }
+            let error = if errors.is_empty() {
+                None
+            } else {
+                Some(SidecarError::Cleanup {
+                    context: "failed to dispose native extension session resources completely",
+                    errors,
+                })
+            };
+            Ok(ExtensionCleanupOutcome { events, error })
         })
     }
 
@@ -3003,39 +4344,118 @@ where
                 while let Some(envelope) =
                     self.take_matching_process_event_envelope(&vm_id, &process_id)?
                 {
-                    if self.capture_extension_process_output_event(
-                        &vm_id,
-                        &process_id,
-                        &envelope.event,
-                    ) {
-                        continue;
+                    if self
+                        .handle_process_event_envelope(envelope)
+                        .await?
+                        .is_some()
+                    {
+                        return Err(SidecarError::InvalidState(format!(
+                            "buffered extension process {process_id} emitted an uncaptured public event"
+                        )));
                     }
-                    self.queue_pending_process_event(envelope)?;
-                    break;
                 }
-                let buffered = self
+                let ready = self
                     .extension_process_output_buffers
                     .get(&key)
-                    .is_some_and(|buffer| !buffer.stdout.is_empty() || !buffer.stderr.is_empty());
-                if buffered || timeout.is_zero() || Instant::now() >= deadline {
+                    .is_some_and(|buffer| {
+                        !buffer.stdout.is_empty()
+                            || !buffer.stderr.is_empty()
+                            || buffer.exit_code.is_some()
+                    });
+                if ready || timeout.is_zero() || Instant::now() >= deadline {
                     break;
                 }
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 time::sleep(remaining.min(Duration::from_millis(10))).await;
             }
-            self.bind_extension_process_resource(
-                ownership,
-                namespace,
-                ext_session_id,
-                process_id.clone(),
-            )?;
-            self.extension_process_output_buffers
+            let buffered = self
+                .extension_process_output_buffers
                 .remove(&key)
                 .ok_or_else(|| {
                     SidecarError::InvalidState(String::from(
                         "extension process output buffering was not started",
                     ))
-                })
+                })?;
+            if buffered.exit_code.is_none() {
+                self.bind_extension_process_resource(
+                    ownership,
+                    namespace,
+                    ext_session_id,
+                    process_id,
+                )?;
+            }
+            Ok(buffered)
+        })
+    }
+
+    fn drain_buffered_process_output<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+        process_id: String,
+        timeout: Duration,
+    ) -> ExtensionFuture<'a, ExtensionBufferedProcessOutput> {
+        Box::pin(async move {
+            let (connection_id, session_id, vm_id) = self.vm_scope_for(&ownership)?;
+            self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
+            let key = (vm_id.clone(), process_id.clone());
+            if !self.extension_process_output_buffers.contains_key(&key) {
+                return Err(SidecarError::InvalidState(String::from(
+                    "extension process output buffering was not started",
+                )));
+            }
+            let deadline = Instant::now() + timeout;
+            loop {
+                self.pump_process_events(&ownership).await?;
+                while let Some(envelope) =
+                    self.take_matching_process_event_envelope(&vm_id, &process_id)?
+                {
+                    if self
+                        .handle_process_event_envelope(envelope)
+                        .await?
+                        .is_some()
+                    {
+                        return Err(SidecarError::InvalidState(format!(
+                            "buffered extension process {process_id} emitted an uncaptured public event"
+                        )));
+                    }
+                }
+                let ready = self
+                    .extension_process_output_buffers
+                    .get(&key)
+                    .is_some_and(|buffer| {
+                        !buffer.stdout.is_empty()
+                            || !buffer.stderr.is_empty()
+                            || buffer.exit_code.is_some()
+                    });
+                if ready || timeout.is_zero() || Instant::now() >= deadline {
+                    break;
+                }
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                time::sleep(remaining.min(Duration::from_millis(10))).await;
+            }
+            let buffer = self
+                .extension_process_output_buffers
+                .get_mut(&key)
+                .ok_or_else(|| {
+                    SidecarError::InvalidState(String::from(
+                        "extension process output buffering was not started",
+                    ))
+                })?;
+            Ok(std::mem::take(buffer))
+        })
+    }
+
+    fn stop_buffering_process_output<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+        process_id: String,
+    ) -> ExtensionFuture<'a, ()> {
+        Box::pin(async move {
+            let (connection_id, session_id, vm_id) = self.vm_scope_for(&ownership)?;
+            self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
+            self.extension_process_output_buffers
+                .remove(&(vm_id, process_id));
+            Ok(())
         })
     }
 }
@@ -3489,6 +4909,8 @@ mod dispose_lifecycle_tests {
             ConnectionState {
                 auth_token: String::new(),
                 sessions: BTreeSet::from([session_id.to_string()]),
+                session_close_outcomes: BTreeMap::new(),
+                session_close_outcome_order: VecDeque::new(),
             },
         );
         sidecar.sessions.insert(
@@ -3498,8 +4920,9 @@ mod dispose_lifecycle_tests {
                 placement: crate::protocol::SidecarPlacement::SidecarPlacementShared(
                     crate::protocol::SidecarPlacementShared { pool: None },
                 ),
-                metadata: BTreeMap::new(),
                 vm_ids,
+                closing: false,
+                cleaned_extension_namespaces: BTreeSet::new(),
             },
         );
     }
@@ -3507,6 +4930,79 @@ mod dispose_lifecycle_tests {
     struct RecordingExtension {
         namespace: String,
         session_disposed: Arc<AtomicUsize>,
+    }
+
+    struct OrderedRetryExtension {
+        namespace: String,
+        calls: Arc<Mutex<Vec<String>>>,
+        fail_once: bool,
+    }
+
+    impl Extension for OrderedRetryExtension {
+        fn namespace(&self) -> &str {
+            &self.namespace
+        }
+
+        fn handle_request<'a>(
+            &'a self,
+            _ctx: ExtensionContext<'a>,
+            _payload: Vec<u8>,
+        ) -> ExtensionFuture<'a, ExtensionResponse> {
+            Box::pin(async { Ok(ExtensionResponse::new(Vec::new())) })
+        }
+
+        fn on_session_disposed<'a>(&'a self, _ctx: ExtensionSnapshot) -> ExtensionFuture<'a, ()> {
+            let calls = self.calls.clone();
+            let namespace = self.namespace.clone();
+            let fail_once = self.fail_once;
+            Box::pin(async move {
+                let mut calls = calls.lock().expect("ordered cleanup calls lock");
+                let attempt = calls.iter().filter(|call| *call == &namespace).count();
+                calls.push(namespace.clone());
+                if fail_once && attempt == 0 {
+                    Err(SidecarError::Bridge(format!(
+                        "injected {namespace} cleanup failure"
+                    )))
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    struct FailingEverySessionExtension {
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Extension for FailingEverySessionExtension {
+        fn namespace(&self) -> &str {
+            "dev.test.fail-every-session"
+        }
+
+        fn handle_request<'a>(
+            &'a self,
+            _ctx: ExtensionContext<'a>,
+            _payload: Vec<u8>,
+        ) -> ExtensionFuture<'a, ExtensionResponse> {
+            Box::pin(async { Ok(ExtensionResponse::new(Vec::new())) })
+        }
+
+        fn on_session_disposed<'a>(&'a self, ctx: ExtensionSnapshot) -> ExtensionFuture<'a, ()> {
+            let calls = self.calls.clone();
+            let session_id = match ctx.ownership() {
+                OwnershipScope::SessionOwnership(owner) => owner.session_id.clone(),
+                other => panic!("expected session cleanup ownership, got {other:?}"),
+            };
+            Box::pin(async move {
+                calls
+                    .lock()
+                    .expect("failing cleanup calls lock")
+                    .push(session_id.clone());
+                Err(SidecarError::Bridge(format!(
+                    "injected cleanup failure for {session_id}"
+                )))
+            })
+        }
     }
 
     impl Extension for RecordingExtension {
@@ -3564,10 +5060,10 @@ mod dispose_lifecycle_tests {
         );
     }
 
-    // H4 (negative): a client-requested dispose is not a disconnect, so the
-    // teardown hook must not fire.
+    // Requested closes are terminal too, so extensions must receive the same
+    // teardown signal as connection-loss cleanup.
     #[test]
-    fn requested_dispose_does_not_invoke_extension_session_teardown() {
+    fn requested_dispose_invokes_extension_session_teardown() {
         let mut sidecar = test_sidecar();
         let counter = register_recording_extension(&mut sidecar);
         insert_session(&mut sidecar, "conn-1", "session-1", BTreeSet::new());
@@ -3577,9 +5073,86 @@ mod dispose_lifecycle_tests {
 
         assert_eq!(
             counter.load(Ordering::SeqCst),
-            0,
-            "the teardown hook is reserved for client disconnect"
+            1,
+            "requested close must release extension session state"
         );
+    }
+
+    #[test]
+    fn extension_cleanup_is_namespace_ordered_and_retries_only_failed_phases() {
+        let mut sidecar = test_sidecar();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        for (namespace, fail_once) in [("dev.test.b", false), ("dev.test.a", true)] {
+            sidecar
+                .register_extension(Box::new(OrderedRetryExtension {
+                    namespace: namespace.to_string(),
+                    calls: calls.clone(),
+                    fail_once,
+                }))
+                .expect("register ordered cleanup extension");
+        }
+        insert_session(&mut sidecar, "conn-1", "session-1", BTreeSet::new());
+
+        block_on(sidecar.dispose_session("conn-1", "session-1", DisposeReason::Requested))
+            .expect_err("first namespace cleanup attempt fails");
+        assert_eq!(
+            *calls.lock().expect("calls lock"),
+            vec![String::from("dev.test.a"), String::from("dev.test.b")]
+        );
+
+        block_on(sidecar.dispose_session("conn-1", "session-1", DisposeReason::Requested))
+            .expect("retry runs only the failed namespace");
+        assert_eq!(
+            *calls.lock().expect("calls lock"),
+            vec![
+                String::from("dev.test.a"),
+                String::from("dev.test.b"),
+                String::from("dev.test.a"),
+            ]
+        );
+    }
+
+    #[test]
+    fn remove_connection_attempts_every_session_and_preserves_ordered_errors() {
+        let mut sidecar = test_sidecar();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        sidecar
+            .register_extension(Box::new(FailingEverySessionExtension {
+                calls: calls.clone(),
+            }))
+            .expect("register failing cleanup extension");
+        insert_session(&mut sidecar, "conn-1", "session-b", BTreeSet::new());
+        sidecar
+            .connections
+            .get_mut("conn-1")
+            .expect("connection")
+            .sessions
+            .insert(String::from("session-a"));
+        sidecar.sessions.insert(
+            String::from("session-a"),
+            SessionState {
+                connection_id: String::from("conn-1"),
+                placement: crate::protocol::SidecarPlacement::SidecarPlacementShared(
+                    crate::protocol::SidecarPlacementShared { pool: None },
+                ),
+                vm_ids: BTreeSet::new(),
+                closing: false,
+                cleaned_extension_namespaces: BTreeSet::new(),
+            },
+        );
+
+        let error = block_on(sidecar.remove_connection("conn-1"))
+            .expect_err("both session cleanup failures are aggregated");
+        assert_eq!(
+            *calls.lock().expect("calls lock"),
+            vec![String::from("session-a"), String::from("session-b")]
+        );
+        let message = error.to_string();
+        assert!(
+            message.find("session session-a").unwrap() < message.find("session session-b").unwrap()
+        );
+        assert!(!sidecar.connections.contains_key("conn-1"));
+        assert!(sidecar.sessions.is_empty());
     }
 
     // M5: disposing a session records its scope for the stdio transport to drain.
@@ -3596,6 +5169,84 @@ mod dispose_lifecycle_tests {
             vec![(String::from("conn-1"), String::from("session-1"))],
             "dispose must publish the session scope so stdio can untrack it"
         );
+    }
+
+    #[test]
+    fn sibling_vm_failure_does_not_discard_committed_lifecycle_events() {
+        let sidecar = test_sidecar();
+        let committed =
+            sidecar.vm_lifecycle_event("conn-1", "session-1", "vm-ok", VmLifecycleState::Disposed);
+        let mut events = Vec::new();
+        let mut errors = Vec::new();
+
+        merge_vm_disposal_outcome(
+            "session-1",
+            "vm-failed",
+            VmDisposalOutcome {
+                events: vec![committed],
+                error: Some(SidecarError::Io(String::from("flush failed"))),
+            },
+            &mut events,
+            &mut errors,
+        );
+
+        assert_eq!(events.len(), 1, "the committed event remains deliverable");
+        assert_eq!(errors.len(), 1, "the sibling cleanup failure also survives");
+        assert!(errors[0]
+            .to_string()
+            .contains("session session-1 VM vm-failed: flush failed"));
+    }
+
+    #[test]
+    fn extension_cleanup_event_retention_is_bounded_and_survives_vm_pruning() {
+        let mut sidecar = test_sidecar();
+        let event =
+            sidecar.vm_lifecycle_event("conn-1", "session-1", "vm-1", VmLifecycleState::Disposed);
+        let mut resources = ExtensionSessionResources {
+            ownership: OwnershipScope::vm("conn-1", "session-1", "vm-1"),
+            process_ids: BTreeSet::new(),
+            vm_ids: BTreeSet::from([String::from("vm-1")]),
+            pending_cleanup_events: Vec::new(),
+            cleanup_in_progress: true,
+        };
+        retain_extension_cleanup_events(&mut resources, vec![event.clone()], 1)
+            .expect("first retained cleanup event fits");
+        let overflow = retain_extension_cleanup_events(&mut resources, vec![event], 1)
+            .expect_err("second retained cleanup event exceeds the configured bound");
+        assert_eq!(crate::execution::error_code(&overflow), "limit_exceeded");
+        assert!(overflow
+            .to_string()
+            .contains("NativeSidecarConfig::max_extension_session_cleanup_events"));
+        assert_eq!(resources.pending_cleanup_events.len(), 1);
+        assert_eq!(
+            remaining_extension_cleanup_event_capacity(0, 1)
+                .expect("VM disposal owns the lifecycle-phase preflight"),
+            1
+        );
+        assert_eq!(
+            remaining_extension_cleanup_event_capacity(
+                1,
+                crate::state::DEFAULT_MAX_EXTENSION_SESSION_CLEANUP_EVENTS
+            )
+            .expect("two lifecycle events and process-event capacity remain"),
+            crate::state::DEFAULT_MAX_EXTENSION_SESSION_CLEANUP_EVENTS - 1
+        );
+
+        let key = (
+            String::from("ns"),
+            String::from("ext-session-1"),
+            String::from("conn-1"),
+            String::from("session-1"),
+            String::from("vm-1"),
+        );
+        sidecar.extension_sessions.insert(key.clone(), resources);
+        sidecar.reclaim_vm_tracking("session-1", "vm-1");
+        let retained = sidecar
+            .extension_sessions
+            .get(&key)
+            .expect("cleanup tombstone survives VM tracking reclamation");
+        assert!(retained.vm_ids.is_empty());
+        assert_eq!(retained.pending_cleanup_events.len(), 1);
     }
 
     // H1 + M6: every per-VM tracking map is reclaimed for a disposed VM. The
@@ -3616,11 +5267,26 @@ mod dispose_lifecycle_tests {
             ExtensionBufferedProcessOutput::default(),
         );
         sidecar.extension_sessions.insert(
-            (String::from("ns"), String::from("ext-sess-1")),
+            (
+                String::from("ns"),
+                String::from("ext-sess-1"),
+                String::from("conn-1"),
+                String::from("session-1"),
+                String::from("vm-1"),
+            ),
             ExtensionSessionResources {
                 ownership: OwnershipScope::vm("conn-1", "session-1", "vm-1"),
                 process_ids: BTreeSet::new(),
                 vm_ids: BTreeSet::from([String::from("vm-1")]),
+                pending_cleanup_events: Vec::new(),
+                cleanup_in_progress: false,
+            },
+        );
+        sidecar.vm_disposal_progress.insert(
+            String::from("vm-1"),
+            VmDisposalProgress {
+                disposing_emitted: true,
+                ..VmDisposalProgress::default()
             },
         );
 
@@ -3635,6 +5301,10 @@ mod dispose_lifecycle_tests {
             "H1: an extension session bound only to the VM must be reclaimed"
         );
         assert!(
+            sidecar.vm_disposal_progress.is_empty(),
+            "VM disposal progress must be reclaimed with the VM"
+        );
+        assert!(
             !sidecar
                 .sessions
                 .get("session-1")
@@ -3645,11 +5315,11 @@ mod dispose_lifecycle_tests {
         );
     }
 
-    // H1: a failing VM dispose inside the loop must not abandon the session. With
-    // unregistered VM ids, `dispose_vm_internal` fails on `require_owned_vm`;
-    // pre-fix the loop `?`-ed out and left the session in `self.sessions`.
+    // A requested close failure retains only non-routable cleanup ownership so
+    // the exact close can retry instead of replaying a manufactured terminal
+    // result.
     #[test]
-    fn dispose_session_reclaims_session_even_when_a_vm_dispose_fails() {
+    fn requested_dispose_failure_retains_non_routable_session_for_retry() {
         let mut sidecar = test_sidecar();
         insert_session(
             &mut sidecar,
@@ -3666,8 +5336,25 @@ mod dispose_lifecycle_tests {
             "a failing VM dispose must still surface an error"
         );
         assert!(
-            !sidecar.sessions.contains_key("session-1"),
-            "the session must be reclaimed even though VM dispose failed"
+            sidecar
+                .sessions
+                .get("session-1")
+                .is_some_and(|session| session.closing),
+            "the failed close must retain a non-routable cleanup session"
         );
+        let ownership_error = sidecar
+            .require_owned_session("conn-1", "session-1")
+            .expect_err("closing session cannot accept ordinary requests");
+        assert!(ownership_error.to_string().contains("is closing"));
+
+        sidecar
+            .sessions
+            .get_mut("session-1")
+            .expect("cleanup session retained")
+            .vm_ids
+            .clear();
+        block_on(sidecar.dispose_session("conn-1", "session-1", DisposeReason::Requested))
+            .expect("retry completes after remaining handles are authoritatively absent");
+        assert!(!sidecar.sessions.contains_key("session-1"));
     }
 }

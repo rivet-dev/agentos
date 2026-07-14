@@ -51,23 +51,40 @@ fn configure_mounts(
     connection_id: &str,
     session_id: &str,
     vm_id: &str,
+    host_workspace: &Path,
     include_registry_commands: bool,
     mut mounts: Vec<MountDescriptor>,
 ) {
+    mounts.push(MountDescriptor {
+        guest_path: String::from("/workspace"),
+        read_only: Some(false),
+        plugin: MountPluginDescriptor {
+            id: String::from("host_dir"),
+            config: Some(
+                serde_json::to_string(&json!({
+                    "hostPath": host_workspace,
+                    "readOnly": false,
+                }))
+                .expect("serialize workspace mount config"),
+            ),
+        },
+    });
     if include_registry_commands {
         let command_root = registry_command_root();
         mounts.insert(
             0,
             MountDescriptor {
                 guest_path: String::from("/__secure_exec/commands/0"),
-                read_only: true,
+                read_only: Some(true),
                 plugin: MountPluginDescriptor {
                     id: String::from("host_dir"),
-                    config: serde_json::to_string(&json!({
-                        "hostPath": command_root,
-                        "readOnly": true,
-                    }))
-                    .expect("serialize registry command mount config"),
+                    config: Some(
+                        serde_json::to_string(&json!({
+                            "hostPath": command_root,
+                            "readOnly": true,
+                        }))
+                        .expect("serialize registry command mount config"),
+                    ),
                 },
             },
         );
@@ -78,18 +95,12 @@ fn configure_mounts(
             10,
             wire_vm(connection_id, session_id, vm_id),
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts,
-                software: Vec::new(),
+                mounts: Some(mounts),
                 permissions: None,
-                module_access_cwd: None,
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
-                command_permissions: HashMap::new(),
-                loopback_exempt_ports: Vec::new(),
-                packages: Vec::new(),
-                packages_mount_at: String::new(),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                command_permissions: None,
+                loopback_exempt_ports: None,
+                packages: None,
+                packages_mount_at: None,
             }),
         ))
         .expect("configure registry command mount");
@@ -116,7 +127,7 @@ fn run_host_probe(cwd: &Path, entrypoint: &Path) -> Value {
 fn run_guest_probe_process(
     case_name: &str,
     cwd: &Path,
-    entrypoint: &Path,
+    _entrypoint: &Path,
     mount_registry_commands: bool,
     extra_metadata: HashMap<String, String>,
     extra_mounts: Vec<MountDescriptor>,
@@ -147,6 +158,7 @@ fn run_guest_probe_process(
             &connection_id,
             &session_id,
             &vm_id,
+            cwd,
             mount_registry_commands,
             extra_mounts,
         );
@@ -160,7 +172,7 @@ fn run_guest_probe_process(
         &vm_id,
         &format!("proc-{case_name}"),
         GuestRuntimeKind::JavaScript,
-        entrypoint,
+        "/workspace/entry.mjs",
         Vec::new(),
     );
 
@@ -217,10 +229,11 @@ fn assert_guest_matches_host(case_name: &str, script: &str) {
 
     let (cwd, entrypoint) = write_probe(case_name, script);
     let host = run_host_probe(&cwd, &entrypoint);
+    let (guest_cwd, guest_entrypoint) = write_probe(&format!("{case_name}-guest"), script);
     let guest = run_guest_probe(
         case_name,
-        &cwd,
-        &entrypoint,
+        &guest_cwd,
+        &guest_entrypoint,
         false,
         HashMap::new(),
         Vec::new(),
@@ -309,14 +322,16 @@ console.log(JSON.stringify({
         HashMap::from([(String::from("env.WORKTREE"), String::from("/workspace"))]),
         vec![MountDescriptor {
             guest_path: String::from("/workspace"),
-            read_only: false,
+            read_only: Some(false),
             plugin: MountPluginDescriptor {
                 id: String::from("host_dir"),
-                config: serde_json::to_string(&json!({
-                    "hostPath": cwd,
-                    "readOnly": false,
-                }))
-                .expect("serialize relative shell mount config"),
+                config: Some(
+                    serde_json::to_string(&json!({
+                        "hostPath": cwd,
+                        "readOnly": false,
+                    }))
+                    .expect("serialize relative shell mount config"),
+                ),
             },
         }],
     );
@@ -431,14 +446,16 @@ console.log(JSON.stringify({
         HashMap::from([(String::from("env.WORKTREE"), String::from("/workspace"))]),
         vec![MountDescriptor {
             guest_path: String::from("/workspace"),
-            read_only: false,
+            read_only: Some(false),
             plugin: MountPluginDescriptor {
                 id: String::from("host_dir"),
-                config: serde_json::to_string(&json!({
-                    "hostPath": cwd,
-                    "readOnly": false,
-                }))
-                .expect("serialize absolute shell mount config"),
+                config: Some(
+                    serde_json::to_string(&json!({
+                        "hostPath": cwd,
+                        "readOnly": false,
+                    }))
+                    .expect("serialize absolute shell mount config"),
+                ),
             },
         }],
     );
@@ -618,10 +635,9 @@ fs.symlinkSync("nested", "workspace/link");
 
 const viaRelative = fs.readFileSync("./workspace/./nested/../nested/note.txt", "utf8");
 const viaSymlinkTraversal = fs.readFileSync("workspace/link/../nested/note.txt", "utf8");
-const realpathRelativeToCwd = path.relative(
-  process.cwd(),
-  fs.realpathSync("workspace/link/../nested/note.txt"),
-);
+const processCwd = process.cwd();
+const resolvedPath = fs.realpathSync("workspace/link/../nested/note.txt");
+const realpathRelativeToCwd = path.relative(processCwd, resolvedPath);
 const readlink = fs.readlinkSync("workspace/link");
 const trailingSlashEntries = fs.readdirSync("workspace/nested/");
 const trailingSlashIsDir = fs.statSync("workspace/nested/").isDirectory();

@@ -14,6 +14,19 @@ use crate::SidecarCoreError;
 /// cap; decoupled here but still validated to stay within the negotiated frame budget.
 pub const DEFAULT_MAX_FETCH_RESPONSE_BYTES: usize = 1024 * 1024;
 
+/// Minimum number of lightweight completed process routes clients may retain for late host
+/// callbacks. A higher explicit `limits.resources.maxProcesses` raises this bound; the sidecar
+/// advertises the resolved value so clients never copy the default.
+pub const DEFAULT_PROCESS_ROUTE_RETENTION: usize = 1024;
+
+pub fn process_route_retention(limits: &VmLimits) -> usize {
+    limits
+        .resources
+        .max_processes
+        .unwrap_or_default()
+        .max(DEFAULT_PROCESS_ROUTE_RETENTION)
+}
+
 pub const DEFAULT_TOOL_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_TOOL_TIMEOUT_MS: u64 = 300_000;
 pub const MAX_REGISTERED_TOOLKITS: usize = 64;
@@ -30,13 +43,11 @@ pub const DEFAULT_ACP_MAX_READ_LINE_BYTES: usize = 16 * 1024 * 1024;
 pub const DEFAULT_ACP_STDOUT_BUFFER_BYTE_LIMIT: usize = 1024 * 1024;
 
 pub const DEFAULT_JS_CAPTURED_OUTPUT_LIMIT_BYTES: usize = 16 * 1024 * 1024;
-pub const DEFAULT_JS_STDIN_BUFFER_LIMIT_BYTES: usize = 16 * 1024 * 1024;
-pub const DEFAULT_JS_EVENT_PAYLOAD_LIMIT_BYTES: usize = 1024 * 1024;
-pub const DEFAULT_V8_IPC_MAX_FRAME_BYTES: u32 = 64 * 1024 * 1024;
+pub const DEFAULT_MAX_CAPTURED_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
 pub const DEFAULT_V8_HEAP_LIMIT_MB: u32 = 128;
 pub const DEFAULT_V8_CPU_TIME_LIMIT_MS: u32 = 30_000;
 pub const DEFAULT_V8_WALL_CLOCK_LIMIT_MS: u32 = 0;
-pub const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS: u64 = 30_000;
+pub const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS: u64 = 120_000;
 
 pub const DEFAULT_PYTHON_OUTPUT_BUFFER_MAX_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_PYTHON_EXECUTION_TIMEOUT_MS: u64 = 5 * 60 * 1000;
@@ -53,10 +64,12 @@ pub const DEFAULT_WASM_RUNNER_HEAP_LIMIT_MB: u32 = 2048;
 /// All operator-tunable VM-scoped limits. Fields are concrete values; the `Default` impls own the
 /// numbers and equal today's hardcoded constants, so unset operator config leaves behavior
 /// unchanged.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VmLimits {
     /// Kernel resource limits (existing type, existing `resource.*` keys).
     pub resources: ResourceLimits,
+    /// Aggregate bytes retained by all active captured processes in one VM.
+    pub max_captured_output_bytes: usize,
     pub http: HttpLimits,
     pub tools: ToolLimits,
     pub plugins: PluginLimits,
@@ -64,6 +77,22 @@ pub struct VmLimits {
     pub js_runtime: JsRuntimeLimits,
     pub python: PythonLimits,
     pub wasm: WasmLimits,
+}
+
+impl Default for VmLimits {
+    fn default() -> Self {
+        Self {
+            resources: ResourceLimits::default(),
+            max_captured_output_bytes: DEFAULT_MAX_CAPTURED_OUTPUT_BYTES,
+            http: HttpLimits::default(),
+            tools: ToolLimits::default(),
+            plugins: PluginLimits::default(),
+            acp: AcpLimits::default(),
+            js_runtime: JsRuntimeLimits::default(),
+            python: PythonLimits::default(),
+            wasm: WasmLimits::default(),
+        }
+    }
 }
 
 pub fn virtual_os_cpu_count(resource_limits: &ResourceLimits) -> usize {
@@ -129,11 +158,6 @@ pub struct JsRuntimeLimits {
     /// Timeout for materializing the per-VM Node import cache.
     pub import_cache_materialize_timeout_ms: u64,
     pub captured_output_limit_bytes: usize,
-    pub stdin_buffer_limit_bytes: usize,
-    pub event_payload_limit_bytes: usize,
-    /// V8 IPC codec frame cap. Must feed both codec sides (`crates/execution/src/v8_ipc.rs` and
-    /// `crates/v8-runtime/src/ipc_binary.rs`).
-    pub v8_ipc_max_frame_bytes: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -209,9 +233,6 @@ impl Default for JsRuntimeLimits {
             wall_clock_limit_ms: DEFAULT_V8_WALL_CLOCK_LIMIT_MS,
             import_cache_materialize_timeout_ms: DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS,
             captured_output_limit_bytes: DEFAULT_JS_CAPTURED_OUTPUT_LIMIT_BYTES,
-            stdin_buffer_limit_bytes: DEFAULT_JS_STDIN_BUFFER_LIMIT_BYTES,
-            event_payload_limit_bytes: DEFAULT_JS_EVENT_PAYLOAD_LIMIT_BYTES,
-            v8_ipc_max_frame_bytes: DEFAULT_V8_IPC_MAX_FRAME_BYTES,
         }
     }
 }
@@ -250,6 +271,11 @@ pub fn vm_limits_from_config(
     };
 
     if let Some(resources) = config.resources.as_ref() {
+        set_usize(
+            &mut limits.max_captured_output_bytes,
+            resources.max_captured_output_bytes,
+            "limits.resources.maxCapturedOutputBytes",
+        )?;
         apply_resource_limits_config(&mut limits.resources, resources)?;
     }
     if let Some(http) = config.http.as_ref() {
@@ -350,20 +376,6 @@ pub fn vm_limits_from_config(
             js_runtime.captured_output_limit_bytes,
             "limits.jsRuntime.capturedOutputLimitBytes",
         )?;
-        set_usize(
-            &mut limits.js_runtime.stdin_buffer_limit_bytes,
-            js_runtime.stdin_buffer_limit_bytes,
-            "limits.jsRuntime.stdinBufferLimitBytes",
-        )?;
-        set_usize(
-            &mut limits.js_runtime.event_payload_limit_bytes,
-            js_runtime.event_payload_limit_bytes,
-            "limits.jsRuntime.eventPayloadLimitBytes",
-        )?;
-        if let Some(value) = js_runtime.v8_ipc_max_frame_bytes {
-            limits.js_runtime.v8_ipc_max_frame_bytes = u32::try_from(value)
-                .map_err(|_| integer_too_large("limits.jsRuntime.v8IpcMaxFrameBytes", value))?;
-        }
         if let Some(value) = js_runtime.sync_rpc_wait_timeout_ms {
             limits.js_runtime.sync_rpc_wait_timeout_ms = Some(value);
         }
@@ -531,6 +543,34 @@ fn apply_resource_limits_config(
     Ok(())
 }
 
+#[allow(clippy::items_after_test_module)]
+#[cfg(test)]
+mod process_route_retention_tests {
+    use super::{process_route_retention, VmLimits, DEFAULT_PROCESS_ROUTE_RETENTION};
+
+    #[test]
+    fn sidecar_resolves_process_route_retention_from_runtime_limits() {
+        let mut limits = VmLimits::default();
+        assert_eq!(
+            process_route_retention(&limits),
+            DEFAULT_PROCESS_ROUTE_RETENTION
+        );
+
+        limits.resources.max_processes = Some(DEFAULT_PROCESS_ROUTE_RETENTION * 2);
+        assert_eq!(
+            process_route_retention(&limits),
+            DEFAULT_PROCESS_ROUTE_RETENTION * 2
+        );
+
+        limits.resources.max_processes = Some(0);
+        assert_eq!(
+            process_route_retention(&limits),
+            DEFAULT_PROCESS_ROUTE_RETENTION,
+            "maxProcesses may raise but never erase late host callback correlation"
+        );
+    }
+}
+
 fn set_usize(target: &mut usize, value: Option<u64>, key: &str) -> Result<(), SidecarCoreError> {
     if let Some(value) = value {
         *target = usize::try_from(value).map_err(|_| integer_too_large(key, value))?;
@@ -572,6 +612,11 @@ pub fn validate_vm_limits(
     limits: &VmLimits,
     sidecar_max_frame_bytes: usize,
 ) -> Result<(), SidecarCoreError> {
+    if limits.max_captured_output_bytes == 0 {
+        return Err(SidecarCoreError::new(
+            "limits.resources.maxCapturedOutputBytes must be greater than zero",
+        ));
+    }
     if limits.http.max_fetch_response_bytes == 0 {
         return Err(SidecarCoreError::new(
             "limits.http.max_fetch_response_bytes must be greater than zero".to_string(),
@@ -584,6 +629,32 @@ pub fn validate_vm_limits(
         )));
     }
 
+    // A captured terminal event carries stdout and stderr in one wire frame.
+    // Reserve fixed protocol/identity overhead, then split the remaining frame
+    // budget evenly between the two independently bounded streams.
+    let max_capture_stream_bytes =
+        sidecar_max_frame_bytes.saturating_sub(crate::CAPTURE_TERMINAL_FRAME_OVERHEAD_BYTES) / 2;
+    for (key, value) in [
+        (
+            "limits.jsRuntime.capturedOutputLimitBytes",
+            limits.js_runtime.captured_output_limit_bytes,
+        ),
+        (
+            "limits.python.outputBufferMaxBytes",
+            limits.python.output_buffer_max_bytes,
+        ),
+        (
+            "limits.wasm.capturedOutputLimitBytes",
+            limits.wasm.captured_output_limit_bytes,
+        ),
+    ] {
+        if value > max_capture_stream_bytes {
+            return Err(SidecarCoreError::new(format!(
+                "{key} ({value}) must be <= {max_capture_stream_bytes} so captured stdout and stderr fit in the sidecar wire frame cap ({sidecar_max_frame_bytes})"
+            )));
+        }
+    }
+
     if limits.tools.default_tool_timeout_ms > limits.tools.max_tool_timeout_ms {
         return Err(SidecarCoreError::new(format!(
             "limits.tools.default_tool_timeout_ms ({}) must be <= limits.tools.max_tool_timeout_ms ({})",
@@ -591,7 +662,7 @@ pub fn validate_vm_limits(
         )));
     }
 
-    let nonzero_usize: [(&str, usize); 13] = [
+    let nonzero_usize: [(&str, usize); 11] = [
         (
             "limits.tools.max_registered_toolkits",
             limits.tools.max_registered_toolkits,
@@ -629,14 +700,6 @@ pub fn validate_vm_limits(
             limits.js_runtime.captured_output_limit_bytes,
         ),
         (
-            "limits.js_runtime.stdin_buffer_limit_bytes",
-            limits.js_runtime.stdin_buffer_limit_bytes,
-        ),
-        (
-            "limits.js_runtime.event_payload_limit_bytes",
-            limits.js_runtime.event_payload_limit_bytes,
-        ),
-        (
             "limits.python.output_buffer_max_bytes",
             limits.python.output_buffer_max_bytes,
         ),
@@ -671,11 +734,6 @@ pub fn validate_vm_limits(
     if limits.wasm.max_module_file_bytes == 0 {
         return Err(SidecarCoreError::new(
             "limits.wasm.max_module_file_bytes must be greater than zero".to_string(),
-        ));
-    }
-    if limits.js_runtime.v8_ipc_max_frame_bytes == 0 {
-        return Err(SidecarCoreError::new(
-            "limits.js_runtime.v8_ipc_max_frame_bytes must be greater than zero".to_string(),
         ));
     }
     if limits.python.execution_timeout_ms == 0 {

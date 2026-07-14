@@ -150,6 +150,7 @@ server.listen({port}, "0.0.0.0", () => console.log("READY"));
             ],
             Default::default(),
         )
+        .await
         .expect("spawn guest HTTP server");
     let mut server_stdout = os
         .on_process_stdout(server.pid)
@@ -165,10 +166,10 @@ server.listen({port}, "0.0.0.0", () => console.log("READY"));
     let response = {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
         loop {
-            while let Some(Some(chunk)) = server_stdout.next().now_or_never() {
+            while let Some(Some(Ok(chunk))) = server_stdout.next().now_or_never() {
                 append_output(&mut captured_stdout, chunk);
             }
-            while let Some(Some(chunk)) = server_stderr.next().now_or_never() {
+            while let Some(Some(Ok(chunk))) = server_stderr.next().now_or_never() {
                 append_output(&mut captured_stderr, chunk);
             }
             if let Some(exit_result) = os.wait_process(server.pid).now_or_never() {
@@ -244,6 +245,8 @@ server.listen({port}, "0.0.0.0", () => console.log("READY"));
         "the custom request header must reach the guest server (header round-trip)"
     );
 
-    os.kill_process(server.pid).expect("kill guest HTTP server");
+    os.kill_process(server.pid)
+        .await
+        .expect("kill guest HTTP server");
     os.shutdown().await.expect("shutdown");
 }

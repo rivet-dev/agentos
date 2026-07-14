@@ -16,8 +16,13 @@ import {
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createBenchSidecar, createBenchVm, type BenchVm } from "../lib/vm.js";
-import type { HostDirectoryMount, SidecarProcess } from "@rivet-dev/agentos-runtime-core";
+import {
+	createBenchSidecar,
+	createBenchVm,
+	type BenchSidecar,
+	type BenchVm,
+	type HostDirectoryMount,
+} from "../lib/vm.js";
 import { getHardware, printTable, round, stats } from "../lib/perf-utils.js";
 
 type ReaddirMode = "plain" | "withFileTypes";
@@ -391,7 +396,7 @@ process.stdout.write(JSON.stringify({ samples, returnedCount, payloadBytes }));
 	await vm.writeFile(scriptPath, source);
 	let stdout = "";
 	let stderr = "";
-	const proc = vm.spawn("node", [scriptPath], {
+	const proc = await vm.spawn("node", [scriptPath], {
 		env: {
 			BENCH_ITERATIONS: String(iterations),
 			BENCH_WARMUP: String(warmup),
@@ -414,14 +419,14 @@ process.stdout.write(JSON.stringify({ samples, returnedCount, payloadBytes }));
 	};
 }
 
-async function createVm(sidecar: SidecarProcess): Promise<BenchVm> {
+async function createVm(sidecar: BenchSidecar): Promise<BenchVm> {
 	return createBenchVm({
 		sidecar,
 	});
 }
 
 async function createVmWithMount(
-	sidecar: SidecarProcess,
+	sidecar: BenchSidecar,
 	path: string,
 	hostPath: string,
 ): Promise<BenchVm> {
@@ -439,7 +444,7 @@ async function runCase(
 	mode: ReaddirMode,
 	iterations: number,
 	warmup: number,
-	sidecar: SidecarProcess,
+	sidecar: BenchSidecar,
 ): Promise<ReaddirCaseResult> {
 	const hostDir = createHostFixture(entryCount);
 	const vmDir =

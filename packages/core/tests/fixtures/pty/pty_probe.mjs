@@ -6,25 +6,23 @@
 //
 // Launched by the host as a BUILT-IN VM command:
 //   vm.openShell({ command: "node", args: ["/pty_probe.mjs", caseId], cols, rows })
-// openShell auto-injects AGENTOS_EXEC_TTY=1 + COLUMNS/LINES; the sidecar opens a
-// PTY and dup2()s the slave onto fd 0/1/2.
+// openShell sends an explicit PTY descriptor; the sidecar opens a PTY, applies
+// its initial window size, and dup2()s the slave onto fd 0/1/2.
 //
 // GUEST-NODE TTY STATUS (the runtime now routes guest-node stdin through the
 // kernel PTY and populates the TTY config from the kernel, so most cells match
-// the wasm-c probe). Remaining honest gaps (asserted-as-broken by the host, NOT
+// the wasm-c probe). Remaining honest gap (asserted-as-broken by the host, NOT
 // faked here):
-//   - SIGINT/SIGQUIT are consumed by the kernel line discipline (no data byte),
-//     but the signal is not yet delivered into the V8 isolate / does not kill it,
-//     so the probe is not torn down the way the wasm-c process is.
-//   - live PTY resize is not delivered as SIGWINCH, so a re-query after resize
-//     still reports the launch size.
 //   - a raw lone-LF stdout write does not flow through OPOST/ONLCR (guest-node
 //     stdout payload-write quirk), so `a\nb` is not rewritten to `a\r\nb`.
 
 // ---- output discipline: synchronous writes to fd 1, explicit \r\n ------------
 
+let startPrefix = "";
+
 function out(s) {
-	process.stdout.write(s);
+	process.stdout.write(`${startPrefix}${s}`);
+	startPrefix = "";
 }
 
 // ---- encoders (byte-identical to the C print_hex / print_text) --------------
@@ -118,9 +116,9 @@ function setMode(want) {
 	const enable = want === "raw";
 	try {
 		process.stdin.setRawMode(enable);
-		out(`#MODE want=${want} rc=0\r\n`);
+		return `#MODE want=${want} rc=0\r\n`;
 	} catch (err) {
-		out(`#MODE want=${want} rc=err err=${err && err.message ? err.message : String(err)}\r\n`);
+		return `#MODE want=${want} rc=err err=${err && err.message ? err.message : String(err)}\r\n`;
 	}
 }
 
@@ -129,8 +127,7 @@ function setMode(want) {
 async function caseCookedEcho() {
 	// Cooked is the kernel default; setRawMode(false) would throw on guest-node,
 	// and cooked is what we want, so report a no-op success to mirror the C output.
-	out("#MODE want=cooked rc=0\r\n");
-	out("#READY tag=echo\r\n");
+	out("#MODE want=cooked rc=0\r\n#READY tag=echo\r\n");
 	const buf = await readUntil(0x0a);
 	if (buf.length === 0) {
 		out("#EOF tag=echo n=0\r\n");
@@ -140,8 +137,7 @@ async function caseCookedEcho() {
 }
 
 async function caseControlCharEcho() {
-	setMode("cooked");
-	out("#READY tag=ctl\r\n");
+	out(`${setMode("cooked")}#READY tag=ctl\r\n`);
 	const buf = await readUntil(0x0a);
 	if (buf.length === 0) {
 		out("#EOF tag=ctl n=0\r\n");
@@ -151,37 +147,32 @@ async function caseControlCharEcho() {
 }
 
 async function caseRawNoEcho() {
-	setMode("raw");
-	out("#READY tag=raw\r\n");
+	out(`${setMode("raw")}#READY tag=raw\r\n`);
 	const buf = await readUntil(0x21); // '!'
 	emitBytes("raw", buf);
 }
 
 async function caseBackspace() {
 	// Cooked default; mirror C #MODE want=cooked rc=0 (no setRawMode call).
-	out("#MODE want=cooked rc=0\r\n");
-	out("#READY tag=erase\r\n");
+	out("#MODE want=cooked rc=0\r\n#READY tag=erase\r\n");
 	const buf = await readUntil(0x0a);
 	emitBytes("erase", buf);
 }
 
 async function caseKillLine() {
-	setMode("cooked");
-	out("#READY tag=kill\r\n");
+	out(`${setMode("cooked")}#READY tag=kill\r\n`);
 	const buf = await readUntil(0x0a);
 	emitBytes("kill", buf);
 }
 
 async function caseWordErase() {
-	out("#MODE want=cooked rc=0\r\n");
-	out("#READY tag=werase\r\n");
+	out("#MODE want=cooked rc=0\r\n#READY tag=werase\r\n");
 	const buf = await readUntil(0x0a);
 	emitBytes("werase", buf);
 }
 
 async function caseLineBuffering() {
-	out("#MODE want=cooked rc=0\r\n");
-	out("#READY tag=canon\r\n");
+	out("#MODE want=cooked rc=0\r\n#READY tag=canon\r\n");
 	const buf = await readUntil(0x0a);
 	if (buf.length === 0) {
 		out("#EOF tag=canon n=0\r\n");
@@ -191,18 +182,14 @@ async function caseLineBuffering() {
 }
 
 async function caseSigint() {
-	out("#MODE want=cooked rc=0\r\n");
-	// Register the handler that SHOULD fire on ^C. On guest-node it never does
-	// (no SIGINT delivery) — kept so a fixed runtime passes the same probe and so
-	// the absence of #SIG is observable, not faked.
+	out("#MODE want=cooked rc=0\r\n#READY tag=sigint\r\n");
+	// Register a handler to prove terminal-generated SIGINT reaches guest Node.
 	process.on("SIGINT", () => {
 		out("#SIG name=SIGINT\r\n");
 		finish("sigint");
 	});
-	out("#READY tag=sigint\r\n");
-	// On guest-node ^C arrives as a raw 0x03 DATA byte (no signal). Report the
-	// first chunk we receive (mirrors the contract's first-data semantics) so the
-	// broken delivery is observable; a working runtime fires the handler instead.
+	// A leaked data byte resolves the read and is reported; a working runtime
+	// consumes it in the line discipline and fires the handler instead.
 	const buf = await readByte();
 	if (buf.length === 0) {
 		out("#EOF tag=sigint n=0\r\n");
@@ -212,13 +199,12 @@ async function caseSigint() {
 }
 
 async function caseSigquit() {
-	out("#MODE want=cooked rc=0\r\n");
+	out("#MODE want=cooked rc=0\r\n#READY tag=sigquit\r\n");
 	process.on("SIGQUIT", () => {
 		out("#SIG name=SIGQUIT\r\n");
 		finish("sigquit");
 	});
-	out("#READY tag=sigquit\r\n");
-	// The lone 0x1C arrives as a data byte on guest-node (no signal); report it.
+	// Report a leaked data byte; a working runtime consumes it and fires SIGQUIT.
 	const buf = await readByte();
 	if (buf.length === 0) {
 		out("#EOF tag=sigquit n=0\r\n");
@@ -228,14 +214,13 @@ async function caseSigquit() {
 }
 
 async function caseVsusp() {
-	out("#MODE want=cooked rc=0\r\n");
+	out("#MODE want=cooked rc=0\r\n#READY tag=susp\r\n");
 	// SHOULD fire on ^Z; on guest-node it never does (no SIGTSTP delivery) — kept
 	// so a fixed runtime passes the same probe and the absence of #SIG is honest.
 	process.on("SIGTSTP", () => {
 		out("#SIG name=SIGTSTP\r\n");
 		finish("vsusp");
 	});
-	out("#READY tag=susp\r\n");
 	// The kernel line discipline consumes ^Z as a signal (no data byte), so this
 	// read stays pending; a leaked data byte resolves it and is reported.
 	const buf = await readByte();
@@ -247,15 +232,13 @@ async function caseVsusp() {
 }
 
 async function caseEraseCtrlH() {
-	out("#MODE want=cooked rc=0\r\n");
-	out("#READY tag=eraseh\r\n");
+	out("#MODE want=cooked rc=0\r\n#READY tag=eraseh\r\n");
 	const buf = await readUntil(0x0a);
 	emitBytes("eraseh", buf);
 }
 
 async function caseVintrBuffer() {
-	out("#MODE want=cooked rc=0\r\n");
-	out("#READY tag=vintrbuf\r\n");
+	out("#MODE want=cooked rc=0\r\n#READY tag=vintrbuf\r\n");
 	// The kernel flushes the canonical buffer on ^C, so the buffered "abc" is
 	// discarded; if this runtime survives the SIGINT it then reads "de\n" and the
 	// delivered line proves the flush ("de\n", not "abcde\n").
@@ -268,8 +251,7 @@ async function caseVintrBuffer() {
 }
 
 async function caseRawCtrlcByte() {
-	setMode("raw");
-	out("#READY tag=rawc\r\n");
+	out(`${setMode("raw")}#READY tag=rawc\r\n`);
 	const buf = await readByte();
 	if (buf.length === 0) {
 		out("#EOF tag=rawc n=0\r\n");
@@ -284,15 +266,13 @@ function caseOnlcr() {
 }
 
 async function caseIcrnl() {
-	out("#MODE want=cooked rc=0\r\n");
-	out("#READY tag=icrnl\r\n");
+	out("#MODE want=cooked rc=0\r\n#READY tag=icrnl\r\n");
 	const buf = await readUntil(0x0a);
 	emitBytes("icrnl", buf);
 }
 
 async function caseEof() {
-	out("#MODE want=cooked rc=0\r\n");
-	out("#READY tag=eof\r\n");
+	out("#MODE want=cooked rc=0\r\n#READY tag=eof\r\n");
 	const buf = await readByte();
 	if (buf.length === 0) {
 		out("#EOF tag=eof n=0\r\n");
@@ -304,8 +284,7 @@ async function caseEof() {
 
 async function caseResizeSigwinch() {
 	out(`#SIZE tag=before rc=0 cols=${process.stdout.columns} rows=${process.stdout.rows}\r\n`);
-	// A real TTY delivers SIGWINCH on resize; guest-node never receives it, so
-	// the #SIG / #SIZE tag=after lines simply never print (honest broken).
+	// The native sidecar mirrors foreground-group SIGWINCH into embedded V8.
 	process.on("SIGWINCH", () => {
 		out("#SIG name=SIGWINCH\r\n");
 		out(`#SIZE tag=after rc=0 cols=${process.stdout.columns} rows=${process.stdout.rows}\r\n`);
@@ -315,9 +294,7 @@ async function caseResizeSigwinch() {
 }
 
 async function caseCpr() {
-	setMode("raw");
-	process.stdout.write("\x1b[6n");
-	out("#CPR sent=1\r\n");
+	out(`${setMode("raw")}\x1b[6n#CPR sent=1\r\n`);
 	const buf = await readUntil(0x52); // 'R'
 	if (buf.length === 0) {
 		out("#EOF tag=cpr n=0\r\n");
@@ -355,7 +332,7 @@ async function main() {
 		return;
 	}
 
-	out(`#START id=${CASE_ID}\r\n`);
+	startPrefix = `#START id=${CASE_ID}\r\n`;
 
 	switch (CASE_ID) {
 		case "cooked-echo":

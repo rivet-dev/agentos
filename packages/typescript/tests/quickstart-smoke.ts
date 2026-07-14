@@ -4,15 +4,11 @@ import {
 	type TypeCheckResult,
 	type TypeScriptTools,
 } from "@rivet-dev/agentos-typescript";
-import {
-	createNodeDriver,
-	createNodeRuntimeDriverFactory,
-} from "@rivet-dev/agentos-core/internal/runtime-compat";
+import type { AgentOs } from "@rivet-dev/agentos-core";
 
-export function createQuickstartTools(): TypeScriptTools {
+export function createQuickstartTools(agentOs: AgentOs): TypeScriptTools {
 	return createTypeScriptTools({
-		systemDriver: createNodeDriver(),
-		runtimeDriverFactory: createNodeRuntimeDriverFactory(),
+		agentOs,
 	});
 }
 

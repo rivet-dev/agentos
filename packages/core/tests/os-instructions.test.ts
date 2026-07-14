@@ -9,9 +9,9 @@ import {
 
 const OS_INSTRUCTIONS_FIXTURE = resolve(
 	import.meta.dirname,
-	// The sidecar crate embeds this prompt; it lives next to the Rust source so
+	// The shared sidecar core embeds this prompt; it lives next to the Rust source so
 	// `cargo publish` can package it. This test only sanity-checks its contents.
-	"../../../crates/agentos-sidecar/src/AGENTOS_SYSTEM_PROMPT.md",
+	"../../../crates/agentos-sidecar-core/src/AGENTOS_SYSTEM_PROMPT.md",
 );
 
 // ── base prompt fixture sanity ─────────────────────────────────────────
@@ -111,7 +111,7 @@ describe("createSession OS instructions integration", () => {
 
 	test("createSession with PI passes --append-system-prompt in spawn args", async () => {
 		const { sessionId } = await vm.createSession("pi");
-		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+		const agentInfo = (await vm.getSessionAgentInfo(sessionId)) as {
 			argv?: string[];
 		};
 		const argv = agentInfo.argv ?? [];
@@ -124,13 +124,13 @@ describe("createSession OS instructions integration", () => {
 		// The sidecar injects the embedded base prompt, not a guest-read file.
 		expect(instructionsArg).toContain("# agentOS");
 
-		vm.closeSession(sessionId);
+		await vm.closeSession(sessionId);
 	});
 
 	test("createSession with OpenCode passes the sidecar-materialized prompt path in OPENCODE_CONTEXTPATHS", async () => {
 		const { sessionId } = await vm.createSession("opencode");
 
-		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+		const agentInfo = (await vm.getSessionAgentInfo(sessionId)) as {
 			contextPaths?: string;
 			argv?: string[];
 		};
@@ -152,21 +152,21 @@ describe("createSession OS instructions integration", () => {
 		const agentOsDirExists = await vm.exists("/home/agentos/.agent-os");
 		expect(agentOsDirExists).toBe(false);
 
-		vm.closeSession(sessionId);
+		await vm.closeSession(sessionId);
 	});
 
 	test("createSession with skipOsInstructions:true does not inject args or env", async () => {
 		const { sessionId } = await vm.createSession("pi", {
 			skipOsInstructions: true,
 		});
-		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+		const agentInfo = (await vm.getSessionAgentInfo(sessionId)) as {
 			argv?: string[];
 		};
 		const argv = agentInfo.argv ?? [];
 
 		expect(argv).not.toContain("--append-system-prompt");
 
-		vm.closeSession(sessionId);
+		await vm.closeSession(sessionId);
 	});
 
 	test("createSession with skipOsInstructions:true still forwards additionalInstructions", async () => {
@@ -176,7 +176,7 @@ describe("createSession OS instructions integration", () => {
 			skipOsInstructions: true,
 			additionalInstructions: additionalText,
 		});
-		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+		const agentInfo = (await vm.getSessionAgentInfo(sessionId)) as {
 			argv?: string[];
 		};
 		const argv = agentInfo.argv ?? [];
@@ -187,7 +187,7 @@ describe("createSession OS instructions integration", () => {
 		expect(instructionsArg).toContain(additionalText);
 		expect(instructionsArg).not.toContain("# agentOS");
 
-		vm.closeSession(sessionId);
+		await vm.closeSession(sessionId);
 	});
 
 	test("user-provided env vars override instruction env vars", async () => {
@@ -196,12 +196,12 @@ describe("createSession OS instructions integration", () => {
 			env: { OPENCODE_CONTEXTPATHS: userContextPaths },
 		});
 
-		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+		const agentInfo = (await vm.getSessionAgentInfo(sessionId)) as {
 			contextPaths?: string;
 		};
 		expect(agentInfo.contextPaths).toBe(userContextPaths);
 
-		vm.closeSession(sessionId);
+		await vm.closeSession(sessionId);
 	});
 
 	test("additionalInstructions content appears in injected text", async () => {
@@ -210,7 +210,7 @@ describe("createSession OS instructions integration", () => {
 		const { sessionId } = await vm.createSession("pi", {
 			additionalInstructions: additionalText,
 		});
-		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+		const agentInfo = (await vm.getSessionAgentInfo(sessionId)) as {
 			argv?: string[];
 		};
 		const argv = agentInfo.argv ?? [];
@@ -220,7 +220,7 @@ describe("createSession OS instructions integration", () => {
 		const instructionsArg = argv[argIdx + 1];
 		expect(instructionsArg).toContain(additionalText);
 
-		vm.closeSession(sessionId);
+		await vm.closeSession(sessionId);
 	});
 
 	test("AgentOs.create additionalInstructions are included in created sessions", async () => {
@@ -234,7 +234,7 @@ describe("createSession OS instructions integration", () => {
 		});
 
 		const { sessionId } = await vm.createSession("pi");
-		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+		const agentInfo = (await vm.getSessionAgentInfo(sessionId)) as {
 			argv?: string[];
 		};
 		const argv = agentInfo.argv ?? [];
@@ -244,6 +244,6 @@ describe("createSession OS instructions integration", () => {
 		const instructionsArg = argv[argIdx + 1];
 		expect(instructionsArg).toContain(vmLevelInstructions);
 
-		vm.closeSession(sessionId);
+		await vm.closeSession(sessionId);
 	});
 });

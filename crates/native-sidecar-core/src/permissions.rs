@@ -54,6 +54,25 @@ pub fn allow_all_policy() -> vm_config::PermissionsPolicy {
     }
 }
 
+/// AgentOS VM policy normalization: omission means allow-all, and omitted
+/// domains in an explicit partial policy inherit allow-all.
+pub fn permissions_with_allow_all_defaults(
+    permissions: Option<vm_config::PermissionsPolicy>,
+) -> vm_config::PermissionsPolicy {
+    let Some(permissions) = permissions else {
+        return allow_all_policy();
+    };
+    let defaults = allow_all_policy();
+    vm_config::PermissionsPolicy {
+        fs: permissions.fs.or(defaults.fs),
+        network: permissions.network.or(defaults.network),
+        child_process: permissions.child_process.or(defaults.child_process),
+        process: permissions.process.or(defaults.process),
+        env: permissions.env.or(defaults.env),
+        binding: permissions.binding.or(defaults.binding),
+    }
+}
+
 pub fn evaluate_permissions_policy(
     permissions: &vm_config::PermissionsPolicy,
     domain: &str,
@@ -140,8 +159,8 @@ fn fs_rule_matches(
     operation: &str,
     resource: Option<&str>,
 ) -> bool {
-    let operations_match = permission_operation_matches(&rule.operations, operation);
-    let paths_match = permission_resource_matches(&rule.paths, resource);
+    let operations_match = permission_operation_matches(rule.operations.as_deref(), operation);
+    let paths_match = permission_resource_matches(rule.paths.as_deref(), resource);
     operations_match && paths_match
 }
 
@@ -150,18 +169,24 @@ fn pattern_rule_matches(
     operation: &str,
     resource: Option<&str>,
 ) -> bool {
-    let operations_match = permission_operation_matches(&rule.operations, operation);
-    let patterns_match = permission_resource_matches(&rule.patterns, resource);
+    let operations_match = permission_operation_matches(rule.operations.as_deref(), operation);
+    let patterns_match = permission_resource_matches(rule.patterns.as_deref(), resource);
     operations_match && patterns_match
 }
 
-fn permission_operation_matches(candidates: &[String], operation: &str) -> bool {
+fn permission_operation_matches(candidates: Option<&[String]>, operation: &str) -> bool {
+    let Some(candidates) = candidates else {
+        return true;
+    };
     candidates
         .iter()
         .any(|candidate| candidate == "*" || candidate == operation)
 }
 
-fn permission_resource_matches(patterns: &[String], resource: Option<&str>) -> bool {
+fn permission_resource_matches(patterns: Option<&[String]>, resource: Option<&str>) -> bool {
+    let Some(patterns) = patterns else {
+        return resource.is_some();
+    };
     resource.is_some_and(|value| {
         patterns
             .iter()
@@ -202,11 +227,14 @@ fn validate_fs_permission_scope(
     };
 
     for (index, rule) in rule_set.rules.iter().enumerate() {
-        validate_permission_rule_field(
-            &rule.operations,
+        validate_optional_permission_rule_field(
+            rule.operations.as_deref(),
             &format!("{domain}.rules[{index}].operations"),
         )?;
-        validate_permission_rule_field(&rule.paths, &format!("{domain}.rules[{index}].paths"))?;
+        validate_optional_permission_rule_field(
+            rule.paths.as_deref(),
+            &format!("{domain}.rules[{index}].paths"),
+        )?;
     }
 
     Ok(())
@@ -221,12 +249,12 @@ fn validate_pattern_permission_scope(
     };
 
     for (index, rule) in rule_set.rules.iter().enumerate() {
-        validate_permission_rule_field(
-            &rule.operations,
+        validate_optional_permission_rule_field(
+            rule.operations.as_deref(),
             &format!("{domain}.rules[{index}].operations"),
         )?;
-        validate_permission_rule_field(
-            &rule.patterns,
+        validate_optional_permission_rule_field(
+            rule.patterns.as_deref(),
             &format!("{domain}.rules[{index}].patterns"),
         )?;
     }
@@ -234,8 +262,11 @@ fn validate_pattern_permission_scope(
     Ok(())
 }
 
-fn validate_permission_rule_field(values: &[String], field: &str) -> Result<(), SidecarCoreError> {
-    if values.is_empty() {
+fn validate_optional_permission_rule_field(
+    values: Option<&[String]>,
+    field: &str,
+) -> Result<(), SidecarCoreError> {
+    if values.is_some_and(<[String]>::is_empty) {
         return Err(SidecarCoreError::new(format!(
             "invalid permissions policy: {field} must not be empty; use [\"*\"] for wildcard"
         )));
@@ -542,8 +573,8 @@ mod tests {
                     default: Some(vm_config::PermissionMode::Deny),
                     rules: vec![vm_config::FsPermissionRule {
                         mode: vm_config::PermissionMode::Allow,
-                        operations: vec![String::from("read")],
-                        paths: vec![String::from("/workspace/**")],
+                        operations: Some(vec![String::from("read")]),
+                        paths: Some(vec![String::from("/workspace/**")]),
                     }],
                 },
             )),
@@ -584,13 +615,13 @@ mod tests {
                     rules: vec![
                         vm_config::FsPermissionRule {
                             mode: vm_config::PermissionMode::Allow,
-                            operations: vec![String::from("read")],
-                            paths: vec![String::from("/workspace/**")],
+                            operations: Some(vec![String::from("read")]),
+                            paths: Some(vec![String::from("/workspace/**")]),
                         },
                         vm_config::FsPermissionRule {
                             mode: vm_config::PermissionMode::Deny,
-                            operations: vec![String::from("read")],
-                            paths: vec![String::from("/workspace/secrets/**")],
+                            operations: Some(vec![String::from("read")]),
+                            paths: Some(vec![String::from("/workspace/secrets/**")]),
                         },
                     ],
                 },
@@ -609,6 +640,51 @@ mod tests {
     }
 
     #[test]
+    fn omitted_rule_fields_are_sidecar_wildcards() {
+        let policy = vm_config::PermissionsPolicy {
+            fs: Some(vm_config::FsPermissionScope::Rules(
+                vm_config::FsPermissionRuleSet {
+                    default: Some(vm_config::PermissionMode::Deny),
+                    rules: vec![vm_config::FsPermissionRule {
+                        mode: vm_config::PermissionMode::Allow,
+                        operations: None,
+                        paths: Some(vec![String::from("/workspace/**")]),
+                    }],
+                },
+            )),
+            network: Some(vm_config::PatternPermissionScope::Rules(
+                vm_config::PatternPermissionRuleSet {
+                    default: Some(vm_config::PermissionMode::Deny),
+                    rules: vec![vm_config::PatternPermissionRule {
+                        mode: vm_config::PermissionMode::Allow,
+                        operations: None,
+                        patterns: None,
+                    }],
+                },
+            )),
+            child_process: None,
+            process: None,
+            env: None,
+            binding: None,
+        };
+
+        validate_permissions_policy(&policy).expect("omitted rule defaults are valid");
+        assert_eq!(
+            evaluate_permissions_policy(&policy, "fs", "fs.write", Some("/workspace/file")),
+            vm_config::PermissionMode::Allow
+        );
+        assert_eq!(
+            evaluate_permissions_policy(
+                &policy,
+                "network",
+                "network.connect",
+                Some("tcp://localhost:443")
+            ),
+            vm_config::PermissionMode::Allow
+        );
+    }
+
+    #[test]
     fn empty_rule_fields_are_rejected() {
         let policy = vm_config::PermissionsPolicy {
             fs: Some(vm_config::FsPermissionScope::Rules(
@@ -616,8 +692,8 @@ mod tests {
                     default: None,
                     rules: vec![vm_config::FsPermissionRule {
                         mode: vm_config::PermissionMode::Allow,
-                        operations: Vec::new(),
-                        paths: vec![String::from("*")],
+                        operations: Some(Vec::new()),
+                        paths: Some(vec![String::from("*")]),
                     }],
                 },
             )),

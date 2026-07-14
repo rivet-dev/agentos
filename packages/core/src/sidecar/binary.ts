@@ -10,8 +10,8 @@ interface SidecarBinaryModule {
  *
  * Honors `AGENTOS_SIDECAR_BIN` as an absolute-path override, otherwise
  * resolves the platform-specific binary shipped by the
- * `@rivet-dev/agentos-sidecar` package. In-repo developer builds use the local
- * cargo build path instead and never reach this function.
+ * `@rivet-dev/agentos-sidecar` package. Runtime SDK code never builds the
+ * sidecar from source; repository tests set `AGENTOS_SIDECAR_BIN` explicitly.
  */
 export function resolvePublishedSidecarBinary(): string {
 	const override = process.env.AGENTOS_SIDECAR_BIN;

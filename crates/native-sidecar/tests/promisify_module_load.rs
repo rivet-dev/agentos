@@ -106,7 +106,7 @@ fn run_guest(case_name: &str, script: &str, allowed_builtins: &[&str]) -> (Value
         &vm_id,
         &process_id,
         agentos_native_sidecar::wire::GuestRuntimeKind::JavaScript,
-        &entrypoint,
+        "/workspace/entry.mjs",
         Vec::new(),
     );
 

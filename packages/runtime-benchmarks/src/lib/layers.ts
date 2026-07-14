@@ -330,7 +330,7 @@ export async function runGuestSpawn(
 	const samples: number[] = [];
 	for (let i = 0; i < warmup + iters; i++) {
 		const start = process.hrtime.bigint();
-		const proc = vm.spawn("node", args);
+		const proc = await vm.spawn("node", args);
 		const code = await vm.waitProcess(proc.pid);
 		const ms = nowMs(start);
 		if (code !== 0) throw new Error(`guest spawn exited ${code}`);

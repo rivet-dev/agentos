@@ -310,7 +310,7 @@ async function runGuest(
 	await vm.writeFile(path, guestScript(row, iterations, warmup));
 	let stdout = "";
 	let stderr = "";
-	const proc = vm.spawn("node", [path], {
+	const proc = await vm.spawn("node", [path], {
 		onStdout: (data) => {
 			stdout += Buffer.from(data).toString("utf8");
 		},
@@ -334,7 +334,7 @@ async function runGuestColdProcess(
 	const totalMs: number[] = [];
 	for (let i = 0; i < warmup + iterations; i++) {
 		const start = performance.now();
-		const proc = vm.spawn("node", [path]);
+		const proc = await vm.spawn("node", [path]);
 		const code = await vm.waitProcess(proc.pid);
 		const elapsed = nowMs(start);
 		if (code !== 0) throw new Error(`guest cold dns row ${row.id} exited ${code}`);

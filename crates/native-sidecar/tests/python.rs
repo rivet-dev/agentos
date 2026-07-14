@@ -149,6 +149,7 @@ fn collect_process_output_with_timeout(
                     exit = Some((exited.exit_code, Instant::now()));
                 }
                 EventPayload::ProcessExitedEvent(_)
+                | EventPayload::CronDispatchEvent(_)
                 | EventPayload::VmLifecycleEvent(_)
                 | EventPayload::StructuredEvent(_)
                 | EventPayload::ExtEnvelope(_) => {}
@@ -403,14 +404,19 @@ fn execute_python_entrypoint_with_env(
             request_id,
             wire_vm(connection_id, session_id, vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
-                process_id: process_id.to_owned(),
+                process_id: Some(process_id.to_owned()),
                 command: None,
                 runtime: Some(GuestRuntimeKind::Python),
                 entrypoint: Some(entrypoint.to_owned()),
                 args: Vec::new(),
-                env,
+                env: Some(env),
                 cwd: None,
                 wasm_permission_tier: None,
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
+                capture_output: None,
             }),
         ))
         .expect("start python execution through wire");
@@ -435,19 +441,31 @@ fn execute_javascript_with_env(
     args: Vec<String>,
     env: HashMap<String, String>,
 ) {
+    let guest_entrypoint = format!(
+        "/workspace/{}",
+        entrypoint
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("JavaScript fixture filename")
+    );
     let result = sidecar
         .dispatch_wire_blocking(wire_request(
             request_id,
             wire_vm(connection_id, session_id, vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
-                process_id: process_id.to_owned(),
+                process_id: Some(process_id.to_owned()),
                 command: None,
                 runtime: Some(GuestRuntimeKind::JavaScript),
-                entrypoint: Some(entrypoint.to_string_lossy().into_owned()),
+                entrypoint: Some(guest_entrypoint),
                 args,
-                env,
+                env: Some(env),
                 cwd: None,
                 wasm_permission_tier: None,
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
+                capture_output: None,
             }),
         ))
         .expect("start JavaScript execution through wire");
@@ -466,7 +484,7 @@ fn create_vm_with_root_filesystem(
     connection_id: &str,
     session_id: &str,
     runtime: GuestRuntimeKind,
-    cwd: &Path,
+    _cwd: &Path,
     root_filesystem: RootFilesystemDescriptor,
 ) -> String {
     let result = sidecar
@@ -475,7 +493,7 @@ fn create_vm_with_root_filesystem(
             wire_session(connection_id, session_id),
             RequestPayload::CreateVmRequest(CreateVmRequest::legacy_test_config(
                 runtime,
-                HashMap::from([(String::from("cwd"), cwd.to_string_lossy().into_owned())]),
+                HashMap::from([(String::from("cwd"), String::from("/workspace"))]),
                 root_filesystem,
                 Some(wire_permissions_allow_all()),
             )),
@@ -495,13 +513,13 @@ fn create_vm_with_metadata_and_permissions(
     connection_id: &str,
     session_id: &str,
     runtime: GuestRuntimeKind,
-    cwd: &Path,
+    _cwd: &Path,
     mut metadata: HashMap<String, String>,
     permissions: PermissionsPolicy,
 ) -> String {
     metadata
         .entry(String::from("cwd"))
-        .or_insert_with(|| cwd.to_string_lossy().into_owned());
+        .or_insert_with(|| String::from("/workspace"));
 
     let result = sidecar
         .dispatch_wire_blocking(wire_request(
@@ -597,7 +615,7 @@ fn guest_write_file_utf8(
             target: None,
             content: Some(content.to_owned()),
             encoding: Some(RootFilesystemEntryEncoding::Utf8),
-            recursive: false,
+            recursive: None,
             max_depth: None,
             mode: None,
             uid: None,
@@ -634,7 +652,7 @@ fn guest_read_file_utf8(
             target: None,
             content: None,
             encoding: None,
-            recursive: false,
+            recursive: None,
             max_depth: None,
             mode: None,
             uid: None,
@@ -673,7 +691,7 @@ fn guest_exists(
             target: None,
             content: None,
             encoding: None,
-            recursive: false,
+            recursive: None,
             max_depth: None,
             mode: None,
             uid: None,
@@ -710,7 +728,7 @@ fn guest_readlink(
             target: None,
             content: None,
             encoding: None,
-            recursive: false,
+            recursive: None,
             max_depth: None,
             mode: None,
             uid: None,
@@ -748,7 +766,7 @@ fn guest_symlink(
             target: Some(target.to_owned()),
             content: None,
             encoding: None,
-            recursive: false,
+            recursive: None,
             max_depth: None,
             mode: None,
             uid: None,
@@ -784,7 +802,7 @@ fn guest_stat_mode(
             target: None,
             content: None,
             encoding: None,
-            recursive: false,
+            recursive: None,
             max_depth: None,
             mode: None,
             uid: None,
@@ -918,6 +936,7 @@ fn wait_for_stdout_chunk(
                 );
             }
             EventPayload::ProcessExitedEvent(_)
+            | EventPayload::CronDispatchEvent(_)
             | EventPayload::VmLifecycleEvent(_)
             | EventPayload::StructuredEvent(_)
             | EventPayload::ExtEnvelope(_) => {}
@@ -1251,7 +1270,8 @@ fn concurrent_python_processes_stay_isolated_across_vms() {
                 assert_eq!(exited.process_id, "proc");
                 result.exit_code = Some(exited.exit_code);
             }
-            EventPayload::VmLifecycleEvent(_)
+            EventPayload::CronDispatchEvent(_)
+            | EventPayload::VmLifecycleEvent(_)
             | EventPayload::StructuredEvent(_)
             | EventPayload::ExtEnvelope(_) => {}
         }
@@ -1287,26 +1307,23 @@ fn python_runtime_mounts_workspace_over_the_kernel_vfs() {
     let cwd = temp_dir("python-workspace-vfs-cwd");
     let connection_id = authenticate_wire(&mut sidecar, "conn-python");
     let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
-    let (vm_id, _) = create_vm_wire(
+    let vm_id = create_vm_with_root_filesystem(
         &mut sidecar,
         3,
         &connection_id,
         &session_id,
         GuestRuntimeKind::Python,
         &cwd,
-    );
-
-    bootstrap_root_filesystem(
-        &mut sidecar,
-        4,
-        &connection_id,
-        &session_id,
-        &vm_id,
-        vec![root_dir("/workspace")],
+        RootFilesystemDescriptor {
+            mode: RootFilesystemMode::Ephemeral,
+            disable_default_base_layer: false,
+            lowers: Vec::new(),
+            bootstrap_entries: vec![root_dir("/workspace")],
+        },
     );
     guest_write_file_utf8(
         &mut sidecar,
-        5,
+        4,
         &connection_id,
         &session_id,
         &vm_id,
@@ -1316,7 +1333,7 @@ fn python_runtime_mounts_workspace_over_the_kernel_vfs() {
 
     execute_inline_python(
         &mut sidecar,
-        6,
+        5,
         &connection_id,
         &session_id,
         &vm_id,
@@ -1361,7 +1378,7 @@ print(json.dumps({
 
     let python_written = guest_read_file_utf8(
         &mut sidecar,
-        7,
+        6,
         &connection_id,
         &session_id,
         &vm_id,
@@ -1605,29 +1622,26 @@ fn python_runtime_supports_symlink_readlink_and_metadata() {
     let cwd = temp_dir("python-fs-hooks-cwd");
     let connection_id = authenticate_wire(&mut sidecar, "conn-python");
     let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
-    let (vm_id, _) = create_vm_wire(
+    let vm_id = create_vm_with_root_filesystem(
         &mut sidecar,
         3,
         &connection_id,
         &session_id,
         GuestRuntimeKind::Python,
         &cwd,
-    );
-
-    bootstrap_root_filesystem(
-        &mut sidecar,
-        4,
-        &connection_id,
-        &session_id,
-        &vm_id,
-        vec![root_dir("/workspace")],
+        RootFilesystemDescriptor {
+            mode: RootFilesystemMode::Ephemeral,
+            disable_default_base_layer: false,
+            lowers: Vec::new(),
+            bootstrap_entries: vec![root_dir("/workspace")],
+        },
     );
 
     // A symlink that already exists on the host (created via the wire, not by
     // Python) — exercises lstat-based detection of pre-existing links.
     guest_symlink(
         &mut sidecar,
-        5,
+        4,
         &connection_id,
         &session_id,
         &vm_id,
@@ -1637,7 +1651,7 @@ fn python_runtime_supports_symlink_readlink_and_metadata() {
 
     execute_inline_python(
         &mut sidecar,
-        6,
+        5,
         &connection_id,
         &session_id,
         &vm_id,
@@ -1698,7 +1712,7 @@ print(json.dumps(result))
     // Cross-check the host kernel VFS.
     let host_target = guest_readlink(
         &mut sidecar,
-        7,
+        6,
         &connection_id,
         &session_id,
         &vm_id,
@@ -1779,29 +1793,25 @@ if (mode === 'write') {
             5,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts: vec![MountDescriptor {
+                mounts: Some(vec![MountDescriptor {
                     guest_path: String::from("/workspace"),
-                    read_only: false,
+                    read_only: Some(false),
                     plugin: MountPluginDescriptor {
                         id: String::from("host_dir"),
-                        config: json!({
-                            "hostPath": workspace_host_dir.to_string_lossy().into_owned(),
-                            "readOnly": false,
-                        })
-                        .to_string(),
+                        config: Some(
+                            json!({
+                                "hostPath": workspace_host_dir.to_string_lossy().into_owned(),
+                                "readOnly": false,
+                            })
+                            .to_string(),
+                        ),
                     },
-                }],
-                software: Vec::new(),
+                }]),
                 permissions: None,
-                module_access_cwd: None,
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
-                command_permissions: HashMap::new(),
-                loopback_exempt_ports: Vec::new(),
-                packages: Vec::new(),
-                packages_mount_at: String::new(),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                command_permissions: None,
+                loopback_exempt_ports: None,
+                packages: None,
+                packages_mount_at: None,
             }),
         ))
         .expect("configure host_dir workspace mount through wire");
@@ -3187,8 +3197,8 @@ fn python_runtime_surfaces_subprocess_permission_errors() {
                     default: Some(PermissionMode::Allow),
                     rules: vec![PatternPermissionRule {
                         mode: PermissionMode::Deny,
-                        operations: vec![String::from("*")],
-                        patterns: vec![String::from("node")],
+                        operations: Some(vec![String::from("*")]),
+                        patterns: Some(vec![String::from("node")]),
                     }],
                 },
             )),
@@ -3258,14 +3268,19 @@ fn execute_python_cli(
             request_id,
             wire_vm(connection_id, session_id, vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
-                process_id: process_id.to_owned(),
+                process_id: Some(process_id.to_owned()),
                 command: Some(command.to_owned()),
                 runtime: None,
                 entrypoint: None,
                 args: args.iter().map(|arg| (*arg).to_string()).collect(),
-                env: HashMap::new(),
+                env: None,
                 cwd: None,
                 wasm_permission_tier: None,
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
+                capture_output: None,
             }),
         ))
         .expect("start python CLI execution through wire");
@@ -3295,14 +3310,19 @@ fn execute_python_cli_with_env(
             request_id,
             wire_vm(connection_id, session_id, vm_id),
             RequestPayload::ExecuteRequest(ExecuteRequest {
-                process_id: process_id.to_owned(),
+                process_id: Some(process_id.to_owned()),
                 command: Some(command.to_owned()),
                 runtime: None,
                 entrypoint: None,
                 args: args.iter().map(|arg| (*arg).to_string()).collect(),
-                env,
+                env: Some(env),
                 cwd: None,
                 wasm_permission_tier: None,
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
+                capture_output: None,
             }),
         ))
         .expect("start python CLI execution through wire");
@@ -3652,29 +3672,25 @@ process.stdout.write('status=' + result.status + ';out=' + (result.stdout || '')
             5,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts: vec![MountDescriptor {
+                mounts: Some(vec![MountDescriptor {
                     guest_path: String::from("/workspace"),
-                    read_only: false,
+                    read_only: Some(false),
                     plugin: MountPluginDescriptor {
                         id: String::from("host_dir"),
-                        config: json!({
-                            "hostPath": workspace_host_dir.to_string_lossy().into_owned(),
-                            "readOnly": false,
-                        })
-                        .to_string(),
+                        config: Some(
+                            json!({
+                                "hostPath": workspace_host_dir.to_string_lossy().into_owned(),
+                                "readOnly": false,
+                            })
+                            .to_string(),
+                        ),
                     },
-                }],
-                software: Vec::new(),
+                }]),
                 permissions: None,
-                module_access_cwd: None,
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
-                command_permissions: HashMap::new(),
-                loopback_exempt_ports: Vec::new(),
-                packages: Vec::new(),
-                packages_mount_at: String::new(),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                command_permissions: None,
+                loopback_exempt_ports: None,
+                packages: None,
+                packages_mount_at: None,
             }),
         ))
         .expect("configure host_dir workspace mount through wire");

@@ -17,8 +17,10 @@ import { SYNC_BRIDGE_KIND_TEXT } from "../../src/sync-bridge.js";
 function fakeSidecar(): {
 	pushFrame: (frame: Uint8Array) => Uint8Array;
 	ownerships: LiveOwnershipScope[];
+	requests: LiveRequestPayload[];
 } {
 	const ownerships: LiveOwnershipScope[] = [];
+	const requests: LiveRequestPayload[] = [];
 	const pushFrame = (frameBytes: Uint8Array): Uint8Array => {
 		const frame = decodeProtocolFramePayload(
 			frameBytes,
@@ -28,6 +30,7 @@ function fakeSidecar(): {
 			throw new Error(`expected request, got ${frame.frame_type}`);
 		}
 		ownerships.push(frame.ownership);
+		requests.push(frame.payload);
 		return encodeProtocolFramePayload(
 			{
 				frame_type: "response",
@@ -39,7 +42,7 @@ function fakeSidecar(): {
 			"json",
 		);
 	};
-	return { pushFrame, ownerships };
+	return { pushFrame, ownerships, requests };
 }
 
 function service(request: LiveRequestPayload): LiveResponsePayload {
@@ -59,6 +62,18 @@ function service(request: LiveRequestPayload): LiveResponsePayload {
 			};
 		case "create_vm":
 			return { type: "vm_created", vm_id: "vm-1" };
+		case "initialize_vm":
+			return {
+				type: "vm_initialized",
+				vm_id: "vm-1",
+				guest_cwd: "/",
+				guest_env: {},
+				process_route_retention: 1,
+				applied_mounts: 1,
+				projected_commands: [],
+				agents: [],
+				host_callbacks: [],
+			};
 		case "execute":
 			return { type: "process_started", process_id: request.process_id };
 		case "guest_filesystem_call":
@@ -120,6 +135,32 @@ describe("converged executor session", () => {
 		});
 	});
 
+	it("forwards opaque package bytes through atomic VM initialization", () => {
+		const sidecar = fakeSidecar();
+		const session = new ConvergedExecutorSession({
+			pushFrame: sidecar.pushFrame,
+			codec: "json",
+		});
+		session.bootstrap({
+			runtime: "java_script",
+			config: {} as never,
+			packages: [{ content: new Uint8Array([1, 2, 3]) }],
+			packagesMountAt: "/srv/agentos",
+		});
+
+		const request = sidecar.requests.at(-1);
+		expect(request).toMatchObject({
+			type: "initialize_vm",
+			runtime: "java_script",
+			config: {},
+		});
+		if (request?.type !== "initialize_vm") {
+			throw new Error("expected initialize_vm request");
+		}
+		expect(Array.from(request.packages?.[0]?.content ?? [])).toEqual([1, 2, 3]);
+		expect(request.packages_mount_at).toBe("/srv/agentos");
+	});
+
 	it("registers a guest execution via an execute wire request", () => {
 		const sidecar = fakeSidecar();
 		const session = new ConvergedExecutorSession({
@@ -134,7 +175,10 @@ describe("converged executor session", () => {
 		});
 		expect(registered).toEqual({ processId: "exec-7" });
 		// The execute request arrives with VM ownership.
-		expect(sidecar.ownerships.at(-1)).toMatchObject({ scope: "vm", vm_id: "vm-1" });
+		expect(sidecar.ownerships.at(-1)).toMatchObject({
+			scope: "vm",
+			vm_id: "vm-1",
+		});
 	});
 
 	it("throws if a handler is requested before bootstrap", () => {

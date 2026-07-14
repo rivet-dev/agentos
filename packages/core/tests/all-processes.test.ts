@@ -14,35 +14,39 @@ describe("allProcesses()", () => {
 		}
 	}, 30_000);
 
-	test("returns empty on a fresh VM with no spawned processes", () => {
-		const all = vm.allProcesses();
+	test("returns empty on a fresh VM with no spawned processes", async () => {
+		const all = await vm.allProcesses();
 		expect(all).toEqual([]);
 	});
 
 	test("spawned process appears in allProcesses alongside kernel processes", async () => {
-		const before = vm.allProcesses();
+		const before = await vm.allProcesses();
 		await vm.writeFile("/tmp/stay.mjs", "setTimeout(() => {}, 30000);");
-		const { pid } = vm.spawn("node", ["/tmp/stay.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/stay.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
-		const after = vm.allProcesses();
+		const after = await vm.allProcesses();
 		expect(after.length).toBeGreaterThan(before.length);
 
 		const found = after.find((p) => p.pid === pid);
 		expect(found).toBeDefined();
 		expect(found?.command).toBe("node");
+		expect(found?.args).toEqual(["node", "/tmp/stay.mjs"]);
+		expect(found?.cwd).toBe("/workspace");
+		expect(found?.startTime).toBeGreaterThan(0);
+		expect(found?.exitTime).toBeNull();
 
-		vm.killProcess(pid);
+		await vm.killProcess(pid);
 	}, 30_000);
 
 	test("ppid relationships are correct", async () => {
 		await vm.writeFile("/tmp/child.mjs", "setTimeout(() => {}, 30000);");
-		const { pid } = vm.spawn("node", ["/tmp/child.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/child.mjs"], {
 			env: { HOME: "/home/agentos" },
 		});
 
-		const all = vm.allProcesses();
+		const all = await vm.allProcesses();
 		const child = all.find((p) => p.pid === pid);
 		expect(child).toBeDefined();
 		// ppid should reference an existing process (the kernel init or similar)
@@ -52,7 +56,7 @@ describe("allProcesses()", () => {
 			expect(parent).toBeDefined();
 		}
 
-		vm.killProcess(pid);
+		await vm.killProcess(pid);
 	}, 30_000);
 
 	test("guest child_process.spawn children appear in allProcesses()", async () => {
@@ -69,7 +73,7 @@ setTimeout(() => {}, 30000);
 		);
 		await vm.writeFile("/tmp/child.mjs", "setTimeout(() => {}, 30000);");
 
-		const { pid } = vm.spawn("node", ["/tmp/parent.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/parent.mjs"], {
 			env: { HOME: "/home/agentos" },
 			onStdout: (data) => {
 				const text = new TextDecoder().decode(data);
@@ -89,8 +93,9 @@ setTimeout(() => {}, 30000);
 		let childProcess = null;
 		for (let attempt = 0; attempt < 20; attempt++) {
 			childProcess =
-				vm.allProcesses().find((process) => process.pid === Number(childPid)) ??
-				null;
+				(await vm.allProcesses()).find(
+					(process) => process.pid === Number(childPid),
+				) ?? null;
 			if (childProcess) {
 				break;
 			}
@@ -101,6 +106,6 @@ setTimeout(() => {}, 30000);
 		expect(childProcess?.command).toBe("node");
 		expect(childProcess?.ppid).toBe(pid);
 
-		vm.killProcess(pid);
+		await vm.killProcess(pid);
 	}, 30_000);
 });

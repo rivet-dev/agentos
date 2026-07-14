@@ -12,23 +12,23 @@
 //     channel, and bump GEN so the blocked reactor wakes and delivers it.
 
 import {
+	encodeSyscallCompletion,
+	SabRing,
+	type SabRingLayout,
+} from "@rivet-dev/agentos-runtime-browser";
+import {
 	decodeBareProtocolFrame,
 	encodeBareProtocolFrame,
 } from "@rivet-dev/agentos-runtime-core/protocol-frames";
 import { SIDECAR_PROTOCOL_SCHEMA } from "@rivet-dev/agentos-runtime-core/protocol-schema";
 import {
-	SabRing,
-	type SabRingLayout,
-	encodeSyscallCompletion,
-} from "@rivet-dev/agentos-runtime-browser";
+	decodeAcpResponse,
+	encodeAcpRequest,
+} from "../../../core/src/sidecar/agentos-protocol.ts";
 import {
 	handleChatCompletion,
 	type LanguageModelSession,
 } from "../../src/chrome-llm-adapter.js";
-import {
-	decodeAcpResponse,
-	encodeAcpRequest,
-} from "../../../core/src/sidecar/agentos-protocol.ts";
 
 const ACP_NS = "dev.rivet.agent-os.acp";
 // Must match the kernel worker's LAYOUT (the completion ring is shared memory).
@@ -39,7 +39,10 @@ let nextRequestId = 1;
 export class KernelWorkerRelay {
 	private readonly worker: Worker;
 	private id = 1;
-	private readonly pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
+	private readonly pending = new Map<
+		number,
+		{ resolve: (v: any) => void; reject: (e: any) => void }
+	>();
 	private readonly agents = new Map<string, Worker>();
 	// Completion channel for DEFERRED inference syscalls; populated from the kernel's
 	// `booted` message. Null until boot resolves.
@@ -79,14 +82,22 @@ export class KernelWorkerRelay {
 			const agent = new Worker(s.workerUrl, { type: "module" });
 			agent.onmessage = (ev: MessageEvent) =>
 				this.onAgentMessage?.(s.executionId, ev.data);
-			agent.postMessage({ type: "init", upSab: s.upSab, downSab: s.downSab, controlSab: s.controlSab, layout: s.layout });
+			agent.postMessage({
+				type: "init",
+				upSab: s.upSab,
+				downSab: s.downSab,
+				controlSab: s.controlSab,
+				layout: s.layout,
+			});
 			this.agents.set(s.executionId, agent);
 			this.lastAgentExecutionId = s.executionId;
 			return;
 		}
 		if (m.type === "agent-stdin") {
 			const s = m as unknown as { executionId: string; chunk: Uint8Array };
-			this.agents.get(s.executionId)?.postMessage({ type: "stdin", chunk: s.chunk });
+			this.agents
+				.get(s.executionId)
+				?.postMessage({ type: "stdin", chunk: s.chunk });
 			return;
 		}
 		if (m.type === "kill-agent") {
@@ -95,7 +106,9 @@ export class KernelWorkerRelay {
 			return;
 		}
 		if (m.type === "host-inference") {
-			void this.completeInference(m as unknown as { executionId: string; body: string });
+			void this.completeInference(
+				m as unknown as { executionId: string; body: string },
+			);
 			return;
 		}
 		const entry = this.pending.get(m.id);
@@ -109,13 +122,21 @@ export class KernelWorkerRelay {
 	// blocked guest via the kernel's completion channel. This is the single async hop
 	// of the inference path (§6); everything else (the guest's net/fs syscalls) is
 	// synchronous over the SAB.
-	private async completeInference(m: { executionId: string; body: string }): Promise<void> {
-		if (!this.completion || !this.control) throw new Error("relay: completion channel not ready");
+	private async completeInference(m: {
+		executionId: string;
+		body: string;
+	}): Promise<void> {
+		if (!this.completion || !this.control)
+			throw new Error("relay: completion channel not ready");
 		const responseJson = this.inferenceSession
 			? await handleChatCompletion(m.body, this.inferenceSession)
-			: JSON.stringify({ error: { type: "no_model", message: "no inference session bound" } });
+			: JSON.stringify({
+					error: { type: "no_model", message: "no inference session bound" },
+				});
 		const result = new TextEncoder().encode(responseJson);
-		if (!this.completion.tryWrite(encodeSyscallCompletion(m.executionId, result))) {
+		if (
+			!this.completion.tryWrite(encodeSyscallCompletion(m.executionId, result))
+		) {
 			throw new Error("relay: completion ring full");
 		}
 		// Bump GEN + notify so the reactor (blocked in Atomics.wait) wakes and drains.
@@ -123,7 +144,10 @@ export class KernelWorkerRelay {
 		Atomics.notify(this.control, 0);
 	}
 
-	private call<T>(message: Record<string, unknown>, transfer: Transferable[] = []): Promise<T> {
+	private call<T>(
+		message: Record<string, unknown>,
+		transfer: Transferable[] = [],
+	): Promise<T> {
 		const id = this.id++;
 		return new Promise<T>((resolve, reject) => {
 			this.pending.set(id, { resolve, reject });
@@ -143,7 +167,12 @@ export class KernelWorkerRelay {
 	}
 
 	async pushFrame(frame: Uint8Array, ownership: unknown): Promise<Uint8Array> {
-		return (await this.call<{ frame: Uint8Array }>({ type: "frame", frame, ownership }, [frame.buffer])).frame;
+		return (
+			await this.call<{ frame: Uint8Array }>(
+				{ type: "frame", frame, ownership },
+				[frame.buffer],
+			)
+		).frame;
 	}
 
 	/** Post a message straight to a spawned agent worker (interactive PTY channel). */
@@ -173,43 +202,32 @@ export async function send(
 		} as never),
 		ownership,
 	);
-	return (decodeBareProtocolFrame(responseBytes) as { payload: Record<string, unknown> }).payload;
+	return (
+		decodeBareProtocolFrame(responseBytes) as {
+			payload: Record<string, unknown>;
+		}
+	).payload;
 }
 
 export async function bootstrapVm(relay: KernelWorkerRelay) {
 	const agentPackages = [
-		["async-echo", "async-echo-agent"],
-		["async-infer", "async-infer-agent"],
-		["async-loopback", "async-loopback-agent"],
-		["async-proxy", "async-proxy-agent"],
-		["pty-loopback", "pty-loopback-agent"],
+		"async-echo",
+		"async-infer",
+		"async-loopback",
+		"async-proxy",
+		"pty-loopback",
 	] as const;
-	const agentPackageEntries = agentPackages.flatMap(([name, acpEntrypoint]) => [
-		{
-			path: `/opt/agentos/pkgs/${name}/current/agentos-package.json`,
-			kind: "file",
-			mode: 0o644,
-			uid: 0,
-			gid: 0,
-			content: JSON.stringify({
-				name,
-				version: "1.0.0",
-				agent: { acpEntrypoint },
-			}),
-			encoding: "utf8",
-			executable: false,
-		},
-		{
-			path: `/opt/agentos/bin/${acpEntrypoint}`,
-			kind: "file",
-			mode: 0o755,
-			uid: 0,
-			gid: 0,
-			content: "",
-			encoding: "utf8",
-			executable: true,
-		},
-	]);
+	const packages = await Promise.all(
+		agentPackages.map(async (name) => {
+			const response = await fetch(`/package-fixtures/${name}.aospkg`);
+			if (!response.ok) {
+				throw new Error(
+					`failed to load browser package fixture ${name}: ${response.status}`,
+				);
+			}
+			return { content: new Uint8Array(await response.arrayBuffer()) };
+		}),
+	);
 	const authed = await send(
 		relay,
 		{ scope: "connection", connection_id: "client-hint" },
@@ -225,24 +243,26 @@ export async function bootstrapVm(relay: KernelWorkerRelay) {
 	const opened = await send(
 		relay,
 		{ scope: "connection", connection_id: connectionId },
-		{ type: "open_session", placement: { kind: "shared", pool: null }, metadata: {} },
+		{ type: "open_session", placement: { kind: "shared", pool: null } },
 	);
 	const sessionId = opened.session_id as string;
 	const created = await send(
 		relay,
 		{ scope: "session", connection_id: connectionId, session_id: sessionId },
 		{
-			type: "create_vm",
+			type: "initialize_vm",
 			runtime: "java_script",
 			config: {
-				rootFilesystem: {
-					mode: "ephemeral",
-					disableDefaultBaseLayer: false,
-					lowers: [],
-					bootstrapEntries: agentPackageEntries,
+				permissions: {
+					fs: "allow",
+					network: "allow",
+					childProcess: "allow",
+					process: "allow",
+					env: "allow",
+					binding: "allow",
 				},
-				permissions: { fs: "allow", network: "allow", childProcess: "allow", process: "allow", env: "allow", binding: "allow" },
 			},
+			packages,
 		},
 	);
 	return { connectionId, sessionId, vmId: created.vm_id as string };
@@ -276,7 +296,12 @@ export async function createPersistentAgentSession(
 ): Promise<PersistentAgentSession> {
 	const sidecarId = await relay.boot();
 	const vm = await bootstrapVm(relay);
-	const vmOwnership = { scope: "vm", connection_id: vm.connectionId, session_id: vm.sessionId, vm_id: vm.vmId };
+	const vmOwnership = {
+		scope: "vm",
+		connection_id: vm.connectionId,
+		session_id: vm.sessionId,
+		vm_id: vm.vmId,
+	};
 
 	const createAcp = encodeAcpRequest({
 		tag: "AcpCreateSessionRequest",
@@ -302,11 +327,15 @@ export async function createPersistentAgentSession(
 	let sessionId = "";
 	if (created.type === "ext" || created.type === "ext_result") {
 		const env = created.envelope as { payload: Uint8Array };
-		const decoded = decodeAcpResponse(env.payload) as { tag: string; val?: { sessionId?: string } };
+		const decoded = decodeAcpResponse(env.payload) as {
+			tag: string;
+			val?: { sessionId?: string };
+		};
 		sessionId = decoded.val?.sessionId ?? "";
 	}
 	const executionId = relay.lastAgentExecutionId;
-	if (!executionId) throw new Error("no agent worker was spawned for the session");
+	if (!executionId)
+		throw new Error("no agent worker was spawned for the session");
 	return { sidecarId, sessionId, executionId };
 }
 
@@ -320,7 +349,12 @@ export async function runSessionPromptGate(
 ): Promise<SessionPromptGateResult> {
 	const sidecarId = await relay.boot();
 	const vm = await bootstrapVm(relay);
-	const vmOwnership = { scope: "vm", connection_id: vm.connectionId, session_id: vm.sessionId, vm_id: vm.vmId };
+	const vmOwnership = {
+		scope: "vm",
+		connection_id: vm.connectionId,
+		session_id: vm.sessionId,
+		vm_id: vm.vmId,
+	};
 
 	const createAcp = encodeAcpRequest({
 		tag: "AcpCreateSessionRequest",
@@ -343,7 +377,10 @@ export async function runSessionPromptGate(
 		envelope: { namespace: ACP_NS, payload: createAcp },
 	});
 
-	const out: SessionPromptGateResult = { sidecarId, payloadType: created.type as string };
+	const out: SessionPromptGateResult = {
+		sidecarId,
+		payloadType: created.type as string,
+	};
 	if (created.type === "ext" || created.type === "ext_result") {
 		const env = created.envelope as { payload: Uint8Array };
 		const decoded = decodeAcpResponse(env.payload) as {
@@ -362,7 +399,9 @@ export async function runSessionPromptGate(
 		val: {
 			sessionId: out.sessionId,
 			method: "session/prompt",
-			params: JSON.stringify({ prompt: [{ type: "text", text: opts.promptText }] }),
+			params: JSON.stringify({
+				prompt: [{ type: "text", text: opts.promptText }],
+			}),
 		},
 	} as never);
 	const prompted = await send(relay, vmOwnership, {
@@ -371,9 +410,14 @@ export async function runSessionPromptGate(
 	});
 	if (prompted.type === "ext" || prompted.type === "ext_result") {
 		const env = prompted.envelope as { payload: Uint8Array };
-		const decoded = decodeAcpResponse(env.payload) as { tag: string; val?: { response?: string } };
+		const decoded = decodeAcpResponse(env.payload) as {
+			tag: string;
+			val?: { response?: string };
+		};
 		if (decoded.tag === "AcpSessionRpcResponse" && decoded.val?.response) {
-			const rpc = JSON.parse(decoded.val.response) as { result?: { content?: string } };
+			const rpc = JSON.parse(decoded.val.response) as {
+				result?: { content?: string };
+			};
 			out.promptContent = rpc.result?.content;
 		}
 	}

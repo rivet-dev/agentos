@@ -11,14 +11,14 @@ type AcpRuntimeKind enum {
 
 type AcpCreateSessionRequest struct {
   agentType: str
-  runtime: AcpRuntimeKind
-  cwd: str
-  args: list<str>
-  env: map<str><str>
-  protocolVersion: i32
-  clientCapabilities: JsonUtf8
-  mcpServers: JsonUtf8
-  skipOsInstructions: bool
+  runtime: optional<AcpRuntimeKind>
+  cwd: optional<str>
+  args: optional<list<str>>
+  env: optional<map<str><str>>
+  protocolVersion: optional<i32>
+  clientCapabilities: optional<JsonUtf8>
+  mcpServers: optional<JsonUtf8>
+  skipOsInstructions: optional<bool>
   additionalInstructions: optional<str>
 }
 
@@ -26,6 +26,15 @@ type AcpSessionRequest struct {
   sessionId: str
   method: str
   params: optional<JsonUtf8>
+}
+
+# Select a session configuration option by its adapter-reported category. The
+# sidecar owns category-to-config-id resolution and adapter-specific read-only
+# behavior; clients forward only the caller's requested value.
+type AcpSetSessionConfigRequest struct {
+  sessionId: str
+  category: str
+  value: str
 }
 
 # Enumerate the agents available in this VM. The sidecar answers from the already
@@ -48,6 +57,10 @@ type AcpGetSessionStateRequest struct {
   sessionId: str
 }
 
+type AcpListSessionsRequest struct {
+  reserved: bool
+}
+
 type AcpCloseSessionRequest struct {
   sessionId: str
 }
@@ -62,8 +75,8 @@ type AcpResumeSessionRequest struct {
   sessionId: str
   agentType: str
   transcriptPath: optional<str>
-  cwd: str
-  env: map<str><str>
+  cwd: optional<str>
+  env: optional<map<str><str>>
 }
 
 # Browser RESUMABLE path only (AGENTOS-WEB-ASYNC-AGENTS.md §3.2.1): the kernel
@@ -78,18 +91,51 @@ type AcpDeliverAgentOutputRequest struct {
   chunk: data
 }
 
+# Host-observed adapter stderr. The host forwards opaque bytes; the sidecar owns
+# session identity, limits, event construction, and retryable delivery.
+type AcpDeliverAgentStderrRequest struct {
+  processId: str
+  chunk: data
+}
+
+# Browser RESUMABLE terminal cleanup. The sidecar owns the stable error code and
+# message for each observed terminal condition; the browser driver supplies only
+# the process handle and the fact it observed.
+type AcpPendingAbortReason enum {
+  AGENT_EXITED
+  INTERACTION_TIMEOUT
+  DRIVER_FAILED
+  CALLER_CANCELLED
+}
+
+type AcpAbortPendingRequest struct {
+  processId: str
+  reason: AcpPendingAbortReason
+  # Present only when the browser execution transport directly observed a
+  # process exit status. Timeouts/driver failures and indirect exits omit it.
+  exitCode: optional<i32>
+}
+
 type AcpRequest union {
   AcpCreateSessionRequest |
   AcpSessionRequest |
+  AcpSetSessionConfigRequest |
   AcpGetSessionStateRequest |
+  AcpListSessionsRequest |
   AcpCloseSessionRequest |
   AcpResumeSessionRequest |
   AcpDeliverAgentOutputRequest |
+  AcpDeliverAgentStderrRequest |
+  AcpAbortPendingRequest |
   AcpListAgentsRequest
 }
 
 type AcpSessionCreatedResponse struct {
   sessionId: str
+  # Complete host-route identity. Clients install the route atomically when this
+  # response frame arrives, before following bootstrap events are dispatched.
+  agentType: str
+  processId: str
   pid: optional<u32>
   modes: optional<JsonUtf8>
   configOptions: list<JsonUtf8>
@@ -100,6 +146,9 @@ type AcpSessionCreatedResponse struct {
 type AcpSessionRpcResponse struct {
   sessionId: str
   response: JsonUtf8
+  # Present for session/prompt. The sidecar accumulates agent_message_chunk
+  # notifications while still streaming them as live session events.
+  text: optional<str>
 }
 
 type AcpSessionStateResponse struct {
@@ -115,8 +164,21 @@ type AcpSessionStateResponse struct {
   agentInfo: optional<JsonUtf8>
 }
 
+type AcpSessionEntry struct {
+  sessionId: str
+  agentType: str
+}
+
+type AcpListSessionsResponse struct {
+  sessions: list<AcpSessionEntry>
+}
+
 type AcpSessionClosedResponse struct {
   sessionId: str
+}
+
+type AcpAgentStderrDeliveredResponse struct {
+  processId: str
 }
 
 # Result of AcpResumeSessionRequest. `sessionId` is the live ACP session id after
@@ -127,6 +189,10 @@ type AcpSessionClosedResponse struct {
 type AcpSessionResumedResponse struct {
   sessionId: str
   mode: str
+  # Complete host-route identity for the newly live adapter/session.
+  agentType: str
+  processId: str
+  pid: optional<u32>
 }
 
 type AcpErrorResponse struct {
@@ -141,13 +207,20 @@ type AcpErrorResponse struct {
 # delivered as the response to the AcpDeliverAgentOutputRequest that completes it.
 type AcpPendingResponse struct {
   processId: str
+  # Sidecar-owned deadline for the currently awaited ACP phase.
+  timeoutMs: u32
+  # Stable phase identity. Browser routing resets the deadline only when this
+  # changes; partial lines and same-phase notifications cannot extend it.
+  timeoutPhase: str
 }
 
 type AcpResponse union {
   AcpSessionCreatedResponse |
   AcpSessionRpcResponse |
   AcpSessionStateResponse |
+  AcpListSessionsResponse |
   AcpSessionClosedResponse |
+  AcpAgentStderrDeliveredResponse |
   AcpSessionResumedResponse |
   AcpErrorResponse |
   AcpPendingResponse |
@@ -198,28 +271,23 @@ type AcpPermissionCallback struct {
   sessionId: str
   permissionId: str
   params: JsonUtf8
-}
-
-type AcpHostRequestCallback struct {
-  sessionId: str
-  request: JsonUtf8
+  # Sidecar-owned host bookkeeping deadline. This is strictly later than the
+  # sidecar's authoritative permission decision timeout; clients must not use
+  # it to choose the permission default.
+  cleanupAfterMs: u64
 }
 
 type AcpCallback union {
-  AcpPermissionCallback |
-  AcpHostRequestCallback
+  AcpPermissionCallback
 }
 
 type AcpPermissionCallbackResponse struct {
   permissionId: str
-  reply: str
-}
-
-type AcpHostRequestCallbackResponse struct {
-  response: optional<JsonUtf8>
+  # The client supplies only an explicit host answer. The ACP sidecar owns the
+  # default behavior when the route is absent, times out, or fails.
+  reply: optional<str>
 }
 
 type AcpCallbackResponse union {
-  AcpPermissionCallbackResponse |
-  AcpHostRequestCallbackResponse
+  AcpPermissionCallbackResponse
 }

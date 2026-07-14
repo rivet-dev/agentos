@@ -13,18 +13,20 @@ use chrono::Utc;
 
 fn noop_action() -> CronAction {
     CronAction::Callback {
-        callback: std::sync::Arc::new(|| Box::pin(async {})),
+        callback: std::sync::Arc::new(|| Box::pin(async { Ok(()) })),
     }
 }
 
-fn try_schedule(os: &AgentOs, schedule: &str) -> Result<(), ClientError> {
-    os.schedule_cron(CronJobOptions {
-        id: None,
-        schedule: schedule.to_string(),
-        action: noop_action(),
-        overlap: None,
-    })
-    .map(|handle| handle.cancel())
+async fn try_schedule(os: &AgentOs, schedule: &str) -> Result<(), ClientError> {
+    let handle = os
+        .schedule_cron(CronJobOptions {
+            id: None,
+            schedule: schedule.to_string(),
+            action: noop_action(),
+            overlap: None,
+        })
+        .await?;
+    handle.cancel().await
 }
 
 #[tokio::test]
@@ -49,7 +51,7 @@ async fn cron_grammar_matches_croner() {
     ];
     for expr in valid {
         assert!(
-            try_schedule(&os, expr).is_ok(),
+            try_schedule(&os, expr).await.is_ok(),
             "expected croner-valid schedule to be accepted: {expr:?}"
         );
     }
@@ -65,7 +67,7 @@ async fn cron_grammar_matches_croner() {
         "",               // empty
     ];
     for expr in invalid {
-        match try_schedule(&os, expr) {
+        match try_schedule(&os, expr).await {
             Err(ClientError::InvalidSchedule(_)) => {}
             other => panic!("expected InvalidSchedule for {expr:?}, got {other:?}"),
         }
@@ -74,11 +76,11 @@ async fn cron_grammar_matches_croner() {
     // One-shot ISO-8601: future accepted, past rejected as PastSchedule.
     let future = (Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
     assert!(
-        try_schedule(&os, &future).is_ok(),
+        try_schedule(&os, &future).await.is_ok(),
         "future one-shot should be accepted: {future}"
     );
     let past = (Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
-    match try_schedule(&os, &past) {
+    match try_schedule(&os, &past).await {
         Err(ClientError::PastSchedule(_)) => {}
         other => panic!("expected PastSchedule for a past one-shot, got {other:?}"),
     }

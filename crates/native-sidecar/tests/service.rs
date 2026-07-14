@@ -1,9 +1,6 @@
 pub trait NativeSidecarBridge: agentos_bridge::HostBridge {}
 impl<T> NativeSidecarBridge for T where T: agentos_bridge::HostBridge {}
 
-#[allow(dead_code, unused_imports)]
-#[path = "acp_legacy/mod.rs"]
-mod acp;
 #[allow(dead_code)]
 #[path = "../src/bootstrap.rs"]
 mod bootstrap;
@@ -21,9 +18,6 @@ mod extension;
 #[allow(dead_code)]
 #[path = "../src/filesystem.rs"]
 mod filesystem;
-#[allow(dead_code, unused_imports)]
-#[path = "../src/json_rpc.rs"]
-mod json_rpc;
 #[allow(dead_code, unused_imports)]
 #[path = "../src/limits.rs"]
 mod limits;
@@ -58,11 +52,11 @@ mod wire {
 // and stdio.rs in turn uses these crate-root re-exports (mirrored from lib.rs) so it
 // compiles inside this integration-test crate too.
 use extension::{
-    Extension, ExtensionContext, ExtensionFuture, ExtensionInterruptRequest,
+    Extension, ExtensionContext, ExtensionFuture, ExtensionInterrupt, ExtensionInterruptRequest,
     ExtensionInterruptResponse, ExtensionResponse,
 };
 use service::NativeSidecarConfig;
-use state::{EventSinkTransport, SidecarRequestTransport};
+use state::{EventSinkTransport, ExtensionCallbackCancellation, SidecarRequestTransport};
 
 #[allow(dead_code)]
 #[path = "../src/stdio.rs"]
@@ -94,27 +88,29 @@ mod service {
         use crate::protocol::VmCreatedResponse;
         use crate::protocol::{
             AuthenticateRequest, BootstrapRootFilesystemRequest, CloseStdinRequest,
-            ConfigureVmRequest, CreateVmRequest, DisposeReason, DisposeVmRequest, EventPayload,
-            FindBoundUdpRequest, FindListenerRequest, FsPermissionRule, FsPermissionRuleSet,
-            FsPermissionScope, GetProcessSnapshotRequest, GetResourceSnapshotRequest,
-            GetZombieTimerCountRequest, GuestFilesystemCallRequest, GuestFilesystemOperation,
-            GuestRuntimeKind, HostCallbackResultResponse, MountDescriptor, MountPluginDescriptor,
-            OpenSessionRequest, OwnershipScope, PatternPermissionRule, PatternPermissionRuleSet,
-            PatternPermissionScope, PermissionMode, PermissionsPolicy,
-            RegisterHostCallbacksRequest, RegisteredHostCallbackDefinition, RejectedResponse,
-            RequestFrame, RequestPayload, ResponsePayload, RootFilesystemEntry,
-            RootFilesystemEntryEncoding, RootFilesystemEntryKind, SessionOpenedResponse,
-            SidecarPlacement, SidecarPlacementShared, SidecarRequestFrame, SidecarRequestPayload,
+            ConfigureVmRequest, CreateVmRequest, DisposeReason, DisposeVmRequest, EventFrame,
+            EventPayload, FindBoundUdpRequest, FindListenerRequest, FsPermissionRule,
+            FsPermissionRuleSet, FsPermissionScope, GetProcessSnapshotRequest,
+            GetResourceSnapshotRequest, GetZombieTimerCountRequest, GuestFilesystemCallRequest,
+            GuestFilesystemOperation, GuestRuntimeKind, HostCallbackResultResponse,
+            MountDescriptor, MountPluginDescriptor, OpenSessionRequest, OwnershipScope,
+            PatternPermissionRule, PatternPermissionRuleSet, PatternPermissionScope,
+            PermissionMode, PermissionsPolicy, ProcessExitedEvent, RegisterHostCallbacksRequest,
+            RegisteredHostCallbackDefinition, RejectedResponse, RequestFrame, RequestPayload,
+            ResponsePayload, RootFilesystemEntry, RootFilesystemEntryEncoding,
+            RootFilesystemEntryKind, SessionOpenedResponse, SidecarPlacement,
+            SidecarPlacementShared, SidecarRequestFrame, SidecarRequestPayload,
             SidecarResponsePayload, WriteStdinRequest,
         };
         use crate::state::{
             ActiveCipherSession, ActiveDiffieHellmanSession, ActiveEcdhSession, ActiveExecution,
             ActiveExecutionEvent, ActiveProcess, ActiveSqliteDatabase, ActiveSqliteStatement,
-            ActiveTcpListener, ActiveUdpSocket, ProcessEventEnvelope, SidecarKernel, ToolExecution,
-            VmListenPolicy, EXECUTION_SANDBOX_ROOT_ENV, JAVASCRIPT_COMMAND,
-            LOOPBACK_EXEMPT_PORTS_ENV, PYTHON_COMMAND, VM_DNS_SERVERS_METADATA_KEY,
-            VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY, VM_LISTEN_PORT_MAX_METADATA_KEY,
-            VM_LISTEN_PORT_MIN_METADATA_KEY, WASM_COMMAND, WASM_STDIO_SYNC_RPC_ENV,
+            ActiveTcpListener, ActiveUdpSocket, ProcessEventEnvelope,
+            ResolvedChildProcessExecution, SidecarKernel, ToolExecution, VmListenPolicy,
+            EXECUTION_SANDBOX_ROOT_ENV, JAVASCRIPT_COMMAND, LOOPBACK_EXEMPT_PORTS_ENV,
+            PYTHON_COMMAND, VM_DNS_SERVERS_METADATA_KEY, VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY,
+            VM_LISTEN_PORT_MAX_METADATA_KEY, VM_LISTEN_PORT_MIN_METADATA_KEY, WASM_COMMAND,
+            WASM_STDIO_SYNC_RPC_ENV,
         };
         use crate::state::{NetworkResourceCounts, VmDnsConfig};
         use agentos_bridge::SymlinkRequest;
@@ -169,11 +165,31 @@ mod service {
         };
         use std::thread;
         use std::time::{Duration, SystemTime, UNIX_EPOCH};
+        use vfs::package_format::pack::pack_aospkg_from_tar;
 
         const TEST_AUTH_TOKEN: &str = "sidecar-test-token";
         const ISOLATED_SERVICE_TEST_ENV: &str = "AGENTOS_SERVICE_ISOLATED_TEST";
         const ISOLATED_SERVICE_CACHE_SUFFIX_ENV: &str = "AGENTOS_SERVICE_ISOLATED_CACHE_SUFFIX";
         const MAX_SERVICE_PROCESS_STREAM_BYTES: usize = 1024 * 1024;
+
+        fn resolve_javascript_child_process_for_test(
+            sidecar: &mut NativeSidecar<RecordingBridge>,
+            vm_id: &str,
+            request: &crate::protocol::JavascriptChildProcessSpawnRequest,
+        ) -> Result<ResolvedChildProcessExecution, SidecarError> {
+            let (env, guest_cwd, host_cwd) = {
+                let vm = sidecar.vms.get(vm_id).expect("configured test VM");
+                (
+                    vm.guest_env.clone(),
+                    vm.guest_cwd.clone(),
+                    vm.host_cwd.clone(),
+                )
+            };
+            let vm = sidecar.vms.get_mut(vm_id).expect("configured test VM");
+            NativeSidecar::<RecordingBridge>::resolve_javascript_child_process_execution(
+                vm, &env, &guest_cwd, &host_cwd, request,
+            )
+        }
         const TLS_TEST_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----\n\
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQClvETzHfSyd1Y+\n\
 sjCfGkuyGxFMzwQlYjUrE0iwdMF774LYHFdpvtEo3sLOW6/b1xfXS/55jq+aggxS\n\
@@ -626,14 +642,18 @@ ykAheWCsAteSEWVc0w==\n\
                 })
                 .expect("queue trailing process event");
 
-            let frame = sidecar
-                .handle_process_event_envelope(ProcessEventEnvelope {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("create tokio runtime");
+            let frame = runtime
+                .block_on(sidecar.handle_process_event_envelope(ProcessEventEnvelope {
                     connection_id,
                     session_id,
                     vm_id: vm_id.clone(),
                     process_id: String::from("proc-exit"),
                     event: ActiveExecutionEvent::Exited(0),
-                })
+                }))
                 .expect("handle exit with full queue")
                 .expect("trailing output should emit immediately");
 
@@ -1288,7 +1308,6 @@ ykAheWCsAteSEWVc0w==\n\
                         placement: SidecarPlacement::SidecarPlacementShared(
                             SidecarPlacementShared { pool: None },
                         ),
-                        metadata: std::collections::HashMap::new(),
                     }),
                 ))
                 .expect("open session");
@@ -1393,32 +1412,66 @@ ykAheWCsAteSEWVc0w==\n\
                     request_id,
                     OwnershipScope::vm(connection_id, session_id, vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/__secure_exec/commands/0"),
-                            read_only: true,
+                            read_only: Some(true),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "hostPath": command_root,
                                     "readOnly": true,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure registry command mount");
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        fn configure_host_fixture_mount(
+            sidecar: &mut NativeSidecar<RecordingBridge>,
+            connection_id: &str,
+            session_id: &str,
+            vm_id: &str,
+            request_id: agentos_native_sidecar::protocol::RequestId,
+            guest_path: &str,
+            host_path: &Path,
+            read_only: bool,
+        ) {
+            sidecar
+                .dispatch_blocking(request(
+                    request_id,
+                    OwnershipScope::vm(connection_id, session_id, vm_id),
+                    RequestPayload::ConfigureVm(ConfigureVmRequest {
+                        mounts: Some(vec![MountDescriptor {
+                            guest_path: guest_path.to_owned(),
+                            read_only: Some(read_only),
+                            plugin: MountPluginDescriptor {
+                                id: String::from("host_dir"),
+                                config: json!({
+                                    "hostPath": host_path,
+                                    "readOnly": read_only,
+                                })
+                                .to_string()
+                                .into(),
+                            },
+                        }]),
+                        permissions: None,
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
+                    }),
+                ))
+                .expect("configure explicit host fixture mount");
         }
 
         #[allow(clippy::too_many_arguments)] // test helper mirroring the exec surface
@@ -1440,14 +1493,19 @@ ykAheWCsAteSEWVc0w==\n\
                     request_id,
                     OwnershipScope::vm(connection_id, session_id, vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: process_id.to_owned(),
+                        process_id: Some(process_id.to_owned()),
                         command: Some(command.to_owned()),
                         runtime: None,
                         entrypoint: None,
                         args: args.iter().map(|arg| (*arg).to_owned()).collect(),
-                        env: env.into_iter().collect(),
+                        env: Some(env.into_iter().collect()),
                         cwd: None,
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch guest command");
@@ -1633,8 +1691,6 @@ ykAheWCsAteSEWVc0w==\n\
             RegisterHostCallbacksRequest {
                 name: String::from(name),
                 description: String::from(description),
-                command_aliases: vec![format!("agentos-{name}")],
-                registry_command_aliases: vec![String::from("agentos")],
                 callbacks: std::collections::HashMap::from([(
                     String::from(tool_name),
                     RegisteredHostCallbackDefinition {
@@ -1663,16 +1719,16 @@ ykAheWCsAteSEWVc0w==\n\
                         default: Some(existing),
                         rules: vec![FsPermissionRule {
                             mode,
-                            operations: vec![operation.to_owned()],
-                            paths: vec![String::from("/**")],
+                            operations: Some(vec![operation.to_owned()]),
+                            paths: Some(vec![String::from("/**")]),
                         }],
                     })
                 }
                 FsPermissionScope::FsPermissionRuleSet(mut rules) => {
                     rules.rules.push(FsPermissionRule {
                         mode,
-                        operations: vec![operation.to_owned()],
-                        paths: vec![String::from("/**")],
+                        operations: Some(vec![operation.to_owned()]),
+                        paths: Some(vec![String::from("/**")]),
                     });
                     FsPermissionScope::FsPermissionRuleSet(rules)
                 }
@@ -1699,16 +1755,16 @@ ykAheWCsAteSEWVc0w==\n\
                         default: Some(default),
                         rules: vec![PatternPermissionRule {
                             mode,
-                            operations: vec![operation.to_owned()],
-                            patterns: vec![String::from("**")],
+                            operations: Some(vec![operation.to_owned()]),
+                            patterns: Some(vec![String::from("**")]),
                         }],
                     })
                 }
                 PatternPermissionScope::PatternPermissionRuleSet(mut rules) => {
                     rules.rules.push(PatternPermissionRule {
                         mode,
-                        operations: vec![operation.to_owned()],
-                        patterns: vec![String::from("**")],
+                        operations: Some(vec![operation.to_owned()]),
+                        patterns: Some(vec![String::from("**")]),
                     });
                     PatternPermissionScope::PatternPermissionRuleSet(rules)
                 }
@@ -1724,8 +1780,8 @@ ykAheWCsAteSEWVc0w==\n\
                         rules: vec![
                             PatternPermissionRule {
                                 mode: PermissionMode::Allow,
-                                operations: vec![String::from("listen")],
-                                patterns: vec![String::from("**")],
+                                operations: Some(vec![String::from("listen")]),
+                                patterns: Some(vec![String::from("**")]),
                             },
                             PatternPermissionRule {
                                 mode: if network {
@@ -1733,8 +1789,8 @@ ykAheWCsAteSEWVc0w==\n\
                                 } else {
                                     PermissionMode::Deny
                                 },
-                                operations: vec![String::from("inspect")],
-                                patterns: vec![String::from("**")],
+                                operations: Some(vec![String::from("inspect")]),
+                                patterns: Some(vec![String::from("**")]),
                             },
                         ],
                     },
@@ -1751,8 +1807,8 @@ ykAheWCsAteSEWVc0w==\n\
                             } else {
                                 PermissionMode::Deny
                             },
-                            operations: vec![String::from("inspect")],
-                            patterns: vec![String::from("**")],
+                            operations: Some(vec![String::from("inspect")]),
+                            patterns: Some(vec![String::from("**")]),
                         }],
                     },
                 )),
@@ -6088,7 +6144,7 @@ ykAheWCsAteSEWVc0w==\n\
                             target: None,
                             content: Some(String::from("stale")),
                             encoding: Some(RootFilesystemEntryEncoding::Utf8),
-                            recursive: false,
+                            recursive: None,
                             max_depth: None,
                             mode: None,
                             uid: None,
@@ -6220,7 +6276,7 @@ ykAheWCsAteSEWVc0w==\n\
                             target: None,
                             content: Some(String::from("hello from live vm")),
                             encoding: Some(RootFilesystemEntryEncoding::Utf8),
-                            recursive: false,
+                            recursive: None,
                             max_depth: None,
                             mode: None,
                             uid: None,
@@ -6251,7 +6307,7 @@ ykAheWCsAteSEWVc0w==\n\
                             target: None,
                             content: None,
                             encoding: None,
-                            recursive: false,
+                            recursive: None,
                             max_depth: None,
                             mode: None,
                             uid: None,
@@ -6422,6 +6478,9 @@ ykAheWCsAteSEWVc0w==\n\
                     OwnershipScope::connection("conn-1"),
                     ResponsePayload::VmCreated(VmCreatedResponse {
                         vm_id: String::from("vm-1"),
+                        guest_cwd: String::from("/workspace"),
+                        guest_env: std::collections::HashMap::new(),
+                        process_route_retention: 1_024,
                     }),
                 ),
                 events: Vec::new(),
@@ -6497,25 +6556,19 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("memory"),
-                                config: json!({}).to_string(),
+                                config: json!({}).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure mounts");
@@ -6574,25 +6627,19 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/readonly"),
-                            read_only: true,
+                            read_only: Some(true),
                             plugin: MountPluginDescriptor {
                                 id: String::from("memory"),
-                                config: json!({}).to_string(),
+                                config: json!({}).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure readonly mount");
@@ -6647,29 +6694,24 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "hostPath": host_dir,
                                     "readOnly": false,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure host_dir mount");
@@ -6722,29 +6764,24 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "hostPath": host_dir,
                                     "readOnly": false,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure host_dir mount");
@@ -6765,65 +6802,6 @@ ykAheWCsAteSEWVc0w==\n\
             configure_vm_passes_resource_read_limits_to_host_dir_mounts();
         }
 
-        fn configure_vm_passes_resource_read_limits_to_module_access_mounts() {
-            let module_access_cwd = temp_dir("agentos-native-sidecar-module-access-read-limit");
-            let package_root = module_access_cwd.join("node_modules/fixture-pkg");
-            fs::create_dir_all(&package_root).expect("create package root");
-            fs::write(
-                package_root.join("package.json"),
-                r#"{"name":"fixture-pkg"}"#,
-            )
-            .expect("seed package json");
-
-            let mut sidecar = create_test_sidecar();
-            let (connection_id, session_id) =
-                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
-            let vm_id = create_vm_with_metadata(
-                &mut sidecar,
-                &connection_id,
-                &session_id,
-                PermissionsPolicy::allow_all(),
-                BTreeMap::from([(String::from("resource.max_pread_bytes"), String::from("4"))]),
-            )
-            .expect("create vm");
-
-            sidecar
-                .dispatch_blocking(request(
-                    4,
-                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: Vec::new(),
-                        software: Vec::new(),
-                        permissions: None,
-                        module_access_cwd: Some(module_access_cwd.to_string_lossy().into_owned()),
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
-                    }),
-                ))
-                .expect("configure module_access mount");
-
-            let vm = sidecar.vms.get_mut(&vm_id).expect("configured vm");
-            let error = vm
-                .kernel
-                .filesystem_mut()
-                .read_file("/root/node_modules/fixture-pkg/package.json")
-                .expect_err("module_access read should honor VM read limit");
-            assert_eq!(error.code(), "EINVAL");
-
-            fs::remove_dir_all(module_access_cwd).expect("remove temp dir");
-        }
-
-        #[test]
-        fn configure_vm_module_access_mount_receives_configured_read_limit() {
-            configure_vm_passes_resource_read_limits_to_module_access_mounts();
-        }
-
         // Regression guard for the read-side shadow-walk fix.
         //
         // Every read-side guest fs op (Exists/Stat/Lstat/ReadFile) reconciles the host
@@ -6841,7 +6819,6 @@ ykAheWCsAteSEWVc0w==\n\
         //      observes the new bytes (no stale skip).
         fn read_side_ops_skip_unchanged_shadow_files_repro() {
             use std::time::{Duration, Instant};
-
             fn fs_payload(
                 operation: GuestFilesystemOperation,
                 path: &str,
@@ -6854,7 +6831,7 @@ ykAheWCsAteSEWVc0w==\n\
                     target: None,
                     content,
                     encoding: Some(RootFilesystemEntryEncoding::Utf8),
-                    recursive: true,
+                    recursive: Some(true),
                     max_depth: None,
                     mode: None,
                     uid: None,
@@ -6998,66 +6975,6 @@ ykAheWCsAteSEWVc0w==\n\
             read_side_ops_skip_unchanged_shadow_files_repro();
         }
 
-        fn configure_vm_rejects_module_access_root_symlink_to_non_node_modules() {
-            let module_access_cwd = temp_dir("agentos-native-sidecar-module-access-symlink-cwd");
-            let outside_root = temp_dir("agentos-native-sidecar-module-access-outside");
-            std::os::unix::fs::symlink(&outside_root, module_access_cwd.join("node_modules"))
-                .expect("create node_modules symlink");
-
-            let mut sidecar = create_test_sidecar();
-            let (connection_id, session_id) =
-                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
-            let vm_id = create_vm(
-                &mut sidecar,
-                &connection_id,
-                &session_id,
-                PermissionsPolicy::allow_all(),
-            )
-            .expect("create vm");
-
-            let response = sidecar
-                .dispatch_blocking(request(
-                    4,
-                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-                    RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: Vec::new(),
-                        software: Vec::new(),
-                        permissions: None,
-                        module_access_cwd: Some(module_access_cwd.to_string_lossy().into_owned()),
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
-                    }),
-                ))
-                .expect("configure module_access mount");
-
-            match response.response.payload {
-                ResponsePayload::Rejected(rejected) => {
-                    assert_eq!(rejected.code, "plugin_error");
-                    assert!(
-                        rejected.message.contains(
-                            "module_access roots must resolve to a node_modules directory"
-                        ),
-                        "unexpected rejection: {rejected:?}"
-                    );
-                }
-                other => panic!("expected rejected response, got {other:?}"),
-            }
-
-            fs::remove_dir_all(module_access_cwd).expect("remove cwd temp dir");
-            fs::remove_dir_all(outside_root).expect("remove outside temp dir");
-        }
-
-        #[test]
-        fn configure_vm_rejects_module_access_symlinked_root_escape() {
-            configure_vm_rejects_module_access_root_symlink_to_non_node_modules();
-        }
-
         fn configure_vm_js_bridge_mount_dispatches_filesystem_calls_via_sidecar_requests() {
             let mut sidecar = create_test_sidecar();
             let (filesystem, calls) = install_memory_js_bridge_handler(&mut sidecar);
@@ -7082,25 +6999,19 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("js_bridge"),
-                                config: json!({ "mountId": "mount-1" }).to_string(),
+                                config: json!({ "mountId": "mount-1" }).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure js_bridge mount");
@@ -7219,25 +7130,19 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("js_bridge"),
-                                config: json!({ "mountId": "mount-sized" }).to_string(),
+                                config: json!({ "mountId": "mount-sized" }).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure js_bridge mount");
@@ -7309,25 +7214,21 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("js_bridge"),
-                                config: json!({ "mountId": "mount-pread-sized" }).to_string(),
+                                config: json!({ "mountId": "mount-pread-sized" })
+                                    .to_string()
+                                    .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure js_bridge mount");
@@ -7428,25 +7329,19 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("js_bridge"),
-                                config: json!({ "mountId": "mount-errors" }).to_string(),
+                                config: json!({ "mountId": "mount-errors" }).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure js_bridge mount");
@@ -7513,25 +7408,19 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("js_bridge"),
-                                config: json!({ "mountId": "mount-root" }).to_string(),
+                                config: json!({ "mountId": "mount-root" }).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure js_bridge mount");
@@ -7609,28 +7498,23 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/sandbox"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("sandbox_agent"),
                                 config: json!({
                                     "baseUrl": server.base_url(),
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure sandbox_agent mount");
@@ -7706,9 +7590,9 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/data"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("chunked_s3"),
                                 config: json!({
@@ -7724,20 +7608,15 @@ ykAheWCsAteSEWVc0w==\n\
                                     "chunkSize": 8,
                                     "inlineThreshold": 4,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure s3 mount");
@@ -7808,9 +7687,9 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/objects"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("object_s3"),
                                 config: json!({
@@ -7823,20 +7702,15 @@ ykAheWCsAteSEWVc0w==\n\
                                         "secretAccessKey": "minioadmin",
                                     },
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure object_s3 mount");
@@ -7895,9 +7769,9 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/local"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("chunked_local"),
                                 config: json!({
@@ -7906,20 +7780,15 @@ ykAheWCsAteSEWVc0w==\n\
                                     "chunkSize": 4,
                                     "inlineThreshold": 1,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure chunked_local mount");
@@ -8295,7 +8164,7 @@ ykAheWCsAteSEWVc0w==\n\
                 .expect_err("read should be denied");
             assert_eq!(read_error.code(), "EACCES");
         }
-        fn create_vm_without_permissions_defaults_to_static_deny_all() {
+        fn create_vm_without_permissions_defaults_to_static_allow_all() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -8312,27 +8181,367 @@ ykAheWCsAteSEWVc0w==\n\
                 ))
                 .expect("create vm");
             let vm_id = created_vm_id(response).expect("vm created");
-            let permission_check_count_before_write = sidecar
-                .with_bridge_mut(|bridge| bridge.permission_checks.len())
-                .expect("read bootstrap permission checks");
+            let vm = sidecar.vms.get_mut(&vm_id).expect("configured vm");
+            vm.kernel
+                .filesystem_mut()
+                .write_file("/allowed.txt", b"allowed".to_vec())
+                .expect("omitted AgentOS permissions should allow guest writes");
+            assert_eq!(
+                vm.kernel
+                    .filesystem_mut()
+                    .read_file("/allowed.txt")
+                    .expect("omitted AgentOS permissions should allow guest reads"),
+                b"allowed".to_vec()
+            );
+        }
 
-            let write_error = sidecar
-                .vms
-                .get_mut(&vm_id)
-                .expect("configured vm")
+        fn create_capture_limited_vm(
+            sidecar: &mut NativeSidecar<RecordingBridge>,
+            connection_id: &str,
+            session_id: &str,
+            runtime: GuestRuntimeKind,
+            per_stream_limit_bytes: u64,
+            total_limit_bytes: u64,
+        ) -> String {
+            let created = sidecar
+                .dispatch_blocking(request(
+                    3,
+                    OwnershipScope::session(connection_id, session_id),
+                    RequestPayload::CreateVm(CreateVmRequest::json_config(
+                        runtime,
+                        agentos_vm_config::CreateVmConfig {
+                            limits: Some(agentos_vm_config::VmLimitsConfig {
+                                resources: Some(agentos_vm_config::ResourceLimitsConfig {
+                                    max_captured_output_bytes: Some(total_limit_bytes),
+                                    ..Default::default()
+                                }),
+                                js_runtime: Some(agentos_vm_config::JsRuntimeLimitsConfig {
+                                    captured_output_limit_bytes: Some(per_stream_limit_bytes),
+                                    ..Default::default()
+                                }),
+                                python: Some(agentos_vm_config::PythonLimitsConfig {
+                                    output_buffer_max_bytes: Some(per_stream_limit_bytes),
+                                    ..Default::default()
+                                }),
+                                wasm: Some(agentos_vm_config::WasmLimitsConfig {
+                                    captured_output_limit_bytes: Some(per_stream_limit_bytes),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        },
+                    )),
+                ))
+                .expect("create capture-limited VM");
+            created_vm_id(created).expect("capture-limited VM id")
+        }
+
+        fn drain_captured_terminal(
+            sidecar: &mut NativeSidecar<RecordingBridge>,
+            vm_id: &str,
+            process_id: &str,
+        ) -> ProcessExitedEvent {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                assert!(
+                    Instant::now() < deadline,
+                    "timed out waiting for captured-output terminal event"
+                );
+                pump_sibling_internal_process_events(sidecar, vm_id, process_id);
+                let event = {
+                    let vm = sidecar.vms.get_mut(vm_id).expect("active limited VM");
+                    let process = vm
+                        .active_processes
+                        .get_mut(process_id)
+                        .expect("active captured process");
+                    process.pending_execution_events.pop_front().or_else(|| {
+                        process
+                            .execution
+                            .poll_event_blocking(Duration::from_secs(5))
+                            .expect("poll captured process")
+                    })
+                };
+                let Some(event) = event else {
+                    continue;
+                };
+                let surfaced = sidecar
+                    .handle_execution_event(vm_id, process_id, event)
+                    .expect("handle captured process event");
+                if let Some(EventFrame {
+                    payload: EventPayload::ProcessExited(exited),
+                    ..
+                }) = surfaced
+                {
+                    return exited;
+                }
+            }
+        }
+
+        fn assert_capture_overflow_terminal(
+            terminal: ProcessExitedEvent,
+            process_id: &str,
+            config_path: &str,
+        ) {
+            assert_eq!(terminal.process_id, process_id);
+            assert_eq!(terminal.stdout.as_deref(), Some(&b""[..]));
+            assert_eq!(terminal.stderr.as_deref(), Some(&b""[..]));
+            let terminal_debug = format!("{terminal:?}");
+            let error = terminal
+                .error
+                .unwrap_or_else(|| panic!("typed capture overflow missing from {terminal_debug}"));
+            assert_eq!(
+                error.code,
+                agentos_native_sidecar_core::CAPTURED_OUTPUT_LIMIT_ERROR_CODE
+            );
+            assert!(error.message.contains("limit of 8 bytes"));
+            assert!(error.message.contains(config_path));
+        }
+
+        fn execute_javascript_capture_limit_is_emitted_by_sidecar_terminal_event() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_capture_limited_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                GuestRuntimeKind::JavaScript,
+                8,
+                32,
+            );
+            let process_id = "captured-output-process";
+            let started = sidecar
+                .dispatch_blocking(request(
+                    4,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        process_id: Some(process_id.to_owned()),
+                        command: Some(String::from("node")),
+                        shell_command: None,
+                        runtime: None,
+                        entrypoint: None,
+                        args: vec![
+                            String::from("-e"),
+                            String::from("process.stdout.write('123456789')"),
+                        ],
+                        env: None,
+                        cwd: None,
+                        wasm_permission_tier: None,
+                        pty: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: Some(true),
+                    }),
+                ))
+                .expect("start captured process");
+            assert!(matches!(
+                started.response.payload,
+                ResponsePayload::ProcessStarted(_)
+            ));
+
+            let terminal = drain_captured_terminal(&mut sidecar, &vm_id, process_id);
+            assert_eq!(terminal.exit_code, 137);
+            assert_capture_overflow_terminal(
+                terminal,
+                process_id,
+                "limits.jsRuntime.capturedOutputLimitBytes",
+            );
+        }
+
+        fn execute_vm_aggregate_capture_limit_is_emitted_by_sidecar_terminal_event() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_capture_limited_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                GuestRuntimeKind::JavaScript,
+                16,
+                8,
+            );
+            let process_id = "captured-output-vm-total";
+            let started = sidecar
+                .dispatch_blocking(request(
+                    4,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        process_id: Some(process_id.to_owned()),
+                        command: Some(String::from("node")),
+                        shell_command: None,
+                        runtime: None,
+                        entrypoint: None,
+                        args: vec![
+                            String::from("-e"),
+                            String::from("process.stdout.write('123456789')"),
+                        ],
+                        env: None,
+                        cwd: None,
+                        wasm_permission_tier: None,
+                        pty: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: Some(true),
+                    }),
+                ))
+                .expect("start aggregate-limited captured process");
+            assert!(matches!(
+                started.response.payload,
+                ResponsePayload::ProcessStarted(_)
+            ));
+
+            let terminal = drain_captured_terminal(&mut sidecar, &vm_id, process_id);
+            assert_eq!(terminal.exit_code, 137);
+            assert_capture_overflow_terminal(
+                terminal,
+                process_id,
+                "limits.resources.maxCapturedOutputBytes",
+            );
+        }
+
+        fn execute_python_capture_limit_is_emitted_by_sidecar_terminal_event() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_capture_limited_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                GuestRuntimeKind::Python,
+                8,
+                32,
+            );
+            let process_id = "captured-output-python";
+            let started = sidecar
+                .dispatch_blocking(request(
+                    4,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        process_id: Some(process_id.to_owned()),
+                        command: None,
+                        shell_command: None,
+                        runtime: Some(GuestRuntimeKind::Python),
+                        entrypoint: Some(String::from("print('123456789')")),
+                        args: Vec::new(),
+                        env: None,
+                        cwd: None,
+                        wasm_permission_tier: None,
+                        pty: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: Some(true),
+                    }),
+                ))
+                .expect("start captured Python process");
+            assert!(matches!(
+                started.response.payload,
+                ResponsePayload::ProcessStarted(_)
+            ));
+
+            let terminal = drain_captured_terminal(&mut sidecar, &vm_id, process_id);
+            assert_capture_overflow_terminal(
+                terminal,
+                process_id,
+                "limits.python.outputBufferMaxBytes",
+            );
+        }
+
+        fn execute_wasm_capture_limit_is_emitted_by_sidecar_terminal_event() {
+            let cwd = temp_dir("agentos-native-sidecar-captured-output-wasm");
+            let entrypoint = cwd.join("output.wasm");
+            write_fixture(&entrypoint, wasm_stdout_module("123456789"));
+
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_capture_limited_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                GuestRuntimeKind::WebAssembly,
+                8,
+                32,
+            );
+            configure_host_fixture_mount(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                4,
+                "/fixture",
+                &cwd,
+                true,
+            );
+            let process_id = "captured-output-wasm";
+            let started = sidecar
+                .dispatch_blocking(request(
+                    5,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        process_id: Some(process_id.to_owned()),
+                        command: None,
+                        shell_command: None,
+                        runtime: Some(GuestRuntimeKind::WebAssembly),
+                        entrypoint: Some(String::from("/fixture/output.wasm")),
+                        args: Vec::new(),
+                        env: None,
+                        cwd: None,
+                        wasm_permission_tier: None,
+                        pty: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: Some(true),
+                    }),
+                ))
+                .expect("start captured WASM process");
+            assert!(matches!(
+                started.response.payload,
+                ResponsePayload::ProcessStarted(_)
+            ));
+
+            let terminal = drain_captured_terminal(&mut sidecar, &vm_id, process_id);
+            assert_eq!(terminal.exit_code, 137);
+            assert_capture_overflow_terminal(
+                terminal,
+                process_id,
+                "limits.wasm.capturedOutputLimitBytes",
+            );
+        }
+
+        fn create_vm_bootstrap_needs_no_guest_filesystem_rights() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::deny_all(),
+            )
+            .expect("trusted sidecar bootstrap should succeed under guest deny-all");
+
+            let vm = sidecar.vms.get_mut(&vm_id).expect("configured vm");
+            assert!(
+                vm.kernel
+                    .filesystem_mut()
+                    .exists("/workspace")
+                    .expect("stat /workspace"),
+                "the sidecar should create the standard working directory internally"
+            );
+            assert!(
+                vm.kernel
+                    .filesystem_mut()
+                    .exists("/tmp")
+                    .expect("stat /tmp"),
+                "the sidecar should create standard Linux directories internally"
+            );
+            let error = vm
                 .kernel
                 .filesystem_mut()
-                .write_file("/blocked.txt", b"nope".to_vec())
-                .expect_err("write should be denied");
-            assert_eq!(write_error.code(), "EACCES");
-
-            let permission_check_count_after_write = sidecar
-                .with_bridge_mut(|bridge| bridge.permission_checks.len())
-                .expect("read bridge permission checks");
-            assert_eq!(
-                permission_check_count_after_write, permission_check_count_before_write,
-                "guest writes under default-deny should not fall through to bridge callbacks"
-            );
+                .write_file("/workspace/blocked.txt", b"blocked".to_vec())
+                .expect_err("guest deny-all policy must be restored after bootstrap");
+            assert_eq!(error.code(), "EACCES");
         }
         fn configure_vm_rollback_restore_failure_falls_back_to_static_deny_all() {
             let mut sidecar = create_test_sidecar();
@@ -8361,28 +8570,23 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "readOnly": false,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("dispatch configure_vm failure");
@@ -8540,8 +8744,8 @@ ykAheWCsAteSEWVc0w==\n\
                                     default: Some(PermissionMode::Deny),
                                     rules: vec![FsPermissionRule {
                                         mode: PermissionMode::Allow,
-                                        operations: Vec::new(),
-                                        paths: vec![String::from("*")],
+                                        operations: Some(Vec::new()),
+                                        paths: Some(vec![String::from("*")]),
                                     }],
                                 },
                             )),
@@ -8585,16 +8789,15 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: Vec::new(),
-                        software: Vec::new(),
+                        mounts: None,
                         permissions: Some(PermissionsPolicy {
                             fs: Some(FsPermissionScope::FsPermissionRuleSet(
                                 FsPermissionRuleSet {
                                     default: Some(PermissionMode::Deny),
                                     rules: vec![FsPermissionRule {
                                         mode: PermissionMode::Allow,
-                                        operations: vec![String::from("read")],
-                                        paths: Vec::new(),
+                                        operations: Some(vec![String::from("read")]),
+                                        paths: Some(Vec::new()),
                                     }],
                                 },
                             )),
@@ -8604,15 +8807,10 @@ ykAheWCsAteSEWVc0w==\n\
                             env: None,
                             binding: None,
                         }),
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("dispatch fs configure vm");
@@ -8635,8 +8833,7 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: Vec::new(),
-                        software: Vec::new(),
+                        mounts: None,
                         permissions: Some(PermissionsPolicy {
                             fs: None,
                             network: Some(PatternPermissionScope::PatternPermissionRuleSet(
@@ -8644,8 +8841,8 @@ ykAheWCsAteSEWVc0w==\n\
                                     default: Some(PermissionMode::Deny),
                                     rules: vec![PatternPermissionRule {
                                         mode: PermissionMode::Allow,
-                                        operations: vec![String::from("dns")],
-                                        patterns: Vec::new(),
+                                        operations: Some(vec![String::from("dns")]),
+                                        patterns: Some(Vec::new()),
                                     }],
                                 },
                             )),
@@ -8654,15 +8851,10 @@ ykAheWCsAteSEWVc0w==\n\
                             env: None,
                             binding: None,
                         }),
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("dispatch network configure vm");
@@ -8707,25 +8899,19 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("memory"),
-                                config: json!({}).to_string(),
+                                config: json!({}).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("dispatch configure vm");
@@ -8761,7 +8947,7 @@ ykAheWCsAteSEWVc0w==\n\
                         target: None,
                         content: None,
                         encoding: None,
-                        recursive: true,
+                        recursive: Some(true),
                         max_depth: None,
                         mode: None,
                         uid: None,
@@ -8781,7 +8967,7 @@ ykAheWCsAteSEWVc0w==\n\
                         target: None,
                         content: Some(String::from("stdio-sidecar-fs")),
                         encoding: None,
-                        recursive: false,
+                        recursive: None,
                         max_depth: None,
                         mode: None,
                         uid: None,
@@ -8801,7 +8987,7 @@ ykAheWCsAteSEWVc0w==\n\
                         target: None,
                         content: None,
                         encoding: None,
-                        recursive: false,
+                        recursive: None,
                         max_depth: None,
                         mode: None,
                         uid: None,
@@ -8821,7 +9007,7 @@ ykAheWCsAteSEWVc0w==\n\
                         target: None,
                         content: None,
                         encoding: None,
-                        recursive: false,
+                        recursive: None,
                         max_depth: None,
                         mode: None,
                         uid: None,
@@ -8841,7 +9027,7 @@ ykAheWCsAteSEWVc0w==\n\
                         target: None,
                         content: None,
                         encoding: None,
-                        recursive: false,
+                        recursive: None,
                         max_depth: None,
                         mode: None,
                         uid: None,
@@ -8917,25 +9103,19 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/etc"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("memory"),
-                                config: json!({}).to_string(),
+                                config: json!({}).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("dispatch configure vm");
@@ -8949,7 +9129,7 @@ ykAheWCsAteSEWVc0w==\n\
                 other => panic!("expected configured response, got {other:?}"),
             }
         }
-        fn guest_mount_request_default_deny_rejects_without_changing_operator_mounts() {
+        fn guest_mount_request_explicit_deny_rejects_without_changing_operator_mounts() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -8961,7 +9141,7 @@ ykAheWCsAteSEWVc0w==\n\
                         GuestRuntimeKind::JavaScript,
                         std::collections::HashMap::new(),
                         Default::default(),
-                        None,
+                        Some(PermissionsPolicy::deny_all()),
                     )),
                 ))
                 .expect("create vm");
@@ -8986,25 +9166,19 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("memory"),
-                                config: json!({}).to_string(),
+                                config: json!({}).to_string().into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure operator mount");
@@ -9040,7 +9214,7 @@ ykAheWCsAteSEWVc0w==\n\
                     MemoryFileSystem::new(),
                     MountOptions::new("memory"),
                 )
-                .expect_err("guest mount under default-deny should be rejected");
+                .expect_err("guest mount under explicit deny should be rejected");
             assert_eq!(mount_error.code(), "EACCES");
 
             let mounts_after_guest_request = sidecar
@@ -9143,29 +9317,24 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "hostPath": host_dir,
                                     "readOnly": false,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure host_dir mount");
@@ -9211,14 +9380,19 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-python"),
+                        process_id: Some(String::from("proc-python")),
                         command: None,
                         runtime: Some(GuestRuntimeKind::Python),
                         entrypoint: Some(String::from("print('hello from python')")),
                         args: Vec::new(),
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: None,
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch python execute");
@@ -9290,29 +9464,24 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/__secure_exec/commands/0"),
-                            read_only: true,
+                            read_only: Some(true),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "hostPath": command_root,
                                     "readOnly": true,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure command mount");
@@ -9322,14 +9491,19 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-command-wasm"),
+                        process_id: Some(String::from("proc-command-wasm")),
                         command: Some(String::from("hello")),
                         runtime: None,
                         entrypoint: None,
                         args: Vec::new(),
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: None,
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch wasm command execute");
@@ -9390,29 +9564,24 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/__secure_exec/commands/0"),
-                            read_only: true,
+                            read_only: Some(true),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "hostPath": command_root,
                                     "readOnly": true,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure command mount");
@@ -9422,14 +9591,19 @@ ykAheWCsAteSEWVc0w==\n\
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-command-wasm-timeout"),
+                        process_id: Some(String::from("proc-command-wasm-timeout")),
                         command: Some(String::from("spin")),
                         runtime: None,
                         entrypoint: None,
                         args: Vec::new(),
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: None,
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch wasm command execute");
@@ -9474,24 +9648,48 @@ ykAheWCsAteSEWVc0w==\n\
                 PermissionsPolicy::allow_all(),
             )
             .expect("create vm B");
+            configure_host_fixture_mount(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_a,
+                4,
+                "/workspace",
+                &cwd_a,
+                true,
+            );
+            configure_host_fixture_mount(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_b,
+                5,
+                "/workspace",
+                &cwd_b,
+                true,
+            );
 
-            for (request_id, vm_id, process_id, entrypoint) in [
-                (6, &vm_a, "proc-wasm-a", cwd_a.join("guest.wasm")),
-                (7, &vm_b, "proc-wasm-b", cwd_b.join("guest.wasm")),
-            ] {
+            for (request_id, vm_id, process_id) in
+                [(6, &vm_a, "proc-wasm-a"), (7, &vm_b, "proc-wasm-b")]
+            {
                 let response = sidecar
                     .dispatch_blocking(request(
                         request_id,
                         OwnershipScope::vm(&connection_id, &session_id, vm_id),
                         RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                            process_id: String::from(process_id),
+                            process_id: Some(String::from(process_id)),
                             command: None,
                             runtime: Some(GuestRuntimeKind::WebAssembly),
-                            entrypoint: Some(entrypoint.to_string_lossy().into_owned()),
+                            entrypoint: Some(String::from("/workspace/guest.wasm")),
                             args: Vec::new(),
-                            env: std::collections::HashMap::new(),
+                            env: None,
                             cwd: None,
                             wasm_permission_tier: None,
+                            pty: None,
+                            shell_command: None,
+                            keep_stdin_open: None,
+                            timeout_ms: None,
+                            capture_output: None,
                         }),
                     ))
                     .expect("dispatch wasm execute");
@@ -9531,12 +9729,11 @@ ykAheWCsAteSEWVc0w==\n\
             );
         }
         fn wasm_path_open_read_goes_through_kernel_filesystem_permissions() {
-            let cwd = temp_dir("agentos-native-sidecar-wasm-fs-permissions");
+            let fixture = temp_dir("agentos-native-sidecar-wasm-fs-permissions");
             write_fixture(
-                &cwd.join("guest.wasm"),
+                &fixture.join("guest.wasm"),
                 wasm_expect_read_errno_module("secret.txt", 2),
             );
-
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -9544,36 +9741,71 @@ ykAheWCsAteSEWVc0w==\n\
                 &mut sidecar,
                 &connection_id,
                 &session_id,
-                capability_permissions(&[
-                    ("fs", PermissionMode::Allow),
-                    ("fs.read", PermissionMode::Deny),
-                    ("child_process.spawn", PermissionMode::Allow),
-                ]),
+                PermissionsPolicy {
+                    fs: Some(FsPermissionScope::FsPermissionRuleSet(
+                        FsPermissionRuleSet {
+                            default: Some(PermissionMode::Allow),
+                            rules: vec![FsPermissionRule {
+                                mode: PermissionMode::Deny,
+                                operations: Some(vec![String::from("read")]),
+                                paths: Some(vec![String::from("/secret.txt")]),
+                            }],
+                        },
+                    )),
+                    network: None,
+                    child_process: Some(PatternPermissionScope::PatternPermissionRuleSet(
+                        PatternPermissionRuleSet {
+                            default: Some(PermissionMode::Deny),
+                            rules: vec![PatternPermissionRule {
+                                mode: PermissionMode::Allow,
+                                operations: Some(vec![String::from("spawn")]),
+                                patterns: Some(vec![String::from("**")]),
+                            }],
+                        },
+                    )),
+                    process: None,
+                    env: None,
+                    binding: None,
+                },
             )
             .expect("create vm");
 
-            sidecar
-                .vms
-                .get_mut(&vm_id)
-                .expect("wasm vm")
-                .kernel
-                .filesystem_mut()
-                .write_file("/secret.txt", b"should-not-read".to_vec())
-                .expect("seed denied-read fixture");
+            configure_host_fixture_mount(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                5,
+                "/fixture",
+                &fixture,
+                true,
+            );
+            {
+                let vm = sidecar.vms.get_mut(&vm_id).expect("wasm vm");
+                vm.kernel
+                    .filesystem_mut()
+                    .write_file("/secret.txt", b"should-not-read".to_vec())
+                    .expect("seed denied-read fixture");
+            }
 
             let response = sidecar
                 .dispatch_blocking(request(
                     6,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-wasm-fs-permission"),
+                        process_id: Some(String::from("proc-wasm-fs-permission")),
                         command: None,
                         runtime: Some(GuestRuntimeKind::WebAssembly),
-                        entrypoint: Some(cwd.join("guest.wasm").to_string_lossy().into_owned()),
+                        entrypoint: Some(String::from("/fixture/guest.wasm")),
                         args: Vec::new(),
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: Some(String::from("/")),
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch wasm execute");
@@ -9594,12 +9826,11 @@ ykAheWCsAteSEWVc0w==\n\
         }
 
         fn wasm_path_open_write_goes_through_kernel_filesystem_permissions() {
-            let cwd = temp_dir("agentos-native-sidecar-wasm-fs-write-permissions");
+            let fixture = temp_dir("agentos-native-sidecar-wasm-fs-write-permissions");
             write_fixture(
-                &cwd.join("guest.wasm"),
+                &fixture.join("guest.wasm"),
                 wasm_expect_write_open_errno_module("created.txt", 2),
             );
-
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
                 authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
@@ -9615,20 +9846,35 @@ ykAheWCsAteSEWVc0w==\n\
                 ]),
             )
             .expect("create vm");
+            configure_host_fixture_mount(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                5,
+                "/fixture",
+                &fixture,
+                true,
+            );
 
             let response = sidecar
                 .dispatch_blocking(request(
                     6,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-wasm-fs-write-permission"),
+                        process_id: Some(String::from("proc-wasm-fs-write-permission")),
                         command: None,
                         runtime: Some(GuestRuntimeKind::WebAssembly),
-                        entrypoint: Some(cwd.join("guest.wasm").to_string_lossy().into_owned()),
+                        entrypoint: Some(String::from("/fixture/guest.wasm")),
                         args: Vec::new(),
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: Some(String::from("/")),
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch wasm execute");
@@ -9786,29 +10032,24 @@ ykAheWCsAteSEWVc0w==\n\
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/__secure_exec/commands/0"),
-                            read_only: true,
+                            read_only: Some(true),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "hostPath": command_root,
                                     "readOnly": true,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure command-path mounts");
@@ -9898,15 +10139,9 @@ ykAheWCsAteSEWVc0w==\n\
                     ],
                 ),
             ] {
-                let resolved = sidecar
-                    .resolve_javascript_child_process_execution(
-                        vm,
-                        &vm.guest_env,
-                        &vm.guest_cwd,
-                        &vm.host_cwd,
-                        &request,
-                    )
-                    .unwrap_or_else(|error| panic!("failed to resolve {command}: {error}"));
+                let resolved =
+                    resolve_javascript_child_process_for_test(&mut sidecar, &vm_id, &request)
+                        .unwrap_or_else(|error| panic!("failed to resolve {command}: {error}"));
                 assert_eq!(
                     resolved.runtime,
                     GuestRuntimeKind::WebAssembly,
@@ -9923,11 +10158,9 @@ ykAheWCsAteSEWVc0w==\n\
                 );
             }
 
-            let missing = sidecar.resolve_javascript_child_process_execution(
-                vm,
-                &vm.guest_env,
-                &vm.guest_cwd,
-                &vm.host_cwd,
+            let missing = resolve_javascript_child_process_for_test(
+                &mut sidecar,
+                &vm_id,
                 &crate::protocol::JavascriptChildProcessSpawnRequest {
                     command: String::from("definitely-not-a-command"),
                     args: Vec::new(),
@@ -9968,14 +10201,7 @@ ykAheWCsAteSEWVc0w==\n\
                     ..Default::default()
                 },
             };
-            let error = sidecar
-                .resolve_javascript_child_process_execution(
-                    vm,
-                    &vm.guest_env,
-                    &vm.guest_cwd,
-                    &vm.host_cwd,
-                    &request,
-                )
+            let error = resolve_javascript_child_process_for_test(&mut sidecar, &vm_id, &request)
                 .expect_err("shell-mode command without guest sh must fail instead of tokenizing");
             assert!(
                 error.to_string().contains("/bin/sh"),
@@ -10061,26 +10287,22 @@ ykAheWCsAteSEWVc0w==\n\
                 ))
                 .expect("register math toolkit");
 
-            let vm = sidecar.vms.get(&vm_id).expect("configured vm");
-            let resolved = sidecar
-                .resolve_javascript_child_process_execution(
-                    vm,
-                    &vm.guest_env,
-                    &vm.guest_cwd,
-                    &vm.host_cwd,
-                    &crate::protocol::JavascriptChildProcessSpawnRequest {
-                        command: String::from("/usr/local/bin/agentos-math"),
-                        args: vec![
-                            String::from("add"),
-                            String::from("--a"),
-                            String::from("2"),
-                            String::from("--b"),
-                            String::from("3"),
-                        ],
-                        options: crate::protocol::JavascriptChildProcessSpawnOptions::default(),
-                    },
-                )
-                .expect("resolve toolkit child process");
+            let resolved = resolve_javascript_child_process_for_test(
+                &mut sidecar,
+                &vm_id,
+                &crate::protocol::JavascriptChildProcessSpawnRequest {
+                    command: String::from("/usr/local/bin/agentos-math"),
+                    args: vec![
+                        String::from("add"),
+                        String::from("--a"),
+                        String::from("2"),
+                        String::from("--b"),
+                        String::from("3"),
+                    ],
+                    options: crate::protocol::JavascriptChildProcessSpawnOptions::default(),
+                },
+            )
+            .expect("resolve toolkit child process");
 
             assert!(
                 resolved.tool_command,
@@ -10178,26 +10400,22 @@ ykAheWCsAteSEWVc0w==\n\
                 ))
                 .expect("register math toolkit");
 
-            let vm = sidecar.vms.get(&vm_id).expect("configured vm");
-            let resolved = sidecar
-                .resolve_javascript_child_process_execution(
-                    vm,
-                    &vm.guest_env,
-                    &vm.guest_cwd,
-                    &vm.host_cwd,
-                    &crate::protocol::JavascriptChildProcessSpawnRequest {
-                        command: String::from("/__secure_exec/commands/0/agentos-math"),
-                        args: vec![
-                            String::from("add"),
-                            String::from("--a"),
-                            String::from("2"),
-                            String::from("--b"),
-                            String::from("3"),
-                        ],
-                        options: crate::protocol::JavascriptChildProcessSpawnOptions::default(),
-                    },
-                )
-                .expect("resolve toolkit child process");
+            let resolved = resolve_javascript_child_process_for_test(
+                &mut sidecar,
+                &vm_id,
+                &crate::protocol::JavascriptChildProcessSpawnRequest {
+                    command: String::from("/__secure_exec/commands/0/agentos-math"),
+                    args: vec![
+                        String::from("add"),
+                        String::from("--a"),
+                        String::from("2"),
+                        String::from("--b"),
+                        String::from("3"),
+                    ],
+                    options: crate::protocol::JavascriptChildProcessSpawnOptions::default(),
+                },
+            )
+            .expect("resolve toolkit child process");
 
             assert!(
                 resolved.tool_command,
@@ -10214,6 +10432,233 @@ ykAheWCsAteSEWVc0w==\n\
                     String::from("--b"),
                     String::from("3"),
                 ]
+            );
+        }
+        fn execute_tool_resolves_relative_cwd_and_rejects_invalid_cwds_before_admission() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+
+            {
+                let vm = sidecar.vms.get_mut(&vm_id).expect("created vm");
+                vm.kernel
+                    .mkdir("/workspace/project", true)
+                    .expect("create relative cwd");
+                vm.kernel
+                    .write_file("/workspace/not-a-directory", b"file".to_vec())
+                    .expect("create cwd file");
+            }
+            let child_cwd_error = {
+                resolve_javascript_child_process_for_test(
+                    &mut sidecar,
+                    &vm_id,
+                    &crate::protocol::JavascriptChildProcessSpawnRequest {
+                        command: String::from("node"),
+                        args: vec![String::from("-e"), String::new()],
+                        options: crate::protocol::JavascriptChildProcessSpawnOptions {
+                            cwd: Some(String::new()),
+                            ..Default::default()
+                        },
+                    },
+                )
+                .expect_err("empty child cwd must fail")
+            };
+            assert!(
+                matches!(child_cwd_error, SidecarError::Kernel(ref message) if message.contains("ENOENT")),
+                "unexpected child cwd error: {child_cwd_error:?}"
+            );
+            sidecar
+                .dispatch_blocking(request(
+                    9,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::RegisterHostCallbacks(test_toolkit_payload(
+                        "math",
+                        "Math utilities",
+                        "add",
+                    )),
+                ))
+                .expect("register math toolkit");
+
+            let response = sidecar
+                .dispatch_blocking(request(
+                    10,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        process_id: Some(String::from("proc-relative-tool-cwd")),
+                        command: Some(String::from("agentos-math")),
+                        runtime: None,
+                        entrypoint: None,
+                        args: vec![
+                            String::from("add"),
+                            String::from("--a"),
+                            String::from("2"),
+                            String::from("--b"),
+                            String::from("3"),
+                        ],
+                        env: None,
+                        cwd: Some(String::from("project")),
+                        wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
+                    }),
+                ))
+                .expect("execute tool with relative cwd");
+            assert!(matches!(
+                response.response.payload,
+                ResponsePayload::ProcessStarted(_)
+            ));
+            assert_eq!(
+                sidecar
+                    .vms
+                    .get(&vm_id)
+                    .expect("created vm")
+                    .active_processes
+                    .get("proc-relative-tool-cwd")
+                    .expect("active tool process")
+                    .guest_cwd,
+                "/workspace/project"
+            );
+
+            for (request_id, process_id, cwd, expected_errno) in [
+                (11, "proc-empty-cwd", "", "ENOENT"),
+                (12, "proc-file-cwd", "/workspace/not-a-directory", "ENOTDIR"),
+            ] {
+                let response = sidecar
+                    .dispatch_blocking(request(
+                        request_id,
+                        OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                        RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                            process_id: Some(String::from(process_id)),
+                            command: Some(String::from("agentos-math")),
+                            runtime: None,
+                            entrypoint: None,
+                            args: vec![String::from("add")],
+                            env: None,
+                            cwd: Some(String::from(cwd)),
+                            wasm_permission_tier: None,
+                            pty: None,
+                            shell_command: None,
+                            keep_stdin_open: None,
+                            timeout_ms: None,
+                            capture_output: None,
+                        }),
+                    ))
+                    .expect("dispatch invalid cwd");
+                assert!(
+                    matches!(
+                        response.response.payload,
+                        ResponsePayload::Rejected(ref rejected)
+                            if rejected.code == "kernel_error"
+                                && rejected.message.contains(expected_errno)
+                    ),
+                    "unexpected cwd response: {:?}",
+                    response.response.payload
+                );
+                assert!(
+                    !sidecar
+                        .vms
+                        .get(&vm_id)
+                        .expect("created vm")
+                        .active_processes
+                        .contains_key(process_id),
+                    "invalid cwd must not admit a process"
+                );
+            }
+
+            let response = sidecar
+                .dispatch_blocking(request(
+                    13,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        process_id: Some(String::from("proc-direct-file-cwd")),
+                        command: Some(String::from("node")),
+                        runtime: Some(GuestRuntimeKind::JavaScript),
+                        entrypoint: Some(String::from("/workspace/main.js")),
+                        args: Vec::new(),
+                        env: None,
+                        cwd: Some(String::from("/workspace/not-a-directory")),
+                        wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
+                    }),
+                ))
+                .expect("dispatch direct command with invalid cwd");
+            assert!(matches!(
+                response.response.payload,
+                ResponsePayload::Rejected(ref rejected)
+                    if rejected.code == "kernel_error"
+                        && rejected.message.contains("ENOTDIR")
+            ));
+            assert!(
+                !sidecar
+                    .vms
+                    .get(&vm_id)
+                    .expect("created vm")
+                    .active_processes
+                    .contains_key("proc-direct-file-cwd"),
+                "direct execution must reject invalid cwd before process admission"
+            );
+
+            let host_nested_cwd = sidecar
+                .vms
+                .get(&vm_id)
+                .expect("created vm")
+                .host_cwd
+                .join("host-nested");
+            fs::create_dir_all(&host_nested_cwd).expect("create host-only cwd");
+            let host_nested_cwd = host_nested_cwd.to_string_lossy().into_owned();
+            let response = sidecar
+                .dispatch_blocking(request(
+                    14,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::Execute(crate::protocol::ExecuteRequest {
+                        process_id: Some(String::from("proc-host-cwd")),
+                        command: Some(String::from("node")),
+                        runtime: None,
+                        entrypoint: None,
+                        args: vec![String::from("-e"), String::new()],
+                        env: None,
+                        cwd: Some(host_nested_cwd.clone()),
+                        wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
+                    }),
+                ))
+                .expect("dispatch host-looking guest cwd");
+            assert!(
+                matches!(
+                    response.response.payload,
+                    ResponsePayload::Rejected(ref rejected)
+                        if rejected.code == "kernel_error"
+                            && rejected.message.contains("ENOENT")
+                ),
+                "unexpected host-looking cwd response: {:?}",
+                response.response.payload
+            );
+            let vm = sidecar.vms.get_mut(&vm_id).expect("created vm");
+            assert!(
+                !vm.active_processes.contains_key("proc-host-cwd"),
+                "host-looking cwd must fail before process admission"
+            );
+            assert!(
+                !vm.kernel.exists(&host_nested_cwd).unwrap_or(false),
+                "host-looking cwd must not be manufactured in the guest"
             );
         }
         fn tools_register_host_callbacks_rejects_duplicate_names_without_replacing_existing_toolkit(
@@ -10368,8 +10813,6 @@ ykAheWCsAteSEWVc0w==\n\
                         RequestPayload::RegisterHostCallbacks(RegisterHostCallbacksRequest {
                             name: format!("toolkit-{toolkit_index}"),
                             description: String::from("Bounded test toolkit"),
-                            command_aliases: vec![format!("agentos-toolkit-{toolkit_index}")],
-                            registry_command_aliases: vec![format!("agentos-{toolkit_index}")],
                             callbacks: tools,
                         }),
                     ))
@@ -10501,8 +10944,8 @@ ykAheWCsAteSEWVc0w==\n\
                         default: Some(PermissionMode::Deny),
                         rules: vec![PatternPermissionRule {
                             mode: PermissionMode::Allow,
-                            operations: vec![String::from("invoke")],
-                            patterns: vec![String::from("math:add")],
+                            operations: Some(vec![String::from("invoke")]),
+                            patterns: Some(vec![String::from("math:add")]),
                         }],
                     },
                 )),
@@ -10593,8 +11036,8 @@ ykAheWCsAteSEWVc0w==\n\
                         default: Some(PermissionMode::Deny),
                         rules: vec![PatternPermissionRule {
                             mode: PermissionMode::Allow,
-                            operations: vec![String::from("invoke")],
-                            patterns: vec![String::from("math:add")],
+                            operations: Some(vec![String::from("invoke")]),
+                            patterns: Some(vec![String::from("math:add")]),
                         }],
                     },
                 )),
@@ -10702,8 +11145,8 @@ ykAheWCsAteSEWVc0w==\n\
                         default: Some(PermissionMode::Deny),
                         rules: vec![PatternPermissionRule {
                             mode: PermissionMode::Allow,
-                            operations: vec![String::from("invoke")],
-                            patterns: vec![String::from("math:add")],
+                            operations: Some(vec![String::from("invoke")]),
+                            patterns: Some(vec![String::from("math:add")]),
                         }],
                     },
                 )),
@@ -10827,29 +11270,24 @@ process.stdout.write(`${JSON.stringify({
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: vec![MountDescriptor {
+                        mounts: Some(vec![MountDescriptor {
                             guest_path: String::from("/workspace"),
-                            read_only: false,
+                            read_only: Some(false),
                             plugin: MountPluginDescriptor {
                                 id: String::from("host_dir"),
                                 config: json!({
                                     "hostPath": workspace,
                                     "readOnly": false,
                                 })
-                                .to_string(),
+                                .to_string()
+                                .into(),
                             },
-                        }],
-                        software: Vec::new(),
+                        }]),
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: vec![4312],
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: Some(vec![4312]),
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure workspace mount");
@@ -10859,14 +11297,19 @@ process.stdout.write(`${JSON.stringify({
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-command-js"),
+                        process_id: Some(String::from("proc-command-js")),
                         command: Some(String::from("./entry.js")),
                         runtime: None,
                         entrypoint: None,
                         args: Vec::new(),
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: Some(String::from("/workspace")),
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch javascript command execute");
@@ -10962,11 +11405,13 @@ if (child.status !== 0) {
                 fs::set_permissions(package.join("adapter.mjs"), perms).expect("chmod adapter.mjs");
             }
 
-            write_agentos_package_tar(&package);
-            package
+            let source_tar = write_agentos_package_tar(&package);
+            let packed = package.join("package.aospkg");
+            pack_aospkg_from_tar(&source_tar, &packed).expect("pack agentOS package fixture");
+            packed
         }
 
-        fn write_agentos_package_tar(package: &Path) {
+        fn write_agentos_package_tar(package: &Path) -> PathBuf {
             let tar_path = package.join("package.tar");
             let _ = fs::remove_file(&tar_path);
             let file = fs::File::create(&tar_path).expect("create package tar");
@@ -10984,6 +11429,7 @@ if (child.status !== 0) {
                 .expect("finish package tar file")
                 .flush()
                 .expect("flush package tar");
+            tar_path
         }
 
         fn append_agentos_package_tree(
@@ -11042,6 +11488,103 @@ if (child.status !== 0) {
         }
 
         #[test]
+        fn configure_vm_preserves_sidecar_owned_package_mounts_when_clients_omit_packages() {
+            let package = write_agentos_package_launch_fixture();
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+
+            let configure =
+                |mounts: Option<Vec<MountDescriptor>>,
+                 packages: Option<Vec<crate::protocol::PackageDescriptor>>| {
+                    RequestPayload::ConfigureVm(ConfigureVmRequest {
+                        mounts,
+                        permissions: None,
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages,
+                        packages_mount_at: None,
+                    })
+                };
+
+            let initial_mounts = match sidecar
+                .dispatch_blocking(request(
+                    4,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    configure(
+                        Some(vec![MountDescriptor {
+                            guest_path: String::from("/operator"),
+                            read_only: Some(false),
+                            plugin: MountPluginDescriptor {
+                                id: String::from("memory"),
+                                config: json!({}).to_string().into(),
+                            },
+                        }]),
+                        Some(vec![crate::protocol::PackageDescriptor::PackagePath(
+                            crate::protocol::PackagePath {
+                                path: package.to_string_lossy().into_owned(),
+                            },
+                        )]),
+                    ),
+                ))
+                .expect("configure package projection")
+                .response
+                .payload
+            {
+                ResponsePayload::VmConfigured(response) => response.applied_mounts,
+                other => panic!("unexpected configure response: {other:?}"),
+            };
+            assert!(
+                initial_mounts >= 4,
+                "expected operator and package leaf mounts"
+            );
+
+            let preserved_mounts = match sidecar
+                .dispatch_blocking(request(
+                    5,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    configure(None, None),
+                ))
+                .expect("reconfigure without replaying packages")
+                .response
+                .payload
+            {
+                ResponsePayload::VmConfigured(response) => response.applied_mounts,
+                other => panic!("unexpected reconfigure response: {other:?}"),
+            };
+            assert_eq!(preserved_mounts, initial_mounts);
+
+            let package_only_mounts = match sidecar
+                .dispatch_blocking(request(
+                    6,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    configure(Some(Vec::new()), None),
+                ))
+                .expect("explicitly clear operator mounts without replaying packages")
+                .response
+                .payload
+            {
+                ResponsePayload::VmConfigured(response) => response.applied_mounts,
+                other => panic!("unexpected clear-mount response: {other:?}"),
+            };
+            assert_eq!(package_only_mounts + 1, initial_mounts);
+            assert!(sidecar
+                .vms
+                .get(&vm_id)
+                .expect("configured vm")
+                .configuration
+                .operator_mounts
+                .is_empty());
+        }
+
+        #[test]
         fn agentos_packages_launch_keeps_adapter_and_child_entrypoints_guest_native() {
             clean_legacy_agentos_projection_temps();
             let package = write_agentos_package_launch_fixture();
@@ -11061,20 +11604,16 @@ if (child.status !== 0) {
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: Vec::new(),
-                        software: Vec::new(),
+                        mounts: None,
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: Vec::new(),
-                        packages: vec![crate::protocol::PackageDescriptor {
-                            path: package.to_string_lossy().into_owned(),
-                        }],
-                        packages_mount_at: String::from("/opt/agentos"),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: Some(vec![crate::protocol::PackageDescriptor::PackagePath(
+                            crate::protocol::PackagePath {
+                                path: package.to_string_lossy().into_owned(),
+                            },
+                        )]),
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure agentos package mount")
@@ -11095,14 +11634,19 @@ if (child.status !== 0) {
                     5,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-agentos-package-launch"),
+                        process_id: Some(String::from("proc-agentos-package-launch")),
                         command: Some(String::from("/opt/agentos/bin/x")),
                         runtime: None,
                         entrypoint: None,
                         args: Vec::new(),
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: Some(String::from("/")),
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch agentos package execute");
@@ -11162,7 +11706,7 @@ if (child.status !== 0) {
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-command-node-eval"),
+                        process_id: Some(String::from("proc-command-node-eval")),
                         command: Some(String::from("node")),
                         runtime: None,
                         entrypoint: None,
@@ -11170,9 +11714,14 @@ if (child.status !== 0) {
                             String::from("-e"),
                             String::from("process.stdout.write('node-eval-ok\\n')"),
                         ],
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: None,
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch node eval execute");
@@ -11207,14 +11756,19 @@ if (child.status !== 0) {
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-command-missing"),
+                        process_id: Some(String::from("proc-command-missing")),
                         command: Some(String::from("definitely-not-a-command")),
                         runtime: None,
                         entrypoint: None,
                         args: Vec::new(),
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: None,
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch missing command execute");
@@ -13095,14 +13649,19 @@ console.log(seen.join("\n"));
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::Execute(crate::protocol::ExecuteRequest {
-                        process_id: String::from("proc-js-import-fresh"),
+                        process_id: Some(String::from("proc-js-import-fresh")),
                         command: Some(String::from("node")),
                         runtime: None,
                         entrypoint: None,
                         args: vec![String::from("/app/main.js")],
-                        env: std::collections::HashMap::new(),
+                        env: None,
                         cwd: None,
                         wasm_permission_tier: None,
+                        pty: None,
+                        shell_command: None,
+                        keep_stdin_open: None,
+                        timeout_ms: None,
+                        capture_output: None,
                     }),
                 ))
                 .expect("dispatch import fresh execute");
@@ -16668,7 +17227,6 @@ console.log(JSON.stringify(result || { data: "", error: "missing-result", reques
                     placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
                         pool: None,
                     }),
-                    metadata: std::collections::HashMap::new(),
                 }),
             );
 
@@ -17797,21 +18355,30 @@ console.log(JSON.stringify(summary));
                     4,
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::ConfigureVm(ConfigureVmRequest {
-                        mounts: Vec::new(),
-                        software: Vec::new(),
+                        mounts: None,
                         permissions: None,
-                        module_access_cwd: None,
-                        instructions: Vec::new(),
-                        projected_modules: Vec::new(),
-                        command_permissions: std::collections::HashMap::new(),
-                        loopback_exempt_ports: vec![port],
-                        packages: Vec::new(),
-                        packages_mount_at: String::new(),
-                        bootstrap_commands: Vec::new(),
-                        tool_shim_commands: Vec::new(),
+                        command_permissions: None,
+                        loopback_exempt_ports: Some(vec![port]),
+                        packages: None,
+                        packages_mount_at: None,
                     }),
                 ))
                 .expect("configure loopback-exempt host listener port");
+
+            sidecar
+                .dispatch_blocking(request(
+                    5,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::ConfigureVm(ConfigureVmRequest {
+                        mounts: None,
+                        permissions: None,
+                        command_permissions: None,
+                        loopback_exempt_ports: None,
+                        packages: None,
+                        packages_mount_at: None,
+                    }),
+                ))
+                .expect("mount-only configure preserves loopback override");
 
             let cwd = temp_dir("agentos-native-sidecar-js-http-external-cwd");
             write_fixture(
@@ -21114,8 +21681,6 @@ console.log(JSON.stringify({
             configure_vm_applies_read_only_mount_wrappers();
             configure_vm_instantiates_host_dir_mounts_through_the_plugin_registry();
             configure_vm_passes_resource_read_limits_to_host_dir_mounts();
-            configure_vm_passes_resource_read_limits_to_module_access_mounts();
-            configure_vm_rejects_module_access_root_symlink_to_non_node_modules();
             configure_vm_js_bridge_mount_dispatches_filesystem_calls_via_sidecar_requests();
             configure_vm_js_bridge_mount_rejects_oversized_read_payloads();
             configure_vm_js_bridge_mount_rejects_pread_payloads_above_requested_length();
@@ -21128,7 +21693,8 @@ console.log(JSON.stringify({
             bridge_permissions_map_symlink_operations_to_symlink_access();
             vm_limits_config_reads_filesystem_limits();
             create_vm_applies_filesystem_permission_descriptors_to_kernel_access();
-            create_vm_without_permissions_defaults_to_static_deny_all();
+            create_vm_without_permissions_defaults_to_static_allow_all();
+            create_vm_bootstrap_needs_no_guest_filesystem_rights();
             configure_vm_rollback_restore_failure_falls_back_to_static_deny_all();
             toolkit_registration_rollback_restore_failure_keeps_registry_consistent();
             create_vm_rejects_permission_rules_with_empty_operations();
@@ -21136,7 +21702,7 @@ console.log(JSON.stringify({
             configure_vm_mounts_bypass_guest_fs_write_policy();
             guest_filesystem_link_and_truncate_preserve_hard_link_semantics();
             configure_vm_sensitive_mounts_bypass_guest_fs_mount_sensitive_policy();
-            guest_mount_request_default_deny_rejects_without_changing_operator_mounts();
+            guest_mount_request_explicit_deny_rejects_without_changing_operator_mounts();
             scoped_host_filesystem_unscoped_target_requires_exact_guest_root_prefix();
             scoped_host_filesystem_realpath_preserves_paths_outside_guest_root();
             host_filesystem_realpath_fails_closed_on_circular_symlinks();
@@ -21154,6 +21720,7 @@ console.log(JSON.stringify({
             javascript_child_process_resolves_path_resolved_tool_commands_as_tools();
             javascript_child_process_spawns_internal_tool_command_paths();
             javascript_child_process_resolves_internal_tool_command_paths_as_tools();
+            execute_tool_resolves_relative_cwd_and_rejects_invalid_cwds_before_admission();
             tools_register_host_callbacks_rejects_duplicate_names_without_replacing_existing_toolkit();
             tools_register_host_callbacks_rejects_registry_overflow_without_mutating_vm();
             tools_register_host_callbacks_rejects_total_tool_overflow_without_mutating_vm();
@@ -21235,6 +21802,11 @@ console.log(JSON.stringify({
         fn service_toolkit_registry_is_bounded() {
             tools_register_host_callbacks_rejects_registry_overflow_without_mutating_vm();
             tools_register_host_callbacks_rejects_total_tool_overflow_without_mutating_vm();
+        }
+
+        #[test]
+        fn service_execute_cwd_matches_linux_before_process_admission() {
+            execute_tool_resolves_relative_cwd_and_rejects_invalid_cwds_before_admission();
         }
 
         #[test]
@@ -21472,6 +22044,26 @@ console.log(JSON.stringify({
         }
 
         #[test]
+        fn execute_javascript_capture_limit_terminal_event_regression() {
+            run_isolated_service_test("execute-javascript-capture-limit-terminal");
+        }
+
+        #[test]
+        fn execute_vm_aggregate_capture_limit_terminal_event_regression() {
+            run_isolated_service_test("execute-vm-aggregate-capture-limit-terminal");
+        }
+
+        #[test]
+        fn execute_python_capture_limit_terminal_event_regression() {
+            run_isolated_service_test("execute-python-capture-limit-terminal");
+        }
+
+        #[test]
+        fn execute_wasm_capture_limit_terminal_event_regression() {
+            run_isolated_service_test("execute-wasm-capture-limit-terminal");
+        }
+
+        #[test]
         fn __service_isolated_runner() {
             let Ok(test_name) = std::env::var(ISOLATED_SERVICE_TEST_ENV) else {
                 return;
@@ -21588,6 +22180,18 @@ console.log(JSON.stringify({
                 }
                 "loopback-tls-https-pending-write" => {
                     javascript_loopback_tls_https_get_buffers_handshake_pending_write_work();
+                }
+                "execute-javascript-capture-limit-terminal" => {
+                    execute_javascript_capture_limit_is_emitted_by_sidecar_terminal_event();
+                }
+                "execute-vm-aggregate-capture-limit-terminal" => {
+                    execute_vm_aggregate_capture_limit_is_emitted_by_sidecar_terminal_event();
+                }
+                "execute-python-capture-limit-terminal" => {
+                    execute_python_capture_limit_is_emitted_by_sidecar_terminal_event();
+                }
+                "execute-wasm-capture-limit-terminal" => {
+                    execute_wasm_capture_limit_is_emitted_by_sidecar_terminal_event();
                 }
                 other => panic!("unknown isolated service test {other}"),
             }

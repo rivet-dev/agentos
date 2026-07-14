@@ -45,7 +45,7 @@ registry/native/c/vendor/
 registry/native/c/libs/
 registry/native/c/.cache/
 registry/native/c/sysroot/
-registry/software/coreutils/bin/
+registry/software/*/bin/
 registry/software/*/wasm/
 registry/software/*/agentos-package.meta.json
 registry/.last-publish-hash
@@ -59,6 +59,9 @@ scripts/ralph/.last-branch
 scripts/ralph/prd.json
 scripts/ralph/todo/prd.json
 scripts/ralph/progress.txt
+
+# Local benchmark outputs
+scripts/benchmarks/results/
 scripts/ralph/reviews/
 scripts/ralph/.codex-last-msg-*
 

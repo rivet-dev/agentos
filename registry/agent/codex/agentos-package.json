@@ -1,4 +1,11 @@
 {
+	"name": "codex",
+	"agent": {
+		"acpEntrypoint": "codex-acp",
+		"env": {
+			"HOME": "/home/agentos"
+		}
+	},
 	"registry": {
 		"title": "Codex",
 		"description": "Run OpenAI's Codex coding agent inside agentOS with programmatic API access.",

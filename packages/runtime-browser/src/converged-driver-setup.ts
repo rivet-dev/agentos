@@ -9,11 +9,12 @@
 // bare `@rivet-dev/agentos-runtime-core/*` imports these modules need — those resolve only
 // when the converged runtime is esbuild-bundled.
 
-import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
 import type { ProtocolFramePayloadCodec } from "@rivet-dev/agentos-runtime-core/protocol-frames";
+import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
+import type { LivePackageDescriptor } from "@rivet-dev/agentos-runtime-core/descriptors";
 import { isConvergedDgramBridgeOperation } from "./converged-dgram-bridge.js";
-import type { ConvergedSyncResponse } from "./converged-fs-bridge.js";
 import { ConvergedExecutorSession } from "./converged-executor-session.js";
+import type { ConvergedSyncResponse } from "./converged-fs-bridge.js";
 import { ConvergedModuleServicer } from "./converged-module-servicer.js";
 import { isConvergedNetBridgeOperation } from "./converged-net-bridge.js";
 import { isConvergedPtyBridgeOperation } from "./converged-pty-bridge.js";
@@ -26,6 +27,8 @@ import { KernelBackedFilesystem } from "./kernel-backed-filesystem.js";
 export interface ConvergedServicerOptions {
 	pushFrame: (frame: Uint8Array) => Uint8Array;
 	config: CreateVmConfig;
+	packages?: readonly LivePackageDescriptor[];
+	packagesMountAt?: string;
 	codec?: ProtocolFramePayloadCodec;
 	// Sets the execution id the sidecar's execution host bridge will echo for the
 	// next `execute`, so a guest execution registers a kernel process under the
@@ -61,10 +64,6 @@ export interface ConvergedServicer {
 		args: readonly unknown[],
 		legacy: LegacySyncBridgeServicer,
 	): Promise<ConvergedSyncResponse>;
-	/** Snapshot the VM root filesystem (for host persistence, e.g. OPFS). */
-	snapshotRootFilesystem(): ReturnType<
-		ConvergedExecutorSession["snapshotRootFilesystem"]
-	>;
 }
 
 export function createConvergedServicer(
@@ -74,7 +73,12 @@ export function createConvergedServicer(
 		pushFrame: options.pushFrame,
 		codec: options.codec,
 	});
-	session.bootstrap({ runtime: "java_script", config: options.config });
+	session.bootstrap({
+		runtime: "java_script",
+		config: options.config,
+		packages: options.packages,
+		packagesMountAt: options.packagesMountAt,
+	});
 	const moduleServicer = new ConvergedModuleServicer(
 		new KernelBackedFilesystem(session.transportForVm()),
 	);
@@ -117,9 +121,6 @@ export function createConvergedServicer(
 				}
 				throw error;
 			}
-		},
-		snapshotRootFilesystem() {
-			return session.snapshotRootFilesystem();
 		},
 	};
 }

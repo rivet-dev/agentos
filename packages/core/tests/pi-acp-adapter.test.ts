@@ -34,7 +34,7 @@ console.log("agent:" + fs.existsSync("/root/node_modules/@mariozechner/pi-coding
 		let stdout = "";
 		let stderr = "";
 
-		const { pid } = vm.spawn("node", ["/tmp/pi-cli-projection.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/pi-cli-projection.mjs"], {
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);
 			},
@@ -58,7 +58,7 @@ console.log("agent:" + fs.existsSync("/root/node_modules/@mariozechner/pi-coding
 
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn("node", ["/tmp/undici-resolve.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/undici-resolve.mjs"], {
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);
 			},
@@ -80,7 +80,7 @@ console.log("agent:" + fs.existsSync("/root/node_modules/@mariozechner/pi-coding
 
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn("node", ["/tmp/undici-import.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/undici-import.mjs"], {
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);
 			},
@@ -136,7 +136,7 @@ console.log(stdout.trim());
 
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn("node", ["/tmp/parent-hello.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/parent-hello.mjs"], {
 			cwd: "/home/agentos",
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);
@@ -193,7 +193,7 @@ console.log(stdout.trim());
 
 		let stdout = "";
 		let stderr = "";
-		const { pid } = vm.spawn("node", ["/tmp/parent-undici.mjs"], {
+		const { pid } = await vm.spawn("node", ["/tmp/parent-undici.mjs"], {
 			cwd: "/home/agentos",
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);

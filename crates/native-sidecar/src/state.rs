@@ -4,9 +4,9 @@
 //! types, and other shared data structures extracted from service.rs.
 
 use crate::protocol::{
-    GuestRuntimeKind, MountDescriptor, ProjectedModuleDescriptor, RegisterHostCallbacksRequest,
-    SidecarRequestFrame, SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload,
-    SignalHandlerRegistration, SoftwareDescriptor, WasmPermissionTier,
+    GuestRuntimeKind, MountDescriptor, RegisterHostCallbacksRequest, SidecarRequestFrame,
+    SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload, SignalHandlerRegistration,
+    WasmPermissionTier,
 };
 use crate::wire::DEFAULT_MAX_FRAME_BYTES;
 use agentos_bridge::{BridgeTypes, FilesystemSnapshot};
@@ -18,7 +18,7 @@ use agentos_kernel::kernel::{KernelProcessHandle, KernelVm};
 use agentos_kernel::mount_table::MountTable;
 use agentos_kernel::root_fs::RootFilesystemMode;
 use agentos_kernel::socket_table::SocketId;
-use agentos_native_sidecar_core::VmLayerStore;
+use agentos_native_sidecar_core::{CapturedOutputState, SessionCloseOutcome, VmLayerStore};
 use agentos_vm_config as vm_config;
 use agentos_vm_config::PermissionsPolicy;
 use rusqlite::Connection;
@@ -81,6 +81,7 @@ pub(crate) const DEFAULT_JAVASCRIPT_NET_BACKLOG: u32 = 511;
 pub(crate) const LOOPBACK_EXEMPT_PORTS_ENV: &str = "AGENTOS_LOOPBACK_EXEMPT_PORTS";
 pub(crate) const TOOL_DRIVER_NAME: &str = "secure-exec-host-callbacks";
 pub(crate) const MAPPED_HOST_FD_START: u32 = 1_000_000_000;
+pub const DEFAULT_MAX_EXTENSION_SESSION_CLEANUP_EVENTS: usize = 16_384;
 
 // ---------------------------------------------------------------------------
 // Public API types
@@ -90,6 +91,10 @@ pub(crate) const MAPPED_HOST_FD_START: u32 = 1_000_000_000;
 pub struct NativeSidecarConfig {
     pub sidecar_id: String,
     pub max_frame_bytes: usize,
+    pub max_sessions_per_connection: usize,
+    /// Maximum lifecycle events retained by one extension-owned session while
+    /// cleanup waits for an independent sibling phase to succeed.
+    pub max_extension_session_cleanup_events: usize,
     pub compile_cache_root: Option<PathBuf>,
     pub expected_auth_token: Option<String>,
     pub acp_termination_grace: Duration,
@@ -100,6 +105,9 @@ impl Default for NativeSidecarConfig {
         Self {
             sidecar_id: String::from("agentos-native-sidecar"),
             max_frame_bytes: DEFAULT_MAX_FRAME_BYTES,
+            max_sessions_per_connection:
+                agentos_native_sidecar_core::DEFAULT_MAX_SESSIONS_PER_CONNECTION,
+            max_extension_session_cleanup_events: DEFAULT_MAX_EXTENSION_SESSION_CLEANUP_EVENTS,
             compile_cache_root: None,
             expected_auth_token: None,
             acp_termination_grace: Duration::from_secs(3),
@@ -110,22 +118,61 @@ impl Default for NativeSidecarConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SidecarError {
     InvalidState(String),
+    SessionNotFound(String),
     ProtocolVersionMismatch(String),
     BridgeVersionMismatch(String),
     Conflict(String),
     Unauthorized(String),
     Unsupported(String),
     FrameTooLarge(String),
+    LimitExceeded {
+        limit: &'static str,
+        capacity: usize,
+        how_to_raise: &'static str,
+    },
+    Timeout(String),
     Kernel(String),
     Plugin(String),
     Execution(String),
     Bridge(String),
     Io(String),
+    Context {
+        context: String,
+        source: Box<SidecarError>,
+    },
+    Cleanup {
+        context: &'static str,
+        errors: Vec<SidecarError>,
+    },
 }
 
 impl fmt::Display for SidecarError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::SessionNotFound(session_id) => {
+                write!(f, "Session not found: {session_id}")
+            }
+            Self::LimitExceeded {
+                limit,
+                capacity,
+                how_to_raise,
+            } => write!(
+                f,
+                "{limit} limit exceeded (capacity {capacity}); raise {how_to_raise}"
+            ),
+            Self::Cleanup { context, errors } => {
+                write!(f, "{context}")?;
+                for (index, error) in errors.iter().enumerate() {
+                    write!(
+                        f,
+                        "; cleanup error {} [{}]: {error}",
+                        index + 1,
+                        crate::execution::error_code(error)
+                    )?;
+                }
+                Ok(())
+            }
+            Self::Context { context, source } => write!(f, "{context}: {source}"),
             Self::InvalidState(message)
             | Self::ProtocolVersionMismatch(message)
             | Self::BridgeVersionMismatch(message)
@@ -133,6 +180,7 @@ impl fmt::Display for SidecarError {
             | Self::Unauthorized(message)
             | Self::Unsupported(message)
             | Self::FrameTooLarge(message)
+            | Self::Timeout(message)
             | Self::Kernel(message)
             | Self::Plugin(message)
             | Self::Execution(message)
@@ -150,6 +198,43 @@ pub trait SidecarRequestTransport: Send + Sync {
         request: SidecarRequestFrame,
         timeout: Duration,
     ) -> Result<SidecarResponseFrame, SidecarError>;
+
+    fn send_request_cancellable(
+        &self,
+        request: SidecarRequestFrame,
+        timeout: Duration,
+        cancellation: &ExtensionCallbackCancellation,
+    ) -> Result<SidecarResponseFrame, SidecarError> {
+        if cancellation.is_cancelled() {
+            return Err(SidecarError::Execution(String::from(
+                "extension callback was cancelled",
+            )));
+        }
+        self.send_request(request, timeout)
+    }
+}
+
+/// Sidecar-owned cancellation for an extension callback wait. The token is
+/// deliberately independent of the client transport: interrupting an ACP turn
+/// cancels the authoritative wait even when the client never answers the
+/// already-emitted callback request.
+#[derive(Clone, Debug, Default)]
+pub struct ExtensionCallbackCancellation {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl ExtensionCallbackCancellation {
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    pub fn same_instance(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.cancelled, &other.cancelled)
+    }
 }
 
 #[derive(Clone)]
@@ -184,6 +269,33 @@ impl SharedSidecarRequestClient {
         let request_id = self.next_request_id.fetch_sub(1, Ordering::Relaxed);
         let request = SidecarRequestFrame::new(request_id, ownership.clone(), payload);
         let response = transport.send_request(request, timeout)?;
+        if response.request_id != request_id {
+            return Err(SidecarError::InvalidState(format!(
+                "sidecar response {} did not match request {request_id}",
+                response.request_id
+            )));
+        }
+        if response.ownership != ownership {
+            return Err(SidecarError::InvalidState(String::from(
+                "sidecar response ownership did not match request ownership",
+            )));
+        }
+        Ok(response.payload)
+    }
+
+    pub(crate) fn invoke_cancellable(
+        &self,
+        ownership: crate::protocol::OwnershipScope,
+        payload: SidecarRequestPayload,
+        timeout: Duration,
+        cancellation: &ExtensionCallbackCancellation,
+    ) -> Result<SidecarResponsePayload, SidecarError> {
+        let transport = self.transport.as_ref().ok_or_else(|| {
+            SidecarError::Unsupported(String::from("sidecar request transport is not configured"))
+        })?;
+        let request_id = self.next_request_id.fetch_sub(1, Ordering::Relaxed);
+        let request = SidecarRequestFrame::new(request_id, ownership.clone(), payload);
+        let response = transport.send_request_cancellable(request, timeout, cancellation)?;
         if response.request_id != request_id {
             return Err(SidecarError::InvalidState(format!(
                 "sidecar response {} did not match request {request_id}",
@@ -269,6 +381,8 @@ impl<B> Clone for SharedBridge<B> {
 pub(crate) struct ConnectionState {
     pub(crate) auth_token: String,
     pub(crate) sessions: BTreeSet<String>,
+    pub(crate) session_close_outcomes: BTreeMap<String, SessionCloseOutcome>,
+    pub(crate) session_close_outcome_order: VecDeque<String>,
 }
 
 #[allow(dead_code)]
@@ -276,21 +390,22 @@ pub(crate) struct ConnectionState {
 pub(crate) struct SessionState {
     pub(crate) connection_id: String,
     pub(crate) placement: crate::protocol::SidecarPlacement,
-    pub(crate) metadata: BTreeMap<String, String>,
     pub(crate) vm_ids: BTreeSet<String>,
+    /// Requested close makes the session non-routable while fallible cleanup
+    /// retains handles for a later retry.
+    pub(crate) closing: bool,
+    pub(crate) cleaned_extension_namespaces: BTreeSet<String>,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct VmConfiguration {
+    pub(crate) operator_mounts: Vec<MountDescriptor>,
     pub(crate) mounts: Vec<MountDescriptor>,
-    pub(crate) software: Vec<SoftwareDescriptor>,
     pub(crate) permissions: PermissionsPolicy,
-    pub(crate) module_access_cwd: Option<String>,
-    pub(crate) instructions: Vec<String>,
-    pub(crate) projected_modules: Vec<ProjectedModuleDescriptor>,
     pub(crate) command_permissions: BTreeMap<String, WasmPermissionTier>,
     pub(crate) provided_commands: BTreeMap<String, Vec<String>>,
+    pub(crate) packages_mount_at: String,
     /// Guest JavaScript host-environment config (platform / module resolution /
     /// builtin allow-list). Set at `create_vm` from `CreateVmConfig.jsRuntime`
     /// and preserved across `configure_vm`. `None` => full Node.js emulation.
@@ -304,14 +419,12 @@ pub(crate) struct VmConfiguration {
 impl Default for VmConfiguration {
     fn default() -> Self {
         Self {
+            operator_mounts: Vec::new(),
             mounts: Vec::new(),
-            software: Vec::new(),
             permissions: agentos_native_sidecar_core::permissions::deny_all_policy(),
-            module_access_cwd: None,
-            instructions: Vec::new(),
-            projected_modules: Vec::new(),
             command_permissions: BTreeMap::new(),
             provided_commands: BTreeMap::new(),
+            packages_mount_at: String::from("/opt/agentos"),
             js_runtime: None,
             snapshot_userland_code: None,
             loopback_exempt_ports: Vec::new(),
@@ -326,6 +439,7 @@ pub(crate) struct VmState {
     /// Operator-tunable VM-scoped runtime limits. Immutable for the VM's lifetime;
     /// `ConfigureVm` does not mutate limits.
     pub(crate) limits: crate::limits::VmLimits,
+    pub(crate) captured_output_budget: Arc<agentos_native_sidecar_core::CapturedOutputBudget>,
     pub(crate) dns: VmDnsConfig,
     pub(crate) listen_policy: VmListenPolicy,
     pub(crate) create_loopback_exempt_ports: BTreeSet<u16>,
@@ -333,6 +447,7 @@ pub(crate) struct VmState {
     pub(crate) requested_runtime: GuestRuntimeKind,
     pub(crate) root_filesystem_mode: RootFilesystemMode,
     pub(crate) guest_cwd: String,
+    pub(crate) agent_additional_instructions: Option<String>,
     pub(crate) cwd: PathBuf,
     pub(crate) host_cwd: PathBuf,
     pub(crate) kernel: SidecarKernel,
@@ -363,13 +478,13 @@ pub(crate) struct VmState {
 #[derive(Debug, Clone)]
 pub(crate) struct ProjectedAgentLaunch {
     pub(crate) acp_entrypoint: String,
+    pub(crate) adapter_entrypoint: String,
     pub(crate) env: BTreeMap<String, String>,
     pub(crate) launch_args: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct ExitedProcessSnapshot {
-    pub(crate) captured_at: Instant,
     pub(crate) process: crate::protocol::ProcessSnapshotEntry,
 }
 
@@ -470,6 +585,9 @@ pub(crate) struct ActiveProcess {
     pub(crate) next_mapped_host_fd: u32,
     pub(crate) pending_execution_events: VecDeque<ActiveExecutionEvent>,
     pub(crate) pending_self_signal_exit: Option<i32>,
+    /// Sidecar-owned absolute deadline for an explicit execute timeout.
+    pub(crate) timeout_at: Option<Instant>,
+    pub(crate) captured_output: Option<CapturedOutputState>,
     pub(crate) child_processes: BTreeMap<String, ActiveProcess>,
     pub(crate) next_child_process_id: usize,
     pub(crate) http_servers: BTreeMap<u64, ActiveHttpServer>,

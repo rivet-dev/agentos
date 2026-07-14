@@ -10,7 +10,6 @@ pub(crate) mod chunked_s3;
 pub(crate) mod google_drive;
 pub(crate) mod host_dir;
 pub(crate) mod js_bridge;
-pub(crate) mod module_access;
 pub(crate) mod object_s3;
 pub(crate) mod s3_common;
 pub(crate) mod sandbox_agent;
@@ -21,7 +20,6 @@ use chunked_s3::ChunkedS3MountPlugin;
 use google_drive::GoogleDriveMountPlugin;
 use host_dir::HostDirMountPlugin;
 use js_bridge::JsBridgeMountPlugin;
-use module_access::ModuleAccessMountPlugin;
 use object_s3::ObjectS3MountPlugin;
 use sandbox_agent::SandboxAgentMountPlugin;
 
@@ -44,7 +42,6 @@ pub(crate) fn register_native_mount_plugins<B>(
 ) -> Result<(), PluginError> {
     register_plugin(registry, AgentosPackagesMountPlugin)?;
     register_plugin(registry, HostDirMountPlugin)?;
-    register_plugin(registry, ModuleAccessMountPlugin)?;
     register_plugin(registry, JsBridgeMountPlugin)?;
     register_plugin(registry, SandboxAgentMountPlugin)?;
     register_plugin(registry, ChunkedLocalMountPlugin)?;

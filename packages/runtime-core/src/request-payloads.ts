@@ -2,14 +2,10 @@ import { toExactArrayBuffer } from "./bytes.js";
 import {
 	type LiveMountDescriptor,
 	type LivePackageDescriptor,
-	type LiveProjectedModuleDescriptor,
 	type LiveSidecarPlacement,
-	type LiveSoftwareDescriptor,
 	toGeneratedMountDescriptor,
 	toGeneratedPackageDescriptor,
-	toGeneratedProjectedModuleDescriptor,
 	toGeneratedSidecarPlacement,
-	toGeneratedSoftwareDescriptor,
 } from "./descriptors.js";
 import { type LiveExtEnvelope, toGeneratedExtEnvelope } from "./ext.js";
 import {
@@ -18,7 +14,7 @@ import {
 	toGeneratedRootFilesystemEntry,
 } from "./filesystem.js";
 import type { CreateVmConfig } from "./generated/CreateVmConfig.js";
-import type * as protocol from "./generated-protocol.js";
+import * as protocol from "./generated-protocol.js";
 import { stringifyJsonUtf8 } from "./json.js";
 import {
 	type LivePermissionsPolicy,
@@ -52,6 +48,14 @@ export interface LiveRegisteredHostCallbackDefinition {
 	examples?: LiveRegisteredHostCallbackExample[];
 }
 
+export interface LiveHostCallbackRegistration {
+	name: string;
+	description: string;
+	callbacks: Record<string, LiveRegisteredHostCallbackDefinition>;
+}
+
+export type LiveCronOverlap = "allow" | "skip" | "queue";
+
 export type LiveRequestPayload =
 	| {
 			type: "authenticate";
@@ -63,7 +67,10 @@ export type LiveRequestPayload =
 	| {
 			type: "open_session";
 			placement: LiveSidecarPlacement;
-			metadata: Record<string, string>;
+	  }
+	| {
+			type: "close_session";
+			session_id: string;
 	  }
 	| {
 			type: "create_vm";
@@ -71,19 +78,22 @@ export type LiveRequestPayload =
 			config: CreateVmConfig;
 	  }
 	| {
+			type: "initialize_vm";
+			runtime: LiveGuestRuntimeKind;
+			config: CreateVmConfig;
+			mounts?: LiveMountDescriptor[];
+			packages?: LivePackageDescriptor[];
+			packages_mount_at?: string;
+			host_callbacks?: LiveHostCallbackRegistration[];
+	  }
+	| {
 			type: "configure_vm";
-			mounts: LiveMountDescriptor[];
-			software: LiveSoftwareDescriptor[];
+			mounts?: LiveMountDescriptor[];
 			permissions?: LivePermissionsPolicy;
-			module_access_cwd?: string;
-			instructions: string[];
-			projected_modules: LiveProjectedModuleDescriptor[];
-			command_permissions: Record<string, LiveWasmPermissionTier>;
+			command_permissions?: Record<string, LiveWasmPermissionTier>;
 			loopback_exempt_ports?: number[];
 			packages?: LivePackageDescriptor[];
 			packages_mount_at?: string;
-			bootstrap_commands?: string[];
-			tool_shim_commands?: string[];
 	  }
 	| {
 			type: "link_package";
@@ -93,13 +103,19 @@ export type LiveRequestPayload =
 			type: "provided_commands";
 	  }
 	| {
-			type: "register_host_callbacks";
-			name: string;
-			description: string;
-			command_aliases?: string[];
-			registry_command_aliases?: string[];
-			callbacks: Record<string, LiveRegisteredHostCallbackDefinition>;
+			type: "schedule_cron";
+			id?: string;
+			schedule: string;
+			action: unknown;
+			overlap?: LiveCronOverlap;
 	  }
+	| { type: "list_cron_jobs" }
+	| { type: "cancel_cron_job"; id: string }
+	| { type: "wake_cron"; generation: number }
+	| { type: "complete_cron_run"; run_id: string; error?: string }
+	| { type: "export_cron_state" }
+	| { type: "import_cron_state"; state: string }
+	| ({ type: "register_host_callbacks" } & LiveHostCallbackRegistration)
 	| {
 			type: "dispose_vm";
 			reason: LiveDisposeReason;
@@ -158,14 +174,19 @@ export type LiveRequestPayload =
 	  }
 	| {
 			type: "execute";
-			process_id: string;
+			process_id?: string;
 			command?: string;
+			shell_command?: string;
 			runtime?: LiveGuestRuntimeKind;
 			entrypoint?: string;
 			args: string[];
 			env?: Record<string, string>;
 			cwd?: string;
 			wasm_permission_tier?: LiveWasmPermissionTier;
+			pty?: { cols?: number; rows?: number };
+			keep_stdin_open?: boolean;
+			timeout_ms?: number;
+			capture_output?: boolean;
 	  }
 	| {
 			type: "write_stdin";
@@ -258,8 +279,12 @@ export function toGeneratedRequestPayload(
 				tag: "OpenSessionRequest",
 				val: {
 					placement: toGeneratedSidecarPlacement(payload.placement),
-					metadata: new Map(Object.entries(payload.metadata ?? {})),
 				},
+			};
+		case "close_session":
+			return {
+				tag: "CloseSessionRequest",
+				val: { sessionId: payload.session_id },
 			};
 		case "create_vm":
 			return {
@@ -267,6 +292,27 @@ export function toGeneratedRequestPayload(
 				val: {
 					runtime: toGeneratedGuestRuntimeKind(payload.runtime),
 					config: stringifyJsonUtf8(payload.config, "create VM config"),
+				},
+			};
+		case "initialize_vm":
+			return {
+				tag: "InitializeVmRequest",
+				val: {
+					runtime: toGeneratedGuestRuntimeKind(payload.runtime),
+					config: stringifyJsonUtf8(payload.config, "initialize VM config"),
+					mounts:
+						payload.mounts === undefined
+							? null
+							: payload.mounts.map(toGeneratedMountDescriptor),
+					packages:
+						payload.packages === undefined
+							? null
+							: payload.packages.map(toGeneratedPackageDescriptor),
+					packagesMountAt: payload.packages_mount_at ?? null,
+					hostCallbacks:
+						payload.host_callbacks === undefined
+							? null
+							: payload.host_callbacks.map(toGeneratedHostCallbackRegistration),
 				},
 			};
 		case "dispose_vm":
@@ -283,28 +329,31 @@ export function toGeneratedRequestPayload(
 			return {
 				tag: "ConfigureVmRequest",
 				val: {
-					mounts: (payload.mounts ?? []).map(toGeneratedMountDescriptor),
-					software: (payload.software ?? []).map(toGeneratedSoftwareDescriptor),
+					mounts:
+						payload.mounts === undefined
+							? null
+							: payload.mounts.map(toGeneratedMountDescriptor),
 					permissions: toGeneratedPermissionsPolicy(payload.permissions),
-					moduleAccessCwd: payload.module_access_cwd ?? null,
-					instructions: payload.instructions ?? [],
-					projectedModules: (payload.projected_modules ?? []).map(
-						toGeneratedProjectedModuleDescriptor,
-					),
-					commandPermissions: new Map(
-						Object.entries(payload.command_permissions ?? {}).map(
-							([name, tier]) => [name, toGeneratedWasmPermissionTier(tier)],
-						),
-					),
-					loopbackExemptPorts: new Uint16Array(
-						payload.loopback_exempt_ports ?? [],
-					),
-					packages: (payload.packages ?? []).map(
-						toGeneratedPackageDescriptor,
-					),
-					packagesMountAt: payload.packages_mount_at ?? "",
-					bootstrapCommands: payload.bootstrap_commands ?? [],
-					toolShimCommands: payload.tool_shim_commands ?? [],
+					commandPermissions:
+						payload.command_permissions === undefined
+							? null
+							: new Map(
+									Object.entries(payload.command_permissions).map(
+										([name, tier]) => [
+											name,
+											toGeneratedWasmPermissionTier(tier),
+										],
+									),
+								),
+					loopbackExemptPorts:
+						payload.loopback_exempt_ports === undefined
+							? null
+							: new Uint16Array(payload.loopback_exempt_ports),
+					packages:
+						payload.packages === undefined
+							? null
+							: payload.packages.map(toGeneratedPackageDescriptor),
+					packagesMountAt: payload.packages_mount_at ?? null,
 				},
 			};
 		case "link_package":
@@ -319,38 +368,44 @@ export function toGeneratedRequestPayload(
 				tag: "ProvidedCommandsRequest",
 				val: null,
 			};
+		case "schedule_cron":
+			return {
+				tag: "ScheduleCronRequest",
+				val: {
+					id: payload.id ?? null,
+					schedule: payload.schedule,
+					action: stringifyJsonUtf8(payload.action, "schedule_cron.action"),
+					overlap:
+						payload.overlap === undefined
+							? null
+							: toGeneratedCronOverlap(payload.overlap),
+				},
+			};
+		case "list_cron_jobs":
+			return { tag: "ListCronJobsRequest", val: null };
+		case "cancel_cron_job":
+			return { tag: "CancelCronJobRequest", val: { id: payload.id } };
+		case "wake_cron":
+			return {
+				tag: "WakeCronRequest",
+				val: { generation: BigInt(payload.generation) },
+			};
+		case "complete_cron_run":
+			return {
+				tag: "CompleteCronRunRequest",
+				val: { runId: payload.run_id, error: payload.error ?? null },
+			};
+		case "export_cron_state":
+			return { tag: "ExportCronStateRequest", val: null };
+		case "import_cron_state":
+			return {
+				tag: "ImportCronStateRequest",
+				val: { state: payload.state },
+			};
 		case "register_host_callbacks":
 			return {
 				tag: "RegisterHostCallbacksRequest",
-				val: {
-					name: payload.name,
-					description: payload.description,
-					commandAliases: payload.command_aliases ?? [],
-					registryCommandAliases: payload.registry_command_aliases ?? [],
-					callbacks: new Map(
-						Object.entries(payload.callbacks).map(([name, callback]) => [
-							name,
-							{
-								description: callback.description,
-								inputSchema: stringifyJsonUtf8(
-									callback.input_schema,
-									"register_host_callbacks.callback.input_schema",
-								),
-								timeoutMs:
-									callback.timeout_ms === undefined
-										? null
-										: BigInt(callback.timeout_ms),
-								examples: (callback.examples ?? []).map((example) => ({
-									description: example.description,
-									input: stringifyJsonUtf8(
-										example.input,
-										"register_host_callbacks.callback.example.input",
-									),
-								})),
-							},
-						]),
-					),
-				},
+				val: toGeneratedHostCallbackRegistration(payload),
 			};
 		case "create_layer":
 			return { tag: "CreateLayerRequest", val: null };
@@ -370,9 +425,12 @@ export function toGeneratedRequestPayload(
 			return {
 				tag: "CreateOverlayRequest",
 				val: {
-					mode: toGeneratedRootFilesystemMode(payload.mode ?? "ephemeral"),
+					mode:
+						payload.mode === undefined
+							? null
+							: toGeneratedRootFilesystemMode(payload.mode),
 					upperLayerId: payload.upper_layer_id ?? null,
-					lowerLayerIds: payload.lower_layer_ids ?? [],
+					lowerLayerIds: payload.lower_layer_ids,
 				},
 			};
 		case "guest_filesystem_call":
@@ -388,7 +446,7 @@ export function toGeneratedRequestPayload(
 						payload.encoding === undefined
 							? null
 							: toGeneratedRootFilesystemEntryEncoding(payload.encoding),
-					recursive: payload.recursive ?? false,
+					recursive: payload.recursive ?? null,
 					maxDepth: payload.max_depth ?? null,
 					mode: payload.mode ?? null,
 					uid: payload.uid ?? null,
@@ -414,20 +472,37 @@ export function toGeneratedRequestPayload(
 			return {
 				tag: "ExecuteRequest",
 				val: {
-					processId: payload.process_id,
+					processId: payload.process_id ?? null,
 					command: payload.command ?? null,
+					shellCommand: payload.shell_command ?? null,
 					runtime:
 						payload.runtime === undefined
 							? null
 							: toGeneratedGuestRuntimeKind(payload.runtime),
 					entrypoint: payload.entrypoint ?? null,
 					args: payload.args ?? [],
-					env: new Map(Object.entries(payload.env ?? {})),
+					env:
+						payload.env === undefined
+							? null
+							: new Map(Object.entries(payload.env)),
 					cwd: payload.cwd ?? null,
 					wasmPermissionTier:
 						payload.wasm_permission_tier === undefined
 							? null
 							: toGeneratedWasmPermissionTier(payload.wasm_permission_tier),
+					pty:
+						payload.pty === undefined
+							? null
+							: {
+									cols: payload.pty.cols ?? null,
+									rows: payload.pty.rows ?? null,
+								},
+					keepStdinOpen: payload.keep_stdin_open ?? null,
+					timeoutMs:
+						payload.timeout_ms === undefined
+							? null
+							: BigInt(payload.timeout_ms),
+					captureOutput: payload.capture_output ?? null,
 				},
 			};
 		case "write_stdin":
@@ -520,6 +595,46 @@ export function toGeneratedRequestPayload(
 				tag: "ExtEnvelope",
 				val: toGeneratedExtEnvelope(payload.envelope),
 			};
+	}
+}
+
+function toGeneratedHostCallbackRegistration(
+	registration: LiveHostCallbackRegistration,
+): protocol.RegisterHostCallbacksRequest {
+	return {
+		name: registration.name,
+		description: registration.description,
+		callbacks: new Map(
+			Object.entries(registration.callbacks).map(([name, callback]) => [
+				name,
+				{
+					description: callback.description,
+					inputSchema: stringifyJsonUtf8(
+						callback.input_schema,
+						"host callback input schema",
+					),
+					timeoutMs:
+						callback.timeout_ms === undefined
+							? null
+							: BigInt(callback.timeout_ms),
+					examples: (callback.examples ?? []).map((example) => ({
+						description: example.description,
+						input: stringifyJsonUtf8(example.input, "host callback example"),
+					})),
+				},
+			]),
+		),
+	};
+}
+
+function toGeneratedCronOverlap(value: LiveCronOverlap): protocol.CronOverlap {
+	switch (value) {
+		case "allow":
+			return protocol.CronOverlap.Allow;
+		case "skip":
+			return protocol.CronOverlap.Skip;
+		case "queue":
+			return protocol.CronOverlap.Queue;
 	}
 }
 

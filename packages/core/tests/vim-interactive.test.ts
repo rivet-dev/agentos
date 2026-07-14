@@ -13,7 +13,6 @@ import pkg from "@xterm/headless";
 import { afterEach, describe, expect, it } from "vitest";
 import { __disposeAllSharedSidecarsForTesting } from "../src/agent-os.js";
 import type { AgentOs } from "../src/index.js";
-import { allowAll } from "../src/runtime-compat.js";
 
 const { Terminal } = pkg;
 
@@ -110,7 +109,6 @@ describe.skipIf(!existsSync(VIM_BINARY))("interactive vim over VM PTY", () => {
 
 			const { AgentOs } = await import("../src/index.js");
 			vm = await AgentOs.create({
-				permissions: allowAll,
 				software: [materializeVimPackage()],
 			});
 			await vm.mkdir("/work", { recursive: true });
@@ -119,7 +117,7 @@ describe.skipIf(!existsSync(VIM_BINARY))("interactive vim over VM PTY", () => {
 			let writes = Promise.resolve();
 			let snapshotIndex = 0;
 
-			const { shellId } = vm.openShell({
+			const { shellId } = await vm.openShell({
 				command: "vim",
 				args: VIM_ARGS,
 				cols: 80,
@@ -275,14 +273,13 @@ describe.skipIf(!existsSync(VIM_BINARY))("interactive vim over VM PTY", () => {
 
 			const { AgentOs } = await import("../src/index.js");
 			vm = await AgentOs.create({
-				permissions: allowAll,
 				software: [materializeVimPackage()],
 			});
 			await vm.mkdir("/work", { recursive: true });
 
 			const term = new Terminal({ cols: 80, rows: 24, allowProposedApi: true });
 			let writes = Promise.resolve();
-			const { shellId } = vm.openShell({
+			const { shellId } = await vm.openShell({
 				command: "vim",
 				args: VIM_ARGS,
 				cols: 80,

@@ -29,12 +29,11 @@ describe("sidecar mount descriptors", () => {
 		});
 	});
 
-	test("host-dir helper defaults config.readOnly to true", () => {
+	test("host-dir helper preserves an omitted readOnly setting", () => {
 		expect(createHostDirBackend({ hostPath: "/tmp/project" })).toEqual({
 			id: "host_dir",
 			config: {
 				hostPath: "/tmp/project",
-				readOnly: true,
 			},
 		});
 	});
@@ -51,8 +50,19 @@ describe("sidecar mount descriptors", () => {
 			readOnly: false,
 			plugin: {
 				id: "js_bridge",
-				config: {},
 			},
+		});
+	});
+
+	test("does not materialize omitted sidecar mount defaults", () => {
+		expect(
+			serializeMountConfigForSidecar({
+				path: "/data",
+				plugin: { id: "chunked_local" },
+			}),
+		).toEqual({
+			guestPath: "/data",
+			plugin: { id: "chunked_local" },
 		});
 	});
 });

@@ -11,6 +11,7 @@ import {
 } from "../src/protocol-frames.js";
 import { SidecarProtocolClient } from "../src/protocol-client.js";
 import { SIDECAR_PROTOCOL_SCHEMA } from "../src/protocol-schema.js";
+import { SidecarRequestRejected } from "../src/sidecar-errors.js";
 
 const ownership = {
 	scope: "connection" as const,
@@ -170,6 +171,93 @@ describe("sidecar protocol client", () => {
 		client.dispose();
 	});
 
+	it("runs the response hook before a following event is dispatched", async () => {
+		const frameTransport = new MemoryFrameTransport();
+		const client = new SidecarProtocolClient({
+			frameTransport,
+			eventBufferCapacity: 8,
+			payloadCodec: "json",
+			stderrText: () => "stderr",
+		});
+		const order: string[] = [];
+		client.onEvent(() => order.push("event"));
+		const response = client.sendRequest({
+			ownership,
+			payload: { type: "create_layer" },
+			onResponse: () => order.push("response-hook"),
+		});
+
+		await expect.poll(() => frameTransport.writes.length).toBe(1);
+		frameTransport.emitFrame({
+			frame_type: "response",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			request_id: 1,
+			ownership,
+			payload: { type: "layer_created", layer_id: "layer" },
+		});
+		frameTransport.emitFrame({
+			frame_type: "event",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			ownership,
+			payload: { type: "structured", name: "ready", detail: {} },
+		});
+
+		expect(order).toEqual(["response-hook", "event"]);
+		await expect(response).resolves.toMatchObject({
+			payload: { type: "layer_created", layer_id: "layer" },
+		});
+		client.dispose();
+	});
+
+	it("preserves structured sidecar rejection details", async () => {
+		const frameTransport = new MemoryFrameTransport();
+		const client = new SidecarProtocolClient({
+			frameTransport,
+			eventBufferCapacity: 8,
+			payloadCodec: "json",
+			stderrText: () => "stderr",
+		});
+
+		const response = client.sendRequest({
+			ownership,
+			payload: { type: "create_layer" },
+		});
+		await expect.poll(() => frameTransport.writes.length).toBe(1);
+
+		frameTransport.emitFrame({
+			frame_type: "response",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			request_id: 1,
+			ownership,
+			payload: {
+				type: "rejected",
+				code: "EACCES",
+				message: "permission denied",
+			},
+		});
+
+		const error = await response.catch((cause: unknown) => cause);
+		expect(error).toBeInstanceOf(SidecarRequestRejected);
+		expect(error).toMatchObject({
+			name: "SidecarRequestRejected",
+			code: "EACCES",
+			message: "permission denied",
+			requestId: 1,
+			ownership,
+			response: {
+				frame_type: "response",
+				request_id: 1,
+				ownership,
+				payload: {
+					type: "rejected",
+					code: "EACCES",
+					message: "permission denied",
+				},
+			},
+		});
+		client.dispose();
+	});
+
 	it("delivers event frames to waiters", async () => {
 		const { stdout, client } = createClient();
 		const event = client.waitForEvent({
@@ -320,7 +408,7 @@ describe("sidecar protocol client", () => {
 	it("writes sidecar request handler responses", async () => {
 		const { stdin, stdout, client } = createClient();
 		const written = readWrittenFrame(stdin);
-		client.setSidecarRequestHandler(async () => ({
+		client.registerSidecarRequestHandler(ownership, async () => ({
 			type: "host_callback_result",
 			invocation_id: "invocation",
 			result: { ok: true },

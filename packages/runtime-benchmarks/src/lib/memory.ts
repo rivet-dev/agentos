@@ -7,11 +7,6 @@ export interface MemorySample {
 	cycle: number;
 	guestHeapRss: number;
 	sidecarRss: number;
-	runningProcesses: number;
-	exitedProcesses: number;
-	openFds: number;
-	sockets: number;
-	pipes: number;
 }
 
 export function findSidecarPid(): number | null {
@@ -249,17 +244,11 @@ function readStatusBytes(pid: number, field: "VmRSS" | "VmHWM"): number {
 
 export async function sampleMemory(vm: BenchVm, cycle: number): Promise<MemorySample> {
 	forceGC();
-	const resource = await vm.getResourceSnapshot();
 	const guestHeapRss = await sampleGuestHeap(vm);
 	return {
 		cycle,
 		guestHeapRss,
 		sidecarRss: readRssBytes(findSidecarPid()),
-		runningProcesses: resource.runningProcesses,
-		exitedProcesses: resource.exitedProcesses,
-		openFds: resource.openFds,
-		sockets: resource.sockets,
-		pipes: resource.pipes,
 	};
 }
 
@@ -283,7 +272,7 @@ async function sampleGuestHeap(vm: BenchVm): Promise<number> {
 		"process.stdout.write(String(process.memoryUsage().rss));",
 	);
 	let stdout = "";
-	const proc = vm.spawn("node", [script], {
+	const proc = await vm.spawn("node", [script], {
 		onStdout: (data) => {
 			stdout += Buffer.from(data).toString("utf8");
 		},

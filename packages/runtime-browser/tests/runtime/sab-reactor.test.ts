@@ -143,6 +143,12 @@ describe("KernelReactor poll + teardown", () => {
 		expect(h.reactor.poll("e1", 50)).toBeNull(); // deadline already passed
 	});
 
+	it("returns immediately when the host cancellation flag is set", () => {
+		const h = harness();
+		h.add("e1");
+		expect(h.reactor.poll("e1", 10_000, () => true)).toBeNull();
+	});
+
 	it("kill poisons the down-ring and bumps the epoch", () => {
 		const h = harness();
 		const { down } = h.add("e1");

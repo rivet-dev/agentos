@@ -198,7 +198,7 @@ export function packageCommandExists(
 
 /**
  * The staged command dir (`<manifest dir>/bin`) of a built package — for
- * harnesses that consume raw command dirs (e.g. `createWasmVmRuntime`).
+ * package builders that consume raw command directories.
  * Throws when the staged transition dir is unavailable.
  */
 export function packageCommandsDir(pkg: RegistryPackageRef): string {

@@ -89,21 +89,23 @@ pub(crate) fn encode_shell_exit_event(shell_id: &str, exit_code: i32) -> Result<
 /// `openShell(options)` — port of [`AgentOs::open_shell`]. Subscribes the
 /// data/stderr streams and the exit code, forwarding them as `shellData` /
 /// `shellStderr` / `shellExit` broadcasts.
-pub fn open_shell(
+pub async fn open_shell(
     host: &HostCtx,
     vm: &AgentOs,
     vars: &mut Vars,
     options: OpenShellActionOptions,
 ) -> Result<OpenShellDto> {
-    let handle = vm.open_shell(OpenShellOptions {
-        command: options.command,
-        args: options.args,
-        env: options.env,
-        cwd: options.cwd,
-        cols: options.cols,
-        rows: options.rows,
-        on_stderr: None,
-    })?;
+    let handle = vm
+        .open_shell(OpenShellOptions {
+            command: options.command,
+            args: options.args,
+            env: options.env,
+            cwd: options.cwd,
+            cols: options.cols,
+            rows: options.rows,
+            on_stderr: None,
+        })
+        .await?;
     let shell_id = handle.shell_id;
 
     let mut terminal_stream = vm.on_shell_data(&shell_id)?;
@@ -112,7 +114,19 @@ pub fn open_shell(
     let data_host = host.clone();
     let data_shell_id = shell_id.clone();
     vars.shell_tasks.push(tokio::spawn(async move {
-        while let Some(chunk) = terminal_stream.next().await {
+        while let Some(result) = terminal_stream.next().await {
+            let chunk = match result {
+                Ok(chunk) => chunk,
+                Err(error) => {
+                    tracing::error!(?error, shell_id = data_shell_id, "shell data stream failed");
+                    super::broadcast_stream_error(
+                        &data_host,
+                        super::StreamErrorSource::ShellOutput(&data_shell_id),
+                        &error,
+                    );
+                    break;
+                }
+            };
             broadcast_event(
                 &data_host,
                 b"shellData",
@@ -127,7 +141,23 @@ pub fn open_shell(
     let stderr_host = host.clone();
     let stderr_shell_id = shell_id.clone();
     vars.shell_tasks.push(tokio::spawn(async move {
-        while let Some(chunk) = stderr_stream.next().await {
+        while let Some(result) = stderr_stream.next().await {
+            let chunk = match result {
+                Ok(chunk) => chunk,
+                Err(error) => {
+                    tracing::error!(
+                        ?error,
+                        shell_id = stderr_shell_id,
+                        "shell stderr stream failed"
+                    );
+                    super::broadcast_stream_error(
+                        &stderr_host,
+                        super::StreamErrorSource::ShellOutput(&stderr_shell_id),
+                        &error,
+                    );
+                    break;
+                }
+            };
             broadcast_event(
                 &stderr_host,
                 b"shellStderr",
@@ -143,15 +173,23 @@ pub fn open_shell(
     let exit_vm = vm.clone();
     let exit_shell_id = shell_id.clone();
     vars.shell_tasks.push(tokio::spawn(async move {
-        if let Ok(exit_code) = exit_vm.wait_shell(&exit_shell_id).await {
-            broadcast_event(
+        match exit_vm.wait_shell(&exit_shell_id).await {
+            Ok(exit_code) => broadcast_event(
                 &exit_host,
                 b"shellExit",
                 &ShellExitEvent {
                     shell_id: &exit_shell_id,
                     exit_code,
                 },
-            );
+            ),
+            Err(error) => {
+                tracing::error!(?error, shell_id = exit_shell_id, "shell exit route failed");
+                super::broadcast_stream_error(
+                    &exit_host,
+                    super::StreamErrorSource::ShellExit(&exit_shell_id),
+                    &error,
+                );
+            }
         }
     }));
 
@@ -196,69 +234,122 @@ pub fn spawn_process_output_pumps(host: &HostCtx, vm: &AgentOs, vars: &mut Vars,
     let stdout = vm.on_process_stdout(pid);
     let stderr = vm.on_process_stderr(pid);
 
-    if let Ok(mut stream) = stdout {
-        let host = host.clone();
-        vars.shell_tasks.push(tokio::spawn(async move {
-            while let Some(chunk) = stream.next().await {
-                broadcast_event(
-                    &host,
-                    b"processOutput",
-                    &ProcessOutputEvent {
-                        pid,
-                        stream: "stdout",
-                        data: serde_bytes::ByteBuf::from(chunk),
-                    },
-                );
-            }
-        }));
+    match stdout {
+        Ok(mut stream) => {
+            let host = host.clone();
+            vars.shell_tasks.push(tokio::spawn(async move {
+                while let Some(result) = stream.next().await {
+                    let chunk = match result {
+                        Ok(chunk) => chunk,
+                        Err(error) => {
+                            tracing::error!(?error, pid, "process stdout stream failed");
+                            super::broadcast_stream_error(
+                                &host,
+                                super::StreamErrorSource::ProcessOutput(pid),
+                                &error,
+                            );
+                            break;
+                        }
+                    };
+                    broadcast_event(
+                        &host,
+                        b"processOutput",
+                        &ProcessOutputEvent {
+                            pid,
+                            stream: "stdout",
+                            data: serde_bytes::ByteBuf::from(chunk),
+                        },
+                    );
+                }
+            }));
+        }
+        Err(error) => {
+            tracing::error!(?error, pid, "process stdout subscribe failed");
+            super::broadcast_stream_error(
+                host,
+                super::StreamErrorSource::ProcessOutput(pid),
+                &error,
+            );
+        }
     }
-    if let Ok(mut stream) = stderr {
-        let host = host.clone();
-        vars.shell_tasks.push(tokio::spawn(async move {
-            while let Some(chunk) = stream.next().await {
-                broadcast_event(
-                    &host,
-                    b"processOutput",
-                    &ProcessOutputEvent {
-                        pid,
-                        stream: "stderr",
-                        data: serde_bytes::ByteBuf::from(chunk),
-                    },
-                );
-            }
-        }));
+    match stderr {
+        Ok(mut stream) => {
+            let host = host.clone();
+            vars.shell_tasks.push(tokio::spawn(async move {
+                while let Some(result) = stream.next().await {
+                    let chunk = match result {
+                        Ok(chunk) => chunk,
+                        Err(error) => {
+                            tracing::error!(?error, pid, "process stderr stream failed");
+                            super::broadcast_stream_error(
+                                &host,
+                                super::StreamErrorSource::ProcessOutput(pid),
+                                &error,
+                            );
+                            break;
+                        }
+                    };
+                    broadcast_event(
+                        &host,
+                        b"processOutput",
+                        &ProcessOutputEvent {
+                            pid,
+                            stream: "stderr",
+                            data: serde_bytes::ByteBuf::from(chunk),
+                        },
+                    );
+                }
+            }));
+        }
+        Err(error) => {
+            tracing::error!(?error, pid, "process stderr subscribe failed");
+            super::broadcast_stream_error(
+                host,
+                super::StreamErrorSource::ProcessOutput(pid),
+                &error,
+            );
+        }
     }
     let host = host.clone();
     let vm = vm.clone();
     vars.shell_tasks.push(tokio::spawn(async move {
-        if let Ok(exit_code) = vm.wait_process(pid).await {
-            broadcast_event(&host, b"processExit", &ProcessExitEvent { pid, exit_code });
+        match vm.wait_process(pid).await {
+            Ok(exit_code) => {
+                broadcast_event(&host, b"processExit", &ProcessExitEvent { pid, exit_code })
+            }
+            Err(error) => {
+                tracing::error!(?error, pid, "process exit route failed");
+                super::broadcast_stream_error(
+                    &host,
+                    super::StreamErrorSource::ProcessExit(pid),
+                    &error,
+                );
+            }
         }
     }));
 }
 
-/// `writeShell(shellId, data)` — port of [`AgentOs::write_shell`], but awaited
-/// so a failed wire write rejects the action instead of vanishing into the
-/// fire-and-forget warn.
+/// `writeShell(shellId, data)` — forwards input and awaits the sidecar response.
 pub async fn write_shell(
     vm: &AgentOs,
     shell_id: &str,
     data: super::filesystem::WriteFileContent,
 ) -> Result<()> {
-    vm.write_shell_awaited(shell_id, StdinInput::Bytes(data.into_bytes()))
+    vm.write_shell(shell_id, StdinInput::Bytes(data.into_bytes()))
         .await
         .map_err(anyhow::Error::from)
 }
 
 /// `resizeShell(shellId, cols, rows)` — port of [`AgentOs::resize_shell`].
-pub fn resize_shell(vm: &AgentOs, shell_id: &str, cols: u16, rows: u16) -> Result<()> {
+pub async fn resize_shell(vm: &AgentOs, shell_id: &str, cols: u16, rows: u16) -> Result<()> {
     vm.resize_shell(shell_id, cols, rows)
+        .await
         .map_err(anyhow::Error::from)
 }
 
 /// `closeShell(shellId)` — port of [`AgentOs::close_shell`].
-pub fn close_shell(vm: &AgentOs, shell_id: &str) -> Result<()> {
-    vm.close_shell(shell_id).map_err(anyhow::Error::from)
+pub async fn close_shell(vm: &AgentOs, shell_id: &str) -> Result<()> {
+    vm.close_shell(shell_id).await.map_err(anyhow::Error::from)
 }
 
 /// `waitShell(shellId)` — port of [`AgentOs::wait_shell`]. Returns the exit code.

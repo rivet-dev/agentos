@@ -17,14 +17,25 @@ class MemorySidecarTransport implements SidecarProcessTransport {
 	}> = [];
 	disposed = false;
 	failed: Error | null = null;
-	private sidecarRequestHandler: LiveSidecarRequestHandler | null = null;
+	private readonly sidecarRequestHandlers = new Map<
+		string,
+		LiveSidecarRequestHandler
+	>();
 	private readonly eventListeners = new Set<(event: LiveEventFrame) => void>();
 
-	setSidecarRequestHandler(handler: LiveSidecarRequestHandler | null): void {
-		this.sidecarRequestHandler = handler;
+	registerSidecarRequestHandler(
+		ownership: LiveOwnershipScope,
+		handler: LiveSidecarRequestHandler,
+	): () => void {
+		const key = JSON.stringify(ownership);
+		this.sidecarRequestHandlers.set(key, handler);
+		return () => this.sidecarRequestHandlers.delete(key);
 	}
 
-	onEvent(handler: (event: LiveEventFrame) => void): () => void {
+	onEvent(
+		handler: (event: LiveEventFrame) => void,
+		_ownership?: LiveOwnershipScope,
+	): () => void {
 		this.eventListeners.add(handler);
 		return () => {
 			this.eventListeners.delete(handler);
@@ -34,8 +45,86 @@ class MemorySidecarTransport implements SidecarProcessTransport {
 	async sendRequest(input: {
 		ownership: LiveOwnershipScope;
 		payload: LiveRequestPayload;
+		onResponse?: (response: LiveResponseFrame) => void;
 	}): Promise<LiveResponseFrame> {
-		this.requests.push(input);
+		this.requests.push({
+			ownership: input.ownership,
+			payload: input.payload,
+		});
+		if (input.payload.type === "ext") {
+			const response: LiveResponseFrame = {
+				frame_type: "response",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: this.requests.length,
+				ownership: input.ownership,
+				payload: {
+					type: "ext_result",
+					envelope: {
+						namespace: input.payload.envelope.namespace,
+						payload: new Uint8Array([2]),
+					},
+				},
+			};
+			input.onResponse?.(response);
+			return response;
+		}
+		if (input.payload.type === "initialize_vm") {
+			return {
+				frame_type: "response",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: this.requests.length,
+				ownership: input.ownership,
+				payload: {
+					type: "vm_initialized",
+					vm_id: "vm-initialized",
+					guest_cwd: "/workspace",
+					guest_env: { HOME: "/home/agentos" },
+					applied_mounts: 0,
+					projected_commands: [],
+					agents: [],
+					host_callbacks: [],
+					process_route_retention: 1024,
+				},
+			};
+		}
+		if (input.payload.type === "guest_filesystem_call") {
+			return {
+				frame_type: "response",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: this.requests.length,
+				ownership: input.ownership,
+				payload: {
+					type: "guest_filesystem_result",
+					operation: input.payload.operation,
+					path: input.payload.path,
+				},
+			};
+		}
+		if (input.payload.type === "close_session") {
+			return {
+				frame_type: "response",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: this.requests.length,
+				ownership: input.ownership,
+				payload: {
+					type: "session_closed",
+					session_id: input.payload.session_id,
+				},
+			};
+		}
+		if (input.payload.type === "execute") {
+			return {
+				frame_type: "response",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: this.requests.length,
+				ownership: input.ownership,
+				payload: {
+					type: "process_started",
+					process_id: `process-${this.requests.length}`,
+					pid: 42,
+				},
+			};
+		}
 		if (input.payload.type !== "create_layer") {
 			throw new Error(`unexpected request ${input.payload.type}`);
 		}
@@ -62,6 +151,61 @@ class MemorySidecarTransport implements SidecarProcessTransport {
 }
 
 describe("sidecar process transport injection", () => {
+	test("forwards an extension response hook through the transport boundary", async () => {
+		const transport = new MemorySidecarTransport();
+		const process = SidecarProcess.fromClient(transport);
+		const order: string[] = [];
+
+		const response = await process.extensionRequest(
+			{ connectionId: "conn", sessionId: "session" },
+			{ vmId: "vm" },
+			{ namespace: "test", payload: new Uint8Array([1]) },
+			{
+				onResponse: (envelope) => {
+					order.push(`hook:${envelope.payload[0]}`);
+				},
+			},
+		);
+		order.push("await");
+
+		expect(order).toEqual(["hook:2", "await"]);
+		expect(response).toEqual({
+			namespace: "test",
+			payload: new Uint8Array([2]),
+		});
+	});
+
+	test("forwards one initialization request and preserves omissions", async () => {
+		const transport = new MemorySidecarTransport();
+		const process = SidecarProcess.fromClient(transport);
+
+		const initialized = await process.initializeVm(
+			{ connectionId: "conn", sessionId: "session" },
+			{ runtime: "java_script", config: {} },
+		);
+
+		expect(initialized).toMatchObject({
+			vmId: "vm-initialized",
+			guestCwd: "/workspace",
+			guestEnv: { HOME: "/home/agentos" },
+			processRouteRetention: 1024,
+		});
+		expect(transport.requests).toEqual([
+			{
+				ownership: {
+					scope: "session",
+					connection_id: "conn",
+					session_id: "session",
+				},
+				payload: {
+					type: "initialize_vm",
+					runtime: "java_script",
+					config: {},
+				},
+			},
+		]);
+	});
+
 	test("runs high-level process operations over an injected transport", async () => {
 		const transport = new MemorySidecarTransport();
 		const process = SidecarProcess.fromClient(transport);
@@ -85,5 +229,83 @@ describe("sidecar process transport injection", () => {
 			},
 		]);
 		expect(transport.disposed).toBe(true);
+	});
+
+	test("closes a session through connection ownership", async () => {
+		const transport = new MemorySidecarTransport();
+		const process = SidecarProcess.fromClient(transport);
+
+		await process.closeSession({
+			connectionId: "conn",
+			sessionId: "session",
+		});
+
+		expect(transport.requests).toEqual([
+			{
+				ownership: {
+					scope: "connection",
+					connection_id: "conn",
+				},
+				payload: {
+					type: "close_session",
+					session_id: "session",
+				},
+			},
+		]);
+	});
+
+	test("rejects missing filesystem response payloads instead of inventing results", async () => {
+		const process = SidecarProcess.fromClient(new MemorySidecarTransport());
+		const session = { connectionId: "conn", sessionId: "session" };
+		const vm = { vmId: "vm" };
+
+		await expect(process.exists(session, vm, "/missing")).rejects.toThrow(
+			"sidecar returned no exists result for /missing",
+		);
+		await expect(process.readdir(session, vm, "/empty")).rejects.toThrow(
+			"sidecar returned no directory entries for /empty",
+		);
+		await expect(
+			process.readdirRecursive(session, vm, "/empty"),
+		).rejects.toThrow(
+			"sidecar returned no recursive directory entries for /empty",
+		);
+	});
+
+	test("preserves false, true, and omission for keepStdinOpen", async () => {
+		const transport = new MemorySidecarTransport();
+		const process = SidecarProcess.fromClient(transport);
+		const session = { connectionId: "conn", sessionId: "session" };
+		const vm = { vmId: "vm" };
+
+		await process.execute(session, vm, {
+			command: "false-case",
+			keepStdinOpen: false,
+		});
+		await process.execute(session, vm, {
+			command: "true-case",
+			keepStdinOpen: true,
+		});
+		await process.execute(session, vm, { command: "omitted-case" });
+
+		const executePayloads = transport.requests
+			.map((request) => request.payload)
+			.filter((payload) => payload.type === "execute");
+		expect(executePayloads).toHaveLength(3);
+		expect(executePayloads[0]).toEqual(
+			expect.objectContaining({
+				type: "execute",
+				command: "false-case",
+				keep_stdin_open: false,
+			}),
+		);
+		expect(executePayloads[1]).toEqual(
+			expect.objectContaining({
+				type: "execute",
+				command: "true-case",
+				keep_stdin_open: true,
+			}),
+		);
+		expect(executePayloads[2]).not.toHaveProperty("keep_stdin_open");
 	});
 });

@@ -66,7 +66,7 @@ AGENTOS_ROOT := $(abspath $(CURDIR)/../..)
 CODEX_REPO ?= $(abspath $(AGENTOS_ROOT)/../codex-rs/codex-rs)
 codex:
 	@if [ -x "$(CODEX_REPO)/scripts/build-wasi-codex-exec.sh" ]; then \
-		AGENTOS_DIR="$(AGENTOS_ROOT)" "$(CODEX_REPO)/scripts/build-wasi-codex-exec.sh"; \
+		SECURE_EXEC_DIR="$(AGENTOS_ROOT)" "$(CODEX_REPO)/scripts/build-wasi-codex-exec.sh"; \
 	else \
 		echo "codex: fork build script not found at $(CODEX_REPO)/scripts/build-wasi-codex-exec.sh — skipping."; \
 		echo "       Set CODEX_REPO=/path/to/codex-rs/codex-rs (the wasi-port-codex-core checkout) to build it."; \

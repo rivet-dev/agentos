@@ -1,15 +1,15 @@
 ---
 title: "Agent Session"
-description: "Create an agent session and send a prompt using a coding agent (Pi, Claude, or OpenCode)."
+description: "Project Pi into a VM, create an agent session, and send a prompt."
 category: "Quickstart"
 order: 12
 ---
 
-Run a coding agent inside an Agent OS VM, send it a prompt, and read back its reply. Reach for this when you want to drive an agent (Pi, Claude, or OpenCode) programmatically rather than through a chat UI.
+Run the Pi coding agent inside an Agent OS VM, send it a prompt, and print its reply.
 
 ## How it works
 
-Register the agent software bundles when you `AgentOs.create` a VM, then open a session with `createSession(agent, { env })` for the agent of your choice. Subscribe with `onSessionEvent` to watch streamed text and tool use as it happens, and call `prompt` to send a message and await the final response text. Close the session and dispose the VM when finished. Agents read credentials such as `ANTHROPIC_API_KEY` from the session `env`.
+Pass the Pi software package to `AgentOs.create({ software: [pi] })` so the sidecar can resolve the `pi` agent name from the projected package. The example requires `ANTHROPIC_API_KEY`, forwards it in the session environment, prints the final response text, and cleans up the session and VM with `try`/`finally`.
 
 ## Run it
 
@@ -18,7 +18,7 @@ npm install
 ANTHROPIC_API_KEY=sk-... npx tsx index.ts
 ```
 
-Expected: the script prints a session ID, streams session events, and logs the agent's answer (`4`).
+Expected: the script prints Pi's response to the prompt.
 
 ## Source
 

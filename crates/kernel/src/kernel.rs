@@ -1081,14 +1081,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
 
     pub fn move_path(&mut self, from: &str, to: &str) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        match self.rename(from, to) {
-            Ok(()) => Ok(()),
-            Err(error) if error.code() == "EXDEV" => {
-                self.copy_path(from, to, true)?;
-                self.remove_path(from, true)
-            }
-            Err(error) => Err(error),
-        }
+        // Match rename(2): moving across mounted filesystems is EXDEV. Callers
+        // that explicitly want copy-and-remove already have copy_path/remove_path.
+        self.rename(from, to)
     }
 
     pub fn remove_file(&mut self, path: &str) -> KernelResult<()> {
@@ -1248,6 +1243,20 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.processes.zombie_timer_count()
     }
 
+    pub fn validate_process_cwd(&mut self, path: &str) -> KernelResult<()> {
+        if path.is_empty() {
+            return Err(KernelError::new("ENOENT", "chdir path is empty"));
+        }
+        let stat = self.stat(path)?;
+        if !stat.is_directory {
+            return Err(KernelError::new(
+                "ENOTDIR",
+                format!("not a directory, chdir '{path}'"),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn spawn_process(
         &mut self,
         command: &str,
@@ -1259,6 +1268,10 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             (options.requester_driver.as_deref(), options.parent_pid)
         {
             self.assert_driver_owns(requester, parent_pid)?;
+        }
+
+        if let Some(cwd) = options.cwd.as_deref() {
+            self.validate_process_cwd(cwd)?;
         }
 
         let cwd = options.cwd.clone().unwrap_or_else(|| self.cwd.clone());
@@ -1320,6 +1333,10 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.assert_not_terminated()?;
         if let Some(parent_pid) = options.parent_pid {
             self.assert_driver_owns(requester_driver, parent_pid)?;
+        }
+
+        if let Some(cwd) = options.cwd.as_deref() {
+            self.validate_process_cwd(cwd)?;
         }
 
         let cwd = options.cwd.clone().unwrap_or_else(|| self.cwd.clone());

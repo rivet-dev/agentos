@@ -7,14 +7,18 @@ import codex from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-test("codex package does not advertise an ACP adapter until the real agent is wired", () => {
-	const manifest = JSON.parse(
+test("codex package projects the ACP adapter and codex-cli command package", () => {
+	const packageManifest = JSON.parse(
 		readFileSync(join(__dirname, "..", "package.json"), "utf8"),
 	);
+	const agentosManifest = JSON.parse(
+		readFileSync(join(__dirname, "..", "agentos-package.json"), "utf8"),
+	);
 
-	assert.equal(manifest.bin, undefined);
-	// The package now re-exports the @agentos-software/codex-cli package
-	// descriptor ({ packagePath }) instead of a bespoke shape.
-	assert.equal(typeof codex.packagePath, "string");
-	assert.equal(codex.agent, undefined);
+	assert.equal(packageManifest.bin["codex-acp"], "./dist/adapter.js");
+	assert.equal(agentosManifest.name, "codex");
+	assert.equal(agentosManifest.agent.acpEntrypoint, "codex-acp");
+	assert.equal(codex.length, 2);
+	assert.equal(typeof codex[0].packagePath, "string");
+	assert.equal(typeof codex[1].packagePath, "string");
 });

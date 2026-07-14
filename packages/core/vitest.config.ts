@@ -18,7 +18,6 @@ const SLOW_E2E_FILES = [
 	"tests/opencode-session.test.ts",
 	"tests/git-quickstart.test.ts",
 	"tests/filesystem-move-delete.test.ts",
-	"tests/batch-file-ops.test.ts",
 	"tests/agentos-base-filesystem.test.ts",
 	"tests/pi-sdk-boot-probe.test.ts",
 	"tests/pi-headless.test.ts",
@@ -49,16 +48,9 @@ const KNOWN_FAILING_E2E_FILES = [
 	"tests/software-projection.test.ts",
 	"tests/pi-acp-adapter.test.ts",
 	"tests/process-lifecycle.test.ts",
-	// Registry-artifact / shell-behavior failures (red in both CI and local):
+	// Registry-artifact failure (red in both CI and local):
 	//  - duckdb-package: imports secure-exec registry/software/duckdb/dist (unbuilt WASM in CI).
-	//  - shell-flat-api: openShell/writeShell/onShellData yields empty output.
 	"tests/duckdb-package.test.ts",
-	"tests/shell-flat-api.test.ts",
-	// codex-fullturn: the pinned @agentos-software/codex package intentionally
-	// stubs the turn ("codex-exec --session-turn is disabled until the real Codex
-	// agent package is wired"). Pre-existing unwired-feature state, not a
-	// regression — re-enable once the real Codex agent package is wired.
-	"tests/codex-fullturn.test.ts",
 ];
 
 // Real-API, real-install matrix (agent × package manager). Hits a live LLM API

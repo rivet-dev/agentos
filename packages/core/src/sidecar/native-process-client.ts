@@ -20,7 +20,12 @@ export type {
 	ExtEnvelope,
 	GuestFilesystemStat,
 	RootFilesystemEntry,
-	RootFilesystemLowerDescriptor,
+	SidecarCronAlarm,
+	SidecarCronDispatch,
+	SidecarCronEventRecord,
+	SidecarCronJobEntry,
+	SidecarCronOverlap,
+	SidecarCronRun,
 	SidecarEventSelector,
 	SidecarFsPermissionRule,
 	SidecarLinkPackageResult,
@@ -32,7 +37,6 @@ export type {
 	SidecarPermissionsPolicy,
 	SidecarProcessSnapshotEntry,
 	SidecarProjectedAgent,
-	SidecarProjectedModuleDescriptor,
 	SidecarRegisteredHostCallbackDefinition,
 	SidecarRegisteredHostCallbackExample,
 	SidecarRequestFrame,
@@ -45,12 +49,8 @@ export type {
 	SidecarSignalHandlerRegistration,
 	SidecarSignalState,
 	SidecarSocketStateEntry,
-	SidecarSoftwareDescriptor,
 	SidecarSpawnOptions,
 	SidecarSpawnOptions as NativeSidecarSpawnOptions,
-	SidecarZombieTimerCount,
-} from "@rivet-dev/agentos-runtime-core/sidecar-client";
-
-export type {
 	SidecarVmConfiguredResponse as SidecarConfigureVmResult,
+	SidecarZombieTimerCount,
 } from "@rivet-dev/agentos-runtime-core/sidecar-client";

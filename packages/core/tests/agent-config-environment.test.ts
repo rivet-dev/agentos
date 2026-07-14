@@ -99,10 +99,10 @@ async function inspectLaunch(
 
 	try {
 		sessionId = (await vm.createSession(agentType)).sessionId;
-		return vm.getSessionAgentInfo(sessionId) as LaunchProbe;
+		return (await vm.getSessionAgentInfo(sessionId)) as LaunchProbe;
 	} finally {
 		if (sessionId) {
-			vm.closeSession(sessionId);
+			await vm.closeSession(sessionId);
 		}
 		await vm.dispose();
 		agentPackage.cleanup();
@@ -170,5 +170,4 @@ describe("agent launch args and env", () => {
 		expect(contextPaths).not.toContain("/etc/agentos/instructions.md");
 		expect(contextPaths).toContain("CLAUDE.md");
 	});
-
 });

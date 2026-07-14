@@ -286,11 +286,9 @@ pub(crate) struct AgentOsSidecarVmLease {
 impl AgentOsSidecarVmLease {
     /// Release the lease.
     ///
-    /// Parity with the TypeScript lease `dispose()`: it is idempotent, removes itself from the
-    /// owning sidecar's active-lease set, recomputes `activeVmCount`, and disposes the underlying
-    /// session transport client. Consuming `self` here gives the idempotence for free (the lease
-    /// cannot be disposed twice). The active-vm count is decremented (saturating at 0) to mirror
-    /// `state.description.activeVmCount = state.activeLeases.size`.
+    /// It is idempotent and decrements the owning sidecar's active VM count (saturating at zero).
+    /// The authoritative wire session is closed by `AgentOs::shutdown` before this host lease is
+    /// released; the shared transport remains live for sibling VMs.
     ///
     pub(crate) async fn dispose(self) -> Result<(), ClientError> {
         let sidecar = self.sidecar;

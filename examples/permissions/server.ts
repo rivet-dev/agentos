@@ -1,11 +1,6 @@
 import { agentOS, setup } from "@rivet-dev/agentos";
 import type { Permissions } from "@rivet-dev/agentos-core";
 
-// docs:start grant-network
-// Grant the network, leave everything else at the secure default.
-const grantNetwork = { network: "allow" } satisfies Permissions;
-// docs:end grant-network
-
 // fs: allow by default, but deny anything under /vault.
 const denyVault = {
 	fs: {
@@ -19,7 +14,9 @@ const denyVault = {
 const allowOneHost = {
 	network: {
 		default: "deny",
-		rules: [{ mode: "allow", operations: ["*"], patterns: ["api.example.com"] }],
+		rules: [
+			{ mode: "allow", operations: ["*"], patterns: ["api.example.com"] },
+		],
 	},
 } satisfies Permissions;
 // docs:end allow-one-host
@@ -37,7 +34,6 @@ const allowOneBinding = {
 // Combine the policies above and bind them to the VM via `agentOS`.
 const vm = agentOS({
 	permissions: {
-		...grantNetwork,
 		...denyVault,
 		...allowOneHost,
 		...allowOneBinding,

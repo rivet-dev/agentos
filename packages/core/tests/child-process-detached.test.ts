@@ -75,7 +75,7 @@ test(
 
 			let parentStdout = "";
 			let parentStderr = "";
-			const { pid } = vm.spawn("node", ["/tmp/detached-parent.mjs"], {
+			const { pid } = await vm.spawn("node", ["/tmp/detached-parent.mjs"], {
 				onStdout: (data) => {
 					parentStdout += new TextDecoder().decode(data);
 				},
@@ -94,7 +94,7 @@ test(
 
 			let probeStdout = "";
 			let probeStderr = "";
-			const probe = vm.spawn("node", ["/tmp/detached-probe.mjs"], {
+			const probe = await vm.spawn("node", ["/tmp/detached-probe.mjs"], {
 				onStdout: (data) => {
 					probeStdout += new TextDecoder().decode(data);
 				},
@@ -109,8 +109,7 @@ test(
 			).toBe(0);
 			expect(probeStdout).toContain("PROBE_CONNECTED");
 
-			const detachedProcess = vm
-				.allProcesses()
+			const detachedProcess = (await vm.allProcesses())
 				.find((process) => process.pid === detachedChildPid);
 			expect(detachedProcess?.command).toBe("node");
 		},
@@ -191,7 +190,7 @@ test(
 
 			let parentStdout = "";
 			let parentStderr = "";
-			const { pid } = vm.spawn("node", ["/tmp/detached-echo-parent.mjs"], {
+			const { pid } = await vm.spawn("node", ["/tmp/detached-echo-parent.mjs"], {
 				onStdout: (data) => {
 					parentStdout += new TextDecoder().decode(data);
 				},
@@ -205,7 +204,7 @@ test(
 
 			let probeStdout = "";
 			let probeStderr = "";
-			const probe = vm.spawn("node", ["/tmp/detached-echo-probe.mjs"], {
+			const probe = await vm.spawn("node", ["/tmp/detached-echo-probe.mjs"], {
 				onStdout: (data) => {
 					probeStdout += new TextDecoder().decode(data);
 				},
@@ -290,7 +289,7 @@ test(
 
 			let parentStdout = "";
 			let parentStderr = "";
-			const { pid } = vm.spawn("node", ["/tmp/detached-fs-parent.mjs"], {
+			const { pid } = await vm.spawn("node", ["/tmp/detached-fs-parent.mjs"], {
 				onStdout: (data) => {
 					parentStdout += new TextDecoder().decode(data);
 				},
@@ -304,7 +303,7 @@ test(
 
 			let probeStdout = "";
 			let probeStderr = "";
-			const probe = vm.spawn("node", ["/tmp/detached-fs-probe.mjs"], {
+			const probe = await vm.spawn("node", ["/tmp/detached-fs-probe.mjs"], {
 				onStdout: (data) => {
 					probeStdout += new TextDecoder().decode(data);
 				},
@@ -416,7 +415,7 @@ function registerPiShapedShellBackendTests(): void {
 
 				let stdout = "";
 				let stderr = "";
-				const { pid } = vm.spawn("node", ["/tmp/pi-backend-probe.mjs"], {
+				const { pid } = await vm.spawn("node", ["/tmp/pi-backend-probe.mjs"], {
 					onStdout: (data) => {
 						stdout += new TextDecoder().decode(data);
 					},

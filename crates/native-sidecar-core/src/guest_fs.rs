@@ -1,11 +1,35 @@
 use crate::SidecarCoreError;
 use agentos_kernel::kernel::KernelVm;
-use agentos_kernel::vfs::{VirtualFileSystem, VirtualStat};
+use agentos_kernel::vfs::{normalize_path, VirtualFileSystem, VirtualStat};
 use agentos_sidecar_protocol::protocol::{
     GuestDirEntry, GuestFilesystemCallRequest, GuestFilesystemOperation,
     GuestFilesystemResultResponse, GuestFilesystemStat, RootFilesystemEntryEncoding,
 };
 use base64::Engine;
+
+pub fn resolve_guest_filesystem_request(
+    guest_cwd: &str,
+    mut payload: GuestFilesystemCallRequest,
+) -> Result<GuestFilesystemCallRequest, SidecarCoreError> {
+    payload.path = resolve_guest_path(guest_cwd, &payload.path)?;
+    payload.destination_path = payload
+        .destination_path
+        .as_deref()
+        .map(|path| resolve_guest_path(guest_cwd, path))
+        .transpose()?;
+    Ok(payload)
+}
+
+pub fn resolve_guest_path(guest_cwd: &str, path: &str) -> Result<String, SidecarCoreError> {
+    if path.is_empty() {
+        return Err(SidecarCoreError::new("ENOENT: guest path is empty"));
+    }
+    Ok(if path.starts_with('/') {
+        normalize_path(path)
+    } else {
+        normalize_path(&format!("{guest_cwd}/{path}"))
+    })
+}
 
 pub fn handle_guest_filesystem_call<F>(
     kernel: &mut KernelVm<F>,
@@ -85,7 +109,7 @@ where
         }
         GuestFilesystemOperation::Mkdir => {
             kernel
-                .mkdir(&payload.path, payload.recursive)
+                .mkdir(&payload.path, payload.recursive.unwrap_or(false))
                 .map_err(kernel_error)?;
             empty_guest_filesystem_response(payload.operation, payload.path)
         }
@@ -200,7 +224,7 @@ where
         }
         GuestFilesystemOperation::Remove => {
             kernel
-                .remove_path(&payload.path, payload.recursive)
+                .remove_path(&payload.path, payload.recursive.unwrap_or(false))
                 .map_err(kernel_error)?;
             empty_guest_filesystem_response(payload.operation, payload.path)
         }
@@ -209,7 +233,11 @@ where
                 SidecarCoreError::new("guest filesystem copy requires a destination_path")
             })?;
             kernel
-                .copy_path(&payload.path, &destination, payload.recursive)
+                .copy_path(
+                    &payload.path,
+                    &destination,
+                    payload.recursive.unwrap_or(false),
+                )
                 .map_err(kernel_error)?;
             targeted_guest_filesystem_response(payload.operation, payload.path, destination)
         }
@@ -407,7 +435,7 @@ mod tests {
             target: None,
             content: None,
             encoding: None,
-            recursive: false,
+            recursive: None,
             max_depth: None,
             mode: None,
             uid: None,
@@ -423,7 +451,7 @@ mod tests {
     fn handles_kernel_backed_guest_filesystem_round_trip() {
         let mut kernel = test_kernel();
         let mut mkdir = request(GuestFilesystemOperation::Mkdir, "/tmp");
-        mkdir.recursive = true;
+        mkdir.recursive = Some(true);
         handle_guest_filesystem_call(&mut kernel, mkdir).unwrap();
 
         let mut write = request(GuestFilesystemOperation::WriteFile, "/tmp/blob.bin");
@@ -522,10 +550,10 @@ mod tests {
     fn read_dir_returns_typed_entries_in_one_call() {
         let mut kernel = test_kernel();
         let mut mkdir = request(GuestFilesystemOperation::Mkdir, "/d");
-        mkdir.recursive = true;
+        mkdir.recursive = Some(true);
         handle_guest_filesystem_call(&mut kernel, mkdir).unwrap();
         let mut subdir = request(GuestFilesystemOperation::Mkdir, "/d/sub");
-        subdir.recursive = true;
+        subdir.recursive = Some(true);
         handle_guest_filesystem_call(&mut kernel, subdir).unwrap();
         let mut write = request(GuestFilesystemOperation::WriteFile, "/d/file.txt");
         write.content = Some(String::from("hi"));
@@ -552,5 +580,42 @@ mod tests {
         assert!(by("sub").is_directory && !by("sub").is_symbolic_link);
         assert!(!by("file.txt").is_directory && !by("file.txt").is_symbolic_link);
         assert!(by("link").is_symbolic_link);
+    }
+
+    #[test]
+    fn resolves_guest_filesystem_paths_against_the_vm_cwd() {
+        let mut request = request(GuestFilesystemOperation::Move, "notes/../source.txt");
+        request.destination_path = Some(String::from("../archive/./target.txt"));
+
+        let resolved = resolve_guest_filesystem_request("/workspace/project", request).unwrap();
+
+        assert_eq!(resolved.path, "/workspace/project/source.txt");
+        assert_eq!(
+            resolved.destination_path.as_deref(),
+            Some("/workspace/archive/target.txt")
+        );
+    }
+
+    #[test]
+    fn resolves_guest_paths_with_linux_cwd_semantics() {
+        assert_eq!(
+            resolve_guest_path("/workspace/project", "src/../input.ts").unwrap(),
+            "/workspace/project/input.ts"
+        );
+        assert_eq!(
+            resolve_guest_path("/workspace/project", "/tmp/../root/input.ts").unwrap(),
+            "/root/input.ts"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_guest_filesystem_paths() {
+        let error = resolve_guest_filesystem_request(
+            "/workspace",
+            request(GuestFilesystemOperation::ReadFile, ""),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.to_string(), "ENOENT: guest path is empty");
     }
 }

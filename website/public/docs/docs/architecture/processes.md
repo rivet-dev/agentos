@@ -6,7 +6,8 @@ Internals of the kernel process model: the virtual process table, how spawns are
 
 This page is an internals deep-dive on the kernel's **process model**: the data
 structures and syscall paths behind every guest process. For the client-facing
-API (`exec`, `spawn`, `openShell`, lifecycle, the process tree), see
+API (`exec`, `spawn`, `openShell`, lifecycle, and the flat `allProcesses`
+snapshot), see
 [Processes & Shell](/docs/processes). For the surrounding component and trust
 model, see [Architecture](/docs/architecture).
 
@@ -21,7 +22,7 @@ Each VM owns one process table. It is the authority for what is "running"
 inside that VM; nothing in it corresponds to a host PID.
 
 - **Per-VM and isolated.** Two VMs have two independent tables. A PID in one VM is meaningless in another, and processes are never visible across the VM boundary.
-- **Holds every guest process,** not only the ones a client started explicitly. A `spawn` from the client, a child spawned by guest `node:child_process`, and the processes behind a shell pipeline are all table entries. This is why the system-wide views (`allProcesses`, `processTree`) can show more than what the client launched.
+- **Holds every guest process,** not only the ones a client started explicitly. A `spawn` from the client, a child spawned by guest `node:child_process`, and the processes behind a shell pipeline are all table entries. This is why the system-wide `allProcesses` snapshot can show more than what the client launched.
 - **Tracks lifecycle and lineage.** Each entry carries its PID, the command and arguments, parent PID (so the tree can be reconstructed), running/exited status, exit code once collected, and its attached stdio endpoints.
 - **Records a driver.** An entry knows which execution backend services it (for example a V8 isolate versus a WASM runtime). This is the `driver` field surfaced on `allProcesses`. Drivers differ in *how* the code runs; they share the same table, the same kernel-owned stdio, and the same boundary.
 
@@ -33,7 +34,7 @@ A spawn, whether it originates from a client `spawn`/`exec` call or from guest
 `node:child_process`, follows one path through the kernel:
 
 1. **The request crosses into the kernel.** A client call arrives over the wire protocol; a guest call arrives as a syscall from the executor. Either way the kernel, not the caller, performs the work.
-2. **Permission check.** The kernel applies the VM's permission policy before doing anything. Process execution is denied by default and must be granted; the policy is trusted input, the guest making the request is not.
+2. **Permission check.** The kernel applies the VM's permission policy before doing anything. The sidecar installs `allow` when `childProcess` is omitted; an explicit deny rejects the spawn with `EACCES`. The policy is trusted input, the guest making the request is not.
 3. **Resolve the program.** The command is resolved against the VM's virtual filesystem (PATH lookup over the VFS), not the host. The resolved program decides the driver: a JavaScript entrypoint runs in a V8 isolate; a `.wasm` program (including `sh` and coreutils) runs on the WASM runtime.
 4. **Allocate the table entry.** The kernel assigns a virtual PID, records the command, arguments, environment, working directory, and parent PID, and links stdio endpoints (see below).
 5. **Start execution.** The driver begins running the program. For a one-shot `exec` the kernel additionally collects stdout, stderr, and the exit code and returns them as the call's result; for `spawn` it leaves the process running and streams output via events.

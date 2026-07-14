@@ -8,7 +8,7 @@
 //!
 //! The crucial difference from a plain `host_dir` mount is the PLUGIN ID: module
 //! resolution and path translation only treat mounts classified
-//! `host_dir`/`module_access` as host-backed (`build_module_reader` /
+//! `host_dir` as host-backed (`build_module_reader` /
 //! `runtime_guest_path_mappings` in `execution.rs`). Because this mount is
 //! `agentos_packages`, the JS runtime resolves `/opt/agentos` modules through the
 //! kernel VFS — no host↔guest path translation (the `/unknown/<cmd>` failure

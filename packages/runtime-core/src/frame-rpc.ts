@@ -120,8 +120,12 @@ export class FrameRpcTransport<
 	async sendFrame(
 		requestId: number,
 		frame: TWriteFrame,
+		onResponse?: (response: TResponseFrame) => void,
 	): Promise<TResponseFrame> {
-		const response = this.pendingResponses.waitForResponse(requestId);
+		const response = this.pendingResponses.waitForResponse(
+			requestId,
+			onResponse,
+		);
 		void this.writeFrame(frame).catch((error) => {
 			this.pendingResponses.reject(
 				requestId,

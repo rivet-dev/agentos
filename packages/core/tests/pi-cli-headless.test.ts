@@ -145,7 +145,7 @@ describe("full createSession('pi-cli') inside the VM", () => {
 			).toBe(true);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);
@@ -203,7 +203,7 @@ describe("full createSession('pi-cli') inside the VM", () => {
 			expect(mock.getRequests().length).toBeGreaterThanOrEqual(2);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 			await vm.dispose();
 			await stopLlmock(mock);

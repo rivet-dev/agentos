@@ -27,7 +27,6 @@ const found = execSync(
 		'-not -path "*/.cache/*"',
 		'-not -path "*/.turbo/*"',
 		'-not -path "*/vendor/*"',
-		'-not -path "./registry/tests/projects/*"',
 		'-not -path "./crates/execution/assets/undici-shims/*"',
 	].join(" "),
 	{ encoding: "utf8", cwd: root },

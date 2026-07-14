@@ -40,7 +40,7 @@ await agent.exec("pip install rich");
 await agent.exec('python -c "import rich; print(rich.__version__)"');
 ```
 
-`pip install <pkg>` and `python -m pip install <pkg>` both work; downloads obey the VM's network policy (default-deny + allowlist).
+`pip install <pkg>` and `python -m pip install <pkg>` both work and follow the VM network policy. Network is allowed when `permissions` or its `network` scope is omitted; pass an explicit deny or destination allowlist to restrict package downloads.
 
 ## Compatibility
 

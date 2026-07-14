@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "vitest";
+import { createInMemoryFileSystem } from "../src/memory-filesystem.js";
 import { createOverlayBackend } from "../src/overlay-filesystem.js";
-import type { VirtualFileSystem } from "../src/runtime-compat.js";
-import { createInMemoryFileSystem } from "../src/runtime-compat.js";
+import type { VirtualFileSystem } from "../src/runtime.js";
 import { defineFsDriverTests } from "../src/test/file-system.js";
 
 // ---------------------------------------------------------------------------

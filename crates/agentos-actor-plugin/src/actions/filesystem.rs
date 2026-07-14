@@ -1,11 +1,9 @@
 //! Filesystem actions. Each helper takes `&AgentOs` plus typed args
-//! and delegates to the matching upstream `AgentOs::*` method. DTOs
-//! used by batch operations live here too so the dispatcher arms can
-//! deserialize/serialize directly without re-declaring shapes.
+//! and delegates to the matching upstream `AgentOs::*` method.
 
 use agentos_client::{
-    AgentOs, BatchReadResult, BatchWriteEntry, BatchWriteResult, DeleteOptions, DirEntry,
-    FileContent, MkdirOptions, ReaddirRecursiveOptions, VirtualDirEntry, VirtualStat,
+    AgentOs, DeleteOptions, DirEntry, FileContent, MkdirOptions, ReaddirRecursiveOptions,
+    VirtualDirEntry, VirtualStat,
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -123,37 +121,6 @@ pub async fn delete_file(vm: &AgentOs, path: &str, recursive: bool) -> Result<()
     vm.delete(path, DeleteOptions { recursive }).await
 }
 
-/// `writeFiles(entries)` — port of [`AgentOs::write_files`]. Per-entry
-/// failures are reported in the [`BatchWriteResultDto`]'s `success` /
-/// `error` fields rather than as a top-level error.
-pub async fn write_files(
-    vm: &AgentOs,
-    entries: Vec<WriteFilesEntryArg>,
-) -> Vec<BatchWriteResultDto> {
-    let entries: Vec<BatchWriteEntry> = entries
-        .into_iter()
-        .map(|entry| BatchWriteEntry {
-            path: entry.path,
-            content: FileContent::Bytes(entry.content.into_bytes()),
-        })
-        .collect();
-    vm.write_files(entries)
-        .await
-        .into_iter()
-        .map(BatchWriteResultDto::from)
-        .collect()
-}
-
-/// `readFiles(paths)` — port of [`AgentOs::read_files`]. Per-entry
-/// failures are reported as `content: None` plus an error string.
-pub async fn read_files(vm: &AgentOs, paths: Vec<String>) -> Vec<BatchReadResultDto> {
-    vm.read_files(paths)
-        .await
-        .into_iter()
-        .map(BatchReadResultDto::from)
-        .collect()
-}
-
 /// `readdirRecursive(path)` — port of [`AgentOs::readdir_recursive`].
 /// Returns every reachable entry with its type and size. Unbounded
 /// depth; the JS shim passes no max-depth in the driver tests so this
@@ -169,7 +136,7 @@ pub async fn readdir_recursive(vm: &AgentOs, path: &str) -> Result<Vec<DirEntry>
 
 /// Accept either a CBOR text string, a CBOR byte string (via `ByteBuf`), or
 /// the `["$Uint8Array", base64]` wrapper that TS encoders emit when the
-/// outer codec is JSON-compatible. Used by `writeFile` and `writeFiles`.
+/// outer codec is JSON-compatible. Used by `writeFile`.
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub enum WriteFileContent {
@@ -211,56 +178,5 @@ impl<'de> Deserialize<'de> for JsonCompatUint8Array {
             .decode(&base64)
             .map_err(|error| serde::de::Error::custom(format!("base64 decode: {error}")))?;
         Ok(Self { bytes })
-    }
-}
-
-/// Argument entry for `writeFiles`. TS sends `[{path, content}, ...]`
-/// where `content` follows the same coercion rules as `writeFile`.
-#[derive(Deserialize)]
-pub struct WriteFilesEntryArg {
-    pub path: String,
-    pub content: WriteFileContent,
-}
-
-/// Reply entry for `writeFiles`. Mirrors `BatchWriteResult` in a
-/// serializable form. `error` is `None` on success.
-#[derive(Serialize)]
-pub struct BatchWriteResultDto {
-    pub path: String,
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-impl From<BatchWriteResult> for BatchWriteResultDto {
-    fn from(value: BatchWriteResult) -> Self {
-        Self {
-            path: value.path,
-            success: value.success,
-            error: value.error,
-        }
-    }
-}
-
-/// Reply entry for `readFiles`. `content` is wrapped via `serde_bytes`
-/// so the `JsonCompatAdapter` re-wraps it as `["$Uint8Array", base64]`
-/// for JSON encoders. `None` content + `Some(error)` indicates that the
-/// specific file failed without aborting the whole batch.
-#[derive(Serialize)]
-pub struct BatchReadResultDto {
-    pub path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<serde_bytes::ByteBuf>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-impl From<BatchReadResult> for BatchReadResultDto {
-    fn from(value: BatchReadResult) -> Self {
-        Self {
-            path: value.path,
-            content: value.content.map(serde_bytes::ByteBuf::from),
-            error: value.error,
-        }
     }
 }

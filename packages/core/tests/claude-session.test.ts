@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
+import claude from "@agentos-software/claude-code";
 import type { Fixture, LLMock, ToolCall } from "@copilotkit/llmock";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import {
 	afterAll,
 	afterEach,
@@ -17,14 +17,17 @@ import {
 	startLlmock,
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
+import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import {
 	REGISTRY_SOFTWARE,
+	requireBuilt,
 	testOnlyCommandSoftware,
 } from "./helpers/registry-commands.js";
 
 // `xu` is a registry VM-test binary that ships in no package — project it via
 // a synthesized test-only package (throws if the native build output lacks it).
 const TEST_COMMAND_SOFTWARE = testOnlyCommandSoftware(["xu"]);
+const CLAUDE_SOFTWARE = requireBuilt(claude, "claude-code");
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 const XU_COMMAND = "xu hello-agent-os";
@@ -32,7 +35,6 @@ const XU_OUTPUT = "xu-ok:hello-agent-os";
 const NODE_EXECSYNC_CHILD_SCRIPT_PATH = "/tmp/nested-execsync-child.cjs";
 const NODE_EXECSYNC_SCRIPT_PATH = "/tmp/nested-execsync.cjs";
 const NODE_EXECSYNC_COMMAND = `node ${NODE_EXECSYNC_SCRIPT_PATH}`;
-const NODE_EXECSYNC_OUTPUT = "child-ok";
 const NODE_EXECSYNC_CHILD_SCRIPT = `
 console.log("child-ok");
 `.trimStart();
@@ -153,7 +155,7 @@ describe("full createSession('claude')", () => {
 		vm = await AgentOs.create({
 			loopbackExemptPorts: [mockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [...REGISTRY_SOFTWARE, TEST_COMMAND_SOFTWARE],
+			software: [...REGISTRY_SOFTWARE, CLAUDE_SOFTWARE, TEST_COMMAND_SOFTWARE],
 		});
 	});
 
@@ -215,7 +217,7 @@ describe("full createSession('claude')", () => {
 			).toBe(true);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 		}
 	}, 120_000);
@@ -228,7 +230,7 @@ describe("full createSession('claude')", () => {
 		const promptVm = await AgentOs.create({
 			loopbackExemptPorts: [promptMockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [...REGISTRY_SOFTWARE, TEST_COMMAND_SOFTWARE],
+			software: [...REGISTRY_SOFTWARE, CLAUDE_SOFTWARE, TEST_COMMAND_SOFTWARE],
 		});
 		let sessionId: string | undefined;
 		try {
@@ -274,7 +276,7 @@ describe("full createSession('claude')", () => {
 			).toBe(false);
 		} finally {
 			if (sessionId) {
-				promptVm.closeSession(sessionId);
+				await promptVm.closeSession(sessionId);
 			}
 			await promptVm.dispose();
 			await stopLlmock(promptMock);
@@ -297,7 +299,7 @@ describe("full createSession('claude')", () => {
 		const promptVm = await AgentOs.create({
 			loopbackExemptPorts: [promptMockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [...REGISTRY_SOFTWARE, TEST_COMMAND_SOFTWARE],
+			software: [...REGISTRY_SOFTWARE, CLAUDE_SOFTWARE, TEST_COMMAND_SOFTWARE],
 		});
 		let sessionId: string | undefined;
 		try {
@@ -351,7 +353,7 @@ describe("full createSession('claude')", () => {
 			).toBe(true);
 		} finally {
 			if (sessionId) {
-				promptVm.closeSession(sessionId);
+				await promptVm.closeSession(sessionId);
 			}
 			await promptVm.dispose();
 			await stopLlmock(promptMock);
@@ -374,7 +376,7 @@ describe("full createSession('claude')", () => {
 		const promptVm = await AgentOs.create({
 			loopbackExemptPorts: [promptMockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [...REGISTRY_SOFTWARE, TEST_COMMAND_SOFTWARE],
+			software: [...REGISTRY_SOFTWARE, CLAUDE_SOFTWARE, TEST_COMMAND_SOFTWARE],
 		});
 		let sessionId: string | undefined;
 		try {
@@ -431,7 +433,7 @@ describe("full createSession('claude')", () => {
 			).toBe(true);
 		} finally {
 			if (sessionId) {
-				promptVm.closeSession(sessionId);
+				await promptVm.closeSession(sessionId);
 			}
 			await promptVm.dispose();
 			await stopLlmock(promptMock);
@@ -451,45 +453,45 @@ describe("full createSession('claude')", () => {
 			});
 			sessionId = session.sessionId;
 
-			expect(vm.listSessions()).toContainEqual({
+			expect(await vm.listSessions()).toContainEqual({
 				sessionId,
 				agentType: "claude",
 			});
 
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as AgentInfo;
+			const agentInfo = (await vm.getSessionAgentInfo(sessionId)) as AgentInfo;
 			expect(agentInfo).toMatchObject({
 				name: "claude-sdk-acp",
 				title: "Claude Agent SDK ACP adapter",
 				version: "0.1.0",
 			});
 
-			const capabilities = vm.getSessionCapabilities(
+			const capabilities = (await vm.getSessionCapabilities(
 				sessionId,
-			) as AgentCapabilities;
+			)) as AgentCapabilities;
 			expect(capabilities.promptCapabilities).toMatchObject({
 				audio: false,
 				embeddedContext: false,
 				image: true,
 			});
 
-			const modes = vm.getSessionModes(sessionId);
+			const modes = await vm.getSessionModes(sessionId);
 			expect(modes?.currentModeId).toBe("default");
 			expect(modes?.availableModes.map((mode) => mode.id)).toEqual(
 				expect.arrayContaining(["default", "plan", "dontAsk"]),
 			);
-			expect(vm.getSessionConfigOptions(sessionId)).toEqual([]);
+			expect(await vm.getSessionConfigOptions(sessionId)).toEqual([]);
 
 			const closedSessionId = sessionId;
-			vm.closeSession(closedSessionId);
+			await vm.closeSession(closedSessionId);
 			sessionId = undefined;
 
-			expect(vm.listSessions()).not.toContainEqual({
+			expect(await vm.listSessions()).not.toContainEqual({
 				sessionId: closedSessionId,
 				agentType: "claude",
 			});
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 		}
 	}, 120_000);
@@ -506,14 +508,14 @@ describe("full createSession('claude')", () => {
 
 		const cancelResponse = await vm.cancelSession(sessionId);
 		expect(cancelResponse.error).toBeUndefined();
-		expect(vm.listSessions()).toContainEqual({
+		expect(await vm.listSessions()).toContainEqual({
 			sessionId,
 			agentType: "claude",
 		});
 
 		await vm.destroySession(sessionId);
 
-		expect(vm.listSessions()).not.toContainEqual({
+		expect(await vm.listSessions()).not.toContainEqual({
 			sessionId,
 			agentType: "claude",
 		});
@@ -545,13 +547,13 @@ describe("full createSession('claude')", () => {
 			unsubscribeEvents();
 			expect(response.error).toBeUndefined();
 
-			const modes = vm.getSessionModes(sessionId);
+			const modes = await vm.getSessionModes(sessionId);
 			expect(modes?.currentModeId).toBe("plan");
 
 			expect(modeEvents.length).toBeGreaterThanOrEqual(1);
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 		}
 	}, 120_000);
@@ -574,11 +576,11 @@ describe("full createSession('claude')", () => {
 			});
 			expect(response.error).toBeUndefined();
 
-			const modes = vm.getSessionModes(sessionId);
+			const modes = await vm.getSessionModes(sessionId);
 			expect(modes?.currentModeId).toBe("plan");
 		} finally {
 			if (sessionId) {
-				vm.closeSession(sessionId);
+				await vm.closeSession(sessionId);
 			}
 		}
 	}, 120_000);

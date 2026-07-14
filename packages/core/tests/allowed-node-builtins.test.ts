@@ -24,22 +24,38 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 
 	function createMockClient() {
 		let stopped = false;
+		let processId: string | null = null;
+		let exitDelivered = false;
 		const execute = vi.fn(
 			async (
 				_session: AuthenticatedSession,
 				_vm: CreatedVm,
 				_execution: { env?: Record<string, string> },
 			) => {
-				throw new Error("stop after capture");
+				processId = "sidecar-process-1";
+				return { processId, pid: 42 };
 			},
 		);
 		const client = {
 			waitForEvent: vi.fn(async () => {
 				while (!stopped) {
+					if (processId !== null && !exitDelivered) {
+						exitDelivered = true;
+						return {
+							ownership: { scope: "vm", vm_id: "vm-1" },
+							payload: {
+								type: "process_exited",
+								process_id: processId,
+								exit_code: 0,
+							},
+						};
+					}
 					await new Promise((resolve) => setTimeout(resolve, 1));
 				}
 				throw new Error("mock stopped");
 			}),
+			writeStdin: vi.fn(async () => {}),
+			closeStdin: vi.fn(async () => {}),
 			execute,
 			disposeVm: vi.fn(async () => {
 				stopped = true;
@@ -67,17 +83,17 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 			cwd: "/workspace",
 			localMounts: [],
 			sidecarMounts: [],
-			commandGuestPaths: new Map(),
 		});
 
-		const proc = proxy.spawn("node", ["/workspace/entry.mjs"], {
+		const proc = await proxy.spawn("node", ["/workspace/entry.mjs"], {
 			cwd: "/workspace",
 			env: { HOME: "/workspace" },
 		});
 		const exitCode = await proc.wait();
 
-		expect(exitCode).toBe(1);
+		expect(exitCode).toBe(0);
 		expect(execute).toHaveBeenCalledTimes(1);
+		expect(execute.mock.calls[0]?.[2]).not.toHaveProperty("processId");
 		return execute.mock.calls[0]?.[2];
 	}
 
@@ -95,7 +111,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 		});
 	});
 
-	test("exec forwards simple node commands to the guest node driver", async () => {
+	test("exec omits sidecar-owned cwd and env defaults", async () => {
 		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-shell-exec-"));
 		const { client, execute } = createMockClient();
 
@@ -110,25 +126,26 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 			cwd: "/workspace",
 			localMounts: [],
 			sidecarMounts: [],
-			commandGuestPaths: new Map([["sh", "/__secure_exec/commands/000/sh"]]),
 		});
 
 		await expect(
 			proxy.exec("node /workspace/entry.mjs --flag"),
 		).resolves.toMatchObject({
-			exitCode: 1,
+			exitCode: 0,
 		});
 		expect(execute).toHaveBeenCalledTimes(1);
 		expect(execute.mock.calls[0]?.[2]).toMatchObject({
-			command: "node",
-			args: ["/workspace/entry.mjs", "--flag"],
-			cwd: "/workspace",
+			shellCommand: "node /workspace/entry.mjs --flag",
+			args: [],
 		});
+		expect(execute.mock.calls[0]?.[2]).not.toHaveProperty("command");
+		expect(execute.mock.calls[0]?.[2]).not.toHaveProperty("cwd");
+		expect(execute.mock.calls[0]?.[2]).not.toHaveProperty("env");
 	});
 
-	test("exec rejects when the guest shell command is unavailable", async () => {
-		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-shell-missing-"));
-		const { client } = createMockClient();
+	test("openShell sends only explicit PTY options and leaves defaults to the sidecar", async () => {
+		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-shell-pty-"));
+		const { client, execute } = createMockClient();
 
 		proxy = new NativeSidecarKernelProxy({
 			client,
@@ -137,15 +154,69 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 				sessionId: "session-1",
 			} as AuthenticatedSession,
 			vm: { vmId: "vm-1" } as CreatedVm,
-			env: { HOME: "/workspace" },
+			env: { HOME: "/home/agentos" },
 			cwd: "/workspace",
 			localMounts: [],
 			sidecarMounts: [],
-			commandGuestPaths: new Map(),
 		});
 
-		await expect(proxy.exec("node /workspace/entry.mjs")).rejects.toThrow(
-			"native sidecar exec requires guest shell command 'sh'",
-		);
+		const shell = await proxy.openShell({ cols: 100, rows: 40 });
+		await expect(shell.wait()).resolves.toBe(0);
+
+		const payload = execute.mock.calls[0]?.[2] as
+			| {
+					env?: Record<string, string>;
+					pty?: { cols?: number; rows?: number };
+					keepStdinOpen?: boolean;
+			  }
+			| undefined;
+		expect(payload?.pty).toEqual({ cols: 100, rows: 40 });
+		expect(payload?.keepStdinOpen).toBeUndefined();
+		expect(payload?.env).toBeUndefined();
+		expect(execute.mock.calls[0]?.[2]).toMatchObject({ args: [] });
+		expect(execute.mock.calls[0]?.[2]).not.toHaveProperty("command");
+	});
+
+	test("spawn preserves false, true, and omission for streamStdin", async () => {
+		const cases = [
+			{ label: "false", value: false, expected: false },
+			{ label: "true", value: true, expected: true },
+			{ label: "omitted", value: undefined, expected: undefined },
+		] as const;
+
+		for (const testCase of cases) {
+			const { client, execute } = createMockClient();
+			proxy = new NativeSidecarKernelProxy({
+				client,
+				session: {
+					connectionId: "conn-1",
+					sessionId: "session-1",
+				} as AuthenticatedSession,
+				vm: { vmId: "vm-1" } as CreatedVm,
+				env: { HOME: "/workspace" },
+				cwd: "/workspace",
+				localMounts: [],
+				sidecarMounts: [],
+			});
+
+			const options =
+				testCase.value === undefined
+					? undefined
+					: { streamStdin: testCase.value };
+			const process = await proxy.spawn("node", [`${testCase.label}.mjs`], options);
+			await expect(process.wait()).resolves.toBe(0);
+			const payload = execute.mock.calls[0]?.[2];
+			if (testCase.expected === undefined) {
+				expect(payload).not.toHaveProperty("keepStdinOpen");
+			} else {
+				expect(payload).toHaveProperty(
+					"keepStdinOpen",
+					testCase.expected,
+				);
+			}
+
+			await proxy.dispose();
+			proxy = null;
+		}
 	});
 });

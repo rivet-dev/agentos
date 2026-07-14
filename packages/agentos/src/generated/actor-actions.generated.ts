@@ -5,7 +5,6 @@ import type {
 	ExecResult,
 	PermissionReply,
 	ProcessInfo,
-	ProcessTreeNode,
 	SpawnedProcessInfo,
 	VirtualStat,
 } from "@rivet-dev/agentos-core";
@@ -92,18 +91,6 @@ export interface OpenShellResult {
 	shellId: string;
 }
 
-export interface WriteFileResult {
-	path: string;
-	success: boolean;
-	error?: string;
-}
-
-export interface ReadFileResult {
-	path: string;
-	content?: Uint8Array;
-	error?: string;
-}
-
 export interface MountInfo {
 	path: string;
 	kind: "host_dir" | "s3" | "google_drive" | "sandbox_agent";
@@ -128,8 +115,6 @@ export type AgentOsActions = {
 	exists: (c: Ctx, path: string) => Promise<boolean>;
 	move: (c: Ctx, from: string, to: string) => Promise<void>;
 	deleteFile: (c: Ctx, path: string, options?: { recursive?: boolean }) => Promise<void>;
-	writeFiles: ( c: Ctx, entries: { path: string; content: string | Uint8Array }[], ) => Promise<WriteFileResult[]>;
-	readFiles: (c: Ctx, paths: string[]) => Promise<ReadFileResult[]>;
 	readdirRecursive: (c: Ctx, path: string) => Promise<DirEntry[]>;
 	exec: ( c: Ctx, command: string, options?: ExecActionOptions, ) => Promise<ExecResult>;
 	spawn: ( c: Ctx, command: string, args: string[], options?: SpawnActionOptions, ) => Promise<SpawnedProcess>;
@@ -138,7 +123,6 @@ export type AgentOsActions = {
 	stopProcess: (c: Ctx, pid: number) => Promise<void>;
 	listProcesses: (c: Ctx) => Promise<SpawnedProcessInfo[]>;
 	allProcesses: (c: Ctx) => Promise<ProcessInfo[]>;
-	processTree: (c: Ctx) => Promise<ProcessTreeNode[]>;
 	getProcess: (c: Ctx, pid: number) => Promise<SpawnedProcessInfo>;
 	writeProcessStdin: (c: Ctx, pid: number, data: string | Uint8Array) => Promise<void>;
 	closeProcessStdin: (c: Ctx, pid: number) => Promise<void>;

@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import type { VirtualFileSystem } from "../runtime-compat.js";
+import type { VirtualFileSystem } from "../runtime.js";
 
 // ---------------------------------------------------------------------------
 // Public config type
@@ -192,7 +192,9 @@ export function defineFsDriverTests(config: FsDriverTestConfig): void {
 
 			test("removeFile on missing file throws ENOENT", async () => {
 				if (capabilities.allowMissingFileRemoveNoop) {
-					await expect(fs.removeFile("/nonexistent.txt")).resolves.toBeUndefined();
+					await expect(
+						fs.removeFile("/nonexistent.txt"),
+					).resolves.toBeUndefined();
 					return;
 				}
 
@@ -251,7 +253,9 @@ export function defineFsDriverTests(config: FsDriverTestConfig): void {
 					return;
 				}
 
-				const err = await fs.rename("/nonexistent.txt", "/dst.txt").catch((e) => e);
+				const err = await fs
+					.rename("/nonexistent.txt", "/dst.txt")
+					.catch((e) => e);
 				expect(err).toBeInstanceOf(Error);
 				expect(hasErrorCode(err, "ENOENT")).toBe(true);
 			});
@@ -272,7 +276,9 @@ export function defineFsDriverTests(config: FsDriverTestConfig): void {
 					await fs.writeFile("/src/sub/three.txt", "3");
 
 					if (capabilities.allowDirectoryRenameUnsupported) {
-						await expect(fs.rename("/src", "/dst")).rejects.toBeInstanceOf(Error);
+						await expect(fs.rename("/src", "/dst")).rejects.toBeInstanceOf(
+							Error,
+						);
 						return;
 					}
 
@@ -460,7 +466,9 @@ export function defineFsDriverTests(config: FsDriverTestConfig): void {
 				test("link on a directory throws EPERM or an error", async () => {
 					await fs.writeFile("/linkdir/child.txt", "x");
 					if (capabilities.allowDirectoryHardLink) {
-						await expect(fs.link("/linkdir", "/linkdir2")).resolves.toBeUndefined();
+						await expect(
+							fs.link("/linkdir", "/linkdir2"),
+						).resolves.toBeUndefined();
 						return;
 					}
 

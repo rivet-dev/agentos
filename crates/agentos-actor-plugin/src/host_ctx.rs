@@ -103,6 +103,37 @@ impl HostCtx {
         self.submit_sql(self.vtable.db_run, sql, params).await
     }
 
+    /// Persist an internal actor action at an absolute Unix timestamp. Rivet
+    /// derives its actor alarm from this scheduled-event queue, so the action
+    /// also wakes a hibernated actor.
+    pub(crate) async fn schedule_at(
+        &self,
+        timestamp_ms: i64,
+        action_name: String,
+        args: Vec<u8>,
+    ) -> Result<(), String> {
+        let mut request = Vec::new();
+        ciborium::into_writer(
+            &abi::ScheduleActionRequest {
+                delay_ms: None,
+                timestamp_ms: Some(timestamp_ms),
+                action_name,
+                args,
+            },
+            &mut request,
+        )
+        .map_err(|error| format!("encode schedule_at request: {error}"))?;
+        let (tx, rx) = oneshot::channel::<SendResult>();
+        let ud = Box::into_raw(Box::new(tx)) as *mut c_void;
+        (self.vtable.schedule_at)(self.ctx(), abi::OwnedBuf::from_vec(request), complete, ud);
+        decode_result(
+            rx.await
+                .map(|result| result.0)
+                .unwrap_or_else(|_| abi::AbiResult::channel_closed()),
+        )?;
+        Ok(())
+    }
+
     async fn submit_sql(
         &self,
         f: abi::DbSqlFn,

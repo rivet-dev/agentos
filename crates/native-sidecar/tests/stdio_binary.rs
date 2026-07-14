@@ -6,7 +6,6 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
-use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 use support::{
@@ -263,11 +262,6 @@ fn spawn_sidecar_binary() -> (Child, ChildStdin, ChildStdout) {
     (child, stdin, stdout)
 }
 
-fn write_script(root: &Path) {
-    fs::write(root.join("entry.mjs"), "console.log('stdio-binary-ok');\n")
-        .expect("write test entrypoint");
-}
-
 #[test]
 fn stdio_binary_test_helpers_bound_frame_and_stream_buffers() {
     let codec = WireFrameCodec::default();
@@ -302,9 +296,6 @@ fn stdio_binary_test_helpers_bound_frame_and_stream_buffers() {
 
 #[test]
 fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
-    let temp = temp_dir("stdio-binary");
-    write_script(&temp);
-
     let (mut child, mut stdin, mut stdout) = spawn_sidecar_binary();
     let codec = WireFrameCodec::default();
     let mut buffered_events = Vec::new();
@@ -339,7 +330,6 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
                     pool: None,
                 }),
-                metadata: HashMap::new(),
             }),
         ),
     );
@@ -357,7 +347,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
             wire_session(&connection_id, &session_id),
             RequestPayload::CreateVmRequest(CreateVmRequest::legacy_test_config(
                 GuestRuntimeKind::JavaScript,
-                HashMap::from([(String::from("cwd"), temp.to_string_lossy().into_owned())]),
+                HashMap::from([(String::from("cwd"), String::from("/workspace"))]),
                 root_filesystem_descriptor(),
                 Some(wire_permissions_allow_all()),
             )),
@@ -387,7 +377,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 target: None,
                 content: None,
                 encoding: None,
-                recursive: true,
+                recursive: Some(true),
                 max_depth: None,
                 mode: None,
                 uid: None,
@@ -421,7 +411,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 target: None,
                 content: Some(String::from("stdio-sidecar-fs")),
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 max_depth: None,
                 mode: None,
                 uid: None,
@@ -455,7 +445,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 target: None,
                 content: None,
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 max_depth: None,
                 mode: None,
                 uid: None,
@@ -488,7 +478,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 target: Some(String::from("/workspace/note.txt")),
                 content: None,
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 max_depth: None,
                 mode: None,
                 uid: None,
@@ -522,7 +512,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 target: None,
                 content: None,
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 max_depth: None,
                 mode: None,
                 uid: None,
@@ -556,7 +546,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 target: None,
                 content: None,
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 max_depth: None,
                 mode: None,
                 uid: None,
@@ -590,7 +580,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 target: None,
                 content: None,
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 max_depth: None,
                 mode: None,
                 uid: None,
@@ -624,7 +614,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 target: None,
                 content: None,
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 max_depth: None,
                 mode: None,
                 uid: None,
@@ -658,7 +648,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 target: None,
                 content: None,
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 max_depth: None,
                 mode: None,
                 uid: None,
@@ -708,19 +698,58 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
         wire_request(
             14,
             wire_vm(&connection_id, &session_id, &vm_id),
-            RequestPayload::ExecuteRequest(ExecuteRequest {
-                process_id: String::from("proc-1"),
-                command: None,
-                runtime: Some(GuestRuntimeKind::JavaScript),
-                entrypoint: Some(String::from("./entry.mjs")),
-                args: Vec::new(),
-                env: HashMap::new(),
-                cwd: None,
-                wasm_permission_tier: None,
+            RequestPayload::GuestFilesystemCallRequest(GuestFilesystemCallRequest {
+                operation: GuestFilesystemOperation::WriteFile,
+                path: String::from("/workspace/entry.mjs"),
+                destination_path: None,
+                target: None,
+                content: Some(String::from("console.log('stdio-binary-ok');\n")),
+                encoding: None,
+                recursive: None,
+                max_depth: None,
+                mode: None,
+                uid: None,
+                gid: None,
+                atime_ms: None,
+                mtime_ms: None,
+                len: None,
+                offset: None,
             }),
         ),
     );
-    let started = recv_response(&mut stdout, &codec, 14, &mut buffered_events);
+    let write_entrypoint = recv_response(&mut stdout, &codec, 14, &mut buffered_events);
+    match write_entrypoint.payload {
+        ResponsePayload::GuestFilesystemResultResponse(response) => {
+            assert_eq!(response.path, "/workspace/entry.mjs");
+            assert_eq!(response.operation, GuestFilesystemOperation::WriteFile);
+        }
+        other => panic!("unexpected entrypoint write response: {other:?}"),
+    }
+
+    send_request(
+        &mut stdin,
+        &codec,
+        wire_request(
+            15,
+            wire_vm(&connection_id, &session_id, &vm_id),
+            RequestPayload::ExecuteRequest(ExecuteRequest {
+                process_id: Some(String::from("proc-1")),
+                command: None,
+                runtime: Some(GuestRuntimeKind::JavaScript),
+                entrypoint: Some(String::from("/workspace/entry.mjs")),
+                args: Vec::new(),
+                env: None,
+                cwd: None,
+                wasm_permission_tier: None,
+                pty: None,
+                shell_command: None,
+                keep_stdin_open: None,
+                timeout_ms: None,
+                capture_output: None,
+            }),
+        ),
+    );
+    let started = recv_response(&mut stdout, &codec, 15, &mut buffered_events);
     match started.payload {
         ResponsePayload::ProcessStartedResponse(response) => {
             assert_eq!(response.process_id, "proc-1");
@@ -741,14 +770,14 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
         &mut stdin,
         &codec,
         wire_request(
-            15,
+            16,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::DisposeVmRequest(DisposeVmRequest {
                 reason: DisposeReason::Requested,
             }),
         ),
     );
-    let disposed = recv_response(&mut stdout, &codec, 15, &mut buffered_events);
+    let disposed = recv_response(&mut stdout, &codec, 16, &mut buffered_events);
     match disposed.payload {
         ResponsePayload::VmDisposedResponse(response) => assert_eq!(response.vm_id, vm_id),
         other => panic!("unexpected dispose response: {other:?}"),
@@ -798,7 +827,6 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
                 placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
                     pool: None,
                 }),
-                metadata: HashMap::new(),
             }),
         ),
     );
@@ -840,25 +868,19 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
             4,
             wire_vm(&connection_id, &session_id, &vm_id),
             RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
-                mounts: vec![MountDescriptor {
+                mounts: Some(vec![MountDescriptor {
                     guest_path: String::from("/workspace"),
-                    read_only: false,
+                    read_only: Some(false),
                     plugin: MountPluginDescriptor {
                         id: String::from("js_bridge"),
-                        config: json!({ "mountId": "mount-1" }).to_string(),
+                        config: Some(json!({ "mountId": "mount-1" }).to_string()),
                     },
-                }],
-                software: Vec::new(),
+                }]),
                 permissions: Some(wire_permissions_allow_all()),
-                module_access_cwd: None,
-                instructions: Vec::new(),
-                projected_modules: Vec::new(),
-                command_permissions: HashMap::new(),
-                loopback_exempt_ports: Vec::new(),
-                packages: Vec::new(),
-                packages_mount_at: String::new(),
-                bootstrap_commands: Vec::new(),
-                tool_shim_commands: Vec::new(),
+                command_permissions: None,
+                loopback_exempt_ports: None,
+                packages: None,
+                packages_mount_at: None,
             }),
         ),
     );
@@ -869,7 +891,6 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
             // granular /opt/agentos leaf mounts (one tar/bin/current mount is added
             // per package, not a single always-present staging mount).
             assert_eq!(response.applied_mounts, 1);
-            assert_eq!(response.applied_software, 0);
         }
         other => panic!("unexpected configure response: {other:?}"),
     }
@@ -887,7 +908,7 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
                 target: None,
                 content: None,
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 max_depth: None,
                 mode: None,
                 uid: None,
@@ -961,7 +982,7 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
                 target: None,
                 content: Some(String::from("from-js-bridge")),
                 encoding: None,
-                recursive: false,
+                recursive: None,
                 max_depth: None,
                 mode: None,
                 uid: None,

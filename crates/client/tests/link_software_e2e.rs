@@ -1,6 +1,6 @@
 //! End-to-end coverage for `link_software` (Rust-client parity with the TS
 //! `linkSoftware`): a package added to a running VM resolves its `bin/` command
-//! live via `$PATH`.
+//! live via `$PATH`, and sidecar-owned enumeration observes its agent metadata.
 
 use std::os::unix::fs::PermissionsExt;
 use std::sync::{Arc, Mutex};
@@ -10,7 +10,6 @@ use agentos_client::config::{
 };
 use agentos_client::process::SpawnOptions;
 use agentos_client::AgentOs;
-use agentos_client::ExecOptions;
 use agentos_client::PackageDescriptor;
 
 fn allow_all() -> Permissions {
@@ -38,7 +37,7 @@ async fn link_software_makes_command_resolve_live() {
     std::fs::create_dir_all(dir.join("bin")).expect("mkdir bin");
     std::fs::write(
         dir.join("agentos-package.json"),
-        r#"{"name":"linked-tool","version":"1.0.0"}"#,
+        r#"{"name":"linked-tool","version":"1.0.0","agent":{"acpEntrypoint":"linked-cmd"}}"#,
     )
     .expect("write agentos-package.json");
     let bin = dir.join("bin").join("linked-cmd");
@@ -56,11 +55,44 @@ async fn link_software_makes_command_resolve_live() {
     .await
     .expect("create VM");
 
+    assert!(
+        !os.provided_commands()
+            .await
+            .expect("provided commands before link")
+            .contains_key("linked-tool"),
+        "the unlinked package must not appear in authoritative sidecar command enumeration"
+    );
+    assert!(
+        os.list_agents()
+            .await
+            .expect("list agents before link")
+            .iter()
+            .all(|agent| agent.id != "linked-tool"),
+        "the unlinked package must not appear in authoritative sidecar enumeration"
+    );
+
     os.link_software(PackageDescriptor {
         path: dir.to_string_lossy().into_owned(),
     })
     .await
     .expect("link_software");
+
+    assert_eq!(
+        os.provided_commands()
+            .await
+            .expect("provided commands after link")
+            .get("linked-tool"),
+        Some(&vec![String::from("linked-cmd")]),
+        "sidecar command enumeration must observe the live package linked after VM creation"
+    );
+    assert!(
+        os.list_agents()
+            .await
+            .expect("list agents after link")
+            .iter()
+            .any(|agent| agent.id == "linked-tool"),
+        "sidecar enumeration must observe the live package linked after VM creation"
+    );
 
     // The /opt/agentos mount is host-backed, so the linked command must be visible.
     let exists = os
@@ -83,18 +115,16 @@ async fn link_software_makes_command_resolve_live() {
             "linked-cmd",
             Vec::new(),
             SpawnOptions {
-                base: ExecOptions {
-                    on_stdout: Some(Box::new(move |chunk: &[u8]| {
-                        cb.lock().unwrap().extend_from_slice(chunk);
-                    })),
-                    on_stderr: Some(Box::new(move |chunk: &[u8]| {
-                        ecb.lock().unwrap().extend_from_slice(chunk);
-                    })),
-                    ..Default::default()
-                },
+                on_stdout: Some(Box::new(move |chunk: &[u8]| {
+                    cb.lock().unwrap().extend_from_slice(chunk);
+                })),
+                on_stderr: Some(Box::new(move |chunk: &[u8]| {
+                    ecb.lock().unwrap().extend_from_slice(chunk);
+                })),
                 ..Default::default()
             },
         )
+        .await
         .expect("spawn linked-cmd");
     let code = os.wait_process(handle.pid).await.expect("wait linked-cmd");
     let stdout = String::from_utf8_lossy(&captured.lock().unwrap()).into_owned();

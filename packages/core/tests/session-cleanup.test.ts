@@ -1,31 +1,33 @@
 import { execFileSync } from "node:child_process";
+import { readdir, readlink } from "node:fs/promises";
 import {
 	createServer,
 	type IncomingMessage,
 	type ServerResponse,
 } from "node:http";
-import { readlink, readdir } from "node:fs/promises";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { resolve } from "node:path";
+import claude from "@agentos-software/claude-code";
+import opencode from "@agentos-software/opencode";
+import pi from "@agentos-software/pi";
 import piCli from "@agentos-software/pi-cli";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 import {
 	decodeAcpResponse,
 	encodeAcpRequest,
-	encodeAcpResponse,
 } from "../src/sidecar/agentos-protocol.js";
+import type { SidecarSessionState } from "../src/sidecar/rpc-client.js";
 import { NativeSidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 import { getAgentOsKernel } from "../src/test/runtime.js";
-import type { SidecarSessionState } from "../src/sidecar/rpc-client.js";
 import {
 	createAnthropicFixture,
 	startLlmock,
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
+import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import {
-	createVmOpenCodeHome,
 	createVmWorkspace as createOpenCodeWorkspace,
+	createVmOpenCodeHome,
 } from "./helpers/opencode-helper.js";
 import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
 
@@ -34,12 +36,9 @@ const PROMPT_TEXT = "Reply with exactly cleanup-ok.";
 const PROMPT_RESPONSE = "cleanup-ok";
 const ACP_EXTENSION_NAMESPACE = "dev.rivet.agent-os.acp";
 
-type MockKind = "anthropic";
-
 type SessionCleanupAgent = {
 	agentType: string;
 	label: string;
-	mockKind: MockKind;
 	activePromptTermination: "close" | "cancel_then_close";
 	activePromptMock: "hang";
 	createVm: (mockUrl: string) => Promise<AgentOs>;
@@ -53,14 +52,13 @@ const PI_AGENTS: SessionCleanupAgent[] = [
 	{
 		agentType: "pi",
 		label: "Pi SDK",
-		mockKind: "anthropic",
 		activePromptTermination: "close",
 		activePromptMock: "hang",
 		createVm: async (mockUrl) =>
 			AgentOs.create({
 				loopbackExemptPorts: [Number(new URL(mockUrl).port)],
 				mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-				software: [], // pi pre-packed (default)
+				software: [pi],
 			}),
 		createSession: async (vm, mockUrl) => {
 			const homeDir = await createVmPiHome(vm, mockUrl);
@@ -79,7 +77,6 @@ const PI_AGENTS: SessionCleanupAgent[] = [
 	{
 		agentType: "pi-cli",
 		label: "Pi CLI",
-		mockKind: "anthropic",
 		activePromptTermination: "close",
 		activePromptMock: "hang",
 		createVm: async (mockUrl) =>
@@ -108,14 +105,13 @@ const REGISTRY_AGENTS: SessionCleanupAgent[] = [
 	{
 		agentType: "claude",
 		label: "Claude",
-		mockKind: "anthropic",
 		activePromptTermination: "close",
 		activePromptMock: "hang",
 		createVm: async (mockUrl) =>
 			AgentOs.create({
 				loopbackExemptPorts: [Number(new URL(mockUrl).port)],
 				mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-				software: [...REGISTRY_SOFTWARE], // claude pre-packed (default)
+				software: [...REGISTRY_SOFTWARE, claude],
 			}),
 		createSession: async (vm, mockUrl) =>
 			vm.createSession("claude", {
@@ -129,14 +125,13 @@ const REGISTRY_AGENTS: SessionCleanupAgent[] = [
 	{
 		agentType: "opencode",
 		label: "OpenCode",
-		mockKind: "anthropic",
 		activePromptTermination: "close",
 		activePromptMock: "hang",
 		createVm: async (mockUrl) =>
 			AgentOs.create({
 				loopbackExemptPorts: [Number(new URL(mockUrl).port)],
 				mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-				software: [...REGISTRY_SOFTWARE], // opencode pre-packed (default)
+				software: [...REGISTRY_SOFTWARE, opencode],
 			}),
 		createSession: async (vm, mockUrl) => {
 			const homeDir = await createVmOpenCodeHome(vm, mockUrl);
@@ -211,14 +206,6 @@ type SidecarBackdoor = AgentOs & {
 			sessionId: string,
 		): Promise<void>;
 	};
-	_closedSessionIds: {
-		has(sessionId: string): boolean;
-		size: number;
-		limit: number;
-	};
-	_sessions: Map<string, unknown>;
-	_sessionClosePromises: Map<string, Promise<void>>;
-	_closeSessionInternal(sessionId: string): Promise<void>;
 	_sidecarSession: unknown;
 	_sidecarVm: unknown;
 };
@@ -227,24 +214,6 @@ type HostProcessRow = {
 	pid: number;
 	ppid: number;
 };
-
-function stubSessionEntry(sessionId: string): Record<string, unknown> {
-	return {
-		sessionId,
-		agentType: "stub-agent",
-		processId: "",
-		pid: null,
-		closed: false,
-		modes: null,
-		configOptions: [],
-		capabilities: {},
-		agentInfo: null,
-		eventHandlers: new Set(),
-		permissionHandlers: new Set(),
-		configOverrides: new Map(),
-		pendingPermissionReplies: new Map(),
-	};
-}
 
 async function getSessionState(
 	vm: AgentOs,
@@ -290,19 +259,7 @@ async function closeSessionAndWait(
 	vm: AgentOs,
 	sessionId: string,
 ): Promise<void> {
-	vm.closeSession(sessionId);
-	await waitForTrackedSessionClose(vm, sessionId);
-}
-
-async function waitForTrackedSessionClose(
-	vm: AgentOs,
-	sessionId: string,
-): Promise<void> {
-	const backdoor = vm as SidecarBackdoor;
-	const closePromise = backdoor._sessionClosePromises.get(sessionId);
-	if (closePromise) {
-		await closePromise;
-	}
+	await vm.closeSession(sessionId);
 }
 
 function readHostProcesses(): HostProcessRow[] {
@@ -356,7 +313,7 @@ function collectProcessTree(rows: HostProcessRow[], rootPid: number): number[] {
 
 async function readKernelProcesses(vm: AgentOs): Promise<HostProcessRow[]> {
 	if (!(getAgentOsKernel(vm) instanceof NativeSidecarKernelProxy)) {
-		return vm.allProcesses().map(({ pid, ppid }) => ({ pid, ppid }));
+		return (await vm.allProcesses()).map(({ pid, ppid }) => ({ pid, ppid }));
 	}
 
 	const backdoor = vm as SidecarBackdoor;
@@ -469,8 +426,9 @@ async function snapshotHostProcessResources(rootPid: number): Promise<{
 }
 
 async function zombieTimerCount(vm: AgentOs): Promise<number> {
-	if (!(getAgentOsKernel(vm) instanceof NativeSidecarKernelProxy)) {
-		return getAgentOsKernel(vm).zombieTimerCount;
+	const kernel = getAgentOsKernel(vm);
+	if (!(kernel instanceof NativeSidecarKernelProxy)) {
+		return (kernel as unknown as { zombieTimerCount: number }).zombieTimerCount;
 	}
 
 	const backdoor = vm as SidecarBackdoor;
@@ -558,7 +516,7 @@ function createDeferredSignal(): {
 	};
 }
 
-async function createTextMock(mockKind: MockKind): Promise<{
+async function createTextMock(): Promise<{
 	url: string;
 	stop: () => Promise<void>;
 }> {
@@ -649,19 +607,6 @@ function writeAnthropicTextResponse(
 		"content-length": Buffer.byteLength(body),
 	});
 	res.end(body);
-}
-
-function writeJson(
-	res: ServerResponse,
-	statusCode: number,
-	body: Record<string, unknown>,
-): void {
-	const payload = JSON.stringify(body);
-	res.writeHead(statusCode, {
-		"content-type": "application/json",
-		"content-length": Buffer.byteLength(payload),
-	});
-	res.end(payload);
 }
 
 function writeJsonError(
@@ -755,7 +700,7 @@ async function assertActivePromptCleanup(
 	const promptMock = await createActivePromptMock(agent);
 	const vm = await agent.createVm(promptMock.url);
 	try {
-		const baselineSessionCount = vm.listSessions().length;
+		const baselineSessionCount = (await vm.listSessions()).length;
 		const baselineZombieTimers = await zombieTimerCount(vm);
 		const baselineVmResources = await snapshotVmResources(vm);
 		const { sessionId } = await agent.createSession(vm, promptMock.url);
@@ -775,7 +720,7 @@ async function assertActivePromptCleanup(
 			const cancelResponse = await vm.cancelSession(sessionId);
 			expect(cancelResponse.error).toBeUndefined();
 		} else {
-			vm.closeSession(sessionId);
+			await vm.closeSession(sessionId);
 		}
 
 		const promptOutcome = await Promise.race([
@@ -805,9 +750,9 @@ async function assertActivePromptCleanup(
 		if (agent.activePromptTermination === "cancel_then_close") {
 			await closeSessionAndWait(vm, sessionId);
 		}
-		expect(vm.listSessions()).toHaveLength(baselineSessionCount);
+		expect(await vm.listSessions()).toHaveLength(baselineSessionCount);
 		expect(
-			vm.listSessions().some((entry) => entry.sessionId === sessionId),
+			(await vm.listSessions()).some((entry) => entry.sessionId === sessionId),
 		).toBe(false);
 		await assertSessionResourcesReleased(
 			[sessionState.pid!],
@@ -825,10 +770,10 @@ function registerSharedCleanupCoverage(agents: SessionCleanupAgent[]): void {
 	test.each(
 		agents,
 	)("$label closeSession() frees session resources after a completed prompt and is idempotent", async (agent) => {
-		const mock = await createTextMock(agent.mockKind);
+		const mock = await createTextMock();
 		const vm = await agent.createVm(mock.url);
 		try {
-			const baselineSessionCount = vm.listSessions().length;
+			const baselineSessionCount = (await vm.listSessions()).length;
 			const baselineZombieTimers = await zombieTimerCount(vm);
 			const baselineVmResources = await snapshotVmResources(vm);
 			const { sessionId } = await agent.createSession(vm, mock.url);
@@ -847,7 +792,7 @@ function registerSharedCleanupCoverage(agents: SessionCleanupAgent[]): void {
 			);
 
 			await closeSessionAndWait(vm, sessionId);
-			expect(vm.listSessions()).toHaveLength(baselineSessionCount);
+			expect(await vm.listSessions()).toHaveLength(baselineSessionCount);
 			await assertSessionResourcesReleased(
 				[sessionState.pid!],
 				baselineZombieTimers,
@@ -856,7 +801,7 @@ function registerSharedCleanupCoverage(agents: SessionCleanupAgent[]): void {
 			);
 
 			await expect(closeSessionAndWait(vm, sessionId)).resolves.toBeUndefined();
-			expect(vm.listSessions()).toHaveLength(baselineSessionCount);
+			expect(await vm.listSessions()).toHaveLength(baselineSessionCount);
 			await assertSessionResourcesReleased(
 				[sessionState.pid!],
 				baselineZombieTimers,
@@ -879,62 +824,12 @@ function registerSharedCleanupCoverage(agents: SessionCleanupAgent[]): void {
 describe("session cleanup", () => {
 	registerSharedCleanupCoverage(PI_AGENTS);
 
-	test("closed session tombstones stay bounded across 10,000 sequential closes", async () => {
-		const vm = await AgentOs.create();
-		const backdoor = vm as SidecarBackdoor;
-		const originalExtensionRequest =
-			backdoor._sidecarClient.extensionRequest.bind(backdoor._sidecarClient);
-		backdoor._sidecarClient.extensionRequest = async (
-			_session,
-			_vm,
-			envelope,
-		) => {
-			return {
-				namespace: envelope.namespace,
-				payload: encodeAcpResponse({
-					tag: "AcpSessionClosedResponse",
-					val: { sessionId: "synthetic" },
-				}),
-			};
-		};
-
-		try {
-			const retentionLimit = backdoor._closedSessionIds.limit;
-			const closedSessionCount = 10_000;
-			expect(retentionLimit).toBeGreaterThan(0);
-			expect(closedSessionCount).toBeGreaterThan(retentionLimit);
-
-			for (let index = 0; index < closedSessionCount; index += 1) {
-				const sessionId = `synthetic-session-${index}`;
-				backdoor._sessions.set(sessionId, stubSessionEntry(sessionId));
-				await backdoor._closeSessionInternal(sessionId);
-			}
-
-			expect(backdoor._closedSessionIds.size).toBeLessThanOrEqual(
-				retentionLimit,
-			);
-
-			const recentSessionId = `synthetic-session-${closedSessionCount - 1}`;
-			expect(backdoor._closedSessionIds.has(recentSessionId)).toBe(true);
-			expect(() => vm.closeSession(recentSessionId)).not.toThrow();
-
-			const evictedSessionId = "synthetic-session-0";
-			expect(backdoor._closedSessionIds.has(evictedSessionId)).toBe(false);
-			expect(() => vm.closeSession(evictedSessionId)).toThrow(
-				`Session not found: ${evictedSessionId}`,
-			);
-		} finally {
-			backdoor._sidecarClient.extensionRequest = originalExtensionRequest;
-			await vm.dispose();
-		}
-	}, 30_000);
-
 	test("Pi SDK returns to baseline after five sequential createSession()/closeSession() cycles", async () => {
 		const agent = PI_AGENTS[0];
-		const mock = await createTextMock(agent.mockKind);
+		const mock = await createTextMock();
 		const vm = await agent.createVm(mock.url);
 		try {
-			const baselineSessionCount = vm.listSessions().length;
+			const baselineSessionCount = (await vm.listSessions()).length;
 			const baselineZombieTimers = await zombieTimerCount(vm);
 			const baselineVmResources = await snapshotVmResources(vm);
 
@@ -947,7 +842,7 @@ describe("session cleanup", () => {
 				expect(text).toContain(PROMPT_RESPONSE);
 
 				await closeSessionAndWait(vm, sessionId);
-				expect(vm.listSessions()).toHaveLength(baselineSessionCount);
+				expect(await vm.listSessions()).toHaveLength(baselineSessionCount);
 				await assertSessionResourcesReleased(
 					[sessionState.pid!],
 					baselineZombieTimers,
@@ -963,10 +858,10 @@ describe("session cleanup", () => {
 
 	test("Pi CLI returns to baseline after three concurrent sessions are closed", async () => {
 		const agent = PI_AGENTS[1];
-		const mock = await createTextMock(agent.mockKind);
+		const mock = await createTextMock();
 		const vm = await agent.createVm(mock.url);
 		try {
-			const baselineSessionCount = vm.listSessions().length;
+			const baselineSessionCount = (await vm.listSessions()).length;
 			const baselineZombieTimers = await zombieTimerCount(vm);
 			const baselineVmResources = await snapshotVmResources(vm);
 			const sessions = await Promise.all(
@@ -991,7 +886,7 @@ describe("session cleanup", () => {
 					expect(isSharedRuntimeCloseRaceError(result.reason)).toBe(true);
 				}
 			}
-			expect(vm.listSessions()).toHaveLength(baselineSessionCount);
+			expect(await vm.listSessions()).toHaveLength(baselineSessionCount);
 			await assertSessionResourcesReleased(
 				dedicatedSessionPids,
 				baselineZombieTimers,

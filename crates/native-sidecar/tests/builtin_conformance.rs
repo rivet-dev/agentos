@@ -23,9 +23,9 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 use support::{
-    assert_node_available, authenticate_wire, dispose_vm_and_close_session_wire, execute_wire,
-    new_sidecar, open_session_wire, temp_dir, wire_permissions_allow_all, wire_request,
-    wire_session, wire_vm, write_fixture,
+    assert_node_available, authenticate_wire, configure_host_workspace_mount,
+    dispose_vm_and_close_session_wire, execute_wire, new_sidecar, open_session_wire, temp_dir,
+    wire_permissions_allow_all, wire_request, wire_session, wire_vm, write_fixture,
 };
 
 // Timing-sensitive assertions flake under the CPU contention of a parallel test
@@ -160,7 +160,7 @@ fn create_vm_with_metadata_and_permissions(
 ) -> String {
     metadata
         .entry(String::from("cwd"))
-        .or_insert_with(|| cwd.to_string_lossy().into_owned());
+        .or_insert_with(|| String::from("/workspace"));
 
     let result = sidecar
         .dispatch_wire_blocking(wire_request(
@@ -181,7 +181,17 @@ fn create_vm_with_metadata_and_permissions(
         .expect("create sidecar VM through wire");
 
     match result.response.payload {
-        ResponsePayload::VmCreatedResponse(response) => response.vm_id,
+        ResponsePayload::VmCreatedResponse(response) => {
+            configure_host_workspace_mount(
+                sidecar,
+                request_id,
+                connection_id,
+                session_id,
+                &response.vm_id,
+                cwd,
+            );
+            response.vm_id
+        }
         other => panic!("unexpected wire vm create response: {other:?}"),
     }
 }
@@ -267,7 +277,7 @@ fn append_probe_output(buffer: &mut String, chunk: &[u8], process_id: &str, chan
 fn run_guest_probe_with_config(
     case_name: &str,
     cwd: &Path,
-    entrypoint: &Path,
+    _entrypoint: &Path,
     mut metadata: HashMap<String, String>,
     permissions: PermissionsPolicy,
     allowed_builtins: &[&str],
@@ -300,7 +310,7 @@ fn run_guest_probe_with_config(
         &vm_id,
         &format!("proc-{case_name}"),
         GuestRuntimeKind::JavaScript,
-        entrypoint,
+        "/workspace/entry.mjs",
         Vec::new(),
     );
 
@@ -333,7 +343,7 @@ fn run_guest_probe_in_existing_session(
     session_id: &str,
     case_name: &str,
     cwd: &Path,
-    entrypoint: &Path,
+    _entrypoint: &Path,
     mut metadata: HashMap<String, String>,
 ) -> Value {
     let allowed_builtins =
@@ -363,7 +373,7 @@ fn run_guest_probe_in_existing_session(
         &vm_id,
         &process_id,
         GuestRuntimeKind::JavaScript,
-        entrypoint,
+        "/workspace/entry.mjs",
         Vec::new(),
     );
 
@@ -407,7 +417,10 @@ fn assert_conformance(case_name: &str, script: &str) {
     write_fixture(&entrypoint, script);
 
     let host = run_host_probe(&cwd, &entrypoint);
-    let guest = run_guest_probe(case_name, &cwd, &entrypoint);
+    let guest_cwd = temp_dir(&format!("builtin-conformance-{case_name}-guest"));
+    let guest_entrypoint = guest_cwd.join("entry.mjs");
+    write_fixture(&guest_entrypoint, script);
+    let guest = run_guest_probe(case_name, &guest_cwd, &guest_entrypoint);
 
     assert_eq!(
         guest,
@@ -844,7 +857,7 @@ agent.destroy();
         &vm_id,
         &format!("proc-{case_name}"),
         GuestRuntimeKind::JavaScript,
-        &entrypoint,
+        "/workspace/entry.mjs",
         Vec::new(),
     );
     let (stdout, stderr, exit_code) = collect_builtin_process_output(
@@ -1372,7 +1385,7 @@ console.log(JSON.stringify({ callbackAnswer, promiseAnswer }));
         &vm_id,
         "proc-readline-question",
         GuestRuntimeKind::JavaScript,
-        &entrypoint,
+        "/workspace/entry.mjs",
         Vec::new(),
     );
     let ownership = wire_session(&connection_id, &session_id);
@@ -4170,7 +4183,7 @@ console.log(JSON.stringify({ hasRefAfterUnref: timer.hasRef() }));
         &vm_id,
         "proc-timer-unref-exit",
         GuestRuntimeKind::JavaScript,
-        &entrypoint,
+        "/workspace/entry.mjs",
         Vec::new(),
     );
 

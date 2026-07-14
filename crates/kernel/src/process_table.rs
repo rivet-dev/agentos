@@ -291,6 +291,7 @@ pub struct ProcessEntry {
     pub args: Vec<String>,
     pub status: ProcessStatus,
     pub exit_code: Option<i32>,
+    pub start_time_ms: u64,
     pub exit_time_ms: Option<u64>,
     pub env: BTreeMap<String, String>,
     pub cwd: String,
@@ -306,8 +307,12 @@ pub struct ProcessInfo {
     pub sid: u32,
     pub driver: String,
     pub command: String,
+    pub args: Vec<String>,
+    pub cwd: String,
     pub status: ProcessStatus,
     pub exit_code: Option<i32>,
+    pub start_time_ms: u64,
+    pub exit_time_ms: Option<u64>,
     pub identity: ProcessIdentity,
 }
 
@@ -459,6 +464,7 @@ impl ProcessTable {
             args,
             status: ProcessStatus::Running,
             exit_code: None,
+            start_time_ms: now_ms(),
             exit_time_ms: None,
             env: ctx.env,
             cwd: ctx.cwd,
@@ -849,8 +855,12 @@ fn to_process_info(entry: &ProcessEntry) -> ProcessInfo {
         sid: entry.sid,
         driver: entry.driver.clone(),
         command: entry.command.clone(),
+        args: entry.args.clone(),
+        cwd: entry.cwd.clone(),
         status: entry.status,
         exit_code: entry.exit_code,
+        start_time_ms: entry.start_time_ms,
+        exit_time_ms: entry.exit_time_ms,
         identity: entry.identity.clone(),
     }
 }
@@ -1574,5 +1584,34 @@ mod tests {
 
         assert_eq!(table.allocate_pid().expect("allocate pid"), 2);
         assert_eq!(table.allocate_pid().expect("allocate pid"), 3);
+    }
+
+    #[test]
+    fn process_snapshot_preserves_kernel_metadata_and_timestamps() {
+        let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
+        let process = Arc::new(TestDriverProcess::default());
+        let mut ctx = context(0);
+        ctx.cwd = "/workspace".to_owned();
+        table.register(
+            42,
+            "javascript",
+            "node",
+            vec!["app.js".to_owned()],
+            ctx,
+            process.clone(),
+        );
+
+        let running = table.list_processes().remove(&42).expect("running process");
+        assert_eq!(running.args, vec!["app.js"]);
+        assert_eq!(running.cwd, "/workspace");
+        assert!(running.start_time_ms > 0);
+        assert_eq!(running.exit_time_ms, None);
+
+        process.exit(7);
+        let exited = table.list_processes().remove(&42).expect("exited process");
+        assert_eq!(exited.status, ProcessStatus::Exited);
+        assert_eq!(exited.exit_code, Some(7));
+        assert!(exited.exit_time_ms.is_some());
+        assert!(exited.exit_time_ms.expect("exit timestamp") >= exited.start_time_ms);
     }
 }

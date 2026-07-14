@@ -211,7 +211,6 @@ pub fn open_session_wire(
                         agentos_native_sidecar::wire::SidecarPlacement::SidecarPlacementShared(
                             agentos_native_sidecar::wire::SidecarPlacementShared { pool: None },
                         ),
-                    metadata: HashMap::new(),
                 },
             ),
         ))
@@ -250,13 +249,9 @@ pub fn create_vm_wire_with_metadata(
     connection_id: &str,
     session_id: &str,
     runtime: agentos_native_sidecar::wire::GuestRuntimeKind,
-    cwd: &Path,
-    mut metadata: HashMap<String, String>,
+    host_workspace: &Path,
+    metadata: HashMap<String, String>,
 ) -> (String, agentos_native_sidecar::wire::WireDispatchResult) {
-    metadata
-        .entry(String::from("cwd"))
-        .or_insert_with(|| cwd.to_string_lossy().into_owned());
-
     let result = sidecar
         .dispatch_wire_blocking(wire_request(
             request_id,
@@ -283,7 +278,54 @@ pub fn create_vm_wire_with_metadata(
         }
         other => panic!("unexpected wire vm create response: {other:?}"),
     };
+    configure_host_workspace_mount(
+        sidecar,
+        request_id,
+        connection_id,
+        session_id,
+        &vm_id,
+        host_workspace,
+    );
     (vm_id, result)
+}
+
+pub fn configure_host_workspace_mount(
+    sidecar: &mut NativeSidecar<RecordingBridge>,
+    request_id: agentos_native_sidecar::wire::RequestId,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+    host_workspace: &Path,
+) {
+    sidecar
+        .dispatch_wire_blocking(wire_request(
+            request_id,
+            wire_vm(connection_id, session_id, vm_id),
+            agentos_native_sidecar::wire::RequestPayload::ConfigureVmRequest(
+                agentos_native_sidecar::wire::ConfigureVmRequest {
+                    mounts: Some(vec![agentos_native_sidecar::wire::MountDescriptor {
+                        guest_path: String::from("/workspace"),
+                        read_only: Some(false),
+                        plugin: agentos_native_sidecar::wire::MountPluginDescriptor {
+                            id: String::from("host_dir"),
+                            config: Some(
+                                serde_json::json!({
+                                    "hostPath": host_workspace,
+                                    "readOnly": false,
+                                })
+                                .to_string(),
+                            ),
+                        },
+                    }]),
+                    permissions: None,
+                    command_permissions: None,
+                    loopback_exempt_ports: None,
+                    packages: None,
+                    packages_mount_at: None,
+                },
+            ),
+        ))
+        .expect("mount explicit host test workspace");
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -295,7 +337,7 @@ pub fn execute_wire(
     vm_id: &str,
     process_id: &str,
     runtime: agentos_native_sidecar::wire::GuestRuntimeKind,
-    entrypoint: &Path,
+    guest_entrypoint: &str,
     args: Vec<String>,
 ) {
     let result = sidecar
@@ -304,14 +346,19 @@ pub fn execute_wire(
             wire_vm(connection_id, session_id, vm_id),
             agentos_native_sidecar::wire::RequestPayload::ExecuteRequest(
                 agentos_native_sidecar::wire::ExecuteRequest {
-                    process_id: process_id.to_owned(),
+                    process_id: Some(process_id.to_owned()),
                     command: None,
                     runtime: Some(runtime),
-                    entrypoint: Some(entrypoint.to_string_lossy().into_owned()),
+                    entrypoint: Some(guest_entrypoint.to_owned()),
                     args,
-                    env: HashMap::new(),
+                    env: None,
                     cwd: None,
                     wasm_permission_tier: None,
+                    pty: None,
+                    shell_command: None,
+                    keep_stdin_open: None,
+                    timeout_ms: None,
+                    capture_output: None,
                 },
             ),
         ))
@@ -337,7 +384,6 @@ pub fn collect_process_output_wire_with_timeout(
     let deadline = Instant::now() + timeout;
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
-    let mut exit = None;
 
     loop {
         let event = sidecar
@@ -372,22 +418,17 @@ pub fn collect_process_output_wire_with_timeout(
                 agentos_native_sidecar::wire::EventPayload::ProcessExitedEvent(exited)
                     if exited.process_id == process_id =>
                 {
-                    exit = Some((exited.exit_code, Instant::now()));
+                    return (
+                        process_stream_to_string(&stdout),
+                        process_stream_to_string(&stderr),
+                        exited.exit_code,
+                    );
                 }
                 agentos_native_sidecar::wire::EventPayload::ProcessExitedEvent(_)
+                | agentos_native_sidecar::wire::EventPayload::CronDispatchEvent(_)
                 | agentos_native_sidecar::wire::EventPayload::VmLifecycleEvent(_)
                 | agentos_native_sidecar::wire::EventPayload::StructuredEvent(_)
                 | agentos_native_sidecar::wire::EventPayload::ExtEnvelope(_) => {}
-            }
-        }
-
-        if let Some((exit_code, seen_at)) = exit {
-            if Instant::now().duration_since(seen_at) >= Duration::from_millis(200) {
-                return (
-                    process_stream_to_string(&stdout),
-                    process_stream_to_string(&stderr),
-                    exit_code,
-                );
             }
         }
 
@@ -460,31 +501,6 @@ pub fn create_vm_with_metadata(
         metadata.into_iter().collect(),
     );
     (vm_id, dispatch_result_from_wire(result))
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn execute(
-    sidecar: &mut NativeSidecar<RecordingBridge>,
-    request_id: RequestId,
-    connection_id: &str,
-    session_id: &str,
-    vm_id: &str,
-    process_id: &str,
-    runtime: GuestRuntimeKind,
-    entrypoint: &Path,
-    args: Vec<String>,
-) {
-    execute_wire(
-        sidecar,
-        request_id,
-        connection_id,
-        session_id,
-        vm_id,
-        process_id,
-        wire_runtime_kind(runtime),
-        entrypoint,
-        args,
-    );
 }
 
 pub fn collect_process_output(

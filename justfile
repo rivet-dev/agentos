@@ -49,6 +49,24 @@ install-shell:
 	done
 	(cd packages/shell && PATH="$global_bin_dir:$PATH" pnpm link --global)
 
+install-gigacode:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	gigacode_root="${GIGACODE_ROOT:-$PWD/../sandbox-agent}"
+	if [[ ! -f "$gigacode_root/justfile" ]]; then
+		echo "Gigacode repository not found at $gigacode_root (override with GIGACODE_ROOT)" >&2
+		exit 1
+	fi
+	if [[ "$(uname -s)" == "Linux" \
+		&& -f /usr/include/openssl/ssl.h \
+		&& -f /usr/lib/x86_64-linux-gnu/libssl.so ]]; then
+		export OPENSSL_DIR=/usr
+		export OPENSSL_INCLUDE_DIR=/usr/include
+		export OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu
+	fi
+	just --justfile "$gigacode_root/justfile" install-gigacode
+	"$HOME/.cargo/bin/gigacode" --version
+
 shell *args:
 	#!/usr/bin/env bash
 	set -euo pipefail
