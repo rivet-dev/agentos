@@ -3,9 +3,11 @@
 //! Drives the actual `persistence::handle_fs_call` dispatch (the storage
 //! callback the VM's `sqlite_vfs` root invokes) through a mock `HostVtable`
 //! whose `db_*` functions execute against an in-memory rusqlite `Connection`,
-//! speaking the exact CBOR `db_*` wire contract the plugin uses. No VM, no
-//! sidecar — this isolates and proves the durable-storage core (the 24 fs ops,
-//! the migration, base64 content, the CBOR params/rows marshalling).
+//! speaking the exact CBOR `db_*` wire contract the plugin uses. Most tests use
+//! no VM or sidecar and isolate the durable-storage core (the 24 fs ops, the
+//! migration, base64 content, and CBOR params/rows marshalling). The cron
+//! cold-boot test intentionally launches a real sidecar and VM to prove opaque
+//! scheduler-state restoration across teardown and reboot.
 
 use std::ffi::c_void;
 use std::io::Cursor;
@@ -528,14 +530,14 @@ async fn persistence_stores_cron_state_as_an_opaque_value() {
 
 #[tokio::test]
 async fn actor_cold_boot_restores_sidecar_owned_cron_state() {
-    let Ok(sidecar_path) = std::env::var("AGENTOS_SIDECAR_BIN") else {
-        eprintln!("skipping actor cold-wake cron test: AGENTOS_SIDECAR_BIN is not set");
-        return;
-    };
-    if !std::path::Path::new(&sidecar_path).is_file() {
-        eprintln!("skipping actor cold-wake cron test: sidecar binary is missing");
-        return;
-    }
+    let sidecar_path = std::env::var("AGENTOS_SIDECAR_BIN")
+        .expect("actor cold-boot cron E2E requires AGENTOS_SIDECAR_BIN");
+    let sidecar_file = std::path::Path::new(&sidecar_path);
+    assert!(
+        sidecar_file.is_file(),
+        "AGENTOS_SIDECAR_BIN does not point to a file: {}",
+        sidecar_file.display()
+    );
     let host_state = MockHost {
         conn: Mutex::new(Connection::open_in_memory().expect("open sqlite")),
         scheduled: Mutex::new(Vec::new()),
@@ -567,12 +569,27 @@ async fn actor_cold_boot_restores_sidecar_owned_cron_state() {
         crate::vm::persist_cron_state(&host, first)
             .await
             .expect("persist before sleep");
+        let first_sidecar = first.sidecar();
         crate::vm::shutdown_vm(&host, &mut vm, "sleep").await;
+        assert!(vm.is_none(), "sleep must drop the first VM handle");
+        let first_description = first_sidecar.describe();
+        assert_eq!(first_description.active_vm_count, 0);
+        assert_eq!(
+            first_description.state,
+            agentos_client::SidecarState::Disposed,
+            "sleep must dispose the one-VM sidecar before cold boot"
+        );
 
         crate::vm::ensure_vm(&host, &sidecar_path, &config, &pool, &mut vm)
             .await
             .expect("cold boot restored VM");
         let restored = vm.as_ref().expect("restored VM");
+        let restored_sidecar = restored.sidecar();
+        assert!(
+            !std::sync::Arc::ptr_eq(&first_sidecar, &restored_sidecar),
+            "cold boot must allocate a new sidecar handle"
+        );
+        assert_eq!(restored_sidecar.describe().active_vm_count, 1);
         assert!(
             restored
                 .list_cron_jobs()
@@ -587,6 +604,14 @@ async fn actor_cold_boot_restores_sidecar_owned_cron_state() {
             .await
             .expect("cancel restored job");
         crate::vm::shutdown_vm(&host, &mut vm, "destroy").await;
+        assert!(vm.is_none(), "destroy must drop the restored VM handle");
+        let restored_description = restored_sidecar.describe();
+        assert_eq!(restored_description.active_vm_count, 0);
+        assert_eq!(
+            restored_description.state,
+            agentos_client::SidecarState::Disposed,
+            "destroy must dispose the restored one-VM sidecar"
+        );
         crate::vm::delete_cron_state(&host)
             .await
             .expect("delete persisted state");

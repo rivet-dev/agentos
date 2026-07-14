@@ -25,6 +25,9 @@ else
 	NETWORK_ENV=("AGENTOS_E2E_NETWORK=1")
 fi
 
+CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${ROOT_DIR}/target}"
+export CARGO_TARGET_DIR
+
 run_step pnpm install --frozen-lockfile
 run_step pnpm build
 run_step pnpm --dir scripts/publish run check-types
@@ -45,6 +48,11 @@ run_step cargo test -p agentos-protocol -- --test-threads=1
 run_step cargo test -p agentos-sidecar -- --test-threads=1
 run_step cargo test -p agentos-sidecar-browser -- --test-threads=1
 run_step cargo test -p agentos-client -- --test-threads=1
+run_step cargo build -p agentos-sidecar
+run_step test -x "${CARGO_TARGET_DIR}/debug/agentos-sidecar"
+run_step env \
+	AGENTOS_SIDECAR_BIN="${CARGO_TARGET_DIR}/debug/agentos-sidecar" \
+	cargo test -p agentos-actor-plugin persistence_e2e -- --test-threads=1
 run_step pnpm check-types
 run_step pnpm lint
 

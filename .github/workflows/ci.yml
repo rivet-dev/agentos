@@ -115,6 +115,17 @@ jobs:
             npx turbo build
           fi
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Build sidecar for actor persistence E2E
+        run: cargo build -p agentos-sidecar
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      - name: Test actor cron cold boot
+        run: |
+          test -x "$AGENTOS_SIDECAR_BIN"
+          cargo test -p agentos-actor-plugin persistence_e2e -- --test-threads=1 --nocapture
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/debug/agentos-sidecar
       - run: cargo test -p agentos-protocol -- --test-threads=1
       - run: cargo test -p agentos-sidecar -- --test-threads=1
       - run: cargo test -p agentos-client -- --test-threads=1
