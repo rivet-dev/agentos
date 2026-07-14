@@ -5,13 +5,9 @@
 // NEVER block-waiting inside a pushFrame while an agent makes a mid-turn syscall.
 
 import { Buffer as BufferPolyfill } from "buffer";
+
 (globalThis as unknown as { Buffer?: unknown }).Buffer ??= BufferPolyfill;
 
-import {
-	decodeBareProtocolFrame,
-	encodeBareProtocolFrame,
-} from "@rivet-dev/agentos-runtime-core/protocol-frames";
-import { SIDECAR_PROTOCOL_SCHEMA } from "@rivet-dev/agentos-runtime-core/protocol-schema";
 import {
 	ConvergedSyncBridgeHandler,
 	DEFERRED,
@@ -20,14 +16,10 @@ import {
 	KernelReactor,
 	PushFrameSidecarTransport,
 	REACTOR_CONTROL_BYTES,
-	sabRingByteLength,
 	type SabRingLayout,
+	sabRingByteLength,
 } from "@rivet-dev/agentos-runtime-browser";
-import {
-	decodeAcpResponse,
-	encodeAcpRequest,
-} from "../../../core/src/sidecar/agentos-protocol.ts";
-import { driveAgentInteraction } from "../../src/agent-drive-loop.js";
+import { createAcpPendingResponseDriver } from "../../src/acp-pending-driver.js";
 import { decodeSyscall } from "./syscall-codec.js";
 
 const WASM_MODULE_URL = "/wasm/agentos_sidecar_browser.js";
@@ -48,15 +40,42 @@ const AGENT_WORKERS: Record<string, string> = {
 	"/opt/agentos/bin/pty-loopback-agent": "/pty-loopback-agent.worker.js",
 };
 const DEFAULT_AGENT_WORKER_URL = "/async-echo-agent.worker.js";
-const ACP_NS = "dev.rivet.agent-os.acp";
 const LAYOUT: SabRingLayout = { slotCount: 64, slotBytes: 4096 };
-const DRIVE_TIMEOUT_MS = 30_000;
 
 interface KernelWasm {
 	default(input?: unknown): Promise<unknown>;
-	AgentOsBrowserSidecarWasm: new (hostBridge?: unknown) => {
+	AgentOsBrowserSidecarWasm: new (
+		hostBridge?: unknown,
+	) => {
 		readonly sidecarId: string;
 		pushFrame(frame: Uint8Array): unknown;
+		pendingResponseProcessId(frame: Uint8Array): unknown;
+		pendingResponseTimeoutMs(frame: Uint8Array): unknown;
+		pendingResponseTimeoutPhase(frame: Uint8Array): unknown;
+		buildDeliverAgentOutputFrame(
+			originResponse: Uint8Array,
+			processId: string,
+			chunk: Uint8Array,
+		): unknown;
+		buildDeliverAgentStderrFrame(
+			originResponse: Uint8Array,
+			processId: string,
+			chunk: Uint8Array,
+		): unknown;
+		buildAbortPendingFrame(
+			originResponse: Uint8Array,
+			processId: string,
+			reason:
+				| "agent_exited"
+				| "interaction_timeout"
+				| "driver_failed"
+				| "caller_cancelled",
+			exitCode: number | null,
+		): unknown;
+		restorePendingResponse(
+			originResponse: Uint8Array,
+			completedResponse: Uint8Array,
+		): unknown;
 	};
 }
 
@@ -70,16 +89,22 @@ function decodeBase64(base64: string): Uint8Array {
 // The async-agent execution host bridge passed to the wasm sidecar: startExecution
 // spawns an agent worker + registers its SAB pair with the reactor; writeExecutionStdin
 // posts stdin to the agent (the §3.2 split); the kernel drives output via the reactor.
-function createAsyncAgentHost(reactor: KernelReactor, controlSab: SharedArrayBuffer) {
+function createAsyncAgentHost(
+	reactor: KernelReactor,
+	controlSab: SharedArrayBuffer,
+) {
 	let contextCounter = 0;
 	let execCounter = 0;
 	let lastExecutionId: string | null = null;
 	const agents = new Set<string>();
+	const pendingProcesses = new Map<string, string>();
 
 	const parse = (json: string): Record<string, unknown> => {
 		try {
 			const value = JSON.parse(json);
-			return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+			return typeof value === "object" && value !== null
+				? (value as Record<string, unknown>)
+				: {};
 		} catch {
 			return {};
 		}
@@ -90,7 +115,8 @@ function createAsyncAgentHost(reactor: KernelReactor, controlSab: SharedArrayBuf
 	// kernel allocates + owns the SAB pair (so reactor reads work over shared memory,
 	// no thread dependency) and asks the main relay to spawn the worker + forward
 	// stdin. The agent's stdout/syscalls come back over the SAB.
-	const toMain = (m: Record<string, unknown>) => (self as unknown as Worker).postMessage(m);
+	const toMain = (m: Record<string, unknown>) =>
+		(self as unknown as Worker).postMessage(m);
 	const bridge: Record<string, (json: string) => unknown> = {
 		createJavascriptContext() {
 			contextCounter += 1;
@@ -164,7 +190,16 @@ function createAsyncAgentHost(reactor: KernelReactor, controlSab: SharedArrayBuf
 		createWorker() {
 			return { workerId: "agent-worker" };
 		},
-		terminateWorker() {
+		terminateWorker(json: string) {
+			const request = parse(json);
+			const executionId = String(request.executionId ?? "");
+			agents.delete(executionId);
+			syscallHandlers.delete(executionId);
+			for (const [processId, boundExecutionId] of pendingProcesses) {
+				if (boundExecutionId === executionId)
+					pendingProcesses.delete(processId);
+			}
+			if (lastExecutionId === executionId) lastExecutionId = null;
 			return {};
 		},
 		emitStructuredEvent() {
@@ -180,13 +215,45 @@ function createAsyncAgentHost(reactor: KernelReactor, controlSab: SharedArrayBuf
 			return {};
 		},
 	};
-	return { bridge, takeLastExecutionId: () => lastExecutionId };
+	return {
+		bridge,
+		bindPendingProcess(processId: string) {
+			if (pendingProcesses.has(processId)) return;
+			if (!lastExecutionId || !agents.has(lastExecutionId)) {
+				throw new Error(
+					`cannot bind ACP process ${processId}: no agent execution was spawned`,
+				);
+			}
+			pendingProcesses.set(processId, lastExecutionId);
+		},
+		pollAgentOutput(
+			processId: string,
+			deadlineMs: number,
+			isCancelled?: () => boolean,
+		) {
+			const executionId = pendingProcesses.get(processId);
+			if (!executionId) throw new Error(`unknown ACP process ${processId}`);
+			const out = reactor.poll(executionId, deadlineMs, isCancelled);
+			if (!out) return null;
+			const kind =
+				out.kind === FRAME_STDOUT
+					? "stdout"
+					: out.kind === FRAME_STDERR
+						? "stderr"
+						: "exit";
+			return {
+				kind: kind as "stdout" | "stderr" | "exit",
+				payload: out.payload,
+			};
+		},
+	};
 }
 
-let sidecar: InstanceType<KernelWasm["AgentOsBrowserSidecarWasm"]> | null = null;
+let sidecar: InstanceType<KernelWasm["AgentOsBrowserSidecarWasm"]> | null =
+	null;
 let reactor: KernelReactor | null = null;
 let host: ReturnType<typeof createAsyncAgentHost> | null = null;
-let nextDeliverRid = 1_000_000;
+let drivePushFrame: ((frame: Uint8Array) => Uint8Array) | null = null;
 // Continuous reactor drive for interactive (long-lived) guests like the PTY shell.
 let continuousDriveRunning = false;
 function startContinuousDrive(): void {
@@ -221,8 +288,12 @@ let currentOwnership: unknown = null;
 // ConvergedSyncResponse as JSON. This runs from the reactor's drainOnce — which the
 // drive loop calls OUTSIDE any pushFrame — so the pushFrame here is NOT nested
 // (re-entrancy-safe; §3.2.1).
-function serviceSyscall(executionId: string, payload: Uint8Array): Uint8Array | typeof DEFERRED {
-	const respond = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
+function serviceSyscall(
+	executionId: string,
+	payload: Uint8Array,
+): Uint8Array | typeof DEFERRED {
+	const respond = (value: unknown) =>
+		new TextEncoder().encode(JSON.stringify(value));
 	let request: { operation: string; args: unknown[] };
 	try {
 		request = decodeSyscall(payload);
@@ -237,16 +308,27 @@ function serviceSyscall(executionId: string, payload: Uint8Array): Uint8Array | 
 	// through this kernel-brokered op, never as an ambient capability.
 	if (request.operation === "host.inference") {
 		const body = String((request.args ?? [])[0] ?? "");
-		(self as unknown as Worker).postMessage({ type: "host-inference", executionId, body });
+		(self as unknown as Worker).postMessage({
+			type: "host-inference",
+			executionId,
+			body,
+		});
 		return DEFERRED;
 	}
 	const handler = syscallHandlers.get(executionId);
-	if (!handler) return respond({ error: `no syscall handler for ${executionId}` });
+	if (!handler)
+		return respond({ error: `no syscall handler for ${executionId}` });
 	try {
-		const result = handler.handle(String(request.operation ?? ""), (request.args ?? []) as unknown[]);
+		const result = handler.handle(
+			String(request.operation ?? ""),
+			(request.args ?? []) as unknown[],
+		);
 		return respond(result);
 	} catch (error) {
-		return respond({ error: error instanceof Error ? error.message : String(error), code: (error as { code?: string }).code });
+		return respond({
+			error: error instanceof Error ? error.message : String(error),
+			code: (error as { code?: string }).code,
+		});
 	}
 }
 
@@ -264,41 +346,97 @@ async function boot(): Promise<string> {
 	const wasm = (await import(/* @vite-ignore */ WASM_MODULE_URL)) as KernelWasm;
 	await wasm.default(WASM_BINARY_URL);
 	sidecar = new wasm.AgentOsBrowserSidecarWasm(host.bridge);
+	drivePushFrame = createAcpPendingResponseDriver({
+		pushFrame,
+		host,
+		now: () => performance.now(),
+		frameHelpers: {
+			pendingResponseProcessId(frame) {
+				const processId = sidecar!.pendingResponseProcessId(frame);
+				if (processId === null) return null;
+				if (typeof processId !== "string") {
+					throw new Error("kernel: invalid ACP pending process id");
+				}
+				return processId;
+			},
+			pendingResponseTimeoutMs(frame) {
+				const timeoutMs = sidecar!.pendingResponseTimeoutMs(frame);
+				if (timeoutMs === null) return null;
+				if (typeof timeoutMs !== "number") {
+					throw new Error("kernel: invalid ACP pending timeout");
+				}
+				return timeoutMs;
+			},
+			pendingResponseTimeoutPhase(frame) {
+				const phase = sidecar!.pendingResponseTimeoutPhase(frame);
+				if (phase === null) return null;
+				if (typeof phase !== "string") {
+					throw new Error("kernel: invalid ACP pending timeout phase");
+				}
+				return phase;
+			},
+			buildDeliverAgentOutputFrame(originResponse, processId, chunk) {
+				const frame = sidecar!.buildDeliverAgentOutputFrame(
+					originResponse,
+					processId,
+					chunk,
+				);
+				if (!(frame instanceof Uint8Array)) {
+					throw new Error("kernel: missing ACP delivery frame");
+				}
+				return frame;
+			},
+			buildDeliverAgentStderrFrame(originResponse, processId, chunk) {
+				const frame = sidecar!.buildDeliverAgentStderrFrame(
+					originResponse,
+					processId,
+					chunk,
+				);
+				if (!(frame instanceof Uint8Array)) {
+					throw new Error("kernel: missing ACP stderr-delivery frame");
+				}
+				return frame;
+			},
+			buildAbortPendingFrame(originResponse, processId, reason, exitCode) {
+				const frame = sidecar!.buildAbortPendingFrame(
+					originResponse,
+					processId,
+					reason,
+					exitCode,
+				);
+				if (!(frame instanceof Uint8Array)) {
+					throw new Error("kernel: missing ACP abort frame");
+				}
+				return frame;
+			},
+			restorePendingResponse(originResponse, completedResponse) {
+				const frame = sidecar!.restorePendingResponse(
+					originResponse,
+					completedResponse,
+				);
+				if (!(frame instanceof Uint8Array)) {
+					throw new Error("kernel: missing restored ACP response");
+				}
+				return frame;
+			},
+		},
+	});
 	return sidecar.sidecarId;
-}
-
-/** Return the AcpPending processId if `responseBytes` is an ACP pending response. */
-function pendingProcessId(responseBytes: Uint8Array): string | null {
-	const frame = decodeBareProtocolFrame(responseBytes) as { payload: Record<string, unknown> };
-	const payload = frame.payload;
-	if (payload.type !== "ext" && payload.type !== "ext_result") return null;
-	const env = payload.envelope as { payload: Uint8Array };
-	const acp = decodeAcpResponse(env.payload) as { tag: string; val?: { processId?: string } };
-	return acp.tag === "AcpPendingResponse" ? (acp.val?.processId ?? null) : null;
-}
-
-function buildDeliverFrame(ownership: unknown, processId: string, chunk: Uint8Array): Uint8Array {
-	const acp = encodeAcpRequest({
-		tag: "AcpDeliverAgentOutputRequest",
-		val: { processId, chunk },
-	} as never);
-	return encodeBareProtocolFrame({
-		frame_type: "request",
-		schema: SIDECAR_PROTOCOL_SCHEMA,
-		request_id: nextDeliverRid++,
-		ownership,
-		payload: { type: "ext", envelope: { namespace: ACP_NS, payload: acp } },
-	} as never);
 }
 
 function pushFrame(frame: Uint8Array): Uint8Array {
 	const response = sidecar!.pushFrame(frame);
-	if (!(response instanceof Uint8Array)) throw new Error("kernel: pushFrame returned no frame");
+	if (!(response instanceof Uint8Array))
+		throw new Error("kernel: pushFrame returned no frame");
 	return response;
 }
 
 self.onmessage = async (event: MessageEvent) => {
-	const message = event.data as { type: string; id: number; frame?: Uint8Array };
+	const message = event.data as {
+		type: string;
+		id: number;
+		frame?: Uint8Array;
+	};
 	try {
 		if (message.type === "boot") {
 			const sidecarId = await boot();
@@ -320,44 +458,20 @@ self.onmessage = async (event: MessageEvent) => {
 			// create_session/prompt pushFrame. Start a continuous drainOnce loop so the
 			// agent's mid-life pty.* syscalls are serviced outside any pushFrame.
 			startContinuousDrive();
-			(self as unknown as Worker).postMessage({ type: "response", id: message.id, frame: new Uint8Array(0) }, []);
+			(self as unknown as Worker).postMessage(
+				{ type: "response", id: message.id, frame: new Uint8Array(0) },
+				[],
+			);
 			return;
 		}
 		if (message.type === "frame") {
 			const frame = message.frame!;
-			// The client (main thread) passes the request's ownership alongside the
-			// frame — we can't decode a client-written request here (decodeBareProtocolFrame
-			// is for sidecar-written response frames). We need it to build deliver frames.
+			// The main thread passes ownership alongside the opaque frame so an agent
+			// spawned during this request can bind its syscall transport to the same VM.
+			// Rust frame helpers retain that ownership for internal ACP delivery frames.
 			const ownership = (message as { ownership?: unknown }).ownership;
 			currentOwnership = ownership; // bound to any agent spawned during this pushFrame
-			const responseBytes = pushFrame(frame);
-			const processId = pendingProcessId(responseBytes);
-			if (processId === null) {
-				(self as unknown as Worker).postMessage(
-					{ type: "response", id: message.id, frame: responseBytes },
-					[responseBytes.buffer],
-				);
-				return;
-			}
-			// Resumable: drive the agent to completion, then relay the real result.
-			const executionId = host!.takeLastExecutionId()!;
-			const result = driveAgentInteraction(
-				{
-					now: () => performance.now(),
-					pollAgentOutput: (_pid, deadlineMs) => {
-						const out = reactor!.poll(executionId, deadlineMs);
-						if (!out) return null;
-						const kind = out.kind === FRAME_STDOUT ? "stdout" : out.kind === FRAME_STDERR ? "stderr" : "exit";
-						return { kind, payload: out.payload };
-					},
-					deliverAgentOutput: (pid, chunk) => {
-						const respBytes = pushFrame(buildDeliverFrame(ownership, pid, chunk));
-						return { pending: pendingProcessId(respBytes) !== null, response: respBytes };
-					},
-				},
-				processId,
-				performance.now() + DRIVE_TIMEOUT_MS,
-			);
+			const result = drivePushFrame!(frame);
 			(self as unknown as Worker).postMessage(
 				{ type: "response", id: message.id, frame: result },
 				[result.buffer],
@@ -367,7 +481,8 @@ self.onmessage = async (event: MessageEvent) => {
 		(self as unknown as Worker).postMessage({
 			type: "error",
 			id: message.id ?? -1,
-			message: error instanceof Error ? (error.stack ?? error.message) : String(error),
+			message:
+				error instanceof Error ? (error.stack ?? error.message) : String(error),
 		});
 	}
 };

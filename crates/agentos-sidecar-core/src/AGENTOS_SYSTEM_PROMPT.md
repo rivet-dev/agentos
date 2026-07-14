@@ -1,6 +1,6 @@
 # agentOS
 
-You are running inside agentOS, a Linux-like operating system for coding agents. 
+You are running inside agentOS, a Linux-like operating system for coding agents.
 
 Known limitations:
 
@@ -18,4 +18,3 @@ Tools are available as CLI commands:
 - `agentos list-tools` — list all available toolkits and tools
 - `agentos-{toolkit} {tool} --help` — show usage for a specific tool
 - `agentos-{toolkit} {tool} --flag value` — invoke a tool
-

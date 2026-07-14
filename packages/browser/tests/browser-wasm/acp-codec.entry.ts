@@ -19,13 +19,6 @@ import {
 } from "../../../core/src/sidecar/agentos-protocol.ts";
 
 const ACP_NS = "dev.rivet.agent-os.acp";
-const OWNERSHIP = {
-	scope: "vm" as const,
-	connection_id: "conn-1",
-	session_id: "session-1",
-	vm_id: "vm-1",
-};
-
 type PushFrame = (frame: Uint8Array) => Uint8Array;
 
 let nextRequestId = 1;
@@ -35,7 +28,7 @@ function authenticateFrame(): Uint8Array {
 		frame_type: "request",
 		schema: SIDECAR_PROTOCOL_SCHEMA,
 		request_id: nextRequestId++,
-		ownership: { scope: "connection", connection_id: OWNERSHIP.connection_id },
+		ownership: { scope: "connection", connection_id: "client-hint" },
 		payload: {
 			type: "authenticate",
 			client_name: "agentos-browser-test",
@@ -46,16 +39,49 @@ function authenticateFrame(): Uint8Array {
 	} as never);
 }
 
-function acpGetSessionStateFrame(sessionId: string): Uint8Array {
+function openSessionFrame(connectionId: string): Uint8Array {
+	return encodeBareProtocolFrame({
+		frame_type: "request",
+		schema: SIDECAR_PROTOCOL_SCHEMA,
+		request_id: nextRequestId++,
+		ownership: { scope: "connection", connection_id: connectionId },
+		payload: {
+			type: "open_session",
+			placement: { kind: "shared", pool: null },
+		},
+	} as never);
+}
+
+function initializeVmFrame(connectionId: string, sessionId: string): Uint8Array {
+	return encodeBareProtocolFrame({
+		frame_type: "request",
+		schema: SIDECAR_PROTOCOL_SCHEMA,
+		request_id: nextRequestId++,
+		ownership: { scope: "session", connection_id: connectionId, session_id: sessionId },
+		payload: { type: "initialize_vm", runtime: "java_script", config: {} },
+	} as never);
+}
+
+function acpGetSessionStateFrame(
+	connectionId: string,
+	sidecarSessionId: string,
+	vmId: string,
+	acpSessionId: string,
+): Uint8Array {
 	const payload = encodeAcpRequest({
 		tag: "AcpGetSessionStateRequest",
-		val: { sessionId },
+		val: { sessionId: acpSessionId },
 	});
 	return encodeBareProtocolFrame({
 		frame_type: "request",
 		schema: SIDECAR_PROTOCOL_SCHEMA,
 		request_id: nextRequestId++,
-		ownership: OWNERSHIP,
+		ownership: {
+			scope: "vm",
+			connection_id: connectionId,
+			session_id: sidecarSessionId,
+			vm_id: vmId,
+		},
 		payload: { type: "ext", envelope: { namespace: ACP_NS, payload } },
 	} as never);
 }
@@ -65,6 +91,9 @@ function decodeResponse(bytes: Uint8Array): {
 	payloadType?: string;
 	acpTag?: string;
 	acpMessage?: string;
+	connectionId?: string;
+	sessionId?: string;
+	vmId?: string;
 	rejected?: { code?: string; message?: string };
 } {
 	const frame = decodeBareProtocolFrame(bytes) as {
@@ -76,6 +105,9 @@ function decodeResponse(bytes: Uint8Array): {
 		frameType: frame.frame_type,
 		payloadType: payload.type as string,
 	};
+	out.connectionId = payload.connection_id as string | undefined;
+	out.sessionId = payload.session_id as string | undefined;
+	out.vmId = payload.vm_id as string | undefined;
 	if (payload.type === "ext" || payload.type === "ext_result") {
 		const env = payload.envelope as { payload: Uint8Array };
 		const acp = decodeAcpResponse(env.payload) as { tag: string; val?: { code?: string; message?: string } };
@@ -93,7 +125,23 @@ function decodeResponse(bytes: Uint8Array): {
 (globalThis as unknown as { __acpHarness: unknown }).__acpHarness = {
 	runGetSessionStateRoundTrip(pushFrame: PushFrame) {
 		const authResp = decodeResponse(pushFrame(authenticateFrame()));
-		const acpResp = decodeResponse(pushFrame(acpGetSessionStateFrame("does-not-exist")));
-		return { authResp, acpResp };
+		if (!authResp.connectionId) throw new Error("authentication returned no connection id");
+		const openResp = decodeResponse(pushFrame(openSessionFrame(authResp.connectionId)));
+		if (!openResp.sessionId) throw new Error("open_session returned no session id");
+		const vmResp = decodeResponse(
+			pushFrame(initializeVmFrame(authResp.connectionId, openResp.sessionId)),
+		);
+		if (!vmResp.vmId) throw new Error("initialize_vm returned no VM id");
+		const acpResp = decodeResponse(
+			pushFrame(
+				acpGetSessionStateFrame(
+					authResp.connectionId,
+					openResp.sessionId,
+					vmResp.vmId,
+					"does-not-exist",
+				),
+			),
+		);
+		return { authResp, openResp, vmResp, acpResp };
 	},
 };

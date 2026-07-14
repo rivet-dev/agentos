@@ -75,7 +75,7 @@ function authenticateFrame(): Uint8Array {
 		frame_type: "request",
 		schema: SIDECAR_PROTOCOL_SCHEMA,
 		request_id: nextRequestId++,
-		ownership: { scope: "connection", connection_id: "conn-1" },
+		ownership: { scope: "connection", connection_id: "client-hint" },
 		payload: {
 			type: "authenticate",
 			client_name: "agentos-kernel-worker-test",
@@ -86,7 +86,34 @@ function authenticateFrame(): Uint8Array {
 	} as never);
 }
 
-function getSessionStateFrame(): Uint8Array {
+function openSessionFrame(connectionId: string): Uint8Array {
+	return encodeBareProtocolFrame({
+		frame_type: "request",
+		schema: SIDECAR_PROTOCOL_SCHEMA,
+		request_id: nextRequestId++,
+		ownership: { scope: "connection", connection_id: connectionId },
+		payload: {
+			type: "open_session",
+			placement: { kind: "shared", pool: null },
+		},
+	} as never);
+}
+
+function initializeVmFrame(connectionId: string, sessionId: string): Uint8Array {
+	return encodeBareProtocolFrame({
+		frame_type: "request",
+		schema: SIDECAR_PROTOCOL_SCHEMA,
+		request_id: nextRequestId++,
+		ownership: { scope: "session", connection_id: connectionId, session_id: sessionId },
+		payload: { type: "initialize_vm", runtime: "java_script", config: {} },
+	} as never);
+}
+
+function getSessionStateFrame(
+	connectionId: string,
+	sidecarSessionId: string,
+	vmId: string,
+): Uint8Array {
 	const payload = encodeAcpRequest({
 		tag: "AcpGetSessionStateRequest",
 		val: { sessionId: "does-not-exist" },
@@ -97,9 +124,9 @@ function getSessionStateFrame(): Uint8Array {
 		request_id: nextRequestId++,
 		ownership: {
 			scope: "vm",
-			connection_id: "conn-1",
-			session_id: "session-1",
-			vm_id: "vm-1",
+			connection_id: connectionId,
+			session_id: sidecarSessionId,
+			vm_id: vmId,
 		},
 		payload: { type: "ext", envelope: { namespace: ACP_NS, payload } },
 	} as never);
@@ -109,12 +136,18 @@ function decodeResponse(bytes: Uint8Array): {
 	payloadType?: string;
 	acpTag?: string;
 	acpMessage?: string;
+	connectionId?: string;
+	sessionId?: string;
+	vmId?: string;
 } {
 	const frame = decodeBareProtocolFrame(bytes) as { payload: Record<string, unknown> };
 	const payload = frame.payload;
-	const out: { payloadType?: string; acpTag?: string; acpMessage?: string } = {
+	const out: ReturnType<typeof decodeResponse> = {
 		payloadType: payload.type as string,
 	};
+	out.connectionId = payload.connection_id as string | undefined;
+	out.sessionId = payload.session_id as string | undefined;
+	out.vmId = payload.vm_id as string | undefined;
 	if (payload.type === "ext" || payload.type === "ext_result") {
 		const env = payload.envelope as { payload: Uint8Array };
 		const acp = decodeAcpResponse(env.payload) as { tag: string; val?: { message?: string } };
@@ -129,8 +162,21 @@ function decodeResponse(bytes: Uint8Array): {
 		const relay = new KernelWorkerRelay("/agentos-kernel.worker.js");
 		const sidecarId = await relay.boot();
 		const authResp = decodeResponse(await relay.pushFrame(authenticateFrame()));
-		const acpResp = decodeResponse(await relay.pushFrame(getSessionStateFrame()));
-		return { sidecarId, authResp, acpResp };
+		if (!authResp.connectionId) throw new Error("authentication returned no connection id");
+		const openResp = decodeResponse(
+			await relay.pushFrame(openSessionFrame(authResp.connectionId)),
+		);
+		if (!openResp.sessionId) throw new Error("open_session returned no session id");
+		const vmResp = decodeResponse(
+			await relay.pushFrame(initializeVmFrame(authResp.connectionId, openResp.sessionId)),
+		);
+		if (!vmResp.vmId) throw new Error("initialize_vm returned no VM id");
+		const acpResp = decodeResponse(
+			await relay.pushFrame(
+				getSessionStateFrame(authResp.connectionId, openResp.sessionId, vmResp.vmId),
+			),
+		);
+		return { sidecarId, authResp, openResp, vmResp, acpResp };
 	},
 };
 

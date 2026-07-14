@@ -435,6 +435,103 @@ export function writeAcpDeliverAgentOutputRequest(bc: bare.ByteCursor, x: AcpDel
     bare.writeData(bc, x.chunk)
 }
 
+/**
+ * Host-observed adapter stderr. The host forwards opaque bytes; the sidecar owns
+ * session identity, limits, event construction, and retryable delivery.
+ */
+export type AcpDeliverAgentStderrRequest = {
+    readonly processId: string
+    readonly chunk: ArrayBuffer
+}
+
+export function readAcpDeliverAgentStderrRequest(bc: bare.ByteCursor): AcpDeliverAgentStderrRequest {
+    return {
+        processId: bare.readString(bc),
+        chunk: bare.readData(bc),
+    }
+}
+
+export function writeAcpDeliverAgentStderrRequest(bc: bare.ByteCursor, x: AcpDeliverAgentStderrRequest): void {
+    bare.writeString(bc, x.processId)
+    bare.writeData(bc, x.chunk)
+}
+
+/**
+ * Browser RESUMABLE terminal cleanup. The sidecar owns the stable error code and
+ * message for each observed terminal condition; the browser driver supplies only
+ * the process handle and the fact it observed.
+ */
+export enum AcpPendingAbortReason {
+    AgentExited = "AgentExited",
+    InteractionTimeout = "InteractionTimeout",
+    DriverFailed = "DriverFailed",
+    CallerCancelled = "CallerCancelled",
+}
+
+export function readAcpPendingAbortReason(bc: bare.ByteCursor): AcpPendingAbortReason {
+    const offset = bc.offset
+    const tag = bare.readU8(bc)
+    switch (tag) {
+        case 0:
+            return AcpPendingAbortReason.AgentExited
+        case 1:
+            return AcpPendingAbortReason.InteractionTimeout
+        case 2:
+            return AcpPendingAbortReason.DriverFailed
+        case 3:
+            return AcpPendingAbortReason.CallerCancelled
+        default: {
+            bc.offset = offset
+            throw new bare.BareError(offset, "invalid tag")
+        }
+    }
+}
+
+export function writeAcpPendingAbortReason(bc: bare.ByteCursor, x: AcpPendingAbortReason): void {
+    switch (x) {
+        case AcpPendingAbortReason.AgentExited: {
+            bare.writeU8(bc, 0)
+            break
+        }
+        case AcpPendingAbortReason.InteractionTimeout: {
+            bare.writeU8(bc, 1)
+            break
+        }
+        case AcpPendingAbortReason.DriverFailed: {
+            bare.writeU8(bc, 2)
+            break
+        }
+        case AcpPendingAbortReason.CallerCancelled: {
+            bare.writeU8(bc, 3)
+            break
+        }
+    }
+}
+
+export type AcpAbortPendingRequest = {
+    readonly processId: string
+    readonly reason: AcpPendingAbortReason
+    /**
+     * Present only when the browser execution transport directly observed a
+     * process exit status. Timeouts/driver failures and indirect exits omit it.
+     */
+    readonly exitCode: i32 | null
+}
+
+export function readAcpAbortPendingRequest(bc: bare.ByteCursor): AcpAbortPendingRequest {
+    return {
+        processId: bare.readString(bc),
+        reason: readAcpPendingAbortReason(bc),
+        exitCode: read6(bc),
+    }
+}
+
+export function writeAcpAbortPendingRequest(bc: bare.ByteCursor, x: AcpAbortPendingRequest): void {
+    bare.writeString(bc, x.processId)
+    writeAcpPendingAbortReason(bc, x.reason)
+    write6(bc, x.exitCode)
+}
+
 export type AcpRequest =
     | { readonly tag: "AcpCreateSessionRequest"; readonly val: AcpCreateSessionRequest }
     | { readonly tag: "AcpSessionRequest"; readonly val: AcpSessionRequest }
@@ -444,6 +541,8 @@ export type AcpRequest =
     | { readonly tag: "AcpCloseSessionRequest"; readonly val: AcpCloseSessionRequest }
     | { readonly tag: "AcpResumeSessionRequest"; readonly val: AcpResumeSessionRequest }
     | { readonly tag: "AcpDeliverAgentOutputRequest"; readonly val: AcpDeliverAgentOutputRequest }
+    | { readonly tag: "AcpDeliverAgentStderrRequest"; readonly val: AcpDeliverAgentStderrRequest }
+    | { readonly tag: "AcpAbortPendingRequest"; readonly val: AcpAbortPendingRequest }
     | { readonly tag: "AcpListAgentsRequest"; readonly val: AcpListAgentsRequest }
 
 export function readAcpRequest(bc: bare.ByteCursor): AcpRequest {
@@ -467,6 +566,10 @@ export function readAcpRequest(bc: bare.ByteCursor): AcpRequest {
         case 7:
             return { tag: "AcpDeliverAgentOutputRequest", val: readAcpDeliverAgentOutputRequest(bc) }
         case 8:
+            return { tag: "AcpDeliverAgentStderrRequest", val: readAcpDeliverAgentStderrRequest(bc) }
+        case 9:
+            return { tag: "AcpAbortPendingRequest", val: readAcpAbortPendingRequest(bc) }
+        case 10:
             return { tag: "AcpListAgentsRequest", val: readAcpListAgentsRequest(bc) }
         default: {
             bc.offset = offset
@@ -517,8 +620,18 @@ export function writeAcpRequest(bc: bare.ByteCursor, x: AcpRequest): void {
             writeAcpDeliverAgentOutputRequest(bc, x.val)
             break
         }
-        case "AcpListAgentsRequest": {
+        case "AcpDeliverAgentStderrRequest": {
             bare.writeU8(bc, 8)
+            writeAcpDeliverAgentStderrRequest(bc, x.val)
+            break
+        }
+        case "AcpAbortPendingRequest": {
+            bare.writeU8(bc, 9)
+            writeAcpAbortPendingRequest(bc, x.val)
+            break
+        }
+        case "AcpListAgentsRequest": {
+            bare.writeU8(bc, 10)
             writeAcpListAgentsRequest(bc, x.val)
             break
         }
@@ -742,6 +855,20 @@ export function writeAcpSessionClosedResponse(bc: bare.ByteCursor, x: AcpSession
     bare.writeString(bc, x.sessionId)
 }
 
+export type AcpAgentStderrDeliveredResponse = {
+    readonly processId: string
+}
+
+export function readAcpAgentStderrDeliveredResponse(bc: bare.ByteCursor): AcpAgentStderrDeliveredResponse {
+    return {
+        processId: bare.readString(bc),
+    }
+}
+
+export function writeAcpAgentStderrDeliveredResponse(bc: bare.ByteCursor, x: AcpAgentStderrDeliveredResponse): void {
+    bare.writeString(bc, x.processId)
+}
+
 /**
  * Result of AcpResumeSessionRequest. `sessionId` is the live ACP session id after
  * resume: equal to the requested id for native loads, or the freshly assigned id
@@ -804,16 +931,29 @@ export function writeAcpErrorResponse(bc: bare.ByteCursor, x: AcpErrorResponse):
  */
 export type AcpPendingResponse = {
     readonly processId: string
+    /**
+     * Sidecar-owned deadline for the currently awaited ACP phase.
+     */
+    readonly timeoutMs: u32
+    /**
+     * Stable phase identity. Browser routing resets the deadline only when this
+     * changes; partial lines and same-phase notifications cannot extend it.
+     */
+    readonly timeoutPhase: string
 }
 
 export function readAcpPendingResponse(bc: bare.ByteCursor): AcpPendingResponse {
     return {
         processId: bare.readString(bc),
+        timeoutMs: bare.readU32(bc),
+        timeoutPhase: bare.readString(bc),
     }
 }
 
 export function writeAcpPendingResponse(bc: bare.ByteCursor, x: AcpPendingResponse): void {
     bare.writeString(bc, x.processId)
+    bare.writeU32(bc, x.timeoutMs)
+    bare.writeString(bc, x.timeoutPhase)
 }
 
 export type AcpResponse =
@@ -822,6 +962,7 @@ export type AcpResponse =
     | { readonly tag: "AcpSessionStateResponse"; readonly val: AcpSessionStateResponse }
     | { readonly tag: "AcpListSessionsResponse"; readonly val: AcpListSessionsResponse }
     | { readonly tag: "AcpSessionClosedResponse"; readonly val: AcpSessionClosedResponse }
+    | { readonly tag: "AcpAgentStderrDeliveredResponse"; readonly val: AcpAgentStderrDeliveredResponse }
     | { readonly tag: "AcpSessionResumedResponse"; readonly val: AcpSessionResumedResponse }
     | { readonly tag: "AcpErrorResponse"; readonly val: AcpErrorResponse }
     | { readonly tag: "AcpPendingResponse"; readonly val: AcpPendingResponse }
@@ -842,12 +983,14 @@ export function readAcpResponse(bc: bare.ByteCursor): AcpResponse {
         case 4:
             return { tag: "AcpSessionClosedResponse", val: readAcpSessionClosedResponse(bc) }
         case 5:
-            return { tag: "AcpSessionResumedResponse", val: readAcpSessionResumedResponse(bc) }
+            return { tag: "AcpAgentStderrDeliveredResponse", val: readAcpAgentStderrDeliveredResponse(bc) }
         case 6:
-            return { tag: "AcpErrorResponse", val: readAcpErrorResponse(bc) }
+            return { tag: "AcpSessionResumedResponse", val: readAcpSessionResumedResponse(bc) }
         case 7:
-            return { tag: "AcpPendingResponse", val: readAcpPendingResponse(bc) }
+            return { tag: "AcpErrorResponse", val: readAcpErrorResponse(bc) }
         case 8:
+            return { tag: "AcpPendingResponse", val: readAcpPendingResponse(bc) }
+        case 9:
             return { tag: "AcpListAgentsResponse", val: readAcpListAgentsResponse(bc) }
         default: {
             bc.offset = offset
@@ -883,23 +1026,28 @@ export function writeAcpResponse(bc: bare.ByteCursor, x: AcpResponse): void {
             writeAcpSessionClosedResponse(bc, x.val)
             break
         }
-        case "AcpSessionResumedResponse": {
+        case "AcpAgentStderrDeliveredResponse": {
             bare.writeU8(bc, 5)
+            writeAcpAgentStderrDeliveredResponse(bc, x.val)
+            break
+        }
+        case "AcpSessionResumedResponse": {
+            bare.writeU8(bc, 6)
             writeAcpSessionResumedResponse(bc, x.val)
             break
         }
         case "AcpErrorResponse": {
-            bare.writeU8(bc, 6)
+            bare.writeU8(bc, 7)
             writeAcpErrorResponse(bc, x.val)
             break
         }
         case "AcpPendingResponse": {
-            bare.writeU8(bc, 7)
+            bare.writeU8(bc, 8)
             writeAcpPendingResponse(bc, x.val)
             break
         }
         case "AcpListAgentsResponse": {
-            bare.writeU8(bc, 8)
+            bare.writeU8(bc, 9)
             writeAcpListAgentsResponse(bc, x.val)
             break
         }

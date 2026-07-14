@@ -1,6 +1,6 @@
 use crate::{
-    BrowserExecutionOptions, BrowserExtensionRequest, BrowserSidecar, BrowserSidecarBridge,
-    BrowserSidecarConfig,
+    BrowserExecutionOptions, BrowserExtensionRequest, BrowserProjectedPackage, BrowserSidecar,
+    BrowserSidecarBridge, BrowserSidecarConfig, BrowserSidecarError,
 };
 use agentos_bridge::{
     CreateJavascriptContextRequest, CreateWasmContextRequest, ExecutionEvent,
@@ -12,37 +12,39 @@ use agentos_native_sidecar_core::{
     authenticated_response, bound_udp_snapshot_response, connection_id_of,
     execution_signal_from_number, guest_environment_with_overrides, layer_created_response,
     layer_sealed_response, listener_snapshot_response, overlay_created_response,
-    permissions_from_policy, permissions_with_allow_all_defaults, process_exited_event_with_result,
-    process_killed_response, process_output_event, process_route_retention,
-    process_snapshot_response, process_started_response, protocol_process_snapshot_entry,
-    protocol_root_filesystem_mode, record_session_close_outcome, reject, resolve_command_line,
-    respond, root_filesystem_bootstrapped_response, root_filesystem_snapshot_response,
-    root_snapshot_entry, route_request_payload, session_close_history_capacity,
-    session_closed_response, session_id_was_allocated, session_limit_near_capacity,
-    session_limit_rejection_message, session_opened_response, session_scope_of,
-    signal_state_response, snapshot_exported_response, snapshot_imported_response,
-    stdin_closed_response, stdin_written_response, unsupported_guest_kernel_call_event,
-    unsupported_host_callback_direction_dispatch, validate_authenticate_versions,
-    validate_process_id, vm_configured_response, vm_created_response, vm_disposed_response,
-    vm_id_of, vm_lifecycle_event, zombie_timer_count_response, CaptureChunkOutcome,
-    CapturedOutputBudget, CapturedOutputState, CronAction, CronScheduler, DispatchResult,
-    RequestRoute, SessionCloseOutcome, VmLimits, CLOSE_SESSION_FAILED_ERROR_CODE,
-    CLOSE_SESSION_HISTORY_EXPIRED_ERROR_CODE, CLOSE_SESSION_INVALID_OWNERSHIP_ERROR_CODE,
-    CLOSE_SESSION_OWNERSHIP_MISMATCH_ERROR_CODE, CLOSE_SESSION_UNAUTHENTICATED_ERROR_CODE,
-    SESSION_LIMIT_ERROR_CODE,
+    package_linked_response, permissions_from_policy, permissions_with_allow_all_defaults,
+    process_exited_event_with_result, process_killed_response, process_output_event,
+    process_route_retention, process_snapshot_response, process_started_response,
+    protocol_process_snapshot_entry, protocol_root_filesystem_mode, provided_commands_response,
+    record_session_close_outcome, reject, resolve_command_line, respond,
+    root_filesystem_bootstrapped_response, root_filesystem_snapshot_response, root_snapshot_entry,
+    route_request_payload, session_close_history_capacity, session_closed_response,
+    session_id_was_allocated, session_limit_near_capacity, session_limit_rejection_message,
+    session_opened_response, session_scope_of, signal_state_response, snapshot_exported_response,
+    snapshot_imported_response, stdin_closed_response, stdin_written_response,
+    unsupported_guest_kernel_call_event, unsupported_host_callback_direction_dispatch,
+    validate_authenticate_versions, validate_process_id, vm_configured_response,
+    vm_created_response, vm_disposed_response, vm_id_of, vm_lifecycle_event,
+    zombie_timer_count_response, CaptureChunkOutcome, CapturedOutputBudget, CapturedOutputState,
+    CronAction, CronScheduler, DispatchResult, RequestRoute, SessionCloseOutcome, VmLimits,
+    CLOSE_SESSION_FAILED_ERROR_CODE, CLOSE_SESSION_HISTORY_EXPIRED_ERROR_CODE,
+    CLOSE_SESSION_INVALID_OWNERSHIP_ERROR_CODE, CLOSE_SESSION_OWNERSHIP_MISMATCH_ERROR_CODE,
+    CLOSE_SESSION_UNAUTHENTICATED_ERROR_CODE, SESSION_LIMIT_ERROR_CODE,
 };
 use agentos_sidecar_protocol::protocol::{
-    AuthenticateRequest, BootstrapRootFilesystemRequest, CancelCronJobRequest, CloseSessionRequest,
-    CloseStdinRequest, CompleteCronRunRequest, ConfigureVmRequest, CreateLayerRequest,
-    CreateOverlayRequest, CreateVmRequest, CronAlarm, CronDispatchEvent, CronEventKind,
-    CronEventRecord, CronRun, DisposeVmRequest, EventFrame, EventPayload, ExecuteRequest,
-    ExportSnapshotRequest, ExtEnvelope, FindBoundUdpRequest, FindListenerRequest,
-    GetProcessSnapshotRequest, GetSignalStateRequest, GetZombieTimerCountRequest, GuestRuntimeKind,
-    HostCallbacksRegisteredResponse, ImportCronStateRequest, ImportSnapshotRequest,
-    KillProcessRequest, OpenSessionRequest, OwnershipScope, RegisterHostCallbacksRequest,
-    RequestFrame, ResponsePayload, ScheduleCronRequest, SealLayerRequest,
-    SnapshotRootFilesystemRequest, SocketStateEntry, StreamChannel, StructuredEvent,
-    VmFetchRequest, VmFetchResponse, VmLifecycleState, WakeCronRequest, WriteStdinRequest,
+    AgentosProjectedAgent, AuthenticateRequest, BootstrapRootFilesystemRequest,
+    CancelCronJobRequest, CloseSessionRequest, CloseStdinRequest, CompleteCronRunRequest,
+    ConfigureVmRequest, CreateLayerRequest, CreateOverlayRequest, CreateVmRequest, CronAlarm,
+    CronDispatchEvent, CronEventKind, CronEventRecord, CronRun, DisposeVmRequest, EventFrame,
+    EventPayload, ExecuteRequest, ExportSnapshotRequest, ExtEnvelope, FindBoundUdpRequest,
+    FindListenerRequest, GetProcessSnapshotRequest, GetSignalStateRequest,
+    GetZombieTimerCountRequest, GuestRuntimeKind, HostCallbacksRegisteredResponse,
+    ImportCronStateRequest, ImportSnapshotRequest, KillProcessRequest, LinkPackageRequest,
+    OpenSessionRequest, OwnershipScope, PackageCommands, PackageDescriptor, ProjectedCommand,
+    RegisterHostCallbacksRequest, RequestFrame, RequestPayload, ResponsePayload,
+    ScheduleCronRequest, SealLayerRequest, SnapshotRootFilesystemRequest, SocketStateEntry,
+    StreamChannel, StructuredEvent, VmFetchRequest, VmFetchResponse, VmLifecycleState,
+    WakeCronRequest, WriteStdinRequest,
 };
 use agentos_sidecar_protocol::wire::{
     request_frame_to_compat, CompatDispatchResult, ProtocolCodecError, ProtocolFrame,
@@ -57,7 +59,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub const BROWSER_SIDECAR_ID: &str = "agentos-native-sidecar-browser";
 pub const BROWSER_MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PENDING_REQUEST_EVENTS: usize = 256;
-const MAX_REQUEST_EVENTS_PER_DISPATCH: usize = 2;
+const MAX_NON_EXTENSION_EVENTS_PER_DISPATCH: usize = 2;
 
 #[derive(Debug)]
 struct ExecutionRecord {
@@ -142,6 +144,14 @@ where
         self.sessions.len()
     }
 
+    pub fn execution_count(&self) -> usize {
+        self.executions.len()
+    }
+
+    pub fn process_execution_route_count(&self) -> usize {
+        self.process_executions.len()
+    }
+
     pub fn sidecar_mut(&mut self) -> &mut BrowserSidecar<B> {
         &mut self.sidecar
     }
@@ -156,7 +166,9 @@ where
             }
         };
         let request = request_frame_to_compat(generated_request)?;
-        let dispatch = if MAX_REQUEST_EVENTS_PER_DISPATCH > self.request_event_capacity() {
+        let event_capacity = self.request_event_capacity();
+        let is_extension = matches!(&request.payload, RequestPayload::Ext(_));
+        let dispatch = if MAX_NON_EXTENSION_EVENTS_PER_DISPATCH > event_capacity {
             rejected(
                 &request,
                 "event_queue_limit_exceeded",
@@ -165,9 +177,16 @@ where
                 ),
             )
         } else {
-            self.dispatch(request)
+            self.dispatch(request, event_capacity)
         };
-        debug_assert!(dispatch.events.len() <= MAX_REQUEST_EVENTS_PER_DISPATCH);
+        debug_assert!(
+            dispatch.events.len()
+                <= if is_extension {
+                    event_capacity
+                } else {
+                    MAX_NON_EXTENSION_EVENTS_PER_DISPATCH
+                }
+        );
         self.pending_events.extend(dispatch.events.iter().cloned());
         let generated =
             agentos_sidecar_protocol::wire::dispatch_result_from_compat(CompatDispatchResult {
@@ -196,7 +215,7 @@ where
         MAX_PENDING_REQUEST_EVENTS.saturating_sub(self.pending_events.len())
     }
 
-    fn dispatch(&mut self, request: RequestFrame) -> DispatchResult {
+    fn dispatch(&mut self, request: RequestFrame, event_capacity: usize) -> DispatchResult {
         match route_request_payload(&request) {
             RequestRoute::Authenticate(payload) => self.authenticate(&request, payload),
             RequestRoute::OpenSession(payload) => self.open_session(&request, payload),
@@ -258,27 +277,11 @@ where
             RequestRoute::FindListener(payload) => self.find_listener(&request, payload),
             RequestRoute::FindBoundUdp(payload) => self.find_bound_udp(&request, payload),
             RequestRoute::VmFetch(payload) => self.vm_fetch(&request, payload),
-            RequestRoute::Ext(payload) => self.ext(&request, payload),
-            RequestRoute::LinkPackage(payload) => {
-                // Package linking projects host-filesystem package trees into the
-                // VM, which the converged browser runtime does not provide.
-                let _ = payload;
-                rejected(
-                    &request,
-                    "unsupported",
-                    "link_package is not available in the converged browser runtime",
-                )
-            }
+            RequestRoute::Ext(payload) => self.ext(&request, payload, event_capacity),
+            RequestRoute::LinkPackage(payload) => self.link_package(&request, payload),
             RequestRoute::ProvidedCommands(payload) => {
-                // Provided command metadata is retained by the native sidecar's
-                // host-backed package projection, which the converged browser
-                // runtime does not provide.
                 let _ = payload;
-                rejected(
-                    &request,
-                    "unsupported",
-                    "provided_commands is not available in the converged browser runtime",
-                )
+                self.provided_commands(&request)
             }
             RequestRoute::ScheduleCron(payload) => self.schedule_cron(&request, payload),
             RequestRoute::ListCronJobs(_) => self.list_cron_jobs(&request),
@@ -639,43 +642,68 @@ where
         vm_id_of(&request.ownership).filter(|vm_id| self.active_vms.contains(vm_id))
     }
 
+    fn owned_vm_id(
+        &self,
+        request: &RequestFrame,
+        operation: &str,
+    ) -> Result<String, DispatchResult> {
+        let Some(vm_id) = vm_id_of(&request.ownership) else {
+            return Err(rejected(
+                request,
+                "invalid_ownership",
+                &format!("{operation} requires VM ownership"),
+            ));
+        };
+        let Some((connection_id, session_id)) = session_scope_of(&request.ownership) else {
+            return Err(rejected(
+                request,
+                "invalid_ownership",
+                &format!("{operation} requires VM ownership"),
+            ));
+        };
+        let Some(session) = self.sessions.get(&session_id) else {
+            return Err(rejected(
+                request,
+                "unknown_session",
+                &format!("{operation} requires an active sidecar session"),
+            ));
+        };
+        if session.connection_id != connection_id || !session.vm_ids.contains(&vm_id) {
+            return Err(rejected(
+                request,
+                "ownership_mismatch",
+                "VM is not owned by the requested browser session",
+            ));
+        }
+        Ok(vm_id)
+    }
+
     fn configure_vm(
         &mut self,
         request: &RequestFrame,
         payload: ConfigureVmRequest,
     ) -> DispatchResult {
-        let Some(vm_id) = vm_id_of(&request.ownership) else {
-            return rejected(
-                request,
-                "invalid_ownership",
-                "configure_vm requires VM ownership",
-            );
+        let vm_id = match self.owned_vm_id(request, "configure_vm") {
+            Ok(vm_id) => vm_id,
+            Err(rejected) => return rejected,
         };
-        if payload
-            .mounts
-            .as_ref()
-            .is_some_and(|mounts| !mounts.is_empty())
-        {
+        let ConfigureVmRequest {
+            mounts,
+            permissions,
+            command_permissions,
+            loopback_exempt_ports,
+            packages,
+            packages_mount_at,
+        } = payload;
+        if mounts.as_ref().is_some_and(|mounts| !mounts.is_empty()) {
             return rejected(
                 request,
                 "unsupported_request",
                 "browser ConfigureVm does not support host mounts",
             );
         }
-        if payload
-            .packages
-            .as_ref()
-            .is_some_and(|packages| !packages.is_empty())
-            || payload.packages_mount_at.is_some()
-        {
-            return rejected(
-                request,
-                "unsupported_request",
-                "browser ConfigureVm does not support package projection",
-            );
-        }
 
-        let permissions = match payload.permissions {
+        let permissions = match permissions {
             Some(policy) => {
                 let policy = permissions_with_allow_all_defaults(Some(
                     agentos_sidecar_protocol::wire::permissions_policy_config_from_wire(policy),
@@ -689,18 +717,110 @@ where
             }
             None => None,
         };
+        let package_bytes = match packages.as_ref() {
+            Some(packages) => {
+                let mut bytes = Vec::with_capacity(packages.len());
+                for package in packages {
+                    match package {
+                        PackageDescriptor::PackageInline(package) => {
+                            bytes.push(package.content.clone())
+                        }
+                        PackageDescriptor::PackagePath(_) => {
+                            return rejected(
+                                request,
+                                "unsupported_package_source",
+                                "browser package projection requires inline .aospkg bytes; host paths are only available to the native sidecar",
+                            );
+                        }
+                    }
+                }
+                Some(bytes)
+            }
+            None => None,
+        };
+
+        // Package replacement is a sidecar-owned atomic mount/catalog swap.
+        // Omission preserves the current projection; an explicit empty list
+        // clears it. All remaining configuration has already been validated and
+        // cannot fail after this VM-existence check in the single dispatcher.
+        let projections = match package_bytes {
+            Some(packages) => match self.sidecar.replace_aospkg_batch_bytes(
+                &vm_id,
+                packages,
+                packages_mount_at.as_deref(),
+            ) {
+                Ok(projections) => projections,
+                Err(error) => return browser_sidecar_rejected(request, error),
+            },
+            None => match self.sidecar.projected_packages(&vm_id) {
+                Ok(projections) => projections,
+                Err(error) => return browser_sidecar_rejected(request, error),
+            },
+        };
         if let Err(error) = self.sidecar.configure_vm(
             &vm_id,
             permissions,
-            payload
-                .command_permissions
-                .map(|permissions| permissions.into_iter().collect()),
-            payload.loopback_exempt_ports,
+            command_permissions.map(|permissions| permissions.into_iter().collect()),
+            loopback_exempt_ports,
         ) {
             return rejected(request, "configure_vm_failed", &error.to_string());
         }
+        let (applied_mounts, projected_commands, agents) =
+            projected_package_response_metadata(&projections);
         DispatchResult {
-            response: vm_configured_response(request, 0, Vec::new(), Vec::new()),
+            response: vm_configured_response(request, applied_mounts, projected_commands, agents),
+            events: Vec::new(),
+        }
+    }
+
+    fn link_package(
+        &mut self,
+        request: &RequestFrame,
+        payload: LinkPackageRequest,
+    ) -> DispatchResult {
+        let vm_id = match self.owned_vm_id(request, "link_package") {
+            Ok(vm_id) => vm_id,
+            Err(rejected) => return rejected,
+        };
+        let bytes = match payload.package {
+            PackageDescriptor::PackageInline(package) => package.content,
+            PackageDescriptor::PackagePath(_) => {
+                return rejected(
+                    request,
+                    "unsupported_package_source",
+                    "browser package projection requires inline .aospkg bytes; host paths are only available to the native sidecar",
+                );
+            }
+        };
+        let projection = match self.sidecar.project_aospkg_bytes(&vm_id, bytes) {
+            Ok(projection) => projection,
+            Err(error) => return browser_sidecar_rejected(request, error),
+        };
+        let (_, projected_commands, agents) =
+            projected_package_response_metadata(std::slice::from_ref(&projection));
+        DispatchResult {
+            response: package_linked_response(request, projected_commands, agents),
+            events: Vec::new(),
+        }
+    }
+
+    fn provided_commands(&self, request: &RequestFrame) -> DispatchResult {
+        let vm_id = match self.owned_vm_id(request, "provided_commands") {
+            Ok(vm_id) => vm_id,
+            Err(rejected) => return rejected,
+        };
+        let packages = match self.sidecar.provided_commands(&vm_id) {
+            Ok(packages) => packages
+                .into_iter()
+                .map(|package| PackageCommands {
+                    package_name: package.package_name,
+                    commands: package.commands,
+                })
+                .collect(),
+            Err(error) => return browser_sidecar_rejected(request, error),
+        };
+        DispatchResult {
+            response: provided_commands_response(request, packages),
             events: Vec::new(),
         }
     }
@@ -1260,7 +1380,17 @@ where
         };
 
         let mut first_error = None;
+        // VM ownership is the complete browser ACP lifecycle key. Dispose each
+        // extension's exact connection/session/VM state while the VM is still
+        // available; a session-only hook cannot reconstruct owners whose process
+        // route was already removed by an earlier terminal abort.
         for vm_id in vm_ids {
+            if let Err(error) =
+                self.sidecar
+                    .dispose_extension_vm_state(&connection_id, &payload.session_id, &vm_id)
+            {
+                first_error.get_or_insert(error.to_string());
+            }
             if let Err(error) = self.sidecar.dispose_vm(&vm_id) {
                 first_error.get_or_insert(error.to_string());
             }
@@ -1403,8 +1533,21 @@ where
             .sidecar
             .set_agent_additional_instructions(&vm_id, create_config.agent_additional_instructions)
         {
-            let _ = self.sidecar.dispose_vm(&vm_id);
-            return rejected(request, "create_vm_failed", &error.to_string());
+            return match self.sidecar.dispose_vm(&vm_id) {
+                Ok(()) => rejected(request, "create_vm_failed", &error.to_string()),
+                Err(cleanup_error) => {
+                    tracing::error!(
+                        vm_id,
+                        %cleanup_error,
+                        "failed to roll back browser VM after initialization failure"
+                    );
+                    rejected(
+                        request,
+                        "create_vm_failed",
+                        &format!("{error}; browser VM rollback also failed: {cleanup_error}"),
+                    )
+                }
+            };
         }
         let process_route_retention = u64::try_from(process_route_retention(&limits))
             .expect("process route retention must fit u64");
@@ -1603,10 +1746,23 @@ where
                 "VM is not owned by the requested browser session",
             );
         }
+        let extension_result =
+            self.sidecar
+                .dispose_extension_vm_state(&connection_id, &session_id, &vm_id);
         let dispose_result = self.sidecar.dispose_vm(&vm_id);
         self.purge_vm_state(&vm_id);
-        if let Err(error) = dispose_result {
-            return rejected(request, "dispose_vm_failed", &error.to_string());
+        match (extension_result, dispose_result) {
+            (Err(extension), Err(vm)) => {
+                return rejected(
+                    request,
+                    "dispose_vm_failed",
+                    &format!("ACP extension cleanup failed: {extension}; VM cleanup failed: {vm}"),
+                );
+            }
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => {
+                return rejected(request, "dispose_vm_failed", &error.to_string());
+            }
+            (Ok(()), Ok(())) => {}
         }
         DispatchResult {
             response: vm_disposed_response(request, vm_id),
@@ -1614,18 +1770,43 @@ where
         }
     }
 
-    fn ext(&mut self, request: &RequestFrame, payload: ExtEnvelope) -> DispatchResult {
+    fn ext(
+        &mut self,
+        request: &RequestFrame,
+        payload: ExtEnvelope,
+        event_capacity: usize,
+    ) -> DispatchResult {
+        let vm_id = match self.owned_vm_id(request, "extension") {
+            Ok(vm_id) => vm_id,
+            Err(rejected) => return rejected,
+        };
         let response = match self
             .sidecar
             .dispatch_extension_request(BrowserExtensionRequest {
                 namespace: payload.namespace,
                 payload: payload.payload,
-                vm_id: vm_id_of(&request.ownership),
+                vm_id: Some(vm_id),
                 connection_id: connection_id_of(&request.ownership),
+                wire_session_id: session_scope_of(&request.ownership)
+                    .map(|(_, session_id)| session_id),
+                event_capacity,
             }) {
             Ok(response) => response,
             Err(error) => return rejected(request, "extension_failed", &error.to_string()),
         };
+        let events = response
+            .events
+            .into_iter()
+            .map(|payload| {
+                EventFrame::new(
+                    request.ownership.clone(),
+                    EventPayload::Ext(ExtEnvelope {
+                        namespace: response.namespace.clone(),
+                        payload,
+                    }),
+                )
+            })
+            .collect();
         DispatchResult {
             response: respond(
                 request,
@@ -1634,7 +1815,7 @@ where
                     payload: response.payload,
                 }),
             ),
-            events: Vec::new(),
+            events,
         }
     }
 
@@ -2144,6 +2325,52 @@ where
             .get(&(vm_id.to_string(), process_id.to_string()))
             .cloned()
     }
+}
+
+fn projected_package_response_metadata(
+    packages: &[BrowserProjectedPackage],
+) -> (u32, Vec<ProjectedCommand>, Vec<AgentosProjectedAgent>) {
+    let applied_mounts = packages
+        .iter()
+        .map(|package| package.applied_mounts)
+        .sum::<usize>();
+    let projected_commands = packages
+        .iter()
+        .flat_map(|package| package.projected_commands.iter())
+        .map(|command| ProjectedCommand {
+            name: command.name.clone(),
+            guest_path: command.guest_path.clone(),
+        })
+        .collect();
+    let agents = packages
+        .iter()
+        .filter_map(|package| package.agent.as_ref())
+        .map(|agent| AgentosProjectedAgent {
+            id: agent.id.clone(),
+            acp_entrypoint: agent.acp_entrypoint.clone(),
+            adapter_entrypoint: agent.adapter_entrypoint.clone(),
+        })
+        .collect();
+    (
+        u32::try_from(applied_mounts).expect("browser package mount limit must fit protocol u32"),
+        projected_commands,
+        agents,
+    )
+}
+
+fn browser_sidecar_rejected(request: &RequestFrame, error: BrowserSidecarError) -> DispatchResult {
+    let code = match &error {
+        BrowserSidecarError::LimitExceeded { .. } => "limit_exceeded",
+        BrowserSidecarError::InvalidPackage(_) => "invalid_package",
+        BrowserSidecarError::PackageConflict(_) => "package_conflict",
+        BrowserSidecarError::PackageMount(_) => "package_mount_failed",
+        BrowserSidecarError::PackageStateCorrupt(_) => "package_state_corrupt",
+        BrowserSidecarError::Cleanup { .. } => "cleanup_failed",
+        BrowserSidecarError::InvalidState(_)
+        | BrowserSidecarError::Kernel(_)
+        | BrowserSidecarError::Bridge(_) => "package_projection_failed",
+    };
+    rejected(request, code, &error.to_string())
 }
 
 fn rejected(request: &RequestFrame, code: &str, message: &str) -> DispatchResult {

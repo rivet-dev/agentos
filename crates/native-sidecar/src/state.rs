@@ -159,6 +159,43 @@ pub trait SidecarRequestTransport: Send + Sync {
         request: SidecarRequestFrame,
         timeout: Duration,
     ) -> Result<SidecarResponseFrame, SidecarError>;
+
+    fn send_request_cancellable(
+        &self,
+        request: SidecarRequestFrame,
+        timeout: Duration,
+        cancellation: &ExtensionCallbackCancellation,
+    ) -> Result<SidecarResponseFrame, SidecarError> {
+        if cancellation.is_cancelled() {
+            return Err(SidecarError::Execution(String::from(
+                "extension callback was cancelled",
+            )));
+        }
+        self.send_request(request, timeout)
+    }
+}
+
+/// Sidecar-owned cancellation for an extension callback wait. The token is
+/// deliberately independent of the client transport: interrupting an ACP turn
+/// cancels the authoritative wait even when the client never answers the
+/// already-emitted callback request.
+#[derive(Clone, Debug, Default)]
+pub struct ExtensionCallbackCancellation {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl ExtensionCallbackCancellation {
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    pub fn same_instance(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.cancelled, &other.cancelled)
+    }
 }
 
 #[derive(Clone)]
@@ -193,6 +230,33 @@ impl SharedSidecarRequestClient {
         let request_id = self.next_request_id.fetch_sub(1, Ordering::Relaxed);
         let request = SidecarRequestFrame::new(request_id, ownership.clone(), payload);
         let response = transport.send_request(request, timeout)?;
+        if response.request_id != request_id {
+            return Err(SidecarError::InvalidState(format!(
+                "sidecar response {} did not match request {request_id}",
+                response.request_id
+            )));
+        }
+        if response.ownership != ownership {
+            return Err(SidecarError::InvalidState(String::from(
+                "sidecar response ownership did not match request ownership",
+            )));
+        }
+        Ok(response.payload)
+    }
+
+    pub(crate) fn invoke_cancellable(
+        &self,
+        ownership: crate::protocol::OwnershipScope,
+        payload: SidecarRequestPayload,
+        timeout: Duration,
+        cancellation: &ExtensionCallbackCancellation,
+    ) -> Result<SidecarResponsePayload, SidecarError> {
+        let transport = self.transport.as_ref().ok_or_else(|| {
+            SidecarError::Unsupported(String::from("sidecar request transport is not configured"))
+        })?;
+        let request_id = self.next_request_id.fetch_sub(1, Ordering::Relaxed);
+        let request = SidecarRequestFrame::new(request_id, ownership.clone(), payload);
+        let response = transport.send_request_cancellable(request, timeout, cancellation)?;
         if response.request_id != request_id {
             return Err(SidecarError::InvalidState(format!(
                 "sidecar response {} did not match request {request_id}",
@@ -298,6 +362,7 @@ pub(crate) struct VmConfiguration {
     pub(crate) permissions: PermissionsPolicy,
     pub(crate) command_permissions: BTreeMap<String, WasmPermissionTier>,
     pub(crate) provided_commands: BTreeMap<String, Vec<String>>,
+    pub(crate) packages_mount_at: String,
     /// Guest JavaScript host-environment config (platform / module resolution /
     /// builtin allow-list). Set at `create_vm` from `CreateVmConfig.jsRuntime`
     /// and preserved across `configure_vm`. `None` => full Node.js emulation.
@@ -316,6 +381,7 @@ impl Default for VmConfiguration {
             permissions: agentos_native_sidecar_core::permissions::deny_all_policy(),
             command_permissions: BTreeMap::new(),
             provided_commands: BTreeMap::new(),
+            packages_mount_at: String::from("/opt/agentos"),
             js_runtime: None,
             snapshot_userland_code: None,
             loopback_exempt_ports: Vec::new(),
@@ -369,6 +435,7 @@ pub(crate) struct VmState {
 #[derive(Debug, Clone)]
 pub(crate) struct ProjectedAgentLaunch {
     pub(crate) acp_entrypoint: String,
+    pub(crate) adapter_entrypoint: String,
     pub(crate) env: BTreeMap<String, String>,
     pub(crate) launch_args: Vec<String>,
 }

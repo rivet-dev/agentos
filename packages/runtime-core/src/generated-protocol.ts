@@ -1119,28 +1119,78 @@ export function writeWasmPermissionTier(bc: bare.ByteCursor, x: WasmPermissionTi
 }
 
 /**
- * agentOS package descriptor. `path` is the trusted host path of the package:
- * normally the packed `.aospkg` file (header + vbare manifest + mount index +
- * mount tar; see crates/vfs/package-format/v1.bare). The sidecar reads the
- * vbare chunk1 manifest, projects the package read-only under
- * `<packagesMountAt>/pkgs/<name>/<version>`, and links its `bin/` commands onto
- * $PATH. A directory path is accepted only for local transition fixtures and is
- * projected as a read-only host-dir leaf (manifest read from the dir's
- * `agentos-package.json`, a toolchain-input file that packed packages no longer
- * ship at runtime).
+ * Native sidecars accept a trusted host path. It normally names the packed
+ * `.aospkg`; a directory is accepted only for local transition fixtures.
  */
-export type PackageDescriptor = {
+export type PackagePath = {
     readonly path: string
 }
 
-export function readPackageDescriptor(bc: bare.ByteCursor): PackageDescriptor {
+export function readPackagePath(bc: bare.ByteCursor): PackagePath {
     return {
         path: bare.readString(bc),
     }
 }
 
-export function writePackageDescriptor(bc: bare.ByteCursor, x: PackageDescriptor): void {
+export function writePackagePath(bc: bare.ByteCursor, x: PackagePath): void {
     bare.writeString(bc, x.path)
+}
+
+/**
+ * Browser sidecars cannot dereference host paths. Their package manager forwards
+ * the complete opaque `.aospkg` bytes; only the sidecar decodes metadata.
+ */
+export type PackageInline = {
+    readonly content: ArrayBuffer
+}
+
+export function readPackageInline(bc: bare.ByteCursor): PackageInline {
+    return {
+        content: bare.readData(bc),
+    }
+}
+
+export function writePackageInline(bc: bare.ByteCursor, x: PackageInline): void {
+    bare.writeData(bc, x.content)
+}
+
+/**
+ * agentOS package input. The sidecar reads the vbare manifest and mount index,
+ * projects the package read-only under `<packagesMountAt>/pkgs/<name>/<version>`,
+ * and links its commands onto $PATH. Clients never send parsed package metadata.
+ */
+export type PackageDescriptor =
+    | { readonly tag: "PackagePath"; readonly val: PackagePath }
+    | { readonly tag: "PackageInline"; readonly val: PackageInline }
+
+export function readPackageDescriptor(bc: bare.ByteCursor): PackageDescriptor {
+    const offset = bc.offset
+    const tag = bare.readU8(bc)
+    switch (tag) {
+        case 0:
+            return { tag: "PackagePath", val: readPackagePath(bc) }
+        case 1:
+            return { tag: "PackageInline", val: readPackageInline(bc) }
+        default: {
+            bc.offset = offset
+            throw new bare.BareError(offset, "invalid tag")
+        }
+    }
+}
+
+export function writePackageDescriptor(bc: bare.ByteCursor, x: PackageDescriptor): void {
+    switch (x.tag) {
+        case "PackagePath": {
+            bare.writeU8(bc, 0)
+            writePackagePath(bc, x.val)
+            break
+        }
+        case "PackageInline": {
+            bare.writeU8(bc, 1)
+            writePackageInline(bc, x.val)
+            break
+        }
+    }
 }
 
 export type AgentosProjectedAgent = {

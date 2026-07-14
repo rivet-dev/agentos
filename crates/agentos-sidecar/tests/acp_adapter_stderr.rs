@@ -32,9 +32,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentos_native_sidecar::wire::{
     AuthenticateRequest, ConfigureVmRequest, ConnectionOwnership, CreateVmRequest, ExtEnvelope,
-    GuestRuntimeKind, OpenSessionRequest, OwnershipScope, PackageDescriptor, RequestFrame,
-    RequestPayload, ResponsePayload, SessionOwnership, SidecarPlacement, SidecarPlacementShared,
-    VmOwnership,
+    GuestRuntimeKind, OpenSessionRequest, OwnershipScope, PackageDescriptor, PackagePath,
+    RequestFrame, RequestPayload, ResponsePayload, SessionOwnership, SidecarPlacement,
+    SidecarPlacementShared, VmOwnership,
 };
 use agentos_native_sidecar::{NativeSidecar, NativeSidecarConfig};
 use agentos_protocol::generated::v1::{
@@ -344,9 +344,9 @@ fn configure_mock_agent_package(
                 permissions: None,
                 command_permissions: None,
                 loopback_exempt_ports: None,
-                packages: Some(vec![PackageDescriptor {
+                packages: Some(vec![PackageDescriptor::PackagePath(PackagePath {
                     path: package_dir.to_string_lossy().into_owned(),
-                }]),
+                })]),
                 packages_mount_at: Some(String::from("/opt/agentos")),
             }),
         })

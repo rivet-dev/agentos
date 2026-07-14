@@ -5482,7 +5482,9 @@ where
         let (connection_id, session_id) = { (vm.connection_id.clone(), vm.session_id.clone()) };
         let ownership = OwnershipScope::vm(&connection_id, &session_id, vm_id);
 
-        if self.capture_extension_process_output_event(vm_id, process_id, &event) {
+        let extension_captured =
+            self.capture_extension_process_output_event(vm_id, process_id, &event);
+        if extension_captured && !matches!(&event, ActiveExecutionEvent::Exited(_)) {
             return Ok(None);
         }
 
@@ -5576,16 +5578,20 @@ where
                 }
                 record_execute_phase("process_exit_lifecycle_emit", phase_start.elapsed());
 
-                Ok(Some(EventFrame::new(
-                    ownership,
-                    EventPayload::ProcessExited(ProcessExitedEvent {
-                        process_id: process_id.to_owned(),
-                        exit_code,
-                        stdout,
-                        stderr,
-                        error: capture_error,
-                    }),
-                )))
+                if extension_captured {
+                    Ok(None)
+                } else {
+                    Ok(Some(EventFrame::new(
+                        ownership,
+                        EventPayload::ProcessExited(ProcessExitedEvent {
+                            process_id: process_id.to_owned(),
+                            exit_code,
+                            stdout,
+                            stderr,
+                            error: capture_error,
+                        }),
+                    )))
+                }
             }
         }
     }

@@ -3,87 +3,194 @@
 //! Maps the host-free ACP core's synchronous host operations onto the converged
 //! browser executor exposed through `BrowserExtensionContext`: agent launch is the
 //! two-step `create_javascript_context` + `start_execution`; stdin/kill/output are
-//! keyed by `(vm_id, execution_id)`; `poll_execution_event` returns events for the
-//! whole VM so we filter by `execution_id`. `now_ms` is a poll counter (each poll is
-//! a real kernel poll over the SAB bridge), so timeouts are interpreted as poll
-//! budgets — no wall clock needed.
+//! keyed by `(vm_id, execution_id)`. The browser sidecar centrally demultiplexes
+//! its VM-global event stream, so this host only receives stdout/stderr/exit for
+//! the requested execution while GuestRequest and SignalState remain owned by the
+//! ordinary browser event loop. `now_ms` is a poll counter (each poll is a real
+//! kernel poll over the SAB bridge), so timeouts are interpreted as poll budgets.
 //!
-//! A minimal ACP agent that only uses stdin/stdout emits no `ExecutionEvent::
-//! GuestRequest`; servicing those (for agents that make kernel calls) is a
-//! follow-up. Cross-execution events are skipped (single-execution-per-session in
-//! the minimal path).
+//! Create, resume, and session requests all use the resumable ACP state machine;
+//! this filtered output seam is retained for blocking conformance tests and
+//! teardown waits without consuming centrally owned events.
 
 use std::collections::BTreeMap;
 
 use agentos_bridge::{
-    CreateJavascriptContextRequest, ExecutionEvent, ExecutionHandleRequest, ExecutionSignal,
-    KillExecutionRequest, PollExecutionEventRequest, StartExecutionRequest,
-    WriteExecutionStdinRequest,
+    CreateJavascriptContextRequest, CreateWasmContextRequest, ExecutionHandleRequest,
+    ExecutionSignal, KillExecutionRequest, StartExecutionRequest, WriteExecutionStdinRequest,
 };
-use agentos_native_sidecar_browser::{BrowserExtensionContext, BrowserSidecarError};
-use agentos_sidecar_core::host::{AcpHost, AgentOutput, SpawnAgentRequest, SpawnedAgent};
+use agentos_native_sidecar_browser::{
+    BrowserExtensionContext, BrowserProjectedAgentLaunch, BrowserSidecarError, ExecutionOutput,
+    PollExecutionOutputRequest,
+};
+use agentos_sidecar_core::host::{
+    AcpHost, AgentOutput, ProjectedAgentLaunch, SpawnAgentRequest, SpawnedAgent,
+};
 use agentos_sidecar_core::AcpCoreError;
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct BrowserAcpOwner {
+    pub connection_id: String,
+    pub wire_session_id: String,
+    pub vm_id: String,
+}
+
+impl BrowserAcpOwner {
+    pub fn core_owner_id(&self) -> String {
+        format!(
+            "browser:{}:{}:{}:{}:{}:{}",
+            self.connection_id.len(),
+            self.connection_id,
+            self.wire_session_id.len(),
+            self.wire_session_id,
+            self.vm_id.len(),
+            self.vm_id,
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BrowserAcpExecution {
+    pub execution_id: String,
+    pub context_id: String,
+    pub owner: BrowserAcpOwner,
+}
 
 /// Per-request adapter: borrows the extension context + the session→execution map.
 pub struct BrowserAcpHost<'ctx, 'host> {
     ctx: &'ctx mut BrowserExtensionContext<'host>,
-    vm_id: String,
+    owner: BrowserAcpOwner,
     /// process_id (core's handle) -> execution_id (browser executor handle).
-    executions: &'ctx mut BTreeMap<String, String>,
+    executions: &'ctx mut BTreeMap<String, BrowserAcpExecution>,
     poll_clock: u64,
 }
 
 impl<'ctx, 'host> BrowserAcpHost<'ctx, 'host> {
     pub fn new(
         ctx: &'ctx mut BrowserExtensionContext<'host>,
-        vm_id: String,
-        executions: &'ctx mut BTreeMap<String, String>,
+        owner: BrowserAcpOwner,
+        executions: &'ctx mut BTreeMap<String, BrowserAcpExecution>,
     ) -> Self {
         Self {
             ctx,
-            vm_id,
+            owner,
             executions,
             poll_clock: 0,
         }
     }
 
     fn execution_id(&self, process_id: &str) -> Result<String, AcpCoreError> {
-        self.executions.get(process_id).cloned().ok_or_else(|| {
-            AcpCoreError::InvalidState(format!("unknown agent process {process_id}"))
-        })
+        self.executions
+            .get(process_id)
+            .filter(|route| route.owner == self.owner)
+            .map(|route| route.execution_id.clone())
+            .ok_or_else(|| {
+                AcpCoreError::InvalidState(format!("unknown agent process {process_id}"))
+            })
     }
 }
 
 fn map_err(error: BrowserSidecarError) -> AcpCoreError {
-    AcpCoreError::Execution(error.to_string())
+    let message = error.to_string();
+    match error {
+        BrowserSidecarError::InvalidState(_)
+        | BrowserSidecarError::InvalidPackage(_)
+        | BrowserSidecarError::PackageStateCorrupt(_) => AcpCoreError::InvalidState(message),
+        BrowserSidecarError::PackageConflict(_) => AcpCoreError::Conflict(message),
+        BrowserSidecarError::LimitExceeded { .. } => AcpCoreError::LimitExceeded(message),
+        BrowserSidecarError::PackageMount(_)
+        | BrowserSidecarError::Kernel(_)
+        | BrowserSidecarError::Bridge(_)
+        | BrowserSidecarError::Cleanup { .. } => AcpCoreError::Execution(message),
+    }
+}
+
+fn map_projected_agent(agent: BrowserProjectedAgentLaunch) -> ProjectedAgentLaunch {
+    ProjectedAgentLaunch {
+        id: agent.id,
+        adapter_entrypoint: agent.adapter_entrypoint,
+        env: agent.env,
+        launch_args: agent.launch_args,
+    }
 }
 
 impl AcpHost for BrowserAcpHost<'_, '_> {
+    fn resolve_projected_agent(
+        &mut self,
+        id: &str,
+    ) -> Result<Option<ProjectedAgentLaunch>, AcpCoreError> {
+        self.ctx
+            .resolve_projected_agent(&self.owner.vm_id, id)
+            .map(|agent| agent.map(map_projected_agent))
+            .map_err(map_err)
+    }
+
+    fn list_projected_agents(&mut self) -> Result<Vec<ProjectedAgentLaunch>, AcpCoreError> {
+        self.ctx
+            .list_projected_agents(&self.owner.vm_id)
+            .map(|agents| agents.into_iter().map(map_projected_agent).collect())
+            .map_err(map_err)
+    }
+
+    fn registered_host_tool_reference(&mut self) -> Result<String, AcpCoreError> {
+        // Browser has no agent-to-client host-callback transport yet. Advertising
+        // registered tools would invite requests this host can only reject.
+        Ok(String::new())
+    }
+
     fn spawn_agent(&mut self, request: SpawnAgentRequest) -> Result<SpawnedAgent, AcpCoreError> {
-        let handle = self
-            .ctx
-            .create_javascript_context(CreateJavascriptContextRequest {
-                vm_id: self.vm_id.clone(),
-                bootstrap_module: request.entrypoint.clone(),
-            })
-            .map_err(map_err)?;
+        let handle = match request.runtime {
+            agentos_protocol::generated::v1::AcpRuntimeKind::JavaScript
+            | agentos_protocol::generated::v1::AcpRuntimeKind::Python => self
+                .ctx
+                .create_javascript_context(CreateJavascriptContextRequest {
+                    vm_id: self.owner.vm_id.clone(),
+                    bootstrap_module: request.entrypoint.clone(),
+                }),
+            agentos_protocol::generated::v1::AcpRuntimeKind::WebAssembly => {
+                self.ctx.create_wasm_context(CreateWasmContextRequest {
+                    vm_id: self.owner.vm_id.clone(),
+                    module_path: request.entrypoint.clone(),
+                })
+            }
+        }
+        .map_err(map_err)?;
         let mut argv = Vec::new();
         if let Some(entrypoint) = &request.entrypoint {
             argv.push(entrypoint.clone());
         }
         argv.extend(request.args.clone());
-        let started = self
-            .ctx
-            .start_execution(StartExecutionRequest {
-                vm_id: self.vm_id.clone(),
-                context_id: handle.context_id,
-                argv,
-                env: request.env.clone(),
-                cwd: request.cwd.clone().unwrap_or_default(),
-            })
-            .map_err(map_err)?;
-        self.executions
-            .insert(request.process_id.clone(), started.execution_id);
+        let context_id = handle.context_id;
+        let started = match self.ctx.start_execution(StartExecutionRequest {
+            vm_id: self.owner.vm_id.clone(),
+            context_id: context_id.clone(),
+            argv,
+            env: request.env.clone(),
+            cwd: request.cwd.clone().unwrap_or_default(),
+        }) {
+            Ok(started) => started,
+            Err(error) => {
+                let start_error = map_err(error);
+                return match self
+                    .ctx
+                    .release_context(&self.owner.vm_id, &context_id)
+                    .map_err(map_err)
+                {
+                    Ok(()) => Err(start_error),
+                    Err(cleanup_error) => Err(AcpCoreError::Execution(format!(
+                        "{start_error}; failed to release browser agent context after start failure: {cleanup_error}"
+                    ))),
+                };
+            }
+        };
+        self.executions.insert(
+            request.process_id.clone(),
+            BrowserAcpExecution {
+                execution_id: started.execution_id,
+                context_id,
+                owner: self.owner.clone(),
+            },
+        );
         Ok(SpawnedAgent {
             process_id: request.process_id,
             pid: None,
@@ -99,7 +206,7 @@ impl AcpHost for BrowserAcpHost<'_, '_> {
         let execution_id = self.execution_id(process_id)?;
         self.ctx
             .write_stdin(WriteExecutionStdinRequest {
-                vm_id: self.vm_id.clone(),
+                vm_id: self.owner.vm_id.clone(),
                 execution_id,
                 chunk: chunk.to_vec(),
             })
@@ -110,7 +217,7 @@ impl AcpHost for BrowserAcpHost<'_, '_> {
         let execution_id = self.execution_id(process_id)?;
         self.ctx
             .close_stdin(ExecutionHandleRequest {
-                vm_id: self.vm_id.clone(),
+                vm_id: self.owner.vm_id.clone(),
                 execution_id,
             })
             .map_err(map_err)
@@ -121,23 +228,18 @@ impl AcpHost for BrowserAcpHost<'_, '_> {
         let execution_id = self.execution_id(process_id)?;
         let event = self
             .ctx
-            .poll_execution_event(PollExecutionEventRequest {
-                vm_id: self.vm_id.clone(),
+            .poll_execution_output(PollExecutionOutputRequest {
+                vm_id: self.owner.vm_id.clone(),
+                execution_id,
             })
             .map_err(map_err)?;
         Ok(match event {
-            Some(ExecutionEvent::Stdout(chunk)) if chunk.execution_id == execution_id => {
-                Some(AgentOutput::Stdout(chunk.chunk))
-            }
-            Some(ExecutionEvent::Stderr(chunk)) if chunk.execution_id == execution_id => {
-                Some(AgentOutput::Stderr(chunk.chunk))
-            }
-            Some(ExecutionEvent::Exited(exited)) if exited.execution_id == execution_id => {
+            Some(ExecutionOutput::Stdout(chunk)) => Some(AgentOutput::Stdout(chunk.chunk)),
+            Some(ExecutionOutput::Stderr(chunk)) => Some(AgentOutput::Stderr(chunk.chunk)),
+            Some(ExecutionOutput::Exited(exited)) => {
                 Some(AgentOutput::Exited(Some(exited.exit_code)))
             }
-            // Other-execution events, GuestRequest, SignalState: not handled in the
-            // minimal path; treat as "nothing for us this poll".
-            _ => None,
+            None => None,
         })
     }
 
@@ -150,11 +252,60 @@ impl AcpHost for BrowserAcpHost<'_, '_> {
         };
         self.ctx
             .kill_execution(KillExecutionRequest {
-                vm_id: self.vm_id.clone(),
+                vm_id: self.owner.vm_id.clone(),
                 execution_id,
                 signal,
             })
             .map_err(map_err)
+    }
+
+    fn abort_agent(&mut self, process_id: &str) -> Result<(), AcpCoreError> {
+        let route = self
+            .executions
+            .get(process_id)
+            .filter(|route| route.owner == self.owner)
+            .cloned()
+            .ok_or_else(|| {
+                AcpCoreError::InvalidState(format!("unknown agent process {process_id}"))
+            })?;
+        let execution = self
+            .ctx
+            .abort_execution(&self.owner.vm_id, &route.execution_id)
+            .map_err(map_err);
+        let context = self
+            .ctx
+            .release_context(&self.owner.vm_id, &route.context_id)
+            .map_err(map_err);
+        match (execution, context) {
+            (Ok(()), Ok(())) => {
+                self.executions.remove(process_id);
+                Ok(())
+            }
+            (Err(execution), Ok(())) => Err(execution),
+            (Ok(()), Err(context)) => Err(context),
+            (Err(execution), Err(context)) => Err(AcpCoreError::Execution(format!(
+                "failed to abort browser agent execution: {execution}; failed to release its context: {context}"
+            ))),
+        }
+    }
+
+    fn release_agent_route(&mut self, process_id: &str) -> Result<(), AcpCoreError> {
+        let Some(route) = self
+            .executions
+            .get(process_id)
+            .filter(|route| route.owner == self.owner)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        self.ctx
+            .release_execution(&route.execution_id)
+            .map_err(map_err)?;
+        self.ctx
+            .release_context(&self.owner.vm_id, &route.context_id)
+            .map_err(map_err)?;
+        self.executions.remove(process_id);
+        Ok(())
     }
 
     fn wait_for_exit(
@@ -173,15 +324,49 @@ impl AcpHost for BrowserAcpHost<'_, '_> {
 
     fn write_file(&mut self, path: &str, contents: &[u8]) -> Result<(), AcpCoreError> {
         self.ctx
-            .write_file(&self.vm_id, path, contents.to_vec())
+            .write_file(&self.owner.vm_id, path, contents.to_vec())
             .map_err(map_err)
     }
 
     fn read_file(&mut self, path: &str) -> Result<Vec<u8>, AcpCoreError> {
-        self.ctx.read_file(&self.vm_id, path).map_err(map_err)
+        self.ctx.read_file(&self.owner.vm_id, path).map_err(map_err)
     }
 
     fn now_ms(&self) -> u64 {
         self.poll_clock
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn browser_sidecar_errors_keep_their_acp_semantic_class() {
+        let limit = map_err(BrowserSidecarError::LimitExceeded {
+            limit: "max_deferred_execution_events_per_vm",
+            capacity: 64,
+            how_to_raise: "raise max_deferred_execution_events_per_vm",
+        });
+        assert_eq!(limit.code(), "limit_exceeded");
+        assert!(limit
+            .to_string()
+            .contains("raise max_deferred_execution_events_per_vm"));
+
+        assert_eq!(
+            map_err(BrowserSidecarError::PackageConflict(String::from(
+                "duplicate"
+            )))
+            .code(),
+            "conflict"
+        );
+        assert_eq!(
+            map_err(BrowserSidecarError::InvalidState(String::from("missing"))).code(),
+            "invalid_state"
+        );
+        assert_eq!(
+            map_err(BrowserSidecarError::Bridge(String::from("worker failed"))).code(),
+            "execution"
+        );
     }
 }

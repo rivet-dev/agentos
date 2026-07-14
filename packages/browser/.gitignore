@@ -35,3 +35,4 @@ tests/browser-wasm/real-terminal.bundle.js
 tests/browser-wasm/real-language-model.bundle.js
 tests/browser-wasm/pi-tui.bundle.js
 tests/browser-wasm/commands/
+tests/browser-wasm/package-fixtures/

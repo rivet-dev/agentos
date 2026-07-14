@@ -12,12 +12,13 @@
 // `_bg.wasm`; both URLs resolve relative to this module so a consumer's bundler
 // (or native ESM loader) emits/serves them.
 
-import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
-import type { ProtocolFramePayloadCodec } from "@rivet-dev/agentos-runtime-core/protocol-frames";
 import type {
 	ConvergedSidecarFactoryOptions,
 	ConvergedSidecarHandle,
 } from "@rivet-dev/agentos-runtime-browser";
+import type { ProtocolFramePayloadCodec } from "@rivet-dev/agentos-runtime-core/protocol-frames";
+import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
+import { createAcpPendingResponseDriver } from "./acp-pending-driver.js";
 import {
 	createConvergedExecutionHostBridge,
 	type SyncAgentExecutor,
@@ -34,8 +35,37 @@ const WASM_BINARY_URL = new URL(
 
 interface AgentOsSidecarWasmWebModule {
 	default(input?: unknown): Promise<unknown>;
-	AgentOsBrowserSidecarWasm: new (hostBridge?: unknown) => {
+	AgentOsBrowserSidecarWasm: new (
+		hostBridge?: unknown,
+	) => {
 		pushFrame(frame: Uint8Array): unknown;
+		pendingResponseProcessId(frame: Uint8Array): unknown;
+		pendingResponseTimeoutMs(frame: Uint8Array): unknown;
+		pendingResponseTimeoutPhase(frame: Uint8Array): unknown;
+		buildDeliverAgentOutputFrame(
+			originResponse: Uint8Array,
+			processId: string,
+			chunk: Uint8Array,
+		): unknown;
+		buildDeliverAgentStderrFrame(
+			originResponse: Uint8Array,
+			processId: string,
+			chunk: Uint8Array,
+		): unknown;
+		buildAbortPendingFrame(
+			originResponse: Uint8Array,
+			processId: string,
+			reason:
+				| "agent_exited"
+				| "interaction_timeout"
+				| "driver_failed"
+				| "caller_cancelled",
+			exitCode: number | null,
+		): unknown;
+		restorePendingResponse(
+			originResponse: Uint8Array,
+			completedResponse: Uint8Array,
+		): unknown;
 	};
 }
 
@@ -58,6 +88,15 @@ export interface AgentOsConvergedSidecarOptions {
 	 * worker (see AGENTOS-WEB-CONVERGENCE.md Step 7). Omit for guest-only use.
 	 */
 	agentExecutor?: SyncAgentExecutor;
+	/** Probe host-owned cancellation state while an ACP interaction is pending.
+	 * Worker integrations should read an Atomics-backed flag so cancellation can
+	 * be observed while the kernel worker is synchronously polling its reactor. */
+	isAgentInteractionCancelled?: (processId: string) => boolean;
+	/** Complete packed `.aospkg` artifacts to forward opaquely into the browser
+	 * sidecar during VM initialization. TypeScript never decodes their metadata. */
+	packageBytes?: readonly Uint8Array[];
+	/** Optional guest package projection root forwarded unchanged to the sidecar. */
+	packagesMountAt?: string;
 }
 
 /**
@@ -82,6 +121,14 @@ export function createAgentOsConvergedSidecar(
 	const binaryUrl = options.binaryUrl ?? WASM_BINARY_URL;
 	return {
 		config,
+		...(options.packageBytes === undefined
+			? {}
+			: {
+					packages: options.packageBytes.map((content) => ({ content })),
+				}),
+		...(options.packagesMountAt === undefined
+			? {}
+			: { packagesMountAt: options.packagesMountAt }),
 		codec: options.codec ?? "bare",
 		onFsReadDenied: options.onFsReadDenied,
 		async loadSidecar(): Promise<ConvergedSidecarHandle> {
@@ -93,14 +140,110 @@ export function createAgentOsConvergedSidecar(
 			)) as AgentOsSidecarWasmWebModule;
 			await wasmModule.default(String(binaryUrl));
 			const sidecar = new wasmModule.AgentOsBrowserSidecarWasm(host.bridge);
-			return {
-				pushFrame: (frame: Uint8Array) => {
-					const response = sidecar.pushFrame(frame);
-					if (!(response instanceof Uint8Array)) {
-						throw new Error("agentos wasm sidecar returned no response frame");
-					}
-					return response;
+			const rawPushFrame = (frame: Uint8Array): Uint8Array => {
+				const response = sidecar.pushFrame(frame);
+				if (!(response instanceof Uint8Array)) {
+					throw new Error("agentos wasm sidecar returned no response frame");
+				}
+				return response;
+			};
+			const pushFrame = createAcpPendingResponseDriver({
+				pushFrame: rawPushFrame,
+				host,
+				...(options.isAgentInteractionCancelled === undefined
+					? {}
+					: { isCancelled: options.isAgentInteractionCancelled }),
+				frameHelpers: {
+					pendingResponseProcessId(frame) {
+						const processId = sidecar.pendingResponseProcessId(frame);
+						if (processId === null) return null;
+						if (typeof processId !== "string") {
+							throw new Error(
+								"agentos wasm sidecar returned an invalid pending process id",
+							);
+						}
+						return processId;
+					},
+					pendingResponseTimeoutMs(frame) {
+						const timeoutMs = sidecar.pendingResponseTimeoutMs(frame);
+						if (timeoutMs === null) return null;
+						if (
+							typeof timeoutMs !== "number" ||
+							!Number.isInteger(timeoutMs) ||
+							timeoutMs <= 0
+						) {
+							throw new Error(
+								"agentos wasm sidecar returned an invalid pending timeout",
+							);
+						}
+						return timeoutMs;
+					},
+					pendingResponseTimeoutPhase(frame) {
+						const phase = sidecar.pendingResponseTimeoutPhase(frame);
+						if (phase === null) return null;
+						if (typeof phase !== "string" || phase.length === 0) {
+							throw new Error(
+								"agentos wasm sidecar returned an invalid pending timeout phase",
+							);
+						}
+						return phase;
+					},
+					buildDeliverAgentOutputFrame(originResponse, processId, chunk) {
+						const frame = sidecar.buildDeliverAgentOutputFrame(
+							originResponse,
+							processId,
+							chunk,
+						);
+						if (!(frame instanceof Uint8Array)) {
+							throw new Error(
+								"agentos wasm sidecar returned no ACP delivery frame",
+							);
+						}
+						return frame;
+					},
+					buildDeliverAgentStderrFrame(originResponse, processId, chunk) {
+						const frame = sidecar.buildDeliverAgentStderrFrame(
+							originResponse,
+							processId,
+							chunk,
+						);
+						if (!(frame instanceof Uint8Array)) {
+							throw new Error(
+								"agentos wasm sidecar returned no ACP stderr-delivery frame",
+							);
+						}
+						return frame;
+					},
+					buildAbortPendingFrame(originResponse, processId, reason, exitCode) {
+						const frame = sidecar.buildAbortPendingFrame(
+							originResponse,
+							processId,
+							reason,
+							exitCode,
+						);
+						if (!(frame instanceof Uint8Array)) {
+							throw new Error(
+								"agentos wasm sidecar returned no ACP abort frame",
+							);
+						}
+						return frame;
+					},
+					restorePendingResponse(originResponse, completedResponse) {
+						const frame = sidecar.restorePendingResponse(
+							originResponse,
+							completedResponse,
+						);
+						if (!(frame instanceof Uint8Array)) {
+							throw new Error(
+								"agentos wasm sidecar returned no restored ACP response",
+							);
+						}
+						return frame;
+					},
 				},
+			});
+			return {
+				pushFrame,
 				setNextExecutionId: (executionId: string) => {
 					host.setNextExecutionId(executionId);
 				},

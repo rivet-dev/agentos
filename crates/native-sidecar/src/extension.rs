@@ -9,7 +9,9 @@ use crate::protocol::{
     SidecarRequestPayload, SidecarResponsePayload, StdinClosedResponse, StdinWrittenResponse,
     WriteStdinRequest,
 };
-use crate::state::{SharedEventSink, SharedSidecarRequestClient, SidecarError};
+use crate::state::{
+    ExtensionCallbackCancellation, SharedEventSink, SharedSidecarRequestClient, SidecarError,
+};
 
 pub type ExtensionFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, SidecarError>> + 'a>>;
 
@@ -20,6 +22,7 @@ pub type ExtensionFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, SidecarE
 pub struct ProjectedAgentLaunchEntry {
     pub id: String,
     pub acp_entrypoint: String,
+    pub adapter_entrypoint: String,
     pub env: std::collections::BTreeMap<String, String>,
     pub launch_args: Vec<String>,
 }
@@ -283,6 +286,24 @@ impl ExtensionSnapshot {
         )?;
         extension_callback_response_payload(&self.namespace, response)
     }
+
+    pub fn invoke_callback_cancellable(
+        &self,
+        payload: Vec<u8>,
+        timeout: Duration,
+        cancellation: &ExtensionCallbackCancellation,
+    ) -> Result<Vec<u8>, SidecarError> {
+        let response = self.sidecar_requests.invoke_cancellable(
+            self.ownership.clone(),
+            SidecarRequestPayload::Ext(ExtEnvelope {
+                namespace: self.namespace.clone(),
+                payload,
+            }),
+            timeout,
+            cancellation,
+        )?;
+        extension_callback_response_payload(&self.namespace, response)
+    }
 }
 
 impl<'a> ExtensionContext<'a> {
@@ -337,6 +358,16 @@ impl<'a> ExtensionContext<'a> {
         timeout: Duration,
     ) -> Result<Vec<u8>, SidecarError> {
         self.snapshot.invoke_callback(payload, timeout)
+    }
+
+    pub fn invoke_callback_cancellable(
+        &self,
+        payload: Vec<u8>,
+        timeout: Duration,
+        cancellation: &ExtensionCallbackCancellation,
+    ) -> Result<Vec<u8>, SidecarError> {
+        self.snapshot
+            .invoke_callback_cancellable(payload, timeout, cancellation)
     }
 
     pub async fn registered_host_tool_reference(&mut self) -> Result<String, SidecarError> {
@@ -716,6 +747,23 @@ pub enum ExtensionInterruptRequest<'a> {
     CloseSession,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExtensionInterrupt {
+    ExtensionPayload(Vec<u8>),
+    KillProcess,
+    CloseSession,
+}
+
+impl ExtensionInterrupt {
+    pub fn as_request(&self) -> ExtensionInterruptRequest<'_> {
+        match self {
+            Self::ExtensionPayload(payload) => ExtensionInterruptRequest::ExtensionPayload(payload),
+            Self::KillProcess => ExtensionInterruptRequest::KillProcess,
+            Self::CloseSession => ExtensionInterruptRequest::CloseSession,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ExtensionInterruptResponse {
     pub interrupted_response_payload: Vec<u8>,
@@ -754,6 +802,21 @@ pub trait Extension: Send + Sync {
         _interrupt: ExtensionInterruptRequest<'_>,
     ) -> Option<ExtensionInterruptResponse> {
         None
+    }
+
+    /// Perform the host-side effect for an accepted blocking-request interrupt
+    /// after the original dispatch future has been dropped. The fresh context
+    /// carries the original authoritative ownership, allowing an extension to
+    /// notify the exact live process without retaining a borrowed dispatch
+    /// context. Returning a payload replaces the interrupting request's
+    /// synthesized extension response (used to surface a typed delivery error).
+    fn on_blocking_request_interrupted<'a>(
+        &'a self,
+        _ctx: ExtensionContext<'a>,
+        _blocking_payload: Vec<u8>,
+        _interrupt: ExtensionInterrupt,
+    ) -> ExtensionFuture<'a, Option<Vec<u8>>> {
+        Box::pin(async { Ok(None) })
     }
 
     fn on_dispose<'a>(&'a self) -> ExtensionFuture<'a, ()> {

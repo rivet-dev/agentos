@@ -1,9 +1,9 @@
 use agentos_native_sidecar::generated_protocol::v1::{
     AuthenticateRequest, ConfigureVmRequest, ConnectionOwnership, ExtEnvelope, FsPermissionScope,
     GuestFilesystemCallRequest, GuestFilesystemOperation, MountDescriptor, MountPluginDescriptor,
-    OwnershipScope, PermissionMode, PermissionsPolicy, ProtocolFrame, ProtocolSchema, RequestFrame,
-    RequestPayload, ResponseFrame, ResponsePayload, VmConfiguredResponse, VmOwnership,
-    WasmPermissionTier,
+    OwnershipScope, PackageDescriptor, PackageInline, PackagePath, PermissionMode,
+    PermissionsPolicy, ProtocolFrame, ProtocolSchema, RequestFrame, RequestPayload, ResponseFrame,
+    ResponsePayload, VmConfiguredResponse, VmOwnership, WasmPermissionTier,
 };
 use agentos_native_sidecar::protocol as live_protocol;
 use serde_json::json;
@@ -175,6 +175,23 @@ fn generated_protocol_preserves_json_utf8_strings() {
         serde_bare::from_slice(&encoded).expect("decode generated descriptor");
 
     assert_eq!(decoded, descriptor);
+}
+
+#[test]
+fn generated_protocol_preserves_both_opaque_package_sources() {
+    for descriptor in [
+        PackageDescriptor::PackagePath(PackagePath {
+            path: String::from("/packages/demo.aospkg"),
+        }),
+        PackageDescriptor::PackageInline(PackageInline {
+            content: vec![0, 1, 2, 255],
+        }),
+    ] {
+        let encoded = serde_bare::to_vec(&descriptor).expect("encode generated package source");
+        let decoded: PackageDescriptor =
+            serde_bare::from_slice(&encoded).expect("decode generated package source");
+        assert_eq!(decoded, descriptor);
+    }
 }
 
 #[test]

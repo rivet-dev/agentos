@@ -211,38 +211,23 @@ export async function send(
 
 export async function bootstrapVm(relay: KernelWorkerRelay) {
 	const agentPackages = [
-		["async-echo", "async-echo-agent"],
-		["async-infer", "async-infer-agent"],
-		["async-loopback", "async-loopback-agent"],
-		["async-proxy", "async-proxy-agent"],
-		["pty-loopback", "pty-loopback-agent"],
+		"async-echo",
+		"async-infer",
+		"async-loopback",
+		"async-proxy",
+		"pty-loopback",
 	] as const;
-	const agentPackageEntries = agentPackages.flatMap(([name, acpEntrypoint]) => [
-		{
-			path: `/opt/agentos/pkgs/${name}/current/agentos-package.json`,
-			kind: "file",
-			mode: 0o644,
-			uid: 0,
-			gid: 0,
-			content: JSON.stringify({
-				name,
-				version: "1.0.0",
-				agent: { acpEntrypoint },
-			}),
-			encoding: "utf8",
-			executable: false,
-		},
-		{
-			path: `/opt/agentos/bin/${acpEntrypoint}`,
-			kind: "file",
-			mode: 0o755,
-			uid: 0,
-			gid: 0,
-			content: "",
-			encoding: "utf8",
-			executable: true,
-		},
-	]);
+	const packages = await Promise.all(
+		agentPackages.map(async (name) => {
+			const response = await fetch(`/package-fixtures/${name}.aospkg`);
+			if (!response.ok) {
+				throw new Error(
+					`failed to load browser package fixture ${name}: ${response.status}`,
+				);
+			}
+			return { content: new Uint8Array(await response.arrayBuffer()) };
+		}),
+	);
 	const authed = await send(
 		relay,
 		{ scope: "connection", connection_id: "client-hint" },
@@ -265,15 +250,9 @@ export async function bootstrapVm(relay: KernelWorkerRelay) {
 		relay,
 		{ scope: "session", connection_id: connectionId, session_id: sessionId },
 		{
-			type: "create_vm",
+			type: "initialize_vm",
 			runtime: "java_script",
 			config: {
-				rootFilesystem: {
-					mode: "ephemeral",
-					disableDefaultBaseLayer: false,
-					lowers: [],
-					bootstrapEntries: agentPackageEntries,
-				},
 				permissions: {
 					fs: "allow",
 					network: "allow",
@@ -283,6 +262,7 @@ export async function bootstrapVm(relay: KernelWorkerRelay) {
 					binding: "allow",
 				},
 			},
+			packages,
 		},
 	);
 	return { connectionId, sessionId, vmId: created.vm_id as string };

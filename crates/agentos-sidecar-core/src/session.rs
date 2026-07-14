@@ -5,7 +5,24 @@
 //! native sidecar wraps a `BTreeMap<String, AcpSessionRecord>` in its own lock and
 //! the browser sidecar (single-threaded) holds it directly.
 
-use agentos_protocol::generated::v1::{AcpSessionCreatedResponse, AcpSessionStateResponse};
+use std::collections::BTreeMap;
+
+use agentos_protocol::generated::v1::{
+    AcpRuntimeKind, AcpSessionCreatedResponse, AcpSessionStateResponse,
+};
+
+/// Exact adapter launch and handshake inputs retained for bounded crash restart.
+#[derive(Debug, Clone)]
+pub struct AcpAdapterRestartState {
+    pub runtime: AcpRuntimeKind,
+    pub entrypoint: String,
+    pub args: Vec<String>,
+    pub env: BTreeMap<String, String>,
+    pub cwd: String,
+    pub protocol_version: i32,
+    pub client_capabilities: String,
+    pub count: u32,
+}
 
 /// State the sidecar tracks for one live ACP session.
 #[derive(Debug, Clone)]
@@ -28,6 +45,8 @@ pub struct AcpSessionRecord {
     /// Set by the resume fallback tier; the transcript-continuation preamble is
     /// prepended once to this session's next `session/prompt`, then cleared.
     pub pending_preamble: Option<String>,
+    /// Present for blocking/native sessions whose adapter can be relaunched.
+    pub restart: Option<AcpAdapterRestartState>,
 }
 
 impl AcpSessionRecord {

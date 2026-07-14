@@ -18,7 +18,9 @@ use std::time::Instant;
 use agentos_protocol::generated::v1::{
     AcpCreateSessionRequest, AcpResponse, AcpRuntimeKind, AcpSessionRequest,
 };
-use agentos_sidecar_core::host::{AcpHost, AgentOutput, SpawnAgentRequest, SpawnedAgent};
+use agentos_sidecar_core::host::{
+    AcpHost, AgentOutput, ProjectedAgentLaunch, SpawnAgentRequest, SpawnedAgent,
+};
 use agentos_sidecar_core::{AcpCore, AcpCoreError};
 
 /// Native `AcpHost` that runs the agent as a `node` child process, reading its
@@ -40,6 +42,17 @@ impl NodeChildAcpHost {
 }
 
 impl AcpHost for NodeChildAcpHost {
+    fn resolve_projected_agent(
+        &mut self,
+        id: &str,
+    ) -> Result<Option<ProjectedAgentLaunch>, AcpCoreError> {
+        Ok((id == "echo").then(|| echo_projected_agent()))
+    }
+
+    fn list_projected_agents(&mut self) -> Result<Vec<ProjectedAgentLaunch>, AcpCoreError> {
+        Ok(vec![echo_projected_agent()])
+    }
+
     fn spawn_agent(&mut self, request: SpawnAgentRequest) -> Result<SpawnedAgent, AcpCoreError> {
         let entrypoint = request
             .entrypoint
@@ -151,18 +164,20 @@ impl AcpHost for NodeChildAcpHost {
     }
 
     fn read_file(&mut self, _: &str) -> Result<Vec<u8>, AcpCoreError> {
-        let manifest = serde_json::json!({
-            "name": "echo",
-            "agent": {
-                "acpEntrypoint": "echo-agent",
-            },
-        });
-        serde_json::to_vec(&manifest)
-            .map_err(|error| AcpCoreError::Execution(format!("encode echo manifest: {error}")))
+        Ok(Vec::new())
     }
 
     fn now_ms(&self) -> u64 {
         self.elapsed_ms()
+    }
+}
+
+fn echo_projected_agent() -> ProjectedAgentLaunch {
+    ProjectedAgentLaunch {
+        id: String::from("echo"),
+        adapter_entrypoint: String::from("/opt/agentos/bin/echo-agent"),
+        env: BTreeMap::new(),
+        launch_args: Vec::new(),
     }
 }
 

@@ -1299,4 +1299,23 @@ mod tests {
         assert!(!mount.effective_read_only());
         assert_eq!(mount.plugin.effective_config(), "{}");
     }
+
+    #[test]
+    fn package_sources_round_trip_as_paths_or_opaque_bytes() {
+        let descriptors = [
+            PackageDescriptor::PackagePath(PackagePath {
+                path: String::from("/packages/demo.aospkg"),
+            }),
+            PackageDescriptor::PackageInline(PackageInline {
+                content: vec![0, 1, 2, 255],
+            }),
+        ];
+
+        for descriptor in descriptors {
+            let encoded = serde_bare::to_vec(&descriptor).expect("encode package source");
+            let decoded: PackageDescriptor =
+                serde_bare::from_slice(&encoded).expect("decode package source");
+            assert_eq!(decoded, descriptor);
+        }
+    }
 }

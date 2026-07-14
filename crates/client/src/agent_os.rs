@@ -413,9 +413,9 @@ impl AgentOs {
                 wire::RequestPayload::LinkPackageRequest(wire::LinkPackageRequest {
                     // The wire `PackageDescriptor` carries the packed package
                     // `path`; the sidecar reads metadata from that payload.
-                    package: wire::PackageDescriptor {
+                    package: wire::PackageDescriptor::PackagePath(wire::PackagePath {
                         path: descriptor.path,
-                    },
+                    }),
                 }),
             )
             .await?;
@@ -1862,8 +1862,10 @@ fn build_package_descriptors(config: &AgentOsConfig) -> Vec<wire::PackageDescrip
     config
         .packages
         .iter()
-        .map(|package| wire::PackageDescriptor {
-            path: package.path.clone(),
+        .map(|package| {
+            wire::PackageDescriptor::PackagePath(wire::PackagePath {
+                path: package.path.clone(),
+            })
         })
         .collect()
 }

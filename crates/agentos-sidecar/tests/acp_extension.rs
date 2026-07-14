@@ -8,13 +8,13 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentos_native_sidecar::wire::{
-    AuthenticateRequest, ConfigureVmRequest, ConnectionOwnership, CreateVmRequest, CronEventKind,
-    EventFrame, EventPayload, ExtEnvelope, GuestRuntimeKind, OpenSessionRequest, OwnershipScope,
-    PackageDescriptor, RegisterHostCallbacksRequest, RegisteredHostCallbackDefinition,
-    RegisteredHostCallbackExample, RequestFrame, RequestPayload, ResponsePayload,
-    ScheduleCronRequest, SessionOwnership, SidecarPlacement, SidecarPlacementShared,
-    SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload, VmOwnership,
-    WakeCronRequest,
+    AuthenticateRequest, CloseSessionRequest as CloseWireSessionRequest, ConfigureVmRequest,
+    ConnectionOwnership, CreateVmRequest, CronEventKind, EventFrame, EventPayload, ExtEnvelope,
+    GuestRuntimeKind, OpenSessionRequest, OwnershipScope, PackageDescriptor, PackagePath,
+    RegisterHostCallbacksRequest, RegisteredHostCallbackDefinition, RegisteredHostCallbackExample,
+    RequestFrame, RequestPayload, ResponsePayload, ScheduleCronRequest, SessionOwnership,
+    SidecarPlacement, SidecarPlacementShared, SidecarRequestPayload, SidecarResponseFrame,
+    SidecarResponsePayload, VmOwnership, WakeCronRequest,
 };
 use agentos_native_sidecar::{NativeSidecar, NativeSidecarConfig};
 use agentos_protocol::generated::v1::{
@@ -34,7 +34,74 @@ fn acp_extension_suite() {
     acp_get_session_state_denies_cross_connection_session_id();
     acp_close_session_is_owner_scoped_and_idempotent();
     acp_session_request_denies_cross_connection_prompt_and_cancel();
+    closing_wire_session_preserves_same_connection_sibling_acp_state();
     cron_session_actions_execute_inside_the_native_sidecar();
+}
+
+fn closing_wire_session_preserves_same_connection_sibling_acp_state() {
+    assert_node_available();
+    let mut sidecar = new_sidecar("agentos-acp-wire-session-isolation");
+    install_default_acp_callback_handler(&mut sidecar);
+    let connection_id = authenticate(&mut sidecar);
+    let disposable_session = open_session(&mut sidecar, &connection_id);
+    let live_session = open_session(&mut sidecar, &connection_id);
+    let cwd = temp_dir("agentos-acp-wire-session-isolation-cwd");
+    fs::write(cwd.join("adapter.mjs"), adapter_script()).expect("write adapter script");
+    let vm_id = create_vm(&mut sidecar, &connection_id, &live_session, &cwd);
+
+    let created = dispatch_acp(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &live_session,
+        &vm_id,
+        AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
+            agent_type: String::from("pi"),
+            runtime: Some(AcpRuntimeKind::JavaScript),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            args: Some(Vec::new()),
+            env: Some(HashMap::new()),
+            protocol_version: Some(i32::from(ACP_PROTOCOL_VERSION)),
+            client_capabilities: Some(String::from(r#"{"fs":{"readTextFile":true}}"#)),
+            mcp_servers: Some(String::from(r#"{"servers":[]}"#)),
+            skip_os_instructions: Some(true),
+            additional_instructions: None,
+        }),
+    );
+    assert!(matches!(created, AcpResponse::AcpSessionCreatedResponse(_)));
+
+    let closed = sidecar
+        .dispatch_wire_blocking(RequestFrame {
+            schema: agentos_native_sidecar::wire::protocol_schema(),
+            request_id: 5,
+            ownership: OwnershipScope::ConnectionOwnership(ConnectionOwnership {
+                connection_id: connection_id.clone(),
+            }),
+            payload: RequestPayload::CloseSessionRequest(CloseWireSessionRequest {
+                session_id: disposable_session,
+            }),
+        })
+        .expect("close sibling wire session");
+    assert!(matches!(
+        closed.response.payload,
+        ResponsePayload::SessionClosedResponse(_)
+    ));
+
+    let state = dispatch_acp(
+        &mut sidecar,
+        6,
+        &connection_id,
+        &live_session,
+        &vm_id,
+        AcpRequest::AcpGetSessionStateRequest(AcpGetSessionStateRequest {
+            session_id: String::from("adapter-session"),
+        }),
+    );
+    assert!(
+        matches!(state, AcpResponse::AcpSessionStateResponse(_)),
+        "closing one wire session must preserve a sibling session on the same connection: {state:?}"
+    );
+    close_owned_session(&mut sidecar, 7, &connection_id, &live_session, &vm_id);
 }
 
 fn cron_session_actions_execute_inside_the_native_sidecar() {
@@ -400,21 +467,21 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
         "once"
     );
     assert_eq!(prompt.text.as_deref(), Some("agent says hello"));
-    assert_eq!(prompt_events.len(), 2);
     let notifications = prompt_events
         .iter()
-        .map(|event| {
+        .filter_map(|event| {
             let EventPayload::ExtEnvelope(envelope) = &event.payload else {
-                panic!("unexpected prompt event: {event:?}");
+                return None;
             };
             let AcpEvent::AcpSessionEvent(event) =
                 serde_bare::from_slice(&envelope.payload).expect("decode ACP event")
             else {
                 panic!("expected an AcpSessionEvent");
             };
-            serde_json::from_str::<Value>(&event.notification).expect("notification json")
+            Some(serde_json::from_str::<Value>(&event.notification).expect("notification json"))
         })
         .collect::<Vec<_>>();
+    assert_eq!(notifications.len(), 2, "{prompt_events:#?}");
     assert!(notifications
         .iter()
         .any(|event| event["params"]["update"]["currentModeId"] == "ask"));
@@ -596,6 +663,24 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
         "owner connection must still read its own ACP session state, got {owner_state:?}"
     );
 
+    // The owner key includes the VM, not only connection + wire session.
+    let sibling_vm_cwd = temp_dir("agentos-acp-sibling-vm-state-cwd");
+    let sibling_vm = create_vm(&mut sidecar, &victim_conn, &victim_session, &sibling_vm_cwd);
+    let sibling_vm_read = dispatch_acp(
+        &mut sidecar,
+        6,
+        &victim_conn,
+        &victim_session,
+        &sibling_vm,
+        AcpRequest::AcpGetSessionStateRequest(AcpGetSessionStateRequest {
+            session_id: String::from("adapter-session"),
+        }),
+    );
+    assert_indistinguishable_deny(
+        sibling_vm_read,
+        "same-session sibling VM read of another VM's ACP session state",
+    );
+
     // Attacker connection: separate auth + session + vm, then tries to read the
     // victim's ACP session state by its (guessed/known) session id.
     let attacker_conn = authenticate(&mut sidecar);
@@ -614,7 +699,7 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
 
     let leaked = dispatch_acp(
         &mut sidecar,
-        6,
+        7,
         &attacker_conn,
         &attacker_session,
         &attacker_vm,
@@ -630,7 +715,7 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
         "cross-connection read of another connection's ACP session state",
     );
 
-    close_owned_session(&mut sidecar, 7, &victim_conn, &victim_session, &victim_vm);
+    close_owned_session(&mut sidecar, 8, &victim_conn, &victim_session, &victim_vm);
 }
 
 /// AOS-ACP-1 (P1 / J.4 cross-connection ACP close): a second connection
@@ -915,8 +1000,8 @@ fn acp_session_request_denies_cross_connection_prompt_and_cancel() {
 }
 
 /// Assert an ACP response is a deny that is INDISTINGUISHABLE from a missing
-/// session: same `session_not_found` code and the same missing-session message
-/// a non-existent session produces. This locks in the no-existence-leak property
+/// session: the shared ACP core's `invalid_state` code and unknown-session
+/// message. This locks in the no-existence-leak property
 /// — a non-owner must learn nothing (not even that the session exists), so a
 /// regression to a distinguishable error (e.g. an `unauthorized` code) fails here.
 #[track_caller]
@@ -925,13 +1010,13 @@ fn assert_indistinguishable_deny(response: AcpResponse, what: &str) {
         panic!("{what} must be DENIED with an error response, but it returned: {response:?}");
     };
     assert_eq!(
-        error.code, "session_not_found",
+        error.code, "invalid_state",
         "{what} must fail closed with the same code as a missing session (no \
          'unauthorized' existence oracle); got code {:?} / message {:?}",
         error.code, error.message
     );
     assert!(
-        error.message.contains("Session not found"),
+        error.message.contains("unknown ACP session"),
         "{what} must read like a missing session (no existence leak); got: {:?}",
         error.message
     );
@@ -1592,9 +1677,9 @@ process.stdin.on("data", () => {
                 permissions: None,
                 command_permissions: None,
                 loopback_exempt_ports: None,
-                packages: Some(vec![PackageDescriptor {
+                packages: Some(vec![PackageDescriptor::PackagePath(PackagePath {
                     path: package_dir.to_string_lossy().into_owned(),
-                }]),
+                })]),
                 packages_mount_at: Some(String::from("/opt/agentos")),
             }),
         })

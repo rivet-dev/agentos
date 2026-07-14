@@ -2,7 +2,10 @@ import type {
 	LiveSidecarRequestPayload,
 	LiveSidecarResponsePayload,
 } from "./callbacks.js";
-import type { MountConfigJsonObject } from "./descriptors.js";
+import type {
+	LivePackageDescriptor,
+	MountConfigJsonObject,
+} from "./descriptors.js";
 import type { LiveSidecarEventSelector } from "./event-buffer.js";
 import {
 	decodeGuestFilesystemContent,
@@ -293,9 +296,7 @@ export interface SidecarPermissionsPolicy {
 
 type WirePermissionsPolicy = LivePermissionsPolicy;
 
-export interface SidecarPackageDescriptor {
-	path: string;
-}
+export type SidecarPackageDescriptor = LivePackageDescriptor;
 
 export interface SidecarProjectedAgent {
 	id: string;
@@ -2052,12 +2053,10 @@ function toWirePermissionsPolicy(
 	};
 }
 
-function toWirePackageDescriptor(descriptor: SidecarPackageDescriptor): {
-	path: string;
-} {
-	return {
-		path: descriptor.path,
-	};
+function toWirePackageDescriptor(
+	descriptor: SidecarPackageDescriptor,
+): LivePackageDescriptor {
+	return descriptor;
 }
 
 function toWireHostCallbackRegistration(

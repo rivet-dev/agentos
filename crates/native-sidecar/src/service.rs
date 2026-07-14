@@ -690,7 +690,8 @@ pub struct NativeSidecar<B> {
     pub(crate) sidecar_requests: SharedSidecarRequestClient,
     pub(crate) event_sink: SharedEventSink,
     pub(crate) extensions: BTreeMap<String, Arc<dyn Extension>>,
-    pub(crate) extension_sessions: BTreeMap<(String, String), ExtensionSessionResources>,
+    pub(crate) extension_sessions:
+        BTreeMap<(String, String, String, String, String), ExtensionSessionResources>,
     pub(crate) extension_process_output_buffers:
         BTreeMap<(String, String), ExtensionBufferedProcessOutput>,
     /// Session scopes (connection_id, session_id) disposed since the stdio
@@ -935,7 +936,13 @@ where
             )));
         }
 
-        let key = (namespace, ext_session_id);
+        let key = (
+            namespace,
+            ext_session_id,
+            connection_id.clone(),
+            session_id.clone(),
+            vm_id.clone(),
+        );
         if let Some(resources) = self.extension_sessions.get_mut(&key) {
             if resources.ownership != ownership {
                 return Err(SidecarError::InvalidState(String::from(
@@ -970,7 +977,13 @@ where
         let (connection_id, session_id, vm_id) = self.vm_scope_for(&ownership)?;
         self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
 
-        let key = (namespace, ext_session_id);
+        let key = (
+            namespace,
+            ext_session_id,
+            connection_id.clone(),
+            session_id.clone(),
+            vm_id.clone(),
+        );
         if let Some(resources) = self.extension_sessions.get_mut(&key) {
             if resources.ownership != ownership {
                 return Err(SidecarError::InvalidState(String::from(
@@ -1311,6 +1324,8 @@ where
         request: &RequestFrame,
         envelope: ExtEnvelope,
     ) -> Result<DispatchResult, SidecarError> {
+        let (connection_id, session_id, vm_id) = self.vm_scope_for(&request.ownership)?;
+        self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
         let namespace = envelope.namespace;
         let Some(extension) = self.extensions.get(&namespace).cloned() else {
             return Ok(DispatchResult {
@@ -1340,6 +1355,25 @@ where
             ),
             events: response.events,
         })
+    }
+
+    pub(crate) async fn dispatch_extension_interrupt(
+        &mut self,
+        extension: Arc<dyn Extension>,
+        ownership: crate::wire::OwnershipScope,
+        blocking_payload: Vec<u8>,
+        interrupt: crate::extension::ExtensionInterrupt,
+    ) -> Result<Option<Vec<u8>>, SidecarError> {
+        let snapshot = ExtensionSnapshot::new(
+            extension.namespace().to_owned(),
+            crate::wire::ownership_scope_to_compat(ownership),
+            self.sidecar_requests.clone(),
+            self.event_sink.clone(),
+        );
+        let ctx = ExtensionContext::new(snapshot, self);
+        extension
+            .on_blocking_request_interrupted(ctx, blocking_payload, interrupt)
+            .await
     }
 
     async fn initialize_vm(
@@ -1922,9 +1956,11 @@ where
                 continue;
             }
 
-            if !timeout.is_zero() {
-                let _ = self.pump_process_events(ownership).await?;
-            }
+            // Pump once even for a non-blocking poll. Extension brokers use a
+            // zero timeout to drive guest execution without parking the
+            // current-thread sidecar runtime, and the pump itself performs
+            // only non-blocking execution polls.
+            self.pump_process_events(ownership).await?;
 
             let queued_envelopes = {
                 let pending_capacity = self.pending_process_event_capacity();
@@ -3771,6 +3807,7 @@ where
                         crate::extension::ProjectedAgentLaunchEntry {
                             id: id.clone(),
                             acp_entrypoint: launch.acp_entrypoint.clone(),
+                            adapter_entrypoint: launch.adapter_entrypoint.clone(),
                             env: launch.env.clone(),
                             launch_args: launch.launch_args.clone(),
                         }
@@ -3846,7 +3883,14 @@ where
         ext_session_id: String,
     ) -> ExtensionFuture<'a, Vec<EventFrame>> {
         Box::pin(async move {
-            let key = (namespace, ext_session_id);
+            let (connection_id, session_id, vm_id) = self.vm_scope_for(&ownership)?;
+            let key = (
+                namespace,
+                ext_session_id,
+                connection_id.clone(),
+                session_id.clone(),
+                vm_id.clone(),
+            );
             let Some(resources) = self.extension_sessions.get(&key) else {
                 return Ok(Vec::new());
             };
@@ -3859,7 +3903,6 @@ where
                 .extension_sessions
                 .remove(&key)
                 .expect("extension resources existed before removal");
-            let (connection_id, session_id, vm_id) = self.vm_scope_for(&ownership)?;
             for process_id in resources.process_ids {
                 if self
                     .vms
@@ -3925,39 +3968,47 @@ where
                 while let Some(envelope) =
                     self.take_matching_process_event_envelope(&vm_id, &process_id)?
                 {
-                    if self.capture_extension_process_output_event(
-                        &vm_id,
-                        &process_id,
-                        &envelope.event,
-                    ) {
-                        continue;
+                    if self
+                        .handle_process_event_envelope(envelope)
+                        .await?
+                        .is_some()
+                    {
+                        return Err(SidecarError::InvalidState(format!(
+                            "buffered extension process {process_id} emitted an uncaptured public event"
+                        )));
                     }
-                    self.queue_pending_process_event(envelope)?;
-                    break;
                 }
-                let buffered = self
+                let ready = self
                     .extension_process_output_buffers
                     .get(&key)
-                    .is_some_and(|buffer| !buffer.stdout.is_empty() || !buffer.stderr.is_empty());
-                if buffered || timeout.is_zero() || Instant::now() >= deadline {
+                    .is_some_and(|buffer| {
+                        !buffer.stdout.is_empty()
+                            || !buffer.stderr.is_empty()
+                            || buffer.exit_code.is_some()
+                    });
+                if ready || timeout.is_zero() || Instant::now() >= deadline {
                     break;
                 }
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 time::sleep(remaining.min(Duration::from_millis(10))).await;
             }
-            self.bind_extension_process_resource(
-                ownership,
-                namespace,
-                ext_session_id,
-                process_id.clone(),
-            )?;
-            self.extension_process_output_buffers
+            let buffered = self
+                .extension_process_output_buffers
                 .remove(&key)
                 .ok_or_else(|| {
                     SidecarError::InvalidState(String::from(
                         "extension process output buffering was not started",
                     ))
-                })
+                })?;
+            if buffered.exit_code.is_none() {
+                self.bind_extension_process_resource(
+                    ownership,
+                    namespace,
+                    ext_session_id,
+                    process_id,
+                )?;
+            }
+            Ok(buffered)
         })
     }
 
@@ -3982,15 +4033,15 @@ where
                 while let Some(envelope) =
                     self.take_matching_process_event_envelope(&vm_id, &process_id)?
                 {
-                    if self.capture_extension_process_output_event(
-                        &vm_id,
-                        &process_id,
-                        &envelope.event,
-                    ) {
-                        continue;
+                    if self
+                        .handle_process_event_envelope(envelope)
+                        .await?
+                        .is_some()
+                    {
+                        return Err(SidecarError::InvalidState(format!(
+                            "buffered extension process {process_id} emitted an uncaptured public event"
+                        )));
                     }
-                    self.queue_pending_process_event(envelope)?;
-                    break;
                 }
                 let ready = self
                     .extension_process_output_buffers
@@ -4610,7 +4661,13 @@ mod dispose_lifecycle_tests {
             ExtensionBufferedProcessOutput::default(),
         );
         sidecar.extension_sessions.insert(
-            (String::from("ns"), String::from("ext-sess-1")),
+            (
+                String::from("ns"),
+                String::from("ext-sess-1"),
+                String::from("conn-1"),
+                String::from("session-1"),
+                String::from("vm-1"),
+            ),
             ExtensionSessionResources {
                 ownership: OwnershipScope::vm("conn-1", "session-1", "vm-1"),
                 process_ids: BTreeSet::new(),

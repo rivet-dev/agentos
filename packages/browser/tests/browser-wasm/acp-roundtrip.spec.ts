@@ -16,6 +16,8 @@ test("ACP get_session_state round-trips through the wasm sidecar in Chromium", a
 
 	// Authentication handshake succeeded over the wire.
 	expect(result.authResp.payloadType).toBe("authenticated");
+	expect(result.openResp.payloadType).toBe("session_opened");
+	expect(result.vmResp.payloadType).toBe("vm_initialized");
 	// The ACP ext request produced a response frame carrying an ACP ext payload.
 	expect(result.acpResp.frameType).toBe("response");
 	expect(result.acpResp.payloadType).toBe("ext_result");
@@ -29,6 +31,8 @@ declare global {
 		__agentosAcp: {
 			run(): Promise<{
 				authResp: { frameType: string; payloadType?: string };
+				openResp: { frameType: string; payloadType?: string };
+				vmResp: { frameType: string; payloadType?: string };
 				acpResp: {
 					frameType: string;
 					payloadType?: string;

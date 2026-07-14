@@ -10,6 +10,7 @@ use agentos_native_sidecar_core::permissions::{
     allow_all_policy, deny_all_policy, evaluate_permissions_policy,
 };
 use agentos_native_sidecar_core::tools::{
+    build_host_tool_reference as core_build_host_tool_reference,
     ensure_toolkit_name_available as core_ensure_toolkit_name_available,
     ensure_toolkit_registry_capacity as core_ensure_toolkit_registry_capacity, is_registry_command,
     registered_tool_command_names, toolkit_name_for_command,
@@ -728,117 +729,7 @@ fn describe_tool_flag_type(schema: &Value) -> String {
 pub(crate) fn build_host_tool_reference(
     toolkits: &BTreeMap<String, RegisterHostCallbacksRequest>,
 ) -> Result<String, SidecarError> {
-    if toolkits.is_empty() {
-        return Ok(String::new());
-    }
-
-    let mut lines = vec![
-        String::from("## Available Host Tools"),
-        String::new(),
-        String::from("Run `agentos list-tools` to see all available tools."),
-        String::new(),
-    ];
-
-    for (toolkit_name, toolkit) in toolkits {
-        lines.push(format!("### {toolkit_name}"));
-        lines.push(String::new());
-        lines.push(toolkit.description.clone());
-        lines.push(String::new());
-
-        for (tool_name, tool) in &toolkit.callbacks {
-            let schema = serde_json::from_str::<Value>(&tool.input_schema).map_err(|error| {
-                SidecarError::InvalidState(format!(
-                    "registered tool {toolkit_name}:{tool_name} has an invalid input schema: {error}"
-                ))
-            })?;
-            let signature = describe_tool_flags_payload(&schema)
-                .iter()
-                .filter_map(|flag| {
-                    let name = flag.get("name")?.as_str()?;
-                    let value_type = flag.get("type")?.as_str()?;
-                    let required = flag.get("required")?.as_bool()?;
-                    Some(if required {
-                        format!("{name} <{value_type}>")
-                    } else {
-                        format!("[{name} <{value_type}>]")
-                    })
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
-            let suffix = (!signature.is_empty())
-                .then(|| format!(" {signature}"))
-                .unwrap_or_default();
-            lines.push(format!(
-                "- `agentos-{toolkit_name} {tool_name}{suffix}` — {}",
-                tool.description
-            ));
-        }
-        lines.push(String::new());
-
-        let tools_with_examples = toolkit
-            .callbacks
-            .iter()
-            .filter(|(_, tool)| !tool.examples.is_empty())
-            .collect::<Vec<_>>();
-        if !tools_with_examples.is_empty() {
-            lines.push(String::from("**Examples:**"));
-            lines.push(String::new());
-            for (tool_name, tool) in tools_with_examples {
-                for example in &tool.examples {
-                    let input = serde_json::from_str::<Value>(&example.input).map_err(|error| {
-                        SidecarError::InvalidState(format!(
-                            "registered tool {toolkit_name}:{tool_name} has an invalid example input: {error}"
-                        ))
-                    })?;
-                    let arguments = tool_input_to_flags(&input);
-                    let suffix = (!arguments.is_empty())
-                        .then(|| format!(" {arguments}"))
-                        .unwrap_or_default();
-                    lines.push(format!(
-                        "- {}: `agentos-{toolkit_name} {tool_name}{suffix}`",
-                        example.description
-                    ));
-                }
-            }
-            lines.push(String::new());
-        }
-
-        lines.push(format!(
-            "Run `agentos-{toolkit_name} <tool> --help` for details."
-        ));
-        lines.push(String::new());
-    }
-
-    Ok(lines.join("\n"))
-}
-
-fn tool_input_to_flags(input: &Value) -> String {
-    let Some(input) = input.as_object() else {
-        return String::new();
-    };
-    input
-        .iter()
-        .flat_map(|(key, value)| {
-            let flag = format!("--{}", camel_to_kebab(key));
-            match value {
-                Value::Bool(true) => vec![flag],
-                Value::Bool(false) => vec![format!("--no-{}", camel_to_kebab(key))],
-                Value::Array(items) => items
-                    .iter()
-                    .map(|item| format!("{flag} {}", tool_cli_string(item)))
-                    .collect(),
-                _ => vec![format!("{flag} {}", tool_cli_string(value))],
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn tool_cli_string(value: &Value) -> String {
-    match value {
-        Value::String(value) => value.clone(),
-        other => other.to_string(),
-    }
+    core_build_host_tool_reference(toolkits).map_err(tool_registration_error)
 }
 
 fn ensure_toolkit_name_available(

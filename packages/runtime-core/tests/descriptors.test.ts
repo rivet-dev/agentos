@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	toGeneratedMountDescriptor,
+	toGeneratedPackageDescriptor,
 	toGeneratedSidecarPlacement,
 } from "../src/descriptors.js";
 
@@ -58,5 +59,20 @@ describe("descriptors", () => {
 			readOnly: null,
 			plugin: { id: "js_bridge", config: null },
 		});
+	});
+
+	it("forwards package paths or exact opaque package bytes without metadata", () => {
+		expect(toGeneratedPackageDescriptor({ path: "/packages/demo.aospkg" })).toEqual({
+			tag: "PackagePath",
+			val: { path: "/packages/demo.aospkg" },
+		});
+
+		const backing = new Uint8Array([99, 1, 2, 3, 88]);
+		const content = backing.subarray(1, 4);
+		const encoded = toGeneratedPackageDescriptor({ content });
+		expect(encoded.tag).toBe("PackageInline");
+		if (encoded.tag !== "PackageInline") throw new Error("expected inline package");
+		expect(new Uint8Array(encoded.val.content)).toEqual(new Uint8Array([1, 2, 3]));
+		expect(encoded.val.content.byteLength).toBe(3);
 	});
 });

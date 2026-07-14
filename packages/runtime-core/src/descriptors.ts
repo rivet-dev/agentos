@@ -1,4 +1,5 @@
 import type * as protocol from "./generated-protocol.js";
+import { toExactArrayBuffer } from "./bytes.js";
 import { stringifyJsonUtf8 } from "./json.js";
 
 export type LiveSidecarPlacement =
@@ -102,9 +103,12 @@ export interface LiveMountDescriptor {
 	plugin: NativeMountPluginDescriptor;
 }
 
-export interface LivePackageDescriptor {
-	path: string;
-}
+/** Opaque package transport. Native callers forward a trusted host path;
+ * browser package managers forward the complete `.aospkg` bytes. Neither form
+ * carries parsed package metadata. */
+export type LivePackageDescriptor =
+	| { path: string; content?: never }
+	| { content: Uint8Array; path?: never };
 
 export function toGeneratedSidecarPlacement(
 	placement: LiveSidecarPlacement,
@@ -142,7 +146,13 @@ export function toGeneratedMountDescriptor(
 export function toGeneratedPackageDescriptor(
 	descriptor: LivePackageDescriptor,
 ): protocol.PackageDescriptor {
-	return {
-		path: descriptor.path,
-	};
+	return "path" in descriptor && descriptor.path !== undefined
+		? {
+				tag: "PackagePath",
+				val: { path: descriptor.path },
+			}
+		: {
+				tag: "PackageInline",
+				val: { content: toExactArrayBuffer(descriptor.content) },
+			};
 }

@@ -8,7 +8,14 @@
 // webServer invokes this).
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import {
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,10 +43,78 @@ function pnpmModuleDir(prefix, pkg) {
 	return path.join(base, match, "node_modules", pkg);
 }
 
+function buildBrowserAgentPackageFixtures() {
+	const toolchainRoot = path.join(repoRoot, "packages", "agentos-toolchain");
+	const fixtureSourceRoot = path.join(
+		packageRoot,
+		".cache",
+		"browser-agent-package-fixtures",
+	);
+	const fixtureOutputRoot = path.join(
+		packageRoot,
+		"tests",
+		"browser-wasm",
+		"package-fixtures",
+	);
+	const packages = [
+		["async-echo", "async-echo-agent"],
+		["async-infer", "async-infer-agent"],
+		["async-loopback", "async-loopback-agent"],
+		["async-proxy", "async-proxy-agent"],
+		["pty-loopback", "pty-loopback-agent"],
+	];
+
+	run("pnpm", ["--dir", toolchainRoot, "build"]);
+	rmSync(fixtureSourceRoot, { recursive: true, force: true });
+	rmSync(fixtureOutputRoot, { recursive: true, force: true });
+	mkdirSync(fixtureOutputRoot, { recursive: true });
+	for (const [name, acpEntrypoint] of packages) {
+		const packageRoot = path.join(fixtureSourceRoot, name);
+		const binRoot = path.join(packageRoot, "bin");
+		mkdirSync(binRoot, { recursive: true });
+		writeFileSync(
+			path.join(packageRoot, "package.json"),
+			`${JSON.stringify({ name, version: "0.0.1" }, null, 2)}\n`,
+		);
+		writeFileSync(
+			path.join(packageRoot, "agentos-package.json"),
+			`${JSON.stringify(
+				{
+					name,
+					version: "0.0.1",
+					agent: { acpEntrypoint },
+				},
+				null,
+				2,
+			)}\n`,
+		);
+		writeFileSync(
+			path.join(binRoot, acpEntrypoint),
+			"// Browser worker execution is supplied by the test host bridge.\n",
+			{ mode: 0o755 },
+		);
+		run("node", [path.join(toolchainRoot, "dist", "cli.js"), "build", packageRoot]);
+		copyFileSync(
+			path.join(packageRoot, "dist", "package.aospkg"),
+			path.join(fixtureOutputRoot, `${name}.aospkg`),
+		);
+	}
+}
+
 // 1. wasm web build (idempotent; wasm-pack is incremental).
 run("node", [path.join(here, "build-sidecar-wasm.mjs"), "--target", "web"]);
+buildBrowserAgentPackageFixtures();
 
 // 2. esbuild bundle of the ACP codec entry (esbuild + buffer come from the pnpm store).
+// The browser gate imports the package export (dist), so compile the current
+// generated protocol first instead of accidentally bundling a stale workspace
+// artifact from a previous revision.
+run("pnpm", [
+	"--dir",
+	path.join(repoRoot, "packages", "runtime-core"),
+	"exec",
+	"tsc",
+]);
 const esbuildBin = path.join(pnpmModuleDir("esbuild@0.25", "esbuild"), "bin", "esbuild");
 const bufferDir = pnpmModuleDir("buffer@6", "buffer");
 const entry = path.join(packageRoot, "tests", "browser-wasm", "acp-codec.entry.ts");

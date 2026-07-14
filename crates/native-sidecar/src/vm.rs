@@ -145,18 +145,18 @@ fn send_kernel_socket_readiness_event(
 #[cfg(test)]
 const KERNEL_COMMAND_STUB: &[u8] = b"#!/bin/sh\n# kernel command stub\n";
 
-fn projected_command_guest_path(command: &str) -> String {
-    format!("{}/{command}", crate::package_projection::OPT_AGENTOS_BIN)
+fn projected_command_guest_path(mount_at: &str, command: &str) -> String {
+    crate::package_projection::package_command_path(mount_at, command)
 }
 
 fn projected_commands_from_guest_paths(
     command_guest_paths: &BTreeMap<String, String>,
+    mount_at: &str,
 ) -> Vec<ProjectedCommand> {
+    let bin = crate::package_projection::package_command_path(mount_at, "");
     command_guest_paths
         .iter()
-        .filter(|(_, guest_path)| {
-            guest_path.starts_with(crate::package_projection::OPT_AGENTOS_BIN)
-        })
+        .filter(|(_, guest_path)| guest_path.starts_with(&bin))
         .map(|(name, guest_path)| ProjectedCommand {
             name: name.clone(),
             guest_path: guest_path.clone(),
@@ -461,6 +461,13 @@ where
             .unwrap_or_else(|| vm.configuration.operator_mounts.clone());
         let mut effective_mounts = operator_mounts.clone();
         let replaces_packages = payload.packages.is_some();
+        let configured_packages_mount_at = if replaces_packages {
+            crate::package_projection::normalize_mount_root(
+                payload.packages_mount_at.as_deref().unwrap_or_default(),
+            )
+        } else {
+            vm.configuration.packages_mount_at.clone()
+        };
         let package_descriptors =
             package_descriptors_from_wire(payload.packages.as_deref().unwrap_or_default())?;
         let provided_commands = if replaces_packages {
@@ -486,11 +493,7 @@ where
             vm.configuration.snapshot_userland_code.clone()
         };
         let package_mounts = if replaces_packages {
-            build_packages_projection(
-                &vm_id,
-                &package_descriptors,
-                payload.packages_mount_at.as_deref().unwrap_or_default(),
-            )?
+            build_packages_projection(&vm_id, &package_descriptors, &configured_packages_mount_at)?
         } else {
             vm.configuration
                 .mounts
@@ -531,18 +534,18 @@ where
         };
         let reconfigure_result = mount_result.and_then(|()| {
             vm.command_guest_paths = discover_command_guest_paths(&mut vm.kernel);
-            // The `{ packageDir }` projection lands each package's `bin/<cmd>` at
-            // `/opt/agentos/bin/<cmd>` (on `$PATH`) but does NOT populate
+            // The package projection lands each package's `bin/<cmd>` under the
+            // configured package root (on `$PATH`) but does NOT populate
             // `/__secure_exec/commands`, so `discover_command_guest_paths` alone misses
             // projected commands and every projected wasm/js command resolves to
             // ENOEXEC (absolute path) / ENOENT (bare name). Register each projected
-            // command by name -> its `/opt/agentos/bin/<cmd>` entrypoint so both the
+            // command by name -> its projected `bin/<cmd>` entrypoint so both the
             // kernel command table (via `execution_commands` below) and the sidecar
             // entrypoint resolver (`resolve_guest_command_entrypoint`) can find it.
             for commands in provided_commands.values() {
                 for command in commands {
                     let entrypoint =
-                        format!("{}/{command}", crate::package_projection::OPT_AGENTOS_BIN);
+                        projected_command_guest_path(&configured_packages_mount_at, command);
                     vm.command_guest_paths
                         .entry(command.clone())
                         .or_insert(entrypoint);
@@ -568,6 +571,7 @@ where
                 permissions: configured_permissions.clone(),
                 command_permissions: configured_command_permissions.clone(),
                 provided_commands: provided_commands.clone(),
+                packages_mount_at: configured_packages_mount_at.clone(),
                 // jsRuntime is create-time only; preserve what create_vm stored.
                 js_runtime: vm.configuration.js_runtime.clone(),
                 snapshot_userland_code: snapshot_userland_code.clone(),
@@ -601,26 +605,27 @@ where
         }
 
         let applied_mounts = effective_mounts.len() as u32;
-        let projected_commands = projected_commands_from_guest_paths(&vm.command_guest_paths);
+        let projected_commands = projected_commands_from_guest_paths(
+            &vm.command_guest_paths,
+            &configured_packages_mount_at,
+        );
         let agents = if replaces_packages {
-            projected_agents_from_descriptors(&package_descriptors)
+            projected_agents_from_descriptors(&package_descriptors, &configured_packages_mount_at)
         } else {
             vm.projected_agent_launch
                 .iter()
                 .map(|(id, launch)| AgentosProjectedAgent {
                     id: id.clone(),
                     acp_entrypoint: launch.acp_entrypoint.clone(),
-                    adapter_entrypoint: format!(
-                        "{}/{}",
-                        crate::package_projection::OPT_AGENTOS_BIN,
-                        launch.acp_entrypoint
-                    ),
+                    adapter_entrypoint: launch.adapter_entrypoint.clone(),
                 })
                 .collect()
         };
         if replaces_packages {
-            vm.projected_agent_launch =
-                projected_agent_launch_from_descriptors(&package_descriptors);
+            vm.projected_agent_launch = projected_agent_launch_from_descriptors(
+                &package_descriptors,
+                &configured_packages_mount_at,
+            );
         }
         let _ = vm;
         // Pre-warm the agent-SDK snapshot when a configured package opts in with
@@ -644,7 +649,7 @@ where
     }
 
     /// Runtime dynamic `linkSoftware`: add one package's tar/current/bin leaf
-    /// mounts to the live VM so commands appear under `/opt/agentos/bin`
+    /// mounts to the live VM so commands appear under the configured package root
     /// immediately, with no reboot. Returns the linked command names.
     pub(crate) async fn link_package(
         &mut self,
@@ -655,12 +660,12 @@ where
         self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
 
         let vm = self.vms.get_mut(&vm_id).expect("owned VM should exist");
-        let descriptor =
-            crate::package_projection::read_package_manifest_from_path(&payload.package.path)?;
+        let packages_mount_at = vm.configuration.packages_mount_at.clone();
+        let descriptor = package_descriptor_from_wire(&payload.package)?;
         let new_mounts = build_packages_projection(
             &vm_id,
             std::slice::from_ref(&descriptor),
-            crate::package_projection::OPT_AGENTOS_ROOT,
+            &packages_mount_at,
         )?;
         if new_mounts.iter().all(|mount| {
             vm.configuration
@@ -673,10 +678,13 @@ where
                 .iter()
                 .map(|target| ProjectedCommand {
                     name: target.command.clone(),
-                    guest_path: projected_command_guest_path(&target.command),
+                    guest_path: projected_command_guest_path(&packages_mount_at, &target.command),
                 })
                 .collect();
-            let agents = projected_agents_from_descriptors(std::slice::from_ref(&descriptor));
+            let agents = projected_agents_from_descriptors(
+                std::slice::from_ref(&descriptor),
+                &packages_mount_at,
+            );
             return Ok(DispatchResult {
                 response: package_linked_response(request, projected_commands, agents),
                 events: Vec::new(),
@@ -691,7 +699,10 @@ where
             {
                 if let Some(command) = mount
                     .guest_path
-                    .strip_prefix(crate::package_projection::OPT_AGENTOS_BIN)
+                    .strip_prefix(&crate::package_projection::package_command_path(
+                        &packages_mount_at,
+                        "",
+                    ))
                     .and_then(|path| path.strip_prefix('/'))
                     .filter(|path| !path.is_empty())
                 {
@@ -727,7 +738,7 @@ where
             .provided_commands
             .insert(descriptor.name.clone(), commands.clone());
         for command in &commands {
-            let entrypoint = projected_command_guest_path(command);
+            let entrypoint = projected_command_guest_path(&packages_mount_at, command);
             vm.command_guest_paths
                 .entry(command.clone())
                 .or_insert(entrypoint);
@@ -746,14 +757,18 @@ where
             .iter()
             .map(|command| ProjectedCommand {
                 name: command.clone(),
-                guest_path: projected_command_guest_path(command),
+                guest_path: projected_command_guest_path(&packages_mount_at, command),
             })
             .collect();
-        let agents = projected_agents_from_descriptors(std::slice::from_ref(&descriptor));
+        let agents = projected_agents_from_descriptors(
+            std::slice::from_ref(&descriptor),
+            &packages_mount_at,
+        );
         if let Some(vm) = self.vms.get_mut(&vm_id) {
             vm.projected_agent_launch
                 .extend(projected_agent_launch_from_descriptors(
                     std::slice::from_ref(&descriptor),
+                    &packages_mount_at,
                 ));
         }
 
@@ -1543,14 +1558,26 @@ fn package_leaf_mount_to_descriptor(
 fn package_descriptors_from_wire(
     packages: &[crate::protocol::PackageDescriptor],
 ) -> Result<Vec<crate::package_projection::PackageDescriptor>, SidecarError> {
-    packages
-        .iter()
-        .map(|package| crate::package_projection::read_package_manifest_from_path(&package.path))
-        .collect()
+    packages.iter().map(package_descriptor_from_wire).collect()
+}
+
+fn package_descriptor_from_wire(
+    package: &crate::protocol::PackageDescriptor,
+) -> Result<crate::package_projection::PackageDescriptor, SidecarError> {
+    match package {
+        crate::protocol::PackageDescriptor::PackagePath(package) => {
+            crate::package_projection::read_package_manifest_from_path(&package.path)
+        }
+        crate::protocol::PackageDescriptor::PackageInline(_) => Err(SidecarError::Unsupported(
+            "native package projection requires a trusted host path; inline .aospkg bytes are for the browser sidecar"
+                .to_string(),
+        )),
+    }
 }
 
 fn projected_agent_launch_from_descriptors(
     packages: &[crate::package_projection::PackageDescriptor],
+    mount_at: &str,
 ) -> BTreeMap<String, crate::state::ProjectedAgentLaunch> {
     packages
         .iter()
@@ -1559,6 +1586,10 @@ fn projected_agent_launch_from_descriptors(
             Some((
                 package.name.clone(),
                 crate::state::ProjectedAgentLaunch {
+                    adapter_entrypoint: crate::package_projection::package_command_path(
+                        mount_at,
+                        &acp_entrypoint,
+                    ),
                     acp_entrypoint,
                     env: package.agent_env.clone().into_iter().collect(),
                     launch_args: package.agent_launch_args.clone(),
@@ -1570,6 +1601,7 @@ fn projected_agent_launch_from_descriptors(
 
 fn projected_agents_from_descriptors(
     packages: &[crate::package_projection::PackageDescriptor],
+    mount_at: &str,
 ) -> Vec<AgentosProjectedAgent> {
     packages
         .iter()
@@ -1580,10 +1612,9 @@ fn projected_agents_from_descriptors(
             vec![AgentosProjectedAgent {
                 id: package.name.clone(),
                 acp_entrypoint: acp_entrypoint.clone(),
-                adapter_entrypoint: format!(
-                    "{}/{}",
-                    crate::package_projection::OPT_AGENTOS_BIN,
-                    acp_entrypoint
+                adapter_entrypoint: crate::package_projection::package_command_path(
+                    mount_at,
+                    acp_entrypoint,
                 ),
             }]
         })

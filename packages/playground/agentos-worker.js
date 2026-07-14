@@ -9392,7 +9392,7 @@ if (module.exports && module.exports.default == null) module.exports.default = m
 						},
 						// Toggle terminal raw mode on the guest's PTY. crossterm calls this instead
 						// of tcsetattr; route it to the kernel via process.stdin.setRawMode (which
-						// drives __pty_set_raw_mode), so reedline gets raw \r keystrokes and submits
+						// drives __pty_set_raw_mode), so reedline gets raw \\r keystrokes and submits
 						// commands. Returns errno 0.
 						set_raw_mode(_enabled) {
 							return 0;
@@ -9515,14 +9515,14 @@ if (module.exports && module.exports.default == null) module.exports.default = m
 						},
 					},
 					host_process: {
-						proc_spawn(argvPtr, argvLen, envpPtr, envpLen, stdinFd, stdoutFd, stderrFd, cwdPtr, cwdLen, retPid) {
-							try {
-								const argv = decodeNullSeparated(readBytes(argvPtr, argvLen));
-								if (argv.length === 0) return errnoNosys;
-								const commandPath = argv[0];
-								const commandName = commandPath.split("/").filter(Boolean).at(-1) || commandPath;
+							proc_spawn(argvPtr, argvLen, envpPtr, envpLen, stdinFd, stdoutFd, stderrFd, cwdPtr, cwdLen, retPid) {
+								try {
+									const argv = decodeNullSeparated(readBytes(argvPtr, argvLen));
+									if (argv.length === 0) return errnoNosys;
+									const commandPath = argv[0];
+									const commandName = commandPath.split("/").filter(Boolean).at(-1) || commandPath;
 								const module = commandModules.get(commandName);
-								if (!module) return errnoNosys;
+									if (!module) return errnoNosys;
 								const env = {
 									...(options && options.env ? options.env : {}),
 									...parseEnv(readBytes(envpPtr, envpLen)),
@@ -9543,9 +9543,14 @@ if (module.exports && module.exports.default == null) module.exports.default = m
 									if (!childHandle) return errnoBadf;
 									overrides.set(childFd, childHandle);
 									childOverrideHandles.push(childHandle);
+									}
+									const pid = nextPid++;
+									const child = { pid, module, commandPath, argv, env, cwd, overrides, childOverrideHandles };
+									for (const parentFd of [stdinFd >>> 0, stdoutFd >>> 0, stderrFd >>> 0]) {
+										if (parentFd > 2) {
+											closeSyntheticHandle(syntheticFdEntries.get(parentFd));
+										}
 								}
-								const pid = nextPid++;
-								const child = { pid, module, commandPath, argv, env, cwd, overrides, childOverrideHandles };
 								if (pipeHasOpenWriters(overrides.get(0))) {
 									deferredChildren.set(pid, child);
 								} else {
@@ -9556,16 +9561,21 @@ if (module.exports && module.exports.default == null) module.exports.default = m
 								return errnoNosys;
 							}
 						},
-						proc_waitpid(pid, _options, retStatus, retPid) {
-							const requested = pid >>> 0;
-							runReadyDeferredChildren(requested === 0xffffffff ? undefined : requested);
+							proc_waitpid(pid, _options, retStatus, retPid) {
+								const requested = pid >>> 0;
+								runReadyDeferredChildren(requested === 0xffffffff ? undefined : requested);
 							const childPid = requested === 0xffffffff
 								? exitedChildren.keys().next().value
 								: requested;
 							if (!childPid || !exitedChildren.has(childPid)) {
-								writeU32(retPid, 0);
-								return errnoChild;
-							}
+									if ((_options >>> 0) !== 0) {
+										writeU32(retStatus, 0);
+										writeU32(retPid, 0);
+										return errnoSuccess;
+									}
+									writeU32(retPid, 0);
+									return errnoChild;
+								}
 							writeU32(retStatus, exitedChildren.get(childPid) || 0);
 							writeU32(retPid, childPid);
 							exitedChildren.delete(childPid);

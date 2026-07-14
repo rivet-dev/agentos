@@ -58,11 +58,11 @@ mod wire {
 // and stdio.rs in turn uses these crate-root re-exports (mirrored from lib.rs) so it
 // compiles inside this integration-test crate too.
 use extension::{
-    Extension, ExtensionContext, ExtensionFuture, ExtensionInterruptRequest,
+    Extension, ExtensionContext, ExtensionFuture, ExtensionInterrupt, ExtensionInterruptRequest,
     ExtensionInterruptResponse, ExtensionResponse,
 };
 use service::NativeSidecarConfig;
-use state::{EventSinkTransport, SidecarRequestTransport};
+use state::{EventSinkTransport, ExtensionCallbackCancellation, SidecarRequestTransport};
 
 #[allow(dead_code)]
 #[path = "../src/stdio.rs"]
@@ -11188,9 +11188,11 @@ if (child.status !== 0) {
                                 config: json!({}).to_string().into(),
                             },
                         }]),
-                        Some(vec![crate::protocol::PackageDescriptor {
-                            path: package.to_string_lossy().into_owned(),
-                        }]),
+                        Some(vec![crate::protocol::PackageDescriptor::PackagePath(
+                            crate::protocol::PackagePath {
+                                path: package.to_string_lossy().into_owned(),
+                            },
+                        )]),
                     ),
                 ))
                 .expect("configure package projection")
@@ -11267,9 +11269,11 @@ if (child.status !== 0) {
                         permissions: None,
                         command_permissions: None,
                         loopback_exempt_ports: None,
-                        packages: Some(vec![crate::protocol::PackageDescriptor {
-                            path: package.to_string_lossy().into_owned(),
-                        }]),
+                        packages: Some(vec![crate::protocol::PackageDescriptor::PackagePath(
+                            crate::protocol::PackagePath {
+                                path: package.to_string_lossy().into_owned(),
+                            },
+                        )]),
                         packages_mount_at: None,
                     }),
                 ))

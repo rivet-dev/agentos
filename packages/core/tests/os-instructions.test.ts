@@ -9,9 +9,9 @@ import {
 
 const OS_INSTRUCTIONS_FIXTURE = resolve(
 	import.meta.dirname,
-	// The sidecar crate embeds this prompt; it lives next to the Rust source so
+	// The shared sidecar core embeds this prompt; it lives next to the Rust source so
 	// `cargo publish` can package it. This test only sanity-checks its contents.
-	"../../../crates/agentos-sidecar/src/AGENTOS_SYSTEM_PROMPT.md",
+	"../../../crates/agentos-sidecar-core/src/AGENTOS_SYSTEM_PROMPT.md",
 );
 
 // ── base prompt fixture sanity ─────────────────────────────────────────

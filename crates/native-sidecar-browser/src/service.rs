@@ -1,17 +1,25 @@
+use crate::package_projection::{
+    normalize_packages_mount_root, prepare_aospkg_bytes, BrowserPackageProjectionError,
+    BrowserProjectedPackage, PreparedBrowserPackage, PreparedBrowserPackageMount,
+    DEFAULT_BROWSER_PACKAGES_MOUNT_ROOT, MAX_BROWSER_PROJECTED_PACKAGES_PER_VM,
+    MAX_BROWSER_PROJECTED_PACKAGE_BYTES_PER_VM, MAX_BROWSER_PROJECTED_PACKAGE_ENTRIES_PER_VM,
+    MAX_BROWSER_PROJECTED_PACKAGE_MATERIALIZED_BYTES_PER_VM,
+    MAX_BROWSER_PROJECTED_PACKAGE_MOUNTS_PER_VM,
+};
 use crate::{
     BrowserSidecarBridge, BrowserWorkerEntrypoint, BrowserWorkerHandle, BrowserWorkerHandleRequest,
     BrowserWorkerOsConfig, BrowserWorkerProcessConfig, BrowserWorkerSpawnRequest,
 };
 use agentos_bridge::{
     BridgeTypes, CreateJavascriptContextRequest, CreateWasmContextRequest, ExecutionEvent,
-    ExecutionHandleRequest, GuestContextHandle, GuestRuntime, KillExecutionRequest,
-    LifecycleEventRecord, LifecycleState, PollExecutionEventRequest, SignalDispositionAction,
-    SignalHandlerRegistration, StartExecutionRequest, StartedExecution, StructuredEventRecord,
-    WriteExecutionStdinRequest,
+    ExecutionHandleRequest, ExecutionSignal, GuestContextHandle, GuestRuntime,
+    KillExecutionRequest, LifecycleEventRecord, LifecycleState, PollExecutionEventRequest,
+    SignalDispositionAction, SignalHandlerRegistration, StartExecutionRequest, StartedExecution,
+    StructuredEventRecord, WriteExecutionStdinRequest,
 };
 use agentos_kernel::bridge::LifecycleState as KernelLifecycleState;
 use agentos_kernel::kernel::{KernelError, KernelVm, KernelVmConfig, VirtualProcessOptions};
-use agentos_kernel::mount_table::MountTable;
+use agentos_kernel::mount_table::{MountOptions, MountTable};
 use agentos_kernel::poll::{PollTargetEntry, POLLERR, POLLHUP, POLLIN};
 use agentos_kernel::process_table::ProcessStatus;
 use agentos_kernel::root_fs::{
@@ -41,7 +49,7 @@ use agentos_sidecar_protocol::protocol::{
     WasmPermissionTier,
 };
 use agentos_vm_config::RootFilesystemConfig;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -50,6 +58,11 @@ type BridgeError<B> = <B as BridgeTypes>::Error;
 type BrowserKernel = KernelVm<MountTable>;
 const BROWSER_WORKER_DRIVER: &str = "browser.worker";
 const BROWSER_VM_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+pub const DEFAULT_MAX_DEFERRED_EXECUTION_EVENTS_PER_VM: usize = 256;
+pub const MAX_BROWSER_PROJECTED_AGENTS_PER_VM: usize = 4_096;
+const DEFERRED_EXECUTION_EVENTS_LIMIT: &str = "max_deferred_execution_events_per_vm";
+const EXTENSION_EVENTS_LIMIT: &str = "available_extension_event_slots";
+const DEFAULT_EXTENSION_EVENT_CAPACITY: usize = 256;
 #[cfg(not(target_arch = "wasm32"))]
 const BROWSER_VM_FETCH_TIMEOUT_MS_ENV: &str = "AGENTOS_TEST_BROWSER_VM_FETCH_TIMEOUT_MS";
 
@@ -57,6 +70,9 @@ const BROWSER_VM_FETCH_TIMEOUT_MS_ENV: &str = "AGENTOS_TEST_BROWSER_VM_FETCH_TIM
 pub struct BrowserSidecarConfig {
     pub sidecar_id: String,
     pub max_sessions_per_connection: usize,
+    /// Bound for events temporarily retained while an extension polls output for
+    /// one execution from the bridge's VM-global event stream.
+    pub max_deferred_execution_events_per_vm: usize,
 }
 
 impl Default for BrowserSidecarConfig {
@@ -65,6 +81,7 @@ impl Default for BrowserSidecarConfig {
             sidecar_id: String::from("agentos-native-sidecar-browser"),
             max_sessions_per_connection:
                 agentos_native_sidecar_core::DEFAULT_MAX_SESSIONS_PER_CONNECTION,
+            max_deferred_execution_events_per_vm: DEFAULT_MAX_DEFERRED_EXECUTION_EVENTS_PER_VM,
         }
     }
 }
@@ -72,16 +89,48 @@ impl Default for BrowserSidecarConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowserSidecarError {
     InvalidState(String),
+    InvalidPackage(String),
+    PackageConflict(String),
+    PackageMount(String),
+    PackageStateCorrupt(String),
     Kernel(String),
     Bridge(String),
+    Cleanup {
+        context: &'static str,
+        errors: Vec<BrowserSidecarError>,
+    },
+    LimitExceeded {
+        limit: &'static str,
+        capacity: usize,
+        how_to_raise: &'static str,
+    },
 }
 
 impl fmt::Display for BrowserSidecarError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidState(message) | Self::Kernel(message) | Self::Bridge(message) => {
-                f.write_str(message)
+            Self::InvalidState(message)
+            | Self::InvalidPackage(message)
+            | Self::PackageConflict(message)
+            | Self::PackageMount(message)
+            | Self::PackageStateCorrupt(message)
+            | Self::Kernel(message)
+            | Self::Bridge(message) => f.write_str(message),
+            Self::Cleanup { context, errors } => {
+                write!(f, "{context}")?;
+                for (index, error) in errors.iter().enumerate() {
+                    write!(f, "; cleanup error {}: {error}", index + 1)?;
+                }
+                Ok(())
             }
+            Self::LimitExceeded {
+                limit,
+                capacity,
+                how_to_raise,
+            } => write!(
+                f,
+                "browser sidecar limit {limit} reached at configured capacity {capacity}; {how_to_raise}"
+            ),
         }
     }
 }
@@ -92,12 +141,57 @@ struct VmState {
     kernel: BrowserKernel,
     guest_cwd: String,
     agent_additional_instructions: Option<String>,
+    projected_agent_launch: BTreeMap<String, BrowserProjectedAgentLaunch>,
+    projected_package_names: BTreeSet<String>,
+    projected_command_names: BTreeSet<String>,
+    projected_package_bytes: usize,
+    projected_package_entries: usize,
+    projected_package_materialized_bytes: usize,
+    projected_package_sources: Vec<Vec<u8>>,
+    projected_packages: Vec<BrowserProjectedPackage>,
+    projected_package_mount_paths: Vec<String>,
+    projected_package_mount_root: String,
+    projected_package_env: BTreeMap<String, String>,
+    provided_commands: BTreeMap<String, Vec<String>>,
     configuration: BrowserVmConfiguration,
     layers: VmLayerStore,
     toolkits: BTreeMap<String, RegisterHostCallbacksRequest>,
     signal_states: BTreeMap<String, BTreeMap<u32, ProtocolSignalHandlerRegistration>>,
     contexts: BTreeSet<String>,
     active_executions: BTreeSet<String>,
+    deferred_execution_events: VecDeque<ExecutionEvent>,
+    deferred_execution_events_warned: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PollExecutionOutputRequest {
+    pub vm_id: String,
+    pub execution_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecutionOutput {
+    Stdout(agentos_bridge::OutputChunk),
+    Stderr(agentos_bridge::OutputChunk),
+    Exited(agentos_bridge::ExecutionExited),
+}
+
+/// One agent launch surface retained in browser sidecar VM state.
+///
+/// The catalog is populated only from trusted `.aospkg` bytes decoded by the
+/// sidecar. New VMs start empty and never derive metadata from guest files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserProjectedAgentLaunch {
+    pub id: String,
+    pub adapter_entrypoint: String,
+    pub env: BTreeMap<String, String>,
+    pub launch_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserProvidedCommands {
+    pub package_name: String,
+    pub commands: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -123,6 +217,7 @@ struct ContextState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ExecutionState {
     vm_id: String,
+    context_id: String,
     worker: BrowserWorkerHandle,
     kernel_pid: u32,
     stdin_write_fd: u32,
@@ -147,8 +242,19 @@ pub trait BrowserExtension: Send + Sync {
 
     fn on_session_disposed(
         &self,
+        _context: &mut BrowserExtensionContext<'_>,
         _connection_id: &str,
         _session_id: &str,
+    ) -> Result<(), BrowserSidecarError> {
+        Ok(())
+    }
+
+    fn on_vm_disposed(
+        &self,
+        _context: &mut BrowserExtensionContext<'_>,
+        _connection_id: &str,
+        _session_id: &str,
+        _vm_id: &str,
     ) -> Result<(), BrowserSidecarError> {
         Ok(())
     }
@@ -165,19 +271,43 @@ pub struct BrowserExtensionRequest {
     /// Owning connection (from the wire ownership scope), for per-connection
     /// ownership enforcement inside extensions.
     pub connection_id: Option<String>,
+    /// Owning wire session, paired with connection + VM for complete extension
+    /// isolation. `None` only for connection-scoped extension requests.
+    pub wire_session_id: Option<String>,
+    /// Slots currently available in the wire dispatcher's bounded event queue.
+    pub event_capacity: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrowserExtensionResponse {
     pub namespace: String,
     pub payload: Vec<u8>,
+    /// Namespaced extension events produced synchronously by this request. The
+    /// wire dispatcher applies the request's exact ownership before delivery.
+    pub events: Vec<Vec<u8>>,
 }
 
 pub trait BrowserExtensionHost {
+    fn resolve_projected_agent(
+        &mut self,
+        vm_id: &str,
+        id: &str,
+    ) -> Result<Option<BrowserProjectedAgentLaunch>, BrowserSidecarError>;
+
+    fn list_projected_agents(
+        &mut self,
+        vm_id: &str,
+    ) -> Result<Vec<BrowserProjectedAgentLaunch>, BrowserSidecarError>;
+
     fn agent_additional_instructions(
         &mut self,
         vm_id: &str,
     ) -> Result<Option<String>, BrowserSidecarError>;
+
+    fn registered_host_tool_reference(
+        &mut self,
+        vm_id: &str,
+    ) -> Result<String, BrowserSidecarError>;
 
     fn write_file(
         &mut self,
@@ -212,6 +342,9 @@ pub trait BrowserExtensionHost {
         request: StartExecutionRequest,
     ) -> Result<StartedExecution, BrowserSidecarError>;
 
+    fn release_context(&mut self, vm_id: &str, context_id: &str)
+        -> Result<(), BrowserSidecarError>;
+
     fn write_stdin(
         &mut self,
         request: WriteExecutionStdinRequest,
@@ -221,16 +354,34 @@ pub trait BrowserExtensionHost {
 
     fn kill_execution(&mut self, request: KillExecutionRequest) -> Result<(), BrowserSidecarError>;
 
+    fn release_execution(&mut self, execution_id: &str) -> Result<(), BrowserSidecarError>;
+
+    fn abort_execution(
+        &mut self,
+        vm_id: &str,
+        execution_id: &str,
+    ) -> Result<(), BrowserSidecarError>;
+
     fn poll_execution_event(
         &mut self,
         request: PollExecutionEventRequest,
     ) -> Result<Option<ExecutionEvent>, BrowserSidecarError>;
+
+    /// Poll output for one execution without consuming events owned by another
+    /// execution or by the central guest-request/signal event loop.
+    fn poll_execution_output(
+        &mut self,
+        request: PollExecutionOutputRequest,
+    ) -> Result<Option<ExecutionOutput>, BrowserSidecarError>;
 }
 
 pub struct BrowserExtensionContext<'a> {
     host: &'a mut dyn BrowserExtensionHost,
     vm_id: Option<String>,
     connection_id: Option<String>,
+    wire_session_id: Option<String>,
+    events: Vec<Vec<u8>>,
+    event_capacity: usize,
 }
 
 impl<'a> BrowserExtensionContext<'a> {
@@ -239,6 +390,9 @@ impl<'a> BrowserExtensionContext<'a> {
             host,
             vm_id: None,
             connection_id: None,
+            wire_session_id: None,
+            events: Vec::new(),
+            event_capacity: DEFAULT_EXTENSION_EVENT_CAPACITY,
         }
     }
 
@@ -248,11 +402,25 @@ impl<'a> BrowserExtensionContext<'a> {
         host: &'a mut dyn BrowserExtensionHost,
         vm_id: Option<String>,
         connection_id: Option<String>,
+        event_capacity: usize,
+    ) -> Self {
+        Self::with_full_ownership(host, vm_id, connection_id, None, event_capacity)
+    }
+
+    pub fn with_full_ownership(
+        host: &'a mut dyn BrowserExtensionHost,
+        vm_id: Option<String>,
+        connection_id: Option<String>,
+        wire_session_id: Option<String>,
+        event_capacity: usize,
     ) -> Self {
         Self {
             host,
             vm_id,
             connection_id,
+            wire_session_id,
+            events: Vec::new(),
+            event_capacity,
         }
     }
 
@@ -266,11 +434,60 @@ impl<'a> BrowserExtensionContext<'a> {
         self.connection_id.as_deref()
     }
 
+    pub fn wire_session_id(&self) -> Option<&str> {
+        self.wire_session_id.as_deref()
+    }
+
+    /// Queue one event in this extension's namespace. Event ownership is added
+    /// by the wire dispatcher from the request that invoked the extension.
+    pub fn emit_event(&mut self, payload: Vec<u8>) -> Result<(), BrowserSidecarError> {
+        if self.events.len() >= self.event_capacity {
+            return Err(BrowserSidecarError::LimitExceeded {
+                limit: EXTENSION_EVENTS_LIMIT,
+                capacity: self.event_capacity,
+                how_to_raise:
+                    "drain events with pollEvent before issuing another extension request",
+            });
+        }
+        self.events.push(payload);
+        Ok(())
+    }
+
+    pub fn event_capacity(&self) -> usize {
+        self.event_capacity
+    }
+
+    fn take_events(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.events)
+    }
+
+    pub fn resolve_projected_agent(
+        &mut self,
+        vm_id: &str,
+        id: &str,
+    ) -> Result<Option<BrowserProjectedAgentLaunch>, BrowserSidecarError> {
+        self.host.resolve_projected_agent(vm_id, id)
+    }
+
+    pub fn list_projected_agents(
+        &mut self,
+        vm_id: &str,
+    ) -> Result<Vec<BrowserProjectedAgentLaunch>, BrowserSidecarError> {
+        self.host.list_projected_agents(vm_id)
+    }
+
     pub fn agent_additional_instructions(
         &mut self,
         vm_id: &str,
     ) -> Result<Option<String>, BrowserSidecarError> {
         self.host.agent_additional_instructions(vm_id)
+    }
+
+    pub fn registered_host_tool_reference(
+        &mut self,
+        vm_id: &str,
+    ) -> Result<String, BrowserSidecarError> {
+        self.host.registered_host_tool_reference(vm_id)
     }
 
     pub fn write_file(
@@ -324,6 +541,14 @@ impl<'a> BrowserExtensionContext<'a> {
         self.host.start_execution(request)
     }
 
+    pub fn release_context(
+        &mut self,
+        vm_id: &str,
+        context_id: &str,
+    ) -> Result<(), BrowserSidecarError> {
+        self.host.release_context(vm_id, context_id)
+    }
+
     pub fn write_stdin(
         &mut self,
         request: WriteExecutionStdinRequest,
@@ -345,11 +570,30 @@ impl<'a> BrowserExtensionContext<'a> {
         self.host.kill_execution(request)
     }
 
+    pub fn release_execution(&mut self, execution_id: &str) -> Result<(), BrowserSidecarError> {
+        self.host.release_execution(execution_id)
+    }
+
+    pub fn abort_execution(
+        &mut self,
+        vm_id: &str,
+        execution_id: &str,
+    ) -> Result<(), BrowserSidecarError> {
+        self.host.abort_execution(vm_id, execution_id)
+    }
+
     pub fn poll_execution_event(
         &mut self,
         request: PollExecutionEventRequest,
     ) -> Result<Option<ExecutionEvent>, BrowserSidecarError> {
         self.host.poll_execution_event(request)
+    }
+
+    pub fn poll_execution_output(
+        &mut self,
+        request: PollExecutionOutputRequest,
+    ) -> Result<Option<ExecutionOutput>, BrowserSidecarError> {
+        self.host.poll_execution_output(request)
     }
 }
 
@@ -360,6 +604,8 @@ pub struct BrowserSidecar<B> {
     contexts: BTreeMap<String, ContextState>,
     executions: BTreeMap<String, ExecutionState>,
     extensions: BTreeMap<String, Box<dyn BrowserExtension>>,
+    #[cfg(test)]
+    next_kernel_cleanup_error: Option<BrowserSidecarError>,
 }
 
 impl<B> BrowserSidecar<B>
@@ -384,6 +630,8 @@ where
             contexts: BTreeMap::new(),
             executions: BTreeMap::new(),
             extensions: BTreeMap::new(),
+            #[cfg(test)]
+            next_kernel_cleanup_error: None,
         };
         for extension in extensions {
             sidecar.register_extension(extension)?;
@@ -428,30 +676,85 @@ where
                 request.namespace
             )));
         };
-        let payload = {
-            let mut context = BrowserExtensionContext::with_ownership(
+        let (payload, events) = {
+            let mut context = BrowserExtensionContext::with_full_ownership(
                 self,
                 request.vm_id.clone(),
                 request.connection_id.clone(),
+                request.wire_session_id.clone(),
+                request.event_capacity,
             );
-            extension.handle_request(&mut context, &request.payload)
+            let payload = extension.handle_request(&mut context, &request.payload);
+            let events = context.take_events();
+            (payload, events)
         };
         self.extensions.insert(request.namespace.clone(), extension);
         let payload = payload?;
         Ok(BrowserExtensionResponse {
             namespace: request.namespace,
             payload,
+            events,
         })
     }
 
     pub fn dispose_extension_session_state(
-        &self,
+        &mut self,
         connection_id: &str,
         session_id: &str,
     ) -> Result<(), BrowserSidecarError> {
         let mut first_error = None;
-        for extension in self.extensions.values() {
-            if let Err(error) = extension.on_session_disposed(connection_id, session_id) {
+        let namespaces = self.extensions.keys().cloned().collect::<Vec<_>>();
+        for namespace in namespaces {
+            let extension = self
+                .extensions
+                .remove(&namespace)
+                .expect("extension namespace came from registry");
+            let result = {
+                let mut context = BrowserExtensionContext::with_full_ownership(
+                    self,
+                    None,
+                    Some(connection_id.to_string()),
+                    Some(session_id.to_string()),
+                    DEFAULT_EXTENSION_EVENT_CAPACITY,
+                );
+                extension.on_session_disposed(&mut context, connection_id, session_id)
+            };
+            self.extensions.insert(namespace, extension);
+            if let Err(error) = result {
+                first_error.get_or_insert(error);
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    pub fn dispose_extension_vm_state(
+        &mut self,
+        connection_id: &str,
+        session_id: &str,
+        vm_id: &str,
+    ) -> Result<(), BrowserSidecarError> {
+        let mut first_error = None;
+        let namespaces = self.extensions.keys().cloned().collect::<Vec<_>>();
+        for namespace in namespaces {
+            let extension = self
+                .extensions
+                .remove(&namespace)
+                .expect("extension namespace came from registry");
+            let result = {
+                let mut context = BrowserExtensionContext::with_full_ownership(
+                    self,
+                    Some(vm_id.to_string()),
+                    Some(connection_id.to_string()),
+                    Some(session_id.to_string()),
+                    DEFAULT_EXTENSION_EVENT_CAPACITY,
+                );
+                extension.on_vm_disposed(&mut context, connection_id, session_id, vm_id)
+            };
+            self.extensions.insert(namespace, extension);
+            if let Err(error) = result {
                 first_error.get_or_insert(error);
             }
         }
@@ -513,6 +816,355 @@ where
         vm_id: &str,
     ) -> Result<Option<String>, BrowserSidecarError> {
         Ok(self.vm(vm_id)?.agent_additional_instructions.clone())
+    }
+
+    pub fn registered_host_tool_reference(
+        &self,
+        vm_id: &str,
+    ) -> Result<String, BrowserSidecarError> {
+        agentos_native_sidecar_core::tools::build_host_tool_reference(&self.vm(vm_id)?.toolkits)
+            .map_err(|error| BrowserSidecarError::InvalidState(error.to_string()))
+    }
+
+    pub fn resolve_projected_agent(
+        &self,
+        vm_id: &str,
+        id: &str,
+    ) -> Result<Option<BrowserProjectedAgentLaunch>, BrowserSidecarError> {
+        Ok(self.vm(vm_id)?.projected_agent_launch.get(id).cloned())
+    }
+
+    pub fn list_projected_agents(
+        &self,
+        vm_id: &str,
+    ) -> Result<Vec<BrowserProjectedAgentLaunch>, BrowserSidecarError> {
+        Ok(self
+            .vm(vm_id)?
+            .projected_agent_launch
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    pub fn provided_commands(
+        &self,
+        vm_id: &str,
+    ) -> Result<Vec<BrowserProvidedCommands>, BrowserSidecarError> {
+        Ok(self
+            .vm(vm_id)?
+            .provided_commands
+            .iter()
+            .map(|(package_name, commands)| BrowserProvidedCommands {
+                package_name: package_name.clone(),
+                commands: commands.clone(),
+            })
+            .collect())
+    }
+
+    /// Return the authoritative package projection metadata retained by the
+    /// browser sidecar. Package manifests are never supplied by the client and
+    /// are not read from mutable guest files.
+    pub fn projected_packages(
+        &self,
+        vm_id: &str,
+    ) -> Result<Vec<BrowserProjectedPackage>, BrowserSidecarError> {
+        Ok(self.vm(vm_id)?.projected_packages.clone())
+    }
+
+    /// Decode and atomically add one complete `.aospkg` supplied by trusted
+    /// sidecar transport. The client never supplies parsed package metadata.
+    pub fn project_aospkg_bytes(
+        &mut self,
+        vm_id: &str,
+        bytes: Vec<u8>,
+    ) -> Result<BrowserProjectedPackage, BrowserSidecarError> {
+        let mut projected = self.project_aospkg_batch_bytes(vm_id, vec![bytes])?;
+        Ok(projected
+            .pop()
+            .expect("one staged package must produce one projection"))
+    }
+
+    /// Atomically add complete `.aospkg` containers at the VM's current package
+    /// root. New VMs begin at `/opt/agentos`; an explicit ConfigureVm root stays
+    /// authoritative for later dynamic links.
+    pub fn project_aospkg_batch_bytes(
+        &mut self,
+        vm_id: &str,
+        packages: Vec<Vec<u8>>,
+    ) -> Result<Vec<BrowserProjectedPackage>, BrowserSidecarError> {
+        let vm = self.vm(vm_id)?;
+        let mount_root = vm.projected_package_mount_root.clone();
+        let mut prepared = Self::prepare_package_batch(
+            packages,
+            &mount_root,
+            vm.projected_package_names.len(),
+            vm.projected_package_bytes,
+            vm.projected_package_entries,
+            vm.projected_package_materialized_bytes,
+        )?;
+        Self::validate_prepared_package_batch(vm, &prepared, false)?;
+
+        let vm = self.vm_mut(vm_id)?;
+        let mounted_paths = match mount_prepared_package_batch(&mut vm.kernel, &mut prepared, false)
+        {
+            Ok(paths) => paths,
+            Err(failure) => {
+                let rollback = rollback_projected_package_mounts(&mut vm.kernel, &failure.mounted);
+                return Err(package_mount_failure(vm_id, failure, rollback));
+            }
+        };
+        Ok(commit_projected_package_batch(
+            vm,
+            prepared,
+            mounted_paths,
+            &mount_root,
+            false,
+        ))
+    }
+
+    /// Atomically replace all projected packages. An empty batch clears the
+    /// projection; callers preserve it by not invoking this method for an
+    /// omitted package field.
+    pub fn replace_aospkg_batch_bytes(
+        &mut self,
+        vm_id: &str,
+        packages: Vec<Vec<u8>>,
+        mount_root: Option<&str>,
+    ) -> Result<Vec<BrowserProjectedPackage>, BrowserSidecarError> {
+        let mount_root =
+            normalize_packages_mount_root(mount_root).map_err(package_projection_error)?;
+        let mut prepared = Self::prepare_package_batch(packages, &mount_root, 0, 0, 0, 0)?;
+        let vm = self.vm(vm_id)?;
+        Self::validate_prepared_package_batch(vm, &prepared, true)?;
+
+        // Retained opaque source bytes let a failed mount swap reconstruct the
+        // exact old read-only projection without guest filesystem access.
+        let old_root = vm.projected_package_mount_root.clone();
+        let mut old_prepared = vm
+            .projected_package_sources
+            .clone()
+            .into_iter()
+            .map(|bytes| prepare_aospkg_bytes(bytes, &old_root))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| {
+                BrowserSidecarError::PackageStateCorrupt(format!(
+                    "rebuild existing package rollback plan: {error}"
+                ))
+            })?;
+        let old_paths = vm.projected_package_mount_paths.clone();
+
+        let vm = self.vm_mut(vm_id)?;
+        if let Err(unmount_error) = rollback_projected_package_mounts(&mut vm.kernel, &old_paths) {
+            let restore = mount_prepared_package_batch(&mut vm.kernel, &mut old_prepared, true);
+            return Err(match restore {
+                Ok(_) => BrowserSidecarError::PackageMount(format!(
+                    "unmount old browser package projection: {unmount_error}"
+                )),
+                Err(restore_error) => BrowserSidecarError::PackageStateCorrupt(format!(
+                    "unmount old browser package projection: {unmount_error}; restore failed: {}",
+                    restore_error.detail
+                )),
+            });
+        }
+
+        let mounted_paths = match mount_prepared_package_batch(&mut vm.kernel, &mut prepared, false)
+        {
+            Ok(paths) => paths,
+            Err(failure) => {
+                let new_rollback =
+                    rollback_projected_package_mounts(&mut vm.kernel, &failure.mounted);
+                let old_restore =
+                    mount_prepared_package_batch(&mut vm.kernel, &mut old_prepared, true);
+                if new_rollback.is_err() || old_restore.is_err() {
+                    let new_rollback_detail = new_rollback
+                        .err()
+                        .map(|error| format!("new projection rollback failed: {error}"));
+                    let old_restore_detail = old_restore.err().map(|restore_error| {
+                        format!("old projection restore failed: {}", restore_error.detail)
+                    });
+                    let recovery_detail = [new_rollback_detail, old_restore_detail]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    tracing::error!(vm_id, error = %recovery_detail, "failed to recover package projection after replacement failure");
+                    return Err(BrowserSidecarError::PackageStateCorrupt(format!(
+                        "replace .aospkg projection failed at {}: {}; {recovery_detail}",
+                        failure.path, failure.detail
+                    )));
+                }
+                return Err(BrowserSidecarError::PackageMount(format!(
+                    "replace .aospkg projection failed at {}: {}",
+                    failure.path, failure.detail
+                )));
+            }
+        };
+
+        Ok(commit_projected_package_batch(
+            vm,
+            prepared,
+            mounted_paths,
+            &mount_root,
+            true,
+        ))
+    }
+
+    fn prepare_package_batch(
+        packages: Vec<Vec<u8>>,
+        mount_root: &str,
+        existing_packages: usize,
+        existing_bytes: usize,
+        existing_entries: usize,
+        existing_materialized_bytes: usize,
+    ) -> Result<Vec<PreparedBrowserPackage>, BrowserSidecarError> {
+        ensure_projected_package_limit(
+            "max_projected_packages_per_vm",
+            existing_packages,
+            packages.len(),
+            MAX_BROWSER_PROJECTED_PACKAGES_PER_VM,
+            "raise the browser package projection package limit in the sidecar",
+        )?;
+        let incoming_bytes = packages.iter().try_fold(0usize, |total, package| {
+            total
+                .checked_add(package.len())
+                .ok_or(BrowserSidecarError::LimitExceeded {
+                    limit: "max_projected_package_bytes_per_vm",
+                    capacity: MAX_BROWSER_PROJECTED_PACKAGE_BYTES_PER_VM,
+                    how_to_raise: "raise the browser package projection byte limit in the sidecar",
+                })
+        })?;
+        ensure_projected_package_limit(
+            "max_projected_package_bytes_per_vm",
+            existing_bytes,
+            incoming_bytes,
+            MAX_BROWSER_PROJECTED_PACKAGE_BYTES_PER_VM,
+            "raise the browser package projection byte limit in the sidecar",
+        )?;
+        let prepared = packages
+            .into_iter()
+            .map(|bytes| prepare_aospkg_bytes(bytes, mount_root))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(package_projection_error)?;
+        let incoming_entries = prepared.iter().try_fold(0usize, |total, package| {
+            total
+                .checked_add(package.index_entries)
+                .ok_or(BrowserSidecarError::LimitExceeded {
+                    limit: "max_projected_package_entries_per_vm",
+                    capacity: MAX_BROWSER_PROJECTED_PACKAGE_ENTRIES_PER_VM,
+                    how_to_raise: "raise the browser package projection entry limit in the sidecar",
+                })
+        })?;
+        ensure_projected_package_limit(
+            "max_projected_package_entries_per_vm",
+            existing_entries,
+            incoming_entries,
+            MAX_BROWSER_PROJECTED_PACKAGE_ENTRIES_PER_VM,
+            "raise the browser package projection entry limit in the sidecar",
+        )?;
+        let incoming_materialized_bytes = prepared.iter().try_fold(0usize, |total, package| {
+            total
+                .checked_add(package.materialized_bytes)
+                .ok_or(BrowserSidecarError::LimitExceeded {
+                limit: "max_projected_package_materialized_bytes_per_vm",
+                capacity: MAX_BROWSER_PROJECTED_PACKAGE_MATERIALIZED_BYTES_PER_VM,
+                how_to_raise:
+                    "raise the browser package projection materialized-byte limit in the sidecar",
+            })
+        })?;
+        ensure_projected_package_limit(
+            "max_projected_package_materialized_bytes_per_vm",
+            existing_materialized_bytes,
+            incoming_materialized_bytes,
+            MAX_BROWSER_PROJECTED_PACKAGE_MATERIALIZED_BYTES_PER_VM,
+            "raise the browser package projection materialized-byte limit in the sidecar",
+        )?;
+        Ok(prepared)
+    }
+
+    fn validate_prepared_package_batch(
+        vm: &VmState,
+        packages: &[PreparedBrowserPackage],
+        replacing: bool,
+    ) -> Result<(), BrowserSidecarError> {
+        let existing_mounts = if replacing {
+            0
+        } else {
+            vm.projected_package_mount_paths.len()
+        };
+        let incoming_mounts = packages.iter().try_fold(0usize, |total, package| {
+            total
+                .checked_add(package.mounts.len())
+                .ok_or(BrowserSidecarError::LimitExceeded {
+                    limit: "max_projected_package_mounts_per_vm",
+                    capacity: MAX_BROWSER_PROJECTED_PACKAGE_MOUNTS_PER_VM,
+                    how_to_raise: "raise the browser package projection mount limit in the sidecar",
+                })
+        })?;
+        ensure_projected_package_limit(
+            "max_projected_package_mounts_per_vm",
+            existing_mounts,
+            incoming_mounts,
+            MAX_BROWSER_PROJECTED_PACKAGE_MOUNTS_PER_VM,
+            "raise the browser package projection mount limit in the sidecar",
+        )?;
+        let mut package_names = if replacing {
+            BTreeSet::new()
+        } else {
+            vm.projected_package_names.clone()
+        };
+        let mut command_names = if replacing {
+            BTreeSet::new()
+        } else {
+            vm.projected_command_names.clone()
+        };
+        let mut agent_ids = if replacing {
+            BTreeSet::new()
+        } else {
+            vm.projected_agent_launch
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>()
+        };
+        let mut mount_paths = BTreeSet::new();
+        for package in packages {
+            if !package_names.insert(package.projection.name.clone()) {
+                return Err(BrowserSidecarError::PackageConflict(format!(
+                    "package {:?} is already projected in this VM",
+                    package.projection.name
+                )));
+            }
+            for command in &package.projection.commands {
+                if !command_names.insert(command.clone()) {
+                    return Err(BrowserSidecarError::PackageConflict(format!(
+                        "command {command:?} is already provided by another projected package"
+                    )));
+                }
+            }
+            if let Some(agent) = &package.projection.agent {
+                if !agent_ids.insert(agent.id.clone()) {
+                    return Err(BrowserSidecarError::PackageConflict(format!(
+                        "agent {:?} is already provided by another projected package",
+                        agent.id
+                    )));
+                }
+            }
+            for mount in &package.mounts {
+                if !mount_paths.insert(mount.guest_path().to_owned()) {
+                    return Err(BrowserSidecarError::PackageConflict(format!(
+                        "duplicate projected package mount {:?}",
+                        mount.guest_path()
+                    )));
+                }
+            }
+        }
+        if agent_ids.len() > MAX_BROWSER_PROJECTED_AGENTS_PER_VM {
+            return Err(BrowserSidecarError::LimitExceeded {
+                limit: "max_projected_agents_per_vm",
+                capacity: MAX_BROWSER_PROJECTED_AGENTS_PER_VM,
+                how_to_raise: "raise the browser package projection agent limit in the sidecar",
+            });
+        }
+        Ok(())
     }
 
     pub fn create_vm(&mut self, config: KernelVmConfig) -> Result<(), BrowserSidecarError> {
@@ -579,6 +1231,18 @@ where
                 ),
                 guest_cwd,
                 agent_additional_instructions: None,
+                projected_agent_launch: BTreeMap::new(),
+                projected_package_names: BTreeSet::new(),
+                projected_command_names: BTreeSet::new(),
+                projected_package_bytes: 0,
+                projected_package_entries: 0,
+                projected_package_materialized_bytes: 0,
+                projected_package_sources: Vec::new(),
+                projected_packages: Vec::new(),
+                projected_package_mount_paths: Vec::new(),
+                projected_package_mount_root: String::from(DEFAULT_BROWSER_PACKAGES_MOUNT_ROOT),
+                projected_package_env: BTreeMap::new(),
+                provided_commands: BTreeMap::new(),
                 configuration: BrowserVmConfiguration {
                     create_loopback_exempt_ports,
                     ..BrowserVmConfiguration::default()
@@ -588,6 +1252,8 @@ where
                 signal_states: BTreeMap::new(),
                 contexts: BTreeSet::new(),
                 active_executions: BTreeSet::new(),
+                deferred_execution_events: VecDeque::new(),
+                deferred_execution_events_warned: false,
             },
         );
         if let Some(root) = self
@@ -966,9 +1632,17 @@ where
                         .map_err(Self::kernel_error)
                 });
             if let Err(error) = result {
-                let _ = vm
-                    .kernel
-                    .socket_close(BROWSER_WORKER_DRIVER, target.kernel_pid, socket_id);
+                if let Err(close_error) =
+                    vm.kernel
+                        .socket_close(BROWSER_WORKER_DRIVER, target.kernel_pid, socket_id)
+                {
+                    tracing::error!(
+                        vm_id,
+                        socket_id,
+                        %close_error,
+                        "failed to close browser vm.fetch socket after request setup failure"
+                    );
+                }
                 return Err(error);
             }
             socket_id
@@ -1183,32 +1857,38 @@ where
             self.contexts.remove(context_id);
         }
 
-        // Release every execution, attempting all of them and retaining only the
-        // first error. A single worker-termination failure must not abandon the
+        // Release every execution and retain every cleanup error. A single
+        // worker-termination failure must not abandon the
         // remaining executions (their `ExecutionState`s would otherwise leak),
         // and `release_execution` already removes each entry from `executions`
         // before doing fallible bridge work, so the maps stay drained even when
         // the bridge reports an error.
-        let mut first_error: Option<BrowserSidecarError> = None;
+        let mut errors = Vec::new();
         for execution_id in &vm_state.active_executions {
             if let Err(error) = self.release_execution(execution_id, "browser.worker.disposed") {
-                first_error.get_or_insert(error);
+                errors.push(error);
             }
         }
 
         // Emit the terminal lifecycle event regardless of the outcome above; the
         // VM is already gone from the registry either way.
-        let terminated = self.emit_lifecycle(
+        if let Err(error) = self.emit_lifecycle(
             vm_id,
             LifecycleState::Terminated,
             Some(String::from(
                 "browser sidecar VM disposed on the main thread",
             )),
-        );
+        ) {
+            errors.push(error);
+        }
 
-        match first_error {
-            Some(error) => Err(error),
-            None => terminated,
+        match errors.len() {
+            0 => Ok(()),
+            1 => Err(errors.pop().expect("one browser VM cleanup error")),
+            _ => Err(BrowserSidecarError::Cleanup {
+                context: "failed to dispose browser VM completely",
+                errors,
+            }),
         }
     }
 
@@ -1315,7 +1995,7 @@ where
 
         let (process_config, os_config) = {
             let vm = self.vm(&request.vm_id)?;
-            browser_worker_identity(&vm.kernel, &request, kernel_pid)
+            browser_worker_identity(&vm.kernel, &vm.projected_package_env, &request, kernel_pid)
         };
         let wasm_permission_tier = match context.runtime {
             GuestRuntime::JavaScript => None,
@@ -1366,6 +2046,7 @@ where
             started.execution_id.clone(),
             ExecutionState {
                 vm_id: request.vm_id.clone(),
+                context_id: request.context_id.clone(),
                 worker: worker.clone(),
                 kernel_pid,
                 stdin_write_fd,
@@ -1380,7 +2061,7 @@ where
             .active_executions
             .insert(started.execution_id.clone());
 
-        self.emit_structured(
+        if let Err(error) = self.emit_structured(
             &request.vm_id,
             "browser.worker.spawned",
             BTreeMap::from([
@@ -1392,14 +2073,18 @@ where
                 ),
                 (String::from("worker_id"), worker_id),
             ]),
-        )?;
-        self.emit_lifecycle(
+        ) {
+            tracing::error!(vm_id = %request.vm_id, execution_id = %started.execution_id, %error, "failed to emit browser worker-start diagnostic after committing execution");
+        }
+        if let Err(error) = self.emit_lifecycle(
             &request.vm_id,
             LifecycleState::Busy,
             Some(String::from(
                 "browser sidecar is coordinating guest execution on the main thread",
             )),
-        )?;
+        ) {
+            tracing::error!(vm_id = %request.vm_id, execution_id = %started.execution_id, %error, "failed to emit browser busy lifecycle after committing execution");
+        }
 
         Ok(started)
     }
@@ -1473,6 +2158,11 @@ where
         vm_id: &str,
         kernel_pid: u32,
     ) -> Result<(), BrowserSidecarError> {
+        #[cfg(test)]
+        if let Some(error) = self.next_kernel_cleanup_error.take() {
+            return Err(error);
+        }
+
         let Some(vm) = self.vms.get_mut(vm_id) else {
             return Ok(());
         };
@@ -1543,6 +2233,29 @@ where
             .map_err(Self::bridge_error)
     }
 
+    pub fn abort_execution(
+        &mut self,
+        vm_id: &str,
+        execution_id: &str,
+    ) -> Result<(), BrowserSidecarError> {
+        if !self.executions.contains_key(execution_id) {
+            return Ok(());
+        }
+        let killed = self.kill_execution(KillExecutionRequest {
+            vm_id: vm_id.to_string(),
+            execution_id: execution_id.to_string(),
+            signal: ExecutionSignal::Kill,
+        });
+        let released = self.release_execution(execution_id, "browser.worker.acp_aborted");
+        match (killed, released) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(kill), Err(release)) => Err(BrowserSidecarError::InvalidState(format!(
+                "failed to kill browser ACP execution: {kill}; failed to release it: {release}"
+            ))),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        }
+    }
+
     pub fn signal_execution_kernel_process(
         &mut self,
         vm_id: &str,
@@ -1566,27 +2279,72 @@ where
     ) -> Result<Option<ExecutionEvent>, BrowserSidecarError> {
         self.ensure_vm(&request.vm_id)?;
 
+        let event = match self.take_deferred_execution_event(&request.vm_id)? {
+            Some(event) => Some(event),
+            None => self
+                .bridge
+                .poll_execution_event(request)
+                .map_err(Self::bridge_error)?,
+        };
+        if let Some(event) = &event {
+            self.apply_execution_event(event)?;
+        }
+        Ok(event)
+    }
+
+    /// Poll only stdout/stderr/exit for one execution. The bridge exposes a
+    /// VM-global destructive event stream, so non-matching output and centrally
+    /// owned GuestRequest/SignalState events are retained in a bounded per-VM
+    /// queue for the ordinary `poll_execution_event` path.
+    pub fn poll_execution_output(
+        &mut self,
+        request: PollExecutionOutputRequest,
+    ) -> Result<Option<ExecutionOutput>, BrowserSidecarError> {
+        self.ensure_execution(&request.vm_id, &request.execution_id)?;
+
+        if let Some(event) =
+            self.take_deferred_execution_output(&request.vm_id, &request.execution_id)?
+        {
+            self.apply_execution_event(&event)?;
+            return Ok(execution_output_from_event(event));
+        }
+
+        self.ensure_deferred_execution_event_capacity(&request.vm_id)?;
         let event = self
             .bridge
-            .poll_execution_event(request)
+            .poll_execution_event(PollExecutionEventRequest {
+                vm_id: request.vm_id.clone(),
+            })
             .map_err(Self::bridge_error)?;
+        let Some(event) = event else {
+            return Ok(None);
+        };
+        if execution_output_matches(&event, &request.execution_id) {
+            self.apply_execution_event(&event)?;
+            return Ok(execution_output_from_event(event));
+        }
 
-        match &event {
-            Some(ExecutionEvent::Stdout(chunk)) => {
+        self.defer_execution_event(event)?;
+        Ok(None)
+    }
+
+    fn apply_execution_event(&mut self, event: &ExecutionEvent) -> Result<(), BrowserSidecarError> {
+        match event {
+            ExecutionEvent::Stdout(chunk) => {
                 let execution = self.ensure_execution_state(&chunk.vm_id, &chunk.execution_id)?;
                 let vm = self.vm_mut(&chunk.vm_id)?;
                 vm.kernel
                     .write_process_stdout(BROWSER_WORKER_DRIVER, execution.kernel_pid, &chunk.chunk)
                     .map_err(Self::kernel_error)?;
             }
-            Some(ExecutionEvent::Stderr(chunk)) => {
+            ExecutionEvent::Stderr(chunk) => {
                 let execution = self.ensure_execution_state(&chunk.vm_id, &chunk.execution_id)?;
                 let vm = self.vm_mut(&chunk.vm_id)?;
                 vm.kernel
                     .write_process_stderr(BROWSER_WORKER_DRIVER, execution.kernel_pid, &chunk.chunk)
                     .map_err(Self::kernel_error)?;
             }
-            Some(ExecutionEvent::Exited(exited)) => {
+            ExecutionEvent::Exited(exited) => {
                 let execution = self.ensure_execution_state(&exited.vm_id, &exited.execution_id)?;
                 {
                     let vm = self.vm_mut(&exited.vm_id)?;
@@ -1600,7 +2358,7 @@ where
                 }
                 self.release_execution(&exited.execution_id, "browser.worker.reaped")?;
             }
-            Some(ExecutionEvent::GuestRequest(call)) => {
+            ExecutionEvent::GuestRequest(call) => {
                 let fields = unsupported_guest_kernel_call_detail(
                     None,
                     &call.execution_id,
@@ -1615,7 +2373,7 @@ where
                     fields,
                 )?;
             }
-            Some(ExecutionEvent::SignalState(state)) => {
+            ExecutionEvent::SignalState(state) => {
                 self.ensure_execution_state(&state.vm_id, &state.execution_id)?;
                 let registration = protocol_signal_registration(&state.registration);
                 let vm = self.vm_mut(&state.vm_id)?;
@@ -1626,9 +2384,75 @@ where
                     registration,
                 );
             }
-            None => {}
         }
+        Ok(())
+    }
 
+    fn ensure_deferred_execution_event_capacity(
+        &self,
+        vm_id: &str,
+    ) -> Result<(), BrowserSidecarError> {
+        let capacity = self.config.max_deferred_execution_events_per_vm;
+        if self.vm(vm_id)?.deferred_execution_events.len() >= capacity {
+            return Err(BrowserSidecarError::LimitExceeded {
+                limit: DEFERRED_EXECUTION_EVENTS_LIMIT,
+                capacity,
+                how_to_raise: "drain events with poll_execution_event or raise BrowserSidecarConfig::max_deferred_execution_events_per_vm",
+            });
+        }
+        Ok(())
+    }
+
+    fn defer_execution_event(&mut self, event: ExecutionEvent) -> Result<(), BrowserSidecarError> {
+        let vm_id = execution_event_vm_id(&event).to_string();
+        let capacity = self.config.max_deferred_execution_events_per_vm;
+        let warning_threshold = deferred_execution_event_warning_threshold(capacity);
+        let vm = self.vm_mut(&vm_id)?;
+        debug_assert!(vm.deferred_execution_events.len() < capacity);
+        vm.deferred_execution_events.push_back(event);
+        let observed = vm.deferred_execution_events.len();
+        if observed >= warning_threshold && !vm.deferred_execution_events_warned {
+            vm.deferred_execution_events_warned = true;
+            tracing::warn!(
+                limit = DEFERRED_EXECUTION_EVENTS_LIMIT,
+                observed,
+                capacity,
+                "browser sidecar deferred execution event queue is near its limit; drain events with poll_execution_event or raise BrowserSidecarConfig::max_deferred_execution_events_per_vm"
+            );
+        }
+        Ok(())
+    }
+
+    fn take_deferred_execution_event(
+        &mut self,
+        vm_id: &str,
+    ) -> Result<Option<ExecutionEvent>, BrowserSidecarError> {
+        let capacity = self.config.max_deferred_execution_events_per_vm;
+        let warning_threshold = deferred_execution_event_warning_threshold(capacity);
+        let vm = self.vm_mut(vm_id)?;
+        let event = vm.deferred_execution_events.pop_front();
+        if vm.deferred_execution_events.len() < warning_threshold {
+            vm.deferred_execution_events_warned = false;
+        }
+        Ok(event)
+    }
+
+    fn take_deferred_execution_output(
+        &mut self,
+        vm_id: &str,
+        execution_id: &str,
+    ) -> Result<Option<ExecutionEvent>, BrowserSidecarError> {
+        let capacity = self.config.max_deferred_execution_events_per_vm;
+        let warning_threshold = deferred_execution_event_warning_threshold(capacity);
+        let vm = self.vm_mut(vm_id)?;
+        let event = vm
+            .deferred_execution_events
+            .iter()
+            .position(|event| execution_output_matches(event, execution_id))
+            .and_then(|index| vm.deferred_execution_events.remove(index));
+        if vm.deferred_execution_events.len() < warning_threshold {
+            vm.deferred_execution_events_warned = false;
+        }
         Ok(event)
     }
 
@@ -1652,20 +2476,60 @@ where
             .expect("VM should exist while registering a guest context");
         vm_state.contexts.insert(handle.context_id.clone());
 
-        self.emit_structured(
+        if let Err(error) = self.emit_structured(
             &vm_id,
             "browser.context.created",
             BTreeMap::from([
-                (String::from("context_id"), handle.context_id),
+                (String::from("context_id"), handle.context_id.clone()),
                 (
                     String::from("runtime"),
                     runtime_label(handle.runtime).to_string(),
                 ),
             ]),
-        )
+        ) {
+            tracing::error!(vm_id, context_id = %handle.context_id, %error, "failed to emit browser context-created diagnostic after committing context");
+        }
+        Ok(())
     }
 
-    fn release_execution(
+    pub fn release_context(
+        &mut self,
+        vm_id: &str,
+        context_id: &str,
+    ) -> Result<(), BrowserSidecarError> {
+        let Some(context) = self.contexts.get(context_id) else {
+            return Ok(());
+        };
+        if context.vm_id != vm_id {
+            return Err(BrowserSidecarError::InvalidState(format!(
+                "browser sidecar context {context_id} belongs to vm {}, not {vm_id}",
+                context.vm_id
+            )));
+        }
+        if self
+            .executions
+            .values()
+            .any(|execution| execution.context_id == context_id)
+        {
+            return Err(BrowserSidecarError::InvalidState(format!(
+                "browser sidecar context {context_id} still has an active execution"
+            )));
+        }
+        self.contexts.remove(context_id);
+        if let Some(vm) = self.vms.get_mut(vm_id) {
+            vm.contexts.remove(context_id);
+        }
+        if let Err(error) = self.emit_structured(
+            vm_id,
+            "browser.context.released",
+            BTreeMap::from([(String::from("context_id"), context_id.to_string())]),
+        ) {
+            tracing::error!(vm_id, context_id, %error, "failed to emit browser context-release diagnostic after cleanup");
+        }
+        Ok(())
+    }
+
+    pub fn release_execution(
         &mut self,
         execution_id: &str,
         event_name: &'static str,
@@ -1680,18 +2544,31 @@ where
         }
 
         let vm_id = execution.vm_id;
-        self.reap_execution_kernel_process(&vm_id, execution.kernel_pid)?;
+        let kernel_cleanup = self.reap_execution_kernel_process(&vm_id, execution.kernel_pid);
         let runtime = execution.worker.runtime;
         let worker_id = execution.worker.worker_id;
-        self.bridge
+        let worker_cleanup = self
+            .bridge
             .terminate_worker(BrowserWorkerHandleRequest {
                 vm_id: vm_id.clone(),
                 execution_id: execution_id.to_string(),
                 worker_id: worker_id.clone(),
             })
-            .map_err(Self::bridge_error)?;
+            .map_err(Self::bridge_error);
 
-        self.emit_structured(
+        match (kernel_cleanup, worker_cleanup) {
+            (Ok(()), Ok(())) => {}
+            (Err(kernel_error), Ok(())) => return Err(kernel_error),
+            (Ok(()), Err(worker_error)) => return Err(worker_error),
+            (Err(kernel_error), Err(worker_error)) => {
+                return Err(BrowserSidecarError::Cleanup {
+                    context: "failed to release browser execution completely",
+                    errors: vec![kernel_error, worker_error],
+                });
+            }
+        }
+
+        if let Err(error) = self.emit_structured(
             &vm_id,
             event_name,
             BTreeMap::from([
@@ -1699,20 +2576,25 @@ where
                 (String::from("runtime"), runtime_label(runtime).to_string()),
                 (String::from("worker_id"), worker_id),
             ]),
-        )?;
+        ) {
+            tracing::error!(vm_id, execution_id, %error, "failed to emit browser execution-release diagnostic after cleanup");
+        }
 
         let next_state = if self.active_worker_count(&vm_id) == 0 {
             LifecycleState::Ready
         } else {
             LifecycleState::Busy
         };
-        self.emit_lifecycle(
+        if let Err(error) = self.emit_lifecycle(
             &vm_id,
             next_state,
             Some(String::from(
                 "browser sidecar worker bookkeeping was updated on the main thread",
             )),
-        )
+        ) {
+            tracing::error!(vm_id, execution_id, %error, "failed to emit browser lifecycle after execution cleanup");
+        }
+        Ok(())
     }
 
     fn ensure_vm(&self, vm_id: &str) -> Result<(), BrowserSidecarError> {
@@ -1891,16 +2773,70 @@ fn is_loopback_socket_host(host: &str) -> bool {
     host == "127.0.0.1" || host == "::1" || host.eq_ignore_ascii_case("localhost")
 }
 
+fn execution_event_vm_id(event: &ExecutionEvent) -> &str {
+    match event {
+        ExecutionEvent::Stdout(chunk) | ExecutionEvent::Stderr(chunk) => &chunk.vm_id,
+        ExecutionEvent::Exited(exited) => &exited.vm_id,
+        ExecutionEvent::GuestRequest(call) => &call.vm_id,
+        ExecutionEvent::SignalState(state) => &state.vm_id,
+    }
+}
+
+fn execution_output_matches(event: &ExecutionEvent, execution_id: &str) -> bool {
+    match event {
+        ExecutionEvent::Stdout(chunk) | ExecutionEvent::Stderr(chunk) => {
+            chunk.execution_id == execution_id
+        }
+        ExecutionEvent::Exited(exited) => exited.execution_id == execution_id,
+        ExecutionEvent::GuestRequest(_) | ExecutionEvent::SignalState(_) => false,
+    }
+}
+
+fn execution_output_from_event(event: ExecutionEvent) -> Option<ExecutionOutput> {
+    match event {
+        ExecutionEvent::Stdout(chunk) => Some(ExecutionOutput::Stdout(chunk)),
+        ExecutionEvent::Stderr(chunk) => Some(ExecutionOutput::Stderr(chunk)),
+        ExecutionEvent::Exited(exited) => Some(ExecutionOutput::Exited(exited)),
+        ExecutionEvent::GuestRequest(_) | ExecutionEvent::SignalState(_) => None,
+    }
+}
+
+fn deferred_execution_event_warning_threshold(capacity: usize) -> usize {
+    capacity.saturating_mul(8).saturating_add(9) / 10
+}
+
 impl<B> BrowserExtensionHost for BrowserSidecar<B>
 where
     B: BrowserSidecarBridge,
     BridgeError<B>: fmt::Debug,
 {
+    fn resolve_projected_agent(
+        &mut self,
+        vm_id: &str,
+        id: &str,
+    ) -> Result<Option<BrowserProjectedAgentLaunch>, BrowserSidecarError> {
+        BrowserSidecar::resolve_projected_agent(self, vm_id, id)
+    }
+
+    fn list_projected_agents(
+        &mut self,
+        vm_id: &str,
+    ) -> Result<Vec<BrowserProjectedAgentLaunch>, BrowserSidecarError> {
+        BrowserSidecar::list_projected_agents(self, vm_id)
+    }
+
     fn agent_additional_instructions(
         &mut self,
         vm_id: &str,
     ) -> Result<Option<String>, BrowserSidecarError> {
         BrowserSidecar::agent_additional_instructions(self, vm_id)
+    }
+
+    fn registered_host_tool_reference(
+        &mut self,
+        vm_id: &str,
+    ) -> Result<String, BrowserSidecarError> {
+        BrowserSidecar::registered_host_tool_reference(self, vm_id)
     }
 
     fn write_file(
@@ -1950,6 +2886,14 @@ where
         BrowserSidecar::start_execution(self, request)
     }
 
+    fn release_context(
+        &mut self,
+        vm_id: &str,
+        context_id: &str,
+    ) -> Result<(), BrowserSidecarError> {
+        BrowserSidecar::release_context(self, vm_id, context_id)
+    }
+
     fn write_stdin(
         &mut self,
         request: WriteExecutionStdinRequest,
@@ -1965,11 +2909,30 @@ where
         BrowserSidecar::kill_execution(self, request)
     }
 
+    fn release_execution(&mut self, execution_id: &str) -> Result<(), BrowserSidecarError> {
+        BrowserSidecar::release_execution(self, execution_id, "browser.worker.acp_released")
+    }
+
+    fn abort_execution(
+        &mut self,
+        vm_id: &str,
+        execution_id: &str,
+    ) -> Result<(), BrowserSidecarError> {
+        BrowserSidecar::abort_execution(self, vm_id, execution_id)
+    }
+
     fn poll_execution_event(
         &mut self,
         request: PollExecutionEventRequest,
     ) -> Result<Option<ExecutionEvent>, BrowserSidecarError> {
         BrowserSidecar::poll_execution_event(self, request)
+    }
+
+    fn poll_execution_output(
+        &mut self,
+        request: PollExecutionOutputRequest,
+    ) -> Result<Option<ExecutionOutput>, BrowserSidecarError> {
+        BrowserSidecar::poll_execution_output(self, request)
     }
 }
 
@@ -2036,6 +2999,7 @@ where
             execution_id.to_string(),
             ExecutionState {
                 vm_id: vm_id.to_string(),
+                context_id: String::new(),
                 worker: BrowserWorkerHandle {
                     worker_id: format!("worker-{execution_id}"),
                     runtime: GuestRuntime::JavaScript,
@@ -2048,6 +3012,10 @@ where
         if let Some(vm) = self.vms.get_mut(vm_id) {
             vm.active_executions.insert(execution_id.to_string());
         }
+    }
+
+    pub(crate) fn test_fail_next_kernel_cleanup(&mut self, message: impl Into<String>) {
+        self.next_kernel_cleanup_error = Some(BrowserSidecarError::Kernel(message.into()));
     }
 }
 
@@ -2078,6 +3046,7 @@ mod tests {
     #[derive(Default)]
     struct TerminateFailingBridge {
         fail_terminate: bool,
+        terminate_requests: Vec<BrowserWorkerHandleRequest>,
     }
 
     impl BridgeTypes for TerminateFailingBridge {
@@ -2262,8 +3231,9 @@ mod tests {
 
         fn terminate_worker(
             &mut self,
-            _request: BrowserWorkerHandleRequest,
+            request: BrowserWorkerHandleRequest,
         ) -> Result<(), Self::Error> {
+            self.terminate_requests.push(request);
             if self.fail_terminate {
                 Err(TestBridgeError(String::from("forced terminate failure")))
             } else {
@@ -2279,6 +3249,7 @@ mod tests {
     fn dispose_vm_drains_maps_even_when_worker_termination_fails() {
         let bridge = TerminateFailingBridge {
             fail_terminate: true,
+            ..TerminateFailingBridge::default()
         };
         let mut sidecar = BrowserSidecar::new(bridge, BrowserSidecarConfig::default());
 
@@ -2309,14 +3280,286 @@ mod tests {
             "ExecutionState leaked after failed dispose"
         );
     }
+
+    #[test]
+    fn release_execution_terminates_worker_after_kernel_cleanup_failure() {
+        let mut sidecar = BrowserSidecar::new(
+            TerminateFailingBridge::default(),
+            BrowserSidecarConfig::default(),
+        );
+        sidecar
+            .create_vm(KernelVmConfig::new("vm-cleanup"))
+            .expect("create vm");
+        sidecar.test_insert_execution("vm-cleanup", "exec-cleanup");
+        sidecar.test_fail_next_kernel_cleanup("forced kernel cleanup failure");
+
+        let error = sidecar
+            .release_execution("exec-cleanup", "browser.worker.test_released")
+            .expect_err("kernel cleanup failure must surface");
+        assert!(error.to_string().contains("forced kernel cleanup failure"));
+        assert_eq!(sidecar.test_total_execution_count(), 0);
+        assert_eq!(sidecar.active_worker_count("vm-cleanup"), 0);
+        assert_eq!(
+            sidecar.bridge().terminate_requests,
+            vec![BrowserWorkerHandleRequest {
+                vm_id: String::from("vm-cleanup"),
+                execution_id: String::from("exec-cleanup"),
+                worker_id: String::from("worker-exec-cleanup"),
+            }]
+        );
+    }
+
+    #[test]
+    fn release_execution_preserves_both_cleanup_errors_after_draining_maps() {
+        let mut sidecar = BrowserSidecar::new(
+            TerminateFailingBridge {
+                fail_terminate: true,
+                ..TerminateFailingBridge::default()
+            },
+            BrowserSidecarConfig::default(),
+        );
+        sidecar
+            .create_vm(KernelVmConfig::new("vm-cleanup"))
+            .expect("create vm");
+        sidecar.test_insert_execution("vm-cleanup", "exec-cleanup");
+        sidecar.test_fail_next_kernel_cleanup("forced kernel cleanup failure");
+
+        let error = sidecar
+            .release_execution("exec-cleanup", "browser.worker.test_released")
+            .expect_err("both cleanup failures must surface");
+        let message = error.to_string();
+        assert!(message.contains("forced kernel cleanup failure"));
+        assert!(message.contains("forced terminate failure"));
+        assert_eq!(sidecar.test_total_execution_count(), 0);
+        assert_eq!(sidecar.active_worker_count("vm-cleanup"), 0);
+        assert_eq!(sidecar.bridge().terminate_requests.len(), 1);
+    }
+}
+
+fn ensure_projected_package_limit(
+    limit: &'static str,
+    existing: usize,
+    incoming: usize,
+    capacity: usize,
+    how_to_raise: &'static str,
+) -> Result<(), BrowserSidecarError> {
+    let observed = existing
+        .checked_add(incoming)
+        .ok_or(BrowserSidecarError::LimitExceeded {
+            limit,
+            capacity,
+            how_to_raise,
+        })?;
+    if observed > capacity {
+        return Err(BrowserSidecarError::LimitExceeded {
+            limit,
+            capacity,
+            how_to_raise,
+        });
+    }
+    let warning_threshold = capacity.saturating_mul(8) / 10;
+    if incoming > 0 && observed >= warning_threshold {
+        tracing::warn!(
+            limit,
+            observed,
+            capacity,
+            "browser package projection is near its limit"
+        );
+    }
+    Ok(())
+}
+
+fn package_projection_error(error: BrowserPackageProjectionError) -> BrowserSidecarError {
+    match error {
+        BrowserPackageProjectionError::Invalid(message) => {
+            BrowserSidecarError::InvalidPackage(message)
+        }
+        BrowserPackageProjectionError::LimitExceeded {
+            limit,
+            capacity,
+            how_to_raise,
+        } => BrowserSidecarError::LimitExceeded {
+            limit,
+            capacity,
+            how_to_raise,
+        },
+    }
+}
+
+struct PackageMountFailure {
+    path: String,
+    detail: String,
+    mounted: Vec<String>,
+}
+
+fn mount_prepared_package_batch(
+    kernel: &mut BrowserKernel,
+    prepared: &mut [PreparedBrowserPackage],
+    skip_existing: bool,
+) -> Result<Vec<String>, PackageMountFailure> {
+    let mut existing_paths = if skip_existing {
+        kernel
+            .mounted_filesystems()
+            .into_iter()
+            .map(|mount| mount.path)
+            .collect::<BTreeSet<_>>()
+    } else {
+        BTreeSet::new()
+    };
+    let mut mounted = Vec::new();
+    for package in prepared {
+        for mount in std::mem::take(&mut package.mounts) {
+            let path = mount.guest_path().to_owned();
+            if existing_paths.contains(&path) {
+                continue;
+            }
+            let result = match mount {
+                PreparedBrowserPackageMount::Files { filesystem, .. } => {
+                    kernel.filesystem_mut().inner_mut().inner_mut().mount(
+                        &path,
+                        filesystem,
+                        MountOptions::new("agentos_package").read_only(true),
+                    )
+                }
+                PreparedBrowserPackageMount::Symlink { filesystem, .. } => {
+                    kernel.filesystem_mut().inner_mut().inner_mut().mount(
+                        &path,
+                        filesystem,
+                        MountOptions::new("agentos_package").read_only(true),
+                    )
+                }
+            };
+            if let Err(error) = result {
+                return Err(PackageMountFailure {
+                    path,
+                    detail: error.to_string(),
+                    mounted,
+                });
+            }
+            existing_paths.insert(path.clone());
+            mounted.push(path);
+        }
+    }
+    Ok(mounted)
+}
+
+fn package_mount_failure(
+    vm_id: &str,
+    failure: PackageMountFailure,
+    rollback: Result<(), String>,
+) -> BrowserSidecarError {
+    match rollback {
+        Ok(()) => BrowserSidecarError::PackageMount(format!(
+            "mount .aospkg projection for VM {vm_id:?} at {}: {}",
+            failure.path, failure.detail
+        )),
+        Err(rollback_error) => BrowserSidecarError::PackageStateCorrupt(format!(
+            "mount .aospkg projection for VM {vm_id:?} at {}: {}; rollback failed: {rollback_error}",
+            failure.path, failure.detail
+        )),
+    }
+}
+
+fn commit_projected_package_batch(
+    vm: &mut VmState,
+    prepared: Vec<PreparedBrowserPackage>,
+    mounted_paths: Vec<String>,
+    mount_root: &str,
+    replacing: bool,
+) -> Vec<BrowserProjectedPackage> {
+    if replacing {
+        vm.projected_agent_launch.clear();
+        vm.projected_package_names.clear();
+        vm.projected_command_names.clear();
+        vm.projected_package_bytes = 0;
+        vm.projected_package_entries = 0;
+        vm.projected_package_materialized_bytes = 0;
+        vm.projected_package_sources.clear();
+        vm.projected_packages.clear();
+        vm.projected_package_mount_paths.clear();
+        vm.projected_package_env.clear();
+        vm.provided_commands.clear();
+    }
+    vm.projected_package_mount_root = mount_root.to_owned();
+    vm.projected_package_mount_paths.extend(mounted_paths);
+
+    let mut projections = Vec::with_capacity(prepared.len());
+    for package in prepared {
+        let projection = package.projection;
+        vm.projected_package_names.insert(projection.name.clone());
+        vm.projected_command_names
+            .extend(projection.commands.iter().cloned());
+        vm.projected_package_bytes = vm
+            .projected_package_bytes
+            .checked_add(package.source_bytes.len())
+            .expect("validated projected package byte count must fit usize");
+        vm.projected_package_entries = vm
+            .projected_package_entries
+            .checked_add(package.index_entries)
+            .expect("validated projected package entry count must fit usize");
+        vm.projected_package_materialized_bytes = vm
+            .projected_package_materialized_bytes
+            .checked_add(package.materialized_bytes)
+            .expect("validated projected package materialized byte count must fit usize");
+        vm.projected_package_sources.push(package.source_bytes);
+        vm.projected_packages.push(projection.clone());
+        vm.provided_commands
+            .insert(projection.name.clone(), projection.commands.clone());
+        for (name, value) in &projection.provided_env {
+            vm.projected_package_env
+                .entry(name.clone())
+                .or_insert_with(|| value.clone());
+        }
+        if let Some(agent) = &projection.agent {
+            vm.projected_agent_launch.insert(
+                agent.id.clone(),
+                BrowserProjectedAgentLaunch {
+                    id: agent.id.clone(),
+                    adapter_entrypoint: agent.adapter_entrypoint.clone(),
+                    env: agent.env.clone(),
+                    launch_args: agent.launch_args.clone(),
+                },
+            );
+        }
+        projections.push(projection);
+    }
+    projections
+}
+
+fn rollback_projected_package_mounts(
+    kernel: &mut BrowserKernel,
+    mounted_paths: &[String],
+) -> Result<(), String> {
+    let mut failures = Vec::new();
+    let mut mounted_paths = mounted_paths.iter().collect::<Vec<_>>();
+    mounted_paths.sort_by_key(|path| std::cmp::Reverse(path.matches('/').count()));
+    for path in mounted_paths {
+        if let Err(error) = kernel
+            .filesystem_mut()
+            .inner_mut()
+            .inner_mut()
+            .unmount(path)
+        {
+            failures.push(format!("unmount {path}: {error}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
 }
 
 fn browser_worker_identity(
     kernel: &BrowserKernel,
+    projected_package_env: &BTreeMap<String, String>,
     request: &StartExecutionRequest,
     kernel_pid: u32,
 ) -> (BrowserWorkerProcessConfig, BrowserWorkerOsConfig) {
     let mut env = kernel.environment().clone();
+    for (name, value) in projected_package_env {
+        env.entry(name.clone()).or_insert_with(|| value.clone());
+    }
     env.extend(request.env.clone());
     let user = kernel.user_profile();
     let resource_limits = kernel.resource_limits();

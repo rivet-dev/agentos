@@ -4,8 +4,8 @@ mod bridge_support;
 use agentos_bridge::{
     CreateJavascriptContextRequest, CreateWasmContextRequest, ExecutionEvent, ExecutionExited,
     ExecutionSignal, ExecutionSignalState, GuestKernelCall, GuestRuntime, KillExecutionRequest,
-    LifecycleState, PollExecutionEventRequest, SignalDispositionAction, SignalHandlerRegistration,
-    StartExecutionRequest,
+    LifecycleState, OutputChunk, PollExecutionEventRequest, SignalDispositionAction,
+    SignalHandlerRegistration, StartExecutionRequest,
 };
 use agentos_kernel::kernel::KernelVmConfig;
 use agentos_kernel::permissions::{
@@ -14,9 +14,11 @@ use agentos_kernel::permissions::{
 use agentos_kernel::resource_accounting::ResourceLimits;
 use agentos_kernel::root_fs::FilesystemEntryKind;
 use agentos_native_sidecar_browser::{
+    BrowserProjectedAgentLaunch, BrowserProjectedCommand, BrowserProjectedPackageAgent,
     BrowserSidecar, BrowserSidecarConfig, BrowserWorkerBridge, BrowserWorkerEntrypoint,
     BrowserWorkerHandle, BrowserWorkerHandleRequest, BrowserWorkerOsConfig,
-    BrowserWorkerProcessConfig, BrowserWorkerSpawnRequest,
+    BrowserWorkerProcessConfig, BrowserWorkerSpawnRequest, ExecutionOutput,
+    PollExecutionOutputRequest, MAX_BROWSER_PROJECTED_PACKAGE_BYTES_PER_VM,
 };
 use agentos_sidecar_protocol::wire::{
     FindBoundUdpRequest, FindListenerRequest, GuestKernelCallRequest, WasmPermissionTier,
@@ -27,6 +29,7 @@ use agentos_vm_config::{
 };
 use bridge_support::RecordingBridge;
 use std::collections::BTreeMap;
+use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -148,8 +151,457 @@ impl BrowserWorkerBridge for RecordingBridge {
     fn terminate_worker(&mut self, request: BrowserWorkerHandleRequest) -> Result<(), Self::Error> {
         self.terminated_workers
             .push((request.vm_id, request.execution_id, request.worker_id));
+        if let Some(error) = self.next_worker_terminate_error() {
+            return Err(error);
+        }
         Ok(())
     }
+}
+
+#[test]
+fn browser_sidecar_projects_real_aospkg_bytes_without_json_bootstrap() {
+    let package_bytes = packed_browser_agent_fixture();
+    let header = vfs::package_format::parse_aospkg_header(&package_bytes)
+        .expect("parse fixture .aospkg header");
+    let index =
+        vfs::package_format::versioned::decode_mount_index(&package_bytes[header.index.clone()])
+            .expect("decode fixture mount index");
+    assert!(index
+        .tar_entries
+        .iter()
+        .all(|entry| entry.path != "/agentos-package.json"));
+
+    let mut sidecar =
+        BrowserSidecar::new(RecordingBridge::default(), BrowserSidecarConfig::default());
+    sidecar
+        .create_vm(KernelVmConfig::new("vm-packed-agent"))
+        .expect("create vm");
+    let projection = sidecar
+        .project_aospkg_bytes("vm-packed-agent", package_bytes)
+        .expect("trusted sidecar projection must not require guest filesystem permission");
+
+    assert_eq!(projection.name, "packed-agent");
+    assert_eq!(projection.version, "1.2.3");
+    assert_eq!(projection.commands, vec![String::from("packed-agent-acp")]);
+    assert_eq!(
+        projection.projected_commands,
+        vec![BrowserProjectedCommand {
+            name: String::from("packed-agent-acp"),
+            guest_path: String::from("/opt/agentos/bin/packed-agent-acp"),
+        }]
+    );
+    assert_eq!(
+        projection.agent,
+        Some(BrowserProjectedPackageAgent {
+            id: String::from("packed-agent"),
+            acp_entrypoint: String::from("packed-agent-acp"),
+            adapter_entrypoint: String::from("/opt/agentos/bin/packed-agent-acp"),
+            snapshot: false,
+            env: [(String::from("PACKED_DEFAULT"), String::from("yes"))]
+                .into_iter()
+                .collect(),
+            launch_args: vec![String::from("--packed-fixture")],
+        })
+    );
+    assert_eq!(projection.applied_mounts, 4);
+    assert_eq!(
+        projection.provided_env,
+        [(String::from("BASE_ENV"), String::from("from-package"))]
+            .into_iter()
+            .collect()
+    );
+    assert_eq!(projection.snapshot_bundle_path, None);
+    let expected_agent = BrowserProjectedAgentLaunch {
+        id: String::from("packed-agent"),
+        adapter_entrypoint: String::from("/opt/agentos/bin/packed-agent-acp"),
+        env: [(String::from("PACKED_DEFAULT"), String::from("yes"))]
+            .into_iter()
+            .collect(),
+        launch_args: vec![String::from("--packed-fixture")],
+    };
+    assert_eq!(
+        sidecar
+            .resolve_projected_agent("vm-packed-agent", "packed-agent")
+            .expect("resolve projected agent"),
+        Some(expected_agent.clone())
+    );
+    assert_eq!(
+        sidecar
+            .list_projected_agents("vm-packed-agent")
+            .expect("list projected agents"),
+        vec![expected_agent]
+    );
+    assert_eq!(
+        sidecar
+            .provided_commands("vm-packed-agent")
+            .expect("list provided commands"),
+        vec![agentos_native_sidecar_browser::BrowserProvidedCommands {
+            package_name: String::from("packed-agent"),
+            commands: vec![String::from("packed-agent-acp")],
+        }]
+    );
+
+    sidecar
+        .configure_vm(
+            "vm-packed-agent",
+            Some(Permissions::allow_all()),
+            None,
+            None,
+        )
+        .expect("allow fixture reads after permission-independent projection");
+
+    let entrypoint = b"export const fixture = 'packed';\n";
+    assert_eq!(
+        sidecar
+            .read_file("vm-packed-agent", "/opt/agentos/bin/packed-agent-acp")
+            .expect("read command alias"),
+        entrypoint
+    );
+    assert_eq!(
+        sidecar
+            .read_file(
+                "vm-packed-agent",
+                "/opt/agentos/pkgs/packed-agent/current/bin/packed-agent-acp",
+            )
+            .expect("read current package alias"),
+        entrypoint
+    );
+    assert_eq!(
+        sidecar
+            .read_file("vm-packed-agent", "/usr/local/share/packed/runtime.txt")
+            .expect("read package-provided subtree"),
+        b"runtime fixture\n"
+    );
+    assert!(sidecar
+        .read_file(
+            "vm-packed-agent",
+            "/opt/agentos/pkgs/packed-agent/current/agentos-package.json",
+        )
+        .is_err());
+    let write_error = sidecar
+        .write_file(
+            "vm-packed-agent",
+            "/opt/agentos/bin/packed-agent-acp",
+            b"mutated".to_vec(),
+        )
+        .expect_err("projected command must be read-only");
+    assert!(write_error.to_string().contains("EROFS"));
+
+    let context = sidecar
+        .create_javascript_context(CreateJavascriptContextRequest {
+            vm_id: String::from("vm-packed-agent"),
+            bootstrap_module: None,
+        })
+        .expect("create package env context");
+    sidecar
+        .start_execution(StartExecutionRequest {
+            vm_id: String::from("vm-packed-agent"),
+            context_id: context.context_id,
+            argv: vec![String::from("node"), String::from("env.js")],
+            env: BTreeMap::new(),
+            cwd: String::from("/workspace"),
+        })
+        .expect("start execution with package-provided env");
+    assert_eq!(
+        sidecar
+            .bridge()
+            .browser_worker_spawns
+            .last()
+            .and_then(|spawn| spawn.get("process_env_base"))
+            .map(String::as_str),
+        Some("from-package")
+    );
+}
+
+#[test]
+fn browser_sidecar_rejects_invalid_package_batch_before_publishing_catalog() {
+    let mut sidecar =
+        BrowserSidecar::new(RecordingBridge::default(), BrowserSidecarConfig::default());
+    sidecar
+        .create_vm(permissive_config("vm-invalid-package"))
+        .expect("create vm");
+
+    let error = sidecar
+        .project_aospkg_batch_bytes(
+            "vm-invalid-package",
+            vec![packed_browser_agent_fixture(), b"not-an-aospkg".to_vec()],
+        )
+        .expect_err("invalid staged package must reject whole batch");
+    assert!(error.to_string().contains("invalid .aospkg"));
+    assert!(sidecar
+        .list_projected_agents("vm-invalid-package")
+        .expect("list projected agents after rejection")
+        .is_empty());
+    assert!(sidecar
+        .read_file("vm-invalid-package", "/opt/agentos/bin/packed-agent-acp")
+        .is_err());
+}
+
+#[test]
+fn browser_sidecar_replaces_and_clears_package_projection_at_custom_root() {
+    let mut sidecar =
+        BrowserSidecar::new(RecordingBridge::default(), BrowserSidecarConfig::default());
+    sidecar
+        .create_vm(permissive_config("vm-replace-package"))
+        .expect("create vm");
+    sidecar
+        .project_aospkg_bytes("vm-replace-package", packed_browser_agent_fixture())
+        .expect("project old package");
+
+    let projected = sidecar
+        .replace_aospkg_batch_bytes(
+            "vm-replace-package",
+            vec![packed_alternate_agent_fixture()],
+            Some("/custom/agentos"),
+        )
+        .expect("replace package projection");
+    assert_eq!(projected.len(), 1);
+    assert_eq!(projected[0].name, "alternate-agent");
+    assert_eq!(
+        projected[0].agent.as_ref().map(|agent| (
+            agent.acp_entrypoint.as_str(),
+            agent.adapter_entrypoint.as_str()
+        )),
+        Some((
+            "alternate-agent-acp",
+            "/custom/agentos/bin/alternate-agent-acp"
+        ))
+    );
+    assert!(sidecar
+        .read_file("vm-replace-package", "/opt/agentos/bin/packed-agent-acp")
+        .is_err());
+    assert_eq!(
+        sidecar
+            .read_file(
+                "vm-replace-package",
+                "/custom/agentos/bin/alternate-agent-acp",
+            )
+            .expect("read replacement command"),
+        b"export const fixture = 'alternate';\n"
+    );
+    assert_eq!(
+        sidecar
+            .provided_commands("vm-replace-package")
+            .expect("replacement provided commands"),
+        vec![agentos_native_sidecar_browser::BrowserProvidedCommands {
+            package_name: String::from("alternate-agent"),
+            commands: vec![String::from("alternate-agent-acp")],
+        }]
+    );
+
+    let linked = sidecar
+        .project_aospkg_bytes("vm-replace-package", packed_browser_agent_fixture())
+        .expect("link package at retained custom root");
+    assert_eq!(
+        linked
+            .agent
+            .as_ref()
+            .map(|agent| agent.adapter_entrypoint.as_str()),
+        Some("/custom/agentos/bin/packed-agent-acp")
+    );
+    assert_eq!(
+        sidecar
+            .read_file("vm-replace-package", "/custom/agentos/bin/packed-agent-acp",)
+            .expect("read dynamically linked command at custom root"),
+        b"export const fixture = 'packed';\n"
+    );
+    assert!(sidecar
+        .read_file("vm-replace-package", "/opt/agentos/bin/packed-agent-acp")
+        .is_err());
+
+    assert!(sidecar
+        .replace_aospkg_batch_bytes("vm-replace-package", Vec::new(), None)
+        .expect("clear package projection")
+        .is_empty());
+    assert!(sidecar
+        .list_projected_agents("vm-replace-package")
+        .expect("agents after clear")
+        .is_empty());
+    assert!(sidecar
+        .provided_commands("vm-replace-package")
+        .expect("commands after clear")
+        .is_empty());
+    assert!(sidecar
+        .read_file(
+            "vm-replace-package",
+            "/custom/agentos/bin/alternate-agent-acp",
+        )
+        .is_err());
+}
+
+#[test]
+fn browser_sidecar_preserves_projection_when_replacement_staging_or_mount_fails() {
+    let mut sidecar =
+        BrowserSidecar::new(RecordingBridge::default(), BrowserSidecarConfig::default());
+    sidecar
+        .create_vm_with_root_filesystem(
+            permissive_config("vm-replace-rollback"),
+            RootFilesystemConfig {
+                disable_default_base_layer: Some(true),
+                bootstrap_entries: Some(vec![RootFilesystemEntry {
+                    path: String::from("/blocker"),
+                    kind: RootFilesystemEntryKind::File,
+                    mode: None,
+                    uid: None,
+                    gid: None,
+                    content: Some(String::from("not a directory")),
+                    encoding: Some(RootFilesystemEntryEncoding::Utf8),
+                    target: None,
+                    executable: false,
+                }]),
+                ..RootFilesystemConfig::default()
+            },
+        )
+        .expect("create vm");
+    sidecar
+        .project_aospkg_bytes("vm-replace-rollback", packed_browser_agent_fixture())
+        .expect("project old package");
+
+    sidecar
+        .replace_aospkg_batch_bytes(
+            "vm-replace-rollback",
+            vec![b"not-an-aospkg".to_vec()],
+            Some("/custom/agentos"),
+        )
+        .expect_err("invalid replacement must fail before swap");
+    sidecar
+        .replace_aospkg_batch_bytes(
+            "vm-replace-rollback",
+            vec![packed_alternate_agent_fixture()],
+            Some("relative/root"),
+        )
+        .expect_err("relative mount root must fail before swap");
+    sidecar
+        .replace_aospkg_batch_bytes(
+            "vm-replace-rollback",
+            vec![packed_alternate_agent_fixture()],
+            Some("/custom/agentos"),
+        )
+        .expect_err("mount failure must roll back to old projection");
+
+    assert_eq!(
+        sidecar
+            .read_file("vm-replace-rollback", "/opt/agentos/bin/packed-agent-acp",)
+            .expect("old package mount survives failed replacement"),
+        b"export const fixture = 'packed';\n"
+    );
+    assert_eq!(
+        sidecar
+            .list_projected_agents("vm-replace-rollback")
+            .expect("old catalog survives failed replacement")[0]
+            .id,
+        "packed-agent"
+    );
+    assert!(sidecar
+        .read_file(
+            "vm-replace-rollback",
+            "/custom/agentos/bin/alternate-agent-acp",
+        )
+        .is_err());
+}
+
+#[test]
+fn browser_package_byte_cap_is_an_aggregate_sidecar_resource_bound() {
+    assert_eq!(MAX_BROWSER_PROJECTED_PACKAGE_BYTES_PER_VM, 64 * 1024 * 1024);
+}
+
+fn packed_browser_agent_fixture() -> Vec<u8> {
+    let mut source = tar::Builder::new(Vec::new());
+    append_tar_entry(
+        &mut source,
+        "agentos-package.json",
+        br#"{
+          "name": "packed-agent",
+          "version": "1.2.3",
+          "agent": {
+            "acpEntrypoint": "packed-agent-acp",
+            "env": { "PACKED_DEFAULT": "yes" },
+            "launchArgs": ["--packed-fixture"]
+          },
+          "provides": {
+            "env": { "BASE_ENV": "from-package" },
+            "files": [
+              { "source": "share/runtime", "target": "/usr/local/share/packed" }
+            ]
+          }
+        }"#,
+        0o644,
+        tar::EntryType::Regular,
+    );
+    append_tar_entry(
+        &mut source,
+        "bin/packed-agent-acp",
+        b"export const fixture = 'packed';\n",
+        0o755,
+        tar::EntryType::Regular,
+    );
+    append_tar_entry(
+        &mut source,
+        "share/runtime/runtime.txt",
+        b"runtime fixture\n",
+        0o644,
+        tar::EntryType::Regular,
+    );
+    let source = source.into_inner().expect("finish source tar");
+    vfs::package_format::pack::pack_aospkg_from_tar_bytes(&source)
+        .expect("pack fixture .aospkg")
+        .0
+}
+
+fn packed_alternate_agent_fixture() -> Vec<u8> {
+    let mut source = tar::Builder::new(Vec::new());
+    append_tar_entry(
+        &mut source,
+        "agentos-package.json",
+        br#"{
+          "name": "alternate-agent",
+          "version": "2.0.0",
+          "agent": { "acpEntrypoint": "alternate-agent-acp" },
+          "provides": {
+            "files": [{ "source": "share/alternate", "target": "/blocker/target" }]
+          }
+        }"#,
+        0o644,
+        tar::EntryType::Regular,
+    );
+    append_tar_entry(
+        &mut source,
+        "share/alternate/data.txt",
+        b"alternate data\n",
+        0o644,
+        tar::EntryType::Regular,
+    );
+    append_tar_entry(
+        &mut source,
+        "bin/alternate-agent-acp",
+        b"export const fixture = 'alternate';\n",
+        0o755,
+        tar::EntryType::Regular,
+    );
+    let source = source.into_inner().expect("finish alternate source tar");
+    vfs::package_format::pack::pack_aospkg_from_tar_bytes(&source)
+        .expect("pack alternate fixture .aospkg")
+        .0
+}
+
+fn append_tar_entry(
+    builder: &mut tar::Builder<Vec<u8>>,
+    path: &str,
+    contents: &[u8],
+    mode: u32,
+    entry_type: tar::EntryType,
+) {
+    let mut header = tar::Header::new_gnu();
+    header.set_entry_type(entry_type);
+    header.set_mode(mode);
+    header.set_uid(0);
+    header.set_gid(0);
+    header.set_mtime(0);
+    header.set_size(contents.len() as u64);
+    header.set_cksum();
+    builder
+        .append_data(&mut header, path, Cursor::new(contents))
+        .expect("append source tar entry");
 }
 
 fn permissive_config(vm_id: &str) -> KernelVmConfig {
@@ -217,6 +669,8 @@ fn browser_sidecar_runs_guest_javascript_from_main_thread_workers() {
             cwd: String::from("/workspace"),
         })
         .expect("start JavaScript execution");
+    let execution_id = started.execution_id.clone();
+    let worker_id = format!("js-worker-{}", context.context_id);
 
     assert_eq!(sidecar.sidecar_id(), "agentos-native-sidecar-browser");
     assert_eq!(sidecar.vm_count(), 1);
@@ -227,7 +681,7 @@ fn browser_sidecar_runs_guest_javascript_from_main_thread_workers() {
         .bridge_mut()
         .push_execution_event(ExecutionEvent::Exited(ExecutionExited {
             vm_id: String::from("vm-browser"),
-            execution_id: started.execution_id.clone(),
+            execution_id: execution_id.clone(),
             exit_code: 0,
         }));
     let event = sidecar
@@ -247,6 +701,10 @@ fn browser_sidecar_runs_guest_javascript_from_main_thread_workers() {
     assert_eq!(sidecar.active_worker_count("vm-browser"), 0);
 
     let bridge = sidecar.into_bridge();
+    assert_eq!(
+        bridge.terminated_workers,
+        vec![(String::from("vm-browser"), execution_id, worker_id)]
+    );
     let states = bridge
         .lifecycle_events
         .iter()
@@ -274,6 +732,368 @@ fn browser_sidecar_runs_guest_javascript_from_main_thread_workers() {
             "browser.worker.reaped",
         ]
     );
+}
+
+#[test]
+fn browser_sidecar_abort_releases_worker_after_bridge_kill_failure() {
+    let mut bridge = RecordingBridge::default();
+    bridge.push_execution_kill_error("forced bridge kill failure");
+    let mut sidecar = BrowserSidecar::new(bridge, BrowserSidecarConfig::default());
+    sidecar
+        .create_vm(permissive_config("vm-browser"))
+        .expect("create vm");
+    let context = sidecar
+        .create_javascript_context(CreateJavascriptContextRequest {
+            vm_id: String::from("vm-browser"),
+            bootstrap_module: None,
+        })
+        .expect("create context");
+    let started = sidecar
+        .start_execution(StartExecutionRequest {
+            vm_id: String::from("vm-browser"),
+            context_id: context.context_id.clone(),
+            argv: vec![String::from("node"), String::from("script.js")],
+            env: BTreeMap::new(),
+            cwd: String::from("/workspace"),
+        })
+        .expect("start execution");
+    let execution_id = started.execution_id;
+
+    let error = sidecar
+        .abort_execution("vm-browser", &execution_id)
+        .expect_err("bridge kill failure must surface after release");
+    assert!(error.to_string().contains("forced bridge kill failure"));
+    assert_eq!(sidecar.active_worker_count("vm-browser"), 0);
+
+    let bridge = sidecar.into_bridge();
+    assert_eq!(bridge.killed_executions.len(), 1);
+    assert_eq!(
+        bridge.terminated_workers,
+        vec![(
+            String::from("vm-browser"),
+            execution_id,
+            format!("js-worker-{}", context.context_id),
+        )]
+    );
+}
+
+#[test]
+fn browser_sidecar_diagnostic_failures_do_not_orphan_execution_or_context() {
+    let mut sidecar =
+        BrowserSidecar::new(RecordingBridge::default(), BrowserSidecarConfig::default());
+    sidecar
+        .create_vm(permissive_config("vm-diagnostic-failure"))
+        .expect("create vm");
+    let context = sidecar
+        .create_javascript_context(CreateJavascriptContextRequest {
+            vm_id: String::from("vm-diagnostic-failure"),
+            bootstrap_module: None,
+        })
+        .expect("create context");
+
+    sidecar
+        .bridge_mut()
+        .push_structured_event_error("injected start diagnostic failure");
+    sidecar
+        .bridge_mut()
+        .push_lifecycle_event_error("injected busy lifecycle failure");
+    let started = sidecar
+        .start_execution(StartExecutionRequest {
+            vm_id: String::from("vm-diagnostic-failure"),
+            context_id: context.context_id.clone(),
+            argv: vec![String::from("node")],
+            env: BTreeMap::new(),
+            cwd: String::from("/workspace"),
+        })
+        .expect("diagnostic failure must not fail a committed execution");
+    assert_eq!(sidecar.active_worker_count("vm-diagnostic-failure"), 1);
+
+    sidecar
+        .bridge_mut()
+        .push_structured_event_error("injected release diagnostic failure");
+    sidecar
+        .bridge_mut()
+        .push_lifecycle_event_error("injected ready lifecycle failure");
+    sidecar
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Exited(ExecutionExited {
+            vm_id: String::from("vm-diagnostic-failure"),
+            execution_id: started.execution_id,
+            exit_code: 0,
+        }));
+    sidecar
+        .poll_execution_event(PollExecutionEventRequest {
+            vm_id: String::from("vm-diagnostic-failure"),
+        })
+        .expect("diagnostic failure must not make terminal cleanup retry an absent execution");
+    assert_eq!(sidecar.active_worker_count("vm-diagnostic-failure"), 0);
+
+    sidecar
+        .bridge_mut()
+        .push_structured_event_error("injected context-release diagnostic failure");
+    sidecar
+        .release_context("vm-diagnostic-failure", &context.context_id)
+        .expect("context cleanup is committed before its diagnostic");
+    assert_eq!(sidecar.context_count("vm-diagnostic-failure"), 0);
+}
+
+#[test]
+fn filtered_execution_output_preserves_other_executions_and_central_events() {
+    let mut sidecar =
+        BrowserSidecar::new(RecordingBridge::default(), BrowserSidecarConfig::default());
+    sidecar
+        .create_vm(permissive_config("vm-browser"))
+        .expect("create vm");
+    let context = sidecar
+        .create_javascript_context(CreateJavascriptContextRequest {
+            vm_id: String::from("vm-browser"),
+            bootstrap_module: None,
+        })
+        .expect("create context");
+    let start = |sidecar: &mut BrowserSidecar<RecordingBridge>, name: &str| {
+        sidecar
+            .start_execution(StartExecutionRequest {
+                vm_id: String::from("vm-browser"),
+                context_id: context.context_id.clone(),
+                argv: vec![name.to_string()],
+                env: BTreeMap::new(),
+                cwd: String::from("/workspace"),
+            })
+            .expect("start execution")
+            .execution_id
+    };
+    let execution_a = start(&mut sidecar, "agent-a");
+    let execution_b = start(&mut sidecar, "agent-b");
+
+    sidecar
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::GuestRequest(GuestKernelCall {
+            vm_id: String::from("vm-browser"),
+            execution_id: execution_a.clone(),
+            operation: String::from("fs.read"),
+            payload: b"request".to_vec(),
+        }));
+    sidecar
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::SignalState(ExecutionSignalState {
+            vm_id: String::from("vm-browser"),
+            execution_id: execution_a.clone(),
+            signal: 15,
+            registration: SignalHandlerRegistration {
+                action: SignalDispositionAction::User,
+                mask: vec![],
+                flags: 0,
+            },
+        }));
+    sidecar
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Stdout(OutputChunk {
+            vm_id: String::from("vm-browser"),
+            execution_id: execution_b.clone(),
+            chunk: b"from-b".to_vec(),
+        }));
+    sidecar
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Stdout(OutputChunk {
+            vm_id: String::from("vm-browser"),
+            execution_id: execution_a.clone(),
+            chunk: b"from-a".to_vec(),
+        }));
+
+    let poll_a = || PollExecutionOutputRequest {
+        vm_id: String::from("vm-browser"),
+        execution_id: execution_a.clone(),
+    };
+    assert_eq!(
+        sidecar
+            .poll_execution_output(poll_a())
+            .expect("defer guest request"),
+        None
+    );
+    assert_eq!(
+        sidecar
+            .poll_execution_output(poll_a())
+            .expect("defer signal state"),
+        None
+    );
+    assert_eq!(
+        sidecar
+            .poll_execution_output(poll_a())
+            .expect("defer B output"),
+        None
+    );
+    assert!(matches!(
+        sidecar.poll_execution_output(poll_a()).expect("poll A output"),
+        Some(ExecutionOutput::Stdout(OutputChunk { chunk, .. })) if chunk == b"from-a"
+    ));
+
+    assert!(matches!(
+        sidecar
+            .poll_execution_event(PollExecutionEventRequest {
+                vm_id: String::from("vm-browser"),
+            })
+            .expect("central guest request poll"),
+        Some(ExecutionEvent::GuestRequest(GuestKernelCall { operation, .. }))
+            if operation == "fs.read"
+    ));
+    assert!(matches!(
+        sidecar
+            .poll_execution_event(PollExecutionEventRequest {
+                vm_id: String::from("vm-browser"),
+            })
+            .expect("central signal poll"),
+        Some(ExecutionEvent::SignalState(ExecutionSignalState {
+            signal: 15,
+            ..
+        }))
+    ));
+    assert!(matches!(
+        sidecar
+            .poll_execution_output(PollExecutionOutputRequest {
+                vm_id: String::from("vm-browser"),
+                execution_id: execution_b.clone(),
+            })
+            .expect("poll preserved B output"),
+        Some(ExecutionOutput::Stdout(OutputChunk { chunk, .. })) if chunk == b"from-b"
+    ));
+
+    sidecar
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Exited(ExecutionExited {
+            vm_id: String::from("vm-browser"),
+            execution_id: execution_b.clone(),
+            exit_code: 2,
+        }));
+    sidecar
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Exited(ExecutionExited {
+            vm_id: String::from("vm-browser"),
+            execution_id: execution_a.clone(),
+            exit_code: 1,
+        }));
+    assert_eq!(
+        sidecar
+            .poll_execution_output(poll_a())
+            .expect("defer B exit"),
+        None
+    );
+    assert!(matches!(
+        sidecar
+            .poll_execution_output(poll_a())
+            .expect("poll A exit"),
+        Some(ExecutionOutput::Exited(ExecutionExited {
+            exit_code: 1,
+            ..
+        }))
+    ));
+    assert!(matches!(
+        sidecar
+            .poll_execution_output(PollExecutionOutputRequest {
+                vm_id: String::from("vm-browser"),
+                execution_id: execution_b,
+            })
+            .expect("poll preserved B exit"),
+        Some(ExecutionOutput::Exited(ExecutionExited {
+            exit_code: 2,
+            ..
+        }))
+    ));
+    assert_eq!(sidecar.active_worker_count("vm-browser"), 0);
+}
+
+#[test]
+fn filtered_execution_output_backpressures_before_consuming_past_its_bound() {
+    let mut sidecar = BrowserSidecar::new(
+        RecordingBridge::default(),
+        BrowserSidecarConfig {
+            max_deferred_execution_events_per_vm: 1,
+            ..BrowserSidecarConfig::default()
+        },
+    );
+    sidecar
+        .create_vm(permissive_config("vm-browser"))
+        .expect("create vm");
+    let context = sidecar
+        .create_javascript_context(CreateJavascriptContextRequest {
+            vm_id: String::from("vm-browser"),
+            bootstrap_module: None,
+        })
+        .expect("create context");
+    let execution_a = sidecar
+        .start_execution(StartExecutionRequest {
+            vm_id: String::from("vm-browser"),
+            context_id: context.context_id.clone(),
+            argv: vec![String::from("agent-a")],
+            env: BTreeMap::new(),
+            cwd: String::from("/workspace"),
+        })
+        .expect("start A")
+        .execution_id;
+    let execution_b = sidecar
+        .start_execution(StartExecutionRequest {
+            vm_id: String::from("vm-browser"),
+            context_id: context.context_id,
+            argv: vec![String::from("agent-b")],
+            env: BTreeMap::new(),
+            cwd: String::from("/workspace"),
+        })
+        .expect("start B")
+        .execution_id;
+    sidecar
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::GuestRequest(GuestKernelCall {
+            vm_id: String::from("vm-browser"),
+            execution_id: execution_a.clone(),
+            operation: String::from("fs.read"),
+            payload: vec![],
+        }));
+    sidecar
+        .bridge_mut()
+        .push_execution_event(ExecutionEvent::Stdout(OutputChunk {
+            vm_id: String::from("vm-browser"),
+            execution_id: execution_b.clone(),
+            chunk: b"still-on-bridge".to_vec(),
+        }));
+    let poll_a = PollExecutionOutputRequest {
+        vm_id: String::from("vm-browser"),
+        execution_id: execution_a,
+    };
+    assert_eq!(
+        sidecar
+            .poll_execution_output(poll_a.clone())
+            .expect("defer guest request"),
+        None
+    );
+    let error = sidecar
+        .poll_execution_output(poll_a)
+        .expect_err("full deferred queue must backpressure before another bridge poll");
+    assert!(matches!(
+        error,
+        agentos_native_sidecar_browser::BrowserSidecarError::LimitExceeded {
+            limit: "max_deferred_execution_events_per_vm",
+            capacity: 1,
+            ..
+        }
+    ));
+
+    assert!(matches!(
+        sidecar
+            .poll_execution_event(PollExecutionEventRequest {
+                vm_id: String::from("vm-browser"),
+            })
+            .expect("drain guest request"),
+        Some(ExecutionEvent::GuestRequest(_))
+    ));
+    assert!(matches!(
+        sidecar
+            .poll_execution_output(PollExecutionOutputRequest {
+                vm_id: String::from("vm-browser"),
+                execution_id: execution_b,
+            })
+            .expect("B output was not consumed on overflow"),
+        Some(ExecutionOutput::Stdout(OutputChunk { chunk, .. }))
+            if chunk == b"still-on-bridge"
+    ));
 }
 
 #[test]

@@ -16,6 +16,7 @@ import type { ProtocolFramePayloadCodec } from "@rivet-dev/agentos-runtime-core/
 import { SIDECAR_PROTOCOL_SCHEMA } from "@rivet-dev/agentos-runtime-core/protocol-schema";
 import type { LiveRequestPayload } from "@rivet-dev/agentos-runtime-core/request-payloads";
 import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
+import type { LivePackageDescriptor } from "@rivet-dev/agentos-runtime-core/descriptors";
 import {
 	type ConvergedPushFrame,
 	ConvergedSyncBridgeHandler,
@@ -40,6 +41,8 @@ export interface ConvergedExecutorSessionOptions {
 export interface ConvergedVmBootstrap {
 	runtime: GuestRuntimeKind;
 	config: CreateVmConfig;
+	packages?: readonly LivePackageDescriptor[];
+	packagesMountAt?: string;
 }
 
 /** A bootstrapped VM inside the wasm sidecar. */
@@ -100,9 +103,21 @@ export class ConvergedExecutorSession {
 
 		const created = this.send(
 			{ scope: "session", connection_id: connectionId, session_id: sessionId },
-			{ type: "create_vm", runtime: options.runtime, config: options.config },
+			options.packages === undefined && options.packagesMountAt === undefined
+				? { type: "create_vm", runtime: options.runtime, config: options.config }
+				: {
+						type: "initialize_vm",
+						runtime: options.runtime,
+						config: options.config,
+						...(options.packages === undefined
+							? {}
+							: { packages: [...options.packages] }),
+						...(options.packagesMountAt === undefined
+							? {}
+							: { packages_mount_at: options.packagesMountAt }),
+					},
 		);
-		if (created.type !== "vm_created") {
+		if (created.type !== "vm_created" && created.type !== "vm_initialized") {
 			throw new Error(`unexpected create_vm response: ${created.type}`);
 		}
 

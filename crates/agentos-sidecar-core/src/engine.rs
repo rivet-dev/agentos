@@ -6,18 +6,19 @@
 //! pure-state ones (`get_session_state`, `close_session`), the bootstrap one
 //! (`create_session`), the in-session RPC one (`session_request`, i.e.
 //! `session/prompt` + other in-session methods), and `resume_session` (native
-//! `session/load` tier with the universal `session/new` fallback). Notification
-//! streaming as ACP events and the `session/cancel` not-found fallback remain a
-//! documented follow-up that layers on the same loop (see `session_request`).
+//! `session/load` tier with the universal `session/new` fallback). Adapter
+//! notifications are queued as ACP events for the embedding sidecar to drain.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use agentos_protocol::generated::v1::{
-    AcpCloseSessionRequest, AcpCreateSessionRequest, AcpDeliverAgentOutputRequest,
-    AcpGetSessionStateRequest, AcpListSessionsResponse, AcpPendingResponse, AcpRequest,
-    AcpResponse, AcpResumeSessionRequest, AcpRuntimeKind, AcpSessionClosedResponse,
-    AcpSessionEntry, AcpSessionRequest, AcpSessionResumedResponse, AcpSessionRpcResponse,
-    AcpSetSessionConfigRequest,
+    AcpAbortPendingRequest, AcpAgentEntry, AcpAgentExitedEvent, AcpAgentStderrDeliveredResponse,
+    AcpAgentStderrEvent, AcpCloseSessionRequest, AcpCreateSessionRequest,
+    AcpDeliverAgentOutputRequest, AcpDeliverAgentStderrRequest, AcpErrorResponse, AcpEvent,
+    AcpGetSessionStateRequest, AcpListAgentsResponse, AcpListSessionsResponse,
+    AcpPendingAbortReason, AcpPendingResponse, AcpRequest, AcpResponse, AcpResumeSessionRequest,
+    AcpRuntimeKind, AcpSessionClosedResponse, AcpSessionEntry, AcpSessionEvent, AcpSessionRequest,
+    AcpSessionResumedResponse, AcpSessionRpcResponse, AcpSetSessionConfigRequest,
 };
 use agentos_protocol::{
     read_only_config_message, select_config_by_category, AcpPromptTextAccumulator,
@@ -26,9 +27,16 @@ use agentos_protocol::{
 };
 use serde_json::{json, Map, Value};
 
-use crate::host::{AcpHost, SpawnAgentRequest};
-use crate::json_rpc::{send_json_rpc, send_json_rpc_exchange};
-use crate::session::AcpSessionRecord;
+use crate::behavior::{
+    apply_successful_session_request, cancel_fallback_decision, cancel_notification,
+    cancel_notification_fallback_response, classify_json_rpc_message, derive_bootstrap_fields,
+    plan_acp_launch_prompt, AcpCancelFallbackDecision, AcpJsonLineAccumulator,
+    AcpJsonRpcMessageKind, AcpLaunchPromptPlan, AcpSessionNotification, AGENTOS_SYSTEM_PROMPT,
+    DEFAULT_ACP_MAX_READ_LINE_BYTES,
+};
+use crate::host::{AcpHost, ProjectedAgentLaunch, SpawnAgentRequest};
+use crate::json_rpc::send_json_rpc_exchange;
+use crate::session::{AcpAdapterRestartState, AcpSessionRecord};
 use crate::AcpCoreError;
 
 /// Matches the native sidecar's `SESSION_CLOSE_TIMEOUT` (5s).
@@ -36,6 +44,9 @@ const SESSION_CLOSE_TIMEOUT_MS: u64 = 5_000;
 /// Matches the native `INITIALIZE_TIMEOUT` (10s) and `SESSION_NEW_TIMEOUT` (30s).
 const INITIALIZE_TIMEOUT_MS: u64 = 10_000;
 const SESSION_NEW_TIMEOUT_MS: u64 = 30_000;
+const DEFAULT_ACP_PENDING_EVENT_LIMIT: usize = 4_096;
+const DEFAULT_ACP_PENDING_EVENT_BYTES_LIMIT: usize = 32 * 1024 * 1024;
+const MAX_ADAPTER_RESTARTS: u32 = 3;
 
 /// Transcript-continuation preamble armed by the resume fallback tier; matches the
 /// native `CONTINUATION_PREAMBLE`.
@@ -46,66 +57,90 @@ enum PreparedSessionConfig {
     Forward(AcpSessionRequest),
 }
 
-/// Agent launch parameters resolved from a projected `/opt/agentos` package
-/// manifest. The npm-agnostic client sends only the agent name; the sidecar owns
-/// the name -> package -> entrypoint/env/launchArgs resolution. Mirrors the native
-/// sidecar's `ResolvedAgent`.
-struct ResolvedAgent {
-    entrypoint: String,
-    env: BTreeMap<String, String>,
-    launch_args: Vec<String>,
+enum AdapterRestartError {
+    Unsupported,
+    Failed(AcpCoreError),
 }
 
-/// The subset of `agentos-package.json` the sidecar needs to launch an agent.
-#[derive(serde::Deserialize)]
-struct AgentPackageManifest {
-    #[serde(default)]
-    agent: Option<AgentPackageAgentBlock>,
+impl From<AcpCoreError> for AdapterRestartError {
+    fn from(error: AcpCoreError) -> Self {
+        Self::Failed(error)
+    }
 }
 
-#[derive(serde::Deserialize)]
-struct AgentPackageAgentBlock {
-    #[serde(rename = "acpEntrypoint", default)]
-    acp_entrypoint: String,
-    #[serde(default)]
-    env: BTreeMap<String, String>,
-    #[serde(rename = "launchArgs", default)]
-    launch_args: Vec<String>,
-}
-
-/// Resolve an agent name to its launch parameters by reading the projected
-/// manifest at `/opt/agentos/<name>/current/agentos-package.json` over the host
-/// filesystem seam. A missing file, a missing `agent` block, or an empty
-/// `agent.acpEntrypoint` all map to a single typed "unknown agent" error. Mirrors
-/// the native sidecar `resolve_agent`.
+/// Resolve an agent name from the host's sidecar-owned projected-package state.
+/// Missing metadata maps to the stable unknown-agent error; failures reading the
+/// authoritative host state propagate unchanged.
 fn resolve_agent<H: AcpHost>(
     host: &mut H,
     agent_type: &str,
-) -> Result<ResolvedAgent, AcpCoreError> {
+) -> Result<ProjectedAgentLaunch, AcpCoreError> {
     let unknown = || {
         AcpCoreError::InvalidState(format!(
             "unknown agent type \"{agent_type}\": no projected /opt/agentos/pkgs/{agent_type} package \
              with an agent.acpEntrypoint — pass its package to AgentOs software"
         ))
     };
-    let path = format!("/opt/agentos/pkgs/{agent_type}/current/agentos-package.json");
-    let bytes = host.read_file(&path).map_err(|_| unknown())?;
-    let manifest: AgentPackageManifest = serde_json::from_slice(&bytes).map_err(|_| unknown())?;
-    let agent = manifest.agent.ok_or_else(&unknown)?;
-    if agent.acp_entrypoint.is_empty() {
+    let agent = host
+        .resolve_projected_agent(agent_type)?
+        .ok_or_else(&unknown)?;
+    if agent.adapter_entrypoint.is_empty() {
         return Err(unknown());
     }
-    Ok(ResolvedAgent {
-        entrypoint: format!("/opt/agentos/bin/{}", agent.acp_entrypoint),
-        env: agent.env,
-        launch_args: agent.launch_args,
-    })
+    Ok(agent)
+}
+
+fn session_storage_key(owner_id: &str, session_id: &str) -> String {
+    // Length-prefixing keeps the internal key unambiguous even when caller-owned
+    // ids contain separators. The external ACP session id remains unchanged.
+    format!("{}:{owner_id}{session_id}", owner_id.len())
+}
+
+fn prepare_agent_launch<H: AcpHost>(
+    host: &mut H,
+    agent_type: &str,
+    resolved: &ProjectedAgentLaunch,
+    request_args: &[String],
+    request_env: &std::collections::HashMap<String, String>,
+    skip_base_instructions: bool,
+    additional_instructions: Option<&str>,
+) -> Result<(Vec<String>, BTreeMap<String, String>), AcpCoreError> {
+    let mut env: BTreeMap<String, String> = request_env.clone().into_iter().collect();
+    env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
+    for (key, value) in &resolved.env {
+        env.entry(key.clone()).or_insert_with(|| value.clone());
+    }
+    let mut args = resolved.launch_args.clone();
+    args.extend(request_args.iter().cloned());
+    let tool_reference = host.registered_host_tool_reference()?;
+    match plan_acp_launch_prompt(
+        agent_type,
+        AGENTOS_SYSTEM_PROMPT,
+        skip_base_instructions,
+        additional_instructions,
+        &tool_reference,
+        &env,
+    )? {
+        AcpLaunchPromptPlan::None => {}
+        AcpLaunchPromptPlan::AppendArgument { flag, prompt } => {
+            args.extend([flag, prompt]);
+        }
+        AcpLaunchPromptPlan::OpenCodeContext {
+            env_key,
+            env_value,
+            file,
+        } => {
+            host.write_file(&file.path, file.contents.as_bytes())?;
+            env.insert(env_key, env_value);
+        }
+    }
+    Ok((args, env))
 }
 
 /// Host-free ACP session engine. The native and browser sidecars each hold one of
 /// these and feed it decoded requests plus the caller's connection id (for the
 /// per-connection ownership checks) and an [`AcpHost`] for the host-coupled steps.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct AcpCore {
     sessions: BTreeMap<String, AcpSessionRecord>,
     next_process_id: u64,
@@ -119,15 +154,69 @@ pub struct AcpCore {
     /// In-flight RESUMABLE session/prompt (and other in-session RPC) requests,
     /// keyed by the agent's process id.
     pending_prompts: BTreeMap<String, PendingPrompt>,
+    /// In-flight RESUMABLE `resume_session` handshakes, keyed by the freshly
+    /// spawned adapter's process id.
+    pending_resumes: BTreeMap<String, PendingResume>,
+    /// In-flight RESUMABLE adapter restarts. Browser hosts cannot synchronously
+    /// wait for the replacement adapter because its syscalls must cross a fresh
+    /// push-frame boundary, so restart bootstrap uses the same core-owned
+    /// continuation model as create/resume.
+    pending_restarts: BTreeMap<String, PendingRestart>,
+    /// In-flight orderly closes. Embedding adapters drive teardown waits so the
+    /// shared core is never locked while an agent exits.
+    pending_closes: BTreeMap<String, PendingClose>,
+    pending_events: Vec<PendingAcpEvent>,
+    default_pending_event_limit: usize,
+    default_pending_event_bytes_limit: usize,
+    pending_event_limits: BTreeMap<String, (usize, usize)>,
+    pending_event_limit_warned: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingAcpEvent {
+    owner_connection_id: String,
+    event: AcpEvent,
+    encoded_bytes: usize,
+}
+
+impl Default for AcpCore {
+    fn default() -> Self {
+        Self {
+            sessions: BTreeMap::new(),
+            next_process_id: 0,
+            pending_creates: BTreeMap::new(),
+            pending_prompts: BTreeMap::new(),
+            pending_resumes: BTreeMap::new(),
+            pending_restarts: BTreeMap::new(),
+            pending_closes: BTreeMap::new(),
+            pending_events: Vec::new(),
+            default_pending_event_limit: DEFAULT_ACP_PENDING_EVENT_LIMIT,
+            default_pending_event_bytes_limit: DEFAULT_ACP_PENDING_EVENT_BYTES_LIMIT,
+            pending_event_limits: BTreeMap::new(),
+            pending_event_limit_warned: BTreeSet::new(),
+        }
+    }
 }
 
 /// State of one in-flight resumable `session/prompt` (or other in-session RPC).
 #[derive(Debug)]
 struct PendingPrompt {
+    owner_connection_id: String,
     session_id: String,
+    method: String,
+    params: Map<String, Value>,
     rpc_id: i64,
     stdout_buffer: String,
     prompt_text: Option<AcpPromptTextAccumulator>,
+    notifications: Vec<AcpSessionNotification>,
+    notification_bytes: usize,
+    /// One-shot resume preamble consumed when this prompt was written. Restored
+    /// if the interaction aborts before the adapter response commits it.
+    pending_preamble: Option<String>,
+    /// The host cancelled this prompt and is draining through its exact RPC
+    /// response boundary. Notifications and prompt text from the cancelled turn
+    /// are discarded so they cannot contaminate a later prompt on this session.
+    cancelled: bool,
 }
 
 /// State of one in-flight resumable `create_session` handshake.
@@ -142,6 +231,75 @@ struct PendingCreate {
     step: CreateStep,
     stdout_buffer: String,
     init_result: Option<Map<String, Value>>,
+    notifications: Vec<Value>,
+    notification_bytes: usize,
+    restart: AcpAdapterRestartState,
+}
+
+/// State of one in-flight resumable `resume_session` handshake.
+#[derive(Debug)]
+struct PendingResume {
+    owner_connection_id: String,
+    requested_session_id: String,
+    agent_type: String,
+    pid: Option<u32>,
+    cwd: String,
+    transcript_path: Option<String>,
+    step: PendingResumeStep,
+    stdout_buffer: String,
+    init_result: Option<Map<String, Value>>,
+    agent_capabilities: Option<Value>,
+    notifications: Vec<Value>,
+    notification_bytes: usize,
+    restart: AcpAdapterRestartState,
+}
+
+#[derive(Debug, Clone)]
+struct PendingRestart {
+    owner_connection_id: String,
+    session_id: String,
+    agent_type: String,
+    dead_process_id: String,
+    exit_code: Option<i32>,
+    pid: Option<u32>,
+    step: PendingRestartStep,
+    stdout_buffer: String,
+    init_result: Option<Map<String, Value>>,
+    agent_capabilities: Option<Value>,
+    restart: AcpAdapterRestartState,
+}
+
+#[derive(Debug, Clone)]
+struct PendingClose {
+    owner_connection_id: String,
+    session_id: String,
+    step: PendingCloseStep,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingCloseStep {
+    AwaitingSigterm,
+    AwaitingSigkill,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingRestartStep {
+    AwaitingInitialize,
+    AwaitingNative(&'static str),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingResumeStep {
+    AwaitingInitialize,
+    AwaitingNative(&'static str),
+    AwaitingFallbackSessionNew,
+}
+
+struct CompletedResume {
+    session_id: String,
+    mode: String,
+    pending_preamble: Option<String>,
+    session_result: Map<String, Value>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -167,6 +325,7 @@ struct SessionBootstrap {
     agent_capabilities: Option<String>,
     agent_info: Option<String>,
     stdout_buffer: String,
+    notifications: Vec<Value>,
 }
 
 impl AcpCore {
@@ -178,6 +337,435 @@ impl AcpCore {
         self.sessions.len()
     }
 
+    /// Whether one exact owner currently owns a live session. Embedding wrappers
+    /// use this only to decide whether an idempotent close needs host cleanup.
+    pub fn session_is_owned_by(&self, owner_id: &str, session_id: &str) -> bool {
+        self.session(owner_id, session_id).is_some()
+    }
+
+    /// Construct with an explicit transient event bound. Adapters drain events
+    /// after every dispatch; this protects embedders that fail to do so.
+    pub fn with_pending_event_limit(limit: usize) -> Self {
+        Self {
+            default_pending_event_limit: limit.max(1),
+            ..Self::default()
+        }
+    }
+
+    pub fn with_pending_event_limits(count: usize, bytes: usize) -> Self {
+        Self {
+            default_pending_event_limit: count.max(1),
+            default_pending_event_bytes_limit: bytes.max(1),
+            ..Self::default()
+        }
+    }
+
+    /// Update the transient event bound used by the embedding adapter. Zero is
+    /// never a valid bound, and queued events cannot be made unrepresentable by
+    /// lowering the limit beneath the current queue depth.
+    pub fn set_pending_event_limit(
+        &mut self,
+        owner_connection_id: &str,
+        limit: usize,
+    ) -> Result<(), AcpCoreError> {
+        let bytes = self.event_limits(owner_connection_id).1;
+        self.set_pending_event_limits(owner_connection_id, limit, bytes)
+    }
+
+    pub fn set_pending_event_limits(
+        &mut self,
+        owner_connection_id: &str,
+        count: usize,
+        bytes: usize,
+    ) -> Result<(), AcpCoreError> {
+        if count == 0 || bytes == 0 {
+            return Err(AcpCoreError::InvalidState(String::from(
+                "ACP pending event count and byte limits must be greater than zero",
+            )));
+        }
+        let (observed_count, observed_bytes) = self.event_usage(owner_connection_id);
+        if count < observed_count || bytes < observed_bytes {
+            return Err(AcpCoreError::InvalidState(format!(
+                "ACP pending event limits ({count} events, {bytes} bytes) are below this owner's current usage ({observed_count} events, {observed_bytes} bytes); drain AcpCore::take_events before lowering the limits",
+            )));
+        }
+        self.pending_event_limits
+            .insert(owner_connection_id.to_string(), (count, bytes));
+        self.refresh_owner_event_warning(owner_connection_id);
+        Ok(())
+    }
+
+    /// Drain adapter notifications and shared synthetic updates produced for one
+    /// exact owner. Native/browser wrappers add their transport ownership; the
+    /// behavior kernel must therefore never expose another owner's queued event.
+    pub fn take_events(&mut self, owner_connection_id: &str) -> Vec<AcpEvent> {
+        self.pending_event_limit_warned.remove(owner_connection_id);
+        let mut events = Vec::new();
+        self.pending_events.retain(|pending| {
+            if pending.owner_connection_id == owner_connection_id {
+                events.push(pending.event.clone());
+                false
+            } else {
+                true
+            }
+        });
+        self.refresh_owner_event_warning(owner_connection_id);
+        events
+    }
+
+    /// Snapshot events awaiting adapter delivery without removing them. Wrappers
+    /// should acknowledge each successfully delivered prefix with
+    /// [`Self::acknowledge_delivered_events`]. This keeps a committed state
+    /// transition observable when encoding or the host event sink fails.
+    pub fn events_for_delivery(&self, owner_connection_id: &str) -> Vec<AcpEvent> {
+        self.pending_events
+            .iter()
+            .filter(|pending| pending.owner_connection_id == owner_connection_id)
+            .map(|pending| pending.event.clone())
+            .collect()
+    }
+
+    /// Remove an exact prefix that the embedding wrapper has delivered. Events
+    /// after that prefix remain queued in their original order for a later
+    /// dispatch to retry.
+    pub fn acknowledge_delivered_events(
+        &mut self,
+        owner_connection_id: &str,
+        count: usize,
+    ) -> Result<(), AcpCoreError> {
+        let available = self
+            .pending_events
+            .iter()
+            .filter(|pending| pending.owner_connection_id == owner_connection_id)
+            .count();
+        if count > available {
+            return Err(AcpCoreError::InvalidState(format!(
+                "cannot acknowledge {count} ACP events for owner when only {available} await delivery",
+            )));
+        }
+        let mut removed = 0;
+        self.pending_events.retain(|pending| {
+            if removed < count && pending.owner_connection_id == owner_connection_id {
+                removed += 1;
+                false
+            } else {
+                true
+            }
+        });
+        self.pending_event_limit_warned.remove(owner_connection_id);
+        self.refresh_owner_event_warning(owner_connection_id);
+        Ok(())
+    }
+
+    pub fn pending_event_count(&self) -> usize {
+        self.pending_events.len()
+    }
+
+    fn event_limits(&self, owner_connection_id: &str) -> (usize, usize) {
+        self.pending_event_limits
+            .get(owner_connection_id)
+            .copied()
+            .unwrap_or((
+                self.default_pending_event_limit,
+                self.default_pending_event_bytes_limit,
+            ))
+    }
+
+    fn queued_event_usage(&self, owner_connection_id: &str) -> (usize, usize) {
+        self.pending_events
+            .iter()
+            .filter(|pending| pending.owner_connection_id == owner_connection_id)
+            .fold((0usize, 0usize), |(count, bytes), pending| {
+                (
+                    count.saturating_add(1),
+                    bytes.saturating_add(pending.encoded_bytes),
+                )
+            })
+    }
+
+    fn pending_interaction_event_usage(&self, owner_connection_id: &str) -> (usize, usize) {
+        let creates = self
+            .pending_creates
+            .values()
+            .filter(|pending| pending.owner_connection_id == owner_connection_id)
+            .map(|pending| (pending.notifications.len(), pending.notification_bytes));
+        let resumes = self
+            .pending_resumes
+            .values()
+            .filter(|pending| pending.owner_connection_id == owner_connection_id)
+            .map(|pending| (pending.notifications.len(), pending.notification_bytes));
+        let prompts = self
+            .pending_prompts
+            .values()
+            .filter(|pending| pending.owner_connection_id == owner_connection_id)
+            .map(|pending| (pending.notifications.len(), pending.notification_bytes));
+        creates.chain(resumes).chain(prompts).fold(
+            (0usize, 0usize),
+            |(count, bytes), (next_count, next_bytes)| {
+                (
+                    count.saturating_add(next_count),
+                    bytes.saturating_add(next_bytes),
+                )
+            },
+        )
+    }
+
+    fn event_usage(&self, owner_connection_id: &str) -> (usize, usize) {
+        let queued = self.queued_event_usage(owner_connection_id);
+        let pending = self.pending_interaction_event_usage(owner_connection_id);
+        (
+            queued.0.saturating_add(pending.0),
+            queued.1.saturating_add(pending.1),
+        )
+    }
+
+    fn available_event_capacity(&self, owner_connection_id: &str) -> usize {
+        let (count_limit, _) = self.event_limits(owner_connection_id);
+        count_limit.saturating_sub(self.event_usage(owner_connection_id).0)
+    }
+
+    fn available_event_bytes_capacity(&self, owner_connection_id: &str) -> usize {
+        let (_, bytes_limit) = self.event_limits(owner_connection_id);
+        bytes_limit.saturating_sub(self.event_usage(owner_connection_id).1)
+    }
+
+    fn ensure_event_capacity(
+        &mut self,
+        owner_connection_id: &str,
+        additional_count: usize,
+        additional_bytes: usize,
+    ) -> Result<(), AcpCoreError> {
+        let (count_limit, bytes_limit) = self.event_limits(owner_connection_id);
+        let (count, bytes) = self.event_usage(owner_connection_id);
+        let projected_count = count.saturating_add(additional_count);
+        let projected_bytes = bytes.saturating_add(additional_bytes);
+        if projected_count > count_limit || projected_bytes > bytes_limit {
+            return Err(AcpCoreError::LimitExceeded(format!(
+                "ACP pending event limit exceeded for one owner: at most {count_limit} events / {bytes_limit} bytes may await adapter delivery; drain AcpCore::take_events after every dispatch or raise AcpCore::with_pending_event_limits",
+            )));
+        }
+        self.warn_if_event_usage_near_capacity(
+            owner_connection_id,
+            projected_count,
+            projected_bytes,
+        );
+        Ok(())
+    }
+
+    fn ensure_pending_notification_capacity(
+        &mut self,
+        owner_connection_id: &str,
+        current_count: usize,
+        current_bytes: usize,
+        additional_bytes: usize,
+        phase: &str,
+    ) -> Result<(), AcpCoreError> {
+        let (count_limit, bytes_limit) = self.event_limits(owner_connection_id);
+        let (other_count, other_bytes) = self.event_usage(owner_connection_id);
+        let projected_count = other_count.saturating_add(current_count).saturating_add(1);
+        let projected_bytes = other_bytes
+            .saturating_add(current_bytes)
+            .saturating_add(additional_bytes);
+        if projected_count > count_limit || projected_bytes > bytes_limit {
+            return Err(AcpCoreError::LimitExceeded(format!(
+                "ACP pending event limit exceeded {phase}: at most {count_limit} events / {bytes_limit} bytes may await adapter delivery for one owner; drain AcpCore::take_events after every dispatch or raise AcpCore::with_pending_event_limits",
+            )));
+        }
+        self.warn_if_event_usage_near_capacity(
+            owner_connection_id,
+            projected_count,
+            projected_bytes,
+        );
+        Ok(())
+    }
+
+    fn warn_if_event_usage_near_capacity(
+        &mut self,
+        owner_connection_id: &str,
+        observed_count: usize,
+        observed_bytes: usize,
+    ) {
+        let (count_limit, bytes_limit) = self.event_limits(owner_connection_id);
+        if !self
+            .pending_event_limit_warned
+            .contains(owner_connection_id)
+            && (observed_count.saturating_mul(100) >= count_limit.saturating_mul(80)
+                || observed_bytes.saturating_mul(100) >= bytes_limit.saturating_mul(80))
+        {
+            self.pending_event_limit_warned
+                .insert(owner_connection_id.to_string());
+            tracing::warn!(
+                observed_count,
+                count_capacity = count_limit,
+                observed_bytes,
+                byte_capacity = bytes_limit,
+                "ACP pending event buffer is near capacity"
+            );
+        }
+    }
+
+    fn refresh_owner_event_warning(&mut self, owner_connection_id: &str) {
+        self.pending_event_limit_warned.remove(owner_connection_id);
+        let (count, bytes) = self.event_usage(owner_connection_id);
+        self.warn_if_event_usage_near_capacity(owner_connection_id, count, bytes);
+    }
+
+    fn encoded_event_len(event: &AcpEvent) -> Result<usize, AcpCoreError> {
+        serde_bare::to_vec(event)
+            .map(|bytes| bytes.len())
+            .map_err(|error| {
+                AcpCoreError::InvalidState(format!(
+                    "failed to size encoded ACP event before queueing it: {error}"
+                ))
+            })
+    }
+
+    fn json_value_len(value: &Value) -> Result<usize, AcpCoreError> {
+        serde_json::to_vec(value)
+            .map(|bytes| bytes.len())
+            .map_err(|error| {
+                AcpCoreError::InvalidState(format!(
+                    "failed to size ACP notification before retaining it: {error}"
+                ))
+            })
+    }
+
+    fn encode_session_notification(
+        notification: &AcpSessionNotification,
+    ) -> Result<AcpEvent, AcpCoreError> {
+        let session_id = notification.session_id.clone();
+        let notification = serde_json::to_string(&notification.notification).map_err(|error| {
+            AcpCoreError::InvalidState(format!(
+                "failed to serialize ACP session notification: {error}"
+            ))
+        })?;
+        Ok(AcpEvent::AcpSessionEvent(AcpSessionEvent {
+            session_id,
+            notification,
+        }))
+    }
+
+    fn push_session_notification_batch(
+        &mut self,
+        owner_connection_id: &str,
+        notifications: &[AcpSessionNotification],
+    ) -> Result<(), AcpCoreError> {
+        let events = notifications
+            .iter()
+            .map(Self::encode_session_notification)
+            .collect::<Result<Vec<_>, _>>()?;
+        let events = events
+            .into_iter()
+            .map(|event| {
+                Self::encoded_event_len(&event).map(|encoded_bytes| (event, encoded_bytes))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let bytes = events
+            .iter()
+            .fold(0usize, |total, (_, bytes)| total.saturating_add(*bytes));
+        self.ensure_event_capacity(owner_connection_id, events.len(), bytes)?;
+        self.pending_events
+            .extend(
+                events
+                    .into_iter()
+                    .map(|(event, encoded_bytes)| PendingAcpEvent {
+                        owner_connection_id: owner_connection_id.to_string(),
+                        event,
+                        encoded_bytes,
+                    }),
+            );
+        Ok(())
+    }
+
+    pub fn deliver_agent_stderr(
+        &mut self,
+        owner_connection_id: &str,
+        request: &AcpDeliverAgentStderrRequest,
+    ) -> Result<AcpResponse, AcpCoreError> {
+        let identity = self
+            .sessions
+            .values()
+            .find(|session| {
+                session.owner_connection_id == owner_connection_id
+                    && session.process_id == request.process_id
+            })
+            .map(|session| (session.session_id.clone(), session.agent_type.clone()))
+            .or_else(|| {
+                self.pending_creates
+                    .get(&request.process_id)
+                    .and_then(|pending| {
+                        (pending.owner_connection_id == owner_connection_id)
+                            .then(|| (String::new(), pending.agent_type.clone()))
+                    })
+            })
+            .or_else(|| {
+                self.pending_resumes
+                    .get(&request.process_id)
+                    .and_then(|pending| {
+                        (pending.owner_connection_id == owner_connection_id).then(|| {
+                            (
+                                pending.requested_session_id.clone(),
+                                pending.agent_type.clone(),
+                            )
+                        })
+                    })
+            })
+            .or_else(|| {
+                self.pending_restarts
+                    .get(&request.process_id)
+                    .and_then(|pending| {
+                        (pending.owner_connection_id == owner_connection_id)
+                            .then(|| (pending.session_id.clone(), pending.agent_type.clone()))
+                    })
+            })
+            .or_else(|| {
+                self.pending_prompts
+                    .get(&request.process_id)
+                    .and_then(|pending| {
+                        if pending.owner_connection_id != owner_connection_id {
+                            return None;
+                        }
+                        let session = self.session(owner_connection_id, &pending.session_id)?;
+                        Some((pending.session_id.clone(), session.agent_type.clone()))
+                    })
+            })
+            .or_else(|| {
+                self.pending_closes
+                    .get(&request.process_id)
+                    .and_then(|pending| {
+                        if pending.owner_connection_id != owner_connection_id {
+                            return None;
+                        }
+                        let session = self.session(owner_connection_id, &pending.session_id)?;
+                        Some((pending.session_id.clone(), session.agent_type.clone()))
+                    })
+            })
+            .ok_or_else(|| {
+                AcpCoreError::InvalidState(format!(
+                    "no owned ACP adapter route for {}",
+                    request.process_id
+                ))
+            })?;
+        let event = AcpEvent::AcpAgentStderrEvent(AcpAgentStderrEvent {
+            session_id: identity.0,
+            agent_type: identity.1,
+            process_id: request.process_id.clone(),
+            chunk: request.chunk.clone(),
+        });
+        let encoded_bytes = Self::encoded_event_len(&event)?;
+        self.ensure_event_capacity(owner_connection_id, 1, encoded_bytes)?;
+        self.pending_events.push(PendingAcpEvent {
+            owner_connection_id: owner_connection_id.to_string(),
+            event,
+            encoded_bytes,
+        });
+        Ok(AcpResponse::AcpAgentStderrDeliveredResponse(
+            AcpAgentStderrDeliveredResponse {
+                process_id: request.process_id.clone(),
+            },
+        ))
+    }
+
     fn allocate_process_id(&mut self, prefix: &str) -> String {
         let id = self.next_process_id;
         self.next_process_id += 1;
@@ -187,7 +775,23 @@ impl AcpCore {
     /// Insert/replace a session record (used by the create/resume handlers once a
     /// process is live).
     pub fn insert_session(&mut self, record: AcpSessionRecord) {
-        self.sessions.insert(record.session_id.clone(), record);
+        let key = session_storage_key(&record.owner_connection_id, &record.session_id);
+        self.sessions.insert(key, record);
+    }
+
+    fn session(&self, owner_id: &str, session_id: &str) -> Option<&AcpSessionRecord> {
+        self.sessions
+            .get(&session_storage_key(owner_id, session_id))
+    }
+
+    fn session_mut(&mut self, owner_id: &str, session_id: &str) -> Option<&mut AcpSessionRecord> {
+        self.sessions
+            .get_mut(&session_storage_key(owner_id, session_id))
+    }
+
+    fn remove_session(&mut self, owner_id: &str, session_id: &str) -> Option<AcpSessionRecord> {
+        self.sessions
+            .remove(&session_storage_key(owner_id, session_id))
     }
 
     /// `session/state`: pure state lookup with per-connection ownership. A non-owner
@@ -200,10 +804,9 @@ impl AcpCore {
     ) -> Result<AcpResponse, AcpCoreError> {
         let unknown =
             || AcpCoreError::InvalidState(format!("unknown ACP session {}", request.session_id));
-        let session = self.sessions.get(&request.session_id).ok_or_else(unknown)?;
-        if session.owner_connection_id != caller_connection_id {
-            return Err(unknown());
-        }
+        let session = self
+            .session(caller_connection_id, &request.session_id)
+            .ok_or_else(unknown)?;
         Ok(AcpResponse::AcpSessionStateResponse(
             session.state_response(),
         ))
@@ -224,53 +827,67 @@ impl AcpCore {
         })
     }
 
-    /// `session/close`: owner-only teardown. Removes the record, then SIGTERM →
-    /// (timeout) → SIGKILL the agent process through the host seam. Mirrors the
-    /// native `close_session` flow.
+    /// `session/close`: owner-only teardown. The authoritative session remains
+    /// present until all fallible cleanup succeeds, so a failed close can be
+    /// retried instead of being manufactured into success by an early removal.
     pub fn close_session<H: AcpHost>(
         &mut self,
         host: &mut H,
         caller_connection_id: &str,
         request: &AcpCloseSessionRequest,
     ) -> Result<AcpResponse, AcpCoreError> {
-        let owned_by_caller = self
-            .sessions
-            .get(&request.session_id)
-            .is_some_and(|session| session.owner_connection_id == caller_connection_id);
-        let session = if owned_by_caller {
-            self.sessions.remove(&request.session_id)
-        } else {
-            None
-        };
-        let Some(session) = session else {
+        let Some(session) = self
+            .session(caller_connection_id, &request.session_id)
+            .cloned()
+        else {
             return Ok(AcpResponse::AcpSessionClosedResponse(
                 AcpSessionClosedResponse {
                     session_id: request.session_id.clone(),
                 },
             ));
         };
+        // Once an authorized close starts, no in-flight request may continue to
+        // mutate this session even if process cleanup has to be retried.
+        self.pending_prompts.remove(&session.process_id);
 
-        let _ = host.close_stdin(&session.process_id);
+        if !session.closed {
+            if let Err(error) = host.close_stdin(&session.process_id) {
+                if !is_process_already_gone_error(&error) {
+                    return Err(error);
+                }
+            }
+        }
         // Mirror of the native `close_session` short-circuit: an adapter that
         // already exited (crash / OOM / idle eviction, recorded on the session
         // as `closed`) has no future exit to wait for, and signalling its
         // reaped PID fails with a process-gone error. Skip the SIGTERM → wait
         // → SIGKILL → wait dance (~2× `SESSION_CLOSE_TIMEOUT_MS` of dead
         // waiting) in that case.
-        let adapter_already_gone = session.closed || {
-            let sigterm = host.kill_agent(&session.process_id, "SIGTERM");
-            matches!(&sigterm, Err(error) if is_process_already_gone_error(error))
+        let adapter_already_gone = if session.closed {
+            true
+        } else {
+            match host.kill_agent(&session.process_id, "SIGTERM") {
+                Ok(()) => false,
+                Err(error) if is_process_already_gone_error(&error) => true,
+                Err(error) => return Err(error),
+            }
         };
         if !adapter_already_gone
             && host
                 .wait_for_exit(&session.process_id, SESSION_CLOSE_TIMEOUT_MS)?
                 .is_none()
         {
-            let sigkill = host.kill_agent(&session.process_id, "SIGKILL");
-            if !matches!(&sigkill, Err(error) if is_process_already_gone_error(error)) {
-                let _ = host.wait_for_exit(&session.process_id, SESSION_CLOSE_TIMEOUT_MS)?;
+            match host.kill_agent(&session.process_id, "SIGKILL") {
+                Ok(()) => {
+                    host.wait_for_exit(&session.process_id, SESSION_CLOSE_TIMEOUT_MS)?;
+                }
+                Err(error) if is_process_already_gone_error(&error) => {}
+                Err(error) => return Err(error),
             }
         }
+        host.release_agent_route(&session.process_id)?;
+
+        self.remove_session(caller_connection_id, &request.session_id);
 
         Ok(AcpResponse::AcpSessionClosedResponse(
             AcpSessionClosedResponse {
@@ -279,11 +896,76 @@ impl AcpCore {
         ))
     }
 
+    /// Begin an orderly close without waiting inside the core. The embedding
+    /// adapter reports exit/timeout through the ordinary pending continuation.
+    pub fn begin_close_session<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        caller_connection_id: &str,
+        request: &AcpCloseSessionRequest,
+    ) -> Result<AcpResponse, AcpCoreError> {
+        let Some(session) = self
+            .session(caller_connection_id, &request.session_id)
+            .cloned()
+        else {
+            return Ok(AcpResponse::AcpSessionClosedResponse(
+                AcpSessionClosedResponse {
+                    session_id: request.session_id.clone(),
+                },
+            ));
+        };
+        if self.pending_closes.contains_key(&session.process_id) {
+            return self.pending_response(session.process_id);
+        }
+        self.pending_prompts.remove(&session.process_id);
+        if !session.closed {
+            if let Err(error) = host.close_stdin(&session.process_id) {
+                if !is_process_already_gone_error(&error) {
+                    return Err(error);
+                }
+            }
+        }
+        let adapter_already_gone = if session.closed {
+            true
+        } else {
+            match host.kill_agent(&session.process_id, "SIGTERM") {
+                Ok(()) => false,
+                Err(error) if is_process_already_gone_error(&error) => true,
+                Err(error) => return Err(error),
+            }
+        };
+        if adapter_already_gone {
+            return self.finish_resumable_close(host, &session.process_id, &session);
+        }
+        self.pending_closes.insert(
+            session.process_id.clone(),
+            PendingClose {
+                owner_connection_id: caller_connection_id.to_string(),
+                session_id: request.session_id.clone(),
+                step: PendingCloseStep::AwaitingSigterm,
+            },
+        );
+        self.pending_response(session.process_id)
+    }
+
+    fn finish_resumable_close<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        process_id: &str,
+        session: &AcpSessionRecord,
+    ) -> Result<AcpResponse, AcpCoreError> {
+        host.release_agent_route(process_id)?;
+        self.pending_closes.remove(process_id);
+        self.remove_session(&session.owner_connection_id, &session.session_id);
+        Ok(AcpResponse::AcpSessionClosedResponse(
+            AcpSessionClosedResponse {
+                session_id: session.session_id.clone(),
+            },
+        ))
+    }
+
     /// `session/create`: launch the agent adapter, run the ACP bootstrap handshake
     /// (`initialize` then `session/new`) over the sync seam, and record the session.
-    /// NOTE: opencode-specific prompt injection / config-option derivation from the
-    /// native `create_session` are deferred follow-ups; the minimal core launches the
-    /// adapter as configured and records what the handshake returns.
     pub fn create_session<H: AcpHost>(
         &mut self,
         host: &mut H,
@@ -293,34 +975,46 @@ impl AcpCore {
         let request = ResolvedAcpCreateSessionRequest::from(request.clone());
         let resolved = resolve_agent(host, &request.agent_type)?;
         let process_id = self.allocate_process_id("acp-agent");
-        let mut env: BTreeMap<String, String> = request.env.clone().into_iter().collect();
-        env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
-        // Manifest env applies as DEFAULTS; caller/base env wins on conflicts.
-        for (key, value) in &resolved.env {
-            env.entry(key.clone()).or_insert_with(|| value.clone());
-        }
-        // Manifest launch args first, then any caller-supplied args.
-        let mut args = resolved.launch_args.clone();
-        args.extend(request.args.iter().cloned());
+        let (args, env) = prepare_agent_launch(
+            host,
+            &request.agent_type,
+            &resolved,
+            &request.args,
+            &request.env,
+            request.skip_os_instructions,
+            request.additional_instructions.as_deref(),
+        )?;
+        let restart = AcpAdapterRestartState {
+            runtime: request.runtime.clone(),
+            entrypoint: resolved.adapter_entrypoint.clone(),
+            args: args.clone(),
+            env: env.clone(),
+            cwd: request.cwd.clone(),
+            protocol_version: request.protocol_version,
+            client_capabilities: request.client_capabilities.clone(),
+            count: 0,
+        };
 
         let spawned = host.spawn_agent(SpawnAgentRequest {
             process_id: process_id.clone(),
             runtime: request.runtime.clone(),
-            entrypoint: Some(resolved.entrypoint.clone()),
+            entrypoint: Some(resolved.adapter_entrypoint.clone()),
             command: None,
             args,
             env,
             cwd: Some(request.cwd.clone()),
         })?;
 
-        let bootstrap = match self.bootstrap_session(host, &request, &process_id) {
-            Ok(bootstrap) => bootstrap,
-            Err(error) => {
-                let _ = host.kill_agent(&process_id, "SIGKILL");
-                return Err(error);
-            }
-        };
+        let bootstrap =
+            match self.bootstrap_session(host, caller_connection_id, &request, &process_id) {
+                Ok(bootstrap) => bootstrap,
+                Err(error) => {
+                    abort_agent_for_cleanup(host, &process_id, "blocking create bootstrap failure");
+                    return Err(error);
+                }
+            };
 
+        let notifications = bootstrap.notifications.clone();
         let session = AcpSessionRecord {
             session_id: bootstrap.session_id.clone(),
             owner_connection_id: caller_connection_id.to_string(),
@@ -336,19 +1030,40 @@ impl AcpCore {
             closed: false,
             exit_code: None,
             pending_preamble: None,
+            restart: Some(restart),
         };
 
-        if self.sessions.contains_key(&session.session_id) {
-            let _ = host.kill_agent(&process_id, "SIGKILL");
+        if self
+            .session(caller_connection_id, &session.session_id)
+            .is_some()
+        {
+            abort_agent_for_cleanup(host, &process_id, "blocking create session collision");
             return Err(AcpCoreError::InvalidState(format!(
                 "session id collision: {}",
                 session.session_id
             )));
         }
-
-        host.bind_session(&session.session_id, &process_id)?;
+        if let Err(error) = host.bind_session(&session.session_id, &process_id) {
+            abort_agent_for_cleanup(host, &process_id, "blocking create bind failure");
+            return Err(error);
+        }
         let response = AcpResponse::AcpSessionCreatedResponse(session.created_response());
-        self.sessions.insert(session.session_id.clone(), session);
+        let session_id = session.session_id.clone();
+        self.insert_session(session);
+        let notifications = notifications
+            .into_iter()
+            .map(|notification| AcpSessionNotification {
+                session_id: session_id.clone(),
+                notification,
+            })
+            .collect::<Vec<_>>();
+        if let Err(error) =
+            self.push_session_notification_batch(caller_connection_id, &notifications)
+        {
+            self.remove_session(caller_connection_id, &session_id);
+            abort_agent_for_cleanup(host, &process_id, "blocking create event commit failure");
+            return Err(error);
+        }
         Ok(response)
     }
 
@@ -366,30 +1081,40 @@ impl AcpCore {
     ) -> Result<String, AcpCoreError> {
         let request = ResolvedAcpCreateSessionRequest::from(request.clone());
         let resolved = resolve_agent(host, &request.agent_type)?;
+        let client_capabilities =
+            parse_json_text(&request.client_capabilities, "clientCapabilities")?;
+        let mcp_servers = parse_json_text(&request.mcp_servers, "mcpServers")?;
         let process_id = self.allocate_process_id("acp-agent");
-        let mut env: BTreeMap<String, String> = request.env.clone().into_iter().collect();
-        env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
-        // Manifest env applies as DEFAULTS; caller/base env wins on conflicts.
-        for (key, value) in &resolved.env {
-            env.entry(key.clone()).or_insert_with(|| value.clone());
-        }
-        // Manifest launch args first, then any caller-supplied args.
-        let mut args = resolved.launch_args.clone();
-        args.extend(request.args.iter().cloned());
+        let (args, env) = prepare_agent_launch(
+            host,
+            &request.agent_type,
+            &resolved,
+            &request.args,
+            &request.env,
+            request.skip_os_instructions,
+            request.additional_instructions.as_deref(),
+        )?;
+        let restart = AcpAdapterRestartState {
+            runtime: request.runtime.clone(),
+            entrypoint: resolved.adapter_entrypoint.clone(),
+            args: args.clone(),
+            env: env.clone(),
+            cwd: request.cwd.clone(),
+            protocol_version: request.protocol_version,
+            client_capabilities: request.client_capabilities.clone(),
+            count: 0,
+        };
 
         let spawned = host.spawn_agent(SpawnAgentRequest {
             process_id: process_id.clone(),
             runtime: request.runtime.clone(),
-            entrypoint: Some(resolved.entrypoint.clone()),
+            entrypoint: Some(resolved.adapter_entrypoint.clone()),
             command: None,
             args,
             env,
             cwd: Some(request.cwd.clone()),
         })?;
 
-        let client_capabilities =
-            parse_json_text(&request.client_capabilities, "clientCapabilities")?;
-        let mcp_servers = parse_json_text(&request.mcp_servers, "mcpServers")?;
         let initialize = json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -400,7 +1125,7 @@ impl AcpCore {
             },
         });
         if let Err(error) = write_json_line(host, &process_id, &initialize) {
-            let _ = host.kill_agent(&process_id, "SIGKILL");
+            abort_agent_for_cleanup(host, &process_id, "resumable create initial write failure");
             return Err(error);
         }
 
@@ -416,6 +1141,86 @@ impl AcpCore {
                 step: CreateStep::AwaitingInitialize,
                 stdout_buffer: String::new(),
                 init_result: None,
+                notifications: Vec::new(),
+                notification_bytes: 0,
+                restart,
+            },
+        );
+        Ok(process_id)
+    }
+
+    /// RESUMABLE `resume_session` — launch the adapter and write `initialize`,
+    /// then return immediately. The remaining native-load/fallback handshake is
+    /// advanced exclusively by [`feed_agent_output`].
+    pub fn begin_resume_session<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        caller_connection_id: &str,
+        request: &AcpResumeSessionRequest,
+    ) -> Result<String, AcpCoreError> {
+        let request = ResolvedAcpResumeSessionRequest::from(request.clone());
+        let resolved = resolve_agent(host, &request.agent_type)?;
+        let client_capabilities =
+            parse_json_text(DEFAULT_ACP_CLIENT_CAPABILITIES, "clientCapabilities")?;
+        let process_id = self.allocate_process_id("acp-agent");
+        let (args, env) = prepare_agent_launch(
+            host,
+            &request.agent_type,
+            &resolved,
+            &[],
+            &request.env,
+            true,
+            None,
+        )?;
+        let restart = AcpAdapterRestartState {
+            runtime: AcpRuntimeKind::JavaScript,
+            entrypoint: resolved.adapter_entrypoint.clone(),
+            args: args.clone(),
+            env: env.clone(),
+            cwd: request.cwd.clone(),
+            protocol_version: DEFAULT_ACP_PROTOCOL_VERSION,
+            client_capabilities: DEFAULT_ACP_CLIENT_CAPABILITIES.to_string(),
+            count: 0,
+        };
+        let spawned = host.spawn_agent(SpawnAgentRequest {
+            process_id: process_id.clone(),
+            runtime: AcpRuntimeKind::JavaScript,
+            entrypoint: Some(resolved.adapter_entrypoint),
+            command: None,
+            args,
+            env,
+            cwd: Some(request.cwd.clone()),
+        })?;
+        let initialize = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": DEFAULT_ACP_PROTOCOL_VERSION,
+                "clientCapabilities": client_capabilities,
+            },
+        });
+        if let Err(error) = write_json_line(host, &process_id, &initialize) {
+            abort_agent_for_cleanup(host, &process_id, "resumable resume initial write failure");
+            return Err(error);
+        }
+
+        self.pending_resumes.insert(
+            process_id.clone(),
+            PendingResume {
+                owner_connection_id: caller_connection_id.to_string(),
+                requested_session_id: request.session_id,
+                agent_type: request.agent_type,
+                pid: spawned.pid,
+                cwd: request.cwd,
+                transcript_path: request.transcript_path,
+                step: PendingResumeStep::AwaitingInitialize,
+                stdout_buffer: String::new(),
+                init_result: None,
+                agent_capabilities: None,
+                notifications: Vec::new(),
+                notification_bytes: 0,
+                restart,
             },
         );
         Ok(process_id)
@@ -430,13 +1235,49 @@ impl AcpCore {
     pub fn feed_agent_output<H: AcpHost>(
         &mut self,
         host: &mut H,
+        caller_connection_id: &str,
         process_id: &str,
         chunk: &[u8],
     ) -> Result<ResumeStep, AcpCoreError> {
+        let owner = self
+            .pending_creates
+            .get(process_id)
+            .map(|pending| pending.owner_connection_id.as_str())
+            .or_else(|| {
+                self.pending_resumes
+                    .get(process_id)
+                    .map(|pending| pending.owner_connection_id.as_str())
+            })
+            .or_else(|| {
+                self.pending_prompts
+                    .get(process_id)
+                    .map(|pending| pending.owner_connection_id.as_str())
+            })
+            .or_else(|| {
+                self.pending_restarts
+                    .get(process_id)
+                    .map(|pending| pending.owner_connection_id.as_str())
+            })
+            .or_else(|| {
+                self.pending_closes
+                    .get(process_id)
+                    .map(|pending| pending.owner_connection_id.as_str())
+            });
+        if owner != Some(caller_connection_id) {
+            return Err(AcpCoreError::InvalidState(format!(
+                "no pending ACP interaction for {process_id}"
+            )));
+        }
         if self.pending_creates.contains_key(process_id) {
             self.feed_create(host, process_id, chunk)
+        } else if self.pending_resumes.contains_key(process_id) {
+            self.feed_resume(host, process_id, chunk)
         } else if self.pending_prompts.contains_key(process_id) {
-            self.feed_prompt(process_id, chunk)
+            self.feed_prompt(host, process_id, chunk)
+        } else if self.pending_restarts.contains_key(process_id) {
+            self.feed_restart(host, process_id, chunk)
+        } else if self.pending_closes.contains_key(process_id) {
+            Ok(ResumeStep::Pending)
         } else {
             Err(AcpCoreError::InvalidState(format!(
                 "no pending ACP interaction for {process_id}"
@@ -450,88 +1291,328 @@ impl AcpCore {
         process_id: &str,
         chunk: &[u8],
     ) -> Result<ResumeStep, AcpCoreError> {
-        let mut session_result: Option<Map<String, Value>> = None;
-        {
-            let pending = self.pending_creates.get_mut(process_id).ok_or_else(|| {
-                AcpCoreError::InvalidState(format!("no pending create_session for {process_id}"))
-            })?;
-            pending
-                .stdout_buffer
-                .push_str(&String::from_utf8_lossy(chunk));
+        let pending = self.pending_creates.remove(process_id).ok_or_else(|| {
+            AcpCoreError::InvalidState(format!("no pending create_session for {process_id}"))
+        })?;
+        let result = self.advance_create(host, process_id, pending, chunk);
+        if result.is_err() {
+            abort_agent_for_cleanup(host, process_id, "resumable create failure");
+        }
+        result
+    }
 
-            while let Some(idx) = pending.stdout_buffer.find('\n') {
-                let line: String = pending.stdout_buffer.drain(..=idx).collect();
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
+    fn advance_create<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        process_id: &str,
+        mut pending: PendingCreate,
+        chunk: &[u8],
+    ) -> Result<ResumeStep, AcpCoreError> {
+        let mut session_result: Option<Map<String, Value>> = None;
+        let mut lines =
+            AcpJsonLineAccumulator::with_buffer(std::mem::take(&mut pending.stdout_buffer));
+        let messages = lines.push_json(chunk, DEFAULT_ACP_MAX_READ_LINE_BYTES)?;
+        pending.stdout_buffer = lines.into_retained();
+
+        for message in messages {
+            match classify_json_rpc_message(&message) {
+                AcpJsonRpcMessageKind::InboundRequest => {
+                    answer_inbound_request(host, process_id, &message)?;
                     continue;
                 }
-                let Ok(message) = serde_json::from_str::<Value>(trimmed) else {
+                AcpJsonRpcMessageKind::Notification => {
+                    let message_bytes = Self::json_value_len(&message)?;
+                    self.ensure_pending_notification_capacity(
+                        &pending.owner_connection_id,
+                        pending.notifications.len(),
+                        pending.notification_bytes,
+                        message_bytes,
+                        "while creating a session",
+                    )?;
+                    pending.notification_bytes =
+                        pending.notification_bytes.saturating_add(message_bytes);
+                    pending.notifications.push(message);
                     continue;
-                };
-                match pending.step {
-                    CreateStep::AwaitingInitialize => {
-                        if message.get("id").and_then(Value::as_i64) != Some(1) {
-                            continue;
-                        }
-                        let init = response_result(message, "ACP initialize")?;
-                        validate_initialize_result(&init, pending.protocol_version)?;
-                        pending.init_result = Some(init);
-                        let session_new = json!({
-                            "jsonrpc": "2.0",
-                            "id": 2,
-                            "method": "session/new",
-                            "params": { "cwd": pending.cwd.clone(), "mcpServers": pending.mcp_servers.clone() },
-                        });
-                        write_json_line(host, process_id, &session_new)?;
-                        pending.step = CreateStep::AwaitingSessionNew;
+                }
+                AcpJsonRpcMessageKind::Response | AcpJsonRpcMessageKind::Unknown => {}
+            }
+            match pending.step {
+                CreateStep::AwaitingInitialize => {
+                    if message.get("id").and_then(Value::as_i64) != Some(1) {
+                        continue;
                     }
-                    CreateStep::AwaitingSessionNew => {
-                        if message.get("id").and_then(Value::as_i64) != Some(2) {
-                            continue;
-                        }
-                        session_result = Some(response_result(message, "ACP session/new")?);
-                        break;
+                    let init = response_result(message, "ACP initialize")?;
+                    validate_initialize_result(&init, pending.protocol_version)?;
+                    pending.init_result = Some(init);
+                    let session_new = json!({
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "session/new",
+                        "params": { "cwd": pending.cwd.clone(), "mcpServers": pending.mcp_servers.clone() },
+                    });
+                    write_json_line(host, process_id, &session_new)?;
+                    pending.step = CreateStep::AwaitingSessionNew;
+                }
+                CreateStep::AwaitingSessionNew => {
+                    if message.get("id").and_then(Value::as_i64) != Some(2) {
+                        continue;
                     }
+                    session_result = Some(response_result(message, "ACP session/new")?);
+                    break;
                 }
             }
         }
 
         let Some(session_result) = session_result else {
+            self.pending_creates.insert(process_id.to_string(), pending);
             return Ok(ResumeStep::Pending);
         };
 
-        // Handshake complete: build + record the session outside the pending borrow.
-        let pending = self
-            .pending_creates
-            .remove(process_id)
-            .expect("pending entry exists");
         let init_result = pending.init_result.clone().unwrap_or_default();
         let session_id = session_id_from_session_result(&session_result, process_id);
-        if self.sessions.contains_key(&session_id) {
-            let _ = host.kill_agent(process_id, "SIGKILL");
+        if self
+            .session(&pending.owner_connection_id, &session_id)
+            .is_some()
+        {
             return Err(AcpCoreError::InvalidState(format!(
                 "session id collision: {session_id}"
             )));
         }
-        host.bind_session(&session_id, process_id)?;
+        let fields = derive_bootstrap_fields(
+            &pending.agent_type,
+            &init_result,
+            &session_result,
+            init_result.get("agentCapabilities"),
+        )?;
+        let notifications = pending.notifications;
         let record = AcpSessionRecord {
             session_id: session_id.clone(),
             owner_connection_id: pending.owner_connection_id.clone(),
             agent_type: pending.agent_type.clone(),
             process_id: process_id.to_string(),
             pid: pending.pid,
-            modes: optional_field_json(&session_result, &init_result, "modes"),
-            config_options: config_options(&init_result, &session_result),
-            agent_capabilities: optional_value_json(init_result.get("agentCapabilities")),
-            agent_info: optional_value_json(init_result.get("agentInfo")),
-            stdout_buffer: String::new(),
+            modes: fields.modes,
+            config_options: fields.config_options,
+            agent_capabilities: fields.agent_capabilities,
+            agent_info: fields.agent_info,
+            stdout_buffer: pending.stdout_buffer,
             next_request_id: 3,
             closed: false,
             exit_code: None,
             pending_preamble: None,
+            restart: Some(pending.restart),
         };
+        host.bind_session(&session_id, process_id)?;
         let response = AcpResponse::AcpSessionCreatedResponse(record.created_response());
-        self.sessions.insert(session_id, record);
+        self.insert_session(record);
+        let notifications = notifications
+            .into_iter()
+            .map(|notification| AcpSessionNotification {
+                session_id: session_id.clone(),
+                notification,
+            })
+            .collect::<Vec<_>>();
+        if let Err(error) =
+            self.push_session_notification_batch(&pending.owner_connection_id, &notifications)
+        {
+            self.remove_session(&pending.owner_connection_id, &session_id);
+            return Err(error);
+        }
+        Ok(ResumeStep::Done(response))
+    }
+
+    fn feed_resume<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        process_id: &str,
+        chunk: &[u8],
+    ) -> Result<ResumeStep, AcpCoreError> {
+        // Remove first so every terminal branch, including malformed output and
+        // host-write failures, clears the pending state. Only a genuinely pending
+        // transition is reinserted below.
+        let pending = self.pending_resumes.remove(process_id).ok_or_else(|| {
+            AcpCoreError::InvalidState(format!("no pending resume_session for {process_id}"))
+        })?;
+        let result = self.advance_resume(host, process_id, pending, chunk);
+        if result.is_err() {
+            abort_agent_for_cleanup(host, process_id, "resumable resume failure");
+        }
+        result
+    }
+
+    fn advance_resume<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        process_id: &str,
+        mut pending: PendingResume,
+        chunk: &[u8],
+    ) -> Result<ResumeStep, AcpCoreError> {
+        let mut lines =
+            AcpJsonLineAccumulator::with_buffer(std::mem::take(&mut pending.stdout_buffer));
+        let messages = lines.push_json(chunk, DEFAULT_ACP_MAX_READ_LINE_BYTES)?;
+        pending.stdout_buffer = lines.into_retained();
+        let mut completed = None;
+
+        for mut message in messages {
+            match classify_json_rpc_message(&message) {
+                AcpJsonRpcMessageKind::InboundRequest => {
+                    answer_inbound_request(host, process_id, &message)?;
+                    continue;
+                }
+                AcpJsonRpcMessageKind::Notification => {
+                    let message_bytes = Self::json_value_len(&message)?;
+                    self.ensure_pending_notification_capacity(
+                        &pending.owner_connection_id,
+                        pending.notifications.len(),
+                        pending.notification_bytes,
+                        message_bytes,
+                        "while resuming a session",
+                    )?;
+                    pending.notification_bytes =
+                        pending.notification_bytes.saturating_add(message_bytes);
+                    pending.notifications.push(message);
+                    continue;
+                }
+                AcpJsonRpcMessageKind::Response | AcpJsonRpcMessageKind::Unknown => {}
+            }
+
+            match pending.step {
+                PendingResumeStep::AwaitingInitialize => {
+                    if message.get("id").and_then(Value::as_i64) != Some(1) {
+                        continue;
+                    }
+                    let init_result = response_result(message, "ACP initialize")?;
+                    validate_initialize_result(&init_result, DEFAULT_ACP_PROTOCOL_VERSION)?;
+                    let agent_capabilities = init_result.get("agentCapabilities").cloned();
+                    pending.init_result = Some(init_result);
+                    pending.agent_capabilities = agent_capabilities.clone();
+
+                    if let Some(method) = native_resume_method(agent_capabilities.as_ref()) {
+                        let load = json!({
+                            "jsonrpc": "2.0",
+                            "id": 2,
+                            "method": method,
+                            "params": {
+                                "sessionId": pending.requested_session_id,
+                                "cwd": pending.cwd,
+                                "mcpServers": [],
+                            },
+                        });
+                        write_json_line(host, process_id, &load)?;
+                        pending.step = PendingResumeStep::AwaitingNative(method);
+                    } else {
+                        write_resume_session_new(host, process_id, &pending.cwd)?;
+                        pending.step = PendingResumeStep::AwaitingFallbackSessionNew;
+                    }
+                }
+                PendingResumeStep::AwaitingNative(method) => {
+                    if message.get("id").and_then(Value::as_i64) != Some(2) {
+                        continue;
+                    }
+                    normalize_unknown_session_error(&mut message);
+                    if message.get("error").is_none() {
+                        completed = Some(CompletedResume {
+                            session_id: pending.requested_session_id.clone(),
+                            mode: String::from("native"),
+                            pending_preamble: None,
+                            session_result: response_result(message, &format!("ACP {method}"))?,
+                        });
+                        break;
+                    }
+                    if !is_unknown_session_error(&message) {
+                        return Err(response_result(message, &format!("ACP {method}"))
+                            .expect_err("native resume error must map to AcpCoreError"));
+                    }
+                    write_resume_session_new(host, process_id, &pending.cwd)?;
+                    pending.step = PendingResumeStep::AwaitingFallbackSessionNew;
+                }
+                PendingResumeStep::AwaitingFallbackSessionNew => {
+                    if message.get("id").and_then(Value::as_i64) != Some(2) {
+                        continue;
+                    }
+                    let session_result = response_result(message, "ACP session/new")?;
+                    completed = Some(CompletedResume {
+                        session_id: session_id_from_session_result(&session_result, process_id),
+                        mode: String::from("fallback"),
+                        pending_preamble: pending
+                            .transcript_path
+                            .as_deref()
+                            .filter(|path| !path.is_empty())
+                            .map(|path| CONTINUATION_PREAMBLE.replace("{path}", path)),
+                        session_result,
+                    });
+                    break;
+                }
+            }
+        }
+
+        let Some(completed) = completed else {
+            self.pending_resumes.insert(process_id.to_string(), pending);
+            return Ok(ResumeStep::Pending);
+        };
+
+        let init_result = pending.init_result.as_ref().ok_or_else(|| {
+            AcpCoreError::InvalidState(String::from(
+                "ACP resume completed without an initialize result",
+            ))
+        })?;
+        let fields = derive_bootstrap_fields(
+            &pending.agent_type,
+            init_result,
+            &completed.session_result,
+            pending.agent_capabilities.as_ref(),
+        )?;
+        if self
+            .session(&pending.owner_connection_id, &completed.session_id)
+            .is_some()
+        {
+            return Err(AcpCoreError::InvalidState(format!(
+                "session id collision: {}",
+                completed.session_id
+            )));
+        }
+        let session_id = completed.session_id;
+        let record = AcpSessionRecord {
+            session_id: session_id.clone(),
+            owner_connection_id: pending.owner_connection_id,
+            agent_type: pending.agent_type,
+            process_id: process_id.to_string(),
+            pid: pending.pid,
+            modes: fields.modes,
+            config_options: fields.config_options,
+            agent_capabilities: fields.agent_capabilities,
+            agent_info: fields.agent_info,
+            stdout_buffer: pending.stdout_buffer,
+            next_request_id: 3,
+            closed: false,
+            exit_code: None,
+            pending_preamble: completed.pending_preamble,
+            restart: Some(pending.restart),
+        };
+        host.bind_session(&session_id, process_id)?;
+        let response = AcpResponse::AcpSessionResumedResponse(AcpSessionResumedResponse {
+            session_id: session_id.clone(),
+            mode: completed.mode,
+            agent_type: record.agent_type.clone(),
+            process_id: process_id.to_string(),
+            pid: record.pid,
+        });
+        let owner_connection_id = record.owner_connection_id.clone();
+        self.insert_session(record);
+        let notifications = pending
+            .notifications
+            .into_iter()
+            .map(|notification| AcpSessionNotification {
+                session_id: session_id.clone(),
+                notification,
+            })
+            .collect::<Vec<_>>();
+        if let Err(error) =
+            self.push_session_notification_batch(&owner_connection_id, &notifications)
+        {
+            self.remove_session(&owner_connection_id, &session_id);
+            return Err(error);
+        }
         Ok(ResumeStep::Done(response))
     }
 
@@ -558,19 +1639,21 @@ impl AcpCore {
         let unknown =
             || AcpCoreError::InvalidState(format!("unknown ACP session {}", request.session_id));
         let session = self
-            .sessions
-            .get_mut(&request.session_id)
+            .session(caller_connection_id, &request.session_id)
             .ok_or_else(unknown)?;
-        if session.owner_connection_id != caller_connection_id {
-            return Err(unknown());
+        let process_id = session.process_id.clone();
+        if self.pending_prompts.contains_key(&process_id) {
+            return Err(AcpCoreError::Conflict(format!(
+                "ACP session {} already has an in-flight request; wait for it to complete before sending another",
+                request.session_id
+            )));
         }
-        let rpc_id = session.allocate_request_id();
+        let rpc_id = session.next_request_id;
         let pending_preamble = if request.method == "session/prompt" {
-            session.pending_preamble.take()
+            session.pending_preamble.clone()
         } else {
             None
         };
-        let process_id = session.process_id.clone();
         if let Some(preamble) = pending_preamble.as_deref() {
             prepend_prompt_preamble(&mut outbound_params, preamble);
         }
@@ -579,86 +1662,348 @@ impl AcpCore {
             "jsonrpc": "2.0",
             "id": rpc_id,
             "method": request.method,
-            "params": Value::Object(outbound_params),
+            "params": Value::Object(outbound_params.clone()),
         });
         write_json_line(host, &process_id, &outbound)?;
+
+        let session = self
+            .session_mut(caller_connection_id, &request.session_id)
+            .ok_or_else(unknown)?;
+        session.next_request_id = rpc_id.saturating_add(1);
+        if pending_preamble.is_some() {
+            session.pending_preamble = None;
+        }
 
         self.pending_prompts.insert(
             process_id.clone(),
             PendingPrompt {
+                owner_connection_id: caller_connection_id.to_string(),
                 session_id: request.session_id.clone(),
+                method: request.method.clone(),
+                params: outbound_params,
                 rpc_id,
                 stdout_buffer: String::new(),
                 prompt_text: (request.method == "session/prompt")
                     .then(AcpPromptTextAccumulator::default),
+                notifications: Vec::new(),
+                notification_bytes: 0,
+                pending_preamble,
+                cancelled: false,
             },
         );
         Ok(process_id)
     }
 
-    fn feed_prompt(&mut self, process_id: &str, chunk: &[u8]) -> Result<ResumeStep, AcpCoreError> {
-        let mut completed: Option<(String, String, Option<String>)> = None;
-        let mut capture_error = None;
-        {
-            let pending = self
-                .pending_prompts
-                .get_mut(process_id)
-                .expect("pending prompt exists");
-            pending
-                .stdout_buffer
-                .push_str(&String::from_utf8_lossy(chunk));
-            while let Some(idx) = pending.stdout_buffer.find('\n') {
-                let line: String = pending.stdout_buffer.drain(..=idx).collect();
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
+    fn feed_prompt<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        process_id: &str,
+        chunk: &[u8],
+    ) -> Result<ResumeStep, AcpCoreError> {
+        let pending = self.pending_prompts.remove(process_id).ok_or_else(|| {
+            AcpCoreError::InvalidState(format!("no pending session request for {process_id}"))
+        })?;
+        let session_id = pending.session_id.clone();
+        let owner_connection_id = pending.owner_connection_id.clone();
+        let pending_preamble = pending.pending_preamble.clone();
+        let result = self.advance_prompt(host, process_id, pending, chunk);
+        if result.is_err() {
+            abort_agent_for_cleanup(host, process_id, "resumable session request failure");
+            if let Some(session) = self.session_mut(&owner_connection_id, &session_id) {
+                session.closed = true;
+                if session.pending_preamble.is_none() {
+                    session.pending_preamble = pending_preamble;
                 }
-                let Ok(message) = serde_json::from_str::<Value>(trimmed) else {
-                    continue;
-                };
-                if message.get("method").and_then(Value::as_str).is_some() {
-                    if let Some(capture) = pending.prompt_text.as_mut() {
-                        match capture.push_notification(&message) {
-                            Ok(true) => tracing::warn!(
-                                session_id = pending.session_id,
-                                "ACP prompt text capture is near its configured limit"
-                            ),
-                            Ok(false) => {}
-                            Err(error) => {
-                                capture_error = Some(AcpCoreError::InvalidState(error));
-                                break;
-                            }
-                        }
-                    }
-                    continue;
-                }
-                if message.get("id").and_then(Value::as_i64) != Some(pending.rpc_id) {
-                    continue;
-                }
-                let text = serde_json::to_string(&message).map_err(|error| {
-                    AcpCoreError::InvalidState(format!(
-                        "failed to serialize ACP session response: {error}"
-                    ))
-                })?;
-                completed = Some((
-                    pending.session_id.clone(),
-                    text,
-                    pending
-                        .prompt_text
-                        .take()
-                        .map(AcpPromptTextAccumulator::into_text),
-                ));
-                break;
             }
         }
-        if let Some(error) = capture_error {
-            self.pending_prompts.remove(process_id);
-            return Err(error);
+        result
+    }
+
+    fn feed_restart<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        process_id: &str,
+        chunk: &[u8],
+    ) -> Result<ResumeStep, AcpCoreError> {
+        let pending = self.pending_restarts.remove(process_id).ok_or_else(|| {
+            AcpCoreError::InvalidState(format!("no pending adapter restart for {process_id}"))
+        })?;
+        let session_id = pending.session_id.clone();
+        let owner_connection_id = pending.owner_connection_id.clone();
+        let failure = pending.clone();
+        match self.advance_restart(host, process_id, pending, chunk) {
+            Ok(step) => Ok(step),
+            Err(error) => {
+                abort_agent_for_cleanup(host, process_id, "resumable adapter restart failure");
+                self.remove_session(&owner_connection_id, &session_id);
+                self.finish_pending_restart_failure(&failure, &error.to_string())
+                    .map(ResumeStep::Done)
+            }
         }
-        let Some((session_id, response, text)) = completed else {
+    }
+
+    fn finish_pending_restart_failure(
+        &mut self,
+        pending: &PendingRestart,
+        detail: &str,
+    ) -> Result<AcpResponse, AcpCoreError> {
+        let exit_error = AcpCoreError::InvalidState(format!(
+            "agent exited before completing the ACP interaction ({})",
+            pending.dead_process_id
+        ));
+        let terminal = self.finish_adapter_exit(
+            &pending.owner_connection_id,
+            &pending.session_id,
+            &pending.agent_type,
+            &pending.dead_process_id,
+            pending.exit_code,
+            &pending.restart,
+            "failed",
+            Some(detail),
+            Some(&exit_error),
+        )?;
+        Ok(crate::error_response(&terminal))
+    }
+
+    fn advance_restart<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        process_id: &str,
+        mut pending: PendingRestart,
+        chunk: &[u8],
+    ) -> Result<ResumeStep, AcpCoreError> {
+        let mut lines =
+            AcpJsonLineAccumulator::with_buffer(std::mem::take(&mut pending.stdout_buffer));
+        let messages = lines.push_json(chunk, DEFAULT_ACP_MAX_READ_LINE_BYTES)?;
+        pending.stdout_buffer = lines.into_retained();
+
+        for message in messages {
+            match classify_json_rpc_message(&message) {
+                AcpJsonRpcMessageKind::InboundRequest => {
+                    answer_inbound_request(host, process_id, &message)?;
+                    continue;
+                }
+                AcpJsonRpcMessageKind::Notification => {
+                    // Restart notifications are intentionally not committed before
+                    // the replacement has successfully rebound the session.
+                    continue;
+                }
+                AcpJsonRpcMessageKind::Response | AcpJsonRpcMessageKind::Unknown => {}
+            }
+
+            match pending.step {
+                PendingRestartStep::AwaitingInitialize => {
+                    if message.get("id").and_then(Value::as_i64) != Some(1) {
+                        continue;
+                    }
+                    let init_result = response_result(message, "ACP initialize")?;
+                    validate_initialize_result(&init_result, pending.restart.protocol_version)?;
+                    let agent_capabilities = init_result.get("agentCapabilities").cloned();
+                    let Some(method) = native_resume_method(agent_capabilities.as_ref()) else {
+                        abort_agent_for_cleanup(
+                            host,
+                            process_id,
+                            "resumable adapter restart unsupported",
+                        );
+                        self.remove_session(&pending.owner_connection_id, &pending.session_id);
+                        let error = self.finish_adapter_exit(
+                            &pending.owner_connection_id,
+                            &pending.session_id,
+                            &pending.agent_type,
+                            &pending.dead_process_id,
+                            pending.exit_code,
+                            &pending.restart,
+                            "unsupported",
+                            Some("adapter does not advertise loadSession/resume"),
+                            None,
+                        )?;
+                        return Ok(ResumeStep::Done(crate::error_response(&error)));
+                    };
+                    let load = json!({
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": method,
+                        "params": {
+                            "sessionId": pending.session_id,
+                            "cwd": pending.restart.cwd,
+                            "mcpServers": [],
+                        },
+                    });
+                    write_json_line(host, process_id, &load)?;
+                    pending.init_result = Some(init_result);
+                    pending.agent_capabilities = agent_capabilities;
+                    pending.step = PendingRestartStep::AwaitingNative(method);
+                }
+                PendingRestartStep::AwaitingNative(method) => {
+                    if message.get("id").and_then(Value::as_i64) != Some(2) {
+                        continue;
+                    }
+                    let load_result = response_result(message, &format!("ACP {method}"))?;
+                    let init_result = pending.init_result.as_ref().ok_or_else(|| {
+                        AcpCoreError::InvalidState(String::from(
+                            "ACP restart completed without an initialize result",
+                        ))
+                    })?;
+                    let fields = derive_bootstrap_fields(
+                        &pending.agent_type,
+                        init_result,
+                        &load_result,
+                        pending.agent_capabilities.as_ref(),
+                    )?;
+                    host.bind_session(&pending.session_id, process_id)?;
+                    let session = self
+                        .session_mut(&pending.owner_connection_id, &pending.session_id)
+                        .ok_or_else(|| {
+                            AcpCoreError::InvalidState(format!(
+                                "ACP session {} was removed during adapter restart",
+                                pending.session_id
+                            ))
+                        })?;
+                    session.process_id = process_id.to_string();
+                    session.pid = pending.pid;
+                    session.modes = fields.modes;
+                    session.config_options = fields.config_options;
+                    session.agent_capabilities = fields.agent_capabilities;
+                    session.agent_info = fields.agent_info;
+                    session.stdout_buffer = pending.stdout_buffer;
+                    session.next_request_id = 3;
+                    session.closed = false;
+                    session.exit_code = None;
+                    session.restart = Some(pending.restart.clone());
+                    let error = self.finish_adapter_exit(
+                        &pending.owner_connection_id,
+                        &pending.session_id,
+                        &pending.agent_type,
+                        &pending.dead_process_id,
+                        pending.exit_code,
+                        &pending.restart,
+                        "restarted",
+                        None,
+                        None,
+                    )?;
+                    return Ok(ResumeStep::Done(crate::error_response(&error)));
+                }
+            }
+        }
+
+        self.pending_restarts
+            .insert(process_id.to_string(), pending);
+        Ok(ResumeStep::Pending)
+    }
+
+    fn advance_prompt<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        process_id: &str,
+        mut pending: PendingPrompt,
+        chunk: &[u8],
+    ) -> Result<ResumeStep, AcpCoreError> {
+        let mut completed = None;
+        let mut lines =
+            AcpJsonLineAccumulator::with_buffer(std::mem::take(&mut pending.stdout_buffer));
+        let messages = lines.push_json(chunk, DEFAULT_ACP_MAX_READ_LINE_BYTES)?;
+        pending.stdout_buffer = lines.into_retained();
+        for message in messages {
+            match classify_json_rpc_message(&message) {
+                AcpJsonRpcMessageKind::InboundRequest => {
+                    answer_inbound_request(host, process_id, &message)?;
+                    continue;
+                }
+                AcpJsonRpcMessageKind::Notification => {
+                    if pending.cancelled {
+                        continue;
+                    }
+                    let message_bytes = Self::json_value_len(&message)?;
+                    self.ensure_pending_notification_capacity(
+                        &pending.owner_connection_id,
+                        pending.notifications.len(),
+                        pending.notification_bytes,
+                        message_bytes,
+                        "during a session request",
+                    )?;
+                    pending.notification_bytes =
+                        pending.notification_bytes.saturating_add(message_bytes);
+                    if let Some(capture) = pending.prompt_text.as_mut() {
+                        if capture
+                            .push_notification(&message)
+                            .map_err(AcpCoreError::LimitExceeded)?
+                        {
+                            tracing::warn!(
+                                session_id = pending.session_id,
+                                "ACP prompt text capture is near its configured limit"
+                            );
+                        }
+                    }
+                    pending.notifications.push(AcpSessionNotification {
+                        session_id: pending.session_id.clone(),
+                        notification: message,
+                    });
+                    continue;
+                }
+                AcpJsonRpcMessageKind::Response | AcpJsonRpcMessageKind::Unknown => {}
+            }
+            if message.get("id").and_then(Value::as_i64) != Some(pending.rpc_id) {
+                continue;
+            }
+            completed = Some((
+                message,
+                pending
+                    .prompt_text
+                    .take()
+                    .map(AcpPromptTextAccumulator::into_text),
+            ));
+            break;
+        }
+
+        let Some((mut response, text)) = completed else {
+            self.pending_prompts.insert(process_id.to_string(), pending);
             return Ok(ResumeStep::Pending);
         };
-        self.pending_prompts.remove(process_id);
+        if pending.cancelled {
+            return Ok(ResumeStep::Done(AcpResponse::AcpErrorResponse(
+                AcpErrorResponse {
+                    code: String::from("agent_interaction_cancelled"),
+                    message: format!("agent interaction was cancelled and drained ({process_id})"),
+                },
+            )));
+        }
+        let session_id = pending.session_id;
+        let method = pending.method;
+        let params = pending.params;
+        let mut notifications = pending.notifications;
+        if cancel_fallback_decision(&method, &response)
+            == AcpCancelFallbackDecision::SendNotification
+        {
+            write_json_line(host, process_id, &cancel_notification(&session_id))?;
+            let id = response.get("id").cloned().unwrap_or(Value::Null);
+            response = cancel_notification_fallback_response(id);
+        }
+        let mut updated_session = if response.get("error").is_none() {
+            let mut session = self
+                .session(&pending.owner_connection_id, &session_id)
+                .cloned()
+                .ok_or_else(|| {
+                    AcpCoreError::InvalidState(format!("unknown ACP session {session_id}"))
+                })?;
+            if let Some(synthetic) =
+                apply_successful_session_request(&mut session, &method, &params, &notifications)?
+            {
+                notifications.push(AcpSessionNotification {
+                    session_id: session_id.clone(),
+                    notification: synthetic.notification(),
+                });
+            }
+            Some(session)
+        } else {
+            None
+        };
+        let response = serde_json::to_string(&response).map_err(|error| {
+            AcpCoreError::InvalidState(format!("failed to serialize ACP session response: {error}"))
+        })?;
+        self.push_session_notification_batch(&pending.owner_connection_id, &notifications)?;
+        if let Some(session) = updated_session.take() {
+            self.insert_session(session);
+        }
         Ok(ResumeStep::Done(AcpResponse::AcpSessionRpcResponse(
             AcpSessionRpcResponse {
                 session_id,
@@ -668,17 +2013,612 @@ impl AcpCore {
         )))
     }
 
-    /// In-flight resumable interactions (create + prompt), for diagnostics/tests.
+    /// In-flight resumable interactions, for diagnostics/tests.
     pub fn pending_create_count(&self) -> usize {
         self.pending_creates.len()
     }
     pub fn pending_prompt_count(&self) -> usize {
         self.pending_prompts.len()
     }
+    pub fn pending_resume_count(&self) -> usize {
+        self.pending_resumes.len()
+    }
+    pub fn pending_restart_count(&self) -> usize {
+        self.pending_restarts.len()
+    }
+    pub fn pending_close_count(&self) -> usize {
+        self.pending_closes.len()
+    }
+    pub fn pending_interaction_count(&self) -> usize {
+        self.pending_creates.len()
+            + self.pending_prompts.len()
+            + self.pending_resumes.len()
+            + self.pending_restarts.len()
+            + self.pending_closes.len()
+    }
+
+    /// Mark an in-flight prompt as cancelled while retaining its exact response
+    /// boundary. The native transport must keep feeding adapter output until the
+    /// old RPC response arrives; cancelled notifications and prompt text are then
+    /// discarded before the session can accept a later prompt.
+    pub fn interrupt_pending_prompt(
+        &mut self,
+        owner_id: &str,
+        process_id: &str,
+    ) -> Result<String, AcpCoreError> {
+        let (session_id, pending_preamble) = {
+            let pending = self.pending_prompts.get_mut(process_id).ok_or_else(|| {
+                AcpCoreError::InvalidState(format!(
+                    "no pending ACP prompt interaction for {process_id}"
+                ))
+            })?;
+            if pending.owner_connection_id != owner_id {
+                return Err(AcpCoreError::InvalidState(format!(
+                    "no pending ACP prompt interaction for {process_id}"
+                )));
+            }
+            pending.cancelled = true;
+            pending.notifications.clear();
+            pending.notification_bytes = 0;
+            pending.prompt_text = None;
+            (pending.session_id.clone(), pending.pending_preamble.take())
+        };
+        if let Some(session) = self.session_mut(owner_id, &session_id) {
+            if session.pending_preamble.is_none() {
+                session.pending_preamble = pending_preamble;
+            }
+        }
+        Ok(session_id)
+    }
+
+    /// Abandon a prompt whose interrupting operation will immediately close the
+    /// session or terminate the adapter. Unlike explicit `session/cancel`, those
+    /// operations provide their own terminal boundary, so no adapter response
+    /// drain is required before removing the continuation.
+    pub fn abandon_pending_prompt(
+        &mut self,
+        owner_id: &str,
+        process_id: &str,
+    ) -> Result<String, AcpCoreError> {
+        let pending = self.pending_prompts.get(process_id).ok_or_else(|| {
+            AcpCoreError::InvalidState(format!(
+                "no pending ACP prompt interaction for {process_id}"
+            ))
+        })?;
+        if pending.owner_connection_id != owner_id {
+            return Err(AcpCoreError::InvalidState(format!(
+                "no pending ACP prompt interaction for {process_id}"
+            )));
+        }
+        let pending = self
+            .pending_prompts
+            .remove(process_id)
+            .expect("pending prompt was checked above");
+        if let Some(session) = self.session_mut(owner_id, &pending.session_id) {
+            if session.pending_preamble.is_none() {
+                session.pending_preamble = pending.pending_preamble;
+            }
+        }
+        Ok(pending.session_id)
+    }
+
+    fn pending_response(&self, process_id: String) -> Result<AcpResponse, AcpCoreError> {
+        let (timeout_ms, timeout_phase) =
+            if let Some(pending) = self.pending_creates.get(&process_id) {
+                match pending.step {
+                    CreateStep::AwaitingInitialize => {
+                        (INITIALIZE_TIMEOUT_MS, "create.initialize".to_string())
+                    }
+                    CreateStep::AwaitingSessionNew => {
+                        (SESSION_NEW_TIMEOUT_MS, "create.session_new".to_string())
+                    }
+                }
+            } else if let Some(pending) = self.pending_resumes.get(&process_id) {
+                match pending.step {
+                    PendingResumeStep::AwaitingInitialize => {
+                        (INITIALIZE_TIMEOUT_MS, "resume.initialize".to_string())
+                    }
+                    PendingResumeStep::AwaitingNative(method) => {
+                        (request_timeout_ms(method), format!("resume.{method}"))
+                    }
+                    PendingResumeStep::AwaitingFallbackSessionNew => {
+                        (SESSION_NEW_TIMEOUT_MS, "resume.session_new".to_string())
+                    }
+                }
+            } else if let Some(pending) = self.pending_prompts.get(&process_id) {
+                (
+                    request_timeout_ms(&pending.method),
+                    format!("session.{}", pending.method),
+                )
+            } else if let Some(pending) = self.pending_restarts.get(&process_id) {
+                match pending.step {
+                    PendingRestartStep::AwaitingInitialize => {
+                        (INITIALIZE_TIMEOUT_MS, "restart.initialize".to_string())
+                    }
+                    PendingRestartStep::AwaitingNative(method) => {
+                        (request_timeout_ms(method), format!("restart.{method}"))
+                    }
+                }
+            } else if let Some(pending) = self.pending_closes.get(&process_id) {
+                match pending.step {
+                    PendingCloseStep::AwaitingSigterm => {
+                        (SESSION_CLOSE_TIMEOUT_MS, "close.sigterm".to_string())
+                    }
+                    PendingCloseStep::AwaitingSigkill => {
+                        (SESSION_CLOSE_TIMEOUT_MS, "close.sigkill".to_string())
+                    }
+                }
+            } else {
+                return Err(AcpCoreError::InvalidState(format!(
+                    "no pending ACP interaction for {process_id}"
+                )));
+            };
+        let timeout_ms = u32::try_from(timeout_ms)
+            .expect("sidecar-owned ACP request timeouts fit in protocol u32 milliseconds");
+        Ok(AcpResponse::AcpPendingResponse(AcpPendingResponse {
+            process_id,
+            timeout_ms,
+            timeout_phase,
+        }))
+    }
+
+    /// Abort one exact owner-scoped resumable interaction and return the stable
+    /// terminal response that replaces its original `AcpPendingResponse`.
+    pub fn abort_pending<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        owner_id: &str,
+        request: &AcpAbortPendingRequest,
+    ) -> Result<AcpResponse, AcpCoreError> {
+        if let Some(pending) = self.pending_closes.get(&request.process_id).cloned() {
+            if pending.owner_connection_id != owner_id {
+                return Err(AcpCoreError::InvalidState(format!(
+                    "no pending ACP interaction for {}",
+                    request.process_id
+                )));
+            }
+            let session = self
+                .session(owner_id, &pending.session_id)
+                .cloned()
+                .ok_or_else(|| {
+                    AcpCoreError::InvalidState(format!(
+                        "no ACP session {} for pending close",
+                        pending.session_id
+                    ))
+                })?;
+            match request.reason {
+                AcpPendingAbortReason::AgentExited => {
+                    return self.finish_resumable_close(host, &request.process_id, &session);
+                }
+                AcpPendingAbortReason::InteractionTimeout
+                    if pending.step == PendingCloseStep::AwaitingSigterm =>
+                {
+                    match host.kill_agent(&request.process_id, "SIGKILL") {
+                        Ok(()) => {
+                            self.pending_closes
+                                .get_mut(&request.process_id)
+                                .expect("pending close was checked")
+                                .step = PendingCloseStep::AwaitingSigkill;
+                            return self.pending_response(request.process_id.clone());
+                        }
+                        Err(error) if is_process_already_gone_error(&error) => {
+                            return self.finish_resumable_close(
+                                host,
+                                &request.process_id,
+                                &session,
+                            );
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+                AcpPendingAbortReason::InteractionTimeout => {
+                    return self.finish_resumable_close(host, &request.process_id, &session);
+                }
+                AcpPendingAbortReason::DriverFailed => {
+                    self.pending_closes.remove(&request.process_id);
+                    host.abort_agent(&request.process_id)?;
+                    self.remove_session(owner_id, &pending.session_id);
+                    return Ok(crate::error_response(&AcpCoreError::Execution(format!(
+                        "ACP pending driver failed while closing {}",
+                        pending.session_id
+                    ))));
+                }
+                AcpPendingAbortReason::CallerCancelled => {
+                    self.pending_closes.remove(&request.process_id);
+                    host.abort_agent(&request.process_id)?;
+                    self.remove_session(owner_id, &pending.session_id);
+                    return Ok(AcpResponse::AcpErrorResponse(AcpErrorResponse {
+                        code: String::from("agent_interaction_cancelled"),
+                        message: format!(
+                            "agent interaction was cancelled while closing {}",
+                            pending.session_id
+                        ),
+                    }));
+                }
+            }
+        }
+        if request.reason == AcpPendingAbortReason::AgentExited {
+            if let Some(pending) = self.pending_restarts.get(&request.process_id) {
+                if pending.owner_connection_id != owner_id {
+                    return Err(AcpCoreError::InvalidState(format!(
+                        "no pending ACP interaction for {}",
+                        request.process_id
+                    )));
+                }
+                let pending = self
+                    .pending_restarts
+                    .remove(&request.process_id)
+                    .expect("pending restart was checked above");
+                self.remove_session(&pending.owner_connection_id, &pending.session_id);
+                let detail = match host.abort_agent(&request.process_id) {
+                    Ok(()) => format!(
+                        "replacement ACP adapter {} exited before restart completed",
+                        request.process_id
+                    ),
+                    Err(error) => format!(
+                        "replacement ACP adapter {} exited before restart completed; cleanup failed: {error}",
+                        request.process_id
+                    ),
+                };
+                return self.finish_pending_restart_failure(&pending, &detail);
+            }
+            if let Some(pending) = self.pending_prompts.get(&request.process_id) {
+                if pending.owner_connection_id != owner_id {
+                    return Err(AcpCoreError::InvalidState(format!(
+                        "no pending ACP interaction for {}",
+                        request.process_id
+                    )));
+                }
+                let pending = self
+                    .pending_prompts
+                    .remove(&request.process_id)
+                    .expect("pending prompt was checked above");
+                if let Some(session) = self.session_mut(owner_id, &pending.session_id) {
+                    session.closed = true;
+                    if session.pending_preamble.is_none() {
+                        session.pending_preamble = pending.pending_preamble;
+                    }
+                }
+                host.abort_agent(&request.process_id)?;
+                return self.begin_resumable_adapter_restart(
+                    host,
+                    owner_id,
+                    &pending.session_id,
+                    &request.process_id,
+                    request.exit_code,
+                );
+            }
+        }
+        self.remove_pending_state(owner_id, &request.process_id)?;
+        host.abort_agent(&request.process_id)?;
+        let (code, message) = match request.reason {
+            AcpPendingAbortReason::AgentExited => (
+                "agent_exited",
+                format!(
+                    "agent exited before completing the ACP interaction ({})",
+                    request.process_id
+                ),
+            ),
+            AcpPendingAbortReason::InteractionTimeout => (
+                "agent_interaction_timeout",
+                format!("agent interaction timed out ({})", request.process_id),
+            ),
+            AcpPendingAbortReason::DriverFailed => (
+                "agent_driver_failed",
+                format!("ACP agent driver failed ({})", request.process_id),
+            ),
+            AcpPendingAbortReason::CallerCancelled => (
+                "agent_interaction_cancelled",
+                format!("agent interaction was cancelled ({})", request.process_id),
+            ),
+        };
+        Ok(AcpResponse::AcpErrorResponse(AcpErrorResponse {
+            code: code.to_string(),
+            message,
+        }))
+    }
+
+    fn begin_resumable_adapter_restart<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        owner_id: &str,
+        session_id: &str,
+        dead_process_id: &str,
+        exit_code: Option<i32>,
+    ) -> Result<AcpResponse, AcpCoreError> {
+        self.ensure_event_capacity(owner_id, 1, 0)?;
+        let session = self.session(owner_id, session_id).cloned().ok_or_else(|| {
+            AcpCoreError::InvalidState(format!("unknown ACP session {session_id}"))
+        })?;
+        let agent_type = session.agent_type;
+        let exit_error = AcpCoreError::InvalidState(format!(
+            "agent exited before completing the ACP interaction ({dead_process_id})"
+        ));
+        let Some(mut restart) = session.restart else {
+            self.remove_session(owner_id, session_id);
+            let error = self.finish_adapter_exit(
+                owner_id,
+                session_id,
+                &agent_type,
+                dead_process_id,
+                exit_code,
+                &AcpAdapterRestartState {
+                    runtime: AcpRuntimeKind::JavaScript,
+                    entrypoint: String::new(),
+                    args: Vec::new(),
+                    env: BTreeMap::new(),
+                    cwd: String::new(),
+                    protocol_version: DEFAULT_ACP_PROTOCOL_VERSION,
+                    client_capabilities: DEFAULT_ACP_CLIENT_CAPABILITIES.to_string(),
+                    count: 0,
+                },
+                "unsupported",
+                Some("launch state unavailable"),
+                Some(&exit_error),
+            )?;
+            return Ok(crate::error_response(&error));
+        };
+        if restart.count >= MAX_ADAPTER_RESTARTS {
+            self.remove_session(owner_id, session_id);
+            let error = self.finish_adapter_exit(
+                owner_id,
+                session_id,
+                &agent_type,
+                dead_process_id,
+                exit_code,
+                &restart,
+                "exhausted",
+                None,
+                Some(&exit_error),
+            )?;
+            return Ok(crate::error_response(&error));
+        }
+        restart.count += 1;
+
+        if let Err(error) = resolve_agent(host, &agent_type) {
+            self.remove_session(owner_id, session_id);
+            let terminal = self.finish_adapter_exit(
+                owner_id,
+                session_id,
+                &agent_type,
+                dead_process_id,
+                exit_code,
+                &restart,
+                "failed",
+                Some(&error.to_string()),
+                Some(&exit_error),
+            )?;
+            return Ok(crate::error_response(&terminal));
+        }
+        let process_id = self.allocate_process_id("acp-agent");
+        let spawned = match host.spawn_agent(SpawnAgentRequest {
+            process_id: process_id.clone(),
+            runtime: restart.runtime.clone(),
+            entrypoint: Some(restart.entrypoint.clone()),
+            command: None,
+            args: restart.args.clone(),
+            env: restart.env.clone(),
+            cwd: Some(restart.cwd.clone()),
+        }) {
+            Ok(spawned) => spawned,
+            Err(error) => {
+                self.remove_session(owner_id, session_id);
+                let terminal = self.finish_adapter_exit(
+                    owner_id,
+                    session_id,
+                    &agent_type,
+                    dead_process_id,
+                    exit_code,
+                    &restart,
+                    "failed",
+                    Some(&error.to_string()),
+                    Some(&exit_error),
+                )?;
+                return Ok(crate::error_response(&terminal));
+            }
+        };
+        let client_capabilities =
+            parse_json_text(&restart.client_capabilities, "clientCapabilities")?;
+        let initialize = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": restart.protocol_version,
+                "clientCapabilities": client_capabilities,
+            },
+        });
+        if let Err(error) = write_json_line(host, &process_id, &initialize) {
+            abort_agent_for_cleanup(host, &process_id, "resumable adapter restart initial write");
+            self.remove_session(owner_id, session_id);
+            let terminal = self.finish_adapter_exit(
+                owner_id,
+                session_id,
+                &agent_type,
+                dead_process_id,
+                exit_code,
+                &restart,
+                "failed",
+                Some(&error.to_string()),
+                Some(&exit_error),
+            )?;
+            return Ok(crate::error_response(&terminal));
+        }
+        self.pending_restarts.insert(
+            process_id.clone(),
+            PendingRestart {
+                owner_connection_id: owner_id.to_string(),
+                session_id: session_id.to_string(),
+                agent_type,
+                dead_process_id: dead_process_id.to_string(),
+                exit_code,
+                pid: spawned.pid,
+                step: PendingRestartStep::AwaitingInitialize,
+                stdout_buffer: String::new(),
+                init_result: None,
+                agent_capabilities: None,
+                restart,
+            },
+        );
+        self.pending_response(process_id)
+    }
+
+    /// Dispose every pending and live ACP process owned by one exact browser
+    /// connection/wire-session/VM identity. State is removed before any fallible
+    /// host cleanup so failed worker termination cannot strand routable sessions.
+    pub fn dispose_owner<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        owner_id: &str,
+    ) -> Result<(), AcpCoreError> {
+        let process_ids = self.take_owner_state(owner_id);
+
+        let mut errors = Vec::new();
+        for process_id in process_ids {
+            if let Err(error) = host.abort_agent(&process_id) {
+                errors.push(format!("{process_id}: {error}"));
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(AcpCoreError::Execution(format!(
+                "failed to release disposed ACP owner executions: {}",
+                errors.join("; ")
+            )))
+        }
+    }
+
+    /// Remove all pending and live state for an owner without invoking host
+    /// cleanup. This is for host teardown callbacks that run only after the
+    /// owner's VM/process resources have already been destroyed.
+    pub fn drop_owner_state(&mut self, owner_id: &str) {
+        self.take_owner_state(owner_id);
+    }
+
+    fn take_owner_state(&mut self, owner_id: &str) -> Vec<String> {
+        let mut process_ids = BTreeSet::new();
+        process_ids.extend(
+            self.pending_creates
+                .iter()
+                .filter(|(_, pending)| pending.owner_connection_id == owner_id)
+                .map(|(process_id, _)| process_id.clone()),
+        );
+        process_ids.extend(
+            self.pending_resumes
+                .iter()
+                .filter(|(_, pending)| pending.owner_connection_id == owner_id)
+                .map(|(process_id, _)| process_id.clone()),
+        );
+        process_ids.extend(
+            self.pending_prompts
+                .iter()
+                .filter(|(_, pending)| pending.owner_connection_id == owner_id)
+                .map(|(process_id, _)| process_id.clone()),
+        );
+        process_ids.extend(
+            self.pending_restarts
+                .iter()
+                .filter(|(_, pending)| pending.owner_connection_id == owner_id)
+                .map(|(process_id, _)| process_id.clone()),
+        );
+        process_ids.extend(
+            self.pending_closes
+                .iter()
+                .filter(|(_, pending)| pending.owner_connection_id == owner_id)
+                .map(|(process_id, _)| process_id.clone()),
+        );
+        process_ids.extend(
+            self.sessions
+                .values()
+                .filter(|session| session.owner_connection_id == owner_id && !session.closed)
+                .map(|session| session.process_id.clone()),
+        );
+
+        self.pending_creates
+            .retain(|_, pending| pending.owner_connection_id != owner_id);
+        self.pending_resumes
+            .retain(|_, pending| pending.owner_connection_id != owner_id);
+        self.pending_prompts
+            .retain(|_, pending| pending.owner_connection_id != owner_id);
+        self.pending_restarts
+            .retain(|_, pending| pending.owner_connection_id != owner_id);
+        self.pending_closes
+            .retain(|_, pending| pending.owner_connection_id != owner_id);
+        self.sessions
+            .retain(|_, session| session.owner_connection_id != owner_id);
+        self.pending_events
+            .retain(|pending| pending.owner_connection_id != owner_id);
+        self.pending_event_limits.remove(owner_id);
+        self.pending_event_limit_warned.remove(owner_id);
+
+        process_ids.into_iter().collect()
+    }
+
+    fn remove_pending_state(
+        &mut self,
+        owner_id: &str,
+        process_id: &str,
+    ) -> Result<(), AcpCoreError> {
+        let owner = self
+            .pending_creates
+            .get(process_id)
+            .map(|pending| pending.owner_connection_id.as_str())
+            .or_else(|| {
+                self.pending_resumes
+                    .get(process_id)
+                    .map(|pending| pending.owner_connection_id.as_str())
+            })
+            .or_else(|| {
+                self.pending_prompts
+                    .get(process_id)
+                    .map(|pending| pending.owner_connection_id.as_str())
+            })
+            .or_else(|| {
+                self.pending_restarts
+                    .get(process_id)
+                    .map(|pending| pending.owner_connection_id.as_str())
+            })
+            .or_else(|| {
+                self.pending_closes
+                    .get(process_id)
+                    .map(|pending| pending.owner_connection_id.as_str())
+            });
+        if owner != Some(owner_id) {
+            return Err(AcpCoreError::InvalidState(format!(
+                "no pending ACP interaction for {process_id}"
+            )));
+        }
+        if self.pending_creates.remove(process_id).is_some()
+            || self.pending_resumes.remove(process_id).is_some()
+        {
+            return Ok(());
+        }
+        if let Some(pending) = self.pending_restarts.remove(process_id) {
+            self.remove_session(&pending.owner_connection_id, &pending.session_id);
+            return Ok(());
+        }
+        if let Some(pending) = self.pending_closes.remove(process_id) {
+            self.remove_session(&pending.owner_connection_id, &pending.session_id);
+            return Ok(());
+        }
+        let pending = self
+            .pending_prompts
+            .remove(process_id)
+            .expect("pending owner lookup found prompt state");
+        if let Some(session) = self.session_mut(&pending.owner_connection_id, &pending.session_id) {
+            session.closed = true;
+            if session.pending_preamble.is_none() {
+                session.pending_preamble = pending.pending_preamble;
+            }
+        }
+        Ok(())
+    }
 
     fn bootstrap_session<H: AcpHost>(
         &self,
         host: &mut H,
+        owner_connection_id: &str,
         request: &ResolvedAcpCreateSessionRequest,
         process_id: &str,
     ) -> Result<SessionBootstrap, AcpCoreError> {
@@ -696,15 +2636,17 @@ impl AcpCore {
                 "clientCapabilities": client_capabilities,
             },
         });
-        let init_response = send_json_rpc(
+        let init_exchange = send_json_rpc_exchange(
             host,
             process_id,
             &initialize,
             1,
             INITIALIZE_TIMEOUT_MS,
             &mut stdout,
+            self.available_event_capacity(owner_connection_id),
+            self.available_event_bytes_capacity(owner_connection_id),
         )?;
-        let init_result = response_result(init_response, "ACP initialize")?;
+        let init_result = response_result(init_exchange.response, "ACP initialize")?;
         validate_initialize_result(&init_result, request.protocol_version)?;
 
         let session_new = json!({
@@ -713,24 +2655,39 @@ impl AcpCore {
             "method": "session/new",
             "params": { "cwd": request.cwd, "mcpServers": mcp_servers },
         });
-        let session_response = send_json_rpc(
+        let session_exchange = send_json_rpc_exchange(
             host,
             process_id,
             &session_new,
             2,
             SESSION_NEW_TIMEOUT_MS,
             &mut stdout,
+            self.available_event_capacity(owner_connection_id)
+                .saturating_sub(init_exchange.notifications.len()),
+            self.available_event_bytes_capacity(owner_connection_id)
+                .saturating_sub(init_exchange.notification_bytes),
         )?;
-        let session_result = response_result(session_response, "ACP session/new")?;
+        let session_result = response_result(session_exchange.response, "ACP session/new")?;
         let session_id = session_id_from_session_result(&session_result, process_id);
 
+        let fields = derive_bootstrap_fields(
+            &request.agent_type,
+            &init_result,
+            &session_result,
+            init_result.get("agentCapabilities"),
+        )?;
         Ok(SessionBootstrap {
             session_id,
-            modes: optional_field_json(&session_result, &init_result, "modes"),
-            config_options: config_options(&init_result, &session_result),
-            agent_capabilities: optional_value_json(init_result.get("agentCapabilities")),
-            agent_info: optional_value_json(init_result.get("agentInfo")),
+            modes: fields.modes,
+            config_options: fields.config_options,
+            agent_capabilities: fields.agent_capabilities,
+            agent_info: fields.agent_info,
             stdout_buffer: stdout,
+            notifications: init_exchange
+                .notifications
+                .into_iter()
+                .chain(session_exchange.notifications)
+                .collect(),
         })
     }
 
@@ -767,12 +2724,8 @@ impl AcpCore {
         let unknown =
             || AcpCoreError::InvalidState(format!("unknown ACP session {}", request.session_id));
         let session = self
-            .sessions
-            .get_mut(&request.session_id)
+            .session_mut(caller_connection_id, &request.session_id)
             .ok_or_else(unknown)?;
-        if session.owner_connection_id != caller_connection_id {
-            return Err(unknown());
-        }
         let rpc_id = session.allocate_request_id();
         // The transcript-continuation preamble is consumed once, on the first
         // `session/prompt` after a fallback resume; other methods leave it armed.
@@ -792,7 +2745,7 @@ impl AcpCore {
             "jsonrpc": "2.0",
             "id": rpc_id,
             "method": request.method,
-            "params": Value::Object(outbound_params),
+            "params": Value::Object(outbound_params.clone()),
         });
         let timeout = request_timeout_ms(&request.method);
         let exchange = match send_json_rpc_exchange(
@@ -802,23 +2755,47 @@ impl AcpCore {
             rpc_id,
             timeout,
             &mut stdout_buffer,
+            self.available_event_capacity(caller_connection_id)
+                .saturating_sub(1),
+            self.available_event_bytes_capacity(caller_connection_id),
         ) {
             Ok(exchange) => exchange,
             Err(error) => {
                 // Persist any drained stdout and re-arm the consumed preamble so a
                 // transient failure does not silently drop transcript context.
-                if let Some(session) = self.sessions.get_mut(&request.session_id) {
+                if let Some(session) = self.session_mut(caller_connection_id, &request.session_id) {
                     session.stdout_buffer = stdout_buffer;
                     if pending_preamble.is_some() && session.pending_preamble.is_none() {
                         session.pending_preamble = pending_preamble;
                     }
                 }
+                if let Some(exit_code) = adapter_gone_exit_code(&error) {
+                    return Err(self.handle_adapter_exit(
+                        host,
+                        caller_connection_id,
+                        &request.session_id,
+                        exit_code,
+                        error,
+                    ));
+                }
                 return Err(error);
             }
         };
 
-        if let Some(session) = self.sessions.get_mut(&request.session_id) {
+        if let Some(session) = self.session_mut(caller_connection_id, &request.session_id) {
             session.stdout_buffer = stdout_buffer;
+        }
+
+        let mut response = exchange.response;
+        if cancel_fallback_decision(&request.method, &response)
+            == AcpCancelFallbackDecision::SendNotification
+        {
+            write_json_line(host, &process_id, &cancel_notification(&request.session_id))?;
+            let id = response
+                .get("id")
+                .cloned()
+                .unwrap_or_else(|| Value::Number(rpc_id.into()));
+            response = cancel_notification_fallback_response(id);
         }
 
         let text = if request.method == "session/prompt" {
@@ -839,14 +2816,287 @@ impl AcpCore {
             None
         };
 
-        let response_text = serde_json::to_string(&exchange.response).map_err(|error| {
+        let notifications = exchange
+            .notifications
+            .iter()
+            .cloned()
+            .map(|notification| AcpSessionNotification {
+                session_id: request.session_id.clone(),
+                notification,
+            })
+            .collect::<Vec<_>>();
+        let (mut updated_session, synthetic_notification) = if response.get("error").is_none() {
+            let mut session = self
+                .session(caller_connection_id, &request.session_id)
+                .cloned()
+                .ok_or_else(|| {
+                    AcpCoreError::InvalidState(format!(
+                        "unknown ACP session {}",
+                        request.session_id
+                    ))
+                })?;
+            let synthetic = apply_successful_session_request(
+                &mut session,
+                &request.method,
+                &outbound_params,
+                &notifications,
+            )?;
+            (Some(session), synthetic)
+        } else {
+            (None, None)
+        };
+        let response_text = serde_json::to_string(&response).map_err(|error| {
             AcpCoreError::InvalidState(format!("failed to serialize ACP session response: {error}"))
         })?;
+        let mut notifications = notifications;
+        if let Some(synthetic) = synthetic_notification {
+            notifications.push(AcpSessionNotification {
+                session_id: request.session_id.clone(),
+                notification: synthetic.notification(),
+            });
+        }
+        self.push_session_notification_batch(caller_connection_id, &notifications)?;
+        if let Some(session) = updated_session.take() {
+            self.insert_session(session);
+        }
         Ok(AcpResponse::AcpSessionRpcResponse(AcpSessionRpcResponse {
             session_id: request.session_id.clone(),
             response: response_text,
             text,
         }))
+    }
+
+    fn handle_adapter_exit<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        owner_id: &str,
+        session_id: &str,
+        exit_code: Option<i32>,
+        error: AcpCoreError,
+    ) -> AcpCoreError {
+        if let Err(limit) = self.ensure_event_capacity(owner_id, 1, 0) {
+            self.remove_session(owner_id, session_id);
+            return limit;
+        }
+        let Some(session) = self.session_mut(owner_id, session_id) else {
+            return error;
+        };
+        session.closed = true;
+        session.exit_code = exit_code;
+        let agent_type = session.agent_type.clone();
+        let dead_process_id = session.process_id.clone();
+        let Some(mut restart) = session.restart.clone() else {
+            self.remove_session(owner_id, session_id);
+            return AcpCoreError::InvalidState(format!(
+                "{error}; ACP adapter auto-restart unsupported (launch state unavailable) — session evicted"
+            ));
+        };
+
+        let (outcome, detail) = if restart.count >= MAX_ADAPTER_RESTARTS {
+            self.remove_session(owner_id, session_id);
+            (String::from("exhausted"), None)
+        } else {
+            restart.count += 1;
+            match self.restart_adapter(host, owner_id, session_id, &agent_type, &restart) {
+                Ok(()) => (String::from("restarted"), None),
+                Err(AdapterRestartError::Unsupported) => {
+                    self.remove_session(owner_id, session_id);
+                    (
+                        String::from("unsupported"),
+                        Some(String::from(
+                            "adapter does not advertise loadSession/resume",
+                        )),
+                    )
+                }
+                Err(AdapterRestartError::Failed(restart_error)) => {
+                    self.remove_session(owner_id, session_id);
+                    (String::from("failed"), Some(restart_error.to_string()))
+                }
+            }
+        };
+
+        self.finish_adapter_exit(
+            owner_id,
+            session_id,
+            &agent_type,
+            &dead_process_id,
+            exit_code,
+            &restart,
+            &outcome,
+            detail.as_deref(),
+            Some(&error),
+        )
+        .unwrap_or_else(|limit| limit)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish_adapter_exit(
+        &mut self,
+        owner_connection_id: &str,
+        session_id: &str,
+        agent_type: &str,
+        dead_process_id: &str,
+        exit_code: Option<i32>,
+        restart: &AcpAdapterRestartState,
+        outcome: &str,
+        detail: Option<&str>,
+        original_error: Option<&AcpCoreError>,
+    ) -> Result<AcpCoreError, AcpCoreError> {
+        let event = AcpEvent::AcpAgentExitedEvent(AcpAgentExitedEvent {
+            session_id: session_id.to_string(),
+            agent_type: agent_type.to_string(),
+            process_id: dead_process_id.to_string(),
+            exit_code,
+            restart: outcome.to_string(),
+            restart_count: restart.count,
+            max_restarts: MAX_ADAPTER_RESTARTS,
+        });
+        let encoded_bytes = Self::encoded_event_len(&event)?;
+        self.ensure_event_capacity(owner_connection_id, 1, encoded_bytes)?;
+        self.pending_events.push(PendingAcpEvent {
+            owner_connection_id: owner_connection_id.to_string(),
+            event,
+            encoded_bytes,
+        });
+
+        let exit_diagnostic = match exit_code {
+            Some(code) => format!("ACP adapter process {dead_process_id} exited with code {code}"),
+            None => original_error
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("ACP adapter process {dead_process_id} exited")),
+        };
+        Ok(AcpCoreError::InvalidState(match outcome {
+            "restarted" => format!(
+                "{exit_diagnostic}; ACP adapter was auto-restarted (attempt {}/{MAX_ADAPTER_RESTARTS}) and the session is live again — retry the request",
+                restart.count,
+            ),
+            "exhausted" => format!(
+                "{exit_diagnostic}; ACP adapter restart budget exhausted ({MAX_ADAPTER_RESTARTS} restarts) — session evicted"
+            ),
+            _ => format!(
+                "{exit_diagnostic}; ACP adapter auto-restart {outcome} ({}) — session evicted",
+                detail.unwrap_or("no detail"),
+            ),
+        }))
+    }
+
+    fn restart_adapter<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        owner_id: &str,
+        session_id: &str,
+        agent_type: &str,
+        restart: &AcpAdapterRestartState,
+    ) -> Result<(), AdapterRestartError> {
+        // Re-resolve to verify the projected package is still present and to let
+        // hosts associate the subsequent spawn with its agent package.
+        resolve_agent(host, agent_type).map_err(AdapterRestartError::Failed)?;
+        let process_id = self.allocate_process_id("acp-agent");
+        let spawned = host
+            .spawn_agent(SpawnAgentRequest {
+                process_id: process_id.clone(),
+                runtime: restart.runtime.clone(),
+                entrypoint: Some(restart.entrypoint.clone()),
+                command: None,
+                args: restart.args.clone(),
+                env: restart.env.clone(),
+                cwd: Some(restart.cwd.clone()),
+            })
+            .map_err(AdapterRestartError::Failed)?;
+
+        let result = (|| {
+            let client_capabilities =
+                parse_json_text(&restart.client_capabilities, "clientCapabilities")?;
+            let mut stdout = String::new();
+            let notification_limit = self.available_event_capacity(owner_id).saturating_sub(1);
+            let notification_bytes_limit = self.available_event_bytes_capacity(owner_id);
+            let initialize = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": restart.protocol_version,
+                    "clientCapabilities": client_capabilities,
+                },
+            });
+            let init_exchange = send_json_rpc_exchange(
+                host,
+                &process_id,
+                &initialize,
+                1,
+                INITIALIZE_TIMEOUT_MS,
+                &mut stdout,
+                notification_limit,
+                notification_bytes_limit,
+            )?;
+            let init_notifications = init_exchange.notifications.len();
+            let init_notification_bytes = init_exchange.notification_bytes;
+            let init_result = response_result(init_exchange.response, "ACP initialize")?;
+            validate_initialize_result(&init_result, restart.protocol_version)?;
+            let agent_capabilities = init_result.get("agentCapabilities").cloned();
+            let Some(method) = native_resume_method(agent_capabilities.as_ref()) else {
+                return Err(AdapterRestartError::Unsupported);
+            };
+            let load = json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": method,
+                "params": {
+                    "sessionId": session_id,
+                    "cwd": restart.cwd,
+                    "mcpServers": [],
+                },
+            });
+            let load_exchange = send_json_rpc_exchange(
+                host,
+                &process_id,
+                &load,
+                2,
+                SESSION_NEW_TIMEOUT_MS,
+                &mut stdout,
+                notification_limit.saturating_sub(init_notifications),
+                notification_bytes_limit.saturating_sub(init_notification_bytes),
+            )?;
+            let load_result = response_result(load_exchange.response, &format!("ACP {method}"))?;
+            let fields = derive_bootstrap_fields(
+                agent_type,
+                &init_result,
+                &load_result,
+                agent_capabilities.as_ref(),
+            )?;
+            host.bind_session(session_id, &process_id)?;
+            Ok((fields, stdout))
+        })();
+
+        let (fields, stdout) = match result {
+            Ok(result) => result,
+            Err(AdapterRestartError::Unsupported) => {
+                abort_agent_for_cleanup(host, &process_id, "adapter restart unsupported");
+                return Err(AdapterRestartError::Unsupported);
+            }
+            Err(AdapterRestartError::Failed(error)) => {
+                abort_agent_for_cleanup(host, &process_id, "adapter restart failure");
+                return Err(AdapterRestartError::Failed(error));
+            }
+        };
+        let Some(session) = self.session_mut(owner_id, session_id) else {
+            abort_agent_for_cleanup(host, &process_id, "adapter restart session removed");
+            return Err(AdapterRestartError::Failed(AcpCoreError::InvalidState(
+                format!("ACP session {session_id} was removed during adapter restart"),
+            )));
+        };
+        session.process_id = process_id;
+        session.pid = spawned.pid;
+        session.modes = fields.modes;
+        session.config_options = fields.config_options;
+        session.agent_capabilities = fields.agent_capabilities;
+        session.agent_info = fields.agent_info;
+        session.stdout_buffer = stdout;
+        session.next_request_id = 3;
+        session.closed = false;
+        session.exit_code = None;
+        session.restart = Some(restart.clone());
+        Ok(())
     }
 
     fn prepare_session_config(
@@ -856,10 +3106,9 @@ impl AcpCore {
     ) -> Result<PreparedSessionConfig, AcpCoreError> {
         let unknown =
             || AcpCoreError::InvalidState(format!("unknown ACP session {}", request.session_id));
-        let session = self.sessions.get(&request.session_id).ok_or_else(unknown)?;
-        if session.owner_connection_id != caller_connection_id {
-            return Err(unknown());
-        }
+        let session = self
+            .session(caller_connection_id, &request.session_id)
+            .ok_or_else(unknown)?;
         let selection = select_config_by_category(&session.config_options, &request.category)
             .map_err(AcpCoreError::InvalidState)?;
         if selection.read_only {
@@ -911,30 +3160,45 @@ impl AcpCore {
         let resolved = resolve_agent(host, &request.agent_type)?;
 
         let process_id = self.allocate_process_id("acp-agent");
-        let mut env: BTreeMap<String, String> = request.env.clone().into_iter().collect();
-        env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
-        // Manifest env applies as DEFAULTS; caller/base env wins on conflicts.
-        for (key, value) in &resolved.env {
-            env.entry(key.clone()).or_insert_with(|| value.clone());
-        }
+        let (args, env) = prepare_agent_launch(
+            host,
+            &request.agent_type,
+            &resolved,
+            &[],
+            &request.env,
+            true,
+            None,
+        )?;
+        let restart = AcpAdapterRestartState {
+            runtime: AcpRuntimeKind::JavaScript,
+            entrypoint: resolved.adapter_entrypoint.clone(),
+            args: args.clone(),
+            env: env.clone(),
+            cwd: request.cwd.clone(),
+            protocol_version: DEFAULT_ACP_PROTOCOL_VERSION,
+            client_capabilities: String::from(DEFAULT_ACP_CLIENT_CAPABILITIES),
+            count: 0,
+        };
 
         let spawned = host.spawn_agent(SpawnAgentRequest {
             process_id: process_id.clone(),
             runtime: AcpRuntimeKind::JavaScript,
-            entrypoint: Some(resolved.entrypoint.clone()),
+            entrypoint: Some(resolved.adapter_entrypoint.clone()),
             command: None,
-            args: resolved.launch_args.clone(),
+            args,
             env,
             cwd: Some(request.cwd.clone()),
         })?;
 
-        let outcome = match self.resume_bootstrap(host, &request, &process_id) {
+        let outcome = match self.resume_bootstrap(host, caller_connection_id, &request, &process_id)
+        {
             Ok(outcome) => outcome,
             Err(error) => {
-                let _ = host.kill_agent(&process_id, "SIGKILL");
+                abort_agent_for_cleanup(host, &process_id, "blocking resume bootstrap failure");
                 return Err(error);
             }
         };
+        let notifications = outcome.bootstrap.notifications.clone();
 
         let session = AcpSessionRecord {
             session_id: outcome.bootstrap.session_id.clone(),
@@ -951,17 +3215,24 @@ impl AcpCore {
             closed: false,
             exit_code: None,
             pending_preamble: outcome.pending_preamble,
+            restart: Some(restart),
         };
 
-        if self.sessions.contains_key(&session.session_id) {
-            let _ = host.kill_agent(&process_id, "SIGKILL");
+        if self
+            .session(caller_connection_id, &session.session_id)
+            .is_some()
+        {
+            abort_agent_for_cleanup(host, &process_id, "blocking resume session collision");
             return Err(AcpCoreError::InvalidState(format!(
                 "session id collision: {}",
                 session.session_id
             )));
         }
 
-        host.bind_session(&session.session_id, &process_id)?;
+        if let Err(error) = host.bind_session(&session.session_id, &process_id) {
+            abort_agent_for_cleanup(host, &process_id, "blocking resume bind failure");
+            return Err(error);
+        }
         let response = AcpResponse::AcpSessionResumedResponse(AcpSessionResumedResponse {
             session_id: session.session_id.clone(),
             mode: outcome.mode,
@@ -969,13 +3240,29 @@ impl AcpCore {
             process_id: session.process_id.clone(),
             pid: session.pid,
         });
-        self.sessions.insert(session.session_id.clone(), session);
+        let session_id = session.session_id.clone();
+        self.insert_session(session);
+        let notifications = notifications
+            .into_iter()
+            .map(|notification| AcpSessionNotification {
+                session_id: session_id.clone(),
+                notification,
+            })
+            .collect::<Vec<_>>();
+        if let Err(error) =
+            self.push_session_notification_batch(caller_connection_id, &notifications)
+        {
+            self.remove_session(caller_connection_id, &session_id);
+            abort_agent_for_cleanup(host, &process_id, "blocking resume event commit failure");
+            return Err(error);
+        }
         Ok(response)
     }
 
     fn resume_bootstrap<H: AcpHost>(
         &self,
         host: &mut H,
+        owner_connection_id: &str,
         request: &ResolvedAcpResumeSessionRequest,
         process_id: &str,
     ) -> Result<ResumeOutcome, AcpCoreError> {
@@ -992,17 +3279,21 @@ impl AcpCore {
                 "clientCapabilities": client_capabilities,
             },
         });
-        let init_response = send_json_rpc(
+        let init_exchange = send_json_rpc_exchange(
             host,
             process_id,
             &initialize,
             1,
             INITIALIZE_TIMEOUT_MS,
             &mut stdout,
+            self.available_event_capacity(owner_connection_id),
+            self.available_event_bytes_capacity(owner_connection_id),
         )?;
-        let init_result = response_result(init_response, "ACP initialize")?;
+        let init_result = response_result(init_exchange.response, "ACP initialize")?;
         validate_initialize_result(&init_result, DEFAULT_ACP_PROTOCOL_VERSION)?;
         let agent_capabilities = init_result.get("agentCapabilities").cloned();
+        let mut notification_bytes = init_exchange.notification_bytes;
+        let mut notifications = init_exchange.notifications;
 
         // Tier 1 — native (capability-gated). Re-probed caps decide eligibility.
         if let Some(native_method) = native_resume_method(agent_capabilities.as_ref()) {
@@ -1012,25 +3303,36 @@ impl AcpCore {
                 "method": native_method,
                 "params": { "sessionId": request.session_id, "cwd": request.cwd, "mcpServers": [] },
             });
-            let mut load_response = send_json_rpc(
+            let load_exchange = send_json_rpc_exchange(
                 host,
                 process_id,
                 &load,
                 2,
                 SESSION_NEW_TIMEOUT_MS,
                 &mut stdout,
+                self.available_event_capacity(owner_connection_id)
+                    .saturating_sub(notifications.len()),
+                self.available_event_bytes_capacity(owner_connection_id)
+                    .saturating_sub(notification_bytes),
             )?;
+            notification_bytes =
+                notification_bytes.saturating_add(load_exchange.notification_bytes);
+            notifications.extend(load_exchange.notifications);
+            let mut load_response = load_exchange.response;
             normalize_unknown_session_error(&mut load_response);
             if load_response.get("error").is_none() {
                 let load_result = response_result(load_response, &format!("ACP {native_method}"))?;
+                let mut bootstrap = self.build_bootstrap(
+                    request.session_id.clone(),
+                    &init_result,
+                    &load_result,
+                    &request.agent_type,
+                    agent_capabilities.as_ref(),
+                    stdout,
+                )?;
+                bootstrap.notifications = notifications;
                 return Ok(ResumeOutcome {
-                    bootstrap: self.build_bootstrap(
-                        request.session_id.clone(),
-                        &init_result,
-                        &load_result,
-                        agent_capabilities.as_ref(),
-                        stdout,
-                    ),
+                    bootstrap,
                     mode: String::from("native"),
                     pending_preamble: None,
                 });
@@ -1053,29 +3355,37 @@ impl AcpCore {
             "method": "session/new",
             "params": { "cwd": request.cwd, "mcpServers": [] },
         });
-        let session_response = send_json_rpc(
+        let session_exchange = send_json_rpc_exchange(
             host,
             process_id,
             &session_new,
             2,
             SESSION_NEW_TIMEOUT_MS,
             &mut stdout,
+            self.available_event_capacity(owner_connection_id)
+                .saturating_sub(notifications.len()),
+            self.available_event_bytes_capacity(owner_connection_id)
+                .saturating_sub(notification_bytes),
         )?;
-        let session_result = response_result(session_response, "ACP session/new")?;
+        notifications.extend(session_exchange.notifications);
+        let session_result = response_result(session_exchange.response, "ACP session/new")?;
         let live_session_id = session_id_from_session_result(&session_result, process_id);
         let pending_preamble = request
             .transcript_path
             .as_deref()
             .filter(|path| !path.is_empty())
             .map(|path| CONTINUATION_PREAMBLE.replace("{path}", path));
+        let mut bootstrap = self.build_bootstrap(
+            live_session_id,
+            &init_result,
+            &session_result,
+            &request.agent_type,
+            agent_capabilities.as_ref(),
+            stdout,
+        )?;
+        bootstrap.notifications = notifications;
         Ok(ResumeOutcome {
-            bootstrap: self.build_bootstrap(
-                live_session_id,
-                &init_result,
-                &session_result,
-                agent_capabilities.as_ref(),
-                stdout,
-            ),
+            bootstrap,
             mode: String::from("fallback"),
             pending_preamble,
         })
@@ -1086,17 +3396,21 @@ impl AcpCore {
         session_id: String,
         init_result: &Map<String, Value>,
         session_result: &Map<String, Value>,
+        agent_type: &str,
         agent_capabilities: Option<&Value>,
         stdout_buffer: String,
-    ) -> SessionBootstrap {
-        SessionBootstrap {
+    ) -> Result<SessionBootstrap, AcpCoreError> {
+        let fields =
+            derive_bootstrap_fields(agent_type, init_result, session_result, agent_capabilities)?;
+        Ok(SessionBootstrap {
             session_id,
-            modes: optional_field_json(session_result, init_result, "modes"),
-            config_options: config_options(init_result, session_result),
-            agent_capabilities: optional_value_json(agent_capabilities),
-            agent_info: optional_value_json(init_result.get("agentInfo")),
+            modes: fields.modes,
+            config_options: fields.config_options,
+            agent_capabilities: fields.agent_capabilities,
+            agent_info: fields.agent_info,
             stdout_buffer,
-        }
+            notifications: Vec::new(),
+        })
     }
 
     /// Dispatch a decoded ACP request to the right handler.
@@ -1132,27 +3446,37 @@ impl AcpCore {
                 self.resume_session(host, caller_connection_id, &request)
             }
             AcpRequest::AcpDeliverAgentOutputRequest(request) => {
-                self.deliver_agent_output(host, &request)
+                self.deliver_agent_output(host, caller_connection_id, &request)
             }
-            // Agent enumeration needs a directory listing of `/opt/agentos`, which
-            // the host-free `AcpHost` seam does not expose (it has `read_file`, not
-            // `read_dir`). The native sidecar answers `list_agents` directly from the
-            // projected packages; the browser resumable path does not support it yet.
-            AcpRequest::AcpListAgentsRequest(_) => Err(AcpCoreError::InvalidState(
-                "list_agents is not handled by the host-free ACP core; the native sidecar answers \
-                 it from the projected /opt/agentos packages"
-                    .to_string(),
-            )),
+            AcpRequest::AcpDeliverAgentStderrRequest(request) => {
+                self.deliver_agent_stderr(caller_connection_id, &request)
+            }
+            AcpRequest::AcpAbortPendingRequest(request) => {
+                self.abort_pending(host, caller_connection_id, &request)
+            }
+            AcpRequest::AcpListAgentsRequest(_) => {
+                let mut agents = host.list_projected_agents()?;
+                agents.sort_by(|left, right| left.id.cmp(&right.id));
+                Ok(AcpResponse::AcpListAgentsResponse(AcpListAgentsResponse {
+                    agents: agents
+                        .into_iter()
+                        .map(|agent| AcpAgentEntry {
+                            id: agent.id,
+                            installed: true,
+                            adapter_entrypoint: agent.adapter_entrypoint,
+                        })
+                        .collect(),
+                }))
+            }
         }
     }
 
-    /// RESUMABLE dispatch (browser path): `create_session` / `session/prompt` start a
-    /// non-blocking handshake and return [`AcpPendingResponse`] with the process
-    /// handle; `deliver_agent_output` feeds the agent's stdout and returns the real
-    /// result once the handshake completes (else another `AcpPendingResponse`).
-    /// Everything else (get_state / close / resume) is delegated to the synchronous
-    /// handlers. This is what the in-worker kernel calls so it never block-waits
-    /// inside `pushFrame` while an agent makes a mid-turn syscall (§3.2.1).
+    /// RESUMABLE dispatch (browser path): create, resume, and in-session RPCs start
+    /// a non-blocking interaction and return [`AcpPendingResponse`] with the process
+    /// handle. `deliver_agent_output` feeds stdout and returns the real result once
+    /// complete (else another pending response). Pure state operations are handled
+    /// immediately. This keeps the worker from block-waiting inside `pushFrame`
+    /// while an agent makes a mid-turn syscall (§3.2.1).
     pub fn dispatch_resumable<H: AcpHost>(
         &mut self,
         host: &mut H,
@@ -1162,16 +3486,12 @@ impl AcpCore {
         match request {
             AcpRequest::AcpCreateSessionRequest(request) => {
                 let process_id = self.begin_create_session(host, caller_connection_id, &request)?;
-                Ok(AcpResponse::AcpPendingResponse(AcpPendingResponse {
-                    process_id,
-                }))
+                self.pending_response(process_id)
             }
             AcpRequest::AcpSessionRequest(request) => {
                 let process_id =
                     self.begin_session_request(host, caller_connection_id, &request)?;
-                Ok(AcpResponse::AcpPendingResponse(AcpPendingResponse {
-                    process_id,
-                }))
+                self.pending_response(process_id)
             }
             AcpRequest::AcpSetSessionConfigRequest(request) => {
                 match self.prepare_session_config(caller_connection_id, &request)? {
@@ -1179,14 +3499,25 @@ impl AcpCore {
                     PreparedSessionConfig::Forward(request) => {
                         let process_id =
                             self.begin_session_request(host, caller_connection_id, &request)?;
-                        Ok(AcpResponse::AcpPendingResponse(AcpPendingResponse {
-                            process_id,
-                        }))
+                        self.pending_response(process_id)
                     }
                 }
             }
+            AcpRequest::AcpResumeSessionRequest(request) => {
+                let process_id = self.begin_resume_session(host, caller_connection_id, &request)?;
+                self.pending_response(process_id)
+            }
+            AcpRequest::AcpCloseSessionRequest(request) => {
+                self.begin_close_session(host, caller_connection_id, &request)
+            }
             AcpRequest::AcpDeliverAgentOutputRequest(request) => {
-                self.deliver_agent_output(host, &request)
+                self.deliver_agent_output(host, caller_connection_id, &request)
+            }
+            AcpRequest::AcpDeliverAgentStderrRequest(request) => {
+                self.deliver_agent_stderr(caller_connection_id, &request)
+            }
+            AcpRequest::AcpAbortPendingRequest(request) => {
+                self.abort_pending(host, caller_connection_id, &request)
             }
             other => self.dispatch(host, caller_connection_id, other),
         }
@@ -1195,12 +3526,16 @@ impl AcpCore {
     fn deliver_agent_output<H: AcpHost>(
         &mut self,
         host: &mut H,
+        caller_connection_id: &str,
         request: &AcpDeliverAgentOutputRequest,
     ) -> Result<AcpResponse, AcpCoreError> {
-        match self.feed_agent_output(host, &request.process_id, &request.chunk)? {
-            ResumeStep::Pending => Ok(AcpResponse::AcpPendingResponse(AcpPendingResponse {
-                process_id: request.process_id.clone(),
-            })),
+        match self.feed_agent_output(
+            host,
+            caller_connection_id,
+            &request.process_id,
+            &request.chunk,
+        )? {
+            ResumeStep::Pending => self.pending_response(request.process_id.clone()),
             ResumeStep::Done(response) => Ok(response),
         }
     }
@@ -1233,6 +3568,25 @@ fn request_timeout_ms(method: &str) -> u64 {
         "session/new" => SESSION_NEW_TIMEOUT_MS,
         _ => 120_000,
     }
+}
+
+fn adapter_gone_exit_code(error: &AcpCoreError) -> Option<Option<i32>> {
+    let (AcpCoreError::Execution(message) | AcpCoreError::InvalidState(message)) = error else {
+        return None;
+    };
+    if let Some(raw) = message
+        .split("agent process exited (code=Some(")
+        .nth(1)
+        .and_then(|tail| tail.split(')').next())
+    {
+        return raw.parse::<i32>().ok().map(Some);
+    }
+    if message.contains("agent process exited (code=None)")
+        || message.contains("has no active process")
+    {
+        return Some(None);
+    }
+    None
 }
 
 /// Prepend the transcript-continuation preamble as a leading text block on a
@@ -1313,6 +3667,17 @@ fn is_process_already_gone_error(error: &AcpCoreError) -> bool {
         || message.contains("has no active process")
 }
 
+fn abort_agent_for_cleanup<H: AcpHost>(host: &mut H, process_id: &str, context: &'static str) {
+    if let Err(error) = host.abort_agent(process_id) {
+        tracing::warn!(
+            process_id,
+            %error,
+            context,
+            "failed to abort ACP adapter during cleanup"
+        );
+    }
+}
+
 /// Write a JSON-RPC message as a single newline-terminated line to the agent's
 /// stdin (no waiting). Used by the resumable handshake.
 fn write_json_line<H: AcpHost>(
@@ -1325,6 +3690,32 @@ fn write_json_line<H: AcpHost>(
     })?;
     line.push(b'\n');
     host.write_stdin(process_id, &line)
+}
+
+fn answer_inbound_request<H: AcpHost>(
+    host: &mut H,
+    process_id: &str,
+    request: &Value,
+) -> Result<(), AcpCoreError> {
+    let response = host.handle_inbound_request(process_id, request)?;
+    write_json_line(host, process_id, &response)
+}
+
+fn write_resume_session_new<H: AcpHost>(
+    host: &mut H,
+    process_id: &str,
+    cwd: &str,
+) -> Result<(), AcpCoreError> {
+    write_json_line(
+        host,
+        process_id,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "session/new",
+            "params": { "cwd": cwd, "mcpServers": [] },
+        }),
+    )
 }
 
 fn parse_json_text(text: &str, label: &str) -> Result<Value, AcpCoreError> {
@@ -1382,55 +3773,37 @@ fn session_id_from_session_result(session_result: &Map<String, Value>, fallback:
         .unwrap_or_else(|| fallback.to_string())
 }
 
-/// JSON-encode a present, non-null value to its string form (the record stores
-/// these fields as opaque JSON text, decoded client-side).
-fn optional_value_json(value: Option<&Value>) -> Option<String> {
-    value
-        .filter(|value| !value.is_null())
-        .and_then(|value| serde_json::to_string(value).ok())
-}
-
-/// Prefer the session/new result, fall back to initialize, for an optional field.
-fn optional_field_json(
-    primary: &Map<String, Value>,
-    fallback: &Map<String, Value>,
-    key: &str,
-) -> Option<String> {
-    optional_value_json(primary.get(key).or_else(|| fallback.get(key)))
-}
-
-/// Config options: prefer session/new's array, else initialize's; each element is
-/// stored as its JSON-text form.
-fn config_options(
-    init_result: &Map<String, Value>,
-    session_result: &Map<String, Value>,
-) -> Vec<String> {
-    let array = session_result
-        .get("configOptions")
-        .and_then(Value::as_array)
-        .or_else(|| init_result.get("configOptions").and_then(Value::as_array));
-    array
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| serde_json::to_string(item).ok())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host::{AgentOutput, SpawnAgentRequest, SpawnedAgent};
+    use crate::host::{AgentOutput, ProjectedAgentLaunch, SpawnAgentRequest, SpawnedAgent};
+
+    fn projected_agent(id: &str) -> ProjectedAgentLaunch {
+        ProjectedAgentLaunch {
+            id: id.to_string(),
+            adapter_entrypoint: String::from("/opt/agentos/bin/echo-agent"),
+            env: BTreeMap::new(),
+            launch_args: Vec::new(),
+        }
+    }
 
     #[derive(Default)]
     struct MockHost {
         killed: Vec<(String, String)>,
         closed_stdin: Vec<String>,
+        wait_failures_remaining: usize,
     }
 
     impl AcpHost for MockHost {
+        fn resolve_projected_agent(
+            &mut self,
+            id: &str,
+        ) -> Result<Option<ProjectedAgentLaunch>, AcpCoreError> {
+            Ok(Some(projected_agent(id)))
+        }
+        fn list_projected_agents(&mut self) -> Result<Vec<ProjectedAgentLaunch>, AcpCoreError> {
+            Ok(vec![projected_agent("echo")])
+        }
         fn spawn_agent(&mut self, _: SpawnAgentRequest) -> Result<SpawnedAgent, AcpCoreError> {
             unreachable!("non-process handlers do not spawn")
         }
@@ -1453,13 +3826,19 @@ mod tests {
             Ok(())
         }
         fn wait_for_exit(&mut self, _: &str, _: u64) -> Result<Option<i32>, AcpCoreError> {
+            if self.wait_failures_remaining > 0 {
+                self.wait_failures_remaining -= 1;
+                return Err(AcpCoreError::Execution(String::from(
+                    "injected wait failure",
+                )));
+            }
             Ok(Some(0)) // exits promptly after SIGTERM
         }
         fn write_file(&mut self, _: &str, _: &[u8]) -> Result<(), AcpCoreError> {
             Ok(())
         }
         fn read_file(&mut self, _: &str) -> Result<Vec<u8>, AcpCoreError> {
-            Ok(br#"{"name":"echo","agent":{"acpEntrypoint":"echo-agent"}}"#.to_vec())
+            Ok(Vec::new())
         }
         fn now_ms(&self) -> u64 {
             0
@@ -1482,7 +3861,134 @@ mod tests {
             closed: false,
             exit_code: None,
             pending_preamble: None,
+            restart: None,
         }
+    }
+
+    fn pending_session_event(owner: &str, notification: &str) -> PendingAcpEvent {
+        let event = AcpEvent::AcpSessionEvent(AcpSessionEvent {
+            session_id: String::from("s1"),
+            notification: notification.to_string(),
+        });
+        let encoded_bytes = AcpCore::encoded_event_len(&event).expect("size test event");
+        PendingAcpEvent {
+            owner_connection_id: owner.to_string(),
+            event,
+            encoded_bytes,
+        }
+    }
+
+    #[test]
+    fn pending_event_limit_rejects_zero_and_queued_event_underflow() {
+        let mut core = AcpCore::new();
+        assert!(core.set_pending_event_limit("owner-a", 0).is_err());
+        core.pending_events
+            .push(pending_session_event("owner-a", "{}"));
+        core.pending_events
+            .push(pending_session_event("owner-a", "{}"));
+        let error = core
+            .set_pending_event_limit("owner-a", 1)
+            .expect_err("cannot lower beneath queued events");
+        assert!(error.to_string().contains("current usage (2 events"));
+        assert_eq!(
+            core.event_limits("owner-a").0,
+            DEFAULT_ACP_PENDING_EVENT_LIMIT
+        );
+    }
+
+    #[test]
+    fn pending_event_limit_resets_warning_state_for_the_new_capacity() {
+        let mut core = AcpCore::new();
+        core.pending_events
+            .push(pending_session_event("owner-a", "{}"));
+        core.pending_event_limit_warned
+            .insert(String::from("owner-a"));
+        core.set_pending_event_limit("owner-a", 10)
+            .expect("raise limit");
+        assert!(!core.pending_event_limit_warned.contains("owner-a"));
+        core.set_pending_event_limit("owner-a", 1)
+            .expect("equal queue depth");
+        assert!(core.pending_event_limit_warned.contains("owner-a"));
+    }
+
+    #[test]
+    fn event_delivery_snapshot_retains_unacknowledged_suffix_in_order() {
+        let mut core = AcpCore::new();
+        for notification in ["first", "second", "third"] {
+            core.pending_events
+                .push(pending_session_event("owner-a", notification));
+        }
+
+        assert_eq!(core.events_for_delivery("owner-a").len(), 3);
+        core.acknowledge_delivered_events("owner-a", 1)
+            .expect("acknowledge delivered prefix");
+        let remaining = core.events_for_delivery("owner-a");
+        assert_eq!(remaining.len(), 2);
+        let AcpEvent::AcpSessionEvent(first_remaining) = &remaining[0] else {
+            panic!("expected session event");
+        };
+        assert_eq!(first_remaining.notification, "second");
+        assert!(core.acknowledge_delivered_events("owner-a", 3).is_err());
+        assert_eq!(core.pending_event_count(), 2);
+    }
+
+    #[test]
+    fn pending_events_are_owner_scoped_and_disposal_purges_only_that_owner() {
+        let mut core = AcpCore::new();
+        core.pending_events
+            .push(pending_session_event("owner-a", "a-first"));
+        core.pending_events
+            .push(pending_session_event("owner-b", "b-only"));
+        core.pending_events
+            .push(pending_session_event("owner-a", "a-second"));
+        core.set_pending_event_limits("owner-a", 2, usize::MAX)
+            .expect("owner A may fill its own quota");
+        core.set_pending_event_limits("owner-b", 1, usize::MAX)
+            .expect("owner A's full quota must not block owner B");
+
+        let owner_b = core.events_for_delivery("owner-b");
+        assert_eq!(owner_b.len(), 1);
+        let AcpEvent::AcpSessionEvent(owner_b_event) = &owner_b[0] else {
+            panic!("expected owner B session event");
+        };
+        assert_eq!(owner_b_event.notification, "b-only");
+        core.acknowledge_delivered_events("owner-b", 1)
+            .expect("acknowledge only owner B");
+        assert_eq!(core.events_for_delivery("owner-a").len(), 2);
+        assert!(core.events_for_delivery("owner-b").is_empty());
+
+        core.drop_owner_state("owner-a");
+        assert_eq!(core.pending_event_count(), 0);
+    }
+
+    #[test]
+    fn agent_stderr_is_owner_scoped_bounded_and_retryable() {
+        let mut core = AcpCore::with_pending_event_limits(1, 4_096);
+        core.insert_session(record("s1", "owner-a"));
+        let request = AcpDeliverAgentStderrRequest {
+            process_id: String::from("proc-s1"),
+            chunk: b"warning\n".to_vec(),
+        };
+
+        assert!(core.deliver_agent_stderr("owner-b", &request).is_err());
+        assert!(matches!(
+            core.deliver_agent_stderr("owner-a", &request),
+            Ok(AcpResponse::AcpAgentStderrDeliveredResponse(_))
+        ));
+        assert!(core.deliver_agent_stderr("owner-a", &request).is_err());
+        let retained = core.events_for_delivery("owner-a");
+        assert_eq!(retained.len(), 1);
+        let AcpEvent::AcpAgentStderrEvent(stderr) = &retained[0] else {
+            panic!("expected stderr event")
+        };
+        assert_eq!(stderr.session_id, "s1");
+        assert_eq!(stderr.agent_type, "echo");
+        assert_eq!(stderr.process_id, "proc-s1");
+        assert_eq!(stderr.chunk, b"warning\n");
+        assert_eq!(core.events_for_delivery("owner-a"), retained);
+        core.acknowledge_delivered_events("owner-a", 1)
+            .expect("acknowledge stderr only after host delivery");
+        assert!(core.events_for_delivery("owner-a").is_empty());
     }
 
     #[test]
@@ -1512,6 +4018,45 @@ mod tests {
         assert_eq!(listed.sessions.len(), 1);
         assert_eq!(listed.sessions[0].session_id, "a1");
         assert_eq!(listed.sessions[0].agent_type, "echo");
+    }
+
+    #[test]
+    fn identical_adapter_session_ids_are_independent_per_owner() {
+        let mut core = AcpCore::new();
+        let mut owner_a = record("same-id", "owner-a");
+        owner_a.process_id = String::from("process-a");
+        let mut owner_b = record("same-id", "owner-b");
+        owner_b.process_id = String::from("process-b");
+        core.insert_session(owner_a);
+        core.insert_session(owner_b);
+
+        assert_eq!(core.session_count(), 2);
+        assert_eq!(
+            core.session("owner-a", "same-id").unwrap().process_id,
+            "process-a"
+        );
+        assert_eq!(
+            core.session("owner-b", "same-id").unwrap().process_id,
+            "process-b"
+        );
+        let AcpResponse::AcpListSessionsResponse(owner_a_list) = core.list_sessions("owner-a")
+        else {
+            panic!("expected owner-scoped session list");
+        };
+        assert_eq!(owner_a_list.sessions.len(), 1);
+
+        let mut host = MockHost::default();
+        core.close_session(
+            &mut host,
+            "owner-a",
+            &AcpCloseSessionRequest {
+                session_id: String::from("same-id"),
+            },
+        )
+        .expect("owner A closes only its same-named session");
+        assert!(core.session("owner-a", "same-id").is_none());
+        assert!(core.session("owner-b", "same-id").is_some());
+        assert_eq!(host.closed_stdin, vec![String::from("process-a")]);
     }
 
     #[test]
@@ -1547,6 +4092,98 @@ mod tests {
         assert_eq!(host.killed, vec![("proc-s1".into(), "SIGTERM".into())]);
     }
 
+    #[test]
+    fn close_session_retains_authoritative_state_until_cleanup_can_be_retried() {
+        let mut core = AcpCore::new();
+        core.insert_session(record("s1", "conn-a"));
+        let mut host = MockHost {
+            wait_failures_remaining: 1,
+            ..MockHost::default()
+        };
+        let request = AcpCloseSessionRequest {
+            session_id: String::from("s1"),
+        };
+
+        let error = core
+            .close_session(&mut host, "conn-a", &request)
+            .expect_err("first close must surface the cleanup failure");
+        assert_eq!(error.code(), "execution");
+        assert_eq!(core.session_count(), 1, "failed close stays retryable");
+
+        core.close_session(&mut host, "conn-a", &request)
+            .expect("retry completes cleanup");
+        assert_eq!(core.session_count(), 0);
+    }
+
+    #[test]
+    fn resumable_close_releases_core_between_bounded_signal_phases() {
+        let mut core = AcpCore::new();
+        core.insert_session(record("s1", "owner-a"));
+        core.insert_session(record("s2", "owner-b"));
+        let mut host = MockHost::default();
+
+        let response = core
+            .begin_close_session(
+                &mut host,
+                "owner-a",
+                &AcpCloseSessionRequest {
+                    session_id: String::from("s1"),
+                },
+            )
+            .expect("begin resumable close");
+        let AcpResponse::AcpPendingResponse(first) = response else {
+            panic!("live adapter close must be pending")
+        };
+        assert_eq!(first.timeout_ms, 5_000);
+        assert_eq!(first.timeout_phase, "close.sigterm");
+        assert_eq!(core.pending_close_count(), 1);
+        assert_eq!(
+            host.killed,
+            vec![(String::from("proc-s1"), String::from("SIGTERM"))]
+        );
+        assert!(matches!(
+            core.list_sessions("owner-b"),
+            AcpResponse::AcpListSessionsResponse(ref sessions)
+                if sessions.sessions.len() == 1 && sessions.sessions[0].session_id == "s2"
+        ));
+
+        let response = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: first.process_id.clone(),
+                    reason: AcpPendingAbortReason::InteractionTimeout,
+                    exit_code: None,
+                },
+            )
+            .expect("SIGTERM timeout advances to SIGKILL phase");
+        let AcpResponse::AcpPendingResponse(second) = response else {
+            panic!("SIGKILL wait must remain pending")
+        };
+        assert_eq!(second.timeout_phase, "close.sigkill");
+        assert_eq!(
+            host.killed[1],
+            (String::from("proc-s1"), String::from("SIGKILL"))
+        );
+
+        let response = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: second.process_id,
+                    reason: AcpPendingAbortReason::AgentExited,
+                    exit_code: Some(0),
+                },
+            )
+            .expect("exit completes close");
+        assert!(matches!(response, AcpResponse::AcpSessionClosedResponse(_)));
+        assert_eq!(core.pending_close_count(), 0);
+        assert!(core.session("owner-a", "s1").is_none());
+        assert!(core.session("owner-b", "s2").is_some());
+    }
+
     /// Host whose adapter process is already gone: `wait_for_exit` would time
     /// out (returns `None`), so any wait the engine performs is dead time. The
     /// wait counter proves the short-circuit: a regression re-enters the
@@ -1559,6 +4196,15 @@ mod tests {
     }
 
     impl AcpHost for GoneAdapterHost {
+        fn resolve_projected_agent(
+            &mut self,
+            id: &str,
+        ) -> Result<Option<ProjectedAgentLaunch>, AcpCoreError> {
+            Ok(Some(projected_agent(id)))
+        }
+        fn list_projected_agents(&mut self) -> Result<Vec<ProjectedAgentLaunch>, AcpCoreError> {
+            Ok(vec![projected_agent("echo")])
+        }
         fn spawn_agent(&mut self, _: SpawnAgentRequest) -> Result<SpawnedAgent, AcpCoreError> {
             unreachable!("close_session does not spawn")
         }
@@ -1661,7 +4307,7 @@ mod tests {
         assert_eq!(err.code(), "invalid_state");
         assert!(err.to_string().contains("unknown ACP session"));
         // next_request_id untouched (no id consumed on the rejected attempt).
-        assert_eq!(core.sessions.get("s1").unwrap().next_request_id, 1);
+        assert_eq!(core.session("conn-a", "s1").unwrap().next_request_id, 1);
     }
 
     #[test]
@@ -1723,6 +4369,15 @@ mod tests {
             last_request: Option<Value>,
         }
         impl AcpHost for PromptHost {
+            fn resolve_projected_agent(
+                &mut self,
+                id: &str,
+            ) -> Result<Option<ProjectedAgentLaunch>, AcpCoreError> {
+                Ok(Some(projected_agent(id)))
+            }
+            fn list_projected_agents(&mut self) -> Result<Vec<ProjectedAgentLaunch>, AcpCoreError> {
+                Ok(vec![projected_agent("echo")])
+            }
             fn spawn_agent(&mut self, _: SpawnAgentRequest) -> Result<SpawnedAgent, AcpCoreError> {
                 unreachable!()
             }
@@ -1770,7 +4425,7 @@ mod tests {
                 Ok(())
             }
             fn read_file(&mut self, _: &str) -> Result<Vec<u8>, AcpCoreError> {
-                Ok(br#"{"name":"echo","agent":{"acpEntrypoint":"echo-agent"}}"#.to_vec())
+                Ok(Vec::new())
             }
             fn now_ms(&self) -> u64 {
                 self.clock
@@ -1801,7 +4456,7 @@ mod tests {
         // The core injected sessionId into the outbound params and consumed an id.
         let sent = host.last_request.unwrap();
         assert_eq!(sent["params"]["sessionId"], json!("s1"));
-        assert_eq!(core.sessions.get("s1").unwrap().next_request_id, 2);
+        assert_eq!(core.session("conn-a", "s1").unwrap().next_request_id, 2);
     }
 
     #[test]
@@ -1818,6 +4473,15 @@ mod tests {
             clock: u64,
         }
         impl AcpHost for ResumeHost {
+            fn resolve_projected_agent(
+                &mut self,
+                id: &str,
+            ) -> Result<Option<ProjectedAgentLaunch>, AcpCoreError> {
+                Ok(Some(projected_agent(id)))
+            }
+            fn list_projected_agents(&mut self) -> Result<Vec<ProjectedAgentLaunch>, AcpCoreError> {
+                Ok(vec![projected_agent("echo")])
+            }
             fn spawn_agent(
                 &mut self,
                 request: SpawnAgentRequest,
@@ -1864,7 +4528,7 @@ mod tests {
                 Ok(())
             }
             fn read_file(&mut self, _: &str) -> Result<Vec<u8>, AcpCoreError> {
-                Ok(br#"{"name":"echo","agent":{"acpEntrypoint":"echo-agent"}}"#.to_vec())
+                Ok(Vec::new())
             }
             fn now_ms(&self) -> u64 {
                 self.clock
@@ -1896,8 +4560,7 @@ mod tests {
         }
         // The fallback armed the transcript-continuation preamble for the next prompt.
         let preamble = core
-            .sessions
-            .get("live-1")
+            .session("conn-a", "live-1")
             .unwrap()
             .pending_preamble
             .clone()
@@ -1920,6 +4583,15 @@ mod tests {
             bound: Vec<(String, String)>,
         }
         impl AcpHost for CreateHost {
+            fn resolve_projected_agent(
+                &mut self,
+                id: &str,
+            ) -> Result<Option<ProjectedAgentLaunch>, AcpCoreError> {
+                Ok(Some(projected_agent(id)))
+            }
+            fn list_projected_agents(&mut self) -> Result<Vec<ProjectedAgentLaunch>, AcpCoreError> {
+                Ok(vec![projected_agent("echo")])
+            }
             fn spawn_agent(
                 &mut self,
                 request: SpawnAgentRequest,
@@ -1972,7 +4644,7 @@ mod tests {
                 Ok(())
             }
             fn read_file(&mut self, _: &str) -> Result<Vec<u8>, AcpCoreError> {
-                Ok(br#"{"name":"echo","agent":{"acpEntrypoint":"echo-agent"}}"#.to_vec())
+                Ok(Vec::new())
             }
             fn now_ms(&self) -> u64 {
                 self.clock
@@ -2043,8 +4715,20 @@ mod tests {
     struct ResumableMockHost {
         stdin: Vec<String>,
         bound: Vec<(String, String)>,
+        killed: Vec<(String, String)>,
+        abort_error: Option<String>,
+        close_stdin_error: Option<String>,
     }
     impl AcpHost for ResumableMockHost {
+        fn resolve_projected_agent(
+            &mut self,
+            id: &str,
+        ) -> Result<Option<ProjectedAgentLaunch>, AcpCoreError> {
+            Ok(Some(projected_agent(id)))
+        }
+        fn list_projected_agents(&mut self) -> Result<Vec<ProjectedAgentLaunch>, AcpCoreError> {
+            Ok(vec![projected_agent("echo")])
+        }
         fn spawn_agent(
             &mut self,
             request: SpawnAgentRequest,
@@ -2064,13 +4748,25 @@ mod tests {
             Ok(())
         }
         fn close_stdin(&mut self, _: &str) -> Result<(), AcpCoreError> {
-            Ok(())
+            match self.close_stdin_error.take() {
+                Some(message) => Err(AcpCoreError::InvalidState(message)),
+                None => Ok(()),
+            }
         }
         fn poll_output(&mut self, _: &str) -> Result<Option<AgentOutput>, AcpCoreError> {
             unreachable!("resumable path must not poll_output (it never blocks)")
         }
-        fn kill_agent(&mut self, _: &str, _: &str) -> Result<(), AcpCoreError> {
+        fn kill_agent(&mut self, process_id: &str, signal: &str) -> Result<(), AcpCoreError> {
+            self.killed
+                .push((process_id.to_string(), signal.to_string()));
             Ok(())
+        }
+        fn abort_agent(&mut self, process_id: &str) -> Result<(), AcpCoreError> {
+            self.kill_agent(process_id, "SIGKILL")?;
+            match self.abort_error.take() {
+                Some(message) => Err(AcpCoreError::Execution(message)),
+                None => Ok(()),
+            }
         }
         fn wait_for_exit(&mut self, _: &str, _: u64) -> Result<Option<i32>, AcpCoreError> {
             Ok(Some(0))
@@ -2079,7 +4775,7 @@ mod tests {
             Ok(())
         }
         fn read_file(&mut self, _: &str) -> Result<Vec<u8>, AcpCoreError> {
-            Ok(br#"{"name":"echo","agent":{"acpEntrypoint":"echo-agent"}}"#.to_vec())
+            Ok(Vec::new())
         }
         fn now_ms(&self) -> u64 {
             0
@@ -2101,6 +4797,19 @@ mod tests {
         }
     }
 
+    fn echo_resume_request(
+        session_id: &str,
+        transcript_path: Option<&str>,
+    ) -> AcpResumeSessionRequest {
+        AcpResumeSessionRequest {
+            session_id: session_id.into(),
+            agent_type: "echo".into(),
+            transcript_path: transcript_path.map(str::to_string),
+            cwd: Some("/workspace".into()),
+            env: Some(HashMap::new()),
+        }
+    }
+
     #[test]
     fn resumable_create_session_drives_the_handshake_without_blocking() {
         let mut core = AcpCore::new();
@@ -2118,6 +4827,7 @@ mod tests {
         let step = core
             .feed_agent_output(
                 &mut host,
+                "conn-a",
                 &process_id,
                 br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"echo"}}}
 "#,
@@ -2131,6 +4841,7 @@ mod tests {
         let step = core
             .feed_agent_output(
                 &mut host,
+                "conn-a",
                 &process_id,
                 br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess-xyz"}}
 "#,
@@ -2175,18 +4886,18 @@ mod tests {
         let (a, rest) = init.split_at(10);
         let (b, c) = rest.split_at(20);
         assert!(matches!(
-            core.feed_agent_output(&mut host, &process_id, a)
+            core.feed_agent_output(&mut host, "conn-a", &process_id, a)
                 .expect("a"),
             ResumeStep::Pending
         ));
         assert_eq!(host.stdin.len(), 1, "no full line yet → no session/new");
         assert!(matches!(
-            core.feed_agent_output(&mut host, &process_id, b)
+            core.feed_agent_output(&mut host, "conn-a", &process_id, b)
                 .expect("b"),
             ResumeStep::Pending
         ));
         assert!(matches!(
-            core.feed_agent_output(&mut host, &process_id, c)
+            core.feed_agent_output(&mut host, "conn-a", &process_id, c)
                 .expect("c"),
             ResumeStep::Pending
         ));
@@ -2196,6 +4907,7 @@ mod tests {
         let step = core
             .feed_agent_output(
                 &mut host,
+                "conn-a",
                 &process_id,
                 br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"chunked-1"}}
 "#,
@@ -2210,6 +4922,57 @@ mod tests {
     }
 
     #[test]
+    fn resumable_inbound_request_stays_pending_and_bypasses_event_capacity() {
+        let mut core = AcpCore::with_pending_event_limit(0);
+        let mut host = ResumableMockHost::default();
+        let process_id = core
+            .begin_create_session(&mut host, "conn-a", &echo_create_request())
+            .expect("begin");
+
+        let step = core
+            .feed_agent_output(
+                &mut host,
+                "conn-a",
+                &process_id,
+                br#"{"jsonrpc":"2.0","id":"host-1","method":"host/read","params":{}}
+"#,
+            )
+            .expect("inbound request is not a notification overflow");
+        assert!(matches!(step, ResumeStep::Pending));
+        assert_eq!(core.pending_create_count(), 1);
+        assert_eq!(core.pending_event_count(), 0);
+        assert!(core.take_events("conn-a").is_empty());
+        assert_eq!(host.stdin.len(), 2);
+        let response: Value = serde_json::from_str(&host.stdin[1]).expect("host response JSON");
+        assert_eq!(response["id"], "host-1");
+        assert_eq!(response["error"]["code"], -32601);
+
+        core.feed_agent_output(
+            &mut host,
+            "conn-a",
+            &process_id,
+            br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}
+"#,
+        )
+        .expect("initialize after inbound request");
+        let completed = core
+            .feed_agent_output(
+                &mut host,
+                "conn-a",
+                &process_id,
+                br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"inbound-sess"}}
+"#,
+            )
+            .expect("session/new after inbound request");
+        assert!(matches!(
+            completed,
+            ResumeStep::Done(AcpResponse::AcpSessionCreatedResponse(_))
+        ));
+        assert_eq!(core.pending_create_count(), 0);
+        assert_eq!(core.pending_event_count(), 0);
+    }
+
+    #[test]
     fn resumable_create_session_propagates_an_agent_initialize_error() {
         let mut core = AcpCore::new();
         let mut host = ResumableMockHost::default();
@@ -2219,6 +4982,7 @@ mod tests {
         let err = core
             .feed_agent_output(
                 &mut host,
+                "conn-a",
                 &process_id,
                 br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"boom"}}
 "#,
@@ -2226,6 +4990,137 @@ mod tests {
             .expect_err("initialize error must surface");
         assert_eq!(err.code(), "execution");
         assert!(err.to_string().contains("boom"));
+    }
+
+    #[test]
+    fn resumable_native_resume_never_polls_and_forwards_bootstrap_notifications() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let pending = core
+            .dispatch_resumable(
+                &mut host,
+                "conn-a",
+                AcpRequest::AcpResumeSessionRequest(echo_resume_request("durable-1", None)),
+            )
+            .expect("begin resumable resume");
+        let AcpResponse::AcpPendingResponse(pending) = pending else {
+            panic!("resume must begin pending");
+        };
+        assert_eq!(core.pending_resume_count(), 1);
+        assert!(host.stdin[0].contains("\"method\":\"initialize\""));
+
+        let step = core
+            .feed_agent_output(
+                &mut host,
+                "conn-a",
+                &pending.process_id,
+                br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"available_commands_update"}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}
+"#,
+            )
+            .expect("initialize response");
+        assert!(matches!(step, ResumeStep::Pending));
+        assert!(host.stdin[1].contains("\"method\":\"session/load\""));
+        assert!(host.stdin[1].contains("\"sessionId\":\"durable-1\""));
+
+        let step = core
+            .feed_agent_output(
+                &mut host,
+                "conn-a",
+                &pending.process_id,
+                br#"{"jsonrpc":"2.0","id":2,"result":{"modes":{"currentModeId":"plan"}}}
+"#,
+            )
+            .expect("native load response");
+        match step {
+            ResumeStep::Done(AcpResponse::AcpSessionResumedResponse(resumed)) => {
+                assert_eq!(resumed.session_id, "durable-1");
+                assert_eq!(resumed.mode, "native");
+            }
+            other => panic!("expected native resumed response, got {other:?}"),
+        }
+        assert_eq!(core.pending_resume_count(), 0);
+        assert_eq!(core.session_count(), 1);
+        assert_eq!(core.take_events("conn-a").len(), 1);
+        assert!(host.killed.is_empty());
+    }
+
+    #[test]
+    fn resumable_unknown_native_session_falls_back_without_polling() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let process_id = core
+            .begin_resume_session(
+                &mut host,
+                "conn-a",
+                &echo_resume_request("durable-missing", Some("/history/session.jsonl")),
+            )
+            .expect("begin resumable resume");
+        core.feed_agent_output(
+            &mut host,
+            "conn-a",
+            &process_id,
+            br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}
+"#,
+        )
+        .expect("initialize response");
+        let step = core
+            .feed_agent_output(
+                &mut host,
+                "conn-a",
+                &process_id,
+                br#"{"jsonrpc":"2.0","id":2,"error":{"code":-32603,"message":"missing","data":{"details":"NotFoundError"}}}
+"#,
+            )
+            .expect("unknown session fallback");
+        assert!(matches!(step, ResumeStep::Pending));
+        assert!(host.stdin[2].contains("\"method\":\"session/new\""));
+
+        let step = core
+            .feed_agent_output(
+                &mut host,
+                "conn-a",
+                &process_id,
+                br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fresh-1"}}
+"#,
+            )
+            .expect("fallback session/new");
+        assert!(matches!(
+            step,
+            ResumeStep::Done(AcpResponse::AcpSessionResumedResponse(
+                AcpSessionResumedResponse { ref session_id, ref mode, .. }
+            )) if session_id == "fresh-1" && mode == "fallback"
+        ));
+        assert_eq!(core.pending_resume_count(), 0);
+
+        host.stdin.clear();
+        core.begin_session_request(
+            &mut host,
+            "conn-a",
+            &AcpSessionRequest {
+                session_id: "fresh-1".into(),
+                method: "session/prompt".into(),
+                params: Some(r#"{"prompt":[{"type":"text","text":"continue"}]}"#.into()),
+            },
+        )
+        .expect("first prompt");
+        assert!(host.stdin[0].contains("/history/session.jsonl"));
+    }
+
+    #[test]
+    fn resumable_resume_terminal_parse_error_clears_state_and_kills_agent() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let process_id = core
+            .begin_resume_session(&mut host, "conn-a", &echo_resume_request("durable-1", None))
+            .expect("begin resumable resume");
+        let error = core
+            .feed_agent_output(&mut host, "conn-a", &process_id, b"not-json\n")
+            .expect_err("malformed adapter output must fail closed");
+        assert!(error.to_string().contains("invalid JSON-RPC"));
+        assert_eq!(core.pending_resume_count(), 0);
+        assert_eq!(core.session_count(), 0);
+        assert_eq!(host.killed, vec![(process_id, String::from("SIGKILL"))]);
     }
 
     #[test]
@@ -2240,6 +5135,7 @@ mod tests {
             .expect("begin create");
         core.feed_agent_output(
             &mut host,
+            "conn-a",
             &process_id,
             br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}
 "#,
@@ -2247,6 +5143,7 @@ mod tests {
         .expect("init");
         core.feed_agent_output(
             &mut host,
+            "conn-a",
             &process_id,
             br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess-p"}}
 "#,
@@ -2266,6 +5163,14 @@ mod tests {
             .expect("begin prompt");
         assert_eq!(prompt_process, process_id);
         assert_eq!(core.pending_prompt_count(), 1);
+        assert!(matches!(
+            core.pending_response(process_id.clone())
+                .expect("pending prompt response"),
+            AcpResponse::AcpPendingResponse(AcpPendingResponse {
+                timeout_ms: 600_000,
+                ..
+            })
+        ));
         // sessionId injected; rpc id is 3 (next after the create handshake's 1,2).
         assert!(host.stdin[0].contains("\"method\":\"session/prompt\""));
         assert!(host.stdin[0].contains("\"sessionId\":\"sess-p\""));
@@ -2274,6 +5179,7 @@ mod tests {
         assert!(matches!(
             core.feed_agent_output(
                 &mut host,
+                "conn-a",
                 &process_id,
                 br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"text":"browser text"}}}}
 "#,
@@ -2286,6 +5192,7 @@ mod tests {
         let step = core
             .feed_agent_output(
                 &mut host,
+                "conn-a",
                 &process_id,
                 br#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}
 "#,
@@ -2303,6 +5210,337 @@ mod tests {
         assert_eq!(core.pending_prompt_count(), 0);
     }
 
+    fn create_restartable_resumable_session(
+        core: &mut AcpCore,
+        host: &mut ResumableMockHost,
+        session_id: &str,
+    ) -> String {
+        let process_id = core
+            .begin_create_session(host, "owner-a", &echo_create_request())
+            .expect("begin restartable session");
+        core.feed_agent_output(
+            host,
+            "owner-a",
+            &process_id,
+            br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}
+"#,
+        )
+        .expect("initialize restartable session");
+        core.feed_agent_output(
+            host,
+            "owner-a",
+            &process_id,
+            format!(
+                "{{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{{\"sessionId\":\"{session_id}\"}}}}\n"
+            )
+            .as_bytes(),
+        )
+        .expect("create restartable session");
+        process_id
+    }
+
+    fn begin_crashing_prompt(
+        core: &mut AcpCore,
+        host: &mut ResumableMockHost,
+        session_id: &str,
+    ) -> String {
+        core.begin_session_request(
+            host,
+            "owner-a",
+            &AcpSessionRequest {
+                session_id: session_id.to_string(),
+                method: String::from("session/prompt"),
+                params: Some(String::from(r#"{"prompt":[]}"#)),
+            },
+        )
+        .expect("begin crashing prompt")
+    }
+
+    #[test]
+    fn resumable_agent_exit_restarts_rebinds_and_allows_retry() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let dead_process =
+            create_restartable_resumable_session(&mut core, &mut host, "restartable");
+        assert!(core
+            .session("owner-a", "restartable")
+            .unwrap()
+            .restart
+            .is_some());
+        begin_crashing_prompt(&mut core, &mut host, "restartable");
+
+        let response = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: dead_process.clone(),
+                    reason: AcpPendingAbortReason::AgentExited,
+                    exit_code: Some(137),
+                },
+            )
+            .expect("sidecar starts the replacement adapter");
+        let AcpResponse::AcpPendingResponse(restart_pending) = response else {
+            panic!("agent exit must return a restart continuation");
+        };
+        assert_ne!(restart_pending.process_id, dead_process);
+        assert_eq!(restart_pending.timeout_phase, "restart.initialize");
+        assert_eq!(core.pending_restart_count(), 1);
+
+        assert!(matches!(
+            core.feed_agent_output(
+                &mut host,
+                "owner-a",
+                &restart_pending.process_id,
+                br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}
+"#,
+            )
+            .expect("replacement initialize"),
+            ResumeStep::Pending
+        ));
+        let completed = core
+            .feed_agent_output(
+                &mut host,
+                "owner-a",
+                &restart_pending.process_id,
+                br#"{"jsonrpc":"2.0","id":2,"result":{}}
+"#,
+            )
+            .expect("replacement session/load");
+        assert!(matches!(
+            completed,
+            ResumeStep::Done(AcpResponse::AcpErrorResponse(AcpErrorResponse { ref code, ref message }))
+                if code == "invalid_state" && message.contains("auto-restarted") && message.contains("retry")
+        ));
+        assert_eq!(core.pending_restart_count(), 0);
+        assert_eq!(
+            core.session("owner-a", "restartable").unwrap().process_id,
+            restart_pending.process_id
+        );
+        assert!(!core.session("owner-a", "restartable").unwrap().closed);
+        assert_eq!(
+            core.session("owner-a", "restartable")
+                .unwrap()
+                .restart
+                .as_ref()
+                .unwrap()
+                .count,
+            1
+        );
+        assert_eq!(
+            host.bound.last(),
+            Some(&(
+                String::from("restartable"),
+                restart_pending.process_id.clone()
+            ))
+        );
+        assert!(matches!(
+            core.take_events("owner-a").as_slice(),
+            [AcpEvent::AcpAgentExitedEvent(AcpAgentExitedEvent {
+                restart,
+                restart_count: 1,
+                exit_code: Some(137),
+                ..
+            })] if restart == "restarted"
+        ));
+
+        let retried_process = begin_crashing_prompt(&mut core, &mut host, "restartable");
+        assert_eq!(retried_process, restart_pending.process_id);
+    }
+
+    #[test]
+    fn resumable_restart_unsupported_evicts_with_shared_outcome() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let dead_process =
+            create_restartable_resumable_session(&mut core, &mut host, "unsupported");
+        begin_crashing_prompt(&mut core, &mut host, "unsupported");
+        let AcpResponse::AcpPendingResponse(restart_pending) = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: dead_process,
+                    reason: AcpPendingAbortReason::AgentExited,
+                    exit_code: None,
+                },
+            )
+            .expect("start restart")
+        else {
+            panic!("expected restart continuation");
+        };
+        let completed = core
+            .feed_agent_output(
+                &mut host,
+                "owner-a",
+                &restart_pending.process_id,
+                br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{}}}
+"#,
+            )
+            .expect("unsupported replacement completes with typed result");
+        assert!(matches!(
+            completed,
+            ResumeStep::Done(AcpResponse::AcpErrorResponse(AcpErrorResponse { ref message, .. }))
+                if message.contains("auto-restart unsupported") && message.contains("session evicted")
+        ));
+        assert_eq!(core.session_count(), 0);
+        assert!(matches!(
+            core.take_events("owner-a").as_slice(),
+            [AcpEvent::AcpAgentExitedEvent(AcpAgentExitedEvent { restart, .. })]
+                if restart == "unsupported"
+        ));
+    }
+
+    #[test]
+    fn resumable_restart_budget_exhaustion_evicts_without_spawning() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let dead_process = create_restartable_resumable_session(&mut core, &mut host, "exhausted");
+        core.session_mut("owner-a", "exhausted")
+            .unwrap()
+            .restart
+            .as_mut()
+            .expect("restart state")
+            .count = MAX_ADAPTER_RESTARTS;
+        begin_crashing_prompt(&mut core, &mut host, "exhausted");
+        let response = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: dead_process,
+                    reason: AcpPendingAbortReason::AgentExited,
+                    exit_code: None,
+                },
+            )
+            .expect("exhaustion is a typed ACP response");
+        assert!(matches!(
+            response,
+            AcpResponse::AcpErrorResponse(AcpErrorResponse { ref message, .. })
+                if message.contains("restart budget exhausted") && message.contains("session evicted")
+        ));
+        assert_eq!(core.session_count(), 0);
+        assert_eq!(core.pending_restart_count(), 0);
+        assert!(matches!(
+            core.take_events("owner-a").as_slice(),
+            [AcpEvent::AcpAgentExitedEvent(AcpAgentExitedEvent { restart, restart_count: MAX_ADAPTER_RESTARTS, .. })]
+                if restart == "exhausted"
+        ));
+    }
+
+    #[test]
+    fn resumable_restart_malformed_output_emits_failed_and_clears_state() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let dead_process =
+            create_restartable_resumable_session(&mut core, &mut host, "malformed-restart");
+        begin_crashing_prompt(&mut core, &mut host, "malformed-restart");
+        let AcpResponse::AcpPendingResponse(restart_pending) = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: dead_process.clone(),
+                    reason: AcpPendingAbortReason::AgentExited,
+                    exit_code: Some(9),
+                },
+            )
+            .expect("begin replacement")
+        else {
+            panic!("replacement must begin pending");
+        };
+
+        let completed = core
+            .feed_agent_output(
+                &mut host,
+                "owner-a",
+                &restart_pending.process_id,
+                b"not-json\n",
+            )
+            .expect("malformed replacement is a deterministic terminal response");
+        assert!(matches!(
+            completed,
+            ResumeStep::Done(AcpResponse::AcpErrorResponse(AcpErrorResponse { ref code, ref message }))
+                if code == "invalid_state" && message.contains("auto-restart failed") && message.contains("invalid JSON-RPC")
+        ));
+        assert_eq!(core.pending_restart_count(), 0);
+        assert_eq!(core.session_count(), 0);
+        assert!(matches!(
+            core.take_events("owner-a").as_slice(),
+            [AcpEvent::AcpAgentExitedEvent(AcpAgentExitedEvent {
+                process_id,
+                exit_code: Some(9),
+                restart,
+                ..
+            })] if process_id == &dead_process && restart == "failed"
+        ));
+        assert_eq!(
+            host.killed,
+            vec![
+                (dead_process, String::from("SIGKILL")),
+                (restart_pending.process_id, String::from("SIGKILL")),
+            ]
+        );
+    }
+
+    #[test]
+    fn resumable_replacement_exit_emits_failed_and_clears_state() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let dead_process =
+            create_restartable_resumable_session(&mut core, &mut host, "replacement-exit");
+        begin_crashing_prompt(&mut core, &mut host, "replacement-exit");
+        let AcpResponse::AcpPendingResponse(restart_pending) = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: dead_process.clone(),
+                    reason: AcpPendingAbortReason::AgentExited,
+                    exit_code: Some(9),
+                },
+            )
+            .expect("begin replacement")
+        else {
+            panic!("replacement must begin pending");
+        };
+
+        let completed = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: restart_pending.process_id.clone(),
+                    reason: AcpPendingAbortReason::AgentExited,
+                    exit_code: Some(42),
+                },
+            )
+            .expect("replacement exit is a deterministic terminal response");
+        assert!(matches!(
+            completed,
+            AcpResponse::AcpErrorResponse(AcpErrorResponse { ref code, ref message })
+                if code == "invalid_state" && message.contains("auto-restart failed") && message.contains("replacement ACP adapter")
+        ));
+        assert_eq!(core.pending_restart_count(), 0);
+        assert_eq!(core.session_count(), 0);
+        assert!(matches!(
+            core.take_events("owner-a").as_slice(),
+            [AcpEvent::AcpAgentExitedEvent(AcpAgentExitedEvent {
+                process_id,
+                exit_code: Some(9),
+                restart,
+                ..
+            })] if process_id == &dead_process && restart == "failed"
+        ));
+        assert_eq!(
+            host.killed,
+            vec![
+                (dead_process, String::from("SIGKILL")),
+                (restart_pending.process_id, String::from("SIGKILL")),
+            ]
+        );
+    }
+
     #[test]
     fn dispatch_resumable_drives_create_session_over_the_wire_types() {
         use agentos_protocol::generated::v1::AcpDeliverAgentOutputRequest;
@@ -2318,7 +5556,10 @@ mod tests {
             )
             .expect("begin");
         let process_id = match pending {
-            AcpResponse::AcpPendingResponse(p) => p.process_id,
+            AcpResponse::AcpPendingResponse(p) => {
+                assert_eq!(p.timeout_ms, 10_000, "initialize timeout is sidecar-owned");
+                p.process_id
+            }
             other => panic!("expected pending, got {other:?}"),
         };
 
@@ -2335,7 +5576,13 @@ mod tests {
                 }),
             )
             .expect("deliver init");
-        assert!(matches!(step, AcpResponse::AcpPendingResponse(_)));
+        assert!(matches!(
+            step,
+            AcpResponse::AcpPendingResponse(AcpPendingResponse {
+                timeout_ms: 30_000,
+                ..
+            })
+        ));
 
         // deliver the session/new response → the real created result.
         let step = core
@@ -2375,5 +5622,655 @@ mod tests {
             .expect_err("non-owner must be rejected");
         assert_eq!(err.code(), "invalid_state");
         assert_eq!(core.pending_prompt_count(), 0);
+    }
+
+    #[test]
+    fn resumable_output_delivery_rejects_cross_owner_injection_before_mutation() {
+        use agentos_protocol::generated::v1::AcpDeliverAgentOutputRequest;
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let pending = core
+            .dispatch_resumable(
+                &mut host,
+                "conn-a",
+                AcpRequest::AcpCreateSessionRequest(echo_create_request()),
+            )
+            .expect("begin create");
+        let AcpResponse::AcpPendingResponse(pending) = pending else {
+            panic!("create must be pending");
+        };
+        let request = AcpRequest::AcpDeliverAgentOutputRequest(AcpDeliverAgentOutputRequest {
+            process_id: pending.process_id.clone(),
+            chunk: br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}
+"#
+            .to_vec(),
+        });
+
+        let error = core
+            .dispatch_resumable(&mut host, "conn-b", request.clone())
+            .expect_err("another connection cannot inject adapter output");
+        assert_eq!(error.code(), "invalid_state");
+        assert_eq!(core.pending_create_count(), 1);
+        assert_eq!(host.stdin.len(), 1, "rejected output writes nothing");
+
+        core.dispatch_resumable(&mut host, "conn-a", request)
+            .expect("owner advances its pending interaction");
+        assert_eq!(host.stdin.len(), 2);
+    }
+
+    #[test]
+    fn resumable_abort_is_owner_scoped_typed_and_restores_prompt_preamble() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        core.insert_session(record("s1", "owner-a"));
+        core.session_mut("owner-a", "s1")
+            .expect("session")
+            .pending_preamble = Some(String::from("resume from /history/session.jsonl"));
+        let process_id = core
+            .begin_session_request(
+                &mut host,
+                "owner-a",
+                &AcpSessionRequest {
+                    session_id: String::from("s1"),
+                    method: String::from("session/prompt"),
+                    params: Some(String::from(r#"{"prompt":[]}"#)),
+                },
+            )
+            .expect("begin prompt");
+        assert_eq!(
+            core.session("owner-a", "s1").unwrap().pending_preamble,
+            None
+        );
+
+        let abort = AcpAbortPendingRequest {
+            process_id: process_id.clone(),
+            reason: AcpPendingAbortReason::InteractionTimeout,
+            exit_code: None,
+        };
+        let error = core
+            .abort_pending(&mut host, "owner-b", &abort)
+            .expect_err("another owner cannot abort the prompt");
+        assert_eq!(error.code(), "invalid_state");
+        assert_eq!(core.pending_prompt_count(), 1);
+        assert!(host.killed.is_empty());
+
+        let response = core
+            .abort_pending(&mut host, "owner-a", &abort)
+            .expect("owner aborts prompt");
+        assert!(matches!(
+            response,
+            AcpResponse::AcpErrorResponse(AcpErrorResponse { ref code, ref message })
+                if code == "agent_interaction_timeout" && message.contains(&process_id)
+        ));
+        assert_eq!(core.pending_prompt_count(), 0);
+        assert!(core.session("owner-a", "s1").unwrap().closed);
+        assert_eq!(
+            core.session("owner-a", "s1")
+                .unwrap()
+                .pending_preamble
+                .as_deref(),
+            Some("resume from /history/session.jsonl")
+        );
+        assert_eq!(host.killed, vec![(process_id, String::from("SIGKILL"))]);
+    }
+
+    #[test]
+    fn resumable_driver_failure_abort_is_sidecar_typed_and_atomic() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        core.insert_session(record("s1", "owner-a"));
+        core.session_mut("owner-a", "s1")
+            .expect("session")
+            .pending_preamble = Some(String::from("durable continuation"));
+        let process_id = core
+            .begin_session_request(
+                &mut host,
+                "owner-a",
+                &AcpSessionRequest {
+                    session_id: String::from("s1"),
+                    method: String::from("session/prompt"),
+                    params: None,
+                },
+            )
+            .expect("begin prompt");
+
+        let response = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: process_id.clone(),
+                    reason: AcpPendingAbortReason::DriverFailed,
+                    exit_code: None,
+                },
+            )
+            .expect("driver failure aborts through the sidecar");
+
+        assert!(matches!(
+            response,
+            AcpResponse::AcpErrorResponse(AcpErrorResponse { ref code, ref message })
+                if code == "agent_driver_failed" && message.contains(&process_id)
+        ));
+        assert_eq!(core.pending_prompt_count(), 0);
+        assert!(core.session("owner-a", "s1").unwrap().closed);
+        assert_eq!(
+            core.session("owner-a", "s1")
+                .unwrap()
+                .pending_preamble
+                .as_deref(),
+            Some("durable continuation")
+        );
+        assert_eq!(host.killed, vec![(process_id, String::from("SIGKILL"))]);
+    }
+
+    #[test]
+    fn resumable_caller_cancellation_is_sidecar_typed_and_atomic() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        core.insert_session(record("s1", "owner-a"));
+        let process_id = core
+            .begin_session_request(
+                &mut host,
+                "owner-a",
+                &AcpSessionRequest {
+                    session_id: String::from("s1"),
+                    method: String::from("session/prompt"),
+                    params: None,
+                },
+            )
+            .expect("begin prompt");
+
+        let response = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: process_id.clone(),
+                    reason: AcpPendingAbortReason::CallerCancelled,
+                    exit_code: None,
+                },
+            )
+            .expect("caller cancellation aborts through the sidecar");
+
+        assert!(matches!(
+            response,
+            AcpResponse::AcpErrorResponse(AcpErrorResponse { ref code, ref message })
+                if code == "agent_interaction_cancelled" && message.contains(&process_id)
+        ));
+        assert_eq!(core.pending_prompt_count(), 0);
+        assert!(core.session("owner-a", "s1").unwrap().closed);
+        assert_eq!(host.killed, vec![(process_id, String::from("SIGKILL"))]);
+    }
+
+    #[test]
+    fn resumable_abort_removes_pending_state_before_cleanup_error_propagates() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let process_id = core
+            .begin_create_session(&mut host, "owner-a", &echo_create_request())
+            .expect("begin create");
+        host.abort_error = Some(String::from("injected execution release failure"));
+
+        let error = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: process_id.clone(),
+                    reason: AcpPendingAbortReason::AgentExited,
+                    exit_code: None,
+                },
+            )
+            .expect_err("cleanup failure must propagate");
+        assert_eq!(error.code(), "execution");
+        assert!(error
+            .to_string()
+            .contains("injected execution release failure"));
+        assert_eq!(core.pending_create_count(), 0);
+        assert_eq!(
+            host.killed,
+            vec![(process_id.clone(), String::from("SIGKILL"))]
+        );
+
+        let retry = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id,
+                    reason: AcpPendingAbortReason::AgentExited,
+                    exit_code: None,
+                },
+            )
+            .expect_err("removed state cannot be revived by retry");
+        assert_eq!(retry.code(), "invalid_state");
+    }
+
+    #[test]
+    fn malformed_prompt_output_restores_consumed_preamble_and_aborts_agent() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        core.insert_session(record("s1", "owner-a"));
+        core.session_mut("owner-a", "s1")
+            .expect("session")
+            .pending_preamble = Some(String::from("durable continuation"));
+        let process_id = core
+            .begin_session_request(
+                &mut host,
+                "owner-a",
+                &AcpSessionRequest {
+                    session_id: String::from("s1"),
+                    method: String::from("session/prompt"),
+                    params: None,
+                },
+            )
+            .expect("begin prompt");
+
+        let error = core
+            .feed_agent_output(&mut host, "owner-a", &process_id, b"not-json\n")
+            .expect_err("malformed adapter output fails closed");
+        assert!(error.to_string().contains("invalid JSON-RPC"));
+        assert_eq!(core.pending_prompt_count(), 0);
+        assert!(core.session("owner-a", "s1").unwrap().closed);
+        assert_eq!(
+            core.session("owner-a", "s1")
+                .unwrap()
+                .pending_preamble
+                .as_deref(),
+            Some("durable continuation")
+        );
+        assert_eq!(host.killed, vec![(process_id, String::from("SIGKILL"))]);
+    }
+
+    #[test]
+    fn disposing_owner_after_prompt_abort_does_not_abort_the_closed_agent_twice() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        core.insert_session(record("s1", "owner-a"));
+        let process_id = core
+            .begin_session_request(
+                &mut host,
+                "owner-a",
+                &AcpSessionRequest {
+                    session_id: String::from("s1"),
+                    method: String::from("session/prompt"),
+                    params: None,
+                },
+            )
+            .expect("begin prompt");
+        core.feed_agent_output(&mut host, "owner-a", &process_id, b"not-json\n")
+            .expect_err("malformed output aborts the prompt agent");
+        host.abort_error = Some(String::from("unknown agent process"));
+
+        core.dispose_owner(&mut host, "owner-a")
+            .expect("closed agent needs no second host cleanup");
+
+        assert_eq!(core.session_count(), 0);
+        assert_eq!(host.killed, vec![(process_id, String::from("SIGKILL"))]);
+        assert_eq!(host.abort_error.as_deref(), Some("unknown agent process"));
+    }
+
+    #[test]
+    fn closing_session_after_prompt_abort_skips_removed_process_route() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        core.insert_session(record("s1", "owner-a"));
+        let process_id = core
+            .begin_session_request(
+                &mut host,
+                "owner-a",
+                &AcpSessionRequest {
+                    session_id: String::from("s1"),
+                    method: String::from("session/prompt"),
+                    params: None,
+                },
+            )
+            .expect("begin prompt");
+        core.feed_agent_output(&mut host, "owner-a", &process_id, b"not-json\n")
+            .expect_err("malformed output aborts the prompt agent");
+        host.close_stdin_error = Some(String::from("unknown agent process"));
+
+        core.close_session(
+            &mut host,
+            "owner-a",
+            &AcpCloseSessionRequest {
+                session_id: String::from("s1"),
+            },
+        )
+        .expect("closed session needs no second process cleanup");
+
+        assert_eq!(core.session_count(), 0);
+        assert_eq!(
+            host.close_stdin_error.as_deref(),
+            Some("unknown agent process")
+        );
+    }
+
+    #[test]
+    fn dispose_owner_removes_only_that_owners_pending_and_live_state() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let pending_a = core
+            .begin_create_session(&mut host, "owner-a", &echo_create_request())
+            .expect("begin owner-a create");
+        let pending_b = core
+            .begin_create_session(&mut host, "owner-b", &echo_create_request())
+            .expect("begin owner-b create");
+        core.insert_session(record("live-a", "owner-a"));
+        core.insert_session(record("live-b", "owner-b"));
+
+        core.dispose_owner(&mut host, "owner-a")
+            .expect("dispose owner-a");
+
+        assert_eq!(core.pending_create_count(), 1);
+        assert_eq!(core.session_count(), 1);
+        assert!(core.session("owner-b", "live-b").is_some());
+        assert_eq!(
+            host.killed,
+            vec![
+                (pending_a, String::from("SIGKILL")),
+                (String::from("proc-live-a"), String::from("SIGKILL")),
+            ]
+        );
+        assert!(!host.killed.iter().any(|(process, _)| process == &pending_b));
+    }
+
+    #[test]
+    fn drop_owner_state_removes_state_without_repeating_host_cleanup() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        core.begin_create_session(&mut host, "owner-a", &echo_create_request())
+            .expect("begin owner-a create");
+        core.begin_create_session(&mut host, "owner-b", &echo_create_request())
+            .expect("begin owner-b create");
+        core.insert_session(record("live-a", "owner-a"));
+        core.insert_session(record("live-b", "owner-b"));
+
+        core.drop_owner_state("owner-a");
+
+        assert_eq!(core.pending_create_count(), 1);
+        assert_eq!(core.session_count(), 1);
+        assert!(core.session("owner-b", "live-b").is_some());
+        assert!(host.killed.is_empty(), "host teardown already ran");
+    }
+
+    #[test]
+    fn resumable_session_request_rejects_a_second_in_flight_request_before_writing() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        core.insert_session(record("s1", "conn-a"));
+        let request = AcpSessionRequest {
+            session_id: String::from("s1"),
+            method: String::from("session/prompt"),
+            params: None,
+        };
+
+        core.begin_session_request(&mut host, "conn-a", &request)
+            .expect("first request starts");
+        let error = core
+            .begin_session_request(&mut host, "conn-a", &request)
+            .expect_err("second request must be rejected as busy");
+        assert_eq!(error.code(), "conflict");
+        assert_eq!(host.stdin.len(), 1);
+        assert_eq!(core.session("conn-a", "s1").unwrap().next_request_id, 2);
+        assert_eq!(core.pending_prompt_count(), 1);
+    }
+
+    #[test]
+    fn interrupted_resumable_prompt_drains_old_boundary_before_accepting_next_prompt() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        core.insert_session(record("s1", "conn-a"));
+        core.session_mut("conn-a", "s1")
+            .expect("session")
+            .pending_preamble = Some(String::from("durable continuation"));
+        let request = AcpSessionRequest {
+            session_id: String::from("s1"),
+            method: String::from("session/prompt"),
+            params: Some(String::from(r#"{"prompt":[]}"#)),
+        };
+
+        let process_id = core
+            .begin_session_request(&mut host, "conn-a", &request)
+            .expect("first prompt starts");
+        assert_eq!(core.pending_prompt_count(), 1);
+        assert_eq!(core.session("conn-a", "s1").unwrap().pending_preamble, None);
+        let wrong_owner = core
+            .interrupt_pending_prompt("conn-b", &process_id)
+            .expect_err("another owner cannot interrupt the prompt");
+        assert_eq!(wrong_owner.code(), "invalid_state");
+        assert_eq!(core.pending_prompt_count(), 1);
+        assert_eq!(
+            core.interrupt_pending_prompt("conn-a", &process_id)
+                .expect("transport interrupt marks exact prompt for draining"),
+            "s1"
+        );
+        assert_eq!(core.pending_prompt_count(), 1);
+        assert!(!core.session("conn-a", "s1").unwrap().closed);
+        assert_eq!(
+            core.session("conn-a", "s1")
+                .unwrap()
+                .pending_preamble
+                .as_deref(),
+            Some("durable continuation")
+        );
+
+        let busy = core
+            .begin_session_request(&mut host, "conn-a", &request)
+            .expect_err("next prompt waits for the cancelled response boundary");
+        assert_eq!(busy.code(), "conflict");
+        assert_eq!(host.stdin.len(), 1);
+
+        assert!(matches!(
+            core.feed_agent_output(
+                &mut host,
+                "conn-a",
+                &process_id,
+                br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"text":"stale text"}}}}
+{"jsonrpc":"2.0","id":999,"result":{"stopReason":"wrong request"}}
+"#,
+            )
+            .expect("stale output before the boundary is discarded"),
+            ResumeStep::Pending
+        ));
+        assert_eq!(core.pending_event_count(), 0);
+
+        let drained = core
+            .feed_agent_output(
+                &mut host,
+                "conn-a",
+                &process_id,
+                br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"text":"more stale text"}}}}
+{"jsonrpc":"2.0","id":1,"result":{"stopReason":"cancelled"}}
+"#,
+            )
+            .expect("matching cancelled response drains the old boundary");
+        assert!(matches!(
+            drained,
+            ResumeStep::Done(AcpResponse::AcpErrorResponse(AcpErrorResponse { ref code, .. }))
+                if code == "agent_interaction_cancelled"
+        ));
+        assert_eq!(core.pending_prompt_count(), 0);
+        assert_eq!(core.pending_event_count(), 0);
+
+        core.begin_session_request(&mut host, "conn-a", &request)
+            .expect("session accepts a later prompt after the old boundary drains");
+        assert_eq!(core.pending_prompt_count(), 1);
+        assert_eq!(host.stdin.len(), 2);
+        let first: Value = serde_json::from_str(&host.stdin[0]).expect("first prompt JSON");
+        let second: Value = serde_json::from_str(&host.stdin[1]).expect("second prompt JSON");
+        assert_eq!(first["id"], json!(1));
+        assert_eq!(second["id"], json!(2));
+        assert!(
+            host.stdin[1].contains("durable continuation"),
+            "the cancelled turn must restore its one-shot preamble for the next prompt"
+        );
+    }
+
+    #[test]
+    fn resumable_create_event_overflow_is_typed_atomic_and_cleans_up() {
+        let mut core = AcpCore::with_pending_event_limit(1);
+        let mut host = ResumableMockHost::default();
+        let process_id = core
+            .begin_create_session(&mut host, "conn-a", &echo_create_request())
+            .expect("begin create");
+        let error = core
+            .feed_agent_output(
+                &mut host,
+                "conn-a",
+                &process_id,
+                br#"{"jsonrpc":"2.0","method":"one"}
+{"jsonrpc":"2.0","method":"two"}
+"#,
+            )
+            .expect_err("second notification exceeds the bound");
+        assert_eq!(error.code(), "limit_exceeded");
+        assert_eq!(core.pending_create_count(), 0);
+        assert_eq!(core.session_count(), 0);
+        assert_eq!(core.pending_event_count(), 0);
+        assert_eq!(host.killed, vec![(process_id, String::from("SIGKILL"))]);
+    }
+
+    #[test]
+    fn resumable_resume_event_overflow_is_typed_atomic_and_cleans_up() {
+        let mut core = AcpCore::with_pending_event_limit(1);
+        let mut host = ResumableMockHost::default();
+        let process_id = core
+            .begin_resume_session(&mut host, "conn-a", &echo_resume_request("s1", None))
+            .expect("begin resume");
+        let error = core
+            .feed_agent_output(
+                &mut host,
+                "conn-a",
+                &process_id,
+                br#"{"jsonrpc":"2.0","method":"one"}
+{"jsonrpc":"2.0","method":"two"}
+"#,
+            )
+            .expect_err("second notification exceeds the bound");
+        assert_eq!(error.code(), "limit_exceeded");
+        assert_eq!(core.pending_resume_count(), 0);
+        assert_eq!(core.session_count(), 0);
+        assert_eq!(core.pending_event_count(), 0);
+        assert_eq!(host.killed, vec![(process_id, String::from("SIGKILL"))]);
+    }
+
+    #[test]
+    fn resumable_prompt_event_overflow_is_typed_atomic_and_closes_the_session() {
+        let mut core = AcpCore::with_pending_event_limit(1);
+        let mut host = ResumableMockHost::default();
+        core.insert_session(record("s1", "conn-a"));
+        let process_id = core
+            .begin_session_request(
+                &mut host,
+                "conn-a",
+                &AcpSessionRequest {
+                    session_id: String::from("s1"),
+                    method: String::from("session/prompt"),
+                    params: None,
+                },
+            )
+            .expect("begin prompt");
+        let error = core
+            .feed_agent_output(
+                &mut host,
+                "conn-a",
+                &process_id,
+                br#"{"jsonrpc":"2.0","method":"one"}
+{"jsonrpc":"2.0","method":"two"}
+"#,
+            )
+            .expect_err("second notification exceeds the bound");
+        assert_eq!(error.code(), "limit_exceeded");
+        assert_eq!(core.pending_prompt_count(), 0);
+        assert!(core.session("conn-a", "s1").unwrap().closed);
+        assert_eq!(core.pending_event_count(), 0);
+        assert_eq!(host.killed, vec![(process_id, String::from("SIGKILL"))]);
+    }
+
+    #[test]
+    fn resumable_event_byte_limit_cleans_up_create_resume_and_prompt_atomically() {
+        let oversized = format!(
+            "{}\n",
+            serde_json::to_string(&json!({
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": { "payload": "x".repeat(256) },
+            }))
+            .expect("encode oversized notification")
+        );
+
+        let mut create_core = AcpCore::with_pending_event_limits(16, 128);
+        let mut create_host = ResumableMockHost::default();
+        let create_process = create_core
+            .begin_create_session(&mut create_host, "conn-a", &echo_create_request())
+            .expect("begin create");
+        let create_error = create_core
+            .feed_agent_output(
+                &mut create_host,
+                "conn-a",
+                &create_process,
+                oversized.as_bytes(),
+            )
+            .expect_err("oversized create notification");
+        assert_eq!(create_error.code(), "limit_exceeded");
+        assert_eq!(create_core.pending_interaction_count(), 0);
+        assert_eq!(create_core.pending_event_count(), 0);
+        assert_eq!(
+            create_host.killed,
+            vec![(create_process, String::from("SIGKILL"))]
+        );
+
+        let mut resume_core = AcpCore::with_pending_event_limits(16, 128);
+        let mut resume_host = ResumableMockHost::default();
+        let resume_process = resume_core
+            .begin_resume_session(&mut resume_host, "conn-a", &echo_resume_request("s1", None))
+            .expect("begin resume");
+        let resume_error = resume_core
+            .feed_agent_output(
+                &mut resume_host,
+                "conn-a",
+                &resume_process,
+                oversized.as_bytes(),
+            )
+            .expect_err("oversized resume notification");
+        assert_eq!(resume_error.code(), "limit_exceeded");
+        assert_eq!(resume_core.pending_interaction_count(), 0);
+        assert_eq!(resume_core.pending_event_count(), 0);
+        assert_eq!(
+            resume_host.killed,
+            vec![(resume_process, String::from("SIGKILL"))]
+        );
+
+        let mut prompt_core = AcpCore::with_pending_event_limits(16, 128);
+        let mut prompt_host = ResumableMockHost::default();
+        prompt_core.insert_session(record("s1", "conn-a"));
+        let prompt_process = prompt_core
+            .begin_session_request(
+                &mut prompt_host,
+                "conn-a",
+                &AcpSessionRequest {
+                    session_id: String::from("s1"),
+                    method: String::from("session/prompt"),
+                    params: None,
+                },
+            )
+            .expect("begin prompt");
+        let prompt_error = prompt_core
+            .feed_agent_output(
+                &mut prompt_host,
+                "conn-a",
+                &prompt_process,
+                oversized.as_bytes(),
+            )
+            .expect_err("oversized prompt notification");
+        assert_eq!(prompt_error.code(), "limit_exceeded");
+        assert_eq!(prompt_core.pending_interaction_count(), 0);
+        assert!(prompt_core.session("conn-a", "s1").unwrap().closed);
+        assert_eq!(prompt_core.pending_event_count(), 0);
+        assert_eq!(
+            prompt_host.killed,
+            vec![(prompt_process, String::from("SIGKILL"))]
+        );
     }
 }

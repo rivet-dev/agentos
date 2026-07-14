@@ -238,9 +238,15 @@ export class KernelReactor {
 	 * executions' syscalls while waiting, until `deadlineMs` (real clock). Returns
 	 * null on timeout or if the execution was killed. Legal to block here: the
 	 * reactor runs in a Worker. */
-	poll(executionId: string, deadlineMs: number): OutputFrame | null {
+	poll(
+		executionId: string,
+		deadlineMs: number,
+		isCancelled?: () => boolean,
+	): OutputFrame | null {
 		for (;;) {
+			if (isCancelled?.()) return null;
 			this.drainOnce();
+			if (isCancelled?.()) return null;
 			const out = this.takeOutput(executionId);
 			if (out !== null) return out;
 			if (!this.isLive(executionId)) return null;
@@ -250,7 +256,12 @@ export class KernelReactor {
 			// only if still empty (§4/F4 — no lost wakeup, no busy-spin).
 			const gen = Atomics.load(this.control, GEN_INDEX);
 			if (!this.anyRingPending()) {
-				Atomics.wait(this.control, GEN_INDEX, gen, remaining);
+				Atomics.wait(
+					this.control,
+					GEN_INDEX,
+					gen,
+					isCancelled ? Math.min(remaining, 25) : remaining,
+				);
 			}
 		}
 	}

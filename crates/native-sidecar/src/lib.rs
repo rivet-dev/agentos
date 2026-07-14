@@ -23,12 +23,12 @@ pub(crate) mod vm;
 pub use agentos_sidecar_protocol::{generated_protocol, protocol, wire};
 
 pub use extension::{
-    Extension, ExtensionContext, ExtensionFuture, ExtensionInterruptRequest,
+    Extension, ExtensionContext, ExtensionFuture, ExtensionInterrupt, ExtensionInterruptRequest,
     ExtensionInterruptResponse, ExtensionResponse,
 };
 pub use service::{DispatchResult, NativeSidecar, NativeSidecarConfig, SidecarError};
-pub use state::EventSinkTransport;
 pub use state::SidecarRequestTransport;
+pub use state::{EventSinkTransport, ExtensionCallbackCancellation};
 
 use wire::{DEFAULT_MAX_FRAME_BYTES, PROTOCOL_NAME, PROTOCOL_VERSION};
 

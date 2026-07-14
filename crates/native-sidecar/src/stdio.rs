@@ -4,8 +4,8 @@ use crate::wire::{
     SessionOpenedResponse, SidecarResponseFrame, WireDispatchResult, WireFrameCodec,
 };
 use crate::{
-    EventSinkTransport, Extension, ExtensionInterruptRequest, NativeSidecar, NativeSidecarConfig,
-    SidecarError, SidecarRequestTransport,
+    EventSinkTransport, Extension, ExtensionCallbackCancellation, ExtensionInterrupt,
+    NativeSidecar, NativeSidecarConfig, SidecarError, SidecarRequestTransport,
 };
 use agentos_bridge::queue_tracker::{tracked_sync_channel, TrackedLimit, TrackedSyncSender};
 use agentos_bridge::{
@@ -454,8 +454,27 @@ async fn dispatch_with_prompt_interrupt(
             if let Some(frame) = frame {
                 if let Some(interrupt) = extension_interrupt_response(&blocking_request, &request, &frame) {
                     drop(dispatch);
+                    let replacement_payload = sidecar
+                        .dispatch_extension_interrupt(
+                            interrupt.extension.clone(),
+                            request.ownership.clone(),
+                            interrupt.blocking_payload.clone(),
+                            interrupt.interrupt.clone(),
+                        )
+                        .await?;
                     let mut extra_responses = Vec::new();
-                    if let Some(response) = interrupt.interrupting_response {
+                    let interrupting_response = match (replacement_payload, interrupt.interrupting_response) {
+                        (Some(payload), Some(mut response)) => {
+                            response.payload = ResponsePayload::ExtEnvelope(ExtEnvelope {
+                                namespace: blocking_request.namespace.clone(),
+                                payload,
+                            });
+                            Some(response)
+                        }
+                        (Some(_), None) => None,
+                        (None, response) => response,
+                    };
+                    if let Some(response) = interrupting_response {
                         extra_responses.push(response);
                     } else {
                         *pending_frame = Some(frame);
@@ -487,6 +506,9 @@ struct BlockingExtensionRequest {
 struct ExtensionInterruptDispatch {
     interrupted_dispatch: WireDispatchResult,
     interrupting_response: Option<ResponseFrame>,
+    extension: Arc<dyn Extension>,
+    blocking_payload: Vec<u8>,
+    interrupt: ExtensionInterrupt,
 }
 
 fn blocking_extension_request(
@@ -497,6 +519,10 @@ fn blocking_extension_request(
         return None;
     };
     let extension = sidecar.extensions.get(&envelope.namespace)?.clone();
+    let (connection_id, session_id, vm_id) = sidecar.vm_scope_for(&request.ownership).ok()?;
+    sidecar
+        .require_owned_vm(&connection_id, &session_id, &vm_id)
+        .ok()?;
     if !extension.is_blocking_request(&envelope.payload) {
         return None;
     }
@@ -519,38 +545,41 @@ fn extension_interrupt_response(
                 &blocking_request.namespace,
                 request,
             )?;
-            let interrupt = blocking_request.extension.interrupt_blocking_request(
+            let interrupt_request = match interrupt {
+                BlockingExtensionInterrupt::ExtensionPayload(payload) => {
+                    ExtensionInterrupt::ExtensionPayload(payload.to_vec())
+                }
+                BlockingExtensionInterrupt::KillProcess => ExtensionInterrupt::KillProcess,
+                BlockingExtensionInterrupt::CloseSession => ExtensionInterrupt::CloseSession,
+            };
+            let interrupt_response = blocking_request.extension.interrupt_blocking_request(
                 &blocking_request.payload,
-                match interrupt {
-                    BlockingExtensionInterrupt::ExtensionPayload(payload) => {
-                        ExtensionInterruptRequest::ExtensionPayload(payload)
-                    }
-                    BlockingExtensionInterrupt::KillProcess => {
-                        ExtensionInterruptRequest::KillProcess
-                    }
-                    BlockingExtensionInterrupt::CloseSession => {
-                        ExtensionInterruptRequest::CloseSession
-                    }
-                },
+                interrupt_request.as_request(),
             )?;
             let interrupted_dispatch = interrupted_extension_dispatch(
                 active_request,
                 &blocking_request.namespace,
-                interrupt.interrupted_response_payload,
+                interrupt_response.interrupted_response_payload,
             );
-            let interrupting_response = interrupt.interrupting_response_payload.map(|payload| {
-                response_frame(
-                    request.request_id,
-                    request.ownership.clone(),
-                    ResponsePayload::ExtEnvelope(ExtEnvelope {
-                        namespace: blocking_request.namespace.clone(),
-                        payload,
-                    }),
-                )
-            });
+            let interrupting_response =
+                interrupt_response
+                    .interrupting_response_payload
+                    .map(|payload| {
+                        response_frame(
+                            request.request_id,
+                            request.ownership.clone(),
+                            ResponsePayload::ExtEnvelope(ExtEnvelope {
+                                namespace: blocking_request.namespace.clone(),
+                                payload,
+                            }),
+                        )
+                    });
             Some(ExtensionInterruptDispatch {
                 interrupted_dispatch,
                 interrupting_response,
+                extension: blocking_request.extension.clone(),
+                blocking_payload: blocking_request.payload.clone(),
+                interrupt: interrupt_request,
             })
         }
         // Response, Event, and SidecarRequest frames are sidecar-to-host only. If one
@@ -770,7 +799,10 @@ fn default_compile_cache_root() -> PathBuf {
 mod tests {
     use super::*;
     use crate::wire::{AuthenticateRequest, KillProcessRequest};
-    use crate::{ExtensionContext, ExtensionFuture, ExtensionInterruptResponse, ExtensionResponse};
+    use crate::{
+        ExtensionContext, ExtensionFuture, ExtensionInterruptRequest, ExtensionInterruptResponse,
+        ExtensionResponse,
+    };
     use std::io::Cursor;
 
     const TEST_EXTENSION_NAMESPACE: &str = "dev.rivet.secure-exec.test.blocking";
@@ -999,6 +1031,55 @@ mod tests {
     }
 
     #[test]
+    fn blocking_classifier_is_not_invoked_before_live_vm_validation() {
+        struct StatefulClassifierExtension {
+            calls: Arc<std::sync::atomic::AtomicUsize>,
+        }
+
+        impl Extension for StatefulClassifierExtension {
+            fn namespace(&self) -> &str {
+                TEST_EXTENSION_NAMESPACE
+            }
+
+            fn handle_request<'a>(
+                &'a self,
+                _ctx: ExtensionContext<'a>,
+                _payload: Vec<u8>,
+            ) -> ExtensionFuture<'a, ExtensionResponse> {
+                Box::pin(async { Ok(ExtensionResponse::new(Vec::new())) })
+            }
+
+            fn is_blocking_request(&self, _payload: &[u8]) -> bool {
+                self.calls
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                true
+            }
+        }
+
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sidecar = NativeSidecar::with_config_and_extensions(
+            LocalBridge::default(),
+            NativeSidecarConfig::default(),
+            vec![Box::new(StatefulClassifierExtension {
+                calls: Arc::clone(&calls),
+            })],
+        )
+        .expect("sidecar");
+        let request = test_extension_request_frame(
+            10,
+            vm_ownership("missing-connection", "missing-session", "missing-vm"),
+            "prompt:forged-owner",
+        );
+
+        assert!(super::blocking_extension_request(&sidecar, &request).is_none());
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "extension classifier must not observe forged ownership"
+        );
+    }
+
+    #[test]
     fn extension_cancel_interrupt_gets_synthetic_response() {
         let ownership = vm_ownership("conn-1", "session-1", "vm-1");
         let prompt = test_extension_request_frame(10, ownership.clone(), "prompt:ext-session-1");
@@ -1021,6 +1102,174 @@ mod tests {
         };
         assert_eq!(envelope.namespace, TEST_EXTENSION_NAMESPACE);
         assert_eq!(envelope.payload, b"cancelled:ext-session-1");
+    }
+
+    #[test]
+    fn cancellable_sidecar_callback_wait_stops_without_waiting_for_its_deadline() {
+        let (write_tx, write_rx) =
+            tracked_sync_channel::<ProtocolFrame>(TrackedLimit::SidecarStdoutFrames, 2);
+        let transport = Arc::new(FrameSidecarRequestTransport::new(write_tx));
+        let cancellation = ExtensionCallbackCancellation::default();
+        let worker_transport = transport.clone();
+        let worker_cancellation = cancellation.clone();
+        let started = Instant::now();
+        let worker = thread::spawn(move || {
+            worker_transport.send_request_cancellable(
+                crate::protocol::SidecarRequestFrame::new(
+                    -1,
+                    crate::protocol::OwnershipScope::vm("conn-1", "session-1", "vm-1"),
+                    crate::protocol::SidecarRequestPayload::Ext(crate::protocol::ExtEnvelope {
+                        namespace: TEST_EXTENSION_NAMESPACE.to_string(),
+                        payload: b"permission".to_vec(),
+                    }),
+                ),
+                Duration::from_secs(120),
+                &worker_cancellation,
+            )
+        });
+
+        let frame = write_rx
+            .recv()
+            .expect("callback request should be emitted before cancellation");
+        assert!(matches!(frame, ProtocolFrame::SidecarRequestFrame(_)));
+        cancellation.cancel();
+        let error = worker
+            .join()
+            .expect("callback waiter thread")
+            .expect_err("cancelled callback must fail");
+        assert!(error.to_string().contains("cancelled"));
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "cancellation must not wait for the 120 second permission deadline"
+        );
+        assert!(transport.pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn callback_response_and_cancellation_complete_wait_exactly_once() {
+        let (write_tx, write_rx) =
+            tracked_sync_channel::<ProtocolFrame>(TrackedLimit::SidecarStdoutFrames, 2);
+        let transport = Arc::new(FrameSidecarRequestTransport::new(write_tx));
+        let cancellation = ExtensionCallbackCancellation::default();
+        let worker_transport = transport.clone();
+        let worker_cancellation = cancellation.clone();
+        let worker = thread::spawn(move || {
+            worker_transport.send_request_cancellable(
+                crate::protocol::SidecarRequestFrame::new(
+                    -1,
+                    crate::protocol::OwnershipScope::vm("conn-1", "session-1", "vm-1"),
+                    crate::protocol::SidecarRequestPayload::Ext(crate::protocol::ExtEnvelope {
+                        namespace: TEST_EXTENSION_NAMESPACE.to_string(),
+                        payload: b"permission".to_vec(),
+                    }),
+                ),
+                Duration::from_secs(120),
+                &worker_cancellation,
+            )
+        });
+        let ProtocolFrame::SidecarRequestFrame(request) =
+            write_rx.recv().expect("callback request")
+        else {
+            panic!("expected callback request frame");
+        };
+        let response = SidecarResponseFrame {
+            schema: request.schema,
+            request_id: request.request_id,
+            ownership: request.ownership,
+            payload: wire::SidecarResponsePayload::ExtEnvelope(ExtEnvelope {
+                namespace: TEST_EXTENSION_NAMESPACE.to_string(),
+                payload: b"allowed".to_vec(),
+            }),
+        };
+        assert!(transport.accept_response(response.clone()));
+        cancellation.cancel();
+        let completed = worker
+            .join()
+            .expect("callback waiter thread")
+            .expect("accepted response wins completion");
+        assert!(matches!(
+            completed.payload,
+            crate::protocol::SidecarResponsePayload::ExtResult(crate::protocol::ExtEnvelope {
+                payload,
+                ..
+            }) if payload == b"allowed"
+        ));
+        assert!(!transport.accept_response(response));
+        assert!(transport.pending.lock().unwrap().is_empty());
+
+        let cancellation = ExtensionCallbackCancellation::default();
+        let worker_transport = transport.clone();
+        let worker_cancellation = cancellation.clone();
+        let worker = thread::spawn(move || {
+            worker_transport.send_request_cancellable(
+                crate::protocol::SidecarRequestFrame::new(
+                    -2,
+                    crate::protocol::OwnershipScope::vm("conn-1", "session-1", "vm-1"),
+                    crate::protocol::SidecarRequestPayload::Ext(crate::protocol::ExtEnvelope {
+                        namespace: TEST_EXTENSION_NAMESPACE.to_string(),
+                        payload: b"permission".to_vec(),
+                    }),
+                ),
+                Duration::from_secs(120),
+                &worker_cancellation,
+            )
+        });
+        let ProtocolFrame::SidecarRequestFrame(request) =
+            write_rx.recv().expect("second callback request")
+        else {
+            panic!("expected callback request frame");
+        };
+        let late_response = SidecarResponseFrame {
+            schema: request.schema,
+            request_id: request.request_id,
+            ownership: request.ownership,
+            payload: wire::SidecarResponsePayload::ExtEnvelope(ExtEnvelope {
+                namespace: TEST_EXTENSION_NAMESPACE.to_string(),
+                payload: b"too-late".to_vec(),
+            }),
+        };
+        cancellation.cancel();
+        let error = worker
+            .join()
+            .expect("callback waiter thread")
+            .expect_err("cancellation wins completion");
+        assert!(error.to_string().contains("cancelled"));
+        assert!(!transport.accept_response(late_response));
+        assert!(transport.pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn accepted_interrupt_runs_deferred_hook_with_original_owner_and_can_replace_response() {
+        let records = Arc::new(Mutex::new(Vec::new()));
+        let extension = RecordingDeferredInterruptExtension {
+            records: records.clone(),
+        };
+        let mut sidecar = NativeSidecar::with_config_and_extensions(
+            LocalBridge::default(),
+            NativeSidecarConfig::default(),
+            vec![Box::new(extension)],
+        )
+        .expect("sidecar");
+        let registered = sidecar
+            .extensions
+            .get(TEST_EXTENSION_NAMESPACE)
+            .expect("registered extension")
+            .clone();
+        let replacement = sidecar
+            .dispatch_extension_interrupt(
+                registered,
+                vm_ownership("conn-exact", "session-exact", "vm-exact"),
+                b"prompt:agent-session".to_vec(),
+                ExtensionInterrupt::ExtensionPayload(b"cancel:agent-session".to_vec()),
+            )
+            .await
+            .expect("deferred interrupt hook");
+
+        assert_eq!(replacement, Some(b"delivered:agent-session".to_vec()));
+        assert_eq!(
+            records.lock().unwrap().as_slice(),
+            &[String::from("conn-exact/session-exact/vm-exact")]
+        );
     }
 
     #[test]
@@ -1071,6 +1320,44 @@ mod tests {
     }
 
     struct TestBlockingInterruptExtension;
+
+    struct RecordingDeferredInterruptExtension {
+        records: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Extension for RecordingDeferredInterruptExtension {
+        fn namespace(&self) -> &str {
+            TEST_EXTENSION_NAMESPACE
+        }
+
+        fn handle_request<'a>(
+            &'a self,
+            _ctx: ExtensionContext<'a>,
+            _payload: Vec<u8>,
+        ) -> ExtensionFuture<'a, ExtensionResponse> {
+            Box::pin(async { Ok(ExtensionResponse::new(Vec::new())) })
+        }
+
+        fn on_blocking_request_interrupted<'a>(
+            &'a self,
+            ctx: ExtensionContext<'a>,
+            blocking_payload: Vec<u8>,
+            _interrupt: ExtensionInterrupt,
+        ) -> ExtensionFuture<'a, Option<Vec<u8>>> {
+            Box::pin(async move {
+                let OwnershipScope::VmOwnership(owner) = ctx.ownership() else {
+                    panic!("expected VM ownership");
+                };
+                self.records.lock().unwrap().push(format!(
+                    "{}/{}/{}",
+                    owner.connection_id, owner.session_id, owner.vm_id
+                ));
+                let (_, session_id) = parse_test_payload(&blocking_payload)
+                    .expect("blocking payload should retain prompt identity");
+                Ok(Some(encode_test_response("delivered", session_id)))
+            })
+        }
+    }
 
     impl Extension for TestBlockingInterruptExtension {
         fn namespace(&self) -> &str {
@@ -1506,16 +1793,20 @@ impl FrameSidecarRequestTransport {
         let _ = sender.send(response);
         true
     }
-}
 
-impl SidecarRequestTransport for FrameSidecarRequestTransport {
-    fn send_request(
+    fn send_request_inner(
         &self,
         request: crate::protocol::SidecarRequestFrame,
         timeout: Duration,
+        cancellation: Option<&ExtensionCallbackCancellation>,
     ) -> Result<crate::protocol::SidecarResponseFrame, SidecarError> {
         let request =
             wire::sidecar_request_frame_from_compat(request).map_err(wire_protocol_error)?;
+        if cancellation.is_some_and(ExtensionCallbackCancellation::is_cancelled) {
+            return Err(SidecarError::Execution(String::from(
+                "extension callback was cancelled",
+            )));
+        }
         let (sender, receiver) = mpsc::sync_channel(1);
         self.pending
             .lock()
@@ -1523,15 +1814,14 @@ impl SidecarRequestTransport for FrameSidecarRequestTransport {
                 SidecarError::Bridge(String::from("sidecar callback waiter map lock poisoned"))
             })?
             .insert(request.request_id, sender);
-        // Bound the request-frame WRITE by the caller's deadline. The shared
-        // `send_output_frame` blocks (correct backpressure for the fire-and-forget
-        // event/response paths), but this request path has a `timeout` that the
-        // response wait below already honors — so a stalled host stdout must not
-        // make the *send* block past it. Poll try_send until a slot frees or the
-        // deadline passes.
         let write_deadline = Instant::now() + timeout;
         let mut frame = ProtocolFrame::SidecarRequestFrame(request.clone());
         let write_result = loop {
+            if cancellation.is_some_and(ExtensionCallbackCancellation::is_cancelled) {
+                break Err(SidecarError::Execution(String::from(
+                    "extension callback was cancelled",
+                )));
+            }
             match self.writer.try_send(frame) {
                 Ok(()) => break Ok(()),
                 Err(mpsc::TrySendError::Disconnected(_)) => {
@@ -1558,24 +1848,73 @@ impl SidecarRequestTransport for FrameSidecarRequestTransport {
                 .map(|mut pending| pending.remove(&request.request_id));
             return Err(error);
         }
-        match receiver.recv_timeout(timeout) {
-            Ok(response) => {
-                wire::sidecar_response_frame_to_compat(response).map_err(wire_protocol_error)
+
+        let response_deadline = Instant::now() + timeout;
+        loop {
+            if cancellation.is_some_and(ExtensionCallbackCancellation::is_cancelled) {
+                let cancellation_won = self
+                    .pending
+                    .lock()
+                    .map_err(|_| {
+                        SidecarError::Bridge(String::from(
+                            "sidecar callback waiter map lock poisoned",
+                        ))
+                    })?
+                    .remove(&request.request_id)
+                    .is_some();
+                if cancellation_won {
+                    return Err(SidecarError::Execution(String::from(
+                        "extension callback was cancelled",
+                    )));
+                }
+                // `accept_response` removes the same route before sending the
+                // response. If it already claimed the route, completion owns
+                // this wait and a concurrent cancellation must not steal it.
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
+            let remaining = response_deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
                 let _ = self
                     .pending
                     .lock()
                     .map(|mut pending| pending.remove(&request.request_id));
-                Err(SidecarError::Timeout(format!(
+                return Err(SidecarError::Timeout(format!(
                     "timed out waiting for sidecar response after {}s",
                     timeout.as_secs()
-                )))
+                )));
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(SidecarError::Io(String::from(
-                "sidecar response waiter disconnected",
-            ))),
+            let wait = remaining.min(Duration::from_millis(10));
+            match receiver.recv_timeout(wait) {
+                Ok(response) => {
+                    return wire::sidecar_response_frame_to_compat(response)
+                        .map_err(wire_protocol_error);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(SidecarError::Io(String::from(
+                        "sidecar response waiter disconnected",
+                    )));
+                }
+            }
         }
+    }
+}
+
+impl SidecarRequestTransport for FrameSidecarRequestTransport {
+    fn send_request(
+        &self,
+        request: crate::protocol::SidecarRequestFrame,
+        timeout: Duration,
+    ) -> Result<crate::protocol::SidecarResponseFrame, SidecarError> {
+        self.send_request_inner(request, timeout, None)
+    }
+
+    fn send_request_cancellable(
+        &self,
+        request: crate::protocol::SidecarRequestFrame,
+        timeout: Duration,
+        cancellation: &ExtensionCallbackCancellation,
+    ) -> Result<crate::protocol::SidecarResponseFrame, SidecarError> {
+        self.send_request_inner(request, timeout, Some(cancellation))
     }
 }
 

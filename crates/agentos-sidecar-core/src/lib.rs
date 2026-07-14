@@ -2,22 +2,16 @@
 
 //! Host-free core for the Agent OS ACP sidecar extension.
 //!
-//! This crate holds the parts of the ACP extension that do NOT depend on the host
-//! runtime (tokio, std::fs, the native secure-exec sidecar): the request/response
-//! wire codec and the per-session data model. It compiles to wasm32 so the browser
-//! sidecar (`agentos-sidecar-browser`) can run the same ACP logic the native sidecar
-//! (`agentos-sidecar`) runs, with each backend supplying the host operations
-//! (process spawn, stdin write, output poll, kill) through a thin seam.
-//!
-//! Porting status: the codec + session model are host-free here. The async ACP
-//! orchestration in `agentos-sidecar::acp_extension` is being migrated onto a
-//! synchronous host seam defined here (see `AcpHost`); until that migration lands,
-//! the native sidecar keeps its own async implementation.
+//! This crate owns the host-independent ACP lifecycle, request/response codec,
+//! and per-session model. It compiles to wasm32 so native and browser sidecars run
+//! the same transitions, with each backend supplying process, filesystem, and
+//! callback operations through the thin [`AcpHost`] seam.
 
 use std::fmt;
 
 use agentos_protocol::generated::v1::{AcpErrorResponse, AcpResponse};
 
+pub mod behavior;
 pub mod codec;
 pub mod engine;
 pub mod host;
@@ -25,7 +19,7 @@ pub mod json_rpc;
 pub mod session;
 
 pub use engine::{AcpCore, ResumeStep};
-pub use host::AcpHost;
+pub use host::{AcpHost, ProjectedAgentLaunch};
 pub use session::AcpSessionRecord;
 
 /// Host-free error type for the ACP core. Mirrors the wire `AcpErrorResponse`
@@ -35,6 +29,7 @@ pub use session::AcpSessionRecord;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AcpCoreError {
     InvalidState(String),
+    LimitExceeded(String),
     Unauthorized(String),
     Unsupported(String),
     Conflict(String),
@@ -47,6 +42,7 @@ impl AcpCoreError {
     pub fn code(&self) -> &'static str {
         match self {
             AcpCoreError::InvalidState(_) => "invalid_state",
+            AcpCoreError::LimitExceeded(_) => "limit_exceeded",
             AcpCoreError::Unauthorized(_) => "unauthorized",
             AcpCoreError::Unsupported(_) => "unsupported",
             AcpCoreError::Conflict(_) => "conflict",
@@ -59,6 +55,7 @@ impl fmt::Display for AcpCoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AcpCoreError::InvalidState(message)
+            | AcpCoreError::LimitExceeded(message)
             | AcpCoreError::Unauthorized(message)
             | AcpCoreError::Unsupported(message)
             | AcpCoreError::Conflict(message)
@@ -91,6 +88,10 @@ mod tests {
             "invalid_state"
         );
         assert_eq!(AcpCoreError::Unsupported("x".into()).code(), "unsupported");
+        assert_eq!(
+            AcpCoreError::LimitExceeded("x".into()).code(),
+            "limit_exceeded"
+        );
         assert_eq!(
             error_response(&AcpCoreError::Conflict("dup".into())),
             AcpResponse::AcpErrorResponse(AcpErrorResponse {

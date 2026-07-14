@@ -36,8 +36,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use agentos_native_sidecar::wire::{
     AuthenticateRequest, ConfigureVmRequest, ConnectionOwnership, CreateVmRequest, EventFrame,
     EventPayload, ExtEnvelope, GuestRuntimeKind, OpenSessionRequest, OwnershipScope,
-    PackageDescriptor, RequestFrame, RequestPayload, ResponsePayload, SessionOwnership,
-    SidecarPlacement, SidecarPlacementShared, VmOwnership,
+    PackageDescriptor, PackagePath, RequestFrame, RequestPayload, ResponsePayload,
+    SessionOwnership, SidecarPlacement, SidecarPlacementShared, VmOwnership,
 };
 use agentos_native_sidecar::{NativeSidecar, NativeSidecarConfig};
 use agentos_protocol::generated::v1::{
@@ -184,9 +184,9 @@ fn adapter_crash_restarts_or_evicts_and_emits_exit_event() {
     let AcpResponse::AcpErrorResponse(AcpErrorResponse { code, message }) = response else {
         panic!("expected the post-eviction prompt to fail, got: {response:?}");
     };
-    assert_eq!(code, "session_not_found");
+    assert_eq!(code, "invalid_state");
     assert!(
-        message.contains("Session not found"),
+        message.contains("unknown ACP session"),
         "expected unknown-session error after eviction, got: {message}"
     );
 
@@ -688,9 +688,9 @@ fn configure_mock_agent_packages(
         fs::write(package_dir.join("agentos-package.json"), manifest)
             .expect("write mock agent manifest");
         fs::write(bin_dir.join(&agent_type), script).expect("write mock agent command");
-        packages.push(PackageDescriptor {
+        packages.push(PackageDescriptor::PackagePath(PackagePath {
             path: package_dir.to_string_lossy().into_owned(),
-        });
+        }));
     }
     let result = sidecar
         .dispatch_wire_blocking(RequestFrame {

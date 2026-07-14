@@ -91,6 +91,31 @@ type AcpDeliverAgentOutputRequest struct {
   chunk: data
 }
 
+# Host-observed adapter stderr. The host forwards opaque bytes; the sidecar owns
+# session identity, limits, event construction, and retryable delivery.
+type AcpDeliverAgentStderrRequest struct {
+  processId: str
+  chunk: data
+}
+
+# Browser RESUMABLE terminal cleanup. The sidecar owns the stable error code and
+# message for each observed terminal condition; the browser driver supplies only
+# the process handle and the fact it observed.
+type AcpPendingAbortReason enum {
+  AGENT_EXITED
+  INTERACTION_TIMEOUT
+  DRIVER_FAILED
+  CALLER_CANCELLED
+}
+
+type AcpAbortPendingRequest struct {
+  processId: str
+  reason: AcpPendingAbortReason
+  # Present only when the browser execution transport directly observed a
+  # process exit status. Timeouts/driver failures and indirect exits omit it.
+  exitCode: optional<i32>
+}
+
 type AcpRequest union {
   AcpCreateSessionRequest |
   AcpSessionRequest |
@@ -100,6 +125,8 @@ type AcpRequest union {
   AcpCloseSessionRequest |
   AcpResumeSessionRequest |
   AcpDeliverAgentOutputRequest |
+  AcpDeliverAgentStderrRequest |
+  AcpAbortPendingRequest |
   AcpListAgentsRequest
 }
 
@@ -150,6 +177,10 @@ type AcpSessionClosedResponse struct {
   sessionId: str
 }
 
+type AcpAgentStderrDeliveredResponse struct {
+  processId: str
+}
+
 # Result of AcpResumeSessionRequest. `sessionId` is the live ACP session id after
 # resume: equal to the requested id for native loads, or the freshly assigned id
 # for the fallback tier (the caller remaps external -> live). `mode` is "native"
@@ -176,6 +207,11 @@ type AcpErrorResponse struct {
 # delivered as the response to the AcpDeliverAgentOutputRequest that completes it.
 type AcpPendingResponse struct {
   processId: str
+  # Sidecar-owned deadline for the currently awaited ACP phase.
+  timeoutMs: u32
+  # Stable phase identity. Browser routing resets the deadline only when this
+  # changes; partial lines and same-phase notifications cannot extend it.
+  timeoutPhase: str
 }
 
 type AcpResponse union {
@@ -184,6 +220,7 @@ type AcpResponse union {
   AcpSessionStateResponse |
   AcpListSessionsResponse |
   AcpSessionClosedResponse |
+  AcpAgentStderrDeliveredResponse |
   AcpSessionResumedResponse |
   AcpErrorResponse |
   AcpPendingResponse |

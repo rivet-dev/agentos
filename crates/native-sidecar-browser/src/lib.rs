@@ -2,15 +2,25 @@
 
 //! Browser-side sidecar scaffold for the secure-exec runtime migration.
 
+mod package_projection;
 mod service;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 pub mod wire_dispatch;
 
+pub use package_projection::{
+    BrowserProjectedCommand, BrowserProjectedPackage, BrowserProjectedPackageAgent,
+    DEFAULT_BROWSER_PACKAGES_MOUNT_ROOT, MAX_BROWSER_PROJECTED_PACKAGES_PER_VM,
+    MAX_BROWSER_PROJECTED_PACKAGE_BYTES_PER_VM, MAX_BROWSER_PROJECTED_PACKAGE_ENTRIES_PER_VM,
+    MAX_BROWSER_PROJECTED_PACKAGE_MATERIALIZED_BYTES_PER_VM,
+    MAX_BROWSER_PROJECTED_PACKAGE_MOUNTS_PER_VM,
+};
 pub use service::{
     BrowserExecutionOptions, BrowserExtension, BrowserExtensionContext, BrowserExtensionHost,
-    BrowserExtensionRequest, BrowserExtensionResponse, BrowserSidecar, BrowserSidecarConfig,
-    BrowserSidecarError,
+    BrowserExtensionRequest, BrowserExtensionResponse, BrowserProjectedAgentLaunch,
+    BrowserProvidedCommands, BrowserSidecar, BrowserSidecarConfig, BrowserSidecarError,
+    ExecutionOutput, PollExecutionOutputRequest, DEFAULT_MAX_DEFERRED_EXECUTION_EVENTS_PER_VM,
+    MAX_BROWSER_PROJECTED_AGENTS_PER_VM,
 };
 #[cfg(target_arch = "wasm32")]
 pub use wasm::{BrowserJsBridge, BrowserSidecarWasm};

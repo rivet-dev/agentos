@@ -1,5 +1,6 @@
 import type { ProtocolFramePayloadCodec } from "@rivet-dev/agentos-runtime-core/protocol-frames";
 import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
+import type { LivePackageDescriptor } from "@rivet-dev/agentos-runtime-core/descriptors";
 import {
 	type BrowserChildProcessPollEvent,
 	decodeChildProcessInput,
@@ -85,6 +86,10 @@ export interface ConvergedSidecarHandle {
 export interface ConvergedSidecarFactoryOptions {
 	loadSidecar(): Promise<ConvergedSidecarHandle>;
 	config: CreateVmConfig;
+	/** Opaque package inputs forwarded during atomic VM initialization. */
+	packages?: readonly LivePackageDescriptor[];
+	/** Explicit package projection root forwarded without client interpretation. */
+	packagesMountAt?: string;
 	codec?: ProtocolFramePayloadCodec;
 	onFsReadDenied?: () => void;
 }
@@ -540,6 +545,8 @@ export class BrowserRuntimeDriver implements NodeRuntimeDriver {
 		this.convergedServicer = createConvergedServicer({
 			pushFrame: sidecar.pushFrame,
 			config: options.config,
+			packages: options.packages,
+			packagesMountAt: options.packagesMountAt,
 			codec: options.codec,
 			setNextExecutionId: sidecar.setNextExecutionId?.bind(sidecar),
 			onFsReadDenied: options.onFsReadDenied,
