@@ -39,6 +39,7 @@ const DEFAULT_ROOT_DIRECTORIES: &[&str] = &[
     "/mnt",
     "/media",
     "/home",
+    "/home/agentos",
     "/usr",
     "/usr/bin",
     "/usr/games",
@@ -61,6 +62,7 @@ const DEFAULT_ROOT_DIRECTORIES: &[&str] = &[
     "/var/spool",
     "/var/tmp",
     "/etc/agentos",
+    "/workspace",
 ];
 const KERNEL_RESERVED_BOOTSTRAP_PATH_PREFIXES: &[&str] = &["/dev", "/proc", "/sys"];
 
@@ -230,7 +232,9 @@ impl RootFileSystem {
     ) -> Result<Self, RootFilesystemError> {
         let mut lower_snapshots = descriptor.lowers.clone();
         if !descriptor.disable_default_base_layer {
-            lower_snapshots.push(load_bundled_base_snapshot_with_limits(limits)?);
+            let mut base = load_bundled_base_snapshot_with_limits(limits)?;
+            ensure_default_root_directories(&mut base);
+            lower_snapshots.push(base);
         } else if lower_snapshots.is_empty() {
             lower_snapshots.push(minimal_root_snapshot());
         }
@@ -553,10 +557,32 @@ pub fn load_bundled_base_snapshot_with_limits(
 fn minimal_root_snapshot() -> RootFilesystemSnapshot {
     let mut entries = DEFAULT_ROOT_DIRECTORIES
         .iter()
-        .map(|path| FilesystemEntry::directory(*path))
+        .map(|path| default_root_directory_entry(path))
         .collect::<Vec<_>>();
     entries.push(FilesystemEntry::file("/usr/bin/env", Vec::new()));
     RootFilesystemSnapshot { entries }
+}
+
+fn ensure_default_root_directories(snapshot: &mut RootFilesystemSnapshot) {
+    let existing = snapshot
+        .entries
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect::<BTreeSet<_>>();
+    let missing = DEFAULT_ROOT_DIRECTORIES
+        .iter()
+        .filter(|path| !existing.contains(**path))
+        .map(|path| default_root_directory_entry(path))
+        .collect::<Vec<_>>();
+    snapshot.entries.extend(missing);
+}
+
+fn default_root_directory_entry(path: &str) -> FilesystemEntry {
+    let mut entry = FilesystemEntry::directory(path);
+    if matches!(path, "/tmp" | "/var/tmp") {
+        entry.mode = 0o1777;
+    }
+    entry
 }
 
 fn convert_raw_entry(raw: RawFilesystemEntry) -> Result<FilesystemEntry, RootFilesystemError> {

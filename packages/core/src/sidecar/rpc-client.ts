@@ -44,7 +44,9 @@ function shouldLogStructuredSidecarEvent(name: string): boolean {
 }
 
 function decodeUtf8(data: Uint8Array): string {
-	return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
+	return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString(
+		"utf8",
+	);
 }
 
 function formatStructuredSidecarDetail(
@@ -546,26 +548,38 @@ export class NativeSidecarKernelProxy {
 		const stdoutHandlers = new Set<(data: Uint8Array) => void>();
 		const stderrHandlers = new Set<(data: Uint8Array) => void>();
 		let onData: ((data: Uint8Array) => void) | null = null;
-		stdoutHandlers.add((data) => onData?.(data));
+		let initialDataHandlerAttached = false;
+		const pendingData: Uint8Array[] = [];
+		stdoutHandlers.add((data) => {
+			if (!initialDataHandlerAttached) {
+				pendingData.push(data.slice());
+				return;
+			}
+			onData?.(data);
+		});
 		if (options?.onStderr) {
 			stderrHandlers.add(options.onStderr);
 		}
 
-		const proc = await this.spawnTracked(options?.command, options?.args ?? [], {
-			env: options?.env,
-			cwd: options?.cwd,
-			pty: { cols: options?.cols, rows: options?.rows },
-			onStdout: (chunk) => {
-				for (const handler of stdoutHandlers) {
-					handler(chunk);
-				}
+		const proc = await this.spawnTracked(
+			options?.command,
+			options?.args ?? [],
+			{
+				env: options?.env,
+				cwd: options?.cwd,
+				pty: { cols: options?.cols, rows: options?.rows },
+				onStdout: (chunk) => {
+					for (const handler of stdoutHandlers) {
+						handler(chunk);
+					}
+				},
+				onStderr: (chunk) => {
+					for (const handler of stderrHandlers) {
+						handler(chunk);
+					}
+				},
 			},
-			onStderr: (chunk) => {
-				for (const handler of stderrHandlers) {
-					handler(chunk);
-				}
-			},
-		});
+		);
 		const entry = this.trackedProcesses.get(proc.pid);
 		if (!entry) {
 			throw new Error(`sidecar shell process ${proc.pid} is not tracked`);
@@ -582,6 +596,12 @@ export class NativeSidecarKernelProxy {
 			},
 			set onData(handler) {
 				onData = handler;
+				if (handler && !initialDataHandlerAttached) {
+					initialDataHandlerAttached = true;
+					for (const data of pendingData.splice(0)) {
+						handler(data);
+					}
+				}
 			},
 			resize: (cols, rows) => {
 				const entry = this.trackedProcesses.get(proc.pid);

@@ -2149,7 +2149,9 @@ function routeChunkToDelegateFd(fd, bytes) {
 }
 
 function finalizeChildExit(record, exitCode, signal) {
-  const status =
+	record.exitCode = signal == null ? (Number(exitCode ?? 1) & 0xff) : 0;
+	record.exitSignal = signal == null ? 0 : signalNumberFromName(signal);
+	const status =
     signal == null
       ? (Number(exitCode ?? 1) & 0xff)
       : 128 + (signalNumberFromName(signal) & 0x7f);
@@ -2163,6 +2165,62 @@ function finalizeChildExit(record, exitCode, signal) {
   unregisterChildPipeProducers(record);
   unregisterChildPipeConsumers(record);
   return status;
+}
+
+let processSignalMaskLo = 0;
+let processSignalMaskHi = 0;
+
+function decodeSpawnActions(bytes) {
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	const actions = [];
+	let offset = 0;
+	while (offset < bytes.byteLength) {
+		if (bytes.byteLength - offset < 24) {
+			throw new Error('truncated proc_spawn_v3 action header');
+		}
+		const command = view.getUint32(offset, true);
+		const fd = view.getUint32(offset + 4, true);
+		const sourceFd = view.getUint32(offset + 8, true);
+		const openFlags = view.getUint32(offset + 12, true);
+		const pathLength = view.getUint32(offset + 20, true);
+		offset += 24;
+		if (pathLength > bytes.byteLength - offset) {
+			throw new Error('truncated proc_spawn_v3 action path');
+		}
+		const actionPath = Buffer.from(
+			bytes.subarray(offset, offset + pathLength),
+		).toString('utf8');
+		offset += pathLength;
+		actions.push({ command, fd, sourceFd, openFlags, path: actionPath });
+	}
+	return actions;
+}
+
+function spawnActionStdioTargets(actions) {
+	const mappings = new Map([
+		[0, 0],
+		[1, 1],
+		[2, 2],
+	]);
+	for (const action of actions) {
+		switch (action.command) {
+			case 1: // close
+				mappings.set(action.fd, 0xffffffff);
+				break;
+			case 2: // dup2(source_fd, fd)
+				mappings.set(action.fd, mappings.get(action.sourceFd) ?? action.sourceFd);
+				break;
+			case 3: // open; Rust currently uses this only for /dev/null stdio.
+				if (action.path !== '/dev/null') {
+					throw new Error(`unsupported proc_spawn_v3 open action: ${action.path}`);
+				}
+				mappings.set(action.fd, 0xffffffff);
+				break;
+			default:
+				throw new Error(`unsupported proc_spawn_v3 action: ${action.command}`);
+		}
+	}
+	return [0, 1, 2].map((fd) => mappings.get(fd) ?? fd);
 }
 
 function pollChildEvent(record, waitMs) {
@@ -3882,6 +3940,58 @@ const hostProcessImport = {
             return WASI_ERRNO_FAULT;
           }
         },
+		proc_spawn_v3(
+			execPathPtr,
+			execPathLen,
+			argvPtr,
+			argvLen,
+			envpPtr,
+			envpLen,
+			actionsPtr,
+			actionsLen,
+			cwdPtr,
+			cwdLen,
+			attrFlags,
+			_sigdefaultLo,
+			_sigdefaultHi,
+			_sigmaskLo,
+			_sigmaskHi,
+			_pgroup,
+			retPidPtr,
+		) {
+			if (permissionTier !== 'full') {
+				return WASI_ERRNO_FAULT;
+			}
+			try {
+				if ((Number(attrFlags) >>> 0) !== 0) {
+					return WASI_ERRNO_FAULT;
+				}
+				const execPath = readGuestString(execPathPtr, execPathLen);
+				const argv = decodeNullSeparatedStrings(readGuestBytes(argvPtr, argvLen));
+				if (argv.length === 0) {
+					argv.push(execPath);
+				}
+				const actions = decodeSpawnActions(readGuestBytes(actionsPtr, actionsLen));
+				const [stdinFd, stdoutFd, stderrFd] = spawnActionStdioTargets(actions);
+				return hostProcessImport.proc_spawn(
+					argvPtr,
+					argvLen,
+					envpPtr,
+					envpLen,
+					stdinFd,
+					stdoutFd,
+					stderrFd,
+					cwdPtr,
+					cwdLen,
+					retPidPtr,
+				);
+			} catch (error) {
+				traceHostProcess('proc-spawn-v3-fault', {
+					message: error instanceof Error ? error.message : String(error),
+				});
+				return WASI_ERRNO_FAULT;
+			}
+		},
         proc_waitpid(pid, options, retStatusPtr, retPidPtr) {
           const requestedPid = Number(pid) >>> 0;
           if (permissionTier !== 'full') {
@@ -3976,6 +4086,56 @@ const hostProcessImport = {
             return WASI_ERRNO_FAULT;
           }
         },
+		proc_waitpid_v2(
+			pid,
+			options,
+			retExitCodePtr,
+			retSignalPtr,
+			retPidPtr,
+			retCoreDumpedPtr,
+		) {
+			const requestedPid = Number(pid) >>> 0;
+			if (permissionTier !== 'full') {
+				return requestedPid === 0xffffffff ? WASI_ERRNO_CHILD : WASI_ERRNO_SRCH;
+			}
+			const record =
+				requestedPid === 0xffffffff
+					? spawnedChildren.values().next().value
+					: spawnedChildren.get(requestedPid);
+			if (!record) {
+				return requestedPid === 0xffffffff ? WASI_ERRNO_CHILD : WASI_ERRNO_SRCH;
+			}
+
+			try {
+				const nonBlocking = (Number(options) >>> 0) !== 0;
+				while (typeof record.exitStatus !== 'number') {
+					const event = pollChildEvent(record, nonBlocking ? 0 : 10);
+					if (!event) {
+						if (!pumpChildInputPipe(record, nonBlocking ? 0 : 10) && nonBlocking) {
+							return writeGuestUint32(retPidPtr, 0);
+						}
+						continue;
+					}
+					processChildEvent(record, event);
+				}
+				for (const [ptr, value] of [
+					[retExitCodePtr, record.exitCode ?? record.exitStatus ?? 1],
+					[retSignalPtr, record.exitSignal ?? 0],
+					[retPidPtr, record.pid],
+					[retCoreDumpedPtr, 0],
+				]) {
+					const result = writeGuestUint32(ptr, value);
+					if (result !== WASI_ERRNO_SUCCESS) return result;
+				}
+				reapSpawnedChild(record);
+				return WASI_ERRNO_SUCCESS;
+			} catch (error) {
+				if (isChildProcessGoneError(error) && typeof record.exitStatus === 'number') {
+					return WASI_ERRNO_CHILD;
+				}
+				return WASI_ERRNO_FAULT;
+			}
+		},
         proc_kill(pid, signal) {
           if (permissionTier !== 'full') {
             return WASI_ERRNO_SRCH;
@@ -4184,6 +4344,36 @@ const hostProcessImport = {
             return WASI_ERRNO_FAULT;
           }
         },
+		proc_signal_mask_v2(how, setLo, setHi, retOldLoPtr, retOldHiPtr) {
+			if (permissionTier !== 'full') {
+				return WASI_ERRNO_FAULT;
+			}
+			const oldLo = processSignalMaskLo;
+			const oldHi = processSignalMaskHi;
+			const lowResult = writeGuestUint32(retOldLoPtr, oldLo);
+			if (lowResult !== WASI_ERRNO_SUCCESS) return lowResult;
+			const highResult = writeGuestUint32(retOldHiPtr, oldHi);
+			if (highResult !== WASI_ERRNO_SUCCESS) return highResult;
+			switch (Number(how) >>> 0) {
+				case 0: // SIG_BLOCK
+					processSignalMaskLo = (oldLo | Number(setLo)) >>> 0;
+					processSignalMaskHi = (oldHi | Number(setHi)) >>> 0;
+					break;
+				case 1: // SIG_UNBLOCK
+					processSignalMaskLo = (oldLo & ~Number(setLo)) >>> 0;
+					processSignalMaskHi = (oldHi & ~Number(setHi)) >>> 0;
+					break;
+				case 2: // SIG_SETMASK
+					processSignalMaskLo = Number(setLo) >>> 0;
+					processSignalMaskHi = Number(setHi) >>> 0;
+					break;
+				case 3: // query only
+					break;
+				default:
+					return WASI_ERRNO_INVAL;
+			}
+			return WASI_ERRNO_SUCCESS;
+		},
 };
 
 const limitedHostProcessImport = {

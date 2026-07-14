@@ -194,6 +194,7 @@ interface AgentOsVmAdmin extends InProcessSidecarVmAdmin {
 	sidecarSession: AuthenticatedSession;
 	sidecarVm: CreatedVm;
 	toolKits: ToolKit[];
+	permissions: Permissions;
 }
 
 interface SessionEventSubscriber {
@@ -1033,6 +1034,16 @@ async function handleHostCallback(
 		};
 	}
 
+	if (
+		toolPermissionMode(context.permissions, payload.callback_key) !== "allow"
+	) {
+		return {
+			type: "host_callback_result",
+			invocation_id: payload.invocation_id,
+			error: `EACCES: blocked by binding.invoke policy for ${payload.callback_key}`,
+		};
+	}
+
 	try {
 		return {
 			type: "host_callback_result",
@@ -1060,6 +1071,49 @@ function buildToolMap(toolKits: ToolKit[]): Map<string, HostTool> {
 
 interface HostCallbackContext {
 	toolMap: ReadonlyMap<string, HostTool>;
+	permissions: Permissions;
+}
+
+function toolPermissionMode(
+	permissions: Permissions,
+	callbackKey: string,
+): "allow" | "deny" {
+	const scope = permissions.binding;
+	if (!scope) {
+		return "deny";
+	}
+	if (typeof scope === "string") {
+		return scope;
+	}
+	let mode: "allow" | "deny" = scope.default ?? "deny";
+	for (const rule of scope.rules) {
+		const operations = rule.operations ?? ["*"];
+		const patterns = rule.patterns ?? ["**"];
+		if (
+			operations.some(
+				(operation) => operation === "*" || operation === "invoke",
+			) &&
+			patterns.some((pattern) => permissionPatternMatches(pattern, callbackKey))
+		) {
+			mode = rule.mode;
+		}
+	}
+	return mode;
+}
+
+function permissionPatternMatches(pattern: string, value: string): boolean {
+	if (pattern === "*" || pattern === "**" || pattern === value) {
+		return true;
+	}
+	const parts = pattern.split(/(\*\*|\*)/u);
+	const source = parts
+		.map((part) => {
+			if (part === "**") return ".*";
+			if (part === "*") return "[^:]*";
+			return part.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+		})
+		.join("");
+	return new RegExp(`^${source}$`).test(value);
 }
 
 interface JsBridgeContext {
@@ -1296,6 +1350,7 @@ export class AgentOs {
 	private _disposePromise: Promise<void> | null = null;
 	private _cronManager!: CronManager;
 	private _toolKits: ToolKit[] = [];
+	private _permissions: Permissions = { binding: "allow" };
 	private _sidecarLease: AgentOsSidecarVmLease<AgentOsVmAdmin> | null = null;
 	private readonly _sidecarClient: SidecarProcess;
 	private readonly _sidecarSession: AuthenticatedSession;
@@ -1395,6 +1450,7 @@ export class AgentOs {
 		// bundle loading from the projected package dirs.
 		const localMounts = await resolveCompatLocalMounts(options?.mounts);
 		const toolKits = options?.toolKits;
+		const permissions = options?.permissions ?? { binding: "allow" as const };
 
 		// Resolve the sidecar handle up front so every VM created here leases the
 		// one shared native sidecar process owned by that handle.
@@ -1505,6 +1561,7 @@ export class AgentOs {
 					sidecarSession: session,
 					sidecarVm: nativeVm,
 					toolKits: toolKits ?? [],
+					permissions,
 					async dispose() {
 						if (kernel) {
 							const currentKernel = kernel;
@@ -1577,6 +1634,7 @@ export class AgentOs {
 			);
 			vm._sidecarLease = sidecarLease;
 			vm._toolKits = vmAdmin.toolKits;
+			vm._permissions = vmAdmin.permissions;
 			vm._installSidecarRequestHandler();
 			vm._cronManager = new CronManager(
 				vmAdmin.sidecarClient,
@@ -2541,8 +2599,7 @@ export class AgentOs {
 			onResponse
 				? {
 						onResponse: (responseEnvelope) => {
-							hookResponse =
-								this._decodeAcpResponseEnvelope(responseEnvelope);
+							hookResponse = this._decodeAcpResponseEnvelope(responseEnvelope);
 							onResponse(hookResponse);
 						},
 					}
@@ -2699,9 +2756,7 @@ export class AgentOs {
 			},
 			(created) => {
 				if (created.tag !== "AcpSessionCreatedResponse") {
-					throw new Error(
-						`unexpected create_session response: ${created.tag}`,
-					);
+					throw new Error(`unexpected create_session response: ${created.tag}`);
 				}
 				this._sessions.set(
 					created.val.sessionId,
@@ -2752,9 +2807,7 @@ export class AgentOs {
 			},
 			(resumed) => {
 				if (resumed.tag !== "AcpSessionResumedResponse") {
-					throw new Error(
-						`unexpected resume_session response: ${resumed.tag}`,
-					);
+					throw new Error(`unexpected resume_session response: ${resumed.tag}`);
 				}
 				this._sessions.set(
 					resumed.val.sessionId,
@@ -2772,6 +2825,7 @@ export class AgentOs {
 	private _installSidecarRequestHandler(): void {
 		const context: HostCallbackContext = {
 			toolMap: buildToolMap(this._toolKits),
+			permissions: this._permissions,
 		};
 		this._disposeSidecarRequestHandler?.();
 		this._disposeSidecarRequestHandler =
@@ -3647,9 +3701,7 @@ async function createInProcessSidecarTransport<
 			try {
 				await disposeVmAdmin(vmId);
 			} catch (error) {
-				errors.push(
-					error instanceof Error ? error : new Error(String(error)),
-				);
+				errors.push(error instanceof Error ? error : new Error(String(error)));
 			}
 		}
 		if (errors.length > 0) {

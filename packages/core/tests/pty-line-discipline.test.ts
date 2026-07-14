@@ -402,7 +402,8 @@ const CASES: Case[] = [
 		// neither delivered nor echoed. Both runtimes prove this via process
 		// death: guest-node stdin is now a real kernel PTY (slave on fd 0), so
 		// the discipline consumes the byte as a signal and SIGINT terminates the
-		// shell process exactly like wasm-c.
+		// JavaScript signal handler, which exits the probe cleanly after proving
+		// delivery.
 		id: "sigint",
 		knownBroken: false,
 		ttyDependent: false,
@@ -412,28 +413,20 @@ const CASES: Case[] = [
 			const status = await ctx.waitShellStatus();
 			ctx.snapshot("after");
 			// Correct: VINTR is consumed as a signal -> the byte is neither echoed
-			// nor delivered (no #BYTES) and the probe is killed mid-read so it never
-			// reaches #DONE.
+			// nor delivered, and the registered JavaScript handler runs.
 			ctx.expect(ctx.screen()).not.toContain("#BYTES tag=sigint");
-			ctx.expect(ctx.screen()).not.toContain("#DONE id=sigint");
+			ctx.expect(ctx.screen()).toContain("#SIG name=SIGINT");
+			ctx.expect(ctx.screen()).toContain("#DONE id=sigint");
 			ctx.expect(ctx.screen()).not.toContain("^C");
-			// POSITIVE proof of death (fixes the prior weakness where a merely-HUNG
-			// process — signal silently dropped — also satisfied the negatives above):
-			// waitShell RESOLVED, so SIGINT actually TERMINATED the process instead of
-			// the read blocking the full 15s — `status` is a real exit status, never
-			// "timeout"/"error". Combined with the missing #DONE that means it died
-			// mid-read. (The wasm PTY-signal kill surfaces a racy/zero exit code, so
-			// death is proven by termination + no #DONE, not a 128+sig code.) guest-node
-			// survives the signal and reaches #DONE via EOF, so `not #DONE` throws and
-			// the cell stays correctly RED under it.fails until signal->isolate lands.
+			// Positive proof that the handler completed rather than the read hanging.
 			ctx.expect(status).not.toBe("timeout");
 			ctx.expect(status).not.toBe("error");
 		},
 	},
 	{
 		// ISIG VQUIT (^\ 0x1C) raises SIGQUIT. Same shape as sigint: the byte is
-		// consumed as a signal (no #BYTES, no echo) and the signal terminates the
-		// shell process on both runtimes.
+		// consumed as a signal (no #BYTES, no echo) and reaches the registered
+		// JavaScript signal handler.
 		id: "sigquit",
 		knownBroken: false,
 		ttyDependent: false,
@@ -442,13 +435,10 @@ const CASES: Case[] = [
 			await ctx.writeShell(Uint8Array.of(0x1c));
 			const status = await ctx.waitShellStatus();
 			ctx.snapshot("after");
-			// Correct: VQUIT is consumed as a signal (no #BYTES, no #DONE).
+			// Correct: VQUIT is consumed as a signal and delivered to the handler.
 			ctx.expect(ctx.screen()).not.toContain("#BYTES tag=sigquit");
-			ctx.expect(ctx.screen()).not.toContain("#DONE id=sigquit");
-			// POSITIVE proof of death: waitShell RESOLVED, so SIGQUIT terminated the
-			// process (status is never a 15s "timeout"); with the missing #DONE that
-			// means it died mid-read. (js-node survives -> reaches #DONE -> the `not
-			// #DONE` check throws -> stays correctly RED under it.fails.)
+			ctx.expect(ctx.screen()).toContain("#SIG name=SIGQUIT");
+			ctx.expect(ctx.screen()).toContain("#DONE id=sigquit");
 			ctx.expect(status).not.toBe("timeout");
 			ctx.expect(status).not.toBe("error");
 		},
@@ -535,7 +525,6 @@ const CASES: Case[] = [
 			await ctx.writeShell("abc");
 			await ctx.settle();
 			await ctx.writeShell("\x03");
-			await ctx.writeShell("de\n");
 			const status = await ctx.waitShellStatus();
 			ctx.snapshot("after");
 			// Killed by SIGINT mid-read: "abc" is never delivered (no #BYTES) and

@@ -4219,30 +4219,42 @@ where
         let (connection_id, session_id, vm_id) = self.vm_scope_for(&request.ownership)?;
         self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
 
-        let vm = self
-            .vms
-            .get_mut(&vm_id)
-            .ok_or_else(|| missing_vm_error(&vm_id))?;
-        let process = vm
-            .active_processes
-            .get_mut(&payload.process_id)
-            .ok_or_else(|| {
-                SidecarError::InvalidState(format!(
-                    "VM {vm_id} has no active process {}",
-                    payload.process_id
-                ))
-            })?;
-        // For a TTY JavaScript process, host stdin must go ONLY to the kernel PTY
-        // master (so line discipline + echo apply); feeding the in-process local
-        // stdin bridge as well would double-deliver the input. Non-TTY JS (piped
-        // stdin) still uses the local bridge; wasm/python always take the
-        // streaming/no-op `write_stdin` path plus the kernel master write below.
-        let tty_js =
-            process.runtime == GuestRuntimeKind::JavaScript && process.tty_master_fd.is_some();
-        if !tty_js {
-            process.execution.write_stdin(&payload.chunk)?;
+        let terminal_signal = {
+            let vm = self
+                .vms
+                .get_mut(&vm_id)
+                .ok_or_else(|| missing_vm_error(&vm_id))?;
+            let process = vm
+                .active_processes
+                .get_mut(&payload.process_id)
+                .ok_or_else(|| {
+                    SidecarError::InvalidState(format!(
+                        "VM {vm_id} has no active process {}",
+                        payload.process_id
+                    ))
+                })?;
+            let terminal_signal = terminal_signal_for_input(&vm.kernel, process, &payload.chunk);
+            // For a TTY JavaScript process, host stdin must go ONLY to the kernel PTY
+            // master (so line discipline + echo apply); feeding the in-process local
+            // stdin bridge as well would double-deliver the input. Non-TTY JS (piped
+            // stdin) still uses the local bridge; wasm/python always take the
+            // streaming/no-op `write_stdin` path plus the kernel master write below.
+            let tty_js =
+                process.runtime == GuestRuntimeKind::JavaScript && process.tty_master_fd.is_some();
+            if !tty_js {
+                process.execution.write_stdin(&payload.chunk)?;
+            }
+            write_kernel_process_stdin(&mut vm.kernel, process, &payload.chunk)?;
+            terminal_signal
+        };
+        if let Some(signal) = terminal_signal {
+            self.kill_process_internal_with_source(
+                &vm_id,
+                &payload.process_id,
+                signal,
+                "terminal_line_discipline",
+            )?;
         }
-        write_kernel_process_stdin(&mut vm.kernel, process, &payload.chunk)?;
 
         Ok(DispatchResult {
             response: stdin_written_response(
@@ -9177,6 +9189,29 @@ where
         }
         Ok(caller_is_member)
     }
+}
+
+fn terminal_signal_for_input(
+    kernel: &SidecarKernel,
+    process: &ActiveProcess,
+    chunk: &[u8],
+) -> Option<&'static str> {
+    let master_fd = process.tty_master_fd?;
+    let termios = kernel
+        .tcgetattr(EXECUTION_DRIVER_NAME, process.kernel_pid, master_fd)
+        .ok()?;
+    if !termios.isig {
+        return None;
+    }
+    for byte in chunk {
+        if *byte == termios.cc.vintr {
+            return Some("SIGINT");
+        }
+        if *byte == termios.cc.vquit {
+            return Some("SIGQUIT");
+        }
+    }
+    None
 }
 
 /// Applies a kill signal to a tracked child execution. Shared-runtime
@@ -19062,7 +19097,7 @@ pub(crate) fn drain_tty_master_output(
     ) {
         Ok(Some(bytes)) if !bytes.is_empty() => Ok(Some(bytes)),
         Ok(_) => Ok(None),
-        Err(error) if error.code() == "EAGAIN" => Ok(None),
+        Err(error) if matches!(error.code(), "EAGAIN" | "ESRCH") => Ok(None),
         Err(error) => Err(kernel_error(error)),
     }
 }
@@ -19278,7 +19313,7 @@ fn forward_tty_slave_input_to_javascript(
                 process.execution.close_stdin()?;
                 return Ok(());
             }
-            Err(error) if error.code() == "EAGAIN" => return Ok(()),
+            Err(error) if matches!(error.code(), "EAGAIN" | "ESRCH") => return Ok(()),
             Err(error) => return Err(kernel_error(error)),
         }
     }
@@ -23928,6 +23963,7 @@ fn signal_name_for_stream_event(signal: i32) -> Option<&'static str> {
     match signal {
         libc::SIGHUP => Some("SIGHUP"),
         libc::SIGINT => Some("SIGINT"),
+        libc::SIGQUIT => Some("SIGQUIT"),
         libc::SIGUSR1 => Some("SIGUSR1"),
         libc::SIGALRM => Some("SIGALRM"),
         libc::SIGCONT => Some("SIGCONT"),

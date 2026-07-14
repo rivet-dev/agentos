@@ -640,12 +640,12 @@ cols=80 rows=24 cursor=0,5
 
 exports[`PTY line discipline matrix > js-node > sigint > js-node/sigint/after 1`] = `
 "# js-node/sigint/after
-cols=80 rows=24 cursor=0,3
+cols=80 rows=24 cursor=0,5
 01|#START id=sigint
 02|#MODE want=cooked rc=0
 03|#READY tag=sigint
-04|
-05|
+04|#SIG name=SIGINT
+05|#DONE id=sigint
 06|
 07|
 08|
@@ -669,12 +669,12 @@ cols=80 rows=24 cursor=0,3
 
 exports[`PTY line discipline matrix > js-node > sigquit > js-node/sigquit/after 1`] = `
 "# js-node/sigquit/after
-cols=80 rows=24 cursor=0,3
+cols=80 rows=24 cursor=0,5
 01|#START id=sigquit
 02|#MODE want=cooked rc=0
 03|#READY tag=sigquit
-04|
-05|
+04|#SIG name=SIGQUIT
+05|#DONE id=sigquit
 06|
 07|
 08|

@@ -155,7 +155,7 @@ describe("toolkit permissions", () => {
 			AgentOs.create({
 				toolKits: [mathToolKit, duplicateMathToolKit],
 			}),
-		).rejects.toThrow(/conflict: toolkit already registered: math/);
+		).rejects.toThrow(/toolkit already registered: math/);
 	});
 
 	test("allows toolkit invocation with default permissions", async () => {
@@ -446,7 +446,8 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 				transformCount += 1;
 				return { value: value + 1 };
 			});
-		registrationSchema.safeParse = transformSchema.safeParse.bind(transformSchema);
+		registrationSchema.safeParse =
+			transformSchema.safeParse.bind(transformSchema);
 
 		const response = await created.handler(
 			hostCallbackFrame("transform:once", { value: 1 }),

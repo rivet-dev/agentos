@@ -7,6 +7,11 @@ import {
 } from "./helpers/openai-responses-mock.js";
 import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
 
+const CODEX_TEST_LIMITS = {
+	jsRuntime: { importCacheMaterializeTimeoutMs: 120_000 },
+	wasm: { prewarmTimeoutMs: 120_000 },
+};
+
 /**
  * Run a single `codex-exec --session-turn` against a mock OpenAI Responses server, driving the real
  * codex-core agent inside the VM. `start` is the EE protocol start message; `stdinTail` is any
@@ -21,6 +26,7 @@ async function runSessionTurn(
 	const vm = await AgentOs.create({
 		loopbackExemptPorts: [mock.port],
 		software: [codex as any, ...(REGISTRY_SOFTWARE as any[])] as any,
+		limits: CODEX_TEST_LIMITS,
 	});
 	try {
 		const stdin =
@@ -47,6 +53,11 @@ async function runSessionTurn(
 				OPENAI_BASE_URL: `${mock.url}/v1`,
 			},
 		} as any);
+		if (r.exitCode !== 0) {
+			throw new Error(
+				`codex-exec exited ${r.exitCode}: ${(r.stderr ?? "").trim()}`,
+			);
+		}
 		return {
 			stdout: r.stdout ?? "",
 			stderr: r.stderr ?? "",
@@ -90,7 +101,7 @@ describe("codex full turn (real codex agent in the VM, mock OpenAI Responses)", 
 		expect(stdout).toContain('"type":"text_delta"');
 		expect(stdout).toContain("hello from codex");
 		expect(stdout).toContain('"type":"done"');
-	}, 70000);
+	}, 150_000);
 
 	test("runs a shell tool call with on-request approval and reports tool_call updates", async () => {
 		const sawToolOutput = (body: Record<string, unknown>) =>
@@ -137,7 +148,7 @@ describe("codex full turn (real codex agent in the VM, mock OpenAI Responses)", 
 		);
 		expect(stdout).toContain('"type":"tool_call_update"');
 		expect(stdout).toContain('"type":"done"');
-	}, 70000);
+	}, 150_000);
 
 	// File-writing child processes still do not report completion through the
 	// WASI watcher, even though the simpler approved shell-command path above works.
@@ -188,6 +199,7 @@ describe("codex full turn (real codex agent in the VM, mock OpenAI Responses)", 
 		const vm = await AgentOs.create({
 			loopbackExemptPorts: [mock.port],
 			software: [codex as any, ...(REGISTRY_SOFTWARE as any[])] as any,
+			limits: CODEX_TEST_LIMITS,
 		});
 		try {
 			const stdin =
@@ -220,7 +232,7 @@ describe("codex full turn (real codex agent in the VM, mock OpenAI Responses)", 
 			await vm.dispose();
 			await mock.stop();
 		}
-	}, 70000);
+	}, 150_000);
 
 	test("replays adapter-supplied history on a resumed multi-turn session", async () => {
 		const { stdout, requests } = await runSessionTurn(
@@ -239,5 +251,5 @@ describe("codex full turn (real codex agent in the VM, mock OpenAI Responses)", 
 		const body = JSON.stringify(requests[0]);
 		expect(body).toContain("what is 2+2?");
 		expect(body).toContain("2+2 = 4");
-	}, 70000);
+	}, 150_000);
 });

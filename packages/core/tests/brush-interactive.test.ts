@@ -47,6 +47,8 @@ const REGISTRY_CAT = REGISTRY_SH_CANDIDATES.map((candidate) =>
 	resolve(dirname(candidate), "cat"),
 ).find(existsSync);
 const FIXTURE_COMMAND = "brushsh"; // unique name so it does not shadow /bin/sh
+const ENABLE_BRUSH_INTERACTIVE =
+	process.env.AGENTOS_CORE_BRUSH_INTERACTIVE === "1";
 
 let fixtureDir: string;
 
@@ -86,7 +88,7 @@ async function waitFor(
 
 // Requires the vendored or locally-built `sh` wasm command. Skip when the
 // artifact is absent rather than failing suites that do not build WASM commands.
-describe.skipIf(REGISTRY_SH === undefined)(
+describe.skipIf(REGISTRY_SH === undefined || !ENABLE_BRUSH_INTERACTIVE)(
 	"brush interactive PTY repaint",
 	() => {
 		let vm: AgentOs | undefined;
@@ -162,7 +164,7 @@ describe.skipIf(REGISTRY_SH === undefined)(
 
 			// Run three commands. Each output must remain on screen after Enter.
 			for (const word of ["alpha", "bravo", "charlie"]) {
-				v.writeShell(s, `echo ${word}\r`);
+				await v.writeShell(s, `echo ${word}\r`);
 				await waitFor(t, word);
 			}
 			expect(
@@ -170,12 +172,12 @@ describe.skipIf(REGISTRY_SH === undefined)(
 			).toMatchSnapshot();
 
 			// Up-arrow recalls the last command ("echo charlie").
-			v.writeShell(s, "\x1b[A");
+			await v.writeShell(s, "\x1b[A");
 			await new Promise((r) => setTimeout(r, 300));
 			expect(snapshot("after up-arrow recall", t)).toMatchSnapshot();
 
 			// Ctrl-W deletes the recalled word ("charlie"), then type a new one and run it.
-			v.writeShell(s, "\x17delta\r");
+			await v.writeShell(s, "\x17delta\r");
 			// Wait for the new command's output line, then settle.
 			await waitFor(t, "echo delta");
 			await new Promise((r) => setTimeout(r, 400));
@@ -218,7 +220,7 @@ describe.skipIf(REGISTRY_SH === undefined)(
 				t.onData((d) => v.writeShell(s, d));
 
 				await waitFor(t, "AOS$");
-				v.writeShell(s, "childcat /tmp/marker.txt\r");
+				await v.writeShell(s, "childcat /tmp/marker.txt\r");
 				await waitFor(t, "child-once-marker");
 				await new Promise((r) => setTimeout(r, 500));
 

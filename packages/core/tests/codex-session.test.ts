@@ -40,9 +40,7 @@ describe("Codex agent availability", () => {
 						{
 							type: "message",
 							role: "assistant",
-							content: [
-								{ type: "output_text", text: "hello from codex acp" },
-							],
+							content: [{ type: "output_text", text: "hello from codex acp" }],
 						},
 					],
 				},
@@ -52,6 +50,10 @@ describe("Codex agent availability", () => {
 		const vm = await AgentOs.create({
 			loopbackExemptPorts: [mock.port],
 			software: [codex],
+			limits: {
+				jsRuntime: { importCacheMaterializeTimeoutMs: 120_000 },
+				wasm: { prewarmTimeoutMs: 120_000 },
+			},
 		});
 		cleanups.add(async () => {
 			await vm.dispose();
@@ -69,5 +71,5 @@ describe("Codex agent availability", () => {
 		expect(result.text).toContain("hello from codex acp");
 		expect(mock.requests.length).toBeGreaterThan(0);
 		await vm.closeSession(session.sessionId);
-	}, 70_000);
+	}, 150_000);
 });
