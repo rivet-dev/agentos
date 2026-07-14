@@ -132,7 +132,7 @@ const positiveInteger = (name: string, fallback: number, allowZero = false) => {
 const iterations = positiveInteger("iterations", 5);
 const warmup = positiveInteger("warmup", 1, true);
 const settleMs = positiveInteger("settle-ms", 750, true);
-const timeoutMs = positiveInteger("timeout-ms", 30_000);
+const timeoutMs = positiveInteger("timeout-ms", 60_000);
 const serverStartAttempts = positiveInteger("server-start-attempts", 3);
 const outputPath = arg("output", "");
 const requestedAgentIds = new Set(
