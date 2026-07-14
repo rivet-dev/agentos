@@ -1155,9 +1155,9 @@ const UseCasesSection = () => {
 					</div>
 				</Reveal>
 			</div>
-			{/* Full-bleed rail: the fades sit on the viewport edges, not mid-page,
-			    so drifting cards dissolve at the screen instead of being cut off
-			    inside the section. */}
+			{/* The rail shares the content column (max-w-7xl), with the fades on
+			    the column edges so drifting cards dissolve there instead of being
+			    cut off. */}
 			<Reveal>
 				<div
 					ref={railRef}
@@ -1173,9 +1173,9 @@ const UseCasesSection = () => {
 					onTouchEnd={() => {
 						pausedRef.current = false;
 					}}
-					className='mt-10 flex gap-4 overflow-x-auto px-6 pb-2 md:mt-12 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [-webkit-mask-image:linear-gradient(to_right,transparent,#000_4%,#000_96%,transparent)] [mask-image:linear-gradient(to_right,transparent,#000_4%,#000_96%,transparent)]'
+					className='mx-auto mt-10 flex max-w-7xl gap-4 overflow-x-auto px-6 pb-2 md:mt-12 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [-webkit-mask-image:linear-gradient(to_right,transparent,#000_6%,#000_94%,transparent)] [mask-image:linear-gradient(to_right,transparent,#000_6%,#000_94%,transparent)]'
 				>
-					{[...useCases, ...useCases].map(({ title, description }, i) => (
+					{[...useCases, ...useCases].map(({ icon: Icon, title, description }, i) => (
 						<a
 							key={`${title}-${i}`}
 							href='/use-cases'
@@ -1187,6 +1187,9 @@ const UseCasesSection = () => {
 								aria-hidden='true'
 								className='absolute right-5 top-5 h-4 w-4 text-ink-faint opacity-0 transition-opacity duration-200 group-hover:opacity-100'
 							/>
+							<div className='mb-4 flex h-10 w-10 items-center justify-center rounded-xl border border-ink/10'>
+								<Icon className='h-5 w-5 text-ink-soft' />
+							</div>
 							<h3 className='mb-2 text-base font-medium text-ink'>{title}</h3>
 							<p className='text-sm leading-relaxed text-ink-soft'>{description}</p>
 						</a>
@@ -1214,53 +1217,51 @@ const UseCasesSection = () => {
 import { benchColdStart, benchWorkloads, sandboxCostPerSec, BENCHMARK_DATE, SANDBOX_COLDSTART_PROVIDER, SANDBOX_COST_PROVIDER, type WorkloadKey } from '../../../data/bench';
 
 function BenchInfoTooltip({ children }: { children: React.ReactNode }) {
-	// The wrapper is intentionally not positioned so the tooltip spans the ink
-	// card itself (the nearest positioned ancestor) instead of clipping at the
-	// panel's overflow-hidden edge.
+	// Anchored to the icon itself: the wrapper is positioned and the tooltip
+	// opens directly above it. The pb-2 gap lives inside the hover target so
+	// the pointer can travel from icon to tooltip (for the links) without a
+	// dead zone. The tooltip stays an ink plate — the site's surface for data
+	// asides — floating over the light card.
 	return (
-		<span className='group/tip ml-1.5 inline-flex align-middle'>
+		<span className='group/tip relative ml-1.5 inline-flex align-middle'>
 			<svg
-				className='h-3.5 w-3.5 cursor-help text-cream/35 transition-colors group-hover/tip:text-cream/70'
+				className='h-3.5 w-3.5 cursor-help text-ink/30 transition-colors group-hover/tip:text-ink/60'
 				viewBox='0 0 16 16'
 				fill='currentColor'
 			>
 				<path d='M8 0a8 8 0 100 16A8 8 0 008 0zm1 12H7V7h2v5zm-1-6a1 1 0 110-2 1 1 0 010 2z' />
 			</svg>
-			<span className='pointer-events-none absolute inset-x-3 bottom-12 z-50 rounded-lg border border-cream/15 bg-ink p-3 text-left text-[11px] leading-relaxed text-cream/80 opacity-0 shadow-xl transition-opacity duration-200 group-hover/tip:pointer-events-auto group-hover/tip:opacity-100 [&_a]:text-accent [&_a]:underline [&_a]:underline-offset-2 [&_strong]:font-medium [&_strong]:text-cream'>
-				{children}
+			<span className='pointer-events-none absolute bottom-full left-0 z-50 pb-2 opacity-0 transition-opacity duration-200 group-hover/tip:pointer-events-auto group-hover/tip:opacity-100'>
+				<span className='block w-max max-w-[min(20rem,80vw)] rounded-lg border border-cream/15 bg-ink p-3 text-left text-[11px] leading-relaxed text-cream/80 shadow-xl [&_a]:text-accent [&_a]:underline [&_a]:underline-offset-2 [&_strong]:font-medium [&_strong]:text-cream'>
+					{children}
+				</span>
 			</span>
 		</span>
 	);
 }
 
+// Pill options in the card's caption bar, reusing the site's rounded-full
+// ring pill (carousel chevrons, the cards' ? buttons); the active option is
+// filled ink like the primary buttons.
 function BenchToggle({ options, active, onChange }: { options: string[]; active: number; onChange: (idx: number) => void }) {
-  const layoutId = useId();
-  const columns = options.length === 3 ? 'grid-cols-3' : 'grid-cols-2';
-
   return (
-    <div className={`grid w-full gap-1 rounded-lg border border-cream/10 bg-cream/[0.03] p-1 ${columns}`}>
+    <div className='flex flex-wrap items-center gap-1.5'>
       {options.map((label, i) => {
         const isActive = i === active;
         return (
-          <motion.button
+          <button
             key={label}
             type='button'
             onClick={() => onChange(i)}
             aria-pressed={isActive}
-            whileTap={{ scale: 0.94 }}
-            className={`relative flex h-7 min-w-0 items-center justify-center rounded-md px-1.5 text-center font-mono text-[10px] uppercase tracking-[0.12em] transition-colors ${
-              isActive ? 'text-ink' : 'text-cream/45 hover:text-cream/75'
+            className={`whitespace-nowrap rounded-full px-2.5 py-1 font-sans text-[11px] font-medium transition-colors ${
+              isActive
+                ? 'bg-ink text-cream'
+                : 'text-ink-soft ring-1 ring-inset ring-ink/15 hover:text-ink hover:ring-ink/30'
             }`}
           >
-            {isActive && (
-              <motion.span
-                layoutId={`bench-toggle-${layoutId}`}
-                className='absolute inset-0 rounded-md bg-cream'
-                transition={{ type: 'spring', stiffness: 480, damping: 38 }}
-              />
-            )}
-            <span className='relative z-[1] truncate'>{label}</span>
-          </motion.button>
+            {label}
+          </button>
         );
       })}
     </div>
@@ -1355,8 +1356,9 @@ function CountUpStat({ text, active }: { text: string; active: boolean }) {
 	);
 }
 
-// Dark ink data card with a mono title, direction tag, headline stat,
-// and label/value rows pinned to the card's foot.
+// Light data card on the site's card surface: title, headline multiplier,
+// comparison rows, and an optional tier toggle in the caption bar. The
+// agentOS row carries pine, matching the ledger's "agentOS" column above.
 function BenchCard({
   title,
   statNote,
@@ -1382,66 +1384,68 @@ function BenchCard({
   const [inView, setInView] = useState(false);
 
   return (
-    // overflow-visible so the agentOS info tooltip can extend above the card
-    // instead of being clipped by the panel's rounded-corner mask.
-    <InkPanel className='h-full' overflow='visible'>
-      <motion.div
-        className='flex h-full flex-col p-6 md:p-7'
-        onViewportEnter={() => setInView(true)}
-        viewport={{ once: true, margin: '-10% 0px' }}
-      >
-        <div className='flex min-h-[2.5rem] items-start justify-between gap-3'>
-          <span className='text-sm font-medium text-accent'>{title}</span>
-          {onHelp ? (
-            <button
-              type='button'
-              onClick={onHelp}
-              aria-label={helpLabel}
-              title={helpLabel}
-              className='flex h-5 w-5 flex-none items-center justify-center rounded-full text-[11px] font-medium text-cream/50 ring-1 ring-inset ring-cream/25 transition-colors hover:text-cream hover:ring-cream/60'
-            >
+    <motion.div
+      className={`flex h-full flex-col p-6 md:p-7 ${CARD_SURFACE}`}
+      onViewportEnter={() => setInView(true)}
+      viewport={{ once: true, margin: '-10% 0px' }}
+    >
+      <div className='flex min-h-[2.5rem] items-start justify-between gap-3'>
+        <span className='text-sm font-medium text-ink'>{title}</span>
+        {onHelp ? (
+          <button
+            type='button'
+            onClick={onHelp}
+            aria-label={helpLabel}
+            title={helpLabel}
+            className='flex h-5 w-5 flex-none items-center justify-center rounded-full text-[11px] font-medium text-ink-soft ring-1 ring-inset ring-ink/15 transition-colors hover:text-ink hover:ring-ink/30'
+          >
+            ?
+          </button>
+        ) : helpTip ? (
+          // Anchored under the ? itself, opening down-left from the card corner.
+          <span className='group/tip relative inline-flex'>
+            <span className='flex h-5 w-5 flex-none cursor-help items-center justify-center rounded-full text-[11px] font-medium text-ink-soft ring-1 ring-inset ring-ink/15 transition-colors group-hover/tip:text-ink group-hover/tip:ring-ink/30'>
               ?
-            </button>
-          ) : helpTip ? (
-            <span className='group/tip inline-flex'>
-              <span className='flex h-5 w-5 flex-none cursor-help items-center justify-center rounded-full text-[11px] font-medium text-cream/50 ring-1 ring-inset ring-cream/25 transition-colors group-hover/tip:text-cream group-hover/tip:ring-cream/60'>
-                ?
-              </span>
-              <span className='pointer-events-none absolute inset-x-3 top-14 z-50 rounded-lg border border-cream/15 bg-ink p-3 text-left text-[11px] leading-relaxed text-cream/80 opacity-0 shadow-xl transition-opacity duration-200 group-hover/tip:opacity-100'>
+            </span>
+            <span className='pointer-events-none absolute right-0 top-full z-50 pt-2 opacity-0 transition-opacity duration-200 group-hover/tip:opacity-100'>
+              <span className='block w-max max-w-[min(18rem,80vw)] rounded-lg border border-cream/15 bg-ink p-3 text-left text-[11px] leading-relaxed text-cream/80 shadow-xl'>
                 {helpTip}
               </span>
             </span>
-          ) : null}
-        </div>
-
-        {/* Verdict: the headline multiplier */}
-        <div className='mt-5 flex items-baseline gap-2'>
-          <span className='font-sans text-[2.75rem] font-medium leading-[1.0] tracking-[-0.02em] tabular-nums text-cream md:text-5xl'>
-            <CountUpStat text={statNote} active={inView} />
           </span>
-          <span className='font-sans text-lg font-medium text-cream/45 md:text-xl'>{verb}</span>
-        </div>
-
-        {/* Comparison ledger: ours vs theirs, same unit, right-aligned */}
-        <div className='mb-6 mt-6 divide-y divide-cream/10 border-y border-cream/10'>
-          {rows.map((row, i) => (
-            <div key={i} className='flex items-baseline justify-between gap-4 py-2.5'>
-              <span className={`inline-flex min-w-0 items-baseline font-mono text-[13px] ${row.highlight ? 'font-medium text-cream' : 'font-normal text-cream/45'}`}>
-                {row.label}
-              </span>
-              <span className={`whitespace-nowrap font-mono text-[15px] tabular-nums ${row.highlight ? 'font-medium text-accent' : 'font-normal text-cream/45'}`}>
-                {row.value}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        {toggle}
-        {note ? (
-          <p className='mt-auto font-mono text-[10px] leading-relaxed text-cream/35'>{note}</p>
         ) : null}
-      </motion.div>
-    </InkPanel>
+      </div>
+
+      {/* Verdict: the headline multiplier */}
+      <div className='mt-5 flex items-baseline gap-2'>
+        <span className='font-sans text-[2.75rem] font-medium leading-[1.0] tracking-[-0.02em] tabular-nums text-ink md:text-5xl'>
+          <CountUpStat text={statNote} active={inView} />
+        </span>
+        <span className='font-sans text-lg font-medium text-ink-faint md:text-xl'>{verb}</span>
+      </div>
+
+      {/* Comparison ledger: ours vs theirs, same unit, right-aligned */}
+      <div className='mb-6 mt-6 divide-y divide-ink/10 border-y border-ink/10'>
+        {rows.map((row, i) => (
+          <div key={i} className='flex items-baseline justify-between gap-4 py-2.5'>
+            <span className={`inline-flex min-w-0 items-baseline text-sm ${row.highlight ? 'font-medium text-pine' : 'text-ink-faint'}`}>
+              {row.label}
+            </span>
+            <span className={`whitespace-nowrap font-mono text-[15px] tabular-nums ${row.highlight ? 'font-medium text-ink' : 'font-normal text-ink-faint'}`}>
+              {row.value}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Caption bar flush with the card foot: holds the tier options or a
+          one-line measurement note. */}
+      {toggle || note ? (
+        <div className='-mx-6 -mb-6 mt-auto border-t border-ink/10 px-6 py-2.5 font-mono text-[11px] leading-relaxed text-ink-faint md:-mx-7 md:-mb-7 md:px-7'>
+          {toggle ?? note}
+        </div>
+      ) : null}
+    </motion.div>
   );
 }
 
@@ -1620,11 +1624,11 @@ const WhatItIsSection = () => (
 			<Reveal>
 				<div className='flex flex-col gap-4'>
 					<div>
-						<p className='mb-2 text-sm text-ink-faint'>Before: a sandbox service</p>
+						<p className='mb-2 text-sm text-ink-soft'>Before: a sandbox service</p>
 						<SandboxTopologyCell />
 					</div>
 					<div>
-						<p className='mb-2 text-sm text-ink-faint'>After: agentOS</p>
+						<p className='mb-2 text-sm text-ink-soft'>After: agentOS</p>
 						<AgentOsTopologyCell />
 					</div>
 				</div>
