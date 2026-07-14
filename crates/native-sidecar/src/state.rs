@@ -81,6 +81,7 @@ pub(crate) const DEFAULT_JAVASCRIPT_NET_BACKLOG: u32 = 511;
 pub(crate) const LOOPBACK_EXEMPT_PORTS_ENV: &str = "AGENTOS_LOOPBACK_EXEMPT_PORTS";
 pub(crate) const TOOL_DRIVER_NAME: &str = "secure-exec-host-callbacks";
 pub(crate) const MAPPED_HOST_FD_START: u32 = 1_000_000_000;
+pub const DEFAULT_MAX_EXTENSION_SESSION_CLEANUP_EVENTS: usize = 16_384;
 
 // ---------------------------------------------------------------------------
 // Public API types
@@ -91,6 +92,9 @@ pub struct NativeSidecarConfig {
     pub sidecar_id: String,
     pub max_frame_bytes: usize,
     pub max_sessions_per_connection: usize,
+    /// Maximum lifecycle events retained by one extension-owned session while
+    /// cleanup waits for an independent sibling phase to succeed.
+    pub max_extension_session_cleanup_events: usize,
     pub compile_cache_root: Option<PathBuf>,
     pub expected_auth_token: Option<String>,
     pub acp_termination_grace: Duration,
@@ -103,6 +107,7 @@ impl Default for NativeSidecarConfig {
             max_frame_bytes: DEFAULT_MAX_FRAME_BYTES,
             max_sessions_per_connection:
                 agentos_native_sidecar_core::DEFAULT_MAX_SESSIONS_PER_CONNECTION,
+            max_extension_session_cleanup_events: DEFAULT_MAX_EXTENSION_SESSION_CLEANUP_EVENTS,
             compile_cache_root: None,
             expected_auth_token: None,
             acp_termination_grace: Duration::from_secs(3),
@@ -120,12 +125,25 @@ pub enum SidecarError {
     Unauthorized(String),
     Unsupported(String),
     FrameTooLarge(String),
+    LimitExceeded {
+        limit: &'static str,
+        capacity: usize,
+        how_to_raise: &'static str,
+    },
     Timeout(String),
     Kernel(String),
     Plugin(String),
     Execution(String),
     Bridge(String),
     Io(String),
+    Context {
+        context: String,
+        source: Box<SidecarError>,
+    },
+    Cleanup {
+        context: &'static str,
+        errors: Vec<SidecarError>,
+    },
 }
 
 impl fmt::Display for SidecarError {
@@ -134,6 +152,27 @@ impl fmt::Display for SidecarError {
             Self::SessionNotFound(session_id) => {
                 write!(f, "Session not found: {session_id}")
             }
+            Self::LimitExceeded {
+                limit,
+                capacity,
+                how_to_raise,
+            } => write!(
+                f,
+                "{limit} limit exceeded (capacity {capacity}); raise {how_to_raise}"
+            ),
+            Self::Cleanup { context, errors } => {
+                write!(f, "{context}")?;
+                for (index, error) in errors.iter().enumerate() {
+                    write!(
+                        f,
+                        "; cleanup error {} [{}]: {error}",
+                        index + 1,
+                        crate::execution::error_code(error)
+                    )?;
+                }
+                Ok(())
+            }
+            Self::Context { context, source } => write!(f, "{context}: {source}"),
             Self::InvalidState(message)
             | Self::ProtocolVersionMismatch(message)
             | Self::BridgeVersionMismatch(message)
@@ -352,6 +391,10 @@ pub(crate) struct SessionState {
     pub(crate) connection_id: String,
     pub(crate) placement: crate::protocol::SidecarPlacement,
     pub(crate) vm_ids: BTreeSet<String>,
+    /// Requested close makes the session non-routable while fallible cleanup
+    /// retains handles for a later retry.
+    pub(crate) closing: bool,
+    pub(crate) cleaned_extension_namespaces: BTreeSet<String>,
 }
 
 #[allow(dead_code)]

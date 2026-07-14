@@ -34,6 +34,14 @@ pub enum AcpCoreError {
     Unsupported(String),
     Conflict(String),
     Execution(String),
+    Context {
+        context: String,
+        source: Box<AcpCoreError>,
+    },
+    Cleanup {
+        context: &'static str,
+        errors: Vec<AcpCoreError>,
+    },
 }
 
 impl AcpCoreError {
@@ -47,6 +55,8 @@ impl AcpCoreError {
             AcpCoreError::Unsupported(_) => "unsupported",
             AcpCoreError::Conflict(_) => "conflict",
             AcpCoreError::Execution(_) => "execution",
+            AcpCoreError::Context { source, .. } => source.code(),
+            AcpCoreError::Cleanup { .. } => "cleanup_failed",
         }
     }
 }
@@ -60,6 +70,19 @@ impl fmt::Display for AcpCoreError {
             | AcpCoreError::Unsupported(message)
             | AcpCoreError::Conflict(message)
             | AcpCoreError::Execution(message) => f.write_str(message),
+            AcpCoreError::Context { context, source } => write!(f, "{context}: {source}"),
+            AcpCoreError::Cleanup { context, errors } => {
+                write!(f, "{context}")?;
+                for (index, error) in errors.iter().enumerate() {
+                    write!(
+                        f,
+                        "; cleanup error {} [{}]: {error}",
+                        index + 1,
+                        error.code()
+                    )?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -99,5 +122,25 @@ mod tests {
                 message: "dup".into(),
             })
         );
+        let cleanup = AcpCoreError::Cleanup {
+            context: "failed cleanup",
+            errors: vec![
+                AcpCoreError::Execution(String::from("first")),
+                AcpCoreError::InvalidState(String::from("second")),
+            ],
+        };
+        assert_eq!(cleanup.code(), "cleanup_failed");
+        assert_eq!(
+            cleanup.to_string(),
+            "failed cleanup; cleanup error 1 [execution]: first; cleanup error 2 [invalid_state]: second"
+        );
+        let contextual = AcpCoreError::Context {
+            context: String::from("session acp-7 process agent-3"),
+            source: Box::new(cleanup),
+        };
+        assert_eq!(contextual.code(), "cleanup_failed");
+        assert!(contextual
+            .to_string()
+            .starts_with("session acp-7 process agent-3: failed cleanup"));
     }
 }

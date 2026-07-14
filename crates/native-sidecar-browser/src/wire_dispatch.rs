@@ -80,6 +80,7 @@ struct BrowserConnectionState {
 struct BrowserSessionState {
     connection_id: String,
     vm_ids: BTreeSet<String>,
+    closing: bool,
 }
 
 type ProcessExecutionKey = (String, String);
@@ -92,6 +93,7 @@ pub struct BrowserWireDispatcher<B: BrowserSidecarBridge> {
     next_vm: usize,
     next_process: u64,
     max_sessions_per_connection: usize,
+    max_sessions: usize,
     connections: BTreeMap<String, BrowserConnectionState>,
     sessions: BTreeMap<String, BrowserSessionState>,
     active_vms: BTreeSet<String>,
@@ -115,6 +117,7 @@ where
 
     pub fn with_config(bridge: B, config: BrowserSidecarConfig) -> Self {
         let max_sessions_per_connection = config.max_sessions_per_connection;
+        let max_sessions = config.max_sessions;
         Self {
             codec: WireFrameCodec::new(BROWSER_MAX_FRAME_BYTES),
             sidecar: BrowserSidecar::new(bridge, config),
@@ -123,6 +126,7 @@ where
             next_vm: 0,
             next_process: 0,
             max_sessions_per_connection,
+            max_sessions,
             connections: BTreeMap::new(),
             sessions: BTreeMap::new(),
             active_vms: BTreeSet::new(),
@@ -216,7 +220,36 @@ where
     }
 
     fn dispatch(&mut self, request: RequestFrame, event_capacity: usize) -> DispatchResult {
-        match route_request_payload(&request) {
+        let route = route_request_payload(&request);
+        if let Some(vm_id) = vm_id_of(&request.ownership) {
+            if self.sidecar.vm_is_disposing(&vm_id) && !matches!(&route, RequestRoute::DisposeVm(_))
+            {
+                return rejected(
+                    &request,
+                    "vm_disposing",
+                    "request requires an active browser VM",
+                );
+            }
+            if self.active_vms.contains(&vm_id) && !matches!(&route, RequestRoute::DisposeVm(_)) {
+                let owned = session_scope_of(&request.ownership).is_some_and(
+                    |(connection_id, session_id)| {
+                        self.sessions.get(&session_id).is_some_and(|session| {
+                            session.connection_id == connection_id
+                                && session.vm_ids.contains(&vm_id)
+                                && !session.closing
+                        })
+                    },
+                );
+                if !owned {
+                    return rejected(
+                        &request,
+                        "ownership_mismatch",
+                        "browser VM is not owned by the requested active session",
+                    );
+                }
+            }
+        }
+        match route {
             RequestRoute::Authenticate(payload) => self.authenticate(&request, payload),
             RequestRoute::OpenSession(payload) => self.open_session(&request, payload),
             RequestRoute::CloseSession(payload) => self.close_session(&request, payload),
@@ -673,6 +706,13 @@ where
                 request,
                 "ownership_mismatch",
                 "VM is not owned by the requested browser session",
+            ));
+        }
+        if session.closing || !self.active_vms.contains(&vm_id) {
+            return Err(rejected(
+                request,
+                "vm_disposing",
+                &format!("{operation} requires an active browser VM"),
             ));
         }
         Ok(vm_id)
@@ -1260,6 +1300,16 @@ where
             );
         };
         let active_sessions = connection.sessions.len();
+        if self.sessions.len() >= self.max_sessions {
+            return rejected(
+                request,
+                SESSION_LIMIT_ERROR_CODE,
+                &format!(
+                    "browser sidecar global session limit {} reached, including sessions retained for cleanup; close sessions or raise BrowserSidecarConfig::max_sessions",
+                    self.max_sessions
+                ),
+            );
+        }
         if active_sessions >= self.max_sessions_per_connection {
             return rejected(
                 request,
@@ -1274,6 +1324,7 @@ where
             BrowserSessionState {
                 connection_id: connection_id.clone(),
                 vm_ids: BTreeSet::new(),
+                closing: false,
             },
         );
         self.connections
@@ -1378,30 +1429,62 @@ where
                 };
             }
         };
+        self.sessions
+            .get_mut(&payload.session_id)
+            .expect("session was resolved above")
+            .closing = true;
 
-        let mut first_error = None;
+        let mut errors = Vec::new();
         // VM ownership is the complete browser ACP lifecycle key. Dispose each
         // extension's exact connection/session/VM state while the VM is still
         // available; a session-only hook cannot reconstruct owners whose process
         // route was already removed by an earlier terminal abort.
         for vm_id in vm_ids {
+            self.active_vms.remove(&vm_id);
+            if let Err(error) = self.sidecar.begin_vm_cleanup(&vm_id) {
+                errors.push(error);
+                continue;
+            }
             if let Err(error) =
                 self.sidecar
                     .dispose_extension_vm_state(&connection_id, &payload.session_id, &vm_id)
             {
-                first_error.get_or_insert(error.to_string());
+                errors.push(error);
+                continue;
             }
             if let Err(error) = self.sidecar.dispose_vm(&vm_id) {
-                first_error.get_or_insert(error.to_string());
+                errors.push(error);
+                continue;
             }
+            self.sidecar
+                .finish_extension_vm_cleanup(&connection_id, &payload.session_id, &vm_id);
             self.purge_vm_state(&vm_id);
         }
-        if let Err(error) = self
-            .sidecar
-            .dispose_extension_session_state(&connection_id, &payload.session_id)
-        {
-            first_error.get_or_insert(error.to_string());
+        let pending_vms = self
+            .sessions
+            .get(&payload.session_id)
+            .is_some_and(|session| !session.vm_ids.is_empty());
+        if !pending_vms {
+            if let Err(error) = self
+                .sidecar
+                .dispose_extension_session_state(&connection_id, &payload.session_id)
+            {
+                errors.push(error);
+            }
         }
+        if !errors.is_empty() {
+            return rejected(
+                request,
+                CLOSE_SESSION_FAILED_ERROR_CODE,
+                &BrowserSidecarError::Cleanup {
+                    context: "failed to close browser sidecar session completely",
+                    errors,
+                }
+                .to_string(),
+            );
+        }
+        self.sidecar
+            .finish_extension_session_cleanup(&connection_id, &payload.session_id);
         self.sessions.remove(&payload.session_id);
         if let Some(connection) = self.connections.get_mut(&connection_id) {
             connection.sessions.remove(&payload.session_id);
@@ -1417,7 +1500,7 @@ where
             &mut connection.session_close_outcome_order,
             payload.session_id.clone(),
             SessionCloseOutcome {
-                error_message: first_error.clone(),
+                error_message: None,
             },
             history_capacity,
         );
@@ -1437,9 +1520,6 @@ where
             );
         }
 
-        if let Some(error) = first_error {
-            return rejected(request, CLOSE_SESSION_FAILED_ERROR_CODE, &error);
-        }
         DispatchResult {
             response: session_closed_response(request, payload.session_id),
             events: Vec::new(),
@@ -1455,7 +1535,14 @@ where
             );
         };
         match self.sessions.get(&session_id) {
-            Some(session) if session.connection_id == connection_id => {}
+            Some(session) if session.connection_id == connection_id && !session.closing => {}
+            Some(session) if session.connection_id == connection_id => {
+                return rejected(
+                    request,
+                    "session_closing",
+                    "create_vm requires an active sidecar session",
+                );
+            }
             Some(_) => {
                 return rejected(
                     request,
@@ -1746,24 +1833,22 @@ where
                 "VM is not owned by the requested browser session",
             );
         }
-        let extension_result =
-            self.sidecar
-                .dispose_extension_vm_state(&connection_id, &session_id, &vm_id);
-        let dispose_result = self.sidecar.dispose_vm(&vm_id);
-        self.purge_vm_state(&vm_id);
-        match (extension_result, dispose_result) {
-            (Err(extension), Err(vm)) => {
-                return rejected(
-                    request,
-                    "dispose_vm_failed",
-                    &format!("ACP extension cleanup failed: {extension}; VM cleanup failed: {vm}"),
-                );
-            }
-            (Err(error), Ok(())) | (Ok(()), Err(error)) => {
-                return rejected(request, "dispose_vm_failed", &error.to_string());
-            }
-            (Ok(()), Ok(())) => {}
+        self.active_vms.remove(&vm_id);
+        if let Err(error) = self.sidecar.begin_vm_cleanup(&vm_id) {
+            return rejected(request, "dispose_vm_failed", &error.to_string());
         }
+        if let Err(error) =
+            self.sidecar
+                .dispose_extension_vm_state(&connection_id, &session_id, &vm_id)
+        {
+            return rejected(request, "dispose_vm_failed", &error.to_string());
+        }
+        if let Err(error) = self.sidecar.dispose_vm(&vm_id) {
+            return rejected(request, "dispose_vm_failed", &error.to_string());
+        }
+        self.sidecar
+            .finish_extension_vm_cleanup(&connection_id, &session_id, &vm_id);
+        self.purge_vm_state(&vm_id);
         DispatchResult {
             response: vm_disposed_response(request, vm_id),
             events: Vec::new(),
@@ -1902,6 +1987,9 @@ where
             GuestRuntimeKind::JavaScript | GuestRuntimeKind::Python => GuestRuntime::JavaScript,
             GuestRuntimeKind::WebAssembly => GuestRuntime::WebAssembly,
         };
+        if let Err(error) = self.sidecar.ensure_execution_admission(&vm_id) {
+            return rejected(request, "execute_failed", &error.to_string());
+        }
         let context = match runtime {
             GuestRuntime::JavaScript => {
                 self.sidecar
@@ -1921,6 +2009,7 @@ where
             Ok(context) => context,
             Err(error) => return rejected(request, "execute_failed", &error.to_string()),
         };
+        let context_id = context.context_id.clone();
 
         let mut argv = Vec::new();
         if let Some(command) = payload.command.clone() {
@@ -1931,13 +2020,22 @@ where
             Some(cwd) => cwd,
             None => match self.sidecar.guest_cwd(&vm_id) {
                 Ok(cwd) => cwd,
-                Err(error) => return rejected(request, "execute_failed", &error.to_string()),
+                Err(error) => {
+                    let error = match self.sidecar.release_context(&vm_id, &context_id) {
+                        Ok(()) => error,
+                        Err(cleanup) => BrowserSidecarError::Cleanup {
+                            context: "failed to resolve execution cwd and release browser context",
+                            errors: vec![error, cleanup],
+                        },
+                    };
+                    return rejected(request, "execute_failed", &error.to_string());
+                }
             },
         };
         let started = match self.sidecar.start_execution_with_options(
             StartExecutionRequest {
                 vm_id: vm_id.clone(),
-                context_id: context.context_id,
+                context_id: context_id.clone(),
                 argv,
                 env: payload
                     .env
@@ -1953,7 +2051,16 @@ where
             },
         ) {
             Ok(started) => started,
-            Err(error) => return rejected(request, "execute_failed", &error.to_string()),
+            Err(error) => {
+                let error = match self.sidecar.release_context(&vm_id, &context_id) {
+                    Ok(()) => error,
+                    Err(cleanup) => BrowserSidecarError::Cleanup {
+                        context: "failed to start execution and release browser context",
+                        errors: vec![error, cleanup],
+                    },
+                };
+                return rejected(request, "execute_failed", &error.to_string());
+            }
         };
 
         let captured_output = payload.capture_output.unwrap_or(false).then(|| {
@@ -2359,17 +2466,21 @@ fn projected_package_response_metadata(
 }
 
 fn browser_sidecar_rejected(request: &RequestFrame, error: BrowserSidecarError) -> DispatchResult {
-    let code = match &error {
-        BrowserSidecarError::LimitExceeded { .. } => "limit_exceeded",
-        BrowserSidecarError::InvalidPackage(_) => "invalid_package",
-        BrowserSidecarError::PackageConflict(_) => "package_conflict",
-        BrowserSidecarError::PackageMount(_) => "package_mount_failed",
-        BrowserSidecarError::PackageStateCorrupt(_) => "package_state_corrupt",
-        BrowserSidecarError::Cleanup { .. } => "cleanup_failed",
-        BrowserSidecarError::InvalidState(_)
-        | BrowserSidecarError::Kernel(_)
-        | BrowserSidecarError::Bridge(_) => "package_projection_failed",
-    };
+    fn error_code(error: &BrowserSidecarError) -> &'static str {
+        match error {
+            BrowserSidecarError::LimitExceeded { .. } => "limit_exceeded",
+            BrowserSidecarError::InvalidPackage(_) => "invalid_package",
+            BrowserSidecarError::PackageConflict(_) => "package_conflict",
+            BrowserSidecarError::PackageMount(_) => "package_mount_failed",
+            BrowserSidecarError::PackageStateCorrupt(_) => "package_state_corrupt",
+            BrowserSidecarError::Cleanup { .. } => "cleanup_failed",
+            BrowserSidecarError::Context { source, .. } => error_code(source),
+            BrowserSidecarError::InvalidState(_)
+            | BrowserSidecarError::Kernel(_)
+            | BrowserSidecarError::Bridge(_) => "package_projection_failed",
+        }
+    }
+    let code = error_code(&error);
     rejected(request, code, &error.to_string())
 }
 

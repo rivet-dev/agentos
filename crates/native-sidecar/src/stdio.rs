@@ -252,11 +252,12 @@ async fn run_async(extensions: Vec<Box<dyn Extension>>) -> Result<(), Box<dyn Er
         }
     });
 
-    flush_sidecar_requests(&mut sidecar, &write_tx)?;
-    let mut pending_frame: Option<ProtocolFrame> = None;
-    let mut limit_warning_closed = false;
+    let run_result = async {
+        flush_sidecar_requests(&mut sidecar, &write_tx)?;
+        let mut pending_frame: Option<ProtocolFrame> = None;
+        let mut limit_warning_closed = false;
 
-    loop {
+        loop {
         if let Some(frame) = pending_frame.take() {
             handle_protocol_frame(
                 frame,
@@ -371,10 +372,13 @@ async fn run_async(extensions: Vec<Box<dyn Extension>>) -> Result<(), Box<dyn Er
                 }
             }
         }
+        }
+        Ok::<(), Box<dyn Error>>(())
     }
+    .await;
 
     cleanup_connections(&mut sidecar, &active_connections, &mut active_sessions).await;
-    Ok(())
+    run_result
 }
 
 async fn handle_protocol_frame(
@@ -619,7 +623,15 @@ async fn cleanup_connections(
     active_sessions: &mut BTreeSet<SessionScope>,
 ) {
     for connection_id in active_connections {
-        let _ = sidecar.remove_connection(connection_id).await;
+        if let Err(error) = sidecar.remove_connection(connection_id).await {
+            tracing::error!(
+                target: "agentos_native_sidecar::stdio",
+                connection_id,
+                error_code = crate::execution::error_code(&error),
+                error = %error,
+                "failed to clean up disconnected native-sidecar connection"
+            );
+        }
     }
     untrack_disposed_sessions(&sidecar.take_disposed_sessions(), active_sessions);
 }

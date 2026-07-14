@@ -13,7 +13,8 @@ use agentos_native_sidecar::wire::{
     StreamChannel, VmLifecycleState,
 };
 use agentos_native_sidecar::{
-    Extension, ExtensionContext, ExtensionFuture, ExtensionResponse, SidecarError,
+    Extension, ExtensionContext, ExtensionFuture, ExtensionResponse, NativeSidecar,
+    NativeSidecarConfig, SidecarError,
 };
 use support::{
     assert_node_available, authenticate_wire, create_vm_wire, dispose_vm_and_close_session_wire,
@@ -231,10 +232,13 @@ impl Extension for VmLifetimeExtension {
     ) -> ExtensionFuture<'a, ExtensionResponse> {
         Box::pin(async move {
             ctx.bind_vm_to_session("extension-vm-session").await?;
-            let events = ctx
+            let outcome = ctx
                 .dispose_session_resources_wire("extension-vm-session")
                 .await?;
-            ExtensionResponse::with_wire_events(b"vm-disposed".to_vec(), events)
+            if let Some(error) = outcome.error {
+                return Err(error);
+            }
+            ExtensionResponse::with_wire_events(b"vm-disposed".to_vec(), outcome.events)
         })
     }
 }
@@ -592,6 +596,85 @@ fn extension_session_resources_can_dispose_bound_vm() {
             );
         })
         .expect("inspect persistence bridge");
+}
+
+#[test]
+fn extension_vm_cleanup_limit_rejects_before_detaching_vm() {
+    let root = temp_dir("extension-vm-cleanup-limit");
+    let mut sidecar = NativeSidecar::with_config(
+        RecordingBridge::default(),
+        NativeSidecarConfig {
+            sidecar_id: String::from("extension-vm-cleanup-limit"),
+            compile_cache_root: Some(root.join("cache")),
+            max_extension_session_cleanup_events: 1,
+            ..NativeSidecarConfig::default()
+        },
+    )
+    .expect("create bounded sidecar");
+    sidecar
+        .register_extension(Box::new(VmLifetimeExtension))
+        .expect("register VM lifetime extension");
+    let connection_id = authenticate_wire(&mut sidecar, "extension-limit-client");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let cwd = temp_dir("extension-vm-cleanup-limit-cwd");
+    let (vm_id, _) = create_vm_wire(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::JavaScript,
+        &cwd,
+    );
+
+    let result = sidecar
+        .dispatch_wire_blocking(wire_request(
+            4,
+            wire_vm(&connection_id, &session_id, &vm_id),
+            RequestPayload::ExtEnvelope(ExtEnvelope {
+                namespace: String::from("dev.rivet.secure-exec.extension-vm-lifetime-test"),
+                payload: Vec::new(),
+            }),
+        ))
+        .expect("cleanup-event reservation returns a wire rejection");
+    let ResponsePayload::RejectedResponse(rejected) = result.response.payload else {
+        panic!(
+            "unexpected cleanup-limit response: {:?}",
+            result.response.payload
+        );
+    };
+    assert_eq!(rejected.code, "cleanup_failed");
+    assert!(rejected.message.contains("limit_exceeded"));
+    assert!(rejected
+        .message
+        .contains("max_extension_session_cleanup_events"));
+    assert!(result.events.is_empty());
+    let still_live = sidecar
+        .dispatch_wire_blocking(wire_request(
+            5,
+            wire_vm(&connection_id, &session_id, &vm_id),
+            RequestPayload::GuestFilesystemCallRequest(GuestFilesystemCallRequest {
+                operation: GuestFilesystemOperation::Exists,
+                path: String::from("/tmp"),
+                destination_path: None,
+                target: None,
+                content: None,
+                encoding: None,
+                recursive: None,
+                max_depth: None,
+                mode: None,
+                uid: None,
+                gid: None,
+                atime_ms: None,
+                mtime_ms: None,
+                len: None,
+                offset: None,
+            }),
+        ))
+        .expect("VM remains routable after non-mutating cleanup rejection");
+    assert!(!matches!(
+        still_live.response.payload,
+        ResponsePayload::RejectedResponse(_)
+    ));
 }
 
 #[test]

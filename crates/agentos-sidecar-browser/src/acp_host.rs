@@ -54,6 +54,9 @@ pub(crate) struct BrowserAcpExecution {
     pub execution_id: String,
     pub context_id: String,
     pub owner: BrowserAcpOwner,
+    pub cleaning: bool,
+    pub execution_cleanup_complete: bool,
+    pub context_cleanup_complete: bool,
 }
 
 /// Per-request adapter: borrows the extension context + the session→execution map.
@@ -82,26 +85,83 @@ impl<'ctx, 'host> BrowserAcpHost<'ctx, 'host> {
     fn execution_id(&self, process_id: &str) -> Result<String, AcpCoreError> {
         self.executions
             .get(process_id)
-            .filter(|route| route.owner == self.owner)
+            .filter(|route| route.owner == self.owner && !route.cleaning)
             .map(|route| route.execution_id.clone())
             .ok_or_else(|| {
                 AcpCoreError::InvalidState(format!("unknown agent process {process_id}"))
             })
     }
+
+    fn drive_route_cleanup(&mut self, process_id: &str, abort: bool) -> Result<(), AcpCoreError> {
+        let Some(route) = self
+            .executions
+            .get_mut(process_id)
+            .filter(|route| route.owner == self.owner)
+        else {
+            return Ok(());
+        };
+        route.cleaning = true;
+        let mut route = route.clone();
+        let mut errors = Vec::new();
+        if !route.execution_cleanup_complete {
+            let result = if abort {
+                self.ctx
+                    .abort_execution(&self.owner.vm_id, &route.execution_id)
+            } else {
+                self.ctx.release_execution(&route.execution_id)
+            };
+            match result.map_err(map_err) {
+                Ok(()) => route.execution_cleanup_complete = true,
+                Err(error) => errors.push(error),
+            }
+        }
+        // BrowserSidecar rejects context release while its execution record is
+        // live; that record also owns the handles needed to retry kernel/worker
+        // cleanup. Context release is therefore a dependent phase.
+        if route.execution_cleanup_complete && !route.context_cleanup_complete {
+            match self
+                .ctx
+                .release_context(&self.owner.vm_id, &route.context_id)
+                .map_err(map_err)
+            {
+                Ok(()) => route.context_cleanup_complete = true,
+                Err(error) => errors.push(error),
+            }
+        }
+        if route.execution_cleanup_complete && route.context_cleanup_complete {
+            self.executions.remove(process_id);
+        } else {
+            self.executions.insert(process_id.to_string(), route);
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(AcpCoreError::Cleanup {
+                context: "failed to clean up browser ACP route completely",
+                errors,
+            })
+        }
+    }
 }
 
 fn map_err(error: BrowserSidecarError) -> AcpCoreError {
-    let message = error.to_string();
     match error {
-        BrowserSidecarError::InvalidState(_)
-        | BrowserSidecarError::InvalidPackage(_)
-        | BrowserSidecarError::PackageStateCorrupt(_) => AcpCoreError::InvalidState(message),
-        BrowserSidecarError::PackageConflict(_) => AcpCoreError::Conflict(message),
-        BrowserSidecarError::LimitExceeded { .. } => AcpCoreError::LimitExceeded(message),
-        BrowserSidecarError::PackageMount(_)
-        | BrowserSidecarError::Kernel(_)
-        | BrowserSidecarError::Bridge(_)
-        | BrowserSidecarError::Cleanup { .. } => AcpCoreError::Execution(message),
+        BrowserSidecarError::InvalidState(message)
+        | BrowserSidecarError::InvalidPackage(message)
+        | BrowserSidecarError::PackageStateCorrupt(message) => AcpCoreError::InvalidState(message),
+        BrowserSidecarError::PackageConflict(message) => AcpCoreError::Conflict(message),
+        BrowserSidecarError::LimitExceeded { .. } => AcpCoreError::LimitExceeded(error.to_string()),
+        BrowserSidecarError::PackageMount(message)
+        | BrowserSidecarError::Kernel(message)
+        | BrowserSidecarError::Bridge(message) => AcpCoreError::Execution(message),
+        BrowserSidecarError::Cleanup { context, errors } => AcpCoreError::Cleanup {
+            context,
+            errors: errors.into_iter().map(map_err).collect(),
+        },
+        BrowserSidecarError::Context { context, source } => AcpCoreError::Context {
+            context,
+            source: Box::new(map_err(*source)),
+        },
     }
 }
 
@@ -189,6 +249,9 @@ impl AcpHost for BrowserAcpHost<'_, '_> {
                 execution_id: started.execution_id,
                 context_id,
                 owner: self.owner.clone(),
+                cleaning: false,
+                execution_cleanup_complete: false,
+                context_cleanup_complete: false,
             },
         );
         Ok(SpawnedAgent {
@@ -260,52 +323,15 @@ impl AcpHost for BrowserAcpHost<'_, '_> {
     }
 
     fn abort_agent(&mut self, process_id: &str) -> Result<(), AcpCoreError> {
-        let route = self
-            .executions
-            .get(process_id)
-            .filter(|route| route.owner == self.owner)
-            .cloned()
-            .ok_or_else(|| {
-                AcpCoreError::InvalidState(format!("unknown agent process {process_id}"))
-            })?;
-        let execution = self
-            .ctx
-            .abort_execution(&self.owner.vm_id, &route.execution_id)
-            .map_err(map_err);
-        let context = self
-            .ctx
-            .release_context(&self.owner.vm_id, &route.context_id)
-            .map_err(map_err);
-        match (execution, context) {
-            (Ok(()), Ok(())) => {
-                self.executions.remove(process_id);
-                Ok(())
-            }
-            (Err(execution), Ok(())) => Err(execution),
-            (Ok(()), Err(context)) => Err(context),
-            (Err(execution), Err(context)) => Err(AcpCoreError::Execution(format!(
-                "failed to abort browser agent execution: {execution}; failed to release its context: {context}"
-            ))),
-        }
+        self.drive_route_cleanup(process_id, true)
     }
 
-    fn release_agent_route(&mut self, process_id: &str) -> Result<(), AcpCoreError> {
-        let Some(route) = self
-            .executions
-            .get(process_id)
-            .filter(|route| route.owner == self.owner)
-            .cloned()
-        else {
-            return Ok(());
-        };
-        self.ctx
-            .release_execution(&route.execution_id)
-            .map_err(map_err)?;
-        self.ctx
-            .release_context(&self.owner.vm_id, &route.context_id)
-            .map_err(map_err)?;
-        self.executions.remove(process_id);
-        Ok(())
+    fn finalize_session_cleanup(
+        &mut self,
+        _session_id: &str,
+        process_id: &str,
+    ) -> Result<(), AcpCoreError> {
+        self.drive_route_cleanup(process_id, false)
     }
 
     fn wait_for_exit(

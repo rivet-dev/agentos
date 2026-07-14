@@ -14,8 +14,8 @@ pub(crate) use crate::execution::{
     LoopbackHttpDispatchRequest,
 };
 use crate::extension::{
-    Extension, ExtensionBufferedProcessOutput, ExtensionContext, ExtensionFuture, ExtensionHost,
-    ExtensionSnapshot,
+    Extension, ExtensionBufferedProcessOutput, ExtensionCleanupOutcome, ExtensionContext,
+    ExtensionFuture, ExtensionHost, ExtensionSnapshot,
 };
 use crate::filesystem::guest_filesystem_call as filesystem_guest_filesystem_call;
 use crate::limits::DEFAULT_ACP_STDOUT_BUFFER_BYTE_LIMIT;
@@ -673,6 +673,7 @@ pub struct NativeSidecar<B> {
     pub(crate) connections: BTreeMap<String, ConnectionState>,
     pub(crate) sessions: BTreeMap<String, SessionState>,
     pub(crate) vms: BTreeMap<String, VmState>,
+    pub(crate) vm_disposal_progress: BTreeMap<String, VmDisposalProgress>,
     pub(crate) cron_schedulers: BTreeMap<String, CronScheduler>,
     pub(crate) cron_process_runs: BTreeMap<(String, String), String>,
     #[allow(dead_code)]
@@ -705,6 +706,103 @@ pub(crate) struct ExtensionSessionResources {
     pub(crate) ownership: OwnershipScope,
     pub(crate) process_ids: BTreeSet<String>,
     pub(crate) vm_ids: BTreeSet<String>,
+    /// Lifecycle events from cleanup phases that committed before a sibling
+    /// failed. They are returned exactly once when the retained cleanup record
+    /// reaches completion.
+    pub(crate) pending_cleanup_events: Vec<EventFrame>,
+    pub(crate) cleanup_in_progress: bool,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct VmDisposalProgress {
+    pub(crate) disposing_emitted: bool,
+    pub(crate) pending_events: Vec<EventFrame>,
+    /// Signals are recorded before dispatch because a fallible runtime signal
+    /// can commit before a later bookkeeping/event step reports an error.
+    pub(crate) sigterm_attempted: BTreeSet<String>,
+    pub(crate) sigterm_deadline: Option<Instant>,
+    pub(crate) sigkill_attempted: BTreeSet<String>,
+    pub(crate) sigkill_deadline: Option<Instant>,
+}
+
+#[derive(Debug)]
+struct SessionDisposalOutcome {
+    events: Vec<EventFrame>,
+    error: Option<SidecarError>,
+}
+
+#[derive(Debug)]
+pub(crate) struct VmDisposalOutcome {
+    pub(crate) events: Vec<EventFrame>,
+    pub(crate) error: Option<SidecarError>,
+}
+
+impl VmDisposalOutcome {
+    pub(crate) fn into_result(self) -> Result<Vec<EventFrame>, SidecarError> {
+        match self.error {
+            Some(error) => Err(error),
+            None => Ok(self.events),
+        }
+    }
+}
+
+fn merge_vm_disposal_outcome(
+    session_id: &str,
+    vm_id: &str,
+    outcome: VmDisposalOutcome,
+    events: &mut Vec<EventFrame>,
+    errors: &mut Vec<SidecarError>,
+) {
+    events.extend(outcome.events);
+    if let Some(error) = outcome.error {
+        errors.push(SidecarError::Context {
+            context: format!("session {session_id} VM {vm_id}"),
+            source: Box::new(error),
+        });
+    }
+}
+
+fn retain_extension_cleanup_events(
+    resources: &mut ExtensionSessionResources,
+    events: Vec<EventFrame>,
+    limit: usize,
+) -> Result<usize, SidecarError> {
+    let projected = resources
+        .pending_cleanup_events
+        .len()
+        .saturating_add(events.len());
+    if projected > limit {
+        return Err(extension_cleanup_event_limit_error(limit));
+    }
+    resources.pending_cleanup_events.extend(events);
+    Ok(projected)
+}
+
+pub(crate) fn extension_cleanup_event_limit_error(limit: usize) -> SidecarError {
+    SidecarError::LimitExceeded {
+        limit: "max_extension_session_cleanup_events",
+        capacity: limit,
+        how_to_raise: "NativeSidecarConfig::max_extension_session_cleanup_events",
+    }
+}
+
+fn remaining_extension_cleanup_event_capacity(
+    retained: usize,
+    capacity: usize,
+) -> Result<usize, SidecarError> {
+    if retained > capacity {
+        return Err(extension_cleanup_event_limit_error(capacity));
+    }
+    Ok(capacity - retained)
+}
+
+impl SessionDisposalOutcome {
+    fn into_result(self) -> Result<Vec<EventFrame>, SidecarError> {
+        match self.error {
+            Some(error) => Err(error),
+            None => Ok(self.events),
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -732,6 +830,10 @@ impl<B> fmt::Debug for NativeSidecar<B> {
             .field("connection_count", &self.connections.len())
             .field("session_count", &self.sessions.len())
             .field("vm_count", &self.vms.len())
+            .field(
+                "vm_disposal_progress_count",
+                &self.vm_disposal_progress.len(),
+            )
             .field("cron_scheduler_count", &self.cron_schedulers.len())
             .field("extension_session_count", &self.extension_sessions.len())
             .field(
@@ -755,6 +857,11 @@ where
         if matches!(config.expected_auth_token.as_deref(), Some("")) {
             return Err(SidecarError::InvalidState(String::from(
                 "native sidecar expected_auth_token must not be empty",
+            )));
+        }
+        if config.max_extension_session_cleanup_events == 0 {
+            return Err(SidecarError::InvalidState(String::from(
+                "NativeSidecarConfig::max_extension_session_cleanup_events must be greater than zero",
             )));
         }
 
@@ -792,6 +899,7 @@ where
             connections: BTreeMap::new(),
             sessions: BTreeMap::new(),
             vms: BTreeMap::new(),
+            vm_disposal_progress: BTreeMap::new(),
             cron_schedulers: BTreeMap::new(),
             cron_process_runs: BTreeMap::new(),
             process_event_sender,
@@ -841,7 +949,10 @@ where
     pub(crate) fn prune_extension_process_resource(&mut self, process_id: &str) {
         self.extension_sessions.retain(|_, resources| {
             resources.process_ids.remove(process_id);
-            !resources.process_ids.is_empty() || !resources.vm_ids.is_empty()
+            !resources.process_ids.is_empty()
+                || !resources.vm_ids.is_empty()
+                || resources.cleanup_in_progress
+                || !resources.pending_cleanup_events.is_empty()
         });
     }
 
@@ -854,7 +965,10 @@ where
                 resources.process_ids.clear();
             }
             resources.vm_ids.remove(vm_id);
-            !resources.process_ids.is_empty() || !resources.vm_ids.is_empty()
+            !resources.process_ids.is_empty()
+                || !resources.vm_ids.is_empty()
+                || resources.cleanup_in_progress
+                || !resources.pending_cleanup_events.is_empty()
         });
     }
 
@@ -867,6 +981,7 @@ where
     /// which was previously removed only on a successful handoff and leaked on VM
     /// or session disposal (M6).
     pub(crate) fn reclaim_vm_tracking(&mut self, session_id: &str, vm_id: &str) {
+        self.vm_disposal_progress.remove(vm_id);
         self.javascript_engine.dispose_vm(vm_id);
         self.python_engine.dispose_vm(vm_id);
         self.wasm_engine.dispose_vm(vm_id);
@@ -957,6 +1072,8 @@ where
                     ownership,
                     process_ids: BTreeSet::from([process_id]),
                     vm_ids: BTreeSet::new(),
+                    pending_cleanup_events: Vec::new(),
+                    cleanup_in_progress: false,
                 },
             );
         }
@@ -998,6 +1115,8 @@ where
                     ownership,
                     process_ids: BTreeSet::new(),
                     vm_ids: BTreeSet::from([vm_id]),
+                    pending_cleanup_events: Vec::new(),
+                    cleanup_in_progress: false,
                 },
             );
         }
@@ -2199,8 +2318,9 @@ where
         connection_id: &str,
         session_id: &str,
     ) -> Result<Vec<EventFrame>, SidecarError> {
-        self.dispose_session(connection_id, session_id, DisposeReason::Requested)
-            .await
+        self.dispose_session_outcome(connection_id, session_id, DisposeReason::Requested)
+            .await?
+            .into_result()
     }
 
     pub async fn remove_connection(
@@ -2219,26 +2339,40 @@ where
             .collect::<Vec<_>>();
 
         let mut events = Vec::new();
-        let mut first_error: Option<SidecarError> = None;
+        let mut errors = Vec::new();
         for session_id in session_ids {
             // Attempt EVERY session; aggregate errors instead of `?`-ing out on
             // the first so one wedged session cannot abandon the rest (H1).
             match self
-                .dispose_session(connection_id, &session_id, DisposeReason::ConnectionClosed)
+                .dispose_session_outcome(
+                    connection_id,
+                    &session_id,
+                    DisposeReason::ConnectionClosed,
+                )
                 .await
             {
-                Ok(session_events) => events.extend(session_events),
-                Err(error) => {
-                    if first_error.is_none() {
-                        first_error = Some(error);
+                Ok(outcome) => {
+                    events.extend(outcome.events);
+                    if let Some(error) = outcome.error {
+                        errors.push(SidecarError::Context {
+                            context: format!("session {session_id}"),
+                            source: Box::new(error),
+                        });
                     }
                 }
+                Err(error) => errors.push(SidecarError::Context {
+                    context: format!("session {session_id}"),
+                    source: Box::new(error),
+                }),
             }
         }
 
         self.connections.remove(connection_id);
-        if let Some(error) = first_error {
-            return Err(error);
+        if !errors.is_empty() {
+            return Err(SidecarError::Cleanup {
+                context: "failed to remove native sidecar connection completely",
+                errors,
+            });
         }
         Ok(events)
     }
@@ -2333,6 +2467,8 @@ where
                 connection_id: connection_id.clone(),
                 placement: payload.placement,
                 vm_ids: BTreeSet::new(),
+                closing: false,
+                cleaned_extension_namespaces: BTreeSet::new(),
             },
         );
         self.connections
@@ -2453,17 +2589,20 @@ where
             }
         }
 
-        let (events, error_message) = match self
-            .dispose_session(
+        let outcome = self
+            .dispose_session_outcome(
                 &connection_id,
                 &payload.session_id,
                 DisposeReason::Requested,
             )
-            .await
-        {
-            Ok(events) => (events, None),
-            Err(error) => (Vec::new(), Some(error.to_string())),
-        };
+            .await?;
+        if let Some(error) = outcome.error {
+            return Ok(DispatchResult {
+                response: self.reject(request, CLOSE_SESSION_FAILED_ERROR_CODE, &error.to_string()),
+                events: outcome.events,
+            });
+        }
+        let events = outcome.events;
 
         let history_capacity =
             session_close_history_capacity(self.config.max_sessions_per_connection);
@@ -2476,7 +2615,7 @@ where
             &mut connection.session_close_outcome_order,
             payload.session_id.clone(),
             SessionCloseOutcome {
-                error_message: error_message.clone(),
+                error_message: None,
             },
             history_capacity,
         );
@@ -2494,13 +2633,6 @@ where
                 session_close_history_capacity = history_capacity,
                 "sidecar evicted its oldest terminal session-close outcome; raise max_sessions_per_connection to retain more retry history"
             );
-        }
-
-        if let Some(error) = error_message {
-            return Ok(DispatchResult {
-                response: self.reject(request, CLOSE_SESSION_FAILED_ERROR_CODE, &error),
-                events,
-            });
         }
 
         Ok(DispatchResult {
@@ -2524,13 +2656,34 @@ where
     // execute, write_stdin, close_stdin, kill_process, find_listener, find_bound_udp,
     // get_signal_state, get_zombie_timer_count moved to crate::execution
 
+    #[cfg(test)]
     async fn dispose_session(
         &mut self,
         connection_id: &str,
         session_id: &str,
         reason: DisposeReason,
     ) -> Result<Vec<EventFrame>, SidecarError> {
-        self.require_owned_session(connection_id, session_id)?;
+        self.dispose_session_outcome(connection_id, session_id, reason)
+            .await?
+            .into_result()
+    }
+
+    async fn dispose_session_outcome(
+        &mut self,
+        connection_id: &str,
+        session_id: &str,
+        reason: DisposeReason,
+    ) -> Result<SessionDisposalOutcome, SidecarError> {
+        self.require_authenticated_connection(connection_id)?;
+        let session = self.sessions.get_mut(session_id).ok_or_else(|| {
+            SidecarError::InvalidState(format!("unknown sidecar session {session_id}"))
+        })?;
+        if session.connection_id != connection_id {
+            return Err(SidecarError::InvalidState(format!(
+                "session {session_id} is not owned by connection {connection_id}"
+            )));
+        }
+        session.closing = true;
 
         let vm_ids = self
             .sessions
@@ -2542,21 +2695,22 @@ where
             .collect::<Vec<_>>();
 
         let mut events = Vec::new();
-        let mut first_error: Option<SidecarError> = None;
+        let mut errors = Vec::new();
         for vm_id in vm_ids {
             // Attempt EVERY VM; aggregate errors instead of `?`-ing out on the
             // first so one stuck VM cannot strand the remaining VMs' teardown and
             // leave the session permanently un-reclaimed (H1).
             match self
-                .dispose_vm_internal(connection_id, session_id, &vm_id, reason.clone())
+                .dispose_vm_internal_outcome(connection_id, session_id, &vm_id, reason.clone())
                 .await
             {
-                Ok(vm_events) => events.extend(vm_events),
-                Err(error) => {
-                    if first_error.is_none() {
-                        first_error = Some(error);
-                    }
+                Ok(outcome) => {
+                    merge_vm_disposal_outcome(session_id, &vm_id, outcome, &mut events, &mut errors)
                 }
+                Err(error) => errors.push(SidecarError::Context {
+                    context: format!("session {session_id} VM {vm_id}"),
+                    source: Box::new(error),
+                }),
             }
         }
 
@@ -2567,24 +2721,32 @@ where
             .dispose_extension_session_state(connection_id, session_id)
             .await
         {
-            if first_error.is_none() {
-                first_error = Some(error);
+            errors.push(SidecarError::Context {
+                context: format!("session {session_id} extension state"),
+                source: Box::new(error),
+            });
+        }
+
+        if errors.is_empty() || reason == DisposeReason::ConnectionClosed {
+            self.sessions.remove(session_id);
+            if let Some(connection) = self.connections.get_mut(connection_id) {
+                connection.sessions.remove(session_id);
             }
+            // Tell the stdio transport this session is gone so it stops iterating a
+            // dead entry every event-pump tick and the set stops growing (M5).
+            self.disposed_sessions
+                .push((connection_id.to_owned(), session_id.to_owned()));
         }
 
-        self.sessions.remove(session_id);
-        if let Some(connection) = self.connections.get_mut(connection_id) {
-            connection.sessions.remove(session_id);
-        }
-        // Tell the stdio transport this session is gone so it stops iterating a
-        // dead entry every event-pump tick and the set stops growing (M5).
-        self.disposed_sessions
-            .push((connection_id.to_owned(), session_id.to_owned()));
-
-        if let Some(error) = first_error {
-            return Err(error);
-        }
-        Ok(events)
+        let error = if errors.is_empty() {
+            None
+        } else {
+            Some(SidecarError::Cleanup {
+                context: "failed to dispose native sidecar session completely",
+                errors,
+            })
+        };
+        Ok(SessionDisposalOutcome { events, error })
     }
 
     /// Invoke each registered extension's per-session teardown hook so it can
@@ -2598,26 +2760,43 @@ where
         let ownership = OwnershipScope::session(connection_id, session_id);
         let extensions = self
             .extensions
-            .values()
-            .cloned()
-            .collect::<Vec<Arc<dyn Extension>>>();
-        let mut first_error: Option<SidecarError> = None;
-        for extension in extensions {
+            .iter()
+            .map(|(namespace, extension)| (namespace.clone(), extension.clone()))
+            .collect::<Vec<(String, Arc<dyn Extension>)>>();
+        let mut errors = Vec::new();
+        for (namespace, extension) in extensions {
+            if self
+                .sessions
+                .get(session_id)
+                .is_some_and(|session| session.cleaned_extension_namespaces.contains(&namespace))
+            {
+                continue;
+            }
             let snapshot = ExtensionSnapshot::new(
-                extension.namespace().to_owned(),
+                namespace.clone(),
                 ownership.clone(),
                 self.sidecar_requests.clone(),
                 self.event_sink.clone(),
             );
-            if let Err(error) = extension.on_session_disposed(snapshot).await {
-                if first_error.is_none() {
-                    first_error = Some(error);
+            match extension.on_session_disposed(snapshot).await {
+                Ok(()) => {
+                    if let Some(session) = self.sessions.get_mut(session_id) {
+                        session.cleaned_extension_namespaces.insert(namespace);
+                    }
                 }
+                Err(error) => errors.push(SidecarError::Context {
+                    context: format!("extension {namespace}"),
+                    source: Box::new(error),
+                }),
             }
         }
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(()),
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(SidecarError::Cleanup {
+                context: "failed to dispose native extension session state completely",
+                errors,
+            })
         }
     }
 
@@ -3341,8 +3520,12 @@ where
         let session = self.sessions.get(session_id).ok_or_else(|| {
             SidecarError::InvalidState(format!("unknown sidecar session {session_id}"))
         })?;
-        if session.connection_id == connection_id {
+        if session.connection_id == connection_id && !session.closing {
             Ok(())
+        } else if session.connection_id == connection_id {
+            Err(SidecarError::InvalidState(format!(
+                "sidecar session {session_id} is closing"
+            )))
         } else {
             Err(SidecarError::InvalidState(format!(
                 "session {session_id} is not owned by connection {connection_id}"
@@ -3357,6 +3540,35 @@ where
         vm_id: &str,
     ) -> Result<(), SidecarError> {
         self.require_owned_session(connection_id, session_id)?;
+        let vm = self
+            .vms
+            .get(vm_id)
+            .ok_or_else(|| SidecarError::InvalidState(format!("unknown sidecar VM {vm_id}")))?;
+        if vm.connection_id != connection_id || vm.session_id != session_id {
+            return Err(SidecarError::InvalidState(format!(
+                "VM {vm_id} is not owned by {connection_id}/{session_id}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Exact ownership check for an internal cleanup driver. Unlike public VM
+    /// admission, this deliberately accepts a session already marked closing.
+    pub(crate) fn require_owned_vm_for_cleanup(
+        &self,
+        connection_id: &str,
+        session_id: &str,
+        vm_id: &str,
+    ) -> Result<(), SidecarError> {
+        self.require_authenticated_connection(connection_id)?;
+        let session = self.sessions.get(session_id).ok_or_else(|| {
+            SidecarError::InvalidState(format!("unknown sidecar session {session_id}"))
+        })?;
+        if session.connection_id != connection_id {
+            return Err(SidecarError::InvalidState(format!(
+                "session {session_id} is not owned by connection {connection_id}"
+            )));
+        }
         let vm = self
             .vms
             .get(vm_id)
@@ -3494,7 +3706,12 @@ where
         shared_respond(request, payload)
     }
 
-    fn reject(&self, request: &RequestFrame, code: &str, message: &str) -> ResponseFrame {
+    pub(crate) fn reject(
+        &self,
+        request: &RequestFrame,
+        code: &str,
+        message: &str,
+    ) -> ResponseFrame {
         shared_reject(request, code, message)
     }
 
@@ -3881,7 +4098,7 @@ where
         ownership: OwnershipScope,
         namespace: String,
         ext_session_id: String,
-    ) -> ExtensionFuture<'a, Vec<EventFrame>> {
+    ) -> ExtensionFuture<'a, ExtensionCleanupOutcome> {
         Box::pin(async move {
             let (connection_id, session_id, vm_id) = self.vm_scope_for(&ownership)?;
             let key = (
@@ -3892,41 +4109,150 @@ where
                 vm_id.clone(),
             );
             let Some(resources) = self.extension_sessions.get(&key) else {
-                return Ok(Vec::new());
+                return Ok(ExtensionCleanupOutcome {
+                    events: Vec::new(),
+                    error: None,
+                });
             };
             if resources.ownership != ownership {
                 return Err(SidecarError::InvalidState(String::from(
                     "extension session ownership did not match dispose request",
                 )));
             }
-            let resources = self
-                .extension_sessions
-                .remove(&key)
-                .expect("extension resources existed before removal");
-            for process_id in resources.process_ids {
+            let process_ids = resources.process_ids.iter().cloned().collect::<Vec<_>>();
+            let vm_ids = resources.vm_ids.iter().cloned().collect::<Vec<_>>();
+            if let Some(resources) = self.extension_sessions.get_mut(&key) {
+                resources.cleanup_in_progress = true;
+            }
+            let mut errors = Vec::new();
+            for process_id in process_ids {
                 if self
                     .vms
                     .get(&vm_id)
                     .is_some_and(|vm| vm.active_processes.contains_key(&process_id))
                 {
-                    self.kill_process_internal(&vm_id, &process_id, "SIGTERM")?;
+                    match self.kill_process_internal(&vm_id, &process_id, "SIGKILL") {
+                        Ok(()) => {
+                            if let Some(resources) = self.extension_sessions.get_mut(&key) {
+                                resources.process_ids.remove(&process_id);
+                            }
+                        }
+                        Err(error) => {
+                            tracing::error!(
+                                connection_id,
+                                session_id,
+                                vm_id,
+                                process_id,
+                                error_code = crate::execution::error_code(&error),
+                                error = %error,
+                                "failed to kill extension session process during cleanup"
+                            );
+                            errors.push(SidecarError::Context {
+                                context: format!(
+                                    "extension session process {process_id} in VM {vm_id}"
+                                ),
+                                source: Box::new(error),
+                            });
+                        }
+                    }
+                } else if let Some(resources) = self.extension_sessions.get_mut(&key) {
+                    resources.process_ids.remove(&process_id);
                 }
             }
-            let mut events = Vec::new();
-            for resource_vm_id in resources.vm_ids {
-                if self.vms.contains_key(&resource_vm_id) {
-                    events.extend(
-                        self.dispose_vm_internal(
-                            &connection_id,
-                            &session_id,
-                            &resource_vm_id,
-                            DisposeReason::Requested,
-                        )
-                        .await?,
-                    );
+            let has_pending_processes = self
+                .extension_sessions
+                .get(&key)
+                .is_some_and(|resources| !resources.process_ids.is_empty());
+            if !has_pending_processes {
+                for resource_vm_id in vm_ids {
+                    if self.vms.contains_key(&resource_vm_id) {
+                        let retained = self
+                            .extension_sessions
+                            .get(&key)
+                            .map_or(0, |resources| resources.pending_cleanup_events.len());
+                        let event_capacity = match remaining_extension_cleanup_event_capacity(
+                            retained,
+                            self.config.max_extension_session_cleanup_events,
+                        ) {
+                            Ok(capacity) => capacity,
+                            Err(error) => {
+                                errors.push(error);
+                                if let Some(resources) = self.extension_sessions.get_mut(&key) {
+                                    resources.cleanup_in_progress = false;
+                                }
+                                continue;
+                            }
+                        };
+                        match self
+                            .dispose_vm_internal_outcome_with_event_limit(
+                                &connection_id,
+                                &session_id,
+                                &resource_vm_id,
+                                DisposeReason::Requested,
+                                event_capacity,
+                            )
+                            .await
+                        {
+                            Ok(outcome) => {
+                                if let Some(resources) = self.extension_sessions.get_mut(&key) {
+                                    let limit = self.config.max_extension_session_cleanup_events;
+                                    let had_events = !outcome.events.is_empty();
+                                    match retain_extension_cleanup_events(
+                                        resources,
+                                        outcome.events,
+                                        limit,
+                                    ) {
+                                        Ok(projected)
+                                            if had_events
+                                                && projected >= limit.saturating_mul(8) / 10 =>
+                                        {
+                                            tracing::warn!(
+                                                connection_id,
+                                                session_id,
+                                                vm_id,
+                                                retained_cleanup_events = projected,
+                                                max_extension_session_cleanup_events = limit,
+                                                "extension session cleanup event retention is near capacity"
+                                            );
+                                        }
+                                        Ok(_) => {}
+                                        Err(error) => errors.push(error),
+                                    }
+                                }
+                                if let Some(error) = outcome.error {
+                                    errors.push(error);
+                                }
+                            }
+                            Err(error) => errors.push(error),
+                        }
+                    }
+                    if !self.vms.contains_key(&resource_vm_id) {
+                        if let Some(resources) = self.extension_sessions.get_mut(&key) {
+                            resources.vm_ids.remove(&resource_vm_id);
+                        }
+                    }
                 }
             }
-            Ok(events)
+            let complete = self.extension_sessions.get(&key).is_none_or(|resources| {
+                resources.process_ids.is_empty() && resources.vm_ids.is_empty()
+            });
+            let events = if let Some(resources) = self.extension_sessions.get_mut(&key) {
+                std::mem::take(&mut resources.pending_cleanup_events)
+            } else {
+                Vec::new()
+            };
+            if complete && errors.is_empty() {
+                self.extension_sessions.remove(&key);
+            }
+            let error = if errors.is_empty() {
+                None
+            } else {
+                Some(SidecarError::Cleanup {
+                    context: "failed to dispose native extension session resources completely",
+                    errors,
+                })
+            };
+            Ok(ExtensionCleanupOutcome { events, error })
         })
     }
 
@@ -4545,6 +4871,8 @@ mod dispose_lifecycle_tests {
                     crate::protocol::SidecarPlacementShared { pool: None },
                 ),
                 vm_ids,
+                closing: false,
+                cleaned_extension_namespaces: BTreeSet::new(),
             },
         );
     }
@@ -4552,6 +4880,79 @@ mod dispose_lifecycle_tests {
     struct RecordingExtension {
         namespace: String,
         session_disposed: Arc<AtomicUsize>,
+    }
+
+    struct OrderedRetryExtension {
+        namespace: String,
+        calls: Arc<Mutex<Vec<String>>>,
+        fail_once: bool,
+    }
+
+    impl Extension for OrderedRetryExtension {
+        fn namespace(&self) -> &str {
+            &self.namespace
+        }
+
+        fn handle_request<'a>(
+            &'a self,
+            _ctx: ExtensionContext<'a>,
+            _payload: Vec<u8>,
+        ) -> ExtensionFuture<'a, ExtensionResponse> {
+            Box::pin(async { Ok(ExtensionResponse::new(Vec::new())) })
+        }
+
+        fn on_session_disposed<'a>(&'a self, _ctx: ExtensionSnapshot) -> ExtensionFuture<'a, ()> {
+            let calls = self.calls.clone();
+            let namespace = self.namespace.clone();
+            let fail_once = self.fail_once;
+            Box::pin(async move {
+                let mut calls = calls.lock().expect("ordered cleanup calls lock");
+                let attempt = calls.iter().filter(|call| *call == &namespace).count();
+                calls.push(namespace.clone());
+                if fail_once && attempt == 0 {
+                    Err(SidecarError::Bridge(format!(
+                        "injected {namespace} cleanup failure"
+                    )))
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    struct FailingEverySessionExtension {
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Extension for FailingEverySessionExtension {
+        fn namespace(&self) -> &str {
+            "dev.test.fail-every-session"
+        }
+
+        fn handle_request<'a>(
+            &'a self,
+            _ctx: ExtensionContext<'a>,
+            _payload: Vec<u8>,
+        ) -> ExtensionFuture<'a, ExtensionResponse> {
+            Box::pin(async { Ok(ExtensionResponse::new(Vec::new())) })
+        }
+
+        fn on_session_disposed<'a>(&'a self, ctx: ExtensionSnapshot) -> ExtensionFuture<'a, ()> {
+            let calls = self.calls.clone();
+            let session_id = match ctx.ownership() {
+                OwnershipScope::SessionOwnership(owner) => owner.session_id.clone(),
+                other => panic!("expected session cleanup ownership, got {other:?}"),
+            };
+            Box::pin(async move {
+                calls
+                    .lock()
+                    .expect("failing cleanup calls lock")
+                    .push(session_id.clone());
+                Err(SidecarError::Bridge(format!(
+                    "injected cleanup failure for {session_id}"
+                )))
+            })
+        }
     }
 
     impl Extension for RecordingExtension {
@@ -4627,6 +5028,83 @@ mod dispose_lifecycle_tests {
         );
     }
 
+    #[test]
+    fn extension_cleanup_is_namespace_ordered_and_retries_only_failed_phases() {
+        let mut sidecar = test_sidecar();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        for (namespace, fail_once) in [("dev.test.b", false), ("dev.test.a", true)] {
+            sidecar
+                .register_extension(Box::new(OrderedRetryExtension {
+                    namespace: namespace.to_string(),
+                    calls: calls.clone(),
+                    fail_once,
+                }))
+                .expect("register ordered cleanup extension");
+        }
+        insert_session(&mut sidecar, "conn-1", "session-1", BTreeSet::new());
+
+        block_on(sidecar.dispose_session("conn-1", "session-1", DisposeReason::Requested))
+            .expect_err("first namespace cleanup attempt fails");
+        assert_eq!(
+            *calls.lock().expect("calls lock"),
+            vec![String::from("dev.test.a"), String::from("dev.test.b")]
+        );
+
+        block_on(sidecar.dispose_session("conn-1", "session-1", DisposeReason::Requested))
+            .expect("retry runs only the failed namespace");
+        assert_eq!(
+            *calls.lock().expect("calls lock"),
+            vec![
+                String::from("dev.test.a"),
+                String::from("dev.test.b"),
+                String::from("dev.test.a"),
+            ]
+        );
+    }
+
+    #[test]
+    fn remove_connection_attempts_every_session_and_preserves_ordered_errors() {
+        let mut sidecar = test_sidecar();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        sidecar
+            .register_extension(Box::new(FailingEverySessionExtension {
+                calls: calls.clone(),
+            }))
+            .expect("register failing cleanup extension");
+        insert_session(&mut sidecar, "conn-1", "session-b", BTreeSet::new());
+        sidecar
+            .connections
+            .get_mut("conn-1")
+            .expect("connection")
+            .sessions
+            .insert(String::from("session-a"));
+        sidecar.sessions.insert(
+            String::from("session-a"),
+            SessionState {
+                connection_id: String::from("conn-1"),
+                placement: crate::protocol::SidecarPlacement::SidecarPlacementShared(
+                    crate::protocol::SidecarPlacementShared { pool: None },
+                ),
+                vm_ids: BTreeSet::new(),
+                closing: false,
+                cleaned_extension_namespaces: BTreeSet::new(),
+            },
+        );
+
+        let error = block_on(sidecar.remove_connection("conn-1"))
+            .expect_err("both session cleanup failures are aggregated");
+        assert_eq!(
+            *calls.lock().expect("calls lock"),
+            vec![String::from("session-a"), String::from("session-b")]
+        );
+        let message = error.to_string();
+        assert!(
+            message.find("session session-a").unwrap() < message.find("session session-b").unwrap()
+        );
+        assert!(!sidecar.connections.contains_key("conn-1"));
+        assert!(sidecar.sessions.is_empty());
+    }
+
     // M5: disposing a session records its scope for the stdio transport to drain.
     #[test]
     fn dispose_session_records_disposed_scope() {
@@ -4641,6 +5119,84 @@ mod dispose_lifecycle_tests {
             vec![(String::from("conn-1"), String::from("session-1"))],
             "dispose must publish the session scope so stdio can untrack it"
         );
+    }
+
+    #[test]
+    fn sibling_vm_failure_does_not_discard_committed_lifecycle_events() {
+        let sidecar = test_sidecar();
+        let committed =
+            sidecar.vm_lifecycle_event("conn-1", "session-1", "vm-ok", VmLifecycleState::Disposed);
+        let mut events = Vec::new();
+        let mut errors = Vec::new();
+
+        merge_vm_disposal_outcome(
+            "session-1",
+            "vm-failed",
+            VmDisposalOutcome {
+                events: vec![committed],
+                error: Some(SidecarError::Io(String::from("flush failed"))),
+            },
+            &mut events,
+            &mut errors,
+        );
+
+        assert_eq!(events.len(), 1, "the committed event remains deliverable");
+        assert_eq!(errors.len(), 1, "the sibling cleanup failure also survives");
+        assert!(errors[0]
+            .to_string()
+            .contains("session session-1 VM vm-failed: flush failed"));
+    }
+
+    #[test]
+    fn extension_cleanup_event_retention_is_bounded_and_survives_vm_pruning() {
+        let mut sidecar = test_sidecar();
+        let event =
+            sidecar.vm_lifecycle_event("conn-1", "session-1", "vm-1", VmLifecycleState::Disposed);
+        let mut resources = ExtensionSessionResources {
+            ownership: OwnershipScope::vm("conn-1", "session-1", "vm-1"),
+            process_ids: BTreeSet::new(),
+            vm_ids: BTreeSet::from([String::from("vm-1")]),
+            pending_cleanup_events: Vec::new(),
+            cleanup_in_progress: true,
+        };
+        retain_extension_cleanup_events(&mut resources, vec![event.clone()], 1)
+            .expect("first retained cleanup event fits");
+        let overflow = retain_extension_cleanup_events(&mut resources, vec![event], 1)
+            .expect_err("second retained cleanup event exceeds the configured bound");
+        assert_eq!(crate::execution::error_code(&overflow), "limit_exceeded");
+        assert!(overflow
+            .to_string()
+            .contains("NativeSidecarConfig::max_extension_session_cleanup_events"));
+        assert_eq!(resources.pending_cleanup_events.len(), 1);
+        assert_eq!(
+            remaining_extension_cleanup_event_capacity(0, 1)
+                .expect("VM disposal owns the lifecycle-phase preflight"),
+            1
+        );
+        assert_eq!(
+            remaining_extension_cleanup_event_capacity(
+                1,
+                crate::state::DEFAULT_MAX_EXTENSION_SESSION_CLEANUP_EVENTS
+            )
+            .expect("two lifecycle events and process-event capacity remain"),
+            crate::state::DEFAULT_MAX_EXTENSION_SESSION_CLEANUP_EVENTS - 1
+        );
+
+        let key = (
+            String::from("ns"),
+            String::from("ext-session-1"),
+            String::from("conn-1"),
+            String::from("session-1"),
+            String::from("vm-1"),
+        );
+        sidecar.extension_sessions.insert(key.clone(), resources);
+        sidecar.reclaim_vm_tracking("session-1", "vm-1");
+        let retained = sidecar
+            .extension_sessions
+            .get(&key)
+            .expect("cleanup tombstone survives VM tracking reclamation");
+        assert!(retained.vm_ids.is_empty());
+        assert_eq!(retained.pending_cleanup_events.len(), 1);
     }
 
     // H1 + M6: every per-VM tracking map is reclaimed for a disposed VM. The
@@ -4672,6 +5228,15 @@ mod dispose_lifecycle_tests {
                 ownership: OwnershipScope::vm("conn-1", "session-1", "vm-1"),
                 process_ids: BTreeSet::new(),
                 vm_ids: BTreeSet::from([String::from("vm-1")]),
+                pending_cleanup_events: Vec::new(),
+                cleanup_in_progress: false,
+            },
+        );
+        sidecar.vm_disposal_progress.insert(
+            String::from("vm-1"),
+            VmDisposalProgress {
+                disposing_emitted: true,
+                ..VmDisposalProgress::default()
             },
         );
 
@@ -4686,6 +5251,10 @@ mod dispose_lifecycle_tests {
             "H1: an extension session bound only to the VM must be reclaimed"
         );
         assert!(
+            sidecar.vm_disposal_progress.is_empty(),
+            "VM disposal progress must be reclaimed with the VM"
+        );
+        assert!(
             !sidecar
                 .sessions
                 .get("session-1")
@@ -4696,11 +5265,11 @@ mod dispose_lifecycle_tests {
         );
     }
 
-    // H1: a failing VM dispose inside the loop must not abandon the session. With
-    // unregistered VM ids, `dispose_vm_internal` fails on `require_owned_vm`;
-    // pre-fix the loop `?`-ed out and left the session in `self.sessions`.
+    // A requested close failure retains only non-routable cleanup ownership so
+    // the exact close can retry instead of replaying a manufactured terminal
+    // result.
     #[test]
-    fn dispose_session_reclaims_session_even_when_a_vm_dispose_fails() {
+    fn requested_dispose_failure_retains_non_routable_session_for_retry() {
         let mut sidecar = test_sidecar();
         insert_session(
             &mut sidecar,
@@ -4717,8 +5286,25 @@ mod dispose_lifecycle_tests {
             "a failing VM dispose must still surface an error"
         );
         assert!(
-            !sidecar.sessions.contains_key("session-1"),
-            "the session must be reclaimed even though VM dispose failed"
+            sidecar
+                .sessions
+                .get("session-1")
+                .is_some_and(|session| session.closing),
+            "the failed close must retain a non-routable cleanup session"
         );
+        let ownership_error = sidecar
+            .require_owned_session("conn-1", "session-1")
+            .expect_err("closing session cannot accept ordinary requests");
+        assert!(ownership_error.to_string().contains("is closing"));
+
+        sidecar
+            .sessions
+            .get_mut("session-1")
+            .expect("cleanup session retained")
+            .vm_ids
+            .clear();
+        block_on(sidecar.dispose_session("conn-1", "session-1", DisposeReason::Requested))
+            .expect("retry completes after remaining handles are authoritatively absent");
+        assert!(!sidecar.sessions.contains_key("session-1"));
     }
 }

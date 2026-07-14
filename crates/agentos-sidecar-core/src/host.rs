@@ -102,10 +102,14 @@ pub trait AcpHost {
     fn abort_agent(&mut self, process_id: &str) -> Result<(), AcpCoreError> {
         self.kill_agent(process_id, "SIGKILL")
     }
-    /// Drop host-only routing state after an orderly close has reaped the
-    /// adapter. Native hosts do not need a second action; browser hosts remove
-    /// their core-process -> executor route without terminating twice.
-    fn release_agent_route(&mut self, _process_id: &str) -> Result<(), AcpCoreError> {
+    /// Finalize every host-owned resource after an orderly close has reaped the
+    /// adapter. This hook is idempotent and may be retried without repeating the
+    /// signal/wait phase.
+    fn finalize_session_cleanup(
+        &mut self,
+        _session_id: &str,
+        _process_id: &str,
+    ) -> Result<(), AcpCoreError> {
         Ok(())
     }
     /// Block (up to `timeout_ms`) for the process to exit. Returns `Some(exit_code)`

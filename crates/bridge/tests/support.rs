@@ -56,6 +56,7 @@ pub struct RecordingBridge {
     execution_kill_errors: VecDeque<StubError>,
     structured_event_errors: VecDeque<StubError>,
     lifecycle_event_errors: VecDeque<StubError>,
+    filesystem_flush_errors: VecDeque<StubError>,
     pub filesystem_permission_requests: Vec<FilesystemPermissionRequest>,
     pub permission_checks: Vec<String>,
     pub log_events: Vec<LogRecord>,
@@ -93,6 +94,7 @@ impl Default for RecordingBridge {
             execution_kill_errors: VecDeque::new(),
             structured_event_errors: VecDeque::new(),
             lifecycle_event_errors: VecDeque::new(),
+            filesystem_flush_errors: VecDeque::new(),
             filesystem_permission_requests: Vec::new(),
             permission_checks: Vec::new(),
             log_events: Vec::new(),
@@ -166,6 +168,11 @@ impl RecordingBridge {
 
     pub fn push_lifecycle_event_error(&mut self, message: impl Into<String>) {
         self.lifecycle_event_errors
+            .push_back(StubError::new(message));
+    }
+
+    pub fn push_filesystem_flush_error(&mut self, message: impl Into<String>) {
+        self.filesystem_flush_errors
             .push_back(StubError::new(message));
     }
 
@@ -372,6 +379,9 @@ impl PersistenceBridge for RecordingBridge {
         &mut self,
         request: FlushFilesystemStateRequest,
     ) -> Result<(), Self::Error> {
+        if let Some(error) = self.filesystem_flush_errors.pop_front() {
+            return Err(error);
+        }
         self.snapshots.insert(request.vm_id, request.snapshot);
         Ok(())
     }

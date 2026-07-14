@@ -24325,12 +24325,15 @@ pub(crate) fn error_code(error: &SidecarError) -> &'static str {
         SidecarError::Unauthorized(_) => "unauthorized",
         SidecarError::Unsupported(_) => "unsupported",
         SidecarError::FrameTooLarge(_) => "frame_too_large",
+        SidecarError::LimitExceeded { .. } => "limit_exceeded",
         SidecarError::Timeout(_) => "timeout",
         SidecarError::Kernel(_) => "kernel_error",
         SidecarError::Plugin(_) => "plugin_error",
         SidecarError::Execution(_) => "execution_error",
         SidecarError::Bridge(_) => "bridge_error",
         SidecarError::Io(_) => "io_error",
+        SidecarError::Context { source, .. } => error_code(source),
+        SidecarError::Cleanup { .. } => "cleanup_failed",
     }
 }
 
@@ -24424,7 +24427,31 @@ pub(crate) fn ignore_stale_javascript_sync_rpc_response(
 
 #[cfg(test)]
 mod error_code_tests {
-    use super::{guest_errno_code, javascript_sync_rpc_error_code, SidecarError};
+    use super::{error_code, guest_errno_code, javascript_sync_rpc_error_code, SidecarError};
+
+    #[test]
+    fn cleanup_error_code_and_display_are_stable_and_ordered() {
+        let error = SidecarError::Cleanup {
+            context: "failed cleanup",
+            errors: vec![
+                SidecarError::Execution(String::from("first")),
+                SidecarError::Io(String::from("second")),
+            ],
+        };
+        assert_eq!(error_code(&error), "cleanup_failed");
+        assert_eq!(
+            error.to_string(),
+            "failed cleanup; cleanup error 1 [execution_error]: first; cleanup error 2 [io_error]: second"
+        );
+        let contextual = SidecarError::Context {
+            context: String::from("VM vm-4 process proc-9"),
+            source: Box::new(error),
+        };
+        assert_eq!(error_code(&contextual), "cleanup_failed");
+        assert!(contextual
+            .to_string()
+            .starts_with("VM vm-4 process proc-9: failed cleanup"));
+    }
 
     #[test]
     fn guest_errno_code_rejects_guest_controlled_errno_segments() {

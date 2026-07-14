@@ -18,8 +18,10 @@ use crate::protocol::{
     SnapshotRootFilesystemRequest, VmLifecycleState,
 };
 use crate::service::{
-    audit_fields, dirname, emit_security_audit_event, emit_structured_event, kernel_error,
-    normalize_path, plugin_error, root_filesystem_error, validate_permissions_policy, vfs_error,
+    audit_fields, dirname, emit_security_audit_event, emit_structured_event,
+    extension_cleanup_event_limit_error, kernel_error, normalize_path, plugin_error,
+    root_filesystem_error, validate_permissions_policy, vfs_error, VmDisposalOutcome,
+    VmDisposalProgress,
 };
 use crate::state::{
     BridgeError, KernelSocketReadinessEvent, KernelSocketReadinessRegistry,
@@ -61,6 +63,7 @@ use base64::Engine;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::fs;
+use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -401,13 +404,21 @@ where
         payload: crate::protocol::DisposeVmRequest,
     ) -> Result<DispatchResult, SidecarError> {
         let (connection_id, session_id, vm_id) = self.vm_scope_for(&request.ownership)?;
-        let events = self
-            .dispose_vm_internal(&connection_id, &session_id, &vm_id, payload.reason)
+        let outcome = self
+            .dispose_vm_internal_outcome(&connection_id, &session_id, &vm_id, payload.reason)
             .await?;
+        let response = match outcome.error {
+            Some(error) => self.reject(
+                request,
+                crate::execution::error_code(&error),
+                &error.to_string(),
+            ),
+            None => vm_disposed_response(request, vm_id),
+        };
 
         Ok(DispatchResult {
-            response: vm_disposed_response(request, vm_id),
-            events,
+            response,
+            events: outcome.events,
         })
     }
 
@@ -939,21 +950,99 @@ where
         connection_id: &str,
         session_id: &str,
         vm_id: &str,
-        _reason: DisposeReason,
+        reason: DisposeReason,
     ) -> Result<Vec<EventFrame>, SidecarError> {
-        self.require_owned_vm(connection_id, session_id, vm_id)?;
+        self.dispose_vm_internal_outcome(connection_id, session_id, vm_id, reason)
+            .await?
+            .into_result()
+    }
 
-        let mut events = vec![self.vm_lifecycle_event(
+    pub(crate) async fn dispose_vm_internal_outcome(
+        &mut self,
+        connection_id: &str,
+        session_id: &str,
+        vm_id: &str,
+        reason: DisposeReason,
+    ) -> Result<VmDisposalOutcome, SidecarError> {
+        self.dispose_vm_internal_outcome_with_event_limit(
             connection_id,
             session_id,
             vm_id,
-            VmLifecycleState::Disposing,
-        )];
+            reason,
+            self.config.max_extension_session_cleanup_events,
+        )
+        .await
+    }
+
+    pub(crate) async fn dispose_vm_internal_outcome_with_event_limit(
+        &mut self,
+        connection_id: &str,
+        session_id: &str,
+        vm_id: &str,
+        reason: DisposeReason,
+        event_limit: usize,
+    ) -> Result<VmDisposalOutcome, SidecarError> {
+        self.require_owned_vm_for_cleanup(connection_id, session_id, vm_id)?;
+        let force_teardown_on_limit = reason == DisposeReason::ConnectionClosed;
+        let disposing_emitted = self
+            .vm_disposal_progress
+            .get(vm_id)
+            .is_some_and(|progress| progress.disposing_emitted);
+        let required_lifecycle_events = if disposing_emitted { 1 } else { 2 };
+        let mut preflight_limit_error = None;
+        if event_limit < required_lifecycle_events {
+            let error = extension_cleanup_event_limit_error(
+                self.config.max_extension_session_cleanup_events,
+            );
+            if !force_teardown_on_limit {
+                return Err(error);
+            }
+            preflight_limit_error = Some(error);
+        }
+
+        if !disposing_emitted && event_limit >= 2 {
+            let event = self.vm_lifecycle_event(
+                connection_id,
+                session_id,
+                vm_id,
+                VmLifecycleState::Disposing,
+            );
+            let progress = self
+                .vm_disposal_progress
+                .entry(vm_id.to_owned())
+                .or_default();
+            record_disposing_event(progress, event);
+        }
         // Process termination needs the VM live in `self.vms` (it looks up and
         // signals the VM's active processes). Capture its result but keep tearing
         // down: a process that refuses to die must not strand the VM's tracking
         // entries for the process lifetime.
-        let terminate_result = self.terminate_vm_processes(vm_id, &mut events).await;
+        let terminate_result = self
+            .terminate_vm_processes(vm_id, event_limit, force_teardown_on_limit)
+            .await;
+        if terminate_result
+            .as_ref()
+            .is_err_and(contains_cleanup_event_limit)
+            && !force_teardown_on_limit
+        {
+            let events = self
+                .vm_disposal_progress
+                .get_mut(vm_id)
+                .map(|progress| std::mem::take(&mut progress.pending_events))
+                .unwrap_or_default();
+            return Ok(VmDisposalOutcome {
+                events,
+                error: terminate_result.err().map(|error| SidecarError::Context {
+                    context: format!("VM {vm_id} process termination"),
+                    source: Box::new(error),
+                }),
+            });
+        }
+        let mut events = self
+            .vm_disposal_progress
+            .get_mut(vm_id)
+            .map(|progress| std::mem::take(&mut progress.pending_events))
+            .unwrap_or_default();
 
         // Detach the VM from `self.vms` BEFORE the remaining fallible teardown so
         // no `?` below can leave the registry entry (or any per-VM map) behind.
@@ -973,25 +1062,27 @@ where
             sidecar_requests: self.sidecar_requests.clone(),
             max_pread_bytes: vm.kernel.resource_limits().max_pread_bytes,
         };
-        let _ = shutdown_configured_mounts(&mut vm, &mount_context, "dispose_vm", true, false);
+        let mount_result =
+            shutdown_configured_mounts(&mut vm, &mount_context, "dispose_vm", true, false);
 
         // Snapshot/flush/kernel-dispose/permission-reset can each fail; run them
         // in a helper whose result is captured so cleanup below is unconditional.
-        let teardown_result = self.finish_vm_teardown(vm_id, &mut vm).await;
+        let teardown_result = self.finish_vm_teardown(vm_id, &mut vm);
 
         // Reclaim EVERY per-VM tracking entry on EVERY exit path — even when a
         // teardown step above errored. Pre-fix these ran only after the fallible
         // steps' `?`, so any failure stranded the engine/extension maps (H1) and
         // the output-buffer map was never reclaimed at all (M6).
         self.reclaim_vm_tracking(session_id, vm_id);
-        let _ = fs::remove_dir_all(&vm.cwd);
+        let cwd = vm.cwd.clone();
+        let cwd_result = fs::remove_dir_all(&cwd);
         if let Some(staging_root) = vm.packages_staging_root.take() {
-            let _ = fs::remove_dir_all(&staging_root);
+            if let Err(error) = fs::remove_dir_all(&staging_root) {
+                if error.kind() != io::ErrorKind::NotFound {
+                    tracing::error!(vm_id, path = %staging_root.display(), %error, "failed to remove VM package staging root during cleanup");
+                }
+            }
         }
-
-        // Surface the first failure only AFTER cleanup has completed.
-        terminate_result?;
-        teardown_result?;
 
         events.push(self.vm_lifecycle_event(
             connection_id,
@@ -999,7 +1090,43 @@ where
             vm_id,
             VmLifecycleState::Disposed,
         ));
-        Ok(events)
+        let mut errors = Vec::new();
+        if let Some(error) = preflight_limit_error {
+            errors.push(error);
+        }
+        if let Err(error) = terminate_result {
+            errors.push(SidecarError::Context {
+                context: format!("VM {vm_id} process termination"),
+                source: Box::new(error),
+            });
+        }
+        if let Err(error) = mount_result {
+            tracing::error!(vm_id, error_code = crate::execution::error_code(&error), error = %error, "failed to shut down VM mounts during cleanup");
+            errors.push(SidecarError::Context {
+                context: format!("VM {vm_id} mount shutdown"),
+                source: Box::new(error),
+            });
+        }
+        if let Err(error) = teardown_result {
+            errors.push(error);
+        }
+        if let Err(error) = cwd_result {
+            if error.kind() != io::ErrorKind::NotFound {
+                errors.push(SidecarError::Io(format!(
+                    "failed to remove VM {vm_id} cwd {}: {error}",
+                    cwd.display()
+                )));
+            }
+        }
+        let error = if errors.is_empty() {
+            None
+        } else {
+            Some(SidecarError::Cleanup {
+                context: "failed to dispose native VM completely",
+                errors,
+            })
+        };
+        Ok(VmDisposalOutcome { events, error })
     }
 
     /// Run the fallible second half of VM disposal (root-filesystem snapshot +
@@ -1007,42 +1134,83 @@ where
     /// that has already been detached from `self.vms`. Kept separate so its
     /// `?`-propagated errors are captured by the caller and the per-VM tracking
     /// maps are still reclaimed afterward.
-    async fn finish_vm_teardown(
-        &mut self,
-        vm_id: &str,
-        vm: &mut VmState,
-    ) -> Result<(), SidecarError> {
+    fn finish_vm_teardown(&mut self, vm_id: &str, vm: &mut VmState) -> Result<(), SidecarError> {
+        let mut errors = Vec::new();
         let snapshot = if vm.kernel.root_filesystem_mut().is_some() {
-            Some(FilesystemSnapshot {
-                format: String::from(ROOT_FILESYSTEM_SNAPSHOT_FORMAT),
-                bytes: encode_root_snapshot(
-                    &vm.kernel.snapshot_root_filesystem().map_err(kernel_error)?,
-                )
-                .map_err(root_filesystem_error)?,
-            })
+            match vm
+                .kernel
+                .snapshot_root_filesystem()
+                .map_err(kernel_error)
+                .and_then(|snapshot| {
+                    encode_root_snapshot(&snapshot)
+                        .map_err(root_filesystem_error)
+                        .map(|bytes| FilesystemSnapshot {
+                            format: String::from(ROOT_FILESYSTEM_SNAPSHOT_FORMAT),
+                            bytes,
+                        })
+                }) {
+                Ok(snapshot) => Some(snapshot),
+                Err(error) => {
+                    errors.push(SidecarError::Context {
+                        context: format!("VM {vm_id} root filesystem snapshot"),
+                        source: Box::new(error),
+                    });
+                    None
+                }
+            }
         } else {
             None
         };
 
-        self.bridge
-            .emit_lifecycle(vm_id, LifecycleState::Terminated)?;
-        vm.kernel.dispose().map_err(kernel_error)?;
+        if let Err(error) = self
+            .bridge
+            .emit_lifecycle(vm_id, LifecycleState::Terminated)
+        {
+            errors.push(SidecarError::Context {
+                context: format!("VM {vm_id} lifecycle emission"),
+                source: Box::new(error),
+            });
+        }
+        if let Err(error) = vm.kernel.dispose().map_err(kernel_error) {
+            errors.push(SidecarError::Context {
+                context: format!("VM {vm_id} kernel disposal"),
+                source: Box::new(error),
+            });
+        }
         if let Some(snapshot) = snapshot {
-            self.bridge.with_mut(|bridge| {
+            if let Err(error) = self.bridge.with_mut(|bridge| {
                 bridge.flush_filesystem_state(FlushFilesystemStateRequest {
                     vm_id: vm_id.to_owned(),
                     snapshot,
                 })
-            })?;
+            }) {
+                errors.push(SidecarError::Context {
+                    context: format!("VM {vm_id} filesystem snapshot flush"),
+                    source: Box::new(error),
+                });
+            }
         }
-        self.bridge.clear_vm_permissions(vm_id)?;
-        Ok(())
+        if let Err(error) = self.bridge.clear_vm_permissions(vm_id) {
+            errors.push(SidecarError::Context {
+                context: format!("VM {vm_id} permission cleanup"),
+                source: Box::new(error),
+            });
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(SidecarError::Cleanup {
+                context: "failed to finish native VM teardown completely",
+                errors,
+            })
+        }
     }
 
     pub(crate) async fn terminate_vm_processes(
         &mut self,
         vm_id: &str,
-        events: &mut Vec<EventFrame>,
+        event_limit: usize,
+        force_teardown_on_limit: bool,
     ) -> Result<(), SidecarError> {
         let process_ids = self
             .vms
@@ -1053,20 +1221,60 @@ where
             return Ok(());
         }
 
+        let mut errors = Vec::new();
         for process_id in process_ids {
-            if self
+            let should_signal = self
                 .vms
                 .get(vm_id)
                 .is_some_and(|vm| vm.active_processes.contains_key(&process_id))
-            {
-                self.kill_process_internal(vm_id, &process_id, "SIGTERM")?;
+                && !self
+                    .vm_disposal_progress
+                    .get(vm_id)
+                    .is_some_and(|progress| progress.sigterm_attempted.contains(&process_id));
+            if should_signal {
+                self.vm_disposal_progress
+                    .entry(vm_id.to_owned())
+                    .or_default()
+                    .sigterm_attempted
+                    .insert(process_id.clone());
+                if let Err(error) = self.kill_process_internal(vm_id, &process_id, "SIGTERM") {
+                    tracing::error!(vm_id, process_id, signal = "SIGTERM", error_code = crate::execution::error_code(&error), error = %error, "failed to signal VM process during cleanup");
+                    errors.push(SidecarError::Context {
+                        context: format!("VM {vm_id} process {process_id} SIGTERM"),
+                        source: Box::new(error),
+                    });
+                }
             }
         }
-        self.wait_for_vm_processes_to_exit(vm_id, DISPOSE_VM_SIGTERM_GRACE, events)
-            .await?;
+        let sigterm_deadline = *self
+            .vm_disposal_progress
+            .entry(vm_id.to_owned())
+            .or_default()
+            .sigterm_deadline
+            .get_or_insert_with(|| Instant::now() + DISPOSE_VM_SIGTERM_GRACE);
+        if let Err(error) = self
+            .wait_for_vm_processes_to_exit(vm_id, sigterm_deadline, event_limit)
+            .await
+        {
+            let limit_exhausted = contains_cleanup_event_limit(&error);
+            errors.push(error);
+            if limit_exhausted && !force_teardown_on_limit {
+                return Err(SidecarError::Cleanup {
+                    context: "failed to terminate native VM processes completely",
+                    errors,
+                });
+            }
+        }
 
         if !self.vm_has_active_processes(vm_id) {
-            return Ok(());
+            return if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(SidecarError::Cleanup {
+                    context: "failed to terminate native VM processes completely",
+                    errors,
+                })
+            };
         }
 
         let remaining = self
@@ -1075,42 +1283,87 @@ where
             .map(|vm| vm.active_processes.keys().cloned().collect::<Vec<_>>())
             .unwrap_or_default();
         for process_id in remaining {
-            if self
+            let should_signal = self
                 .vms
                 .get(vm_id)
                 .is_some_and(|vm| vm.active_processes.contains_key(&process_id))
-            {
-                self.kill_process_internal(vm_id, &process_id, "SIGKILL")?;
+                && !self
+                    .vm_disposal_progress
+                    .get(vm_id)
+                    .is_some_and(|progress| progress.sigkill_attempted.contains(&process_id));
+            if should_signal {
+                self.vm_disposal_progress
+                    .entry(vm_id.to_owned())
+                    .or_default()
+                    .sigkill_attempted
+                    .insert(process_id.clone());
+                if let Err(error) = self.kill_process_internal(vm_id, &process_id, "SIGKILL") {
+                    tracing::error!(vm_id, process_id, signal = "SIGKILL", error_code = crate::execution::error_code(&error), error = %error, "failed to signal VM process during cleanup");
+                    errors.push(SidecarError::Context {
+                        context: format!("VM {vm_id} process {process_id} SIGKILL"),
+                        source: Box::new(error),
+                    });
+                }
             }
         }
-        self.wait_for_vm_processes_to_exit(vm_id, DISPOSE_VM_SIGKILL_GRACE, events)
-            .await?;
+        let sigkill_deadline = *self
+            .vm_disposal_progress
+            .entry(vm_id.to_owned())
+            .or_default()
+            .sigkill_deadline
+            .get_or_insert_with(|| Instant::now() + DISPOSE_VM_SIGKILL_GRACE);
+        if let Err(error) = self
+            .wait_for_vm_processes_to_exit(vm_id, sigkill_deadline, event_limit)
+            .await
+        {
+            errors.push(error);
+        }
 
         if self.vm_has_active_processes(vm_id) {
-            return Err(SidecarError::Execution(format!(
+            errors.push(SidecarError::Execution(format!(
                 "failed to terminate active guest executions for VM {vm_id}"
             )));
         }
 
-        Ok(())
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(SidecarError::Cleanup {
+                context: "failed to terminate native VM processes completely",
+                errors,
+            })
+        }
     }
 
     pub(crate) async fn wait_for_vm_processes_to_exit(
         &mut self,
         vm_id: &str,
-        timeout: Duration,
-        events: &mut Vec<EventFrame>,
+        deadline: Instant,
+        event_limit: usize,
     ) -> Result<(), SidecarError> {
         let ownership = self.vm_ownership(vm_id)?;
-        let deadline = Instant::now() + timeout;
 
         while self.vm_has_active_processes(vm_id) && Instant::now() < deadline {
+            // Keep one slot reserved for the final Disposed lifecycle event.
+            // Check before polling so an over-limit event remains in the
+            // bounded process queue and the VM stays live for a retry.
+            ensure_vm_disposal_process_event_capacity(
+                self.vm_disposal_progress
+                    .get(vm_id)
+                    .map_or(0, |progress| progress.pending_events.len()),
+                event_limit,
+                self.config.max_extension_session_cleanup_events,
+            )?;
             let remaining = deadline.saturating_duration_since(Instant::now());
             if let Some(event) = self
                 .poll_event(&ownership, remaining.min(Duration::from_millis(10)))
                 .await?
             {
-                events.push(event);
+                self.vm_disposal_progress
+                    .entry(vm_id.to_owned())
+                    .or_default()
+                    .pending_events
+                    .push(event);
             }
         }
 
@@ -1121,6 +1374,40 @@ where
 // ---------------------------------------------------------------------------
 // Free functions — VM lifecycle helpers
 // ---------------------------------------------------------------------------
+
+fn contains_cleanup_event_limit(error: &SidecarError) -> bool {
+    match error {
+        SidecarError::LimitExceeded {
+            limit: "max_extension_session_cleanup_events",
+            ..
+        } => true,
+        SidecarError::Context { source, .. } => contains_cleanup_event_limit(source),
+        SidecarError::Cleanup { errors, .. } => errors.iter().any(contains_cleanup_event_limit),
+        _ => false,
+    }
+}
+
+fn record_disposing_event(progress: &mut VmDisposalProgress, event: EventFrame) -> bool {
+    if progress.disposing_emitted {
+        false
+    } else {
+        progress.disposing_emitted = true;
+        progress.pending_events.push(event);
+        true
+    }
+}
+
+fn ensure_vm_disposal_process_event_capacity(
+    event_count: usize,
+    event_limit: usize,
+    configured_capacity: usize,
+) -> Result<(), SidecarError> {
+    if event_count >= event_limit.saturating_sub(1) {
+        Err(extension_cleanup_event_limit_error(configured_capacity))
+    } else {
+        Ok(())
+    }
+}
 
 fn native_root_plugin_from_config(
     config: Option<&vm_config::NativeRootFilesystemConfig>,
@@ -1420,6 +1707,7 @@ where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    let mut errors = Vec::new();
     for existing in vm.configuration.mounts.clone() {
         if preserve_agentos_packages && existing.plugin.id == "agentos_packages" {
             continue;
@@ -1445,7 +1733,16 @@ where
             }
             Err(error) if error.code() == "EINVAL" => {}
             Err(error) => {
-                let _ = emit_structured_event(
+                tracing::error!(
+                    vm_id = %context.vm_id,
+                    guest_path = %existing.guest_path,
+                    plugin_id = %existing.plugin.id,
+                    phase,
+                    error_code = error.code(),
+                    error = %error,
+                    "failed to unmount configured filesystem during cleanup"
+                );
+                if let Err(event_error) = emit_structured_event(
                     &context.bridge,
                     &context.vm_id,
                     "filesystem.mount.shutdown_failed",
@@ -1460,16 +1757,36 @@ where
                         (String::from("error_code"), String::from(error.code())),
                         (String::from("error"), error.to_string()),
                     ]),
-                );
+                ) {
+                    tracing::error!(
+                        vm_id = %context.vm_id,
+                        guest_path = %existing.guest_path,
+                        plugin_id = %existing.plugin.id,
+                        phase,
+                        error = %event_error,
+                        "failed to emit configured-mount cleanup failure"
+                    );
+                    if continue_on_error {
+                        errors.push(event_error);
+                    }
+                }
 
                 if !continue_on_error {
                     return Err(kernel_error(error));
                 }
+                errors.push(kernel_error(error));
             }
         }
     }
 
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(SidecarError::Cleanup {
+            context: "failed to shut down configured mounts completely",
+            errors,
+        })
+    }
 }
 
 /// Build the `/opt/agentos` package projection for `configure_vm`.
@@ -2159,16 +2476,18 @@ fn prune_kernel_command_stub(
 #[cfg(test)]
 mod tests {
     use super::{
-        bootstrap_native_root_filesystem, bootstrap_shadow_root, guest_environment_with_overrides,
+        bootstrap_native_root_filesystem, bootstrap_shadow_root,
+        ensure_vm_disposal_process_event_capacity, guest_environment_with_overrides,
         materialize_shadow_root_snapshot_entries, native_root_plugin_from_config,
-        permissions_with_allow_all_defaults, prune_kernel_command_stub, shadow_path_for_guest,
-        DEFAULT_GUEST_PATH_ENV, KERNEL_COMMAND_STUB,
+        permissions_with_allow_all_defaults, prune_kernel_command_stub, record_disposing_event,
+        shadow_path_for_guest, DEFAULT_GUEST_PATH_ENV, KERNEL_COMMAND_STUB,
     };
     use crate::plugins::chunked_local::ChunkedLocalMountPlugin;
     use crate::protocol::{
-        RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemEntryKind,
-        RootFilesystemLowerDescriptor,
+        EventFrame, EventPayload, OwnershipScope, RootFilesystemDescriptor, RootFilesystemEntry,
+        RootFilesystemEntryKind, RootFilesystemLowerDescriptor, VmLifecycleEvent, VmLifecycleState,
     };
+    use crate::service::VmDisposalProgress;
     use agentos_bridge::FilesystemSnapshot;
     use agentos_kernel::kernel::{KernelVm, KernelVmConfig};
     use agentos_kernel::mount_plugin::{FileSystemPluginFactory, OpenFileSystemPluginRequest};
@@ -2177,8 +2496,58 @@ mod tests {
     use agentos_kernel::resource_accounting::ResourceLimits;
     use agentos_kernel::root_fs::{encode_snapshot, FilesystemEntry, RootFilesystemSnapshot};
     use agentos_kernel::vfs::VirtualFileSystem;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, VecDeque};
     use std::fs;
+
+    #[test]
+    fn disposal_event_budget_stops_before_polling_a_refillable_queue() {
+        let event_limit = 8;
+        let mut committed = 1; // Disposing lifecycle event.
+        let mut producer = VecDeque::from(["event"]);
+        let mut consumed = 0;
+
+        for _ in 0..100 {
+            let result =
+                ensure_vm_disposal_process_event_capacity(committed, event_limit, event_limit);
+            if result.is_err() {
+                assert_eq!(
+                    crate::execution::error_code(&result.unwrap_err()),
+                    "limit_exceeded"
+                );
+                break;
+            }
+            producer.pop_front().expect("producer keeps refilling");
+            consumed += 1;
+            committed += 1;
+            producer.push_back("event");
+        }
+
+        assert_eq!(consumed, event_limit - 2);
+        assert_eq!(committed, event_limit - 1);
+        assert_eq!(producer.len(), 1, "overflow event was not consumed");
+    }
+
+    #[test]
+    fn disposal_progress_checkpoints_lifecycle_events_and_signals_across_retry() {
+        let disposing = EventFrame::new(
+            OwnershipScope::vm("conn-1", "session-1", "vm-1"),
+            EventPayload::VmLifecycle(VmLifecycleEvent {
+                state: VmLifecycleState::Disposing,
+            }),
+        );
+        let mut progress = VmDisposalProgress::default();
+
+        assert!(record_disposing_event(&mut progress, disposing.clone()));
+        progress.sigterm_attempted.insert(String::from("process-1"));
+        let first_batch = std::mem::take(&mut progress.pending_events);
+        assert_eq!(first_batch, vec![disposing.clone()]);
+
+        assert!(!record_disposing_event(&mut progress, disposing));
+        assert!(progress.pending_events.is_empty());
+        assert!(progress.sigterm_attempted.contains("process-1"));
+        assert!(progress.sigkill_attempted.insert(String::from("process-1")));
+        assert!(!progress.sigkill_attempted.insert(String::from("process-1")));
+    }
     use std::os::unix::fs::PermissionsExt;
     use std::time::{SystemTime, UNIX_EPOCH};
 

@@ -59,8 +59,12 @@ type BrowserKernel = KernelVm<MountTable>;
 const BROWSER_WORKER_DRIVER: &str = "browser.worker";
 const BROWSER_VM_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_MAX_DEFERRED_EXECUTION_EVENTS_PER_VM: usize = 256;
+pub const DEFAULT_MAX_PENDING_EXECUTION_CLEANUPS_PER_VM: usize = 256;
+pub const DEFAULT_MAX_VMS: usize = 1_024;
+pub const DEFAULT_MAX_SESSIONS: usize = 4_096;
 pub const MAX_BROWSER_PROJECTED_AGENTS_PER_VM: usize = 4_096;
 const DEFERRED_EXECUTION_EVENTS_LIMIT: &str = "max_deferred_execution_events_per_vm";
+const PENDING_EXECUTION_CLEANUPS_LIMIT: &str = "max_pending_execution_cleanups_per_vm";
 const EXTENSION_EVENTS_LIMIT: &str = "available_extension_event_slots";
 const DEFAULT_EXTENSION_EVENT_CAPACITY: usize = 256;
 #[cfg(not(target_arch = "wasm32"))]
@@ -70,9 +74,16 @@ const BROWSER_VM_FETCH_TIMEOUT_MS_ENV: &str = "AGENTOS_TEST_BROWSER_VM_FETCH_TIM
 pub struct BrowserSidecarConfig {
     pub sidecar_id: String,
     pub max_sessions_per_connection: usize,
+    /// Global bound including closing sessions retained for cleanup retry.
+    pub max_sessions: usize,
     /// Bound for events temporarily retained while an extension polls output for
     /// one execution from the bridge's VM-global event stream.
     pub max_deferred_execution_events_per_vm: usize,
+    /// Bound on active execution reservations plus retained, non-routable
+    /// cleanup handles for one VM.
+    pub max_pending_execution_cleanups_per_vm: usize,
+    /// Bound on active VMs plus their reserved non-routable cleanup state.
+    pub max_vms: usize,
 }
 
 impl Default for BrowserSidecarConfig {
@@ -81,7 +92,10 @@ impl Default for BrowserSidecarConfig {
             sidecar_id: String::from("agentos-native-sidecar-browser"),
             max_sessions_per_connection:
                 agentos_native_sidecar_core::DEFAULT_MAX_SESSIONS_PER_CONNECTION,
+            max_sessions: DEFAULT_MAX_SESSIONS,
             max_deferred_execution_events_per_vm: DEFAULT_MAX_DEFERRED_EXECUTION_EVENTS_PER_VM,
+            max_pending_execution_cleanups_per_vm: DEFAULT_MAX_PENDING_EXECUTION_CLEANUPS_PER_VM,
+            max_vms: DEFAULT_MAX_VMS,
         }
     }
 }
@@ -95,6 +109,10 @@ pub enum BrowserSidecarError {
     PackageStateCorrupt(String),
     Kernel(String),
     Bridge(String),
+    Context {
+        context: String,
+        source: Box<BrowserSidecarError>,
+    },
     Cleanup {
         context: &'static str,
         errors: Vec<BrowserSidecarError>,
@@ -123,6 +141,7 @@ impl fmt::Display for BrowserSidecarError {
                 }
                 Ok(())
             }
+            Self::Context { context, source } => write!(f, "{context}: {source}"),
             Self::LimitExceeded {
                 limit,
                 capacity,
@@ -161,6 +180,7 @@ struct VmState {
     active_executions: BTreeSet<String>,
     deferred_execution_events: VecDeque<ExecutionEvent>,
     deferred_execution_events_warned: bool,
+    pending_execution_cleanups_warned: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -222,6 +242,25 @@ struct ExecutionState {
     kernel_pid: u32,
     stdin_write_fd: u32,
     cwd: String,
+}
+
+#[derive(Debug, Clone)]
+struct ExecutionCleanupState {
+    execution: ExecutionState,
+    event_name: &'static str,
+    kernel_reaped: bool,
+    worker_terminated: bool,
+    structured_event_emitted: bool,
+    lifecycle_event_emitted: bool,
+}
+
+#[derive(Debug, Clone)]
+struct StartupCleanupState {
+    vm_id: String,
+    execution_id: Option<String>,
+    kernel_pid: u32,
+    kernel_reaped: bool,
+    bridge_killed: bool,
 }
 
 pub trait BrowserExtension: Send + Sync {
@@ -603,7 +642,12 @@ pub struct BrowserSidecar<B> {
     vms: BTreeMap<String, VmState>,
     contexts: BTreeMap<String, ContextState>,
     executions: BTreeMap<String, ExecutionState>,
+    execution_cleanups: BTreeMap<String, ExecutionCleanupState>,
+    startup_cleanups: BTreeMap<String, StartupCleanupState>,
+    disposing_vms: BTreeSet<String>,
     extensions: BTreeMap<String, Box<dyn BrowserExtension>>,
+    extension_session_cleanups: BTreeMap<(String, String), BTreeSet<String>>,
+    extension_vm_cleanups: BTreeMap<(String, String, String), BTreeSet<String>>,
     #[cfg(test)]
     next_kernel_cleanup_error: Option<BrowserSidecarError>,
 }
@@ -629,7 +673,12 @@ where
             vms: BTreeMap::new(),
             contexts: BTreeMap::new(),
             executions: BTreeMap::new(),
+            execution_cleanups: BTreeMap::new(),
+            startup_cleanups: BTreeMap::new(),
+            disposing_vms: BTreeSet::new(),
             extensions: BTreeMap::new(),
+            extension_session_cleanups: BTreeMap::new(),
+            extension_vm_cleanups: BTreeMap::new(),
             #[cfg(test)]
             next_kernel_cleanup_error: None,
         };
@@ -702,9 +751,17 @@ where
         connection_id: &str,
         session_id: &str,
     ) -> Result<(), BrowserSidecarError> {
-        let mut first_error = None;
+        let cleanup_key = (connection_id.to_string(), session_id.to_string());
+        let mut errors = Vec::new();
         let namespaces = self.extensions.keys().cloned().collect::<Vec<_>>();
         for namespace in namespaces {
+            if self
+                .extension_session_cleanups
+                .get(&cleanup_key)
+                .is_some_and(|completed| completed.contains(&namespace))
+            {
+                continue;
+            }
             let extension = self
                 .extensions
                 .remove(&namespace)
@@ -719,14 +776,24 @@ where
                 );
                 extension.on_session_disposed(&mut context, connection_id, session_id)
             };
-            self.extensions.insert(namespace, extension);
-            if let Err(error) = result {
-                first_error.get_or_insert(error);
+            self.extensions.insert(namespace.clone(), extension);
+            match result {
+                Ok(()) => {
+                    self.extension_session_cleanups
+                        .entry(cleanup_key.clone())
+                        .or_default()
+                        .insert(namespace);
+                }
+                Err(error) => errors.push(error),
             }
         }
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(()),
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(BrowserSidecarError::Cleanup {
+                context: "failed to dispose browser extension session state completely",
+                errors,
+            })
         }
     }
 
@@ -736,9 +803,21 @@ where
         session_id: &str,
         vm_id: &str,
     ) -> Result<(), BrowserSidecarError> {
-        let mut first_error = None;
+        let cleanup_key = (
+            connection_id.to_string(),
+            session_id.to_string(),
+            vm_id.to_string(),
+        );
+        let mut errors = Vec::new();
         let namespaces = self.extensions.keys().cloned().collect::<Vec<_>>();
         for namespace in namespaces {
+            if self
+                .extension_vm_cleanups
+                .get(&cleanup_key)
+                .is_some_and(|completed| completed.contains(&namespace))
+            {
+                continue;
+            }
             let extension = self
                 .extensions
                 .remove(&namespace)
@@ -753,15 +832,47 @@ where
                 );
                 extension.on_vm_disposed(&mut context, connection_id, session_id, vm_id)
             };
-            self.extensions.insert(namespace, extension);
-            if let Err(error) = result {
-                first_error.get_or_insert(error);
+            self.extensions.insert(namespace.clone(), extension);
+            match result {
+                Ok(()) => {
+                    self.extension_vm_cleanups
+                        .entry(cleanup_key.clone())
+                        .or_default()
+                        .insert(namespace);
+                }
+                Err(error) => errors.push(error),
             }
         }
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(()),
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(BrowserSidecarError::Cleanup {
+                context: "failed to dispose browser extension VM state completely",
+                errors,
+            })
         }
+    }
+
+    pub fn finish_extension_vm_cleanup(
+        &mut self,
+        connection_id: &str,
+        session_id: &str,
+        vm_id: &str,
+    ) {
+        self.extension_vm_cleanups.remove(&(
+            connection_id.to_string(),
+            session_id.to_string(),
+            vm_id.to_string(),
+        ));
+    }
+
+    pub fn finish_extension_session_cleanup(&mut self, connection_id: &str, session_id: &str) {
+        self.extension_session_cleanups
+            .remove(&(connection_id.to_string(), session_id.to_string()));
+        self.extension_vm_cleanups
+            .retain(|(owner_connection, owner_session, _), _| {
+                owner_connection != connection_id || owner_session != session_id
+            });
     }
 
     pub fn sidecar_id(&self) -> &str {
@@ -784,6 +895,17 @@ where
         self.vms.len()
     }
 
+    pub fn active_vm_count(&self) -> usize {
+        self.vms
+            .keys()
+            .filter(|vm_id| !self.disposing_vms.contains(*vm_id))
+            .count()
+    }
+
+    pub fn pending_vm_cleanup_count(&self) -> usize {
+        self.disposing_vms.len()
+    }
+
     pub fn context_count(&self, vm_id: &str) -> usize {
         self.vms
             .get(vm_id)
@@ -796,6 +918,18 @@ where
             .get(vm_id)
             .map(|vm| vm.active_executions.len())
             .unwrap_or_default()
+    }
+
+    pub fn pending_execution_cleanup_count(&self, vm_id: &str) -> usize {
+        self.execution_cleanups
+            .values()
+            .filter(|cleanup| cleanup.execution.vm_id == vm_id)
+            .count()
+            + self
+                .startup_cleanups
+                .values()
+                .filter(|cleanup| cleanup.vm_id == vm_id)
+                .count()
     }
 
     pub fn guest_cwd(&self, vm_id: &str) -> Result<String, BrowserSidecarError> {
@@ -1211,6 +1345,24 @@ where
                 "browser sidecar VM already exists: {vm_id}"
             )));
         }
+        if self.vms.len() >= self.config.max_vms {
+            return Err(BrowserSidecarError::LimitExceeded {
+                limit: "max_vms",
+                capacity: self.config.max_vms,
+                how_to_raise:
+                    "dispose active or pending-cleanup VMs or raise BrowserSidecarConfig::max_vms",
+            });
+        }
+        if self.vms.len().saturating_add(1)
+            >= deferred_execution_event_warning_threshold(self.config.max_vms)
+        {
+            tracing::warn!(
+                limit = "max_vms",
+                observed = self.vms.len() + 1,
+                capacity = self.config.max_vms,
+                "browser sidecar VM registry is near its limit; dispose VMs or raise BrowserSidecarConfig::max_vms"
+            );
+        }
 
         self.emit_lifecycle(
             &vm_id,
@@ -1254,6 +1406,7 @@ where
                 active_executions: BTreeSet::new(),
                 deferred_execution_events: VecDeque::new(),
                 deferred_execution_events_warned: false,
+                pending_execution_cleanups_warned: false,
             },
         );
         if let Some(root) = self
@@ -1839,57 +1992,98 @@ where
     }
 
     pub fn dispose_vm(&mut self, vm_id: &str) -> Result<(), BrowserSidecarError> {
-        // Remove the VM bookkeeping up front and take ownership of its state, so
-        // that EVERY exit path below — including a mid-dispose `?` failure while
-        // releasing executions or emitting lifecycle events — reclaims the
-        // VmState (and the BrowserKernel it owns) instead of stranding it in the
-        // `vms` map for the process lifetime.
-        let Some(vm_state) = self.vms.remove(vm_id) else {
-            return Err(BrowserSidecarError::InvalidState(format!(
-                "unknown browser sidecar VM: {vm_id}"
-            )));
-        };
+        self.begin_vm_cleanup(vm_id)?;
+        let vm_state = self
+            .vms
+            .get(vm_id)
+            .expect("VM exists after cleanup transition");
 
-        // Dropping per-context bookkeeping is infallible, so do it
-        // unconditionally; `contexts` can never retain an entry for a VM that
-        // has already been removed from `vms`.
-        for context_id in &vm_state.contexts {
-            self.contexts.remove(context_id);
-        }
-
-        // Release every execution and retain every cleanup error. A single
-        // worker-termination failure must not abandon the
-        // remaining executions (their `ExecutionState`s would otherwise leak),
-        // and `release_execution` already removes each entry from `executions`
-        // before doing fallible bridge work, so the maps stay drained even when
-        // the bridge reports an error.
+        let active_execution_ids = vm_state
+            .active_executions
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        let cleanup_execution_ids = self
+            .execution_cleanups
+            .iter()
+            .filter(|(_, cleanup)| cleanup.execution.vm_id == vm_id)
+            .map(|(execution_id, _)| execution_id.clone())
+            .collect::<Vec<_>>();
+        let startup_cleanup_ids = self
+            .startup_cleanups
+            .iter()
+            .filter(|(_, cleanup)| cleanup.vm_id == vm_id)
+            .map(|(cleanup_id, _)| cleanup_id.clone())
+            .collect::<Vec<_>>();
         let mut errors = Vec::new();
-        for execution_id in &vm_state.active_executions {
-            if let Err(error) = self.release_execution(execution_id, "browser.worker.disposed") {
+        for execution_id in active_execution_ids
+            .into_iter()
+            .chain(cleanup_execution_ids)
+        {
+            if let Err(error) = self.release_execution(&execution_id, "browser.worker.disposed") {
+                errors.push(error);
+            }
+        }
+        for cleanup_id in startup_cleanup_ids {
+            if let Err(error) = self.drive_startup_cleanup(&cleanup_id) {
                 errors.push(error);
             }
         }
 
-        // Emit the terminal lifecycle event regardless of the outcome above; the
-        // VM is already gone from the registry either way.
-        if let Err(error) = self.emit_lifecycle(
-            vm_id,
-            LifecycleState::Terminated,
-            Some(String::from(
-                "browser sidecar VM disposed on the main thread",
-            )),
-        ) {
-            errors.push(error);
+        let has_pending_executions = self
+            .execution_cleanups
+            .values()
+            .any(|cleanup| cleanup.execution.vm_id == vm_id)
+            || self
+                .startup_cleanups
+                .values()
+                .any(|cleanup| cleanup.vm_id == vm_id);
+        if !has_pending_executions {
+            if let Err(error) = self.emit_lifecycle(
+                vm_id,
+                LifecycleState::Terminated,
+                Some(String::from(
+                    "browser sidecar VM disposed on the main thread",
+                )),
+            ) {
+                errors.push(error);
+            } else {
+                let context_ids = self
+                    .vms
+                    .get(vm_id)
+                    .map(|vm| vm.contexts.iter().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default();
+                for context_id in context_ids {
+                    self.contexts.remove(&context_id);
+                }
+                self.vms.remove(vm_id);
+                self.disposing_vms.remove(vm_id);
+            }
         }
 
-        match errors.len() {
-            0 => Ok(()),
-            1 => Err(errors.pop().expect("one browser VM cleanup error")),
-            _ => Err(BrowserSidecarError::Cleanup {
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(BrowserSidecarError::Cleanup {
                 context: "failed to dispose browser VM completely",
                 errors,
-            }),
+            })
         }
+    }
+
+    /// Make a VM non-routable before an outer extension/session cleanup begins.
+    pub fn begin_vm_cleanup(&mut self, vm_id: &str) -> Result<(), BrowserSidecarError> {
+        if !self.vms.contains_key(vm_id) {
+            return Err(BrowserSidecarError::InvalidState(format!(
+                "unknown browser sidecar VM: {vm_id}"
+            )));
+        }
+        self.disposing_vms.insert(vm_id.to_string());
+        Ok(())
+    }
+
+    pub fn vm_is_disposing(&self, vm_id: &str) -> bool {
+        self.disposing_vms.contains(vm_id)
     }
 
     pub fn create_javascript_context(
@@ -1942,7 +2136,7 @@ where
         request: StartExecutionRequest,
         options: BrowserExecutionOptions,
     ) -> Result<StartedExecution, BrowserSidecarError> {
-        self.ensure_vm(&request.vm_id)?;
+        self.ensure_execution_admission(&request.vm_id)?;
 
         let context = self
             .contexts
@@ -1963,7 +2157,7 @@ where
         }
 
         let guest_cwd = request.cwd.clone();
-        let (kernel_pid, stdin_write_fd) = {
+        let pending_process = {
             let vm = self.vm_mut(&request.vm_id)?;
             let kernel_handle = vm
                 .kernel
@@ -1985,11 +2179,32 @@ where
                 .map_err(Self::kernel_error)?;
             let kernel_pid = kernel_handle.pid();
             match Self::configure_process_stdio(&mut vm.kernel, kernel_pid) {
-                Ok(stdin_write_fd) => (kernel_pid, stdin_write_fd),
+                Ok(stdin_write_fd) => Ok((kernel_pid, stdin_write_fd)),
                 Err(error) => {
-                    Self::cleanup_pending_kernel_process(&mut vm.kernel, kernel_pid)?;
-                    return Err(error);
+                    let cleanup = Self::cleanup_pending_kernel_process(&mut vm.kernel, kernel_pid);
+                    Err((kernel_pid, error, cleanup.err()))
                 }
+            }
+        };
+        let (kernel_pid, stdin_write_fd) = match pending_process {
+            Ok(process) => process,
+            Err((_kernel_pid, primary, None)) => return Err(primary),
+            Err((kernel_pid, primary, Some(cleanup))) => {
+                let key = format!("startup-kernel:{}:{kernel_pid}", request.vm_id);
+                self.startup_cleanups.insert(
+                    key,
+                    StartupCleanupState {
+                        vm_id: request.vm_id.clone(),
+                        execution_id: None,
+                        kernel_pid,
+                        kernel_reaped: false,
+                        bridge_killed: true,
+                    },
+                );
+                return Err(BrowserSidecarError::Cleanup {
+                    context: "failed to configure and roll back browser execution stdio",
+                    errors: vec![primary, cleanup],
+                });
             }
         };
 
@@ -2010,9 +2225,27 @@ where
         let started = match self.bridge.start_execution(request.clone()) {
             Ok(started) => started,
             Err(error) => {
-                let vm = self.vm_mut(&request.vm_id)?;
-                Self::cleanup_pending_kernel_process(&mut vm.kernel, kernel_pid)?;
-                return Err(Self::bridge_error(error));
+                let primary = Self::bridge_error(error);
+                match self.reap_execution_kernel_process(&request.vm_id, kernel_pid) {
+                    Ok(()) => return Err(primary),
+                    Err(cleanup) => {
+                        let key = format!("startup-kernel:{}:{kernel_pid}", request.vm_id);
+                        self.startup_cleanups.insert(
+                            key,
+                            StartupCleanupState {
+                                vm_id: request.vm_id.clone(),
+                                execution_id: None,
+                                kernel_pid,
+                                kernel_reaped: false,
+                                bridge_killed: true,
+                            },
+                        );
+                        return Err(BrowserSidecarError::Cleanup {
+                            context: "failed to start and roll back browser execution",
+                            errors: vec![primary, cleanup],
+                        });
+                    }
+                }
             }
         };
 
@@ -2028,16 +2261,25 @@ where
         }) {
             Ok(worker) => worker,
             Err(error) => {
-                let vm = self.vm_mut(&request.vm_id)?;
-                Self::cleanup_pending_kernel_process(&mut vm.kernel, kernel_pid)?;
-                self.bridge
-                    .kill_execution(KillExecutionRequest {
-                        vm_id: request.vm_id,
-                        execution_id: started.execution_id,
-                        signal: agentos_bridge::ExecutionSignal::Kill,
-                    })
-                    .map_err(Self::bridge_error)?;
-                return Err(Self::bridge_error(error));
+                let primary = Self::bridge_error(error);
+                let cleanup_key = format!("startup-execution:{}", started.execution_id);
+                self.startup_cleanups.insert(
+                    cleanup_key.clone(),
+                    StartupCleanupState {
+                        vm_id: request.vm_id.clone(),
+                        execution_id: Some(started.execution_id.clone()),
+                        kernel_pid,
+                        kernel_reaped: false,
+                        bridge_killed: false,
+                    },
+                );
+                return match self.drive_startup_cleanup(&cleanup_key) {
+                    Ok(()) => Err(primary),
+                    Err(cleanup) => Err(BrowserSidecarError::Cleanup {
+                        context: "failed to create worker and roll back browser execution",
+                        errors: vec![primary, cleanup],
+                    }),
+                };
             }
         };
 
@@ -2087,6 +2329,12 @@ where
         }
 
         Ok(started)
+    }
+
+    pub fn ensure_execution_admission(&mut self, vm_id: &str) -> Result<(), BrowserSidecarError> {
+        self.ensure_vm(vm_id)?;
+        self.retry_startup_cleanups_for_vm(vm_id)?;
+        self.reserve_execution_cleanup_capacity(vm_id)
     }
 
     fn resolve_wasm_permission_tier(
@@ -2179,6 +2427,73 @@ where
         Ok(())
     }
 
+    fn retry_startup_cleanups_for_vm(&mut self, vm_id: &str) -> Result<(), BrowserSidecarError> {
+        let keys = self
+            .startup_cleanups
+            .iter()
+            .filter(|(_, cleanup)| cleanup.vm_id == vm_id)
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        let mut errors = Vec::new();
+        for key in keys {
+            if let Err(error) = self.drive_startup_cleanup(&key) {
+                errors.push(error);
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(BrowserSidecarError::Cleanup {
+                context: "failed to retry browser execution startup cleanup",
+                errors,
+            })
+        }
+    }
+
+    fn drive_startup_cleanup(&mut self, key: &str) -> Result<(), BrowserSidecarError> {
+        let Some(mut cleanup) = self.startup_cleanups.get(key).cloned() else {
+            return Ok(());
+        };
+        let mut errors = Vec::new();
+        if !cleanup.kernel_reaped {
+            match self.reap_execution_kernel_process(&cleanup.vm_id, cleanup.kernel_pid) {
+                Ok(()) => cleanup.kernel_reaped = true,
+                Err(error) => errors.push(error),
+            }
+        }
+        if !cleanup.bridge_killed {
+            let execution_id = cleanup
+                .execution_id
+                .as_ref()
+                .expect("bridge cleanup requires an execution id");
+            match self
+                .bridge
+                .kill_execution(KillExecutionRequest {
+                    vm_id: cleanup.vm_id.clone(),
+                    execution_id: execution_id.clone(),
+                    signal: agentos_bridge::ExecutionSignal::Kill,
+                })
+                .map_err(Self::bridge_error)
+            {
+                Ok(()) => cleanup.bridge_killed = true,
+                Err(error) => errors.push(error),
+            }
+        }
+        self.startup_cleanups
+            .insert(key.to_string(), cleanup.clone());
+        if cleanup.kernel_reaped && cleanup.bridge_killed {
+            self.startup_cleanups.remove(key);
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(BrowserSidecarError::Cleanup {
+                context: "failed to clean up partial browser execution startup",
+                errors,
+            })
+        }
+    }
+
     pub fn write_stdin(
         &mut self,
         request: WriteExecutionStdinRequest,
@@ -2238,21 +2553,33 @@ where
         vm_id: &str,
         execution_id: &str,
     ) -> Result<(), BrowserSidecarError> {
-        if !self.executions.contains_key(execution_id) {
+        if !self.executions.contains_key(execution_id)
+            && !self.execution_cleanups.contains_key(execution_id)
+        {
             return Ok(());
         }
-        let killed = self.kill_execution(KillExecutionRequest {
-            vm_id: vm_id.to_string(),
-            execution_id: execution_id.to_string(),
-            signal: ExecutionSignal::Kill,
-        });
-        let released = self.release_execution(execution_id, "browser.worker.acp_aborted");
-        match (killed, released) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(kill), Err(release)) => Err(BrowserSidecarError::InvalidState(format!(
-                "failed to kill browser ACP execution: {kill}; failed to release it: {release}"
-            ))),
-            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        let mut errors = Vec::new();
+        if self.executions.contains_key(execution_id) {
+            if let Err(error) = self.kill_execution(KillExecutionRequest {
+                vm_id: vm_id.to_string(),
+                execution_id: execution_id.to_string(),
+                signal: ExecutionSignal::Kill,
+            }) {
+                errors.push(BrowserSidecarError::InvalidState(format!(
+                    "execution {execution_id} abort signal: {error}"
+                )));
+            }
+        }
+        if let Err(error) = self.release_execution(execution_id, "browser.worker.acp_aborted") {
+            errors.push(error);
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(BrowserSidecarError::Cleanup {
+                context: "failed to abort browser execution completely",
+                errors,
+            })
         }
     }
 
@@ -2534,76 +2861,193 @@ where
         execution_id: &str,
         event_name: &'static str,
     ) -> Result<(), BrowserSidecarError> {
-        let Some(execution) = self.executions.remove(execution_id) else {
-            return Ok(());
-        };
-
-        if let Some(vm_state) = self.vms.get_mut(&execution.vm_id) {
-            vm_state.active_executions.remove(execution_id);
-            vm_state.signal_states.remove(execution_id);
+        if !self.execution_cleanups.contains_key(execution_id) {
+            let Some(execution) = self.executions.remove(execution_id) else {
+                return Ok(());
+            };
+            if let Some(vm_state) = self.vms.get_mut(&execution.vm_id) {
+                vm_state.active_executions.remove(execution_id);
+                vm_state.signal_states.remove(execution_id);
+            }
+            self.execution_cleanups.insert(
+                execution_id.to_string(),
+                ExecutionCleanupState {
+                    execution,
+                    event_name,
+                    kernel_reaped: false,
+                    worker_terminated: false,
+                    structured_event_emitted: false,
+                    lifecycle_event_emitted: false,
+                },
+            );
         }
-
-        let vm_id = execution.vm_id;
-        let kernel_cleanup = self.reap_execution_kernel_process(&vm_id, execution.kernel_pid);
-        let runtime = execution.worker.runtime;
-        let worker_id = execution.worker.worker_id;
-        let worker_cleanup = self
-            .bridge
-            .terminate_worker(BrowserWorkerHandleRequest {
-                vm_id: vm_id.clone(),
-                execution_id: execution_id.to_string(),
-                worker_id: worker_id.clone(),
-            })
-            .map_err(Self::bridge_error);
-
-        match (kernel_cleanup, worker_cleanup) {
-            (Ok(()), Ok(())) => {}
-            (Err(kernel_error), Ok(())) => return Err(kernel_error),
-            (Ok(()), Err(worker_error)) => return Err(worker_error),
-            (Err(kernel_error), Err(worker_error)) => {
-                return Err(BrowserSidecarError::Cleanup {
-                    context: "failed to release browser execution completely",
-                    errors: vec![kernel_error, worker_error],
-                });
+        let mut cleanup = self
+            .execution_cleanups
+            .get(execution_id)
+            .cloned()
+            .expect("active execution was transitioned to cleanup state");
+        let vm_id = cleanup.execution.vm_id.clone();
+        let worker_id = cleanup.execution.worker.worker_id.clone();
+        let mut errors = Vec::new();
+        if !cleanup.kernel_reaped {
+            match self.reap_execution_kernel_process(&vm_id, cleanup.execution.kernel_pid) {
+                Ok(()) => cleanup.kernel_reaped = true,
+                Err(error) => errors.push(BrowserSidecarError::Kernel(format!(
+                    "execution {execution_id} kernel reap: {error}"
+                ))),
             }
         }
-
-        if let Err(error) = self.emit_structured(
-            &vm_id,
-            event_name,
-            BTreeMap::from([
-                (String::from("execution_id"), execution_id.to_string()),
-                (String::from("runtime"), runtime_label(runtime).to_string()),
-                (String::from("worker_id"), worker_id),
-            ]),
-        ) {
-            tracing::error!(vm_id, execution_id, %error, "failed to emit browser execution-release diagnostic after cleanup");
+        if !cleanup.worker_terminated {
+            match self
+                .bridge
+                .terminate_worker(BrowserWorkerHandleRequest {
+                    vm_id: vm_id.clone(),
+                    execution_id: execution_id.to_string(),
+                    worker_id: worker_id.clone(),
+                })
+                .map_err(Self::bridge_error)
+            {
+                Ok(()) => cleanup.worker_terminated = true,
+                Err(error) => errors.push(BrowserSidecarError::Bridge(format!(
+                    "execution {execution_id} worker {worker_id} termination: {error}"
+                ))),
+            }
         }
-
-        let next_state = if self.active_worker_count(&vm_id) == 0 {
-            LifecycleState::Ready
+        if cleanup.kernel_reaped && cleanup.worker_terminated {
+            if !cleanup.structured_event_emitted {
+                match self.emit_structured(
+                    &vm_id,
+                    cleanup.event_name,
+                    BTreeMap::from([
+                        (String::from("execution_id"), execution_id.to_string()),
+                        (
+                            String::from("runtime"),
+                            runtime_label(cleanup.execution.worker.runtime).to_string(),
+                        ),
+                        (String::from("worker_id"), worker_id.clone()),
+                    ]),
+                ) {
+                    Ok(()) => cleanup.structured_event_emitted = true,
+                    Err(error) => errors.push(error),
+                }
+            }
+            if self.disposing_vms.contains(&vm_id) {
+                cleanup.lifecycle_event_emitted = true;
+            } else if !cleanup.lifecycle_event_emitted {
+                let next_state = if self.active_worker_count(&vm_id) == 0 {
+                    LifecycleState::Ready
+                } else {
+                    LifecycleState::Busy
+                };
+                match self.emit_lifecycle(
+                    &vm_id,
+                    next_state,
+                    Some(String::from(
+                        "browser sidecar worker bookkeeping was updated on the main thread",
+                    )),
+                ) {
+                    Ok(()) => cleanup.lifecycle_event_emitted = true,
+                    Err(error) => errors.push(error),
+                }
+            }
+        }
+        let complete = cleanup.kernel_reaped
+            && cleanup.worker_terminated
+            && cleanup.structured_event_emitted
+            && cleanup.lifecycle_event_emitted;
+        if complete {
+            self.execution_cleanups.remove(execution_id);
         } else {
-            LifecycleState::Busy
-        };
-        if let Err(error) = self.emit_lifecycle(
-            &vm_id,
-            next_state,
-            Some(String::from(
-                "browser sidecar worker bookkeeping was updated on the main thread",
-            )),
-        ) {
-            tracing::error!(vm_id, execution_id, %error, "failed to emit browser lifecycle after execution cleanup");
+            self.execution_cleanups
+                .insert(execution_id.to_string(), cleanup);
         }
-        Ok(())
+        self.refresh_execution_cleanup_warning(&vm_id);
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(BrowserSidecarError::Cleanup {
+                context: "failed to release browser execution completely",
+                errors,
+            })
+        }
     }
 
     fn ensure_vm(&self, vm_id: &str) -> Result<(), BrowserSidecarError> {
-        if self.vms.contains_key(vm_id) {
+        if self.vms.contains_key(vm_id) && !self.disposing_vms.contains(vm_id) {
             Ok(())
+        } else if self.disposing_vms.contains(vm_id) {
+            Err(BrowserSidecarError::InvalidState(format!(
+                "browser sidecar VM {vm_id} is being disposed"
+            )))
         } else {
             Err(BrowserSidecarError::InvalidState(format!(
                 "unknown browser sidecar VM: {vm_id}"
             )))
+        }
+    }
+
+    fn reserve_execution_cleanup_capacity(
+        &mut self,
+        vm_id: &str,
+    ) -> Result<(), BrowserSidecarError> {
+        let capacity = self.config.max_pending_execution_cleanups_per_vm;
+        let active = self
+            .vms
+            .get(vm_id)
+            .map(|vm| vm.active_executions.len())
+            .unwrap_or_default();
+        let cleaning = self
+            .execution_cleanups
+            .values()
+            .filter(|cleanup| cleanup.execution.vm_id == vm_id)
+            .count();
+        let starting_cleanup = self
+            .startup_cleanups
+            .values()
+            .filter(|cleanup| cleanup.vm_id == vm_id)
+            .count();
+        let observed = active
+            .saturating_add(cleaning)
+            .saturating_add(starting_cleanup);
+        if observed >= capacity {
+            return Err(BrowserSidecarError::LimitExceeded {
+                limit: PENDING_EXECUTION_CLEANUPS_LIMIT,
+                capacity,
+                how_to_raise: "finish pending execution cleanup or raise BrowserSidecarConfig::max_pending_execution_cleanups_per_vm",
+            });
+        }
+        let warning_threshold = deferred_execution_event_warning_threshold(capacity);
+        if observed.saturating_add(1) >= warning_threshold {
+            let vm = self
+                .vms
+                .get_mut(vm_id)
+                .expect("VM exists after execution cleanup reservation validation");
+            if !vm.pending_execution_cleanups_warned {
+                vm.pending_execution_cleanups_warned = true;
+                tracing::warn!(
+                    vm_id,
+                    limit = PENDING_EXECUTION_CLEANUPS_LIMIT,
+                    observed = observed + 1,
+                    capacity,
+                    "browser sidecar execution cleanup reservations are near their limit; finish cleanup or raise BrowserSidecarConfig::max_pending_execution_cleanups_per_vm"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn refresh_execution_cleanup_warning(&mut self, vm_id: &str) {
+        let capacity = self.config.max_pending_execution_cleanups_per_vm;
+        let cleaning = self
+            .execution_cleanups
+            .values()
+            .filter(|cleanup| cleanup.execution.vm_id == vm_id)
+            .count();
+        if let Some(vm) = self.vms.get_mut(vm_id) {
+            let observed = vm.active_executions.len().saturating_add(cleaning);
+            if observed < deferred_execution_event_warning_threshold(capacity) {
+                vm.pending_execution_cleanups_warned = false;
+            }
         }
     }
 
@@ -2968,9 +3412,9 @@ where
         self.contexts.len()
     }
 
-    /// Test-only: number of entries still tracked in the global `executions` map.
+    /// Test-only: active plus non-routable cleanup execution records.
     pub(crate) fn test_total_execution_count(&self) -> usize {
-        self.executions.len()
+        self.executions.len() + self.execution_cleanups.len()
     }
 
     /// Test-only: inject a context directly into both the global `contexts` map
@@ -3242,11 +3686,10 @@ mod tests {
         }
     }
 
-    // A mid-dispose worker-termination failure must still drain the VM, context,
-    // and execution bookkeeping for that id — otherwise the VmState (holding a
-    // BrowserKernel) and ContextState leak for the process lifetime.
+    // A mid-dispose worker-termination failure keeps only non-routable cleanup
+    // ownership, then an exact retry releases the retained worker and VM.
     #[test]
-    fn dispose_vm_drains_maps_even_when_worker_termination_fails() {
+    fn dispose_vm_retries_retained_worker_cleanup_before_releasing_vm() {
         let bridge = TerminateFailingBridge {
             fail_terminate: true,
             ..TerminateFailingBridge::default()
@@ -3263,22 +3706,76 @@ mod tests {
         assert_eq!(sidecar.test_total_context_count(), 1);
         assert_eq!(sidecar.test_total_execution_count(), 1);
 
-        // The forced terminate_worker failure surfaces as an error, but the
-        // dispose must still have reclaimed every entry for `vm-leak`.
         let result = sidecar.dispose_vm("vm-leak");
         assert!(result.is_err(), "forced terminate failure should surface");
 
-        assert_eq!(sidecar.vm_count(), 0, "VmState leaked after failed dispose");
+        assert_eq!(
+            sidecar.vm_count(),
+            1,
+            "cleanup retains the VM kernel handle"
+        );
         assert_eq!(
             sidecar.test_total_context_count(),
-            0,
-            "ContextState leaked after failed dispose"
+            1,
+            "cleanup retains the context only until execution cleanup completes"
         );
         assert_eq!(
             sidecar.test_total_execution_count(),
-            0,
-            "ExecutionState leaked after failed dispose"
+            1,
+            "failed worker handle must remain retryable"
         );
+        assert_eq!(sidecar.active_worker_count("vm-leak"), 0);
+
+        sidecar.bridge_mut().fail_terminate = false;
+        sidecar
+            .dispose_vm("vm-leak")
+            .expect("cleanup retry succeeds");
+        assert_eq!(sidecar.vm_count(), 0);
+        assert_eq!(sidecar.test_total_context_count(), 0);
+        assert_eq!(sidecar.test_total_execution_count(), 0);
+        assert_eq!(sidecar.bridge().terminate_requests.len(), 2);
+    }
+
+    #[test]
+    fn retained_vm_cleanup_consumes_vm_capacity_until_retry_succeeds() {
+        let bridge = TerminateFailingBridge {
+            fail_terminate: true,
+            ..TerminateFailingBridge::default()
+        };
+        let mut sidecar = BrowserSidecar::new(
+            bridge,
+            BrowserSidecarConfig {
+                max_vms: 1,
+                ..BrowserSidecarConfig::default()
+            },
+        );
+        sidecar
+            .create_vm(KernelVmConfig::new("vm-retained"))
+            .expect("first VM fits");
+        sidecar.test_insert_execution("vm-retained", "exec-retained");
+        sidecar
+            .dispose_vm("vm-retained")
+            .expect_err("failed worker cleanup retains VM ownership");
+
+        let error = sidecar
+            .create_vm(KernelVmConfig::new("vm-blocked"))
+            .expect_err("retained cleanup remains charged to max_vms");
+        assert!(matches!(
+            error,
+            BrowserSidecarError::LimitExceeded {
+                limit: "max_vms",
+                capacity: 1,
+                ..
+            }
+        ));
+
+        sidecar.bridge_mut().fail_terminate = false;
+        sidecar
+            .dispose_vm("vm-retained")
+            .expect("retry releases retained VM capacity");
+        sidecar
+            .create_vm(KernelVmConfig::new("vm-after-retry"))
+            .expect("VM admission succeeds after cleanup");
     }
 
     #[test]
@@ -3297,7 +3794,7 @@ mod tests {
             .release_execution("exec-cleanup", "browser.worker.test_released")
             .expect_err("kernel cleanup failure must surface");
         assert!(error.to_string().contains("forced kernel cleanup failure"));
-        assert_eq!(sidecar.test_total_execution_count(), 0);
+        assert_eq!(sidecar.test_total_execution_count(), 1);
         assert_eq!(sidecar.active_worker_count("vm-cleanup"), 0);
         assert_eq!(
             sidecar.bridge().terminate_requests,
@@ -3307,10 +3804,15 @@ mod tests {
                 worker_id: String::from("worker-exec-cleanup"),
             }]
         );
+        sidecar
+            .release_execution("exec-cleanup", "browser.worker.test_released")
+            .expect("retry reaps the kernel without terminating the worker twice");
+        assert_eq!(sidecar.test_total_execution_count(), 0);
+        assert_eq!(sidecar.bridge().terminate_requests.len(), 1);
     }
 
     #[test]
-    fn release_execution_preserves_both_cleanup_errors_after_draining_maps() {
+    fn release_execution_preserves_both_errors_and_retries_incomplete_phases() {
         let mut sidecar = BrowserSidecar::new(
             TerminateFailingBridge {
                 fail_terminate: true,
@@ -3330,9 +3832,15 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("forced kernel cleanup failure"));
         assert!(message.contains("forced terminate failure"));
-        assert_eq!(sidecar.test_total_execution_count(), 0);
+        assert_eq!(sidecar.test_total_execution_count(), 1);
         assert_eq!(sidecar.active_worker_count("vm-cleanup"), 0);
         assert_eq!(sidecar.bridge().terminate_requests.len(), 1);
+        sidecar.bridge_mut().fail_terminate = false;
+        sidecar
+            .release_execution("exec-cleanup", "browser.worker.test_released")
+            .expect("retry completes both failed phases");
+        assert_eq!(sidecar.test_total_execution_count(), 0);
+        assert_eq!(sidecar.bridge().terminate_requests.len(), 2);
     }
 }
 

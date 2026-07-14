@@ -254,7 +254,37 @@ fn browser_close_session_disposes_vms_is_idempotent_and_rejects_cross_owner() {
     ));
 }
 
-struct FailingSessionDisposeExtension;
+struct FailingSessionDisposeExtension {
+    attempts: Arc<Mutex<usize>>,
+}
+
+struct FailingVmDisposeExtension {
+    attempts: Arc<Mutex<usize>>,
+}
+
+impl BrowserExtension for FailingVmDisposeExtension {
+    fn namespace(&self) -> &str {
+        "dev.agentos.test.vm-close-failure"
+    }
+
+    fn on_vm_disposed(
+        &self,
+        _context: &mut BrowserExtensionContext<'_>,
+        _connection_id: &str,
+        _session_id: &str,
+        _vm_id: &str,
+    ) -> Result<(), BrowserSidecarError> {
+        let mut attempts = self.attempts.lock().expect("attempt lock");
+        *attempts += 1;
+        if *attempts == 1 {
+            Err(BrowserSidecarError::Bridge(String::from(
+                "transient VM teardown failure",
+            )))
+        } else {
+            Ok(())
+        }
+    }
+}
 
 impl BrowserExtension for FailingSessionDisposeExtension {
     fn namespace(&self) -> &str {
@@ -267,14 +297,20 @@ impl BrowserExtension for FailingSessionDisposeExtension {
         _connection_id: &str,
         _session_id: &str,
     ) -> Result<(), BrowserSidecarError> {
-        Err(BrowserSidecarError::Bridge(String::from(
-            "deterministic session teardown failure",
-        )))
+        let mut attempts = self.attempts.lock().expect("attempt lock");
+        *attempts += 1;
+        if *attempts == 1 {
+            Err(BrowserSidecarError::Bridge(String::from(
+                "transient session teardown failure",
+            )))
+        } else {
+            Ok(())
+        }
     }
 }
 
 #[test]
-fn browser_failed_close_replays_the_terminal_failure_and_releases_admission() {
+fn browser_failed_close_retries_cleanup_before_recording_terminal_success() {
     let codec = WireFrameCodec::default();
     let mut dispatcher = BrowserWireDispatcher::with_config(
         RecordingBridge::default(),
@@ -283,9 +319,12 @@ fn browser_failed_close_replays_the_terminal_failure_and_releases_admission() {
             ..BrowserSidecarConfig::default()
         },
     );
+    let attempts = Arc::new(Mutex::new(0));
     dispatcher
         .sidecar_mut()
-        .register_extension(Box::new(FailingSessionDisposeExtension))
+        .register_extension(Box::new(FailingSessionDisposeExtension {
+            attempts: attempts.clone(),
+        }))
         .expect("register failing teardown extension");
     let session = open_wire_session(&codec, &mut dispatcher);
     let OwnershipScope::SessionOwnership(session) = session else {
@@ -302,7 +341,6 @@ fn browser_failed_close_replays_the_terminal_failure_and_releases_admission() {
         }),
     };
     let first = dispatch(&codec, &mut dispatcher, close_request(3));
-    let retry = dispatch(&codec, &mut dispatcher, close_request(4));
     let failure = |payload: ResponsePayload| match payload {
         ResponsePayload::RejectedResponse(rejected) => {
             assert_eq!(rejected.code, "close_session_failed");
@@ -310,18 +348,49 @@ fn browser_failed_close_replays_the_terminal_failure_and_releases_admission() {
         }
         other => panic!("expected close_session_failed, got {other:?}"),
     };
-    assert_eq!(
-        failure(first.payload),
-        failure(retry.payload),
-        "a retry must replay the terminal teardown failure"
+    assert!(failure(first.payload).contains("transient session teardown failure"));
+    assert_eq!(*attempts.lock().expect("attempt lock"), 1);
+
+    let blocked_reopen = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 4,
+            ownership: OwnershipScope::ConnectionOwnership(ConnectionOwnership {
+                connection_id: session.connection_id.clone(),
+            }),
+            payload: RequestPayload::OpenSessionRequest(OpenSessionRequest {
+                placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
+                    pool: None,
+                }),
+            }),
+        },
     );
+    assert!(matches!(
+        blocked_reopen.payload,
+        ResponsePayload::RejectedResponse(_)
+    ));
+
+    let retry = dispatch(&codec, &mut dispatcher, close_request(5));
+    assert!(matches!(
+        retry.payload,
+        ResponsePayload::SessionClosedResponse(_)
+    ));
+    assert_eq!(*attempts.lock().expect("attempt lock"), 2);
+    let replay = dispatch(&codec, &mut dispatcher, close_request(6));
+    assert!(matches!(
+        replay.payload,
+        ResponsePayload::SessionClosedResponse(_)
+    ));
+    assert_eq!(*attempts.lock().expect("attempt lock"), 2);
 
     let reopened = dispatch(
         &codec,
         &mut dispatcher,
         RequestFrame {
             schema: protocol_schema(),
-            request_id: 5,
+            request_id: 7,
             ownership: OwnershipScope::ConnectionOwnership(ConnectionOwnership {
                 connection_id: session.connection_id,
             }),
@@ -336,6 +405,65 @@ fn browser_failed_close_replays_the_terminal_failure_and_releases_admission() {
         reopened.payload,
         ResponsePayload::SessionOpenedResponse(_)
     ));
+}
+
+#[test]
+fn browser_failed_vm_close_makes_the_vm_non_routable_until_cleanup_retry() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let attempts = Arc::new(Mutex::new(0));
+    dispatcher
+        .sidecar_mut()
+        .register_extension(Box::new(FailingVmDisposeExtension {
+            attempts: attempts.clone(),
+        }))
+        .expect("register failing VM teardown extension");
+    let (_, ownership) = create_wire_vm(&codec, &mut dispatcher);
+    let OwnershipScope::VmOwnership(owner) = ownership.clone() else {
+        unreachable!();
+    };
+    let close = |request_id| RequestFrame {
+        schema: protocol_schema(),
+        request_id,
+        ownership: OwnershipScope::ConnectionOwnership(ConnectionOwnership {
+            connection_id: owner.connection_id.clone(),
+        }),
+        payload: RequestPayload::CloseSessionRequest(CloseSessionRequest {
+            session_id: owner.session_id.clone(),
+        }),
+    };
+
+    let first = dispatch(&codec, &mut dispatcher, close(4));
+    assert!(matches!(
+        first.payload,
+        ResponsePayload::RejectedResponse(ref rejected)
+            if rejected.code == "close_session_failed"
+    ));
+    let routed = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 5,
+            ownership,
+            payload: RequestPayload::BootstrapRootFilesystemRequest(
+                BootstrapRootFilesystemRequest {
+                    entries: Vec::new(),
+                },
+            ),
+        },
+    );
+    assert!(matches!(
+        routed.payload,
+        ResponsePayload::RejectedResponse(ref rejected) if rejected.code == "vm_disposing"
+    ));
+
+    let retry = dispatch(&codec, &mut dispatcher, close(6));
+    assert!(matches!(
+        retry.payload,
+        ResponsePayload::SessionClosedResponse(_)
+    ));
+    assert_eq!(*attempts.lock().expect("attempt lock"), 2);
 }
 
 #[test]
@@ -411,6 +539,65 @@ fn browser_open_session_enforces_configured_bound() {
         reopened.payload,
         ResponsePayload::SessionOpenedResponse(_)
     ));
+}
+
+#[test]
+fn browser_open_session_enforces_global_bound_across_connections() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::with_config(
+        RecordingBridge::default(),
+        BrowserSidecarConfig {
+            max_sessions_per_connection: 2,
+            max_sessions: 1,
+            ..BrowserSidecarConfig::default()
+        },
+    );
+    let _first = open_wire_session(&codec, &mut dispatcher);
+
+    let auth = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 20,
+            ownership: OwnershipScope::ConnectionOwnership(ConnectionOwnership {
+                connection_id: String::from("second-client"),
+            }),
+            payload: RequestPayload::AuthenticateRequest(AuthenticateRequest {
+                client_name: String::from("browser-global-session-limit-test"),
+                auth_token: String::from("test-token"),
+                protocol_version: PROTOCOL_VERSION,
+                bridge_version: agentos_bridge::bridge_contract().version,
+            }),
+        },
+    );
+    let ResponsePayload::AuthenticatedResponse(authenticated) = auth.payload else {
+        panic!("unexpected auth response: {:?}", auth.payload);
+    };
+    let rejected = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 21,
+            ownership: OwnershipScope::ConnectionOwnership(ConnectionOwnership {
+                connection_id: authenticated.connection_id,
+            }),
+            payload: RequestPayload::OpenSessionRequest(OpenSessionRequest {
+                placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
+                    pool: None,
+                }),
+            }),
+        },
+    );
+    let ResponsePayload::RejectedResponse(rejected) = rejected.payload else {
+        panic!("expected global browser session limit rejection");
+    };
+    assert_eq!(rejected.code, "session_limit_exceeded");
+    assert!(rejected.message.contains("global session limit 1"));
+    assert!(rejected
+        .message
+        .contains("BrowserSidecarConfig::max_sessions"));
 }
 
 struct WireExtension;
@@ -589,6 +776,77 @@ fn execute_wire_process(
         },
     )
     .payload
+}
+
+#[test]
+fn browser_wire_execution_cap_rejects_before_creating_contexts() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::with_config(
+        RecordingBridge::default(),
+        BrowserSidecarConfig {
+            max_pending_execution_cleanups_per_vm: 1,
+            ..BrowserSidecarConfig::default()
+        },
+    );
+    let (vm_id, ownership) = create_wire_vm(&codec, &mut dispatcher);
+    assert!(matches!(
+        execute_wire_process(&codec, &mut dispatcher, ownership.clone(), 10, "proc-1"),
+        ResponsePayload::ProcessStartedResponse(_)
+    ));
+    assert_eq!(dispatcher.sidecar_mut().context_count(&vm_id), 1);
+
+    for request_id in 11..14 {
+        let rejected = execute_wire_process(
+            &codec,
+            &mut dispatcher,
+            ownership.clone(),
+            request_id,
+            &format!("proc-{request_id}"),
+        );
+        assert!(matches!(
+            rejected,
+            ResponsePayload::RejectedResponse(ref response)
+                if response.code == "execute_failed"
+                    && response.message.contains("max_pending_execution_cleanups_per_vm")
+        ));
+        assert_eq!(dispatcher.sidecar_mut().context_count(&vm_id), 1);
+    }
+}
+
+#[test]
+fn browser_wire_rejects_cross_session_vm_routes_before_side_effects() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let (owner_vm_id, owner_scope) = create_wire_vm(&codec, &mut dispatcher);
+    let (_, attacker_scope) = create_wire_vm(&codec, &mut dispatcher);
+    let OwnershipScope::VmOwnership(attacker) = attacker_scope else {
+        unreachable!();
+    };
+    let forged = OwnershipScope::VmOwnership(VmOwnership {
+        connection_id: attacker.connection_id,
+        session_id: attacker.session_id,
+        vm_id: owner_vm_id,
+    });
+    let response = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 20,
+            ownership: forged,
+            payload: RequestPayload::BootstrapRootFilesystemRequest(
+                BootstrapRootFilesystemRequest {
+                    entries: Vec::new(),
+                },
+            ),
+        },
+    );
+    assert!(matches!(
+        response.payload,
+        ResponsePayload::RejectedResponse(ref rejected)
+            if rejected.code == "ownership_mismatch"
+    ));
+    assert!(matches!(owner_scope, OwnershipScope::VmOwnership(_)));
 }
 
 #[test]

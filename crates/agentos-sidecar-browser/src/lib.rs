@@ -45,6 +45,8 @@ pub struct BrowserAcpDiagnostics {
 pub struct BrowserAcpResourceCounts {
     pub sessions: usize,
     pub pending_interactions: usize,
+    pub active_process_routes: usize,
+    pub pending_cleanup_routes: usize,
     pub process_routes: usize,
 }
 
@@ -59,6 +61,8 @@ impl BrowserAcpDiagnostics {
         Ok(BrowserAcpResourceCounts {
             sessions: core.session_count(),
             pending_interactions: core.pending_interaction_count(),
+            active_process_routes: executions.values().filter(|route| !route.cleaning).count(),
+            pending_cleanup_routes: executions.values().filter(|route| route.cleaning).count(),
             process_routes: executions.len(),
         })
     }
@@ -95,16 +99,16 @@ impl BrowserAcpExtension {
             let core_owner_id = owner.core_owner_id();
             let mut host = BrowserAcpHost::new(context, owner, &mut executions);
             if let Err(error) = core.dispose_owner(&mut host, &core_owner_id) {
-                errors.push(error.to_string());
+                errors.push(to_browser_error(error));
             }
         }
         if errors.is_empty() {
             Ok(())
         } else {
-            Err(BrowserSidecarError::InvalidState(format!(
-                "failed to dispose browser ACP owner state: {}",
-                errors.join("; ")
-            )))
+            Err(BrowserSidecarError::Cleanup {
+                context: "failed to dispose browser ACP owner state completely",
+                errors,
+            })
         }
     }
 }
@@ -116,7 +120,17 @@ impl Default for BrowserAcpExtension {
 }
 
 fn to_browser_error(error: AcpCoreError) -> BrowserSidecarError {
-    BrowserSidecarError::InvalidState(error.to_string())
+    match error {
+        AcpCoreError::Cleanup { context, errors } => BrowserSidecarError::Cleanup {
+            context,
+            errors: errors.into_iter().map(to_browser_error).collect(),
+        },
+        AcpCoreError::Context { context, source } => BrowserSidecarError::Context {
+            context,
+            source: Box::new(to_browser_error(*source)),
+        },
+        error => BrowserSidecarError::InvalidState(error.to_string()),
+    }
 }
 
 impl BrowserExtension for BrowserAcpExtension {
@@ -602,6 +616,9 @@ mod tests {
                         execution_id: execution_id.to_string(),
                         context_id: format!("context-{process_id}"),
                         owner: owner.clone(),
+                        cleaning: false,
+                        execution_cleanup_complete: false,
+                        context_cleanup_complete: false,
                     },
                 );
             }
@@ -752,6 +769,9 @@ mod tests {
                 execution_id: String::from("execution-a"),
                 context_id: String::from("context-a"),
                 owner: owner.clone(),
+                cleaning: false,
+                execution_cleanup_complete: false,
+                context_cleanup_complete: false,
             },
         )]);
         let mut acp_host =
@@ -789,6 +809,9 @@ mod tests {
                 execution_id: String::from("execution-a"),
                 context_id: String::from("context-a"),
                 owner: owner.clone(),
+                cleaning: false,
+                execution_cleanup_complete: false,
+                context_cleanup_complete: false,
             },
         )]);
         let mut host = BrowserAcpHost::new(&mut context, owner, &mut executions);
@@ -858,6 +881,9 @@ mod tests {
                     execution_id: execution_id.clone(),
                     context_id: format!("context-{index}"),
                     owner: owner.clone(),
+                    cleaning: false,
+                    execution_cleanup_complete: false,
+                    context_cleanup_complete: false,
                 },
             );
             extension_host.execution_output.push_back(
@@ -878,7 +904,7 @@ mod tests {
                 },
             )
             .expect("orderly browser close");
-            host.release_agent_route(&process_id)
+            host.finalize_session_cleanup(&session_id, &process_id)
                 .expect("absent browser route release is idempotent");
             drop(host);
             drop(context);

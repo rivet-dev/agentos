@@ -46,6 +46,7 @@ const INITIALIZE_TIMEOUT_MS: u64 = 10_000;
 const SESSION_NEW_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_ACP_PENDING_EVENT_LIMIT: usize = 4_096;
 const DEFAULT_ACP_PENDING_EVENT_BYTES_LIMIT: usize = 32 * 1024 * 1024;
+const DEFAULT_ACP_PROCESS_ROUTE_LIMIT: usize = 256;
 const MAX_ADAPTER_RESTARTS: u32 = 3;
 
 /// Transcript-continuation preamble armed by the resume fallback tier; matches the
@@ -60,6 +61,16 @@ enum PreparedSessionConfig {
 enum AdapterRestartError {
     Unsupported,
     Failed(AcpCoreError),
+}
+
+enum OwnerCleanupAction {
+    Abort {
+        process_id: String,
+    },
+    Finalize {
+        session_id: String,
+        process_id: String,
+    },
 }
 
 impl From<AcpCoreError> for AdapterRestartError {
@@ -165,7 +176,21 @@ pub struct AcpCore {
     /// In-flight orderly closes. Embedding adapters drive teardown waits so the
     /// shared core is never locked while an agent exits.
     pending_closes: BTreeMap<String, PendingClose>,
+    /// Non-routable process handles retained only while abort cleanup is
+    /// retryable. Each entry replaces one pending interaction, so admission is
+    /// covered by the process-route limit.
+    pending_cleanups: BTreeMap<(String, String), Option<AcpResponse>>,
+    pending_restart_cleanups: BTreeMap<(String, String), PendingRestartCleanup>,
+    /// Cleanup completions that also evict a close-owned session tombstone.
+    cleanup_session_removals: BTreeSet<(String, String)>,
+    /// Orderly-close finalizers are distinct from process aborts: signals and
+    /// waits have already completed and must not repeat when host resource
+    /// cleanup is retried.
+    pending_finalizations: BTreeMap<(String, String), String>,
     pending_events: Vec<PendingAcpEvent>,
+    default_process_route_limit: usize,
+    process_route_limits: BTreeMap<String, usize>,
+    process_route_limit_warned: BTreeSet<String>,
     default_pending_event_limit: usize,
     default_pending_event_bytes_limit: usize,
     pending_event_limits: BTreeMap<String, (usize, usize)>,
@@ -189,7 +214,14 @@ impl Default for AcpCore {
             pending_resumes: BTreeMap::new(),
             pending_restarts: BTreeMap::new(),
             pending_closes: BTreeMap::new(),
+            pending_cleanups: BTreeMap::new(),
+            pending_restart_cleanups: BTreeMap::new(),
+            cleanup_session_removals: BTreeSet::new(),
+            pending_finalizations: BTreeMap::new(),
             pending_events: Vec::new(),
+            default_process_route_limit: DEFAULT_ACP_PROCESS_ROUTE_LIMIT,
+            process_route_limits: BTreeMap::new(),
+            process_route_limit_warned: BTreeSet::new(),
             default_pending_event_limit: DEFAULT_ACP_PENDING_EVENT_LIMIT,
             default_pending_event_bytes_limit: DEFAULT_ACP_PENDING_EVENT_BYTES_LIMIT,
             pending_event_limits: BTreeMap::new(),
@@ -217,6 +249,9 @@ struct PendingPrompt {
     /// response boundary. Notifications and prompt text from the cancelled turn
     /// are discarded so they cannot contaminate a later prompt on this session.
     cancelled: bool,
+    /// Once an adapter exit is reported, the prompt route becomes cleanup-only.
+    /// The nested option preserves an unknown exit status for restart reporting.
+    cleanup_restart_exit_code: Option<Option<i32>>,
 }
 
 /// State of one in-flight resumable `create_session` handshake.
@@ -267,6 +302,18 @@ struct PendingRestart {
     init_result: Option<Map<String, Value>>,
     agent_capabilities: Option<Value>,
     restart: AcpAdapterRestartState,
+    cleanup_only: bool,
+}
+
+#[derive(Debug, Clone)]
+struct PendingRestartCleanup {
+    pending: PendingRestart,
+    outcome: &'static str,
+    detail: String,
+    include_exit_error: bool,
+    /// The host abort committed. A later event-capacity failure must retry only
+    /// the canonical completion, never signal the replacement process twice.
+    host_cleanup_complete: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -333,8 +380,134 @@ impl AcpCore {
         Self::default()
     }
 
+    /// Construct with a per-owner bound for live and cleanup-only ACP process
+    /// routes. A route remains charged until its host cleanup succeeds.
+    pub fn with_process_route_limit(limit: usize) -> Result<Self, AcpCoreError> {
+        if limit == 0 {
+            return Err(AcpCoreError::InvalidState(String::from(
+                "ACP process route limit must be greater than zero",
+            )));
+        }
+        Ok(Self {
+            default_process_route_limit: limit,
+            ..Self::default()
+        })
+    }
+
+    pub fn set_process_route_limit(
+        &mut self,
+        owner_connection_id: &str,
+        limit: usize,
+    ) -> Result<(), AcpCoreError> {
+        if limit == 0 {
+            return Err(AcpCoreError::InvalidState(String::from(
+                "ACP process route limit must be greater than zero",
+            )));
+        }
+        let observed = self.owned_process_ids(owner_connection_id).len();
+        if limit < observed {
+            return Err(AcpCoreError::InvalidState(format!(
+                "ACP process route limit {limit} is below this owner's current usage {observed}; finish or dispose sessions before lowering the limit",
+            )));
+        }
+        self.process_route_limits
+            .insert(owner_connection_id.to_string(), limit);
+        self.process_route_limit_warned.remove(owner_connection_id);
+        Ok(())
+    }
+
     pub fn session_count(&self) -> usize {
         self.sessions.len()
+    }
+
+    fn process_route_limit(&self, owner_connection_id: &str) -> usize {
+        self.process_route_limits
+            .get(owner_connection_id)
+            .copied()
+            .unwrap_or(self.default_process_route_limit)
+    }
+
+    fn owned_process_ids(&self, owner_connection_id: &str) -> BTreeSet<String> {
+        let mut process_ids = BTreeSet::new();
+        process_ids.extend(
+            self.sessions
+                .values()
+                .filter(|session| {
+                    session.owner_connection_id == owner_connection_id && !session.closed
+                })
+                .map(|session| session.process_id.clone()),
+        );
+        process_ids.extend(
+            self.pending_creates
+                .iter()
+                .filter(|(_, pending)| pending.owner_connection_id == owner_connection_id)
+                .map(|(process_id, _)| process_id.clone()),
+        );
+        process_ids.extend(
+            self.pending_resumes
+                .iter()
+                .filter(|(_, pending)| pending.owner_connection_id == owner_connection_id)
+                .map(|(process_id, _)| process_id.clone()),
+        );
+        process_ids.extend(
+            self.pending_restarts
+                .iter()
+                .filter(|(_, pending)| pending.owner_connection_id == owner_connection_id)
+                .map(|(process_id, _)| process_id.clone()),
+        );
+        process_ids.extend(
+            self.pending_prompts
+                .iter()
+                .filter(|(_, pending)| pending.owner_connection_id == owner_connection_id)
+                .map(|(process_id, _)| process_id.clone()),
+        );
+        process_ids.extend(
+            self.pending_closes
+                .iter()
+                .filter(|(_, pending)| pending.owner_connection_id == owner_connection_id)
+                .map(|(process_id, _)| process_id.clone()),
+        );
+        process_ids.extend(
+            self.pending_cleanups
+                .keys()
+                .filter(|(owner, _)| owner == owner_connection_id)
+                .map(|(_, process_id)| process_id.clone()),
+        );
+        process_ids.extend(
+            self.pending_finalizations
+                .keys()
+                .filter(|(owner, _)| owner == owner_connection_id)
+                .map(|(_, process_id)| process_id.clone()),
+        );
+        process_ids
+    }
+
+    fn ensure_process_route_capacity(
+        &mut self,
+        owner_connection_id: &str,
+        additional: usize,
+    ) -> Result<(), AcpCoreError> {
+        let current = self.owned_process_ids(owner_connection_id).len();
+        let limit = self.process_route_limit(owner_connection_id);
+        if current.saturating_add(additional) > limit {
+            return Err(AcpCoreError::LimitExceeded(format!(
+                "ACP process route limit exceeded for one owner: {current} routes remain owned and the limit is {limit}; retry retained cleanup or raise AcpCore::with_process_route_limit",
+            )));
+        }
+        if current.saturating_add(additional) >= limit.saturating_mul(3) / 4
+            && self
+                .process_route_limit_warned
+                .insert(owner_connection_id.to_string())
+        {
+            tracing::warn!(
+                owner_connection_id,
+                current,
+                additional,
+                limit,
+                "ACP process route usage is near its configured limit"
+            );
+        }
+        Ok(())
     }
 
     /// Whether one exact owner currently owns a live session. Embedding wrappers
@@ -688,6 +861,7 @@ impl AcpCore {
             .find(|session| {
                 session.owner_connection_id == owner_connection_id
                     && session.process_id == request.process_id
+                    && !session.closed
             })
             .map(|session| (session.session_id.clone(), session.agent_type.clone()))
             .or_else(|| {
@@ -714,7 +888,8 @@ impl AcpCore {
                 self.pending_restarts
                     .get(&request.process_id)
                     .and_then(|pending| {
-                        (pending.owner_connection_id == owner_connection_id)
+                        (pending.owner_connection_id == owner_connection_id
+                            && !pending.cleanup_only)
                             .then(|| (pending.session_id.clone(), pending.agent_type.clone()))
                     })
             })
@@ -726,6 +901,9 @@ impl AcpCore {
                             return None;
                         }
                         let session = self.session(owner_connection_id, &pending.session_id)?;
+                        if pending.cleanup_restart_exit_code.is_some() || session.closed {
+                            return None;
+                        }
                         Some((pending.session_id.clone(), session.agent_type.clone()))
                     })
             })
@@ -737,6 +915,9 @@ impl AcpCore {
                             return None;
                         }
                         let session = self.session(owner_connection_id, &pending.session_id)?;
+                        if session.closed {
+                            return None;
+                        }
                         Some((pending.session_id.clone(), session.agent_type.clone()))
                     })
             })
@@ -818,7 +999,9 @@ impl AcpCore {
             sessions: self
                 .sessions
                 .values()
-                .filter(|session| session.owner_connection_id == caller_connection_id)
+                .filter(|session| {
+                    session.owner_connection_id == caller_connection_id && !session.closed
+                })
                 .map(|session| AcpSessionEntry {
                     session_id: session.session_id.clone(),
                     agent_type: session.agent_type.clone(),
@@ -836,6 +1019,17 @@ impl AcpCore {
         caller_connection_id: &str,
         request: &AcpCloseSessionRequest,
     ) -> Result<AcpResponse, AcpCoreError> {
+        if self.finish_replacement_cleanup_before_close(
+            host,
+            caller_connection_id,
+            &request.session_id,
+        )? {
+            return Ok(AcpResponse::AcpSessionClosedResponse(
+                AcpSessionClosedResponse {
+                    session_id: request.session_id.clone(),
+                },
+            ));
+        }
         let Some(session) = self
             .session(caller_connection_id, &request.session_id)
             .cloned()
@@ -846,6 +1040,11 @@ impl AcpCore {
                 },
             ));
         };
+        if let Some(response) =
+            self.finish_retained_abort_before_close(host, caller_connection_id, &session)?
+        {
+            return Ok(response);
+        }
         // Once an authorized close starts, no in-flight request may continue to
         // mutate this session even if process cleanup has to be retried.
         self.pending_prompts.remove(&session.process_id);
@@ -885,15 +1084,10 @@ impl AcpCore {
                 Err(error) => return Err(error),
             }
         }
-        host.release_agent_route(&session.process_id)?;
-
-        self.remove_session(caller_connection_id, &request.session_id);
-
-        Ok(AcpResponse::AcpSessionClosedResponse(
-            AcpSessionClosedResponse {
-                session_id: request.session_id.clone(),
-            },
-        ))
+        if let Some(session) = self.session_mut(caller_connection_id, &request.session_id) {
+            session.closed = true;
+        }
+        self.finish_host_finalization(host, caller_connection_id, &session)
     }
 
     /// Begin an orderly close without waiting inside the core. The embedding
@@ -904,6 +1098,17 @@ impl AcpCore {
         caller_connection_id: &str,
         request: &AcpCloseSessionRequest,
     ) -> Result<AcpResponse, AcpCoreError> {
+        if self.finish_replacement_cleanup_before_close(
+            host,
+            caller_connection_id,
+            &request.session_id,
+        )? {
+            return Ok(AcpResponse::AcpSessionClosedResponse(
+                AcpSessionClosedResponse {
+                    session_id: request.session_id.clone(),
+                },
+            ));
+        }
         let Some(session) = self
             .session(caller_connection_id, &request.session_id)
             .cloned()
@@ -914,6 +1119,11 @@ impl AcpCore {
                 },
             ));
         };
+        if let Some(response) =
+            self.finish_retained_abort_before_close(host, caller_connection_id, &session)?
+        {
+            return Ok(response);
+        }
         if self.pending_closes.contains_key(&session.process_id) {
             return self.pending_response(session.process_id);
         }
@@ -935,7 +1145,7 @@ impl AcpCore {
             }
         };
         if adapter_already_gone {
-            return self.finish_resumable_close(host, &session.process_id, &session);
+            return self.finish_resumable_close(host, &session);
         }
         self.pending_closes.insert(
             session.process_id.clone(),
@@ -948,15 +1158,118 @@ impl AcpCore {
         self.pending_response(session.process_id)
     }
 
+    fn finish_retained_abort_before_close<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        owner_id: &str,
+        session: &AcpSessionRecord,
+    ) -> Result<Option<AcpResponse>, AcpCoreError> {
+        let cleanup_key = (owner_id.to_string(), session.process_id.clone());
+        if self.pending_cleanups.contains_key(&cleanup_key) {
+            self.drive_pending_cleanup(host, &cleanup_key)?;
+            self.remove_session(owner_id, &session.session_id);
+            return Ok(Some(AcpResponse::AcpSessionClosedResponse(
+                AcpSessionClosedResponse {
+                    session_id: session.session_id.clone(),
+                },
+            )));
+        }
+        let prompt_cleanup = self
+            .pending_prompts
+            .get(&session.process_id)
+            .is_some_and(|pending| pending.cleanup_restart_exit_code.is_some());
+        let restart_cleanup = self
+            .pending_restarts
+            .get(&session.process_id)
+            .is_some_and(|pending| pending.cleanup_only);
+        if !prompt_cleanup && !restart_cleanup {
+            return Ok(None);
+        }
+        if let Err(error) = host.abort_agent(&session.process_id) {
+            return Err(AcpCoreError::Cleanup {
+                context: "failed to finish retained ACP abort before session close",
+                errors: vec![error],
+            });
+        }
+        self.pending_prompts.remove(&session.process_id);
+        self.pending_restarts.remove(&session.process_id);
+        self.remove_session(owner_id, &session.session_id);
+        self.process_route_limit_warned.remove(owner_id);
+        Ok(Some(AcpResponse::AcpSessionClosedResponse(
+            AcpSessionClosedResponse {
+                session_id: session.session_id.clone(),
+            },
+        )))
+    }
+
+    /// Replacement adapters can outlive removal of the old session record while
+    /// their failed abort is retained. Close is keyed by session id, so discover
+    /// those exact cleanup tombstones before treating an absent session as an
+    /// idempotent success.
+    fn finish_replacement_cleanup_before_close<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        owner_id: &str,
+        session_id: &str,
+    ) -> Result<bool, AcpCoreError> {
+        let cleanup_only_processes = self
+            .pending_restarts
+            .iter()
+            .filter(|(_, pending)| {
+                pending.cleanup_only
+                    && pending.owner_connection_id == owner_id
+                    && pending.session_id == session_id
+            })
+            .map(|(process_id, _)| process_id.clone())
+            .collect::<Vec<_>>();
+        for process_id in cleanup_only_processes {
+            self.promote_cleanup_only_restart(&process_id)
+                .expect("cleanup-only replacement was selected for promotion");
+        }
+        let cleanup_keys = self
+            .pending_restart_cleanups
+            .iter()
+            .filter(|((owner, _), completion)| {
+                owner == owner_id && completion.pending.session_id == session_id
+            })
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        if cleanup_keys.is_empty() {
+            return Ok(false);
+        }
+        for cleanup_key in cleanup_keys {
+            self.drive_pending_cleanup(host, &cleanup_key)?;
+        }
+        self.remove_session(owner_id, session_id);
+        self.process_route_limit_warned.remove(owner_id);
+        Ok(true)
+    }
+
     fn finish_resumable_close<H: AcpHost>(
         &mut self,
         host: &mut H,
-        process_id: &str,
         session: &AcpSessionRecord,
     ) -> Result<AcpResponse, AcpCoreError> {
-        host.release_agent_route(process_id)?;
-        self.pending_closes.remove(process_id);
-        self.remove_session(&session.owner_connection_id, &session.session_id);
+        if let Some(session) = self.session_mut(&session.owner_connection_id, &session.session_id) {
+            session.closed = true;
+        }
+        self.finish_host_finalization(host, &session.owner_connection_id, session)
+    }
+
+    fn finish_host_finalization<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        owner_id: &str,
+        session: &AcpSessionRecord,
+    ) -> Result<AcpResponse, AcpCoreError> {
+        let cleanup_key = (owner_id.to_string(), session.process_id.clone());
+        self.pending_finalizations
+            .insert(cleanup_key.clone(), session.session_id.clone());
+        host.finalize_session_cleanup(&session.session_id, &session.process_id)?;
+        self.pending_finalizations.remove(&cleanup_key);
+        self.pending_closes.remove(&session.process_id);
+        self.remove_session(owner_id, &session.session_id);
+        self.process_route_limit_warned.remove(owner_id);
         Ok(AcpResponse::AcpSessionClosedResponse(
             AcpSessionClosedResponse {
                 session_id: session.session_id.clone(),
@@ -974,6 +1287,7 @@ impl AcpCore {
     ) -> Result<AcpResponse, AcpCoreError> {
         let request = ResolvedAcpCreateSessionRequest::from(request.clone());
         let resolved = resolve_agent(host, &request.agent_type)?;
+        self.ensure_process_route_capacity(caller_connection_id, 1)?;
         let process_id = self.allocate_process_id("acp-agent");
         let (args, env) = prepare_agent_launch(
             host,
@@ -1009,8 +1323,13 @@ impl AcpCore {
             match self.bootstrap_session(host, caller_connection_id, &request, &process_id) {
                 Ok(bootstrap) => bootstrap,
                 Err(error) => {
-                    abort_agent_for_cleanup(host, &process_id, "blocking create bootstrap failure");
-                    return Err(error);
+                    return Err(self.with_abort_cleanup(
+                        host,
+                        caller_connection_id,
+                        &process_id,
+                        "blocking create bootstrap failure",
+                        error,
+                    ));
                 }
             };
 
@@ -1037,15 +1356,24 @@ impl AcpCore {
             .session(caller_connection_id, &session.session_id)
             .is_some()
         {
-            abort_agent_for_cleanup(host, &process_id, "blocking create session collision");
-            return Err(AcpCoreError::InvalidState(format!(
-                "session id collision: {}",
-                session.session_id
-            )));
+            let error =
+                AcpCoreError::InvalidState(format!("session id collision: {}", session.session_id));
+            return Err(self.with_abort_cleanup(
+                host,
+                caller_connection_id,
+                &process_id,
+                "blocking create session collision",
+                error,
+            ));
         }
         if let Err(error) = host.bind_session(&session.session_id, &process_id) {
-            abort_agent_for_cleanup(host, &process_id, "blocking create bind failure");
-            return Err(error);
+            return Err(self.with_abort_cleanup(
+                host,
+                caller_connection_id,
+                &process_id,
+                "blocking create bind failure",
+                error,
+            ));
         }
         let response = AcpResponse::AcpSessionCreatedResponse(session.created_response());
         let session_id = session.session_id.clone();
@@ -1061,8 +1389,13 @@ impl AcpCore {
             self.push_session_notification_batch(caller_connection_id, &notifications)
         {
             self.remove_session(caller_connection_id, &session_id);
-            abort_agent_for_cleanup(host, &process_id, "blocking create event commit failure");
-            return Err(error);
+            return Err(self.with_abort_cleanup(
+                host,
+                caller_connection_id,
+                &process_id,
+                "blocking create event commit failure",
+                error,
+            ));
         }
         Ok(response)
     }
@@ -1081,6 +1414,7 @@ impl AcpCore {
     ) -> Result<String, AcpCoreError> {
         let request = ResolvedAcpCreateSessionRequest::from(request.clone());
         let resolved = resolve_agent(host, &request.agent_type)?;
+        self.ensure_process_route_capacity(caller_connection_id, 1)?;
         let client_capabilities =
             parse_json_text(&request.client_capabilities, "clientCapabilities")?;
         let mcp_servers = parse_json_text(&request.mcp_servers, "mcpServers")?;
@@ -1125,8 +1459,13 @@ impl AcpCore {
             },
         });
         if let Err(error) = write_json_line(host, &process_id, &initialize) {
-            abort_agent_for_cleanup(host, &process_id, "resumable create initial write failure");
-            return Err(error);
+            return Err(self.with_abort_cleanup(
+                host,
+                caller_connection_id,
+                &process_id,
+                "resumable create initial write failure",
+                error,
+            ));
         }
 
         self.pending_creates.insert(
@@ -1160,6 +1499,7 @@ impl AcpCore {
     ) -> Result<String, AcpCoreError> {
         let request = ResolvedAcpResumeSessionRequest::from(request.clone());
         let resolved = resolve_agent(host, &request.agent_type)?;
+        self.ensure_process_route_capacity(caller_connection_id, 1)?;
         let client_capabilities =
             parse_json_text(DEFAULT_ACP_CLIENT_CAPABILITIES, "clientCapabilities")?;
         let process_id = self.allocate_process_id("acp-agent");
@@ -1201,8 +1541,13 @@ impl AcpCore {
             },
         });
         if let Err(error) = write_json_line(host, &process_id, &initialize) {
-            abort_agent_for_cleanup(host, &process_id, "resumable resume initial write failure");
-            return Err(error);
+            return Err(self.with_abort_cleanup(
+                host,
+                caller_connection_id,
+                &process_id,
+                "resumable resume initial write failure",
+                error,
+            ));
         }
 
         self.pending_resumes.insert(
@@ -1294,11 +1639,18 @@ impl AcpCore {
         let pending = self.pending_creates.remove(process_id).ok_or_else(|| {
             AcpCoreError::InvalidState(format!("no pending create_session for {process_id}"))
         })?;
+        let owner_connection_id = pending.owner_connection_id.clone();
         let result = self.advance_create(host, process_id, pending, chunk);
-        if result.is_err() {
-            abort_agent_for_cleanup(host, process_id, "resumable create failure");
+        match result {
+            Ok(step) => Ok(step),
+            Err(error) => Err(self.with_abort_cleanup(
+                host,
+                &owner_connection_id,
+                process_id,
+                "resumable create failure",
+                error,
+            )),
         }
-        result
     }
 
     fn advance_create<H: AcpHost>(
@@ -1433,11 +1785,18 @@ impl AcpCore {
         let pending = self.pending_resumes.remove(process_id).ok_or_else(|| {
             AcpCoreError::InvalidState(format!("no pending resume_session for {process_id}"))
         })?;
+        let owner_connection_id = pending.owner_connection_id.clone();
         let result = self.advance_resume(host, process_id, pending, chunk);
-        if result.is_err() {
-            abort_agent_for_cleanup(host, process_id, "resumable resume failure");
+        match result {
+            Ok(step) => Ok(step),
+            Err(error) => Err(self.with_abort_cleanup(
+                host,
+                &owner_connection_id,
+                process_id,
+                "resumable resume failure",
+                error,
+            )),
         }
-        result
     }
 
     fn advance_resume<H: AcpHost>(
@@ -1641,6 +2000,9 @@ impl AcpCore {
         let session = self
             .session(caller_connection_id, &request.session_id)
             .ok_or_else(unknown)?;
+        if session.closed {
+            return Err(unknown());
+        }
         let process_id = session.process_id.clone();
         if self.pending_prompts.contains_key(&process_id) {
             return Err(AcpCoreError::Conflict(format!(
@@ -1689,6 +2051,7 @@ impl AcpCore {
                 notification_bytes: 0,
                 pending_preamble,
                 cancelled: false,
+                cleanup_restart_exit_code: None,
             },
         );
         Ok(process_id)
@@ -1700,23 +2063,39 @@ impl AcpCore {
         process_id: &str,
         chunk: &[u8],
     ) -> Result<ResumeStep, AcpCoreError> {
+        if self
+            .pending_prompts
+            .get(process_id)
+            .is_some_and(|pending| pending.cleanup_restart_exit_code.is_some())
+        {
+            return Err(AcpCoreError::InvalidState(format!(
+                "ACP process {process_id} is retained for cleanup and is no longer routable"
+            )));
+        }
         let pending = self.pending_prompts.remove(process_id).ok_or_else(|| {
             AcpCoreError::InvalidState(format!("no pending session request for {process_id}"))
         })?;
         let session_id = pending.session_id.clone();
         let owner_connection_id = pending.owner_connection_id.clone();
         let pending_preamble = pending.pending_preamble.clone();
-        let result = self.advance_prompt(host, process_id, pending, chunk);
-        if result.is_err() {
-            abort_agent_for_cleanup(host, process_id, "resumable session request failure");
-            if let Some(session) = self.session_mut(&owner_connection_id, &session_id) {
-                session.closed = true;
-                if session.pending_preamble.is_none() {
-                    session.pending_preamble = pending_preamble;
+        match self.advance_prompt(host, process_id, pending, chunk) {
+            Ok(step) => Ok(step),
+            Err(error) => {
+                if let Some(session) = self.session_mut(&owner_connection_id, &session_id) {
+                    session.closed = true;
+                    if session.pending_preamble.is_none() {
+                        session.pending_preamble = pending_preamble;
+                    }
                 }
+                Err(self.with_abort_cleanup(
+                    host,
+                    &owner_connection_id,
+                    process_id,
+                    "resumable session request failure",
+                    error,
+                ))
             }
         }
-        result
     }
 
     fn feed_restart<H: AcpHost>(
@@ -1725,6 +2104,15 @@ impl AcpCore {
         process_id: &str,
         chunk: &[u8],
     ) -> Result<ResumeStep, AcpCoreError> {
+        if self
+            .pending_restarts
+            .get(process_id)
+            .is_some_and(|pending| pending.cleanup_only)
+        {
+            return Err(AcpCoreError::InvalidState(format!(
+                "ACP process {process_id} is retained for cleanup and is no longer routable"
+            )));
+        }
         let pending = self.pending_restarts.remove(process_id).ok_or_else(|| {
             AcpCoreError::InvalidState(format!("no pending adapter restart for {process_id}"))
         })?;
@@ -1734,8 +2122,24 @@ impl AcpCore {
         match self.advance_restart(host, process_id, pending, chunk) {
             Ok(step) => Ok(step),
             Err(error) => {
-                abort_agent_for_cleanup(host, process_id, "resumable adapter restart failure");
+                let detail = error.to_string();
+                let error = self.with_abort_cleanup(
+                    host,
+                    &owner_connection_id,
+                    process_id,
+                    "resumable adapter restart failure",
+                    error,
+                );
                 self.remove_session(&owner_connection_id, &session_id);
+                if matches!(error, AcpCoreError::Cleanup { .. }) {
+                    let cleanup_key = (owner_connection_id.clone(), process_id.to_string());
+                    if !self.pending_restart_cleanups.contains_key(&cleanup_key) {
+                        self.retain_restart_cleanup_completion(
+                            process_id, failure, "failed", detail, true,
+                        );
+                    }
+                    return Err(error);
+                }
                 self.finish_pending_restart_failure(&failure, &error.to_string())
                     .map(ResumeStep::Done)
             }
@@ -1800,12 +2204,26 @@ impl AcpCore {
                     validate_initialize_result(&init_result, pending.restart.protocol_version)?;
                     let agent_capabilities = init_result.get("agentCapabilities").cloned();
                     let Some(method) = native_resume_method(agent_capabilities.as_ref()) else {
-                        abort_agent_for_cleanup(
+                        let cleanup = self.with_abort_cleanup(
                             host,
+                            &pending.owner_connection_id,
                             process_id,
                             "resumable adapter restart unsupported",
+                            AcpCoreError::Unsupported(String::from(
+                                "adapter does not advertise loadSession/resume",
+                            )),
                         );
                         self.remove_session(&pending.owner_connection_id, &pending.session_id);
+                        if matches!(cleanup, AcpCoreError::Cleanup { .. }) {
+                            self.retain_restart_cleanup_completion(
+                                process_id,
+                                pending.clone(),
+                                "unsupported",
+                                String::from("adapter does not advertise loadSession/resume"),
+                                false,
+                            );
+                            return Err(cleanup);
+                        }
                         let error = self.finish_adapter_exit(
                             &pending.owner_connection_id,
                             &pending.session_id,
@@ -2029,11 +2447,33 @@ impl AcpCore {
     pub fn pending_close_count(&self) -> usize {
         self.pending_closes.len()
     }
+    pub fn pending_cleanup_count(&self) -> usize {
+        self.pending_cleanups.len()
+            + self.pending_finalizations.len()
+            + self
+                .pending_prompts
+                .values()
+                .filter(|pending| pending.cleanup_restart_exit_code.is_some())
+                .count()
+            + self
+                .pending_restarts
+                .values()
+                .filter(|pending| pending.cleanup_only)
+                .count()
+    }
     pub fn pending_interaction_count(&self) -> usize {
         self.pending_creates.len()
-            + self.pending_prompts.len()
+            + self
+                .pending_prompts
+                .values()
+                .filter(|pending| pending.cleanup_restart_exit_code.is_none())
+                .count()
             + self.pending_resumes.len()
-            + self.pending_restarts.len()
+            + self
+                .pending_restarts
+                .values()
+                .filter(|pending| !pending.cleanup_only)
+                .count()
             + self.pending_closes.len()
     }
 
@@ -2055,6 +2495,11 @@ impl AcpCore {
             if pending.owner_connection_id != owner_id {
                 return Err(AcpCoreError::InvalidState(format!(
                     "no pending ACP prompt interaction for {process_id}"
+                )));
+            }
+            if pending.cleanup_restart_exit_code.is_some() {
+                return Err(AcpCoreError::InvalidState(format!(
+                    "ACP prompt {process_id} is retained for cleanup and cannot be interrupted"
                 )));
             }
             pending.cancelled = true;
@@ -2088,6 +2533,11 @@ impl AcpCore {
         if pending.owner_connection_id != owner_id {
             return Err(AcpCoreError::InvalidState(format!(
                 "no pending ACP prompt interaction for {process_id}"
+            )));
+        }
+        if pending.cleanup_restart_exit_code.is_some() {
+            return Err(AcpCoreError::InvalidState(format!(
+                "ACP prompt {process_id} is retained for cleanup and cannot be abandoned"
             )));
         }
         let pending = self
@@ -2170,6 +2620,10 @@ impl AcpCore {
         owner_id: &str,
         request: &AcpAbortPendingRequest,
     ) -> Result<AcpResponse, AcpCoreError> {
+        let cleanup_key = (owner_id.to_string(), request.process_id.clone());
+        if self.pending_cleanups.contains_key(&cleanup_key) {
+            return self.drive_pending_cleanup(host, &cleanup_key);
+        }
         if let Some(pending) = self.pending_closes.get(&request.process_id).cloned() {
             if pending.owner_connection_id != owner_id {
                 return Err(AcpCoreError::InvalidState(format!(
@@ -2188,7 +2642,7 @@ impl AcpCore {
                 })?;
             match request.reason {
                 AcpPendingAbortReason::AgentExited => {
-                    return self.finish_resumable_close(host, &request.process_id, &session);
+                    return self.finish_resumable_close(host, &session);
                 }
                 AcpPendingAbortReason::InteractionTimeout
                     if pending.step == PendingCloseStep::AwaitingSigterm =>
@@ -2202,40 +2656,104 @@ impl AcpCore {
                             return self.pending_response(request.process_id.clone());
                         }
                         Err(error) if is_process_already_gone_error(&error) => {
-                            return self.finish_resumable_close(
-                                host,
-                                &request.process_id,
-                                &session,
-                            );
+                            return self.finish_resumable_close(host, &session);
                         }
                         Err(error) => return Err(error),
                     }
                 }
                 AcpPendingAbortReason::InteractionTimeout => {
-                    return self.finish_resumable_close(host, &request.process_id, &session);
+                    return self.finish_resumable_close(host, &session);
                 }
                 AcpPendingAbortReason::DriverFailed => {
                     self.pending_closes.remove(&request.process_id);
-                    host.abort_agent(&request.process_id)?;
-                    self.remove_session(owner_id, &pending.session_id);
-                    return Ok(crate::error_response(&AcpCoreError::Execution(format!(
+                    if let Some(session) = self.session_mut(owner_id, &pending.session_id) {
+                        session.closed = true;
+                    }
+                    let response = crate::error_response(&AcpCoreError::Execution(format!(
                         "ACP pending driver failed while closing {}",
                         pending.session_id
-                    ))));
+                    )));
+                    self.pending_cleanups
+                        .insert(cleanup_key.clone(), Some(response));
+                    self.cleanup_session_removals.insert(cleanup_key.clone());
+                    return self.drive_pending_cleanup(host, &cleanup_key);
                 }
                 AcpPendingAbortReason::CallerCancelled => {
                     self.pending_closes.remove(&request.process_id);
-                    host.abort_agent(&request.process_id)?;
-                    self.remove_session(owner_id, &pending.session_id);
-                    return Ok(AcpResponse::AcpErrorResponse(AcpErrorResponse {
+                    if let Some(session) = self.session_mut(owner_id, &pending.session_id) {
+                        session.closed = true;
+                    }
+                    let response = AcpResponse::AcpErrorResponse(AcpErrorResponse {
                         code: String::from("agent_interaction_cancelled"),
                         message: format!(
                             "agent interaction was cancelled while closing {}",
                             pending.session_id
                         ),
-                    }));
+                    });
+                    self.pending_cleanups
+                        .insert(cleanup_key.clone(), Some(response));
+                    self.cleanup_session_removals.insert(cleanup_key.clone());
+                    return self.drive_pending_cleanup(host, &cleanup_key);
                 }
             }
+        }
+        if let Some(pending) = self
+            .pending_restarts
+            .get(&request.process_id)
+            .filter(|pending| pending.cleanup_only)
+            .cloned()
+        {
+            if pending.owner_connection_id != owner_id {
+                return Err(AcpCoreError::InvalidState(format!(
+                    "no pending ACP interaction for {}",
+                    request.process_id
+                )));
+            }
+            let cleanup_key = self
+                .promote_cleanup_only_restart(&request.process_id)
+                .expect("cleanup-only replacement was checked above");
+            return self.drive_pending_cleanup(host, &cleanup_key);
+        }
+        if let Some((pending_owner, session_id, pending_preamble, exit_code)) = self
+            .pending_prompts
+            .get(&request.process_id)
+            .and_then(|pending| {
+                pending.cleanup_restart_exit_code.map(|exit_code| {
+                    (
+                        pending.owner_connection_id.clone(),
+                        pending.session_id.clone(),
+                        pending.pending_preamble.clone(),
+                        exit_code,
+                    )
+                })
+            })
+        {
+            if pending_owner != owner_id {
+                return Err(AcpCoreError::InvalidState(format!(
+                    "no pending ACP interaction for {}",
+                    request.process_id
+                )));
+            }
+            if let Err(error) = host.abort_agent(&request.process_id) {
+                return Err(AcpCoreError::Cleanup {
+                    context: "failed to abort exited ACP adapter before restart",
+                    errors: vec![error],
+                });
+            }
+            self.pending_prompts.remove(&request.process_id);
+            if let Some(session) = self.session_mut(owner_id, &session_id) {
+                session.closed = true;
+                if session.pending_preamble.is_none() {
+                    session.pending_preamble = pending_preamble;
+                }
+            }
+            return self.begin_resumable_adapter_restart(
+                host,
+                owner_id,
+                &session_id,
+                &request.process_id,
+                exit_code,
+            );
         }
         if request.reason == AcpPendingAbortReason::AgentExited {
             if let Some(pending) = self.pending_restarts.get(&request.process_id) {
@@ -2245,21 +2763,25 @@ impl AcpCore {
                         request.process_id
                     )));
                 }
+                self.pending_restarts
+                    .get_mut(&request.process_id)
+                    .expect("pending restart was checked above")
+                    .cleanup_only = true;
+                if let Err(error) = host.abort_agent(&request.process_id) {
+                    return Err(AcpCoreError::Cleanup {
+                        context: "failed to abort exited replacement ACP adapter",
+                        errors: vec![error],
+                    });
+                }
                 let pending = self
                     .pending_restarts
                     .remove(&request.process_id)
-                    .expect("pending restart was checked above");
+                    .expect("cleanup-only restart was checked above");
                 self.remove_session(&pending.owner_connection_id, &pending.session_id);
-                let detail = match host.abort_agent(&request.process_id) {
-                    Ok(()) => format!(
-                        "replacement ACP adapter {} exited before restart completed",
-                        request.process_id
-                    ),
-                    Err(error) => format!(
-                        "replacement ACP adapter {} exited before restart completed; cleanup failed: {error}",
-                        request.process_id
-                    ),
-                };
+                let detail = format!(
+                    "replacement ACP adapter {} exited before restart completed",
+                    request.process_id
+                );
                 return self.finish_pending_restart_failure(&pending, &detail);
             }
             if let Some(pending) = self.pending_prompts.get(&request.process_id) {
@@ -2269,28 +2791,42 @@ impl AcpCore {
                         request.process_id
                     )));
                 }
-                let pending = self
-                    .pending_prompts
-                    .remove(&request.process_id)
-                    .expect("pending prompt was checked above");
-                if let Some(session) = self.session_mut(owner_id, &pending.session_id) {
+                let (session_id, pending_preamble, exit_code) = {
+                    let pending = self
+                        .pending_prompts
+                        .get_mut(&request.process_id)
+                        .expect("pending prompt was checked above");
+                    if pending.cleanup_restart_exit_code.is_none() {
+                        pending.cleanup_restart_exit_code = Some(request.exit_code);
+                    }
+                    (
+                        pending.session_id.clone(),
+                        pending.pending_preamble.clone(),
+                        pending.cleanup_restart_exit_code.flatten(),
+                    )
+                };
+                if let Some(session) = self.session_mut(owner_id, &session_id) {
                     session.closed = true;
                     if session.pending_preamble.is_none() {
-                        session.pending_preamble = pending.pending_preamble;
+                        session.pending_preamble = pending_preamble;
                     }
                 }
-                host.abort_agent(&request.process_id)?;
+                if let Err(error) = host.abort_agent(&request.process_id) {
+                    return Err(AcpCoreError::Cleanup {
+                        context: "failed to abort exited ACP adapter before restart",
+                        errors: vec![error],
+                    });
+                }
+                self.pending_prompts.remove(&request.process_id);
                 return self.begin_resumable_adapter_restart(
                     host,
                     owner_id,
-                    &pending.session_id,
+                    &session_id,
                     &request.process_id,
-                    request.exit_code,
+                    exit_code,
                 );
             }
         }
-        self.remove_pending_state(owner_id, &request.process_id)?;
-        host.abort_agent(&request.process_id)?;
         let (code, message) = match request.reason {
             AcpPendingAbortReason::AgentExited => (
                 "agent_exited",
@@ -2312,10 +2848,164 @@ impl AcpCore {
                 format!("agent interaction was cancelled ({})", request.process_id),
             ),
         };
-        Ok(AcpResponse::AcpErrorResponse(AcpErrorResponse {
+        let response = AcpResponse::AcpErrorResponse(AcpErrorResponse {
             code: code.to_string(),
             message,
-        }))
+        });
+        self.remove_pending_state(owner_id, &request.process_id)?;
+        self.pending_cleanups
+            .insert(cleanup_key.clone(), Some(response));
+        self.drive_pending_cleanup(host, &cleanup_key)
+    }
+
+    fn drive_pending_cleanup<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        cleanup_key: &(String, String),
+    ) -> Result<AcpResponse, AcpCoreError> {
+        let Some(completion) = self.pending_cleanups.get(cleanup_key).cloned() else {
+            return Err(AcpCoreError::InvalidState(format!(
+                "no pending ACP interaction for {}",
+                cleanup_key.1
+            )));
+        };
+        let host_cleanup_complete = self
+            .pending_restart_cleanups
+            .get(cleanup_key)
+            .is_some_and(|completion| completion.host_cleanup_complete);
+        if !host_cleanup_complete {
+            if let Err(error) = host.abort_agent(&cleanup_key.1) {
+                return Err(AcpCoreError::Cleanup {
+                    context: "failed to abort ACP adapter during pending cleanup",
+                    errors: vec![error],
+                });
+            }
+            if let Some(completion) = self.pending_restart_cleanups.get_mut(cleanup_key) {
+                completion.host_cleanup_complete = true;
+            }
+        }
+        if let Some(completion) = self.pending_restart_cleanups.get(cleanup_key).cloned() {
+            self.remove_session(
+                &completion.pending.owner_connection_id,
+                &completion.pending.session_id,
+            );
+            let exit_error = AcpCoreError::InvalidState(format!(
+                "agent exited before completing the ACP interaction ({})",
+                completion.pending.dead_process_id
+            ));
+            let terminal = self.finish_adapter_exit(
+                &completion.pending.owner_connection_id,
+                &completion.pending.session_id,
+                &completion.pending.agent_type,
+                &completion.pending.dead_process_id,
+                completion.pending.exit_code,
+                &completion.pending.restart,
+                completion.outcome,
+                Some(&completion.detail),
+                completion.include_exit_error.then_some(&exit_error),
+            )?;
+            self.pending_cleanups.remove(cleanup_key);
+            self.pending_restart_cleanups.remove(cleanup_key);
+            self.process_route_limit_warned.remove(&cleanup_key.0);
+            return Ok(crate::error_response(&terminal));
+        }
+        self.pending_cleanups.remove(cleanup_key);
+        if self.cleanup_session_removals.remove(cleanup_key) {
+            let closed_session_id = self
+                .sessions
+                .values()
+                .find(|session| {
+                    session.owner_connection_id == cleanup_key.0
+                        && session.process_id == cleanup_key.1
+                        && session.closed
+                })
+                .map(|session| session.session_id.clone());
+            if let Some(session_id) = closed_session_id {
+                self.remove_session(&cleanup_key.0, &session_id);
+            }
+        }
+        self.process_route_limit_warned.remove(&cleanup_key.0);
+        completion.ok_or_else(|| {
+            AcpCoreError::InvalidState(format!(
+                "ACP owner cleanup for {} has no client response",
+                cleanup_key.1
+            ))
+        })
+    }
+
+    fn with_abort_cleanup<H: AcpHost>(
+        &mut self,
+        host: &mut H,
+        owner_id: &str,
+        process_id: &str,
+        context: &'static str,
+        primary: AcpCoreError,
+    ) -> AcpCoreError {
+        let cleanup_key = (owner_id.to_string(), process_id.to_string());
+        if self.pending_cleanups.contains_key(&cleanup_key) {
+            return primary;
+        }
+        match host.abort_agent(process_id) {
+            Ok(()) => {
+                self.process_route_limit_warned.remove(owner_id);
+                primary
+            }
+            Err(cleanup) => {
+                self.pending_cleanups
+                    .insert(cleanup_key, Some(crate::error_response(&primary)));
+                AcpCoreError::Cleanup {
+                    context,
+                    errors: vec![primary, cleanup],
+                }
+            }
+        }
+    }
+
+    fn retain_restart_cleanup_completion(
+        &mut self,
+        process_id: &str,
+        pending: PendingRestart,
+        outcome: &'static str,
+        detail: String,
+        include_exit_error: bool,
+    ) {
+        let cleanup_key = (pending.owner_connection_id.clone(), process_id.to_string());
+        if self.pending_cleanups.contains_key(&cleanup_key) {
+            self.pending_restart_cleanups.insert(
+                cleanup_key,
+                PendingRestartCleanup {
+                    pending,
+                    outcome,
+                    detail,
+                    include_exit_error,
+                    host_cleanup_complete: false,
+                },
+            );
+        }
+    }
+
+    fn promote_cleanup_only_restart(&mut self, process_id: &str) -> Option<(String, String)> {
+        let pending = self
+            .pending_restarts
+            .remove(process_id)
+            .filter(|pending| pending.cleanup_only)?;
+        let cleanup_key = (pending.owner_connection_id.clone(), process_id.to_string());
+        let detail =
+            format!("replacement ACP adapter {process_id} exited before restart completed");
+        let primary = AcpCoreError::InvalidState(detail.clone());
+        self.pending_cleanups
+            .insert(cleanup_key.clone(), Some(crate::error_response(&primary)));
+        self.pending_restart_cleanups.insert(
+            cleanup_key.clone(),
+            PendingRestartCleanup {
+                pending,
+                outcome: "failed",
+                detail,
+                include_exit_error: true,
+                host_cleanup_complete: false,
+            },
+        );
+        Some(cleanup_key)
     }
 
     fn begin_resumable_adapter_restart<H: AcpHost>(
@@ -2327,6 +3017,7 @@ impl AcpCore {
         exit_code: Option<i32>,
     ) -> Result<AcpResponse, AcpCoreError> {
         self.ensure_event_capacity(owner_id, 1, 0)?;
+        self.ensure_process_route_capacity(owner_id, 0)?;
         let session = self.session(owner_id, session_id).cloned().ok_or_else(|| {
             AcpCoreError::InvalidState(format!("unknown ACP session {session_id}"))
         })?;
@@ -2429,8 +3120,38 @@ impl AcpCore {
             },
         });
         if let Err(error) = write_json_line(host, &process_id, &initialize) {
-            abort_agent_for_cleanup(host, &process_id, "resumable adapter restart initial write");
+            let detail = error.to_string();
+            let error = self.with_abort_cleanup(
+                host,
+                owner_id,
+                &process_id,
+                "resumable adapter restart initial write",
+                error,
+            );
             self.remove_session(owner_id, session_id);
+            if matches!(error, AcpCoreError::Cleanup { .. }) {
+                self.retain_restart_cleanup_completion(
+                    &process_id,
+                    PendingRestart {
+                        owner_connection_id: owner_id.to_string(),
+                        session_id: session_id.to_string(),
+                        agent_type,
+                        dead_process_id: dead_process_id.to_string(),
+                        exit_code,
+                        pid: spawned.pid,
+                        step: PendingRestartStep::AwaitingInitialize,
+                        stdout_buffer: String::new(),
+                        init_result: None,
+                        agent_capabilities: None,
+                        restart,
+                        cleanup_only: true,
+                    },
+                    "failed",
+                    detail,
+                    true,
+                );
+                return Err(error);
+            }
             let terminal = self.finish_adapter_exit(
                 owner_id,
                 session_id,
@@ -2458,6 +3179,7 @@ impl AcpCore {
                 init_result: None,
                 agent_capabilities: None,
                 restart,
+                cleanup_only: false,
             },
         );
         self.pending_response(process_id)
@@ -2471,21 +3193,54 @@ impl AcpCore {
         host: &mut H,
         owner_id: &str,
     ) -> Result<(), AcpCoreError> {
-        let process_ids = self.take_owner_state(owner_id);
+        let cleanup_actions = self.take_owner_state(owner_id);
 
         let mut errors = Vec::new();
-        for process_id in process_ids {
-            if let Err(error) = host.abort_agent(&process_id) {
-                errors.push(format!("{process_id}: {error}"));
+        for action in cleanup_actions {
+            match action {
+                OwnerCleanupAction::Abort { process_id } => {
+                    if let Err(error) = host.abort_agent(&process_id) {
+                        tracing::error!(
+                            owner_id,
+                            process_id,
+                            error_code = error.code(),
+                            error = %error,
+                            "failed to abort ACP process while disposing owner"
+                        );
+                        self.pending_cleanups
+                            .insert((owner_id.to_string(), process_id), None);
+                        errors.push(error);
+                    }
+                }
+                OwnerCleanupAction::Finalize {
+                    session_id,
+                    process_id,
+                } => {
+                    if let Err(error) = host.finalize_session_cleanup(&session_id, &process_id) {
+                        tracing::error!(
+                            owner_id,
+                            session_id,
+                            process_id,
+                            error_code = error.code(),
+                            error = %error,
+                            "failed to finalize ACP session while disposing owner"
+                        );
+                        self.pending_finalizations
+                            .insert((owner_id.to_string(), process_id), session_id);
+                        errors.push(error);
+                    }
+                }
             }
         }
         if errors.is_empty() {
+            self.process_route_limits.remove(owner_id);
+            self.process_route_limit_warned.remove(owner_id);
             Ok(())
         } else {
-            Err(AcpCoreError::Execution(format!(
-                "failed to release disposed ACP owner executions: {}",
-                errors.join("; ")
-            )))
+            Err(AcpCoreError::Cleanup {
+                context: "failed to release disposed ACP owner executions",
+                errors,
+            })
         }
     }
 
@@ -2494,10 +3249,18 @@ impl AcpCore {
     /// owner's VM/process resources have already been destroyed.
     pub fn drop_owner_state(&mut self, owner_id: &str) {
         self.take_owner_state(owner_id);
+        self.process_route_limits.remove(owner_id);
+        self.process_route_limit_warned.remove(owner_id);
     }
 
-    fn take_owner_state(&mut self, owner_id: &str) -> Vec<String> {
+    fn take_owner_state(&mut self, owner_id: &str) -> Vec<OwnerCleanupAction> {
         let mut process_ids = BTreeSet::new();
+        let finalizations = self
+            .pending_finalizations
+            .iter()
+            .filter(|((owner, _), _)| owner == owner_id)
+            .map(|((_, process_id), session_id)| (process_id.clone(), session_id.clone()))
+            .collect::<BTreeMap<_, _>>();
         process_ids.extend(
             self.pending_creates
                 .iter()
@@ -2529,11 +3292,20 @@ impl AcpCore {
                 .map(|(process_id, _)| process_id.clone()),
         );
         process_ids.extend(
+            self.pending_cleanups
+                .keys()
+                .filter(|(owner, _)| owner == owner_id)
+                .map(|(_, process_id)| process_id.clone()),
+        );
+        process_ids.extend(
             self.sessions
                 .values()
                 .filter(|session| session.owner_connection_id == owner_id && !session.closed)
                 .map(|session| session.process_id.clone()),
         );
+        for process_id in finalizations.keys() {
+            process_ids.remove(process_id);
+        }
 
         self.pending_creates
             .retain(|_, pending| pending.owner_connection_id != owner_id);
@@ -2545,14 +3317,34 @@ impl AcpCore {
             .retain(|_, pending| pending.owner_connection_id != owner_id);
         self.pending_closes
             .retain(|_, pending| pending.owner_connection_id != owner_id);
+        self.pending_cleanups
+            .retain(|(owner, _), _| owner != owner_id);
+        self.pending_restart_cleanups
+            .retain(|(owner, _), _| owner != owner_id);
+        self.cleanup_session_removals
+            .retain(|(owner, _)| owner != owner_id);
+        self.pending_finalizations
+            .retain(|(owner, _), _| owner != owner_id);
         self.sessions
             .retain(|_, session| session.owner_connection_id != owner_id);
         self.pending_events
             .retain(|pending| pending.owner_connection_id != owner_id);
         self.pending_event_limits.remove(owner_id);
         self.pending_event_limit_warned.remove(owner_id);
-
-        process_ids.into_iter().collect()
+        let mut actions = process_ids
+            .into_iter()
+            .map(|process_id| (process_id.clone(), OwnerCleanupAction::Abort { process_id }))
+            .collect::<BTreeMap<_, _>>();
+        for (process_id, session_id) in finalizations {
+            actions.insert(
+                process_id.clone(),
+                OwnerCleanupAction::Finalize {
+                    session_id,
+                    process_id,
+                },
+            );
+        }
+        actions.into_values().collect()
     }
 
     fn remove_pending_state(
@@ -2726,6 +3518,9 @@ impl AcpCore {
         let session = self
             .session_mut(caller_connection_id, &request.session_id)
             .ok_or_else(unknown)?;
+        if session.closed {
+            return Err(unknown());
+        }
         let rpc_id = session.allocate_request_id();
         // The transcript-continuation preamble is consumed once, on the first
         // `session/prompt` after a fallback resume; other methods leave it armed.
@@ -2991,6 +3786,8 @@ impl AcpCore {
         // Re-resolve to verify the projected package is still present and to let
         // hosts associate the subsequent spawn with its agent package.
         resolve_agent(host, agent_type).map_err(AdapterRestartError::Failed)?;
+        self.ensure_process_route_capacity(owner_id, 0)
+            .map_err(AdapterRestartError::Failed)?;
         let process_id = self.allocate_process_id("acp-agent");
         let spawned = host
             .spawn_agent(SpawnAgentRequest {
@@ -3071,18 +3868,39 @@ impl AcpCore {
         let (fields, stdout) = match result {
             Ok(result) => result,
             Err(AdapterRestartError::Unsupported) => {
-                abort_agent_for_cleanup(host, &process_id, "adapter restart unsupported");
-                return Err(AdapterRestartError::Unsupported);
+                let error = self.with_abort_cleanup(
+                    host,
+                    owner_id,
+                    &process_id,
+                    "adapter restart unsupported",
+                    AcpCoreError::Unsupported(String::from("adapter restart is unsupported")),
+                );
+                return if matches!(error, AcpCoreError::Cleanup { .. }) {
+                    Err(AdapterRestartError::Failed(error))
+                } else {
+                    Err(AdapterRestartError::Unsupported)
+                };
             }
             Err(AdapterRestartError::Failed(error)) => {
-                abort_agent_for_cleanup(host, &process_id, "adapter restart failure");
-                return Err(AdapterRestartError::Failed(error));
+                return Err(AdapterRestartError::Failed(self.with_abort_cleanup(
+                    host,
+                    owner_id,
+                    &process_id,
+                    "adapter restart failure",
+                    error,
+                )));
             }
         };
         let Some(session) = self.session_mut(owner_id, session_id) else {
-            abort_agent_for_cleanup(host, &process_id, "adapter restart session removed");
-            return Err(AdapterRestartError::Failed(AcpCoreError::InvalidState(
-                format!("ACP session {session_id} was removed during adapter restart"),
+            let error = AcpCoreError::InvalidState(format!(
+                "ACP session {session_id} was removed during adapter restart"
+            ));
+            return Err(AdapterRestartError::Failed(self.with_abort_cleanup(
+                host,
+                owner_id,
+                &process_id,
+                "adapter restart session removed",
+                error,
             )));
         };
         session.process_id = process_id;
@@ -3109,6 +3927,9 @@ impl AcpCore {
         let session = self
             .session(caller_connection_id, &request.session_id)
             .ok_or_else(unknown)?;
+        if session.closed {
+            return Err(unknown());
+        }
         let selection = select_config_by_category(&session.config_options, &request.category)
             .map_err(AcpCoreError::InvalidState)?;
         if selection.read_only {
@@ -3158,6 +3979,7 @@ impl AcpCore {
     ) -> Result<AcpResponse, AcpCoreError> {
         let request = ResolvedAcpResumeSessionRequest::from(request.clone());
         let resolved = resolve_agent(host, &request.agent_type)?;
+        self.ensure_process_route_capacity(caller_connection_id, 1)?;
 
         let process_id = self.allocate_process_id("acp-agent");
         let (args, env) = prepare_agent_launch(
@@ -3194,8 +4016,13 @@ impl AcpCore {
         {
             Ok(outcome) => outcome,
             Err(error) => {
-                abort_agent_for_cleanup(host, &process_id, "blocking resume bootstrap failure");
-                return Err(error);
+                return Err(self.with_abort_cleanup(
+                    host,
+                    caller_connection_id,
+                    &process_id,
+                    "blocking resume bootstrap failure",
+                    error,
+                ));
             }
         };
         let notifications = outcome.bootstrap.notifications.clone();
@@ -3222,16 +4049,25 @@ impl AcpCore {
             .session(caller_connection_id, &session.session_id)
             .is_some()
         {
-            abort_agent_for_cleanup(host, &process_id, "blocking resume session collision");
-            return Err(AcpCoreError::InvalidState(format!(
-                "session id collision: {}",
-                session.session_id
-            )));
+            let error =
+                AcpCoreError::InvalidState(format!("session id collision: {}", session.session_id));
+            return Err(self.with_abort_cleanup(
+                host,
+                caller_connection_id,
+                &process_id,
+                "blocking resume session collision",
+                error,
+            ));
         }
 
         if let Err(error) = host.bind_session(&session.session_id, &process_id) {
-            abort_agent_for_cleanup(host, &process_id, "blocking resume bind failure");
-            return Err(error);
+            return Err(self.with_abort_cleanup(
+                host,
+                caller_connection_id,
+                &process_id,
+                "blocking resume bind failure",
+                error,
+            ));
         }
         let response = AcpResponse::AcpSessionResumedResponse(AcpSessionResumedResponse {
             session_id: session.session_id.clone(),
@@ -3253,8 +4089,13 @@ impl AcpCore {
             self.push_session_notification_batch(caller_connection_id, &notifications)
         {
             self.remove_session(caller_connection_id, &session_id);
-            abort_agent_for_cleanup(host, &process_id, "blocking resume event commit failure");
-            return Err(error);
+            return Err(self.with_abort_cleanup(
+                host,
+                caller_connection_id,
+                &process_id,
+                "blocking resume event commit failure",
+                error,
+            ));
         }
         Ok(response)
     }
@@ -3667,17 +4508,6 @@ fn is_process_already_gone_error(error: &AcpCoreError) -> bool {
         || message.contains("has no active process")
 }
 
-fn abort_agent_for_cleanup<H: AcpHost>(host: &mut H, process_id: &str, context: &'static str) {
-    if let Err(error) = host.abort_agent(process_id) {
-        tracing::warn!(
-            process_id,
-            %error,
-            context,
-            "failed to abort ACP adapter during cleanup"
-        );
-    }
-}
-
 /// Write a JSON-RPC message as a single newline-terminated line to the agent's
 /// stdin (no waiting). Used by the resumable handshake.
 fn write_json_line<H: AcpHost>(
@@ -3792,6 +4622,9 @@ mod tests {
         killed: Vec<(String, String)>,
         closed_stdin: Vec<String>,
         wait_failures_remaining: usize,
+        finalization_failures_remaining: usize,
+        finalized: Vec<(String, String)>,
+        cleanup_order: Vec<String>,
     }
 
     impl AcpHost for MockHost {
@@ -3821,6 +4654,8 @@ mod tests {
             Ok(None)
         }
         fn kill_agent(&mut self, process_id: &str, signal: &str) -> Result<(), AcpCoreError> {
+            self.cleanup_order
+                .push(format!("signal:{process_id}:{signal}"));
             self.killed
                 .push((process_id.to_string(), signal.to_string()));
             Ok(())
@@ -3833,6 +4668,25 @@ mod tests {
                 )));
             }
             Ok(Some(0)) // exits promptly after SIGTERM
+        }
+        fn finalize_session_cleanup(
+            &mut self,
+            session_id: &str,
+            process_id: &str,
+        ) -> Result<(), AcpCoreError> {
+            self.finalized
+                .push((session_id.to_string(), process_id.to_string()));
+            self.cleanup_order.push(format!("finalize:{process_id}"));
+            if self.finalization_failures_remaining > 0 {
+                self.finalization_failures_remaining -= 1;
+                return Err(AcpCoreError::Cleanup {
+                    context: "injected finalization failure",
+                    errors: vec![AcpCoreError::Execution(String::from(
+                        "worker termination failed",
+                    ))],
+                });
+            }
+            Ok(())
         }
         fn write_file(&mut self, _: &str, _: &[u8]) -> Result<(), AcpCoreError> {
             Ok(())
@@ -4113,6 +4967,142 @@ mod tests {
         core.close_session(&mut host, "conn-a", &request)
             .expect("retry completes cleanup");
         assert_eq!(core.session_count(), 0);
+    }
+
+    #[test]
+    fn close_finalization_retry_is_non_routable_and_does_not_repeat_signals() {
+        let mut core = AcpCore::new();
+        core.insert_session(record("s1", "conn-a"));
+        let mut host = MockHost {
+            finalization_failures_remaining: 1,
+            ..MockHost::default()
+        };
+        let request = AcpCloseSessionRequest {
+            session_id: String::from("s1"),
+        };
+
+        let error = core
+            .close_session(&mut host, "conn-a", &request)
+            .expect_err("first host finalization fails");
+        assert_eq!(error.code(), "cleanup_failed");
+        assert!(core.session("conn-a", "s1").unwrap().closed);
+        let AcpResponse::AcpListSessionsResponse(list) = core.list_sessions("conn-a") else {
+            panic!("expected session list");
+        };
+        assert!(list.sessions.is_empty(), "cleanup tombstone is not live");
+        assert_eq!(host.closed_stdin, vec![String::from("proc-s1")]);
+        assert_eq!(
+            host.killed,
+            vec![(String::from("proc-s1"), String::from("SIGTERM"))]
+        );
+        let prompt = AcpSessionRequest {
+            session_id: String::from("s1"),
+            method: String::from("session/prompt"),
+            params: None,
+        };
+        assert_eq!(
+            core.begin_session_request(&mut host, "conn-a", &prompt)
+                .expect_err("cleanup-only session cannot start a resumable request")
+                .code(),
+            "invalid_state"
+        );
+        assert_eq!(
+            core.session_request(&mut host, "conn-a", &prompt)
+                .expect_err("cleanup-only session cannot run a blocking request")
+                .code(),
+            "invalid_state"
+        );
+        let config_error = core
+            .prepare_session_config(
+                "conn-a",
+                &AcpSetSessionConfigRequest {
+                    session_id: String::from("s1"),
+                    category: String::from("model"),
+                    value: String::from("test"),
+                },
+            )
+            .err()
+            .expect("cleanup-only session cannot mutate configuration");
+        assert_eq!(config_error.code(), "invalid_state");
+        assert_eq!(
+            host.finalized.len(),
+            1,
+            "routing checks do not retry cleanup"
+        );
+
+        core.close_session(&mut host, "conn-a", &request)
+            .expect("retry runs only host finalization");
+        assert_eq!(core.session_count(), 0);
+        assert_eq!(host.closed_stdin, vec![String::from("proc-s1")]);
+        assert_eq!(host.killed.len(), 1, "retry must not repeat signal phase");
+        assert_eq!(host.finalized.len(), 2);
+    }
+
+    #[test]
+    fn owner_disposal_retries_a_retained_close_finalizer_without_aborting_process() {
+        let mut core = AcpCore::new();
+        core.insert_session(record("s1", "owner-a"));
+        let mut host = MockHost {
+            finalization_failures_remaining: 1,
+            ..MockHost::default()
+        };
+        core.close_session(
+            &mut host,
+            "owner-a",
+            &AcpCloseSessionRequest {
+                session_id: String::from("s1"),
+            },
+        )
+        .expect_err("close retains the failed host finalizer");
+        assert_eq!(core.pending_cleanup_count(), 1);
+
+        host.finalization_failures_remaining = 1;
+        let error = core
+            .dispose_owner(&mut host, "owner-a")
+            .expect_err("owner disposal preserves a still-failing finalizer");
+        assert_eq!(error.code(), "cleanup_failed");
+        assert_eq!(core.pending_cleanup_count(), 1);
+        assert_eq!(host.killed.len(), 1, "disposal must not repeat signals");
+
+        core.dispose_owner(&mut host, "owner-a")
+            .expect("a later owner disposal retries the exact finalizer");
+        assert_eq!(core.pending_cleanup_count(), 0);
+        assert_eq!(host.killed.len(), 1);
+        assert_eq!(host.finalized.len(), 3);
+    }
+
+    #[test]
+    fn owner_disposal_orders_abort_and_finalizer_actions_by_process_id() {
+        let mut core = AcpCore::new();
+        let mut session = record("s1", "owner-a");
+        session.process_id = String::from("proc-a");
+        core.insert_session(session);
+        let mut host = MockHost {
+            finalization_failures_remaining: 1,
+            ..MockHost::default()
+        };
+        core.close_session(
+            &mut host,
+            "owner-a",
+            &AcpCloseSessionRequest {
+                session_id: String::from("s1"),
+            },
+        )
+        .expect_err("retain finalizer");
+        core.pending_cleanups
+            .insert((String::from("owner-a"), String::from("proc-z")), None);
+        host.cleanup_order.clear();
+        host.finalization_failures_remaining = 1;
+
+        core.dispose_owner(&mut host, "owner-a")
+            .expect_err("injected finalizer still fails");
+        assert_eq!(
+            host.cleanup_order,
+            vec![
+                String::from("finalize:proc-a"),
+                String::from("signal:proc-z:SIGKILL"),
+            ]
+        );
     }
 
     #[test]
@@ -5349,6 +6339,60 @@ mod tests {
     }
 
     #[test]
+    fn exited_prompt_cleanup_is_non_routable_and_retried_before_restart() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let dead_process =
+            create_restartable_resumable_session(&mut core, &mut host, "cleanup-restart");
+        begin_crashing_prompt(&mut core, &mut host, "cleanup-restart");
+        host.abort_error = Some(String::from("injected abort failure"));
+        let abort = AcpAbortPendingRequest {
+            process_id: dead_process.clone(),
+            reason: AcpPendingAbortReason::AgentExited,
+            exit_code: Some(137),
+        };
+
+        let error = core
+            .abort_pending(&mut host, "owner-a", &abort)
+            .expect_err("restart waits for cleanup");
+        assert_eq!(error.code(), "cleanup_failed");
+        assert_eq!(core.pending_prompt_count(), 1);
+        let route_error = core
+            .feed_agent_output(&mut host, "owner-a", &dead_process, b"{}\n")
+            .expect_err("cleanup-only prompt cannot receive adapter output");
+        assert_eq!(route_error.code(), "invalid_state");
+        assert_eq!(core.pending_prompt_count(), 1);
+        assert_eq!(
+            core.interrupt_pending_prompt("owner-a", &dead_process)
+                .expect_err("cleanup-only prompt cannot be interrupted")
+                .code(),
+            "invalid_state"
+        );
+        assert_eq!(
+            core.abandon_pending_prompt("owner-a", &dead_process)
+                .expect_err("cleanup-only prompt cannot be abandoned")
+                .code(),
+            "invalid_state"
+        );
+        assert_eq!(core.pending_prompt_count(), 1);
+
+        let response = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    reason: AcpPendingAbortReason::CallerCancelled,
+                    ..abort
+                },
+            )
+            .expect("exact retry cleans up then begins restart");
+        assert!(matches!(response, AcpResponse::AcpPendingResponse(_)));
+        assert_eq!(core.pending_prompt_count(), 0);
+        assert_eq!(core.pending_restart_count(), 1);
+        assert_eq!(host.killed.len(), 2);
+    }
+
+    #[test]
     fn resumable_restart_unsupported_evicts_with_shared_outcome() {
         let mut core = AcpCore::new();
         let mut host = ResumableMockHost::default();
@@ -5369,7 +6413,8 @@ mod tests {
         else {
             panic!("expected restart continuation");
         };
-        let completed = core
+        host.abort_error = Some(String::from("injected unsupported cleanup failure"));
+        let cleanup_error = core
             .feed_agent_output(
                 &mut host,
                 "owner-a",
@@ -5377,10 +6422,23 @@ mod tests {
                 br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{}}}
 "#,
             )
-            .expect("unsupported replacement completes with typed result");
+            .expect_err("cleanup failure delays unsupported outcome");
+        assert_eq!(cleanup_error.code(), "cleanup_failed");
+        assert!(core.take_events("owner-a").is_empty());
+        let completed = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: restart_pending.process_id,
+                    reason: AcpPendingAbortReason::DriverFailed,
+                    exit_code: None,
+                },
+            )
+            .expect("cleanup retry commits unsupported outcome");
         assert!(matches!(
             completed,
-            ResumeStep::Done(AcpResponse::AcpErrorResponse(AcpErrorResponse { ref message, .. }))
+            AcpResponse::AcpErrorResponse(AcpErrorResponse { ref message, .. })
                 if message.contains("auto-restart unsupported") && message.contains("session evicted")
         ));
         assert_eq!(core.session_count(), 0);
@@ -5450,17 +6508,33 @@ mod tests {
             panic!("replacement must begin pending");
         };
 
-        let completed = core
+        host.abort_error = Some(String::from("injected malformed restart cleanup failure"));
+        let cleanup_error = core
             .feed_agent_output(
                 &mut host,
                 "owner-a",
                 &restart_pending.process_id,
                 b"not-json\n",
             )
-            .expect("malformed replacement is a deterministic terminal response");
+            .expect_err("cleanup failure delays the terminal restart outcome");
+        assert_eq!(cleanup_error.code(), "cleanup_failed");
+        assert_eq!(core.pending_cleanup_count(), 1);
+        assert!(core.take_events("owner-a").is_empty());
+
+        let completed = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: restart_pending.process_id.clone(),
+                    reason: AcpPendingAbortReason::CallerCancelled,
+                    exit_code: None,
+                },
+            )
+            .expect("cleanup retry commits the canonical restart outcome");
         assert!(matches!(
             completed,
-            ResumeStep::Done(AcpResponse::AcpErrorResponse(AcpErrorResponse { ref code, ref message }))
+            AcpResponse::AcpErrorResponse(AcpErrorResponse { ref code, ref message })
                 if code == "invalid_state" && message.contains("auto-restart failed") && message.contains("invalid JSON-RPC")
         ));
         assert_eq!(core.pending_restart_count(), 0);
@@ -5478,9 +6552,137 @@ mod tests {
             host.killed,
             vec![
                 (dead_process, String::from("SIGKILL")),
+                (restart_pending.process_id.clone(), String::from("SIGKILL")),
                 (restart_pending.process_id, String::from("SIGKILL")),
             ]
         );
+    }
+
+    #[test]
+    fn close_finds_replacement_cleanup_by_session_after_session_record_is_removed() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let dead_process =
+            create_restartable_resumable_session(&mut core, &mut host, "close-replacement");
+        begin_crashing_prompt(&mut core, &mut host, "close-replacement");
+        let AcpResponse::AcpPendingResponse(restart_pending) = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: dead_process,
+                    reason: AcpPendingAbortReason::AgentExited,
+                    exit_code: Some(9),
+                },
+            )
+            .expect("begin replacement")
+        else {
+            panic!("replacement must begin pending");
+        };
+        host.abort_error = Some(String::from("injected replacement cleanup failure"));
+        core.feed_agent_output(
+            &mut host,
+            "owner-a",
+            &restart_pending.process_id,
+            b"not-json\n",
+        )
+        .expect_err("replacement cleanup is retained");
+        assert_eq!(
+            core.session_count(),
+            0,
+            "restart failure removed the live session"
+        );
+        assert_eq!(core.pending_cleanup_count(), 1);
+
+        let response = core
+            .close_session(
+                &mut host,
+                "owner-a",
+                &AcpCloseSessionRequest {
+                    session_id: String::from("close-replacement"),
+                },
+            )
+            .expect("close drives the replacement cleanup tombstone");
+        assert!(matches!(response, AcpResponse::AcpSessionClosedResponse(_)));
+        assert_eq!(core.pending_cleanup_count(), 0);
+        assert_eq!(
+            host.killed.last(),
+            Some(&(restart_pending.process_id, String::from("SIGKILL")))
+        );
+        assert!(host.killed.iter().all(|(_, signal)| signal == "SIGKILL"));
+    }
+
+    #[test]
+    fn restart_completion_retries_event_commit_without_repeating_host_abort() {
+        let mut core = AcpCore::with_pending_event_limit(1);
+        let mut host = ResumableMockHost::default();
+        let dead_process =
+            create_restartable_resumable_session(&mut core, &mut host, "event-backpressure");
+        begin_crashing_prompt(&mut core, &mut host, "event-backpressure");
+        let AcpResponse::AcpPendingResponse(restart_pending) = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: dead_process.clone(),
+                    reason: AcpPendingAbortReason::AgentExited,
+                    exit_code: Some(9),
+                },
+            )
+            .expect("begin replacement")
+        else {
+            panic!("replacement must begin pending");
+        };
+        host.abort_error = Some(String::from("injected replacement cleanup failure"));
+        core.feed_agent_output(
+            &mut host,
+            "owner-a",
+            &restart_pending.process_id,
+            b"not-json\n",
+        )
+        .expect_err("replacement cleanup is retained");
+        core.pending_events
+            .push(pending_session_event("owner-a", "sibling"));
+
+        let retry = AcpAbortPendingRequest {
+            process_id: restart_pending.process_id.clone(),
+            reason: AcpPendingAbortReason::CallerCancelled,
+            exit_code: None,
+        };
+        let error = core
+            .abort_pending(&mut host, "owner-a", &retry)
+            .expect_err("event capacity delays canonical restart completion");
+        assert_eq!(error.code(), "limit_exceeded");
+        assert_eq!(core.pending_cleanup_count(), 1);
+        let abort_count = host
+            .killed
+            .iter()
+            .filter(|(process_id, _)| process_id == &restart_pending.process_id)
+            .count();
+        assert_eq!(abort_count, 2, "failed abort plus one successful retry");
+
+        assert_eq!(core.take_events("owner-a").len(), 1);
+        let completed = core
+            .abort_pending(&mut host, "owner-a", &retry)
+            .expect("draining capacity commits the retained completion");
+        assert!(matches!(
+            completed,
+            AcpResponse::AcpErrorResponse(AcpErrorResponse { ref code, .. }) if code == "invalid_state"
+        ));
+        assert_eq!(core.pending_cleanup_count(), 0);
+        assert_eq!(
+            host.killed
+                .iter()
+                .filter(|(process_id, _)| process_id == &restart_pending.process_id)
+                .count(),
+            abort_count,
+            "event retry must not repeat the committed host abort"
+        );
+        assert!(matches!(
+            core.take_events("owner-a").as_slice(),
+            [AcpEvent::AcpAgentExitedEvent(AcpAgentExitedEvent { process_id, .. })]
+                if process_id == &dead_process
+        ));
     }
 
     #[test]
@@ -5505,14 +6707,31 @@ mod tests {
             panic!("replacement must begin pending");
         };
 
+        host.abort_error = Some(String::from("injected replacement cleanup failure"));
+        let replacement_abort = AcpAbortPendingRequest {
+            process_id: restart_pending.process_id.clone(),
+            reason: AcpPendingAbortReason::AgentExited,
+            exit_code: Some(42),
+        };
+        let cleanup_error = core
+            .abort_pending(&mut host, "owner-a", &replacement_abort)
+            .expect_err("replacement exit cleanup failure remains retryable");
+        assert_eq!(cleanup_error.code(), "cleanup_failed");
+        assert_eq!(core.pending_restart_count(), 1);
+        assert_eq!(
+            core.feed_agent_output(&mut host, "owner-a", &restart_pending.process_id, b"{}\n",)
+                .expect_err("cleanup-only replacement route rejects output")
+                .code(),
+            "invalid_state"
+        );
+
         let completed = core
             .abort_pending(
                 &mut host,
                 "owner-a",
                 &AcpAbortPendingRequest {
-                    process_id: restart_pending.process_id.clone(),
-                    reason: AcpPendingAbortReason::AgentExited,
-                    exit_code: Some(42),
+                    reason: AcpPendingAbortReason::DriverFailed,
+                    ..replacement_abort
                 },
             )
             .expect("replacement exit is a deterministic terminal response");
@@ -5536,9 +6755,67 @@ mod tests {
             host.killed,
             vec![
                 (dead_process, String::from("SIGKILL")),
+                (restart_pending.process_id.clone(), String::from("SIGKILL")),
                 (restart_pending.process_id, String::from("SIGKILL")),
             ]
         );
+    }
+
+    #[test]
+    fn close_drives_cleanup_only_inflight_replacement_by_session_id() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        let dead_process =
+            create_restartable_resumable_session(&mut core, &mut host, "close-live-replacement");
+        begin_crashing_prompt(&mut core, &mut host, "close-live-replacement");
+        let AcpResponse::AcpPendingResponse(restart_pending) = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: dead_process,
+                    reason: AcpPendingAbortReason::AgentExited,
+                    exit_code: Some(9),
+                },
+            )
+            .expect("begin replacement")
+        else {
+            panic!("replacement must begin pending");
+        };
+        host.abort_error = Some(String::from("injected replacement exit abort failure"));
+        core.abort_pending(
+            &mut host,
+            "owner-a",
+            &AcpAbortPendingRequest {
+                process_id: restart_pending.process_id.clone(),
+                reason: AcpPendingAbortReason::AgentExited,
+                exit_code: Some(42),
+            },
+        )
+        .expect_err("replacement route becomes cleanup-only");
+        assert_eq!(core.pending_cleanup_count(), 1);
+
+        let response = core
+            .close_session(
+                &mut host,
+                "owner-a",
+                &AcpCloseSessionRequest {
+                    session_id: String::from("close-live-replacement"),
+                },
+            )
+            .expect("close promotes and retries the replacement cleanup");
+        assert!(matches!(response, AcpResponse::AcpSessionClosedResponse(_)));
+        assert_eq!(core.pending_cleanup_count(), 0);
+        assert_eq!(core.pending_restart_count(), 0);
+        assert_eq!(
+            host.killed
+                .iter()
+                .filter(|(process_id, _)| process_id == &restart_pending.process_id)
+                .count(),
+            2,
+            "close retries the failed replacement abort exactly once"
+        );
+        assert!(host.killed.iter().all(|(_, signal)| signal == "SIGKILL"));
     }
 
     #[test]
@@ -5803,7 +7080,7 @@ mod tests {
     }
 
     #[test]
-    fn resumable_abort_removes_pending_state_before_cleanup_error_propagates() {
+    fn resumable_abort_retains_non_routable_cleanup_for_exact_owner_retry() {
         let mut core = AcpCore::new();
         let mut host = ResumableMockHost::default();
         let process_id = core
@@ -5822,17 +7099,51 @@ mod tests {
                 },
             )
             .expect_err("cleanup failure must propagate");
-        assert_eq!(error.code(), "execution");
+        assert_eq!(error.code(), "cleanup_failed");
         assert!(error
             .to_string()
             .contains("injected execution release failure"));
         assert_eq!(core.pending_create_count(), 0);
+        assert_eq!(core.pending_cleanup_count(), 1);
         assert_eq!(
             host.killed,
             vec![(process_id.clone(), String::from("SIGKILL"))]
         );
 
+        let wrong_owner = core
+            .abort_pending(
+                &mut host,
+                "owner-b",
+                &AcpAbortPendingRequest {
+                    process_id: process_id.clone(),
+                    reason: AcpPendingAbortReason::CallerCancelled,
+                    exit_code: None,
+                },
+            )
+            .expect_err("cleanup tombstone must remain owner-scoped");
+        assert_eq!(wrong_owner.code(), "invalid_state");
+        assert_eq!(host.killed.len(), 1, "wrong owner cannot drive cleanup");
+
         let retry = core
+            .abort_pending(
+                &mut host,
+                "owner-a",
+                &AcpAbortPendingRequest {
+                    process_id: process_id.clone(),
+                    reason: AcpPendingAbortReason::CallerCancelled,
+                    exit_code: None,
+                },
+            )
+            .expect("exact owner retry completes cleanup");
+        assert!(matches!(
+            retry,
+            AcpResponse::AcpErrorResponse(AcpErrorResponse { ref code, .. })
+                if code == "agent_exited"
+        ));
+        assert_eq!(core.pending_cleanup_count(), 0);
+        assert_eq!(host.killed.len(), 2);
+
+        let finished = core
             .abort_pending(
                 &mut host,
                 "owner-a",
@@ -5842,8 +7153,123 @@ mod tests {
                     exit_code: None,
                 },
             )
-            .expect_err("removed state cannot be revived by retry");
-        assert_eq!(retry.code(), "invalid_state");
+            .expect_err("completed cleanup is no longer pending");
+        assert_eq!(finished.code(), "invalid_state");
+    }
+
+    #[test]
+    fn retained_cleanup_consumes_process_route_capacity_until_retry_succeeds() {
+        let mut core = AcpCore::with_process_route_limit(1).expect("valid route limit");
+        let mut host = ResumableMockHost::default();
+        let process_id = core
+            .begin_create_session(&mut host, "owner-a", &echo_create_request())
+            .expect("first route fits");
+        host.abort_error = Some(String::from("injected release failure"));
+        core.abort_pending(
+            &mut host,
+            "owner-a",
+            &AcpAbortPendingRequest {
+                process_id: process_id.clone(),
+                reason: AcpPendingAbortReason::DriverFailed,
+                exit_code: None,
+            },
+        )
+        .expect_err("failed cleanup retains the charged route");
+
+        let error = core
+            .begin_create_session(&mut host, "owner-a", &echo_create_request())
+            .expect_err("retained cleanup blocks admission at the configured bound");
+        assert_eq!(error.code(), "limit_exceeded");
+        assert!(error.to_string().contains("with_process_route_limit"));
+        assert_eq!(host.stdin.len(), 1, "rejected admission spawns no adapter");
+
+        core.abort_pending(
+            &mut host,
+            "owner-a",
+            &AcpAbortPendingRequest {
+                process_id,
+                reason: AcpPendingAbortReason::DriverFailed,
+                exit_code: None,
+            },
+        )
+        .expect("cleanup retry releases route capacity");
+        core.begin_create_session(&mut host, "owner-a", &echo_create_request())
+            .expect("admission succeeds after cleanup");
+        assert_eq!(host.stdin.len(), 2);
+    }
+
+    #[test]
+    fn close_retries_retained_abort_without_switching_to_orderly_finalization() {
+        let mut core = AcpCore::new();
+        let mut host = ResumableMockHost::default();
+        core.insert_session(record("s1", "owner-a"));
+        let process_id = core
+            .begin_session_request(
+                &mut host,
+                "owner-a",
+                &AcpSessionRequest {
+                    session_id: String::from("s1"),
+                    method: String::from("session/prompt"),
+                    params: None,
+                },
+            )
+            .expect("begin prompt");
+        host.abort_error = Some(String::from("injected abort failure"));
+        core.abort_pending(
+            &mut host,
+            "owner-a",
+            &AcpAbortPendingRequest {
+                process_id: process_id.clone(),
+                reason: AcpPendingAbortReason::InteractionTimeout,
+                exit_code: None,
+            },
+        )
+        .expect_err("abort cleanup is retained");
+
+        let response = core
+            .close_session(
+                &mut host,
+                "owner-a",
+                &AcpCloseSessionRequest {
+                    session_id: String::from("s1"),
+                },
+            )
+            .expect("close finishes the retained abort");
+        assert!(matches!(response, AcpResponse::AcpSessionClosedResponse(_)));
+        assert!(core.session("owner-a", "s1").is_none());
+        assert_eq!(core.pending_cleanup_count(), 0);
+        assert_eq!(
+            host.killed,
+            vec![
+                (process_id.clone(), String::from("SIGKILL")),
+                (process_id, String::from("SIGKILL")),
+            ],
+            "close retries abort and never switches to SIGTERM"
+        );
+    }
+
+    #[test]
+    fn failed_owner_disposal_preserves_its_process_route_limit() {
+        let mut core = AcpCore::new();
+        core.set_process_route_limit("owner-a", 1)
+            .expect("configure owner limit");
+        let mut host = ResumableMockHost::default();
+        core.begin_create_session(&mut host, "owner-a", &echo_create_request())
+            .expect("first route fits");
+        host.abort_error = Some(String::from("injected owner cleanup failure"));
+        core.dispose_owner(&mut host, "owner-a")
+            .expect_err("failed disposal retains cleanup ownership");
+
+        assert_eq!(
+            core.begin_create_session(&mut host, "owner-a", &echo_create_request())
+                .expect_err("retained owner cleanup remains charged to its configured limit")
+                .code(),
+            "limit_exceeded"
+        );
+        core.dispose_owner(&mut host, "owner-a")
+            .expect("owner cleanup retry succeeds");
+        core.begin_create_session(&mut host, "owner-a", &echo_create_request())
+            .expect("admission resumes after cleanup releases the owner");
     }
 
     #[test]

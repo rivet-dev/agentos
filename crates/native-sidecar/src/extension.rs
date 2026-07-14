@@ -15,6 +15,21 @@ use crate::state::{
 
 pub type ExtensionFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, SidecarError>> + 'a>>;
 
+/// A cleanup attempt may commit lifecycle events even when a later phase must
+/// be retried. Returning both prevents callers from losing committed events or
+/// retaining them behind a full cleanup buffer until the retry succeeds.
+#[derive(Debug)]
+pub struct ExtensionCleanupOutcome {
+    pub events: Vec<EventFrame>,
+    pub error: Option<SidecarError>,
+}
+
+#[derive(Debug)]
+pub struct ExtensionWireCleanupOutcome {
+    pub events: Vec<crate::wire::EventFrame>,
+    pub error: Option<SidecarError>,
+}
+
 /// One projected agent package's launch surface, served from sidecar-owned VM
 /// state (sourced from packed vbare manifests; packed packages ship no
 /// `agentos-package.json` for extensions to read from the guest filesystem).
@@ -105,7 +120,7 @@ pub trait ExtensionHost {
         ownership: OwnershipScope,
         namespace: String,
         ext_session_id: String,
-    ) -> ExtensionFuture<'a, Vec<EventFrame>>;
+    ) -> ExtensionFuture<'a, ExtensionCleanupOutcome>;
 
     fn start_buffering_process_output<'a>(
         &'a mut self,
@@ -634,7 +649,7 @@ impl<'a> ExtensionContext<'a> {
     pub async fn dispose_session_resources(
         &mut self,
         ext_session_id: impl Into<String>,
-    ) -> Result<Vec<EventFrame>, SidecarError> {
+    ) -> Result<ExtensionCleanupOutcome, SidecarError> {
         self.host
             .dispose_session_resources(
                 self.snapshot.ownership.clone(),
@@ -647,13 +662,18 @@ impl<'a> ExtensionContext<'a> {
     pub async fn dispose_session_resources_wire(
         &mut self,
         ext_session_id: impl Into<String>,
-    ) -> Result<Vec<crate::wire::EventFrame>, SidecarError> {
-        self.dispose_session_resources(ext_session_id)
-            .await?
+    ) -> Result<ExtensionWireCleanupOutcome, SidecarError> {
+        let outcome = self.dispose_session_resources(ext_session_id).await?;
+        let events = outcome
+            .events
             .into_iter()
             .map(crate::wire::event_frame_from_compat)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(wire_protocol_error)
+            .map_err(wire_protocol_error)?;
+        Ok(ExtensionWireCleanupOutcome {
+            events,
+            error: outcome.error,
+        })
     }
 
     pub async fn start_buffering_process_output(

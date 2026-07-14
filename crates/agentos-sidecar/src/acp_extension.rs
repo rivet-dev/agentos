@@ -43,7 +43,7 @@ pub struct AcpExtension {
     next_process_id: AtomicUsize,
     next_terminal_id: AtomicUsize,
     terminals: Mutex<BTreeMap<String, NativeAcpTerminal>>,
-    core_processes: Mutex<BTreeMap<(String, String), NativeCoreProcess>>,
+    core_processes: Mutex<BTreeMap<(String, String), Arc<Mutex<NativeCoreProcess>>>>,
     core_owners: Mutex<BTreeMap<String, NativeCoreOwner>>,
     permission_waits: Mutex<BTreeMap<NativePermissionWaitKey, ExtensionCallbackCancellation>>,
 }
@@ -57,10 +57,20 @@ struct NativeCoreOwner {
 #[derive(Debug, Clone)]
 struct NativeCoreProcess {
     owner_id: String,
-    connection_id: String,
-    wire_session_id: Option<String>,
     session_id: Option<String>,
     pending_output: VecDeque<AgentOutput>,
+    /// The native host bounds this batch with
+    /// `NativeSidecarConfig::max_extension_session_cleanup_events` before it is
+    /// returned through `dispose_session_resources_wire`.
+    pending_cleanup_events: VecDeque<agentos_native_sidecar::wire::EventFrame>,
+    cleanup: NativeRouteCleanupProgress,
+}
+
+#[derive(Debug, Clone, Default)]
+struct NativeRouteCleanupProgress {
+    output_buffer_stopped: bool,
+    terminals_cleaned: bool,
+    session_resources_disposed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -114,7 +124,8 @@ enum NativeCoreCommand {
         process_id: String,
         reply: NativeCoreReply<()>,
     },
-    ReleaseAgentRoute {
+    FinalizeSessionCleanup {
+        session_id: String,
         process_id: String,
         reply: NativeCoreReply<()>,
     },
@@ -241,8 +252,13 @@ impl AcpHost for NativeCoreHost {
         })
     }
 
-    fn release_agent_route(&mut self, process_id: &str) -> Result<(), AcpCoreError> {
-        self.exchange(|reply| NativeCoreCommand::ReleaseAgentRoute {
+    fn finalize_session_cleanup(
+        &mut self,
+        session_id: &str,
+        process_id: &str,
+    ) -> Result<(), AcpCoreError> {
+        self.exchange(|reply| NativeCoreCommand::FinalizeSessionCleanup {
+            session_id: session_id.to_string(),
             process_id: process_id.to_string(),
             reply,
         })
@@ -415,11 +431,17 @@ impl AcpExtension {
         );
         let core = self.core_for_owner(&owner_id).await;
         let mut result = self
-            .run_core_transition(&core, &mut ctx, &owner_id, request)
+            .run_core_transition(&core, &mut ctx, &owner_id, request, &mut broker_events)
             .await;
         while let Ok(AcpResponse::AcpPendingResponse(pending)) = &result {
             result = self
-                .drive_native_pending(&core, &mut ctx, &owner_id, pending.clone())
+                .drive_native_pending(
+                    &core,
+                    &mut ctx,
+                    &owner_id,
+                    pending.clone(),
+                    &mut broker_events,
+                )
                 .await;
         }
 
@@ -484,6 +506,7 @@ impl AcpExtension {
         ctx: &mut ExtensionContext<'_>,
         owner_id: &str,
         request: AcpRequest,
+        broker_events: &mut Vec<agentos_native_sidecar::wire::EventFrame>,
     ) -> Result<AcpResponse, AcpCoreError> {
         let (commands, receiver) = mpsc::channel(1);
         let core = Arc::clone(core);
@@ -509,7 +532,8 @@ impl AcpExtension {
             }
             result
         });
-        self.drive_native_core_broker(ctx, receiver).await;
+        self.drive_native_core_broker(ctx, receiver, broker_events)
+            .await;
         worker.join().unwrap_or_else(|_| {
             Err(AcpCoreError::Execution(String::from(
                 "native ACP core worker panicked",
@@ -523,6 +547,7 @@ impl AcpExtension {
         ctx: &mut ExtensionContext<'_>,
         owner_id: &str,
         pending: agentos_protocol::generated::v1::AcpPendingResponse,
+        broker_events: &mut Vec<agentos_native_sidecar::wire::EventFrame>,
     ) -> Result<AcpResponse, AcpCoreError> {
         let deadline = Instant::now() + Duration::from_millis(u64::from(pending.timeout_ms));
         loop {
@@ -538,6 +563,7 @@ impl AcpExtension {
                             reason: AcpPendingAbortReason::InteractionTimeout,
                             exit_code: None,
                         }),
+                        broker_events,
                     )
                     .await;
             }
@@ -561,6 +587,7 @@ impl AcpExtension {
                                     chunk,
                                 },
                             ),
+                            broker_events,
                         )
                         .await;
                 }
@@ -575,6 +602,7 @@ impl AcpExtension {
                                 reason: AcpPendingAbortReason::AgentExited,
                                 exit_code,
                             }),
+                            broker_events,
                         )
                         .await;
                 }
@@ -587,6 +615,7 @@ impl AcpExtension {
                             process_id: pending.process_id.clone(),
                             chunk,
                         }),
+                        broker_events,
                     )
                     .await?;
                 }
@@ -649,6 +678,7 @@ impl AcpExtension {
         owner_id: &str,
         session_id: &str,
         process_id: &str,
+        broker_events: &mut Vec<agentos_native_sidecar::wire::EventFrame>,
     ) -> Result<(), SidecarError> {
         let deadline = Instant::now() + ACP_CANCEL_DRAIN_TIMEOUT;
         loop {
@@ -663,7 +693,13 @@ impl AcpExtension {
                 );
                 return self
                     .recover_interrupted_prompt_adapter(
-                        core, ctx, owner_id, session_id, process_id, None,
+                        core,
+                        ctx,
+                        owner_id,
+                        session_id,
+                        process_id,
+                        None,
+                        broker_events,
                     )
                     .await;
             }
@@ -686,7 +722,13 @@ impl AcpExtension {
                     );
                     return self
                         .recover_interrupted_prompt_adapter(
-                            core, ctx, owner_id, session_id, process_id, None,
+                            core,
+                            ctx,
+                            owner_id,
+                            session_id,
+                            process_id,
+                            None,
+                            broker_events,
                         )
                         .await
                         .map_err(|recovery_error| {
@@ -709,6 +751,7 @@ impl AcpExtension {
                                     chunk,
                                 },
                             ),
+                            broker_events,
                         )
                         .await
                         .map_err(|error| SidecarError::Execution(error.to_string()))?;
@@ -730,7 +773,13 @@ impl AcpExtension {
                 Some(AgentOutput::Exited(exit_code)) => {
                     return self
                         .recover_interrupted_prompt_adapter(
-                            core, ctx, owner_id, session_id, process_id, exit_code,
+                            core,
+                            ctx,
+                            owner_id,
+                            session_id,
+                            process_id,
+                            exit_code,
+                            broker_events,
                         )
                         .await;
                 }
@@ -746,6 +795,7 @@ impl AcpExtension {
         session_id: &str,
         process_id: &str,
         exit_code: Option<i32>,
+        broker_events: &mut Vec<agentos_native_sidecar::wire::EventFrame>,
     ) -> Result<(), SidecarError> {
         let mut response = self
             .run_core_transition(
@@ -757,12 +807,13 @@ impl AcpExtension {
                     reason: AcpPendingAbortReason::AgentExited,
                     exit_code,
                 }),
+                broker_events,
             )
             .await
             .map_err(|error| SidecarError::Execution(error.to_string()))?;
         while let AcpResponse::AcpPendingResponse(pending) = response {
             response = self
-                .drive_native_pending(core, ctx, owner_id, pending)
+                .drive_native_pending(core, ctx, owner_id, pending, broker_events)
                 .await
                 .map_err(|error| SidecarError::Execution(error.to_string()))?;
         }
@@ -791,11 +842,15 @@ impl AcpExtension {
         &self,
         ctx: &mut ExtensionContext<'_>,
         mut receiver: mpsc::Receiver<NativeCoreCommand>,
+        broker_events: &mut Vec<agentos_native_sidecar::wire::EventFrame>,
     ) {
         while let Some(command) = receiver.recv().await {
             match command {
                 NativeCoreCommand::Finished => return,
-                command => self.handle_native_core_command(ctx, command).await,
+                command => {
+                    self.handle_native_core_command(ctx, command, broker_events)
+                        .await
+                }
             }
         }
     }
@@ -804,6 +859,7 @@ impl AcpExtension {
         &self,
         ctx: &mut ExtensionContext<'_>,
         command: NativeCoreCommand,
+        broker_events: &mut Vec<agentos_native_sidecar::wire::EventFrame>,
     ) {
         match command {
             NativeCoreCommand::ResolveAgent { id, reply } => {
@@ -899,17 +955,15 @@ impl AcpExtension {
                 };
                 if result.is_ok() {
                     let owner_id = ownership_owner_id(ctx.ownership());
-                    let (connection_id, wire_session_id) =
-                        ownership_session_identity(ctx.ownership());
                     self.core_processes.lock().await.insert(
                         (owner_id.clone(), process_id),
-                        NativeCoreProcess {
+                        Arc::new(Mutex::new(NativeCoreProcess {
                             owner_id,
-                            connection_id,
-                            wire_session_id,
                             session_id: None,
                             pending_output: VecDeque::new(),
-                        },
+                            pending_cleanup_events: VecDeque::new(),
+                            cleanup: NativeRouteCleanupProgress::default(),
+                        })),
                     );
                 }
                 send_native_core_reply(reply, result, "spawn agent");
@@ -925,13 +979,14 @@ impl AcpExtension {
                     .map_err(sidecar_to_core_error);
                 if result.is_ok() {
                     let owner_id = ownership_owner_id(ctx.ownership());
-                    if let Some(process) = self
+                    let process = self
                         .core_processes
                         .lock()
                         .await
-                        .get_mut(&(owner_id, process_id))
-                    {
-                        process.session_id = Some(session_id);
+                        .get(&(owner_id, process_id))
+                        .cloned();
+                    if let Some(process) = process {
+                        process.lock().await.session_id = Some(session_id);
                     }
                 }
                 send_native_core_reply(reply, result, "bind session");
@@ -988,24 +1043,32 @@ impl AcpExtension {
                     Err(error) if is_process_already_gone(&error) => Ok(()),
                     Err(error) => Err(error),
                 };
-                let cleanup = self.release_native_agent_route(ctx, &process_id).await;
+                let cleanup = self
+                    .cleanup_native_agent_route(ctx, None, &process_id, broker_events)
+                    .await;
                 let result = match (kill, cleanup) {
                     (Ok(()), Ok(())) => Ok(()),
-                    (Err(error), Ok(())) | (Ok(()), Err(error)) => {
-                        Err(sidecar_to_core_error(error))
-                    }
-                    (Err(kill), Err(cleanup)) => Err(AcpCoreError::Execution(format!(
-                        "failed to abort native ACP adapter {process_id}: {kill}; cleanup also failed: {cleanup}"
-                    ))),
+                    (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(AcpCoreError::Cleanup {
+                        context: "failed to abort native ACP adapter completely",
+                        errors: vec![sidecar_to_core_error(error)],
+                    }),
+                    (Err(kill), Err(cleanup)) => Err(AcpCoreError::Cleanup {
+                        context: "failed to abort native ACP adapter completely",
+                        errors: vec![sidecar_to_core_error(kill), sidecar_to_core_error(cleanup)],
+                    }),
                 };
                 send_native_core_reply(reply, result, "abort agent");
             }
-            NativeCoreCommand::ReleaseAgentRoute { process_id, reply } => {
+            NativeCoreCommand::FinalizeSessionCleanup {
+                session_id,
+                process_id,
+                reply,
+            } => {
                 let result = self
-                    .release_native_agent_route(ctx, &process_id)
+                    .finalize_native_session_cleanup(ctx, &session_id, &process_id, broker_events)
                     .await
                     .map_err(sidecar_to_core_error);
-                send_native_core_reply(reply, result, "release agent route");
+                send_native_core_reply(reply, result, "finalize session cleanup");
             }
             NativeCoreCommand::WaitForExit {
                 process_id,
@@ -1097,6 +1160,10 @@ impl AcpExtension {
                     .await
                     .get(&(owner_id, process_id.clone()))
                     .cloned();
+                let process = match process {
+                    Some(process) => Some(process.lock().await.clone()),
+                    None => None,
+                };
                 let result =
                     build_inbound_response(self, ctx, &process_id, process.as_ref(), &request)
                         .await
@@ -1117,14 +1184,11 @@ impl AcpExtension {
     ) -> Result<Option<AgentOutput>, AcpCoreError> {
         let owner_id = ownership_owner_id(ctx.ownership());
         let route_key = (owner_id, process_id.to_string());
-        if let Some(output) = self
-            .core_processes
-            .lock()
-            .await
-            .get_mut(&route_key)
-            .and_then(|process| process.pending_output.pop_front())
-        {
-            return Ok(Some(output));
+        let route = self.core_processes.lock().await.get(&route_key).cloned();
+        if let Some(route) = route {
+            if let Some(output) = route.lock().await.pending_output.pop_front() {
+                return Ok(Some(output));
+            }
         }
 
         let buffered = ctx
@@ -1145,12 +1209,18 @@ impl AcpExtension {
                 "ACP adapter stderr exceeded the buffered-output limit and was truncated"
             );
         }
-        let mut processes = self.core_processes.lock().await;
-        let process = processes.get_mut(&route_key).ok_or_else(|| {
-            AcpCoreError::InvalidState(format!(
-                "native ACP adapter route disappeared while polling {process_id}"
-            ))
-        })?;
+        let route = self
+            .core_processes
+            .lock()
+            .await
+            .get(&route_key)
+            .cloned()
+            .ok_or_else(|| {
+                AcpCoreError::InvalidState(format!(
+                    "native ACP adapter route disappeared while polling {process_id}"
+                ))
+            })?;
+        let mut process = route.lock().await;
         if !buffered.stdout.is_empty() {
             process
                 .pending_output
@@ -1190,7 +1260,7 @@ impl AcpExtension {
             let kill = ctx
                 .kill_process_wire(KillProcessRequest {
                     process_id: process_id.clone(),
-                    signal: String::from("SIGTERM"),
+                    signal: String::from("SIGKILL"),
                 })
                 .await;
             let stop = ctx.stop_buffering_process_output(&process_id).await;
@@ -1200,11 +1270,19 @@ impl AcpExtension {
             };
             if let Err(error) = &kill {
                 if !kill_succeeded {
-                    errors.push(format!("{terminal_id} kill: {error}"));
+                    tracing::error!(terminal_id, process_id, error = %error, "failed to kill ACP terminal during cleanup");
+                    errors.push(SidecarError::Context {
+                        context: format!("terminal {terminal_id} process {process_id} kill"),
+                        source: Box::new(error.clone()),
+                    });
                 }
             }
             if let Err(error) = &stop {
-                errors.push(format!("{terminal_id} output cleanup: {error}"));
+                tracing::error!(terminal_id, process_id, error = %error, "failed to stop ACP terminal output buffering during cleanup");
+                errors.push(SidecarError::Context {
+                    context: format!("terminal {terminal_id} process {process_id} output cleanup"),
+                    source: Box::new(error.clone()),
+                });
             }
             if kill_succeeded && stop.is_ok() {
                 self.terminals.lock().await.remove(&terminal_id);
@@ -1213,30 +1291,132 @@ impl AcpExtension {
         if errors.is_empty() {
             Ok(())
         } else {
-            Err(SidecarError::Execution(format!(
-                "failed to clean up ACP session terminals: {}",
-                errors.join("; ")
-            )))
+            Err(SidecarError::Cleanup {
+                context: "failed to clean up ACP session terminals",
+                errors,
+            })
         }
     }
 
-    async fn release_native_agent_route(
+    async fn finalize_native_session_cleanup(
         &self,
         ctx: &mut ExtensionContext<'_>,
+        session_id: &str,
         process_id: &str,
+        broker_events: &mut Vec<agentos_native_sidecar::wire::EventFrame>,
+    ) -> Result<(), SidecarError> {
+        self.cleanup_native_agent_route(ctx, Some(session_id), process_id, broker_events)
+            .await
+    }
+
+    async fn cleanup_native_agent_route(
+        &self,
+        ctx: &mut ExtensionContext<'_>,
+        expected_session_id: Option<&str>,
+        process_id: &str,
+        broker_events: &mut Vec<agentos_native_sidecar::wire::EventFrame>,
     ) -> Result<(), SidecarError> {
         let owner_id = ownership_owner_id(ctx.ownership());
         let route_key = (owner_id, process_id.to_string());
-        let Some(process) = self.core_processes.lock().await.get(&route_key).cloned() else {
+        let Some(route) = self.core_processes.lock().await.get(&route_key).cloned() else {
             return Ok(());
         };
-        ctx.stop_buffering_process_output(process_id).await?;
-        if let Some(session_id) = process.session_id.as_deref() {
-            self.cleanup_session_terminals(ctx, session_id).await?;
-            ctx.dispose_session_resources_wire(session_id).await?;
+        // Lock only this route across destructive host calls. The returned
+        // events and phase bits are persisted synchronously after each await,
+        // while unrelated owners can still access their independent routes.
+        let mut process = route.lock().await;
+        if let Some(expected_session_id) = expected_session_id {
+            if process.session_id.as_deref() != Some(expected_session_id) {
+                return Err(SidecarError::InvalidState(format!(
+                    "native ACP process {process_id} is not bound to session {expected_session_id}"
+                )));
+            }
         }
-        self.core_processes.lock().await.remove(&route_key);
-        Ok(())
+        // Drain already committed events before asking the native host to do
+        // more cleanup. If delivery is backpressured, retry only delivery; this
+        // keeps the route queue bounded by one native cleanup batch and avoids
+        // repeating destructive phases merely to append another batch.
+        if let Err(error) = drain_committed_cleanup_events(
+            process_id,
+            &mut process.pending_cleanup_events,
+            |event| deliver_event(ctx, broker_events, event),
+        ) {
+            return Err(SidecarError::Cleanup {
+                context: "failed to clean up native ACP agent route completely",
+                errors: vec![error],
+            });
+        }
+        let session_id = process.session_id.clone();
+        let mut errors = Vec::new();
+        if !process.cleanup.output_buffer_stopped {
+            match ctx.stop_buffering_process_output(process_id).await {
+                Ok(()) => {
+                    process.cleanup.output_buffer_stopped = true;
+                }
+                Err(error) => errors.push(error),
+            }
+        }
+        if let Some(session_id) = session_id.as_deref() {
+            if !process.cleanup.terminals_cleaned {
+                match self.cleanup_session_terminals(ctx, session_id).await {
+                    Ok(()) => {
+                        process.cleanup.terminals_cleaned = true;
+                    }
+                    Err(error) => errors.push(error),
+                }
+            }
+            // Resource disposal can destroy the VM/process handles required by
+            // output-buffer and terminal retries, so this phase is deliberately
+            // dependent on both earlier phases. The earlier two are independent
+            // and are always attempted together above.
+            if process.cleanup.output_buffer_stopped
+                && process.cleanup.terminals_cleaned
+                && !process.cleanup.session_resources_disposed
+            {
+                match ctx.dispose_session_resources_wire(session_id).await {
+                    Ok(outcome) => {
+                        process.pending_cleanup_events.extend(outcome.events);
+                        if let Some(error) = outcome.error {
+                            errors.push(error);
+                        } else {
+                            process.cleanup.session_resources_disposed = true;
+                        }
+                    }
+                    Err(error) => errors.push(error),
+                }
+            }
+        } else {
+            process.cleanup.terminals_cleaned = true;
+            process.cleanup.session_resources_disposed = true;
+        }
+        if let Err(error) = drain_committed_cleanup_events(
+            process_id,
+            &mut process.pending_cleanup_events,
+            |event| deliver_event(ctx, broker_events, event),
+        ) {
+            errors.push(error);
+        }
+        let complete = errors.is_empty()
+            && process.cleanup.output_buffer_stopped
+            && process.cleanup.terminals_cleaned
+            && process.cleanup.session_resources_disposed
+            && process.pending_cleanup_events.is_empty();
+        drop(process);
+        if complete {
+            let mut routes = self.core_processes.lock().await;
+            if routes
+                .get(&route_key)
+                .is_some_and(|current| Arc::ptr_eq(current, &route))
+            {
+                routes.remove(&route_key);
+            }
+            Ok(())
+        } else {
+            return Err(SidecarError::Cleanup {
+                context: "failed to clean up native ACP agent route completely",
+                errors,
+            });
+        }
     }
 
     fn allocate_process_id(&self, prefix: &str) -> String {
@@ -1312,9 +1492,10 @@ impl Extension for AcpExtension {
                 };
                 core.drop_owner_state(owner_id);
             }
-            self.core_processes.lock().await.retain(|_, process| {
-                process.connection_id != connection_id || process.wire_session_id != wire_session_id
-            });
+            self.core_processes
+                .lock()
+                .await
+                .retain(|(owner_id, _), _| !owner_ids.contains(owner_id));
             self.core_owners
                 .lock()
                 .await
@@ -1418,10 +1599,21 @@ impl Extension for AcpExtension {
             }
 
             let owner_id = ownership_owner_id(ctx.ownership());
-            let process_id = {
+            let mut broker_events = Vec::new();
+            let owner_routes = {
                 let processes = self.core_processes.lock().await;
-                native_prompt_interrupt_target(&processes, &owner_id, &blocking_request.session_id)
+                processes
+                    .iter()
+                    .filter(|((route_owner_id, _), _)| route_owner_id == &owner_id)
+                    .map(|((_, process_id), process)| (process_id.clone(), Arc::clone(process)))
+                    .collect::<Vec<_>>()
             };
+            let process_id = native_prompt_interrupt_target(
+                &owner_routes,
+                &owner_id,
+                &blocking_request.session_id,
+            )
+            .await;
             let process_id = match process_id {
                 Ok(process_id) => process_id,
                 Err(error) => {
@@ -1487,6 +1679,7 @@ impl Extension for AcpExtension {
                             reason: AcpPendingAbortReason::CallerCancelled,
                             exit_code: None,
                         }),
+                        &mut broker_events,
                     )
                     .await;
                 let error = match cleanup {
@@ -1512,6 +1705,7 @@ impl Extension for AcpExtension {
                     &owner_id,
                     &blocking_request.session_id,
                     &process_id,
+                    &mut broker_events,
                 )
                 .await
             {
@@ -1535,22 +1729,24 @@ impl NativePromptInterruptIo for ExtensionContext<'_> {
     }
 }
 
-fn native_prompt_interrupt_target(
-    processes: &BTreeMap<(String, String), NativeCoreProcess>,
+async fn native_prompt_interrupt_target(
+    processes: &[(String, Arc<Mutex<NativeCoreProcess>>)],
     owner_id: &str,
     session_id: &str,
 ) -> Result<String, SidecarError> {
-    let mut matches = processes.iter().filter(|((route_owner_id, _), process)| {
-        route_owner_id == owner_id
-            && process.owner_id == owner_id
-            && process.session_id.as_deref() == Some(session_id)
-    });
-    let Some(((_, process_id), _)) = matches.next() else {
+    let mut matches = Vec::new();
+    for (process_id, process) in processes {
+        let process = process.lock().await;
+        if process.owner_id == owner_id && process.session_id.as_deref() == Some(session_id) {
+            matches.push(process_id.clone());
+        }
+    }
+    let Some(process_id) = matches.first() else {
         return Err(SidecarError::InvalidState(format!(
             "cannot interrupt ACP session {session_id}: its owner has no live adapter route"
         )));
     };
-    if matches.next().is_some() {
+    if matches.len() > 1 {
         return Err(SidecarError::Conflict(format!(
             "cannot interrupt ACP session {session_id}: its owner has multiple live adapter routes"
         )));
@@ -1619,12 +1815,27 @@ fn sidecar_to_core_error(error: SidecarError) -> AcpCoreError {
         SidecarError::Unauthorized(message) => AcpCoreError::Unauthorized(message),
         SidecarError::Unsupported(message) => AcpCoreError::Unsupported(message),
         SidecarError::FrameTooLarge(message) => AcpCoreError::LimitExceeded(message),
+        SidecarError::LimitExceeded {
+            limit,
+            capacity,
+            how_to_raise,
+        } => AcpCoreError::LimitExceeded(format!(
+            "{limit} limit exceeded (capacity {capacity}); raise {how_to_raise}"
+        )),
         SidecarError::Execution(message)
         | SidecarError::Timeout(message)
         | SidecarError::Kernel(message)
         | SidecarError::Plugin(message)
         | SidecarError::Bridge(message)
         | SidecarError::Io(message) => AcpCoreError::Execution(message),
+        SidecarError::Cleanup { context, errors } => AcpCoreError::Cleanup {
+            context,
+            errors: errors.into_iter().map(sidecar_to_core_error).collect(),
+        },
+        SidecarError::Context { context, source } => AcpCoreError::Context {
+            context,
+            source: Box::new(sidecar_to_core_error(*source)),
+        },
         SidecarError::SessionNotFound(session_id) => {
             AcpCoreError::InvalidState(format!("unknown ACP session {session_id}"))
         }
@@ -1677,6 +1888,25 @@ fn deliver_event(
 ) -> Result<(), SidecarError> {
     if let Some(frame) = ctx.emit_event_wire(frame)? {
         events.push(frame);
+    }
+    Ok(())
+}
+
+fn drain_committed_cleanup_events<T, F>(
+    process_id: &str,
+    events: &mut VecDeque<T>,
+    mut deliver: F,
+) -> Result<(), SidecarError>
+where
+    T: Clone,
+    F: FnMut(T) -> Result<(), SidecarError>,
+{
+    while let Some(event) = events.front().cloned() {
+        deliver(event).map_err(|error| SidecarError::Context {
+            context: format!("native ACP process {process_id} committed cleanup event delivery"),
+            source: Box::new(error),
+        })?;
+        events.pop_front();
     }
     Ok(())
 }
@@ -2824,12 +3054,15 @@ fn error_code(error: &SidecarError) -> String {
         SidecarError::Unauthorized(_) => "unauthorized",
         SidecarError::Unsupported(_) => "unsupported",
         SidecarError::FrameTooLarge(_) => "frame_too_large",
+        SidecarError::LimitExceeded { .. } => "limit_exceeded",
         SidecarError::Timeout(_) => "timeout",
         SidecarError::Kernel(_) => "kernel",
         SidecarError::Plugin(_) => "plugin",
         SidecarError::Execution(_) => "execution",
         SidecarError::Bridge(_) => "bridge",
         SidecarError::Io(_) => "io",
+        SidecarError::Cleanup { .. } => "cleanup_failed",
+        SidecarError::Context { source, .. } => return error_code(source),
     };
     String::from(code)
 }
@@ -2857,14 +3090,14 @@ mod tests {
         }
     }
 
-    fn test_core_process(owner_id: &str, session_id: &str) -> NativeCoreProcess {
-        NativeCoreProcess {
+    fn test_core_process(owner_id: &str, session_id: &str) -> Arc<Mutex<NativeCoreProcess>> {
+        Arc::new(Mutex::new(NativeCoreProcess {
             owner_id: owner_id.to_owned(),
-            connection_id: String::from("wire-connection"),
-            wire_session_id: Some(String::from("wire-session")),
             session_id: Some(session_id.to_owned()),
             pending_output: VecDeque::new(),
-        }
+            pending_cleanup_events: VecDeque::new(),
+            cleanup: NativeRouteCleanupProgress::default(),
+        }))
     }
 
     #[test]
@@ -2972,9 +3205,15 @@ mod tests {
         }
         let process_id = {
             let processes = extension.core_processes.lock().await;
-            native_prompt_interrupt_target(&processes, owner_id, session_id)
-                .expect("exact owner and ACP session route")
+            processes
+                .iter()
+                .filter(|((route_owner_id, _), _)| route_owner_id == owner_id)
+                .map(|((_, process_id), process)| (process_id.clone(), Arc::clone(process)))
+                .collect::<Vec<_>>()
         };
+        let process_id = native_prompt_interrupt_target(&process_id, owner_id, session_id)
+            .await
+            .expect("exact owner and ACP session route");
         assert_eq!(process_id, "exact-process");
 
         let wait_key = NativePermissionWaitKey {
@@ -3023,10 +3262,73 @@ mod tests {
             (String::from("owner-a"), String::from("process-b")),
             test_core_process("owner-a", "agent-session"),
         );
+        let owner_routes = processes
+            .iter()
+            .map(|((_, process_id), process)| (process_id.clone(), Arc::clone(process)))
+            .collect::<Vec<_>>();
+        drop(processes);
         assert!(matches!(
-            native_prompt_interrupt_target(&processes, "owner-a", "agent-session"),
+            native_prompt_interrupt_target(&owner_routes, "owner-a", "agent-session").await,
             Err(SidecarError::Conflict(message)) if message.contains("multiple live adapter routes")
         ));
+    }
+
+    #[tokio::test]
+    async fn stalled_route_cleanup_does_not_lock_an_unrelated_owner_route() {
+        let extension = AcpExtension::new();
+        let route_a = test_core_process("owner-a", "session-a");
+        let route_b = test_core_process("owner-b", "session-b");
+        {
+            let mut processes = extension.core_processes.lock().await;
+            processes.insert(
+                (String::from("owner-a"), String::from("process-a")),
+                Arc::clone(&route_a),
+            );
+            processes.insert(
+                (String::from("owner-b"), String::from("process-b")),
+                Arc::clone(&route_b),
+            );
+        }
+
+        let _stalled_cleanup = route_a.lock().await;
+        let owner_b = tokio::time::timeout(Duration::from_millis(50), async {
+            let route = extension
+                .core_processes
+                .lock()
+                .await
+                .get(&(String::from("owner-b"), String::from("process-b")))
+                .cloned()
+                .expect("owner B route remains registered");
+            let owner_id = route.lock().await.owner_id.clone();
+            owner_id
+        })
+        .await
+        .expect("owner A route cleanup must not hold the global route registry");
+        assert_eq!(owner_b, "owner-b");
+    }
+
+    #[test]
+    fn committed_cleanup_events_backpressure_without_growth_and_deliver_once() {
+        let mut pending = VecDeque::from([1_u8, 2_u8]);
+        let error = drain_committed_cleanup_events("process-a", &mut pending, |_| {
+            Err(SidecarError::LimitExceeded {
+                limit: "test_event_sink",
+                capacity: 0,
+                how_to_raise: "recover the test sink",
+            })
+        })
+        .expect_err("backpressure keeps the committed batch for retry");
+        assert!(error.to_string().contains("process-a"));
+        assert_eq!(pending, VecDeque::from([1, 2]));
+
+        let mut delivered = Vec::new();
+        drain_committed_cleanup_events("process-a", &mut pending, |event| {
+            delivered.push(event);
+            Ok(())
+        })
+        .expect("recovered sink drains the retained batch");
+        assert_eq!(delivered, vec![1, 2]);
+        assert!(pending.is_empty());
     }
 
     #[tokio::test]

@@ -818,15 +818,18 @@ fn browser_sidecar_diagnostic_failures_do_not_orphan_execution_or_context() {
         .bridge_mut()
         .push_execution_event(ExecutionEvent::Exited(ExecutionExited {
             vm_id: String::from("vm-diagnostic-failure"),
-            execution_id: started.execution_id,
+            execution_id: started.execution_id.clone(),
             exit_code: 0,
         }));
     sidecar
         .poll_execution_event(PollExecutionEventRequest {
             vm_id: String::from("vm-diagnostic-failure"),
         })
-        .expect("diagnostic failure must not make terminal cleanup retry an absent execution");
+        .expect_err("cleanup diagnostics are tracked retryable phases");
     assert_eq!(sidecar.active_worker_count("vm-diagnostic-failure"), 0);
+    sidecar
+        .release_execution(&started.execution_id, "browser.worker.reaped")
+        .expect("retry emits only the failed cleanup diagnostics");
 
     sidecar
         .bridge_mut()
@@ -2119,6 +2122,59 @@ fn browser_sidecar_reaps_pending_kernel_process_when_worker_startup_fails() {
         .expect("leaked pending process would exhaust the one-process limit");
 
     assert_eq!(started.execution_id, "exec-2");
+    assert_eq!(sidecar.active_worker_count("vm-browser"), 1);
+}
+
+#[test]
+fn browser_sidecar_retains_partial_startup_cleanup_and_charges_admission() {
+    let mut bridge = RecordingBridge::default();
+    bridge.push_worker_create_error("worker startup failed");
+    bridge.push_execution_kill_error("first rollback kill failed");
+    bridge.push_execution_kill_error("retry rollback kill failed");
+    let mut sidecar = BrowserSidecar::new(
+        bridge,
+        BrowserSidecarConfig {
+            max_pending_execution_cleanups_per_vm: 1,
+            ..BrowserSidecarConfig::default()
+        },
+    );
+    let mut config = KernelVmConfig::new("vm-browser");
+    config.permissions = Permissions::allow_all();
+    sidecar.create_vm(config).expect("create VM");
+    let context = sidecar
+        .create_javascript_context(CreateJavascriptContextRequest {
+            vm_id: String::from("vm-browser"),
+            bootstrap_module: Some(String::from("entry.js")),
+        })
+        .expect("create context");
+    let request = StartExecutionRequest {
+        vm_id: String::from("vm-browser"),
+        context_id: context.context_id,
+        argv: vec![String::from("node"), String::from("entry.js")],
+        env: BTreeMap::new(),
+        cwd: String::from("/workspace"),
+    };
+
+    let first = sidecar
+        .start_execution(request.clone())
+        .expect_err("worker and rollback failure retain cleanup");
+    assert!(first.to_string().contains("first rollback kill failed"));
+    assert_eq!(sidecar.pending_execution_cleanup_count("vm-browser"), 1);
+    assert_eq!(sidecar.active_worker_count("vm-browser"), 0);
+
+    let retry_error = sidecar
+        .start_execution(request.clone())
+        .expect_err("failed cleanup retry blocks replacement startup");
+    assert!(retry_error
+        .to_string()
+        .contains("retry rollback kill failed"));
+    assert_eq!(sidecar.pending_execution_cleanup_count("vm-browser"), 1);
+
+    let started = sidecar
+        .start_execution(request)
+        .expect("successful cleanup retry releases admission");
+    assert_eq!(started.execution_id, "exec-2");
+    assert_eq!(sidecar.pending_execution_cleanup_count("vm-browser"), 0);
     assert_eq!(sidecar.active_worker_count("vm-browser"), 1);
 }
 
