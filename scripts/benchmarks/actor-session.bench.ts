@@ -383,7 +383,7 @@ async function warmActor(actor: any): Promise<number> {
 		"actor-warm-ok\n",
 	);
 	const execResult = await actor.exec(
-		"node -e \"require('fs').writeFileSync('/home/agentos/benchmark/exec-warm.txt', 'exec-warm-ok\\n')\"",
+		"echo exec-warm-ok > /home/agentos/benchmark/exec-warm.txt",
 	);
 	const warmText = new TextDecoder()
 		.decode(await actor.readFile("/home/agentos/benchmark/actor-warm.txt"))
