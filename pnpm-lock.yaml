@@ -32,6 +32,9 @@ importers:
       '@agentos-software/common':
         specifier: workspace:*
         version: link:registry/software/common
+      '@agentos-software/opencode':
+        specifier: workspace:*
+        version: link:registry/agent/opencode
       '@agentos-software/pi':
         specifier: workspace:*
         version: link:registry/agent/pi
@@ -44,6 +47,9 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: ^0.60.0
         version: 0.60.0
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:packages/agentos
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:packages/core
@@ -59,6 +65,9 @@ importers:
       pdf-lib:
         specifier: ^1.17.1
         version: 1.17.1
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
       turbo:
         specifier: ^2.5.6
         version: 2.9.1
@@ -2935,13 +2944,19 @@ importers:
 
   registry/agent/codex:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: ^0.16.1
+        version: 0.16.1(zod@4.3.6)
       '@agentos-software/codex-cli':
-        specifier: workspace:*
+        specifier: workspace:0.3.3
         version: link:../../software/codex-cli
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../../packages/manifest
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15

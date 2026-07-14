@@ -107,7 +107,7 @@ All benchmarks compare agentOS against the fastest/cheapest mainstream sandbox p
 ## Features
 
 ### Agents
-- **Multi-agent support**: Run built-in Pi, Claude Code, and OpenCode agents with a unified API, plus install registry command packages such as Codex as VM software
+- **Multi-agent support**: Run built-in Pi, Claude Code, Codex, and OpenCode agents with a unified API
 - **[Sessions via ACP](https://agentos-sdk.dev/docs/sessions)**: Create, manage, and resume agent sessions over the [Agent Communication Protocol](https://agentclientprotocol.com)
 - **Universal transcript format**: One transcript format across all agents for debugging, auditing, and comparison
 - **[Automatic persistence](https://agentos-sdk.dev/docs/persistence)**: Every conversation is saved and replayable without extra code

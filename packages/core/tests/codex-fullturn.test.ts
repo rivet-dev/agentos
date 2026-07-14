@@ -33,6 +33,10 @@ async function runSessionTurn(
 			"\n" +
 			stdinTail;
 		await vm.execArgv("mkdir", ["-p", "/root/.codex"]);
+		await vm.writeFile(
+			"/root/.codex/config.toml",
+			new TextEncoder().encode("[features]\nshell_snapshot = false\n"),
+		);
 		const r = await vm.execArgv("codex-exec", ["--session-turn"], {
 			timeout: 45000,
 			stdin,
@@ -135,8 +139,8 @@ describe("codex full turn (real codex agent in the VM, mock OpenAI Responses)", 
 		expect(stdout).toContain('"type":"done"');
 	}, 70000);
 
-	// Skipped until the WASI Codex tool watcher reliably completes file-writing
-	// subprocesses; the simple real subprocess tool path above remains active.
+	// File-writing child processes still do not report completion through the
+	// WASI watcher, even though the simpler approved shell-command path above works.
 	test.skip("shell tool runs a REAL subprocess with an observable filesystem side effect", async () => {
 		// Proves codex's exec tool spawns a real subprocess via the secure-exec
 		// host_process bridge (not a mocked/gated stub): the model asks to run a
@@ -218,9 +222,7 @@ describe("codex full turn (real codex agent in the VM, mock OpenAI Responses)", 
 		}
 	}, 70000);
 
-	// Skipped until the WASI session-turn wrapper reliably completes resumed-history
-	// turns instead of hanging after the mock response.
-	test.skip("replays adapter-supplied history on a resumed multi-turn session", async () => {
+	test("replays adapter-supplied history on a resumed multi-turn session", async () => {
 		const { stdout, requests } = await runSessionTurn(
 			[finalText("the answer is 4")],
 			{

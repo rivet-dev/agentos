@@ -14,6 +14,7 @@ LANES=(
   "memory-sleep"
   "memory-pi-session"
   "session"
+  "actor-session"
 )
 
 should_run() {
@@ -44,6 +45,19 @@ run() {
     2> >(tee "$RESULTS_DIR/${name}.log" >&2)
 }
 
+run_to_file() {
+  local name="$1"
+  shift
+  if ! should_run "$name"; then
+    echo "=== Skipping $name (BENCH_ONLY=$BENCH_ONLY) ===" >&2
+    return
+  fi
+  echo "" >&2
+  echo "=== Running $name ===" >&2
+  pnpm exec tsx "$@" --output="$RESULTS_DIR/${name}.json" \
+    2>&1 | tee "$RESULTS_DIR/${name}.log" >&2
+}
+
 if should_build; then
   echo "=== Building benchmark TypeScript dependencies ===" >&2
   pnpm --dir packages/core build >&2
@@ -58,6 +72,22 @@ if should_build; then
     export AGENTOS_SIDECAR_BIN="$REPO_ROOT/target/release/agentos-sidecar"
   fi
   echo "Using sidecar: $AGENTOS_SIDECAR_BIN" >&2
+
+  if should_run "actor-session"; then
+    echo "=== Building actor-session benchmark dependencies ===" >&2
+    pnpm --filter @agentos-software/claude-code build >&2
+    pnpm --filter @agentos-software/pi build >&2
+    pnpm --filter @agentos-software/codex-cli build >&2
+    pnpm --filter @agentos-software/codex build >&2
+    if ! pnpm --filter @agentos-software/opencode exec bun --version >/dev/null 2>&1; then
+      echo "=== Materializing Bun for the OpenCode package build ===" >&2
+      pnpm --filter @agentos-software/opencode exec node node_modules/bun/install.js >&2
+    fi
+    pnpm --filter @agentos-software/opencode build >&2
+    pnpm --dir packages/agentos build >&2
+    cargo build --release -p agentos-actor-plugin >&2
+    echo "Using release actor plugin from the Cargo target directory" >&2
+  fi
 else
   echo "=== No matching benchmark lanes for BENCH_ONLY=$BENCH_ONLY ===" >&2
 fi
@@ -81,6 +111,11 @@ run "memory-pi-session" \
 run "session" \
   scripts/benchmarks/session.bench.ts --iterations=5 \
     ${BENCH_GATE:+--gate} ${BENCH_UPDATE_BASELINE:+--update-baseline}
+
+# End-to-end actor session startup + first message (local llmock provider).
+run_to_file "actor-session" \
+  scripts/benchmarks/actor-session.bench.ts \
+    --iterations="${BENCH_ITERATIONS:-5}" --warmup="${BENCH_WARMUP:-1}"
 
 echo "" >&2
 echo "=== Done. Results in $RESULTS_DIR ===" >&2

@@ -62,7 +62,18 @@ function npmBinary(): string {
 		join(dirname(process.execPath), "npm"),
 		"npm",
 	].filter((value): value is string => typeof value === "string" && value.length > 0);
-	return candidates.find((candidate) => candidate === "npm" || existsSync(candidate)) ?? "npm";
+	for (const candidate of new Set(candidates)) {
+		try {
+			execFileSync(candidate, ["--version"], { stdio: "ignore" });
+			return candidate;
+		} catch {
+			// Keep looking: PATH and Node-adjacent npm shims can exist but have a
+			// missing target after a Node or pnpm installation is replaced.
+		}
+	}
+	throw new Error(
+		"agentos-toolchain requires a working npm executable; install npm or set AGENTOS_TOOLCHAIN_NPM",
+	);
 }
 
 function readHead(file: string): Buffer {
@@ -100,6 +111,16 @@ function npmInstallFlat(source: string, into: string): void {
 	);
 }
 
+function findUp(startDir: string, fileName: string): string | undefined {
+	let dir = startDir;
+	for (;;) {
+		if (existsSync(join(dir, fileName))) return join(dir, fileName);
+		const parent = dirname(dir);
+		if (parent === dir) return undefined;
+		dir = parent;
+	}
+}
+
 /**
  * Resolve a pack source into an install spec npm will COPY (not symlink).
  *
@@ -114,9 +135,22 @@ function resolveInstallSpec(source: string, scratch: string): string {
 	if (!(existsSync(source) && statSync(source).isDirectory())) return source;
 	const dest = join(scratch, "tarball");
 	mkdirSync(dest, { recursive: true });
+	const sourceDir = resolve(source);
+	if (findUp(sourceDir, "pnpm-workspace.yaml")) {
+		const out = execFileSync(
+			"pnpm",
+			["pack", "--pack-destination", dest, "--json"],
+			{ cwd: sourceDir, encoding: "utf8" },
+		);
+		const result = JSON.parse(out) as { filename?: unknown };
+		if (typeof result.filename !== "string" || result.filename.length === 0) {
+			throw new Error("pnpm pack produced no tarball");
+		}
+		return result.filename;
+	}
 	const out = execFileSync(
 		npmBinary(),
-		["pack", resolve(source), "--pack-destination", dest, "--ignore-scripts", "--silent"],
+		["pack", sourceDir, "--pack-destination", dest, "--ignore-scripts", "--silent"],
 		{ encoding: "utf8" },
 	);
 	const file = out.trim().split("\n").pop()?.trim();

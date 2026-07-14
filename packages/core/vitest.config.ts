@@ -51,11 +51,6 @@ const KNOWN_FAILING_E2E_FILES = [
 	// Registry-artifact failure (red in both CI and local):
 	//  - duckdb-package: imports secure-exec registry/software/duckdb/dist (unbuilt WASM in CI).
 	"tests/duckdb-package.test.ts",
-	// codex-fullturn: the pinned @agentos-software/codex package intentionally
-	// stubs the turn ("codex-exec --session-turn is disabled until the real Codex
-	// agent package is wired"). Pre-existing unwired-feature state, not a
-	// regression — re-enable once the real Codex agent package is wired.
-	"tests/codex-fullturn.test.ts",
 ];
 
 // Real-API, real-install matrix (agent × package manager). Hits a live LLM API

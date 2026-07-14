@@ -4310,7 +4310,13 @@ function resolveHostFsMapping(value, fromGuestDir = HOST_FS_GUEST_CWD) {
 }
 
 const hostFsImport = {
-  fd_mode(fd) {
+	// Rust's WASI std now exposes File::lock through this host import. The VM's
+	// filesystem is private to one actor process tree, so accepting the advisory
+	// lock is sufficient until the kernel fd_flock RPC is projected here.
+	flock(_fd, _operation) {
+		return WASI_ERRNO_SUCCESS;
+	},
+	fd_mode(fd) {
     const descriptor = Number(fd) >>> 0;
     if (descriptor <= 2) {
       return HOST_FS_MODE_CHARACTER;
