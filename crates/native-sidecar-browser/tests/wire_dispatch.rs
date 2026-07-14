@@ -10,17 +10,18 @@ use agentos_kernel::kernel::KernelVmConfig;
 use agentos_kernel::permissions::Permissions;
 use agentos_native_sidecar_browser::{
     wire_dispatch::BrowserWireDispatcher, BrowserExtension, BrowserExtensionContext,
-    BrowserSidecarError, BrowserWorkerBridge, BrowserWorkerHandle, BrowserWorkerHandleRequest,
-    BrowserWorkerSpawnRequest,
+    BrowserSidecarConfig, BrowserSidecarError, BrowserWorkerBridge, BrowserWorkerHandle,
+    BrowserWorkerHandleRequest, BrowserWorkerSpawnRequest,
 };
 use agentos_sidecar_protocol::wire::{
-    protocol_schema, AuthenticateRequest, BootstrapRootFilesystemRequest, ConfigureVmRequest,
-    ConnectionOwnership, CreateOverlayRequest, CreateVmRequest, DisposeReason, DisposeVmRequest,
-    EventPayload, ExecuteRequest, ExportSnapshotRequest, ExtEnvelope, FilesystemOperation,
-    FindBoundUdpRequest, FindListenerRequest, GetSignalStateRequest, GuestFilesystemCallRequest,
-    GuestFilesystemOperation, GuestRuntimeKind, HostFilesystemCallRequest, ImportSnapshotRequest,
-    InitializeVmRequest, KillProcessRequest, OpenSessionRequest, OwnershipScope, PermissionsPolicy,
-    PersistenceFlushRequest, PersistenceLoadRequest, ProtocolFrame, RegisterHostCallbacksRequest,
+    protocol_schema, AuthenticateRequest, BootstrapRootFilesystemRequest, CloseSessionRequest,
+    ConfigureVmRequest, ConnectionOwnership, CreateOverlayRequest, CreateVmRequest, DisposeReason,
+    DisposeVmRequest, EventPayload, ExecuteRequest, ExportSnapshotRequest, ExtEnvelope,
+    FilesystemOperation, FindBoundUdpRequest, FindListenerRequest, GetSignalStateRequest,
+    GuestFilesystemCallRequest, GuestFilesystemOperation, GuestRuntimeKind,
+    HostFilesystemCallRequest, ImportSnapshotRequest, InitializeVmRequest, KillProcessRequest,
+    OpenSessionRequest, OwnershipScope, PermissionsPolicy, PersistenceFlushRequest,
+    PersistenceLoadRequest, ProtocolFrame, RegisterHostCallbacksRequest,
     RegisteredHostCallbackDefinition, RequestFrame, RequestPayload, ResponsePayload,
     RootFilesystemEntry, RootFilesystemEntryEncoding, RootFilesystemEntryKind, RootFilesystemMode,
     ScheduleCronRequest, SealLayerRequest, SidecarPlacement, SidecarPlacementShared,
@@ -29,6 +30,265 @@ use agentos_sidecar_protocol::wire::{
 };
 use bridge_support::RecordingBridge;
 use std::collections::{BTreeMap, HashMap};
+
+#[test]
+fn browser_close_session_disposes_vms_is_idempotent_and_rejects_cross_owner() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let (_vm_id, vm_ownership) = create_wire_vm(&codec, &mut dispatcher);
+    let OwnershipScope::VmOwnership(owner) = vm_ownership else {
+        unreachable!();
+    };
+    let other = open_wire_session(&codec, &mut dispatcher);
+    let OwnershipScope::SessionOwnership(other) = other else {
+        unreachable!();
+    };
+
+    let cross_owner = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 10,
+            ownership: OwnershipScope::ConnectionOwnership(ConnectionOwnership {
+                connection_id: other.connection_id,
+            }),
+            payload: RequestPayload::CloseSessionRequest(CloseSessionRequest {
+                session_id: owner.session_id.clone(),
+            }),
+        },
+    );
+    assert!(matches!(
+        cross_owner.payload,
+        ResponsePayload::RejectedResponse(ref rejected)
+            if rejected.code == "ownership_mismatch"
+    ));
+
+    let owner_connection = OwnershipScope::ConnectionOwnership(ConnectionOwnership {
+        connection_id: owner.connection_id.clone(),
+    });
+    let close_request = |request_id| RequestFrame {
+        schema: protocol_schema(),
+        request_id,
+        ownership: owner_connection.clone(),
+        payload: RequestPayload::CloseSessionRequest(CloseSessionRequest {
+            session_id: owner.session_id.clone(),
+        }),
+    };
+    let wrong_scope = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 101,
+            ownership: OwnershipScope::SessionOwnership(
+                agentos_sidecar_protocol::wire::SessionOwnership {
+                    connection_id: owner.connection_id.clone(),
+                    session_id: owner.session_id.clone(),
+                },
+            ),
+            payload: RequestPayload::CloseSessionRequest(CloseSessionRequest {
+                session_id: owner.session_id.clone(),
+            }),
+        },
+    );
+    assert!(matches!(
+        wrong_scope.payload,
+        ResponsePayload::RejectedResponse(ref rejected)
+            if rejected.code == "invalid_ownership"
+    ));
+    let unauthenticated = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 102,
+            ownership: OwnershipScope::ConnectionOwnership(ConnectionOwnership {
+                connection_id: String::from("missing-connection"),
+            }),
+            payload: RequestPayload::CloseSessionRequest(CloseSessionRequest {
+                session_id: owner.session_id.clone(),
+            }),
+        },
+    );
+    assert!(matches!(
+        unauthenticated.payload,
+        ResponsePayload::RejectedResponse(ref rejected)
+            if rejected.code == "unauthenticated"
+    ));
+    let closed = dispatch(&codec, &mut dispatcher, close_request(11));
+    assert!(matches!(
+        closed.payload,
+        ResponsePayload::SessionClosedResponse(ref response)
+            if response.session_id == owner.session_id
+    ));
+    assert_eq!(dispatcher.vm_count(), 0);
+
+    let retry = dispatch(&codec, &mut dispatcher, close_request(12));
+    assert!(matches!(
+        retry.payload,
+        ResponsePayload::SessionClosedResponse(ref response)
+            if response.session_id == owner.session_id
+    ));
+}
+
+struct FailingSessionDisposeExtension;
+
+impl BrowserExtension for FailingSessionDisposeExtension {
+    fn namespace(&self) -> &str {
+        "dev.agentos.test.close-failure"
+    }
+
+    fn on_session_disposed(
+        &self,
+        _connection_id: &str,
+        _session_id: &str,
+    ) -> Result<(), BrowserSidecarError> {
+        Err(BrowserSidecarError::Bridge(String::from(
+            "deterministic session teardown failure",
+        )))
+    }
+}
+
+#[test]
+fn browser_failed_close_replays_the_terminal_failure_and_releases_admission() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::with_config(
+        RecordingBridge::default(),
+        BrowserSidecarConfig {
+            max_sessions_per_connection: 1,
+            ..BrowserSidecarConfig::default()
+        },
+    );
+    dispatcher
+        .sidecar_mut()
+        .register_extension(Box::new(FailingSessionDisposeExtension))
+        .expect("register failing teardown extension");
+    let session = open_wire_session(&codec, &mut dispatcher);
+    let OwnershipScope::SessionOwnership(session) = session else {
+        unreachable!();
+    };
+    let close_request = |request_id| RequestFrame {
+        schema: protocol_schema(),
+        request_id,
+        ownership: OwnershipScope::ConnectionOwnership(ConnectionOwnership {
+            connection_id: session.connection_id.clone(),
+        }),
+        payload: RequestPayload::CloseSessionRequest(CloseSessionRequest {
+            session_id: session.session_id.clone(),
+        }),
+    };
+    let first = dispatch(&codec, &mut dispatcher, close_request(3));
+    let retry = dispatch(&codec, &mut dispatcher, close_request(4));
+    let failure = |payload: ResponsePayload| match payload {
+        ResponsePayload::RejectedResponse(rejected) => {
+            assert_eq!(rejected.code, "close_session_failed");
+            rejected.message
+        }
+        other => panic!("expected close_session_failed, got {other:?}"),
+    };
+    assert_eq!(
+        failure(first.payload),
+        failure(retry.payload),
+        "a retry must replay the terminal teardown failure"
+    );
+
+    let reopened = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 5,
+            ownership: OwnershipScope::ConnectionOwnership(ConnectionOwnership {
+                connection_id: session.connection_id,
+            }),
+            payload: RequestPayload::OpenSessionRequest(OpenSessionRequest {
+                placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
+                    pool: None,
+                }),
+            }),
+        },
+    );
+    assert!(matches!(
+        reopened.payload,
+        ResponsePayload::SessionOpenedResponse(_)
+    ));
+}
+
+#[test]
+fn browser_open_session_enforces_configured_bound() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::with_config(
+        RecordingBridge::default(),
+        BrowserSidecarConfig {
+            max_sessions_per_connection: 1,
+            ..BrowserSidecarConfig::default()
+        },
+    );
+    let session = open_wire_session(&codec, &mut dispatcher);
+    let OwnershipScope::SessionOwnership(session) = session else {
+        unreachable!();
+    };
+    let rejected = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 3,
+            ownership: OwnershipScope::ConnectionOwnership(ConnectionOwnership {
+                connection_id: session.connection_id.clone(),
+            }),
+            payload: RequestPayload::OpenSessionRequest(OpenSessionRequest {
+                placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
+                    pool: None,
+                }),
+            }),
+        },
+    );
+    let ResponsePayload::RejectedResponse(rejected) = rejected.payload else {
+        panic!("expected browser session limit rejection");
+    };
+    assert_eq!(rejected.code, "session_limit_exceeded");
+    assert!(rejected.message.contains("max_sessions_per_connection"));
+
+    let connection = OwnershipScope::ConnectionOwnership(ConnectionOwnership {
+        connection_id: session.connection_id.clone(),
+    });
+    let closed = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 4,
+            ownership: connection.clone(),
+            payload: RequestPayload::CloseSessionRequest(CloseSessionRequest {
+                session_id: session.session_id,
+            }),
+        },
+    );
+    assert!(matches!(
+        closed.payload,
+        ResponsePayload::SessionClosedResponse(_)
+    ));
+    let reopened = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 5,
+            ownership: connection,
+            payload: RequestPayload::OpenSessionRequest(OpenSessionRequest {
+                placement: SidecarPlacement::SidecarPlacementShared(SidecarPlacementShared {
+                    pool: None,
+                }),
+            }),
+        },
+    );
+    assert!(matches!(
+        reopened.payload,
+        ResponsePayload::SessionOpenedResponse(_)
+    ));
+}
 
 struct WireExtension;
 

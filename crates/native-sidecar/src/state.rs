@@ -18,7 +18,7 @@ use agentos_kernel::kernel::{KernelProcessHandle, KernelVm};
 use agentos_kernel::mount_table::MountTable;
 use agentos_kernel::root_fs::RootFilesystemMode;
 use agentos_kernel::socket_table::SocketId;
-use agentos_native_sidecar_core::{CapturedOutputState, VmLayerStore};
+use agentos_native_sidecar_core::{CapturedOutputState, SessionCloseOutcome, VmLayerStore};
 use agentos_vm_config as vm_config;
 use agentos_vm_config::PermissionsPolicy;
 use rusqlite::Connection;
@@ -90,6 +90,7 @@ pub(crate) const MAPPED_HOST_FD_START: u32 = 1_000_000_000;
 pub struct NativeSidecarConfig {
     pub sidecar_id: String,
     pub max_frame_bytes: usize,
+    pub max_sessions_per_connection: usize,
     pub compile_cache_root: Option<PathBuf>,
     pub expected_auth_token: Option<String>,
     pub acp_termination_grace: Duration,
@@ -100,6 +101,8 @@ impl Default for NativeSidecarConfig {
         Self {
             sidecar_id: String::from("agentos-native-sidecar"),
             max_frame_bytes: DEFAULT_MAX_FRAME_BYTES,
+            max_sessions_per_connection:
+                agentos_native_sidecar_core::DEFAULT_MAX_SESSIONS_PER_CONNECTION,
             compile_cache_root: None,
             expected_auth_token: None,
             acp_termination_grace: Duration::from_secs(3),
@@ -275,6 +278,8 @@ impl<B> Clone for SharedBridge<B> {
 pub(crate) struct ConnectionState {
     pub(crate) auth_token: String,
     pub(crate) sessions: BTreeSet<String>,
+    pub(crate) session_close_outcomes: BTreeMap<String, SessionCloseOutcome>,
+    pub(crate) session_close_outcome_order: VecDeque<String>,
 }
 
 #[allow(dead_code)]

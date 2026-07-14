@@ -36,6 +36,16 @@ describe("request payload conversion", () => {
 				},
 			},
 		});
+
+		expect(
+			toGeneratedRequestPayload({
+				type: "close_session",
+				session_id: "session-1",
+			}),
+		).toEqual({
+			tag: "CloseSessionRequest",
+			val: { sessionId: "session-1" },
+		});
 	});
 
 	it("preserves an omitted overlay mode for the sidecar default", () => {

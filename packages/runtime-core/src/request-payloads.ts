@@ -69,6 +69,10 @@ export type LiveRequestPayload =
 			placement: LiveSidecarPlacement;
 	  }
 	| {
+			type: "close_session";
+			session_id: string;
+	  }
+	| {
 			type: "create_vm";
 			runtime: LiveGuestRuntimeKind;
 			config: CreateVmConfig;
@@ -276,6 +280,11 @@ export function toGeneratedRequestPayload(
 				val: {
 					placement: toGeneratedSidecarPlacement(payload.placement),
 				},
+			};
+		case "close_session":
+			return {
+				tag: "CloseSessionRequest",
+				val: { sessionId: payload.session_id },
 			};
 		case "create_vm":
 			return {

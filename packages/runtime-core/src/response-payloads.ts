@@ -133,6 +133,10 @@ export type LiveResponsePayload =
 			owner_connection_id: string;
 	  }
 	| {
+			type: "session_closed";
+			session_id: string;
+	  }
+	| {
 			type: "vm_created";
 			vm_id: string;
 			guest_cwd: string;
@@ -343,6 +347,11 @@ export function fromGeneratedResponsePayload(
 				type: "session_opened",
 				session_id: payload.val.sessionId,
 				owner_connection_id: payload.val.ownerConnectionId,
+			};
+		case "SessionClosedResponse":
+			return {
+				type: "session_closed",
+				session_id: payload.val.sessionId,
 			};
 		case "VmCreatedResponse":
 			return {

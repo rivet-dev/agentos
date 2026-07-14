@@ -15,29 +15,34 @@ use agentos_native_sidecar_core::{
     permissions_from_policy, permissions_with_allow_all_defaults, process_exited_event_with_result,
     process_killed_response, process_output_event, process_route_retention,
     process_snapshot_response, process_started_response, protocol_process_snapshot_entry,
-    protocol_root_filesystem_mode, reject, resolve_command_line, respond,
-    root_filesystem_bootstrapped_response, root_filesystem_snapshot_response, root_snapshot_entry,
-    route_request_payload, session_opened_response, session_scope_of, signal_state_response,
-    snapshot_exported_response, snapshot_imported_response, stdin_closed_response,
-    stdin_written_response, unsupported_guest_kernel_call_event,
+    protocol_root_filesystem_mode, record_session_close_outcome, reject, resolve_command_line,
+    respond, root_filesystem_bootstrapped_response, root_filesystem_snapshot_response,
+    root_snapshot_entry, route_request_payload, session_close_history_capacity,
+    session_closed_response, session_id_was_allocated, session_limit_near_capacity,
+    session_limit_rejection_message, session_opened_response, session_scope_of,
+    signal_state_response, snapshot_exported_response, snapshot_imported_response,
+    stdin_closed_response, stdin_written_response, unsupported_guest_kernel_call_event,
     unsupported_host_callback_direction_dispatch, validate_authenticate_versions,
     validate_process_id, vm_configured_response, vm_created_response, vm_disposed_response,
     vm_id_of, vm_lifecycle_event, zombie_timer_count_response, CaptureChunkOutcome,
     CapturedOutputBudget, CapturedOutputState, CronAction, CronScheduler, DispatchResult,
-    RequestRoute, VmLimits,
+    RequestRoute, SessionCloseOutcome, VmLimits, CLOSE_SESSION_FAILED_ERROR_CODE,
+    CLOSE_SESSION_HISTORY_EXPIRED_ERROR_CODE, CLOSE_SESSION_INVALID_OWNERSHIP_ERROR_CODE,
+    CLOSE_SESSION_OWNERSHIP_MISMATCH_ERROR_CODE, CLOSE_SESSION_UNAUTHENTICATED_ERROR_CODE,
+    SESSION_LIMIT_ERROR_CODE,
 };
 use agentos_sidecar_protocol::protocol::{
-    AuthenticateRequest, BootstrapRootFilesystemRequest, CancelCronJobRequest, CloseStdinRequest,
-    CompleteCronRunRequest, ConfigureVmRequest, CreateLayerRequest, CreateOverlayRequest,
-    CreateVmRequest, CronAlarm, CronDispatchEvent, CronEventKind, CronEventRecord, CronRun,
-    DisposeVmRequest, EventFrame, EventPayload, ExecuteRequest, ExportSnapshotRequest, ExtEnvelope,
-    FindBoundUdpRequest, FindListenerRequest, GetProcessSnapshotRequest, GetSignalStateRequest,
-    GetZombieTimerCountRequest, GuestRuntimeKind, HostCallbacksRegisteredResponse,
-    ImportCronStateRequest, ImportSnapshotRequest, KillProcessRequest, OpenSessionRequest,
-    OwnershipScope, RegisterHostCallbacksRequest, RequestFrame, ResponsePayload,
-    ScheduleCronRequest, SealLayerRequest, SnapshotRootFilesystemRequest, SocketStateEntry,
-    StreamChannel, StructuredEvent, VmFetchRequest, VmFetchResponse, VmLifecycleState,
-    WakeCronRequest, WriteStdinRequest,
+    AuthenticateRequest, BootstrapRootFilesystemRequest, CancelCronJobRequest, CloseSessionRequest,
+    CloseStdinRequest, CompleteCronRunRequest, ConfigureVmRequest, CreateLayerRequest,
+    CreateOverlayRequest, CreateVmRequest, CronAlarm, CronDispatchEvent, CronEventKind,
+    CronEventRecord, CronRun, DisposeVmRequest, EventFrame, EventPayload, ExecuteRequest,
+    ExportSnapshotRequest, ExtEnvelope, FindBoundUdpRequest, FindListenerRequest,
+    GetProcessSnapshotRequest, GetSignalStateRequest, GetZombieTimerCountRequest, GuestRuntimeKind,
+    HostCallbacksRegisteredResponse, ImportCronStateRequest, ImportSnapshotRequest,
+    KillProcessRequest, OpenSessionRequest, OwnershipScope, RegisterHostCallbacksRequest,
+    RequestFrame, ResponsePayload, ScheduleCronRequest, SealLayerRequest,
+    SnapshotRootFilesystemRequest, SocketStateEntry, StreamChannel, StructuredEvent,
+    VmFetchRequest, VmFetchResponse, VmLifecycleState, WakeCronRequest, WriteStdinRequest,
 };
 use agentos_sidecar_protocol::wire::{
     request_frame_to_compat, CompatDispatchResult, ProtocolCodecError, ProtocolFrame,
@@ -62,6 +67,19 @@ struct ExecutionRecord {
     captured_output: Option<CapturedOutputState>,
 }
 
+#[derive(Debug, Default)]
+struct BrowserConnectionState {
+    sessions: BTreeSet<String>,
+    session_close_outcomes: BTreeMap<String, SessionCloseOutcome>,
+    session_close_outcome_order: VecDeque<String>,
+}
+
+#[derive(Debug)]
+struct BrowserSessionState {
+    connection_id: String,
+    vm_ids: BTreeSet<String>,
+}
+
 type ProcessExecutionKey = (String, String);
 
 pub struct BrowserWireDispatcher<B: BrowserSidecarBridge> {
@@ -71,6 +89,9 @@ pub struct BrowserWireDispatcher<B: BrowserSidecarBridge> {
     next_session: usize,
     next_vm: usize,
     next_process: u64,
+    max_sessions_per_connection: usize,
+    connections: BTreeMap<String, BrowserConnectionState>,
+    sessions: BTreeMap<String, BrowserSessionState>,
     active_vms: BTreeSet<String>,
     vm_limits: BTreeMap<String, VmLimits>,
     vm_capture_budgets: BTreeMap<String, Arc<CapturedOutputBudget>>,
@@ -87,13 +108,21 @@ where
     <B as agentos_bridge::BridgeTypes>::Error: fmt::Debug,
 {
     pub fn new(bridge: B) -> Self {
+        Self::with_config(bridge, BrowserSidecarConfig::default())
+    }
+
+    pub fn with_config(bridge: B, config: BrowserSidecarConfig) -> Self {
+        let max_sessions_per_connection = config.max_sessions_per_connection;
         Self {
             codec: WireFrameCodec::new(BROWSER_MAX_FRAME_BYTES),
-            sidecar: BrowserSidecar::new(bridge, BrowserSidecarConfig::default()),
+            sidecar: BrowserSidecar::new(bridge, config),
             next_connection: 0,
             next_session: 0,
             next_vm: 0,
             next_process: 0,
+            max_sessions_per_connection,
+            connections: BTreeMap::new(),
+            sessions: BTreeMap::new(),
             active_vms: BTreeSet::new(),
             vm_limits: BTreeMap::new(),
             vm_capture_budgets: BTreeMap::new(),
@@ -107,6 +136,10 @@ where
 
     pub fn vm_count(&self) -> usize {
         self.sidecar.vm_count()
+    }
+
+    pub fn session_count(&self) -> usize {
+        self.sessions.len()
     }
 
     pub fn sidecar_mut(&mut self) -> &mut BrowserSidecar<B> {
@@ -167,6 +200,7 @@ where
         match route_request_payload(&request) {
             RequestRoute::Authenticate(payload) => self.authenticate(&request, payload),
             RequestRoute::OpenSession(payload) => self.open_session(&request, payload),
+            RequestRoute::CloseSession(payload) => self.close_session(&request, payload),
             RequestRoute::CreateVm(payload) => self.create_vm(&request, payload),
             RequestRoute::InitializeVm(payload) => self.initialize_vm(&request, payload),
             RequestRoute::DisposeVm(payload) => self.dispose_vm(&request, payload),
@@ -1063,6 +1097,8 @@ where
 
         self.next_connection += 1;
         let connection_id = format!("browser-connection-{}", self.next_connection);
+        self.connections
+            .insert(connection_id.clone(), BrowserConnectionState::default());
         DispatchResult {
             response: authenticated_response(
                 request.request_id,
@@ -1086,17 +1122,196 @@ where
         request: &RequestFrame,
         _payload: OpenSessionRequest,
     ) -> DispatchResult {
-        let Some(connection_id) = connection_id_of(&request.ownership) else {
+        let connection_id = match &request.ownership {
+            OwnershipScope::ConnectionOwnership(scope) => scope.connection_id.clone(),
+            OwnershipScope::SessionOwnership(_) | OwnershipScope::VmOwnership(_) => {
+                return rejected(
+                    request,
+                    "invalid_ownership",
+                    "open_session requires connection ownership",
+                );
+            }
+        };
+        let Some(connection) = self.connections.get(&connection_id) else {
             return rejected(
                 request,
-                "invalid_ownership",
-                "open_session requires connection ownership",
+                "unauthenticated",
+                "open_session requires an authenticated connection",
             );
         };
+        let active_sessions = connection.sessions.len();
+        if active_sessions >= self.max_sessions_per_connection {
+            return rejected(
+                request,
+                SESSION_LIMIT_ERROR_CODE,
+                &session_limit_rejection_message(self.max_sessions_per_connection),
+            );
+        }
         self.next_session += 1;
         let session_id = format!("browser-session-{}", self.next_session);
+        self.sessions.insert(
+            session_id.clone(),
+            BrowserSessionState {
+                connection_id: connection_id.clone(),
+                vm_ids: BTreeSet::new(),
+            },
+        );
+        self.connections
+            .get_mut(&connection_id)
+            .expect("authenticated browser connection should exist")
+            .sessions
+            .insert(session_id.clone());
+        let active_sessions = active_sessions + 1;
+        if session_limit_near_capacity(active_sessions, self.max_sessions_per_connection) {
+            tracing::warn!(
+                connection_id,
+                active_sessions,
+                max_sessions_per_connection = self.max_sessions_per_connection,
+                "browser sidecar session registry is near capacity"
+            );
+        }
         DispatchResult {
             response: session_opened_response(request.request_id, connection_id, session_id),
+            events: Vec::new(),
+        }
+    }
+
+    fn close_session(
+        &mut self,
+        request: &RequestFrame,
+        payload: CloseSessionRequest,
+    ) -> DispatchResult {
+        let connection_id = match &request.ownership {
+            OwnershipScope::ConnectionOwnership(scope) => scope.connection_id.clone(),
+            OwnershipScope::SessionOwnership(_) | OwnershipScope::VmOwnership(_) => {
+                return rejected(
+                    request,
+                    CLOSE_SESSION_INVALID_OWNERSHIP_ERROR_CODE,
+                    "close_session requires connection ownership",
+                );
+            }
+        };
+        if !self.connections.contains_key(&connection_id) {
+            return rejected(
+                request,
+                CLOSE_SESSION_UNAUTHENTICATED_ERROR_CODE,
+                "close_session requires an authenticated connection",
+            );
+        }
+
+        let vm_ids = match self.sessions.get(&payload.session_id) {
+            Some(session) if session.connection_id != connection_id => {
+                return rejected(
+                    request,
+                    CLOSE_SESSION_OWNERSHIP_MISMATCH_ERROR_CODE,
+                    &format!(
+                        "session {} is not owned by connection {connection_id}",
+                        payload.session_id
+                    ),
+                );
+            }
+            Some(session) => session.vm_ids.iter().cloned().collect::<Vec<_>>(),
+            None => {
+                let terminal = self.connections.iter().find_map(|(owner_id, state)| {
+                    state
+                        .session_close_outcomes
+                        .get(&payload.session_id)
+                        .cloned()
+                        .map(|outcome| (owner_id.clone(), outcome))
+                });
+                if let Some((owner_id, outcome)) = terminal {
+                    if owner_id != connection_id {
+                        return rejected(
+                            request,
+                            CLOSE_SESSION_OWNERSHIP_MISMATCH_ERROR_CODE,
+                            &format!(
+                                "session {} is not owned by connection {connection_id}",
+                                payload.session_id
+                            ),
+                        );
+                    }
+                    return match outcome.error_message {
+                        Some(error) => rejected(request, CLOSE_SESSION_FAILED_ERROR_CODE, &error),
+                        None => DispatchResult {
+                            response: session_closed_response(request, payload.session_id),
+                            events: Vec::new(),
+                        },
+                    };
+                }
+                if session_id_was_allocated(
+                    &payload.session_id,
+                    "browser-session-",
+                    self.next_session,
+                ) {
+                    return rejected(
+                        request,
+                        CLOSE_SESSION_HISTORY_EXPIRED_ERROR_CODE,
+                        &format!(
+                            "terminal close outcome for session {} expired; raise max_sessions_per_connection to retain more close retry history",
+                            payload.session_id
+                        ),
+                    );
+                }
+                return DispatchResult {
+                    response: session_closed_response(request, payload.session_id),
+                    events: Vec::new(),
+                };
+            }
+        };
+
+        let mut first_error = None;
+        for vm_id in vm_ids {
+            if let Err(error) = self.sidecar.dispose_vm(&vm_id) {
+                first_error.get_or_insert(error.to_string());
+            }
+            self.purge_vm_state(&vm_id);
+        }
+        if let Err(error) = self
+            .sidecar
+            .dispose_extension_session_state(&connection_id, &payload.session_id)
+        {
+            first_error.get_or_insert(error.to_string());
+        }
+        self.sessions.remove(&payload.session_id);
+        if let Some(connection) = self.connections.get_mut(&connection_id) {
+            connection.sessions.remove(&payload.session_id);
+        }
+
+        let history_capacity = session_close_history_capacity(self.max_sessions_per_connection);
+        let connection = self
+            .connections
+            .get_mut(&connection_id)
+            .expect("authenticated browser connection remains present during close");
+        let evicted = record_session_close_outcome(
+            &mut connection.session_close_outcomes,
+            &mut connection.session_close_outcome_order,
+            payload.session_id.clone(),
+            SessionCloseOutcome {
+                error_message: first_error.clone(),
+            },
+            history_capacity,
+        );
+        if session_limit_near_capacity(connection.session_close_outcomes.len(), history_capacity) {
+            tracing::warn!(
+                connection_id,
+                retained_session_close_outcomes = connection.session_close_outcomes.len(),
+                session_close_history_capacity = history_capacity,
+                "browser sidecar terminal session-close history is near capacity"
+            );
+        }
+        if evicted {
+            tracing::warn!(
+                connection_id,
+                session_close_history_capacity = history_capacity,
+                "browser sidecar evicted its oldest terminal session-close outcome; raise max_sessions_per_connection to retain more retry history"
+            );
+        }
+
+        if let Some(error) = first_error {
+            return rejected(request, CLOSE_SESSION_FAILED_ERROR_CODE, &error);
+        }
+        DispatchResult {
+            response: session_closed_response(request, payload.session_id),
             events: Vec::new(),
         }
     }
@@ -1109,6 +1324,23 @@ where
                 "create_vm requires session ownership",
             );
         };
+        match self.sessions.get(&session_id) {
+            Some(session) if session.connection_id == connection_id => {}
+            Some(_) => {
+                return rejected(
+                    request,
+                    "ownership_mismatch",
+                    "create_vm session is owned by another connection",
+                );
+            }
+            None => {
+                return rejected(
+                    request,
+                    "unknown_session",
+                    "create_vm requires an active sidecar session",
+                );
+            }
+        }
         let create_config: CreateVmConfig = match serde_json::from_str(&payload.config) {
             Ok(config) => config,
             Err(error) => {
@@ -1177,6 +1409,11 @@ where
         let process_route_retention = u64::try_from(process_route_retention(&limits))
             .expect("process route retention must fit u64");
         self.active_vms.insert(vm_id.clone());
+        self.sessions
+            .get_mut(&session_id)
+            .expect("validated browser session should remain active")
+            .vm_ids
+            .insert(vm_id.clone());
         self.vm_capture_budgets
             .insert(vm_id.clone(), CapturedOutputBudget::for_vm(&limits));
         self.vm_limits.insert(vm_id.clone(), limits);
@@ -1321,6 +1558,9 @@ where
     }
 
     fn purge_vm_state(&mut self, vm_id: &str) {
+        for session in self.sessions.values_mut() {
+            session.vm_ids.remove(vm_id);
+        }
         self.active_vms.remove(vm_id);
         self.vm_limits.remove(vm_id);
         self.vm_capture_budgets.remove(vm_id);
@@ -1342,6 +1582,27 @@ where
                 "dispose_vm requires VM ownership",
             );
         };
+        let Some((connection_id, session_id)) = session_scope_of(&request.ownership) else {
+            return rejected(
+                request,
+                "invalid_ownership",
+                "dispose_vm requires VM ownership",
+            );
+        };
+        let Some(session) = self.sessions.get(&session_id) else {
+            return rejected(
+                request,
+                "unknown_session",
+                "dispose_vm requires an active sidecar session",
+            );
+        };
+        if session.connection_id != connection_id || !session.vm_ids.contains(&vm_id) {
+            return rejected(
+                request,
+                "ownership_mismatch",
+                "VM is not owned by the requested browser session",
+            );
+        }
         let dispose_result = self.sidecar.dispose_vm(&vm_id);
         self.purge_vm_state(&vm_id);
         if let Err(error) = dispose_result {

@@ -401,6 +401,9 @@ fn to_generated_request_payload(
         RequestPayload::OpenSession(inner) => {
             generated_protocol::RequestPayload::OpenSessionRequest(inner.clone())
         }
+        RequestPayload::CloseSession(inner) => {
+            generated_protocol::RequestPayload::CloseSessionRequest(inner.clone())
+        }
         RequestPayload::CreateVm(inner) => {
             generated_protocol::RequestPayload::CreateVmRequest(inner.clone())
         }
@@ -535,6 +538,9 @@ fn from_generated_request_payload(
         generated_protocol::RequestPayload::OpenSessionRequest(inner) => {
             RequestPayload::OpenSession(inner)
         }
+        generated_protocol::RequestPayload::CloseSessionRequest(inner) => {
+            RequestPayload::CloseSession(inner)
+        }
         generated_protocol::RequestPayload::CreateVmRequest(inner) => {
             RequestPayload::CreateVm(inner)
         }
@@ -666,6 +672,9 @@ fn to_generated_response_payload(
         }
         ResponsePayload::SessionOpened(inner) => {
             generated_protocol::ResponsePayload::SessionOpenedResponse(inner.clone())
+        }
+        ResponsePayload::SessionClosed(inner) => {
+            generated_protocol::ResponsePayload::SessionClosedResponse(inner.clone())
         }
         ResponsePayload::VmCreated(inner) => {
             generated_protocol::ResponsePayload::VmCreatedResponse(inner.clone())
@@ -844,6 +853,9 @@ fn from_generated_response_payload(
         }
         generated_protocol::ResponsePayload::SessionOpenedResponse(inner) => {
             ResponsePayload::SessionOpened(inner)
+        }
+        generated_protocol::ResponsePayload::SessionClosedResponse(inner) => {
+            ResponsePayload::SessionClosed(inner)
         }
         generated_protocol::ResponsePayload::VmCreatedResponse(inner) => {
             ResponsePayload::VmCreated(inner)
@@ -1378,6 +1390,7 @@ pub enum RequestPayload {
     ExportCronState(ExportCronStateRequest),
     ImportCronState(ImportCronStateRequest),
     InitializeVm(InitializeVmRequest),
+    CloseSession(CloseSessionRequest),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1425,6 +1438,7 @@ pub enum ResponsePayload {
     CronStateExported(CronStateExportedResponse),
     CronStateImported(CronStateImportedResponse),
     VmInitialized(VmInitializedResponse),
+    SessionClosed(SessionClosedResponse),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1496,6 +1510,8 @@ pub type VmLifecycleState = crate::wire::VmLifecycleState;
 pub type AuthenticateRequest = crate::wire::AuthenticateRequest;
 
 pub type OpenSessionRequest = crate::wire::OpenSessionRequest;
+
+pub type CloseSessionRequest = crate::wire::CloseSessionRequest;
 
 pub type CreateVmRequest = crate::wire::CreateVmRequest;
 
@@ -1623,6 +1639,8 @@ pub type JsBridgeCallRequest = crate::wire::JsBridgeCallRequest;
 pub type AuthenticatedResponse = crate::wire::AuthenticatedResponse;
 
 pub type SessionOpenedResponse = crate::wire::SessionOpenedResponse;
+
+pub type SessionClosedResponse = crate::wire::SessionClosedResponse;
 
 pub type VmCreatedResponse = crate::wire::VmCreatedResponse;
 
@@ -1767,6 +1785,7 @@ impl_bare_newtype_union_enum!(
         ExportCronState(ExportCronStateRequest) = 38,
         ImportCronState(ImportCronStateRequest) = 39,
         InitializeVm(InitializeVmRequest) = 40,
+        CloseSession(CloseSessionRequest) = 41,
     }
 );
 
@@ -1818,6 +1837,7 @@ impl_bare_newtype_union_enum!(
         CronStateExported(CronStateExportedResponse) = 40,
         CronStateImported(CronStateImportedResponse) = 41,
         VmInitialized(VmInitializedResponse) = 42,
+        SessionClosed(SessionClosedResponse) = 43,
     }
 );
 
@@ -2365,6 +2385,7 @@ struct PendingSidecarRequest {
 enum ExpectedResponseKind {
     Authenticated,
     SessionOpened,
+    SessionClosed,
     VmCreated,
     VmDisposed,
     RootFilesystemBootstrapped,
@@ -2422,6 +2443,7 @@ impl ExpectedResponseKind {
         match self {
             Self::Authenticated => "authenticated",
             Self::SessionOpened => "session_opened",
+            Self::SessionClosed => "session_closed",
             Self::VmCreated => "vm_created",
             Self::VmDisposed => "vm_disposed",
             Self::RootFilesystemBootstrapped => "root_filesystem_bootstrapped",
@@ -2490,7 +2512,9 @@ impl ExpectedSidecarResponseKind {
 impl RequestPayload {
     fn ownership_requirement(&self) -> OwnershipRequirement {
         match self {
-            Self::Authenticate(_) | Self::OpenSession(_) => OwnershipRequirement::Connection,
+            Self::Authenticate(_) | Self::OpenSession(_) | Self::CloseSession(_) => {
+                OwnershipRequirement::Connection
+            }
             Self::CreateVm(_)
             | Self::InitializeVm(_)
             | Self::PersistenceLoad(_)
@@ -2537,6 +2561,7 @@ impl RequestPayload {
         match self {
             Self::Authenticate(_) => ExpectedResponseKind::Authenticated,
             Self::OpenSession(_) => ExpectedResponseKind::SessionOpened,
+            Self::CloseSession(_) => ExpectedResponseKind::SessionClosed,
             Self::CreateVm(_) => ExpectedResponseKind::VmCreated,
             Self::DisposeVm(_) => ExpectedResponseKind::VmDisposed,
             Self::BootstrapRootFilesystem(_) => ExpectedResponseKind::RootFilesystemBootstrapped,
@@ -2597,7 +2622,9 @@ impl SidecarRequestPayload {
 impl ResponsePayload {
     fn ownership_requirement(&self) -> OwnershipRequirement {
         match self {
-            Self::Authenticated(_) | Self::SessionOpened(_) => OwnershipRequirement::Connection,
+            Self::Authenticated(_) | Self::SessionOpened(_) | Self::SessionClosed(_) => {
+                OwnershipRequirement::Connection
+            }
             Self::VmCreated(_)
             | Self::VmInitialized(_)
             | Self::PersistenceState(_)
@@ -2646,6 +2673,7 @@ impl ResponsePayload {
         match self {
             Self::Authenticated(_) => "authenticated",
             Self::SessionOpened(_) => "session_opened",
+            Self::SessionClosed(_) => "session_closed",
             Self::VmCreated(_) => "vm_created",
             Self::VmDisposed(_) => "vm_disposed",
             Self::RootFilesystemBootstrapped(_) => "root_filesystem_bootstrapped",

@@ -53,11 +53,11 @@ pub use frames::{
     process_killed_response, process_output_event, process_snapshot_response,
     process_started_response, provided_commands_response, reject, respond, response_with_ownership,
     root_filesystem_bootstrapped_response, root_filesystem_snapshot_response,
-    session_opened_response, signal_state_response, snapshot_exported_response,
-    snapshot_imported_response, stdin_closed_response, stdin_written_response,
-    unsupported_guest_kernel_call_detail, unsupported_guest_kernel_call_event,
-    validate_authenticate_versions, vm_configured_response, vm_created_response,
-    vm_disposed_response, vm_lifecycle_event, zombie_timer_count_response,
+    session_closed_response, session_opened_response, signal_state_response,
+    snapshot_exported_response, snapshot_imported_response, stdin_closed_response,
+    stdin_written_response, unsupported_guest_kernel_call_detail,
+    unsupported_guest_kernel_call_event, validate_authenticate_versions, vm_configured_response,
+    vm_created_response, vm_disposed_response, vm_lifecycle_event, zombie_timer_count_response,
     AuthenticateVersionError, DispatchResult, UNSUPPORTED_GUEST_KERNEL_CALL_EVENT,
 };
 pub use guest_fs::{
@@ -92,11 +92,16 @@ pub use root_fs::{
     root_snapshot_from_entries, SidecarCoreError,
 };
 pub use router::{
-    connection_id_of, generated_wire_blocking_extension_interrupt, request_dispatch_mode,
-    request_is_unsupported_host_callback_direction, route_request_payload, session_scope_of,
+    connection_id_of, generated_wire_blocking_extension_interrupt, record_session_close_outcome,
+    request_dispatch_mode, request_is_unsupported_host_callback_direction, route_request_payload,
+    session_close_history_capacity, session_id_was_allocated, session_limit_near_capacity,
+    session_limit_rejection_message, session_scope_of,
     unsupported_host_callback_direction_dispatch, vm_id_of, BlockingExtensionInterrupt,
-    RequestDispatchMode, RequestRoute, UNSUPPORTED_HOST_CALLBACK_DIRECTION_CODE,
-    UNSUPPORTED_HOST_CALLBACK_DIRECTION_MESSAGE,
+    RequestDispatchMode, RequestRoute, SessionCloseOutcome, CLOSE_SESSION_FAILED_ERROR_CODE,
+    CLOSE_SESSION_HISTORY_EXPIRED_ERROR_CODE, CLOSE_SESSION_INVALID_OWNERSHIP_ERROR_CODE,
+    CLOSE_SESSION_OWNERSHIP_MISMATCH_ERROR_CODE, CLOSE_SESSION_UNAUTHENTICATED_ERROR_CODE,
+    DEFAULT_MAX_SESSIONS_PER_CONNECTION, SESSION_LIMIT_ERROR_CODE,
+    UNSUPPORTED_HOST_CALLBACK_DIRECTION_CODE, UNSUPPORTED_HOST_CALLBACK_DIRECTION_MESSAGE,
 };
 pub use signals::{
     apply_process_signal_state_update, canonical_signal_name, default_signal_exit_code,

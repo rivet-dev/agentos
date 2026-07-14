@@ -713,6 +713,7 @@ fn extension_callback_response_payload(
 pub enum ExtensionInterruptRequest<'a> {
     ExtensionPayload(&'a [u8]),
     KillProcess,
+    CloseSession,
 }
 
 #[derive(Debug, Clone)]
@@ -735,13 +736,10 @@ pub trait Extension: Send + Sync {
     }
 
     /// Per-session teardown hook. The host invokes this for every registered
-    /// extension when a session is disposed because its connection closed
-    /// (`DisposeReason::ConnectionClosed`), giving the extension the disposed
-    /// session's ownership scope so it can release the per-session state it
-    /// keyed on that session. Default is a no-op. This is the only signal an
-    /// extension receives that a client has disconnected, so it is what lets an
-    /// ACP-style extension free per-session state instead of leaking it for the
-    /// process lifetime.
+    /// extension whenever a host session is disposed, whether explicitly or
+    /// because its connection closed. The disposed ownership scope lets the
+    /// extension release per-session state instead of retaining it for the
+    /// process lifetime. Default is a no-op.
     fn on_session_disposed<'a>(&'a self, _ctx: ExtensionSnapshot) -> ExtensionFuture<'a, ()> {
         Box::pin(async { Ok(()) })
     }

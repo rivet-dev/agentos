@@ -167,6 +167,8 @@ fn sidecar_rejects_oversized_request_frames_before_dispatch() {
         NativeSidecarConfig {
             sidecar_id: String::from("sidecar-frame-limit"),
             max_frame_bytes: 512,
+            max_sessions_per_connection:
+                agentos_native_sidecar_core::DEFAULT_MAX_SESSIONS_PER_CONNECTION,
             compile_cache_root: Some(root.join("cache")),
             expected_auth_token: Some(String::from(TEST_AUTH_TOKEN)),
             acp_termination_grace: Duration::from_secs(3),

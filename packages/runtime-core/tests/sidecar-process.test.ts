@@ -79,6 +79,18 @@ class MemorySidecarTransport implements SidecarProcessTransport {
 				},
 			};
 		}
+		if (input.payload.type === "close_session") {
+			return {
+				frame_type: "response",
+				schema: SIDECAR_PROTOCOL_SCHEMA,
+				request_id: this.requests.length,
+				ownership: input.ownership,
+				payload: {
+					type: "session_closed",
+					session_id: input.payload.session_id,
+				},
+			};
+		}
 		if (input.payload.type === "execute") {
 			return {
 				frame_type: "response",
@@ -172,6 +184,29 @@ describe("sidecar process transport injection", () => {
 			},
 		]);
 		expect(transport.disposed).toBe(true);
+	});
+
+	test("closes a session through connection ownership", async () => {
+		const transport = new MemorySidecarTransport();
+		const process = SidecarProcess.fromClient(transport);
+
+		await process.closeSession({
+			connectionId: "conn",
+			sessionId: "session",
+		});
+
+		expect(transport.requests).toEqual([
+			{
+				ownership: {
+					scope: "connection",
+					connection_id: "conn",
+				},
+				payload: {
+					type: "close_session",
+					session_id: "session",
+				},
+			},
+		]);
 	});
 
 	test("rejects missing filesystem response payloads instead of inventing results", async () => {

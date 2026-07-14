@@ -30,6 +30,16 @@ describe("response payload conversion", () => {
 			code: "bad_request",
 			message: "nope",
 		});
+
+		expect(
+			fromGeneratedResponsePayload({
+				tag: "SessionClosedResponse",
+				val: { sessionId: "session-1" },
+			}),
+		).toEqual({
+			type: "session_closed",
+			session_id: "session-1",
+		});
 	});
 
 	it("maps guest filesystem result details", () => {

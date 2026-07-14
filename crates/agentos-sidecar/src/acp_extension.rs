@@ -1741,10 +1741,12 @@ impl Extension for AcpExtension {
         let interrupted_response_payload =
             encode_interrupted_session_response(&blocking_request.session_id)?;
         match interrupt {
-            ExtensionInterruptRequest::KillProcess => Some(ExtensionInterruptResponse {
-                interrupted_response_payload,
-                interrupting_response_payload: None,
-            }),
+            ExtensionInterruptRequest::KillProcess | ExtensionInterruptRequest::CloseSession => {
+                Some(ExtensionInterruptResponse {
+                    interrupted_response_payload,
+                    interrupting_response_payload: None,
+                })
+            }
             ExtensionInterruptRequest::ExtensionPayload(payload) => {
                 let request = decode_request(payload).ok()?;
                 match request {

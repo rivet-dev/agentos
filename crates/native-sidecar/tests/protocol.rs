@@ -1,11 +1,11 @@
 use agentos_native_sidecar::protocol::{
-    validate_frame, AuthenticateRequest, AuthenticatedResponse, CreateVmRequest, EventFrame,
-    EventPayload, ExtEnvelope, GetZombieTimerCountRequest, GuestFilesystemCallRequest,
-    GuestFilesystemOperation, GuestRuntimeKind, HostCallbackRequest, HostCallbackResultResponse,
-    JsBridgeResultResponse, NativeFrameCodec, NativePayloadCodec, OpenSessionRequest,
-    OwnershipScope, PatternPermissionScope, PermissionMode, PermissionsPolicy, ProcessOutputEvent,
-    ProcessStartedResponse, ProtocolCodecError, ProtocolFrame, RequestFrame, RequestPayload,
-    ResponseFrame, ResponsePayload, ResponseTracker, ResponseTrackerError,
+    validate_frame, AuthenticateRequest, AuthenticatedResponse, CloseSessionRequest,
+    CreateVmRequest, EventFrame, EventPayload, ExtEnvelope, GetZombieTimerCountRequest,
+    GuestFilesystemCallRequest, GuestFilesystemOperation, GuestRuntimeKind, HostCallbackRequest,
+    HostCallbackResultResponse, JsBridgeResultResponse, NativeFrameCodec, NativePayloadCodec,
+    OpenSessionRequest, OwnershipScope, PatternPermissionScope, PermissionMode, PermissionsPolicy,
+    ProcessOutputEvent, ProcessStartedResponse, ProtocolCodecError, ProtocolFrame, RequestFrame,
+    RequestPayload, ResponseFrame, ResponsePayload, ResponseTracker, ResponseTrackerError,
     RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemEntryKind,
     RootFilesystemLowerDescriptor, SidecarPlacement, SidecarPlacementShared, SidecarRequestFrame,
     SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload, SidecarResponseTracker,
@@ -73,6 +73,20 @@ fn codec_round_trips_authenticated_setup_and_session_messages() {
     let decoded = codec.decode(&encoded).expect("decode session");
 
     assert_eq!(decoded, session_frame);
+
+    let close_frame = ProtocolFrame::Request(RequestFrame::new(
+        3,
+        OwnershipScope::connection("conn-1"),
+        RequestPayload::CloseSession(CloseSessionRequest {
+            session_id: String::from("session-1"),
+        }),
+    ));
+    assert_eq!(
+        codec
+            .decode(&codec.encode(&close_frame).expect("encode close session"))
+            .expect("decode close session"),
+        close_frame
+    );
 }
 
 #[test]
@@ -898,6 +912,7 @@ fn checked_in_bare_schema_covers_all_top_level_frame_payload_types() {
         "type SidecarResponsePayload union {",
         "AuthenticateRequest",
         "OpenSessionRequest",
+        "CloseSessionRequest",
         "CreateVmRequest",
         "InitializeVmRequest",
         "DisposeVmRequest",
@@ -928,6 +943,7 @@ fn checked_in_bare_schema_covers_all_top_level_frame_payload_types() {
         "ExtEnvelope",
         "AuthenticatedResponse",
         "SessionOpenedResponse",
+        "SessionClosedResponse",
         "VmCreatedResponse",
         "VmInitializedResponse",
         "VmDisposedResponse",

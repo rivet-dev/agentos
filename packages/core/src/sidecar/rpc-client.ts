@@ -241,6 +241,7 @@ export class NativeSidecarKernelProxy {
 	> | null = null;
 	private readonly rootView: VirtualFileSystem;
 	private disposed = false;
+	private disposePromise: Promise<void> | null = null;
 	private pumpError: Error | null = null;
 	private mountReconfigurePromise: Promise<void> | null = null;
 	private readonly eventPumpAbortController = new AbortController();
@@ -296,8 +297,21 @@ export class NativeSidecarKernelProxy {
 		if (this.disposed) {
 			return;
 		}
-		this.disposed = true;
-		this.eventPumpAbortController.abort();
+		if (this.disposePromise) {
+			return this.disposePromise;
+		}
+		const attempt = this.disposeOnce();
+		this.disposePromise = attempt;
+		try {
+			await attempt;
+		} finally {
+			if (this.disposePromise === attempt) {
+				this.disposePromise = null;
+			}
+		}
+	}
+
+	private async disposeOnce(): Promise<void> {
 		const errors: Error[] = [];
 		try {
 			await this.mountReconfigurePromise;
@@ -321,7 +335,14 @@ export class NativeSidecarKernelProxy {
 			await this.client.disposeVm(this.session, this.vm);
 		} catch (error) {
 			errors.push(toError(error));
+			throw new AggregateError(errors, "failed to dispose sidecar VM");
 		}
+
+		// Remote disposal is authoritative. Only now make local teardown
+		// irreversible; a rejected/failed request leaves the route and lease live so
+		// the caller can retry without manufacturing local success.
+		this.disposed = true;
+		this.eventPumpAbortController.abort();
 		for (const entry of liveProcesses) {
 			if (!entry.settled) {
 				// The sidecar dispose path already performs TERM/KILL escalation for any
@@ -1406,11 +1427,11 @@ export class AgentOsSidecarClient {
 			}
 		}
 
-		this.disposed = true;
-
 		if (errors.length > 0) {
 			throw new Error(errors.map((error) => error.message).join("; "));
 		}
+
+		this.disposed = true;
 	}
 
 	private async disposeVmEntry(

@@ -56,12 +56,15 @@ const BROWSER_VM_FETCH_TIMEOUT_MS_ENV: &str = "AGENTOS_TEST_BROWSER_VM_FETCH_TIM
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrowserSidecarConfig {
     pub sidecar_id: String,
+    pub max_sessions_per_connection: usize,
 }
 
 impl Default for BrowserSidecarConfig {
     fn default() -> Self {
         Self {
             sidecar_id: String::from("agentos-native-sidecar-browser"),
+            max_sessions_per_connection:
+                agentos_native_sidecar_core::DEFAULT_MAX_SESSIONS_PER_CONNECTION,
         }
     }
 }
@@ -140,6 +143,14 @@ pub trait BrowserExtension: Send + Sync {
             "browser extension {} does not handle requests",
             self.namespace()
         )))
+    }
+
+    fn on_session_disposed(
+        &self,
+        _connection_id: &str,
+        _session_id: &str,
+    ) -> Result<(), BrowserSidecarError> {
+        Ok(())
     }
 }
 
@@ -431,6 +442,23 @@ where
             namespace: request.namespace,
             payload,
         })
+    }
+
+    pub fn dispose_extension_session_state(
+        &self,
+        connection_id: &str,
+        session_id: &str,
+    ) -> Result<(), BrowserSidecarError> {
+        let mut first_error = None;
+        for extension in self.extensions.values() {
+            if let Err(error) = extension.on_session_disposed(connection_id, session_id) {
+                first_error.get_or_insert(error);
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     pub fn sidecar_id(&self) -> &str {

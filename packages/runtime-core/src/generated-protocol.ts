@@ -266,6 +266,20 @@ export function writeOpenSessionRequest(bc: bare.ByteCursor, x: OpenSessionReque
     writeSidecarPlacement(bc, x.placement)
 }
 
+export type CloseSessionRequest = {
+    readonly sessionId: string
+}
+
+export function readCloseSessionRequest(bc: bare.ByteCursor): CloseSessionRequest {
+    return {
+        sessionId: bare.readString(bc),
+    }
+}
+
+export function writeCloseSessionRequest(bc: bare.ByteCursor, x: CloseSessionRequest): void {
+    bare.writeString(bc, x.sessionId)
+}
+
 export enum GuestRuntimeKind {
     JavaScript = "JavaScript",
     Python = "Python",
@@ -2559,6 +2573,7 @@ export type RequestPayload =
     | { readonly tag: "ExportCronStateRequest"; readonly val: ExportCronStateRequest }
     | { readonly tag: "ImportCronStateRequest"; readonly val: ImportCronStateRequest }
     | { readonly tag: "InitializeVmRequest"; readonly val: InitializeVmRequest }
+    | { readonly tag: "CloseSessionRequest"; readonly val: CloseSessionRequest }
 
 export function readRequestPayload(bc: bare.ByteCursor): RequestPayload {
     const offset = bc.offset
@@ -2646,6 +2661,8 @@ export function readRequestPayload(bc: bare.ByteCursor): RequestPayload {
             return { tag: "ImportCronStateRequest", val: readImportCronStateRequest(bc) }
         case 40:
             return { tag: "InitializeVmRequest", val: readInitializeVmRequest(bc) }
+        case 41:
+            return { tag: "CloseSessionRequest", val: readCloseSessionRequest(bc) }
         default: {
             bc.offset = offset
             throw new bare.BareError(offset, "invalid tag")
@@ -2852,6 +2869,11 @@ export function writeRequestPayload(bc: bare.ByteCursor, x: RequestPayload): voi
             writeInitializeVmRequest(bc, x.val)
             break
         }
+        case "CloseSessionRequest": {
+            bare.writeU8(bc, 41)
+            writeCloseSessionRequest(bc, x.val)
+            break
+        }
     }
 }
 
@@ -2913,6 +2935,20 @@ export function readSessionOpenedResponse(bc: bare.ByteCursor): SessionOpenedRes
 export function writeSessionOpenedResponse(bc: bare.ByteCursor, x: SessionOpenedResponse): void {
     bare.writeString(bc, x.sessionId)
     bare.writeString(bc, x.ownerConnectionId)
+}
+
+export type SessionClosedResponse = {
+    readonly sessionId: string
+}
+
+export function readSessionClosedResponse(bc: bare.ByteCursor): SessionClosedResponse {
+    return {
+        sessionId: bare.readString(bc),
+    }
+}
+
+export function writeSessionClosedResponse(bc: bare.ByteCursor, x: SessionClosedResponse): void {
+    bare.writeString(bc, x.sessionId)
 }
 
 export type VmCreatedResponse = {
@@ -4288,6 +4324,7 @@ export type ResponsePayload =
     | { readonly tag: "CronStateExportedResponse"; readonly val: CronStateExportedResponse }
     | { readonly tag: "CronStateImportedResponse"; readonly val: CronStateImportedResponse }
     | { readonly tag: "VmInitializedResponse"; readonly val: VmInitializedResponse }
+    | { readonly tag: "SessionClosedResponse"; readonly val: SessionClosedResponse }
 
 export function readResponsePayload(bc: bare.ByteCursor): ResponsePayload {
     const offset = bc.offset
@@ -4379,6 +4416,8 @@ export function readResponsePayload(bc: bare.ByteCursor): ResponsePayload {
             return { tag: "CronStateImportedResponse", val: readCronStateImportedResponse(bc) }
         case 42:
             return { tag: "VmInitializedResponse", val: readVmInitializedResponse(bc) }
+        case 43:
+            return { tag: "SessionClosedResponse", val: readSessionClosedResponse(bc) }
         default: {
             bc.offset = offset
             throw new bare.BareError(offset, "invalid tag")
@@ -4601,6 +4640,11 @@ export function writeResponsePayload(bc: bare.ByteCursor, x: ResponsePayload): v
         case "VmInitializedResponse": {
             bare.writeU8(bc, 42)
             writeVmInitializedResponse(bc, x.val)
+            break
+        }
+        case "SessionClosedResponse": {
+            bare.writeU8(bc, 43)
+            writeSessionClosedResponse(bc, x.val)
             break
         }
     }

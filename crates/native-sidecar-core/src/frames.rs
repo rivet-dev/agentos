@@ -7,11 +7,11 @@ use agentos_sidecar_protocol::protocol::{
     ProcessSnapshotResponse, ProcessStartedResponse, ProjectedCommand, ProtocolSchema,
     ProvidedCommandsResponse, RejectedResponse, RequestFrame, RequestId, ResponseFrame,
     ResponsePayload, RootFilesystemBootstrappedResponse, RootFilesystemEntry,
-    RootFilesystemSnapshotResponse, SessionOpenedResponse, SignalHandlerRegistration,
-    SignalStateResponse, SnapshotExportedResponse, SnapshotImportedResponse, SocketStateEntry,
-    StdinClosedResponse, StdinWrittenResponse, StreamChannel, StructuredEvent,
-    VmConfiguredResponse, VmCreatedResponse, VmDisposedResponse, VmLifecycleEvent,
-    VmLifecycleState, ZombieTimerCountResponse, PROTOCOL_VERSION,
+    RootFilesystemSnapshotResponse, SessionClosedResponse, SessionOpenedResponse,
+    SignalHandlerRegistration, SignalStateResponse, SnapshotExportedResponse,
+    SnapshotImportedResponse, SocketStateEntry, StdinClosedResponse, StdinWrittenResponse,
+    StreamChannel, StructuredEvent, VmConfiguredResponse, VmCreatedResponse, VmDisposedResponse,
+    VmLifecycleEvent, VmLifecycleState, ZombieTimerCountResponse, PROTOCOL_VERSION,
 };
 use std::collections::HashMap;
 
@@ -108,6 +108,18 @@ pub fn session_opened_response(
         ResponsePayload::SessionOpened(SessionOpenedResponse {
             session_id,
             owner_connection_id,
+        }),
+    )
+}
+
+pub fn session_closed_response(
+    request: &RequestFrame,
+    session_id: impl Into<String>,
+) -> ResponseFrame {
+    respond(
+        request,
+        ResponsePayload::SessionClosed(SessionClosedResponse {
+            session_id: session_id.into(),
         }),
     )
 }
@@ -533,6 +545,26 @@ mod tests {
             }
             other => panic!("unexpected response payload: {other:?}"),
         }
+    }
+
+    #[test]
+    fn session_closed_response_preserves_connection_ownership() {
+        let request = RequestFrame::new(
+            9,
+            OwnershipScope::connection("conn-1"),
+            RequestPayload::CloseSession(agentos_sidecar_protocol::protocol::CloseSessionRequest {
+                session_id: String::from("session-1"),
+            }),
+        );
+        let response = session_closed_response(&request, "session-1");
+
+        assert_eq!(response.request_id, 9);
+        assert_eq!(response.ownership, OwnershipScope::connection("conn-1"));
+        assert!(matches!(
+            response.payload,
+            ResponsePayload::SessionClosed(SessionClosedResponse { session_id })
+                if session_id == "session-1"
+        ));
     }
 
     #[test]

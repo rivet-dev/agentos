@@ -1,7 +1,7 @@
 use crate::wire::{
     self, AuthenticatedResponse, ExtEnvelope, OwnershipScope, ProtocolCodecError, ProtocolFrame,
-    RequestFrame, RequestId, RequestPayload, ResponseFrame, ResponsePayload, SessionOpenedResponse,
-    SidecarResponseFrame, WireDispatchResult, WireFrameCodec,
+    RequestFrame, RequestId, RequestPayload, ResponseFrame, ResponsePayload, SessionClosedResponse,
+    SessionOpenedResponse, SidecarResponseFrame, WireDispatchResult, WireFrameCodec,
 };
 use crate::{
     EventSinkTransport, Extension, ExtensionInterruptRequest, NativeSidecar, NativeSidecarConfig,
@@ -67,6 +67,13 @@ const MAX_EVENT_READY_QUEUE: usize = 1;
 // below the queue tracker's near-capacity threshold; sustained backlog still
 // warns and applies pipe-like backpressure.
 const MAX_STDOUT_FRAME_QUEUE: usize = 2;
+const MAX_SESSIONS_PER_CONNECTION_ENV: &str = "AGENTOS_MAX_SESSIONS_PER_CONNECTION";
+
+fn parse_max_sessions_per_connection(value: &str) -> Result<usize, String> {
+    value.parse::<usize>().map_err(|error| {
+        format!("{MAX_SESSIONS_PER_CONNECTION_ENV} must be a non-negative integer: {error}")
+    })
+}
 
 #[cfg(test)]
 fn request_frame(
@@ -141,10 +148,16 @@ pub fn run_with_extensions(extensions: Vec<Box<dyn Extension>>) -> Result<(), Bo
 }
 
 async fn run_async(extensions: Vec<Box<dyn Extension>>) -> Result<(), Box<dyn Error>> {
-    let config = NativeSidecarConfig {
+    let mut config = NativeSidecarConfig {
         compile_cache_root: Some(default_compile_cache_root()),
         ..NativeSidecarConfig::default()
     };
+    if let Some(value) = std::env::var_os(MAX_SESSIONS_PER_CONNECTION_ENV) {
+        let value = value
+            .into_string()
+            .map_err(|_| format!("{MAX_SESSIONS_PER_CONNECTION_ENV} must contain valid UTF-8"))?;
+        config.max_sessions_per_connection = parse_max_sessions_per_connection(&value)?;
+    }
     let codec = WireFrameCodec::new(config.max_frame_bytes);
     let mut sidecar =
         NativeSidecar::with_config_and_extensions(LocalBridge::default(), config, extensions)?;
@@ -378,11 +391,7 @@ async fn handle_protocol_frame(
             let (dispatch, extra_responses) =
                 dispatch_with_prompt_interrupt(sidecar, request.clone(), stdin_rx, pending_frame)
                     .await?;
-            track_session_state(
-                &dispatch.response.payload,
-                active_sessions,
-                active_connections,
-            );
+            track_session_state(&dispatch.response, active_sessions, active_connections);
 
             send_output_frame(write_tx, ProtocolFrame::ResponseFrame(dispatch.response))?;
             for response in extra_responses {
@@ -519,6 +528,9 @@ fn extension_interrupt_response(
                     BlockingExtensionInterrupt::KillProcess => {
                         ExtensionInterruptRequest::KillProcess
                     }
+                    BlockingExtensionInterrupt::CloseSession => {
+                        ExtensionInterruptRequest::CloseSession
+                    }
                 },
             )?;
             let interrupted_dispatch = interrupted_extension_dispatch(
@@ -584,11 +596,11 @@ async fn cleanup_connections(
 }
 
 fn track_session_state(
-    payload: &ResponsePayload,
+    response: &ResponseFrame,
     active_sessions: &mut BTreeSet<SessionScope>,
     active_connections: &mut BTreeSet<String>,
 ) {
-    match payload {
+    match &response.payload {
         ResponsePayload::AuthenticatedResponse(AuthenticatedResponse { connection_id, .. }) => {
             active_connections.insert(connection_id.clone());
         }
@@ -600,6 +612,14 @@ fn track_session_state(
                 connection_id: owner_connection_id.clone(),
                 session_id: session_id.clone(),
             });
+        }
+        ResponsePayload::SessionClosedResponse(SessionClosedResponse { session_id }) => {
+            if let OwnershipScope::ConnectionOwnership(connection) = &response.ownership {
+                active_sessions.remove(&SessionScope {
+                    connection_id: connection.connection_id.clone(),
+                    session_id: session_id.clone(),
+                });
+            }
         }
         _ => {}
     }
@@ -888,10 +908,14 @@ mod tests {
         let mut active_sessions = BTreeSet::<SessionScope>::new();
         let mut active_connections = BTreeSet::<String>::new();
         track_session_state(
-            &ResponsePayload::SessionOpenedResponse(SessionOpenedResponse {
-                session_id: String::from("session-1"),
-                owner_connection_id: String::from("conn-1"),
-            }),
+            &response_frame(
+                1,
+                connection_ownership("conn-1"),
+                ResponsePayload::SessionOpenedResponse(SessionOpenedResponse {
+                    session_id: String::from("session-1"),
+                    owner_connection_id: String::from("conn-1"),
+                }),
+            ),
             &mut active_sessions,
             &mut active_connections,
         );
@@ -901,14 +925,30 @@ mod tests {
             "opening a session should track it for the event pump"
         );
 
-        untrack_disposed_sessions(
-            &[(String::from("conn-1"), String::from("session-1"))],
+        track_session_state(
+            &response_frame(
+                2,
+                connection_ownership("conn-1"),
+                ResponsePayload::SessionClosedResponse(SessionClosedResponse {
+                    session_id: String::from("session-1"),
+                }),
+            ),
             &mut active_sessions,
+            &mut active_connections,
         );
         assert!(
             active_sessions.is_empty(),
             "a disposed session must be removed from the active-session set"
         );
+    }
+
+    #[test]
+    fn stdio_session_limit_env_parser_accepts_counts_and_rejects_invalid_values() {
+        assert_eq!(parse_max_sessions_per_connection("2048").unwrap(), 2_048);
+        assert_eq!(parse_max_sessions_per_connection("0").unwrap(), 0);
+        let error = parse_max_sessions_per_connection("many").unwrap_err();
+        assert!(error.contains(MAX_SESSIONS_PER_CONNECTION_ENV));
+        assert!(error.contains("non-negative integer"));
     }
 
     #[test]
@@ -1062,7 +1102,8 @@ mod tests {
             let interrupted_response_payload =
                 encode_test_response("prompt-cancelled", blocking_session_id);
             match interrupt {
-                ExtensionInterruptRequest::KillProcess => Some(ExtensionInterruptResponse {
+                ExtensionInterruptRequest::KillProcess
+                | ExtensionInterruptRequest::CloseSession => Some(ExtensionInterruptResponse {
                     interrupted_response_payload,
                     interrupting_response_payload: None,
                 }),

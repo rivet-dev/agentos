@@ -1295,6 +1295,8 @@ export class AgentOs {
 	private _processes = new Map<number, ProcessRoute>();
 	private _shells = new Map<string, ShellEntry>();
 	private _pendingShellExitPromises = new Map<string, Promise<number>>();
+	private _disposed = false;
+	private _disposePromise: Promise<void> | null = null;
 	private _cronManager!: CronManager;
 	private _toolKits: ToolKit[] = [];
 	private _sidecarLease: AgentOsSidecarVmLease<AgentOsVmAdmin> | null = null;
@@ -3082,8 +3084,24 @@ export class AgentOs {
 	}
 
 	async dispose(): Promise<void> {
-		this._cronManager.dispose();
+		if (this._disposed) {
+			return;
+		}
+		if (this._disposePromise) {
+			return this._disposePromise;
+		}
+		const attempt = this._disposeOnce();
+		this._disposePromise = attempt;
+		try {
+			await attempt;
+		} finally {
+			if (this._disposePromise === attempt) {
+				this._disposePromise = null;
+			}
+		}
+	}
 
+	private async _disposeOnce(): Promise<void> {
 		for (const sessionId of [...this._sessions.keys()]) {
 			try {
 				await this._closeSessionInternal(sessionId);
@@ -3104,23 +3122,30 @@ export class AgentOs {
 			}
 		}
 		const shellExitPromises = [...this._pendingShellExitPromises.values()];
-		this._shells.clear();
-		this._processes.clear();
 		await waitForTrackedExitPromises(
 			shellExitPromises,
 			SHELL_DISPOSE_TIMEOUT_MS,
 		);
 
+		const sidecarLease = this._sidecarLease;
+		if (sidecarLease) {
+			await sidecarLease.dispose();
+		} else {
+			await this.#kernel.dispose();
+		}
+
+		// Only release local correlation after authoritative remote teardown. A
+		// failed close leaves these routes and the lease intact for a safe retry.
+		this._cronManager.dispose();
+		this._shells.clear();
+		this._processes.clear();
 		this._disposeSidecarEventListener();
 		this._disposeSidecarRequestHandler?.();
 		this._disposeSidecarRequestHandler = null;
-
-		const sidecarLease = this._sidecarLease;
-		this._sidecarLease = null;
-		if (sidecarLease) {
-			return sidecarLease.dispose();
+		if (this._sidecarLease === sidecarLease) {
+			this._sidecarLease = null;
 		}
-		return this.#kernel.dispose();
+		this._disposed = true;
 	}
 }
 
@@ -3177,6 +3202,7 @@ interface AgentOsSidecarState {
 	description: AgentOsSidecarDescription;
 	activeLeases: Set<AgentOsSidecarLeaseRecord>;
 	sharedPool?: string;
+	disposePromise?: Promise<void>;
 	/**
 	 * The single native sidecar process shared by every VM leased from this
 	 * handle. Spawned lazily on first VM creation and reused thereafter so VMs
@@ -3364,6 +3390,13 @@ async function disposeSharedSidecarNativeProcess(
 	if (!pending) {
 		return;
 	}
+	const { client, session } = await pending;
+	// The TS handle shares one real wire session across all leased VMs. Close it
+	// only after every VM lease has confirmed disposal, then terminate transport.
+	// A rejected close retains the live process/session handle so the caller can
+	// retry the idempotent sidecar operation.
+	await client.closeSession(session);
+	await client.dispose();
 	state.nativeProcess = undefined;
 	// The cached child is now dead; drop it (symmetric with the assignment in
 	// ensureSharedSidecarNativeProcess). We deliberately do NOT zero
@@ -3373,12 +3406,6 @@ async function disposeSharedSidecarNativeProcess(
 	// zeroing a shared counter could clobber a hold on a freshly re-acquired
 	// process generation, so it is left to the balanced acquire/release pairs.
 	state.sharedChild = undefined;
-	try {
-		const { client } = await pending;
-		await client.dispose();
-	} catch (error) {
-		console.warn("failed to dispose shared sidecar process", error);
-	}
 }
 
 export class AgentOsSidecar {
@@ -3409,7 +3436,21 @@ export class AgentOsSidecar {
 		if (state.description.state === "disposed") {
 			return;
 		}
+		if (state.disposePromise) {
+			return state.disposePromise;
+		}
+		const attempt = this.disposeOnce(state);
+		state.disposePromise = attempt;
+		try {
+			await attempt;
+		} finally {
+			if (state.disposePromise === attempt) {
+				state.disposePromise = undefined;
+			}
+		}
+	}
 
+	private async disposeOnce(state: AgentOsSidecarState): Promise<void> {
 		state.description.state = "disposing";
 		const errors: Error[] = [];
 		for (const lease of [...state.activeLeases]) {
@@ -3419,16 +3460,17 @@ export class AgentOsSidecar {
 				errors.push(error instanceof Error ? error : new Error(String(error)));
 			}
 		}
-		state.activeLeases.clear();
-		state.description.activeVmCount = 0;
+		if (errors.length > 0) {
+			throw new AggregateError(
+				errors,
+				`failed to dispose sidecar ${state.description.sidecarId}`,
+			);
+		}
 		// Tear down the shared native process after all leased VMs are gone.
 		await disposeSharedSidecarNativeProcess(state);
 		state.description.state = "disposed";
 		if (state.sharedPool && sharedSidecars.get(state.sharedPool) === this) {
 			sharedSidecars.delete(state.sharedPool);
-		}
-		if (errors.length > 0) {
-			throw new Error(errors.map((error) => error.message).join("; "));
 		}
 	}
 }
@@ -3521,6 +3563,7 @@ async function leaseAgentOsSidecarVm<TVmAdmin extends InProcessSidecarVmAdmin>(
 	};
 
 	let disposed = false;
+	let disposePromise: Promise<void> | null = null;
 	let leaseRecord: AgentOsSidecarLeaseRecord | undefined;
 
 	try {
@@ -3542,14 +3585,26 @@ async function leaseAgentOsSidecarVm<TVmAdmin extends InProcessSidecarVmAdmin>(
 				if (disposed) {
 					return;
 				}
-				disposed = true;
-				state.activeLeases.delete(leaseRecord!);
-				state.description.activeVmCount = state.activeLeases.size;
-				await client.dispose();
-				// Release this lease's hold; the shared sidecar is unref'd only
-				// once the last hold (across all in-flight + active leases) drops,
-				// so a one-shot host process can then exit on its own.
-				releaseHold();
+				if (!disposePromise) {
+					disposePromise = (async () => {
+						await client.dispose();
+						disposed = true;
+						state.activeLeases.delete(leaseRecord!);
+						state.description.activeVmCount = state.activeLeases.size;
+						// Release this lease's hold; the shared sidecar is unref'd only
+						// once the last hold (across all in-flight + active leases) drops,
+						// so a one-shot host process can then exit on its own.
+						releaseHold();
+					})();
+				}
+				const attempt = disposePromise;
+				try {
+					await attempt;
+				} finally {
+					if (disposePromise === attempt) {
+						disposePromise = null;
+					}
+				}
 			},
 		};
 
@@ -3579,6 +3634,7 @@ async function createInProcessSidecarTransport<
 ): Promise<InProcessSidecarTransport<TVmAdmin>> {
 	const vmAdmins = new Map<string, TVmAdmin>();
 	let disposed = false;
+	let disposePromise: Promise<void> | null = null;
 
 	async function disposeVmAdmin(vmId: string): Promise<void> {
 		const admin = vmAdmins.get(vmId);
@@ -3586,8 +3642,25 @@ async function createInProcessSidecarTransport<
 			return;
 		}
 
-		vmAdmins.delete(vmId);
 		await admin.dispose();
+		vmAdmins.delete(vmId);
+	}
+
+	async function disposeTransport(): Promise<void> {
+		const errors: Error[] = [];
+		for (const vmId of [...vmAdmins.keys()]) {
+			try {
+				await disposeVmAdmin(vmId);
+			} catch (error) {
+				errors.push(
+					error instanceof Error ? error : new Error(String(error)),
+				);
+			}
+		}
+		if (errors.length > 0) {
+			throw new AggregateError(errors, "failed to dispose sidecar session");
+		}
+		disposed = true;
 	}
 
 	return {
@@ -3610,21 +3683,16 @@ async function createInProcessSidecarTransport<
 			if (disposed) {
 				return;
 			}
-			disposed = true;
-
-			const errors: Error[] = [];
-			for (const vmId of [...vmAdmins.keys()]) {
-				try {
-					await disposeVmAdmin(vmId);
-				} catch (error) {
-					errors.push(
-						error instanceof Error ? error : new Error(String(error)),
-					);
-				}
+			if (!disposePromise) {
+				disposePromise = disposeTransport();
 			}
-
-			if (errors.length > 0) {
-				throw new Error(errors.map((error) => error.message).join("; "));
+			const attempt = disposePromise;
+			try {
+				await attempt;
+			} finally {
+				if (disposePromise === attempt) {
+					disposePromise = null;
+				}
 			}
 		},
 

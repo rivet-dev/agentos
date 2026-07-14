@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	type LocalCompatMount,
 	NativeSidecarKernelProxy,
@@ -185,11 +185,15 @@ describe("NativeSidecarKernelProxy tracking-collection cleanup", () => {
 		expect(after.localMounts).toBe(0);
 	});
 
-	it("surfaces sidecar teardown failures after clearing local state", async () => {
+	it("retains local state and retries a failed sidecar teardown", async () => {
 		const { client } = createStubClient();
 		let disposedClient = false;
+		let disposeAttempts = 0;
 		client.disposeVm = async () => {
-			throw new Error("dispose VM failed");
+			disposeAttempts++;
+			if (disposeAttempts === 1) {
+				throw new Error("dispose VM failed");
+			}
 		};
 		client.dispose = async () => {
 			disposedClient = true;
@@ -205,11 +209,45 @@ describe("NativeSidecarKernelProxy tracking-collection cleanup", () => {
 		await expect(proxy.dispose()).rejects.toThrow(
 			"failed to dispose sidecar VM",
 		);
+		expect(disposedClient).toBe(false);
+		expect(proxy.__trackingSizesForTest()).toEqual({
+			trackedProcesses: 0,
+			trackedProcessesById: 0,
+			localMounts: 1,
+		});
+
+		await expect(proxy.dispose()).resolves.toBeUndefined();
+		expect(disposeAttempts).toBe(2);
 		expect(disposedClient).toBe(true);
 		expect(proxy.__trackingSizesForTest()).toEqual({
 			trackedProcesses: 0,
 			trackedProcessesById: 0,
 			localMounts: 0,
 		});
+	});
+
+	it("serializes concurrent teardown callers into one remote disposal", async () => {
+		const { client } = createStubClient();
+		let releaseDispose!: () => void;
+		const disposeVm = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					releaseDispose = resolve;
+				}),
+		);
+		client.disposeVm = disposeVm;
+		const proxy = createProxy(client);
+
+		const first = proxy.dispose();
+		const second = proxy.dispose();
+		await waitFor(() => disposeVm.mock.calls.length === 1);
+		expect(disposeVm).toHaveBeenCalledOnce();
+
+		releaseDispose();
+		await expect(Promise.all([first, second])).resolves.toEqual([
+			undefined,
+			undefined,
+		]);
+		expect(disposeVm).toHaveBeenCalledOnce();
 	});
 });

@@ -161,11 +161,47 @@ pub(crate) struct AgentOsInner {
     // Lifecycle.
     pub(crate) sidecar: Arc<AgentOsSidecar>,
     pub(crate) sidecar_lease: parking_lot::Mutex<Option<AgentOsSidecarVmLease>>,
+    /// Serializes concurrent shutdown callers so exactly one close request/finalization sequence
+    /// runs at a time. A failed close leaves the lifecycle retryable for the next caller.
+    pub(crate) shutdown_lock: tokio::sync::Mutex<()>,
+    /// Host-only task cleanup is destructive. It runs once after the authoritative close is
+    /// confirmed, so a failed close retains every live host route for retry.
+    pub(crate) local_shutdown_complete: AtomicBool,
     pub(crate) disposed: AtomicBool,
     /// Handle for the background ACP event-pump task (`spawn_acp_event_pump`). Stored so `shutdown`
     /// can abort it; the pump only exits on its own when the shared transport's event channel closes,
     /// which does not happen while sibling VMs keep the transport alive. Mirrors `pending_shell_exits`.
     pub(crate) acp_event_pump: parking_lot::Mutex<Option<JoinHandle<()>>>,
+}
+
+/// One serialized shutdown attempt. Dropping an incomplete attempt (for example after a wire
+/// failure) deliberately leaves `disposed` false so a later caller retries.
+struct ShutdownAttempt<'a> {
+    _guard: tokio::sync::MutexGuard<'a, ()>,
+    disposed: &'a AtomicBool,
+    already_disposed: bool,
+}
+
+impl<'a> ShutdownAttempt<'a> {
+    async fn begin(lock: &'a tokio::sync::Mutex<()>, disposed: &'a AtomicBool) -> Self {
+        let guard = lock.lock().await;
+        let already_disposed = disposed.load(Ordering::SeqCst);
+        Self {
+            _guard: guard,
+            disposed,
+            already_disposed,
+        }
+    }
+
+    async fn complete_with<F, Fut, E>(self, finalize: F) -> Result<(), E>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<(), E>>,
+    {
+        finalize().await?;
+        self.disposed.store(true, Ordering::SeqCst);
+        Ok(())
+    }
 }
 
 impl AgentOs {
@@ -175,9 +211,7 @@ impl AgentOs {
     pub async fn create(options: AgentOsConfig) -> Result<AgentOs, ClientError> {
         let config = Arc::new(options);
 
-        // 1. Resolve the sidecar handle (shared "default" pool unless configured otherwise) and
-        //    establish/reuse its shared process + authenticated connection. A shared sidecar hosts
-        //    multiple VMs in one process, each opening its own session + VM below.
+        // 1. Resolve the sidecar handle (shared "default" pool unless configured otherwise).
         let sidecar = match &config.sidecar {
             Some(crate::config::AgentOsSidecarConfig::Explicit { handle }) => handle.clone(),
             Some(crate::config::AgentOsSidecarConfig::Shared { pool }) => {
@@ -186,33 +220,15 @@ impl AgentOs {
             }
             None => AgentOs::get_shared_sidecar(None, config.sidecar_binary_path.clone()).await?,
         };
-        let (transport, connection_id, _) = sidecar.ensure_connection().await?;
 
-        // 2. Open a session for this VM (connection scope) on the shared connection.
-        let session = match transport
-            .request_wire(
-                wire_connection_ownership(&connection_id),
-                wire::RequestPayload::OpenSessionRequest(wire::OpenSessionRequest {
-                    placement: sidecar_wire_placement(&sidecar),
-                }),
-            )
-            .await?
-        {
-            wire::ResponsePayload::SessionOpenedResponse(opened) => opened,
-            wire::ResponsePayload::RejectedResponse(rejected) => {
-                return Err(rejected_to_error(rejected));
-            }
-            other => {
-                return Err(ClientError::Sidecar(format!(
-                    "unexpected open_session response: {other:?}"
-                )));
-            }
-        };
-        let session_id = session.session_id;
-
-        // 3. Serialize explicit caller input. Omitted collections remain omitted so the sidecar
-        //    owns defaults rather than receiving client-authored empty/default policy.
+        // 2. Serialize every fallible piece of explicit caller input before opening a session.
+        //    Invalid input must not consume sidecar session capacity or need remote rollback.
+        //    Omitted collections remain omitted so the sidecar owns defaults rather than receiving
+        //    client-authored empty/default policy.
         let create_vm_config = serialize_create_vm_config_for_sidecar(&config)?;
+        let create_vm_config = serde_json::to_string(&create_vm_config).map_err(|error| {
+            ClientError::Sidecar(format!("failed to serialize create VM config: {error}"))
+        })?;
         let packages = build_package_descriptors(&config);
         let mounts = serialize_mounts(&config)?;
         let mut tool_map: HashMap<String, HostTool> = HashMap::new();
@@ -237,6 +253,38 @@ impl AgentOs {
                 callbacks,
             });
         }
+        let initialize_vm_request = wire::InitializeVmRequest {
+            runtime: wire::GuestRuntimeKind::JavaScript,
+            config: create_vm_config,
+            mounts: (!mounts.is_empty()).then_some(mounts),
+            packages: (!packages.is_empty()).then_some(packages),
+            packages_mount_at: config.packages_mount_at.clone(),
+            host_callbacks: (!host_callbacks.is_empty()).then_some(host_callbacks),
+        };
+
+        // 3. Establish/reuse the shared process + authenticated connection, then open this VM's
+        //    connection-scoped session. Any failure after this point must close `session_id`.
+        let (transport, connection_id, _) = sidecar.ensure_connection().await?;
+        let session = match transport
+            .request_wire(
+                wire_connection_ownership(&connection_id),
+                wire::RequestPayload::OpenSessionRequest(wire::OpenSessionRequest {
+                    placement: sidecar_wire_placement(&sidecar),
+                }),
+            )
+            .await?
+        {
+            wire::ResponsePayload::SessionOpenedResponse(opened) => opened,
+            wire::ResponsePayload::RejectedResponse(rejected) => {
+                return Err(rejected_to_error(rejected));
+            }
+            other => {
+                return Err(ClientError::Sidecar(format!(
+                    "unexpected open_session response: {other:?}"
+                )));
+            }
+        };
+        let session_id = session.session_id;
 
         // JS-backed mounts are the one host-only route initialization itself may call: the sidecar
         // can perform VFS operations while applying explicit mount descriptors. Install that route
@@ -253,53 +301,61 @@ impl AgentOs {
         let initialization_response = match transport
             .request_wire(
                 wire_session_ownership(&connection_id, &session_id),
-                wire::RequestPayload::InitializeVmRequest(wire::InitializeVmRequest {
-                    runtime: wire::GuestRuntimeKind::JavaScript,
-                    config: serde_json::to_string(&create_vm_config).map_err(|error| {
-                        ClientError::Sidecar(format!(
-                            "failed to serialize create VM config: {error}"
-                        ))
-                    })?,
-                    mounts: (!mounts.is_empty()).then_some(mounts),
-                    packages: (!packages.is_empty()).then_some(packages),
-                    packages_mount_at: config.packages_mount_at.clone(),
-                    host_callbacks: (!host_callbacks.is_empty()).then_some(host_callbacks),
-                }),
+                wire::RequestPayload::InitializeVmRequest(initialize_vm_request),
             )
             .await
         {
             Ok(response) => response,
             Err(error) => {
-                if let Some(key) = &js_bridge_session_key {
-                    let _ = session_js_bridge_callbacks().remove(key);
-                }
-                return Err(error.into());
+                return Err(fail_create_after_open_session(
+                    transport.as_ref(),
+                    &connection_id,
+                    &session_id,
+                    js_bridge_session_key.as_deref(),
+                    error.into(),
+                )
+                .await);
             }
         };
         let initialized = match initialization_response {
             wire::ResponsePayload::VmInitializedResponse(initialized) => initialized,
             wire::ResponsePayload::RejectedResponse(rejected) => {
-                if let Some(key) = &js_bridge_session_key {
-                    let _ = session_js_bridge_callbacks().remove(key);
-                }
-                return Err(rejected_to_error(rejected));
+                return Err(fail_create_after_open_session(
+                    transport.as_ref(),
+                    &connection_id,
+                    &session_id,
+                    js_bridge_session_key.as_deref(),
+                    rejected_to_error(rejected),
+                )
+                .await);
             }
             other => {
-                if let Some(key) = &js_bridge_session_key {
-                    let _ = session_js_bridge_callbacks().remove(key);
-                }
-                return Err(ClientError::Sidecar(format!(
-                    "unexpected initialize_vm response: {other:?}"
-                )));
+                return Err(fail_create_after_open_session(
+                    transport.as_ref(),
+                    &connection_id,
+                    &session_id,
+                    js_bridge_session_key.as_deref(),
+                    ClientError::Sidecar(format!("unexpected initialize_vm response: {other:?}")),
+                )
+                .await);
             }
         };
-        let process_route_retention = usize::try_from(initialized.process_route_retention)
-            .map_err(|_| {
-                ClientError::Sidecar(format!(
-                    "sidecar process route retention exceeds this host's range: {}",
-                    initialized.process_route_retention
-                ))
-            })?;
+        let process_route_retention = match usize::try_from(initialized.process_route_retention) {
+            Ok(retention) => retention,
+            Err(_) => {
+                return Err(fail_create_after_open_session(
+                    transport.as_ref(),
+                    &connection_id,
+                    &session_id,
+                    js_bridge_session_key.as_deref(),
+                    ClientError::Sidecar(format!(
+                        "sidecar process route retention exceeds this host's range: {}",
+                        initialized.process_route_retention
+                    )),
+                )
+                .await);
+            }
+        };
         let vm_id = initialized.vm_id;
         let projected_commands = initialized
             .projected_commands
@@ -341,6 +397,8 @@ impl AgentOs {
             cron,
             sidecar,
             sidecar_lease: parking_lot::Mutex::new(Some(lease)),
+            shutdown_lock: tokio::sync::Mutex::new(()),
+            local_shutdown_complete: AtomicBool::new(false),
             disposed: AtomicBool::new(false),
             acp_event_pump: parking_lot::Mutex::new(None),
         };
@@ -362,16 +420,6 @@ impl AgentOs {
         Ok(client)
     }
 
-    /// Dispose the VM (= TS `dispose`). Teardown order:
-    /// 1. cron dispose
-    /// 2. close all sessions (swallow errors)
-    /// 3. kill all shells + snapshot pending exits
-    /// 4. drain tracked shell-exit tasks (two-phase, bounded by
-    ///    [`crate::SHELL_DISPOSE_TIMEOUT_MS`])
-    /// 5. unregister the sidecar event listener
-    /// 6. release the lease (or tear down the transport)
-    ///
-    /// Idempotent (guarded by `disposed`).
     /// Dynamically link a software package into the RUNNING VM (parity with the
     /// TS client's `linkSoftware`). Forwarded to the sidecar, which owns the
     /// `/opt/agentos` projection and appends the package to its live staging dir,
@@ -433,82 +481,92 @@ impl AgentOs {
         }
     }
 
+    /// Dispose the VM (= TS `dispose`). Performs destructive host-task cleanup once, asks the
+    /// sidecar to close this VM's owning wire session, and releases host callback routes plus the
+    /// VM lease only after that close is confirmed. A close failure is returned and remains
+    /// retryable; confirmed shutdown is idempotent.
     pub async fn shutdown(&self) -> Result<(), ClientError> {
-        // Idempotent: only the first caller runs teardown.
-        if self.inner.disposed.swap(true, Ordering::SeqCst) {
+        // Serialize concurrent callers. `disposed` becomes true only after the sidecar confirms
+        // that the owning wire session is closed and host ownership has been released; failures
+        // therefore remain observable and retryable.
+        let shutdown =
+            ShutdownAttempt::begin(&self.inner.shutdown_lock, &self.inner.disposed).await;
+        if shutdown.already_disposed {
             return Ok(());
         }
 
-        // The `/opt/agentos` projection staging dir is owned + cleaned up by the
-        // sidecar on VM dispose, so the client no longer removes it here.
-
-        // 1. Cron dispose (abort the host alarm and release callback routes).
-        self.inner.cron.dispose();
-
-        // Abort the background ACP event pump and drain the SDK-spawned process registry. Neither
-        // ends on its own while a shared transport stays alive: the pump only exits on transport
-        // close, and the per-process output tasks await a broadcast `Closed` that the entry's own
-        // retained sender clones prevent. Aborting + clearing here stops both from leaking past
-        // dispose.
-        abort_tracked_task(&self.inner.acp_event_pump);
-        crate::process::drain_process_output_tasks(&self.inner.processes);
-
-        // 2-4. Best-effort drain tracked shell tasks before the VM is disposed, bounded by
-        //      SHELL_DISPOSE_TIMEOUT_MS so late output cannot race a closed transport.
-        let mut exit_tasks = Vec::new();
-        self.inner.pending_shell_exits.retain(|_, task| {
-            exit_tasks.push(std::mem::replace(task, tokio::spawn(async {})));
-            false
-        });
-
-        if !exit_tasks.is_empty() {
-            let mut drain_tasks = exit_tasks;
-            if tokio::time::timeout(
-                Duration::from_millis(crate::SHELL_DISPOSE_TIMEOUT_MS),
-                futures::future::join_all(drain_tasks.iter_mut()),
-            )
-            .await
-            .is_err()
-            {
-                for task in drain_tasks {
-                    task.abort();
-                }
-            }
-        }
-
-        // 5-6. Release this VM (DisposeVm best-effort) and its lease. The transport is shared across
-        //      VMs on the same sidecar, so it is only torn down when this was the last VM (matching
-        //      the TS lease/shared-sidecar lifecycle); otherwise sibling VMs keep using it.
-        let lease = self.inner.sidecar_lease.lock().take();
-        let _ = self
-            .transport()
-            .request_wire(
-                wire::OwnershipScope::VmOwnership(wire::VmOwnership {
-                    connection_id: self.inner.connection_id.clone(),
-                    session_id: self.inner.session_id.clone(),
-                    vm_id: self.inner.vm_id.clone(),
-                }),
-                wire::RequestPayload::DisposeVmRequest(wire::DisposeVmRequest {
-                    reason: wire::DisposeReason::Requested,
-                }),
-            )
-            .await;
-        let _ = vm_tools().remove(&self.inner.vm_id);
-        let _ = vm_permission_routers().remove(&self.inner.vm_id);
-        let _ = session_js_bridge_callbacks().remove(&sidecar_session_key(
+        // The Rust client deliberately owns one wire session per VM: JS-backed root mounts can call
+        // the host during InitializeVm before the generated VM id is known, so startup callback
+        // routing is session-keyed. Close that session as the one authoritative disposal operation;
+        // the sidecar owns disposal of every VM/resource in it. The request is connection-owned so
+        // a retry remains addressable after the sidecar has already removed the session.
+        request_close_sidecar_session(
+            self.transport().as_ref(),
             &self.inner.connection_id,
             &self.inner.session_id,
-        ));
-        let sidecar = self.inner.sidecar.clone();
-        if let Some(lease) = lease {
-            lease.dispose().await?;
-        }
-        if sidecar.active_vm_count.load(Ordering::SeqCst) == 0 {
-            sidecar.kill_connection().await;
-            let _ = sidecar.dispose().await;
+        )
+        .await?;
+
+        // A failed close above retains cron callbacks, the ACP event pump, process/shell routes,
+        // global host callback routes, and the lease. Once close is confirmed, clean local tasks
+        // exactly once. The completion flag is stored after the work, so cancellation before the
+        // end retries the idempotent cleanup path on the next shutdown call.
+        if !self.inner.local_shutdown_complete.load(Ordering::SeqCst) {
+            // The `/opt/agentos` projection staging dir is sidecar-owned and was reclaimed with the
+            // VM by CloseSession; the client never removes it.
+            self.inner.cron.dispose();
+            abort_tracked_task(&self.inner.acp_event_pump);
+            close_process_routes(&self.inner.processes);
+            close_shell_routes(&self.inner.shells);
+            close_acp_routes(&self.inner.sessions);
+
+            let mut exit_tasks = Vec::new();
+            self.inner.pending_shell_exits.retain(|_, task| {
+                exit_tasks.push(std::mem::replace(task, tokio::spawn(async {})));
+                false
+            });
+
+            if !exit_tasks.is_empty() {
+                let mut drain_tasks = exit_tasks;
+                if tokio::time::timeout(
+                    Duration::from_millis(crate::SHELL_DISPOSE_TIMEOUT_MS),
+                    futures::future::join_all(drain_tasks.iter_mut()),
+                )
+                .await
+                .is_err()
+                {
+                    for task in drain_tasks {
+                        task.abort();
+                    }
+                }
+            }
+            self.inner
+                .local_shutdown_complete
+                .store(true, Ordering::SeqCst);
         }
 
-        Ok(())
+        // Only confirmed (including idempotent already-closed) close releases host ownership. A
+        // failed request above leaves these routes, the lease, and active_vm_count untouched.
+        shutdown
+            .complete_with(|| async {
+                let _ = vm_tools().remove(&self.inner.vm_id);
+                let _ = vm_permission_routers().remove(&self.inner.vm_id);
+                let _ = session_js_bridge_callbacks().remove(&sidecar_session_key(
+                    &self.inner.connection_id,
+                    &self.inner.session_id,
+                ));
+                let lease = self.inner.sidecar_lease.lock().take();
+                if let Some(lease) = lease {
+                    lease.dispose().await?;
+                }
+                let sidecar = self.inner.sidecar.clone();
+                if sidecar.active_vm_count.load(Ordering::SeqCst) == 0 {
+                    sidecar.kill_connection().await;
+                    sidecar.dispose().await?;
+                }
+                Ok(())
+            })
+            .await
     }
 
     // --- internal accessors used by sibling impl blocks ---
@@ -562,6 +620,55 @@ fn abort_tracked_task(slot: &parking_lot::Mutex<Option<JoinHandle<()>>>) {
     if let Some(handle) = slot.lock().take() {
         handle.abort();
     }
+}
+
+/// Terminally close and remove every SDK process route after the sidecar has confirmed session
+/// disposal. Sending the terminal state first wakes already-subscribed waiters; draining the map
+/// then drops retained sender clones and aborts per-process output callback tasks.
+fn close_process_routes(processes: &SccHashMap<u32, ProcessEntry>) {
+    processes.scan(|_, entry| {
+        let _ = entry.exit_tx.send(Some(ProcessExit::EventStreamClosed));
+        let _ = entry.stdout_tx.send(RoutedStreamEvent::Closed {
+            context: "process stdout after VM shutdown",
+        });
+        let _ = entry.stderr_tx.send(RoutedStreamEvent::Closed {
+            context: "process stderr after VM shutdown",
+        });
+    });
+    crate::process::drain_process_output_tasks(processes);
+}
+
+/// Terminally close and remove all PTY shell routes after authoritative session disposal.
+fn close_shell_routes(shells: &SccHashMap<String, ShellEntry>) {
+    shells.scan(|_, entry| {
+        let _ = entry.exit_tx.send(Some(ShellExit::EventStreamClosed));
+        let _ = entry.data_tx.send(RoutedStreamEvent::Closed {
+            context: "shell stdout after VM shutdown",
+        });
+        let _ = entry.stderr_tx.send(RoutedStreamEvent::Closed {
+            context: "shell stderr after VM shutdown",
+        });
+    });
+    shells.clear();
+}
+
+/// Terminally close and remove all ACP host routes after authoritative session disposal. Clearing
+/// each pending sender wakes its in-flight responder with cancellation before the session entry and
+/// broadcast senders are dropped.
+fn close_acp_routes(sessions: &SccHashMap<String, SessionEntry>) {
+    sessions.scan(|_, entry| {
+        entry.pending_permission_replies.clear();
+        let _ = entry.event_tx.send(RoutedStreamEvent::Closed {
+            context: "ACP session after VM shutdown",
+        });
+        let _ = entry.permission_tx.send(RoutedStreamEvent::Closed {
+            context: "ACP permission route after VM shutdown",
+        });
+        let _ = entry.agent_exit_tx.send(RoutedStreamEvent::Closed {
+            context: "ACP agent-exit route after VM shutdown",
+        });
+    });
+    sessions.clear();
 }
 
 fn spawn_acp_event_pump(client: &AgentOs) {
@@ -1862,12 +1969,82 @@ fn rejected_to_error(rejected: wire::RejectedResponse) -> ClientError {
     }
 }
 
+/// Ask the sidecar to close one connection-owned session and validate the authoritative response.
+/// The operation is idempotent server-side, so callers can safely retry after a lost response.
+async fn request_close_sidecar_session(
+    transport: &SidecarProcess,
+    connection_id: &str,
+    session_id: &str,
+) -> Result<(), ClientError> {
+    let response = transport
+        .request_wire(
+            wire_connection_ownership(connection_id),
+            wire::RequestPayload::CloseSessionRequest(wire::CloseSessionRequest {
+                session_id: session_id.to_string(),
+            }),
+        )
+        .await?;
+    confirm_closed_session(response, session_id)
+}
+
+/// Roll back a session opened by `create` after initialization failed. The original failure remains
+/// the API result; a cleanup failure is emitted at the failure site with both errors so it is never
+/// silently discarded and operators know the leaked session id that may require intervention.
+async fn fail_create_after_open_session(
+    transport: &SidecarProcess,
+    connection_id: &str,
+    session_id: &str,
+    js_bridge_session_key: Option<&str>,
+    create_error: ClientError,
+) -> ClientError {
+    if let Some(key) = js_bridge_session_key {
+        let _ = session_js_bridge_callbacks().remove(key);
+    }
+    if let Err(cleanup_error) =
+        request_close_sidecar_session(transport, connection_id, session_id).await
+    {
+        tracing::error!(
+            %create_error,
+            %cleanup_error,
+            session_id,
+            "failed to close sidecar session after VM creation failure"
+        );
+    }
+    create_error
+}
+
+/// Validate the authoritative response before shutdown releases any host ownership. Keeping this
+/// check separate makes it impossible for a rejection, wrong-session response, or unrelated
+/// response to fall through into route/lease finalization.
+fn confirm_closed_session(
+    response: wire::ResponsePayload,
+    requested_session_id: &str,
+) -> Result<(), ClientError> {
+    match response {
+        wire::ResponsePayload::SessionClosedResponse(closed)
+            if closed.session_id == requested_session_id =>
+        {
+            Ok(())
+        }
+        wire::ResponsePayload::SessionClosedResponse(closed) => Err(ClientError::Sidecar(format!(
+            "close_session returned session {} for requested session {requested_session_id}",
+            closed.session_id
+        ))),
+        wire::ResponsePayload::RejectedResponse(rejected) => Err(rejected_to_error(rejected)),
+        other => Err(ClientError::Sidecar(format!(
+            "unexpected close_session response: {other:?}"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        abort_tracked_task, handle_acp_ext_callback, permissions_policy_config,
+        abort_tracked_task, close_acp_routes, close_process_routes, close_shell_routes,
+        confirm_closed_session, handle_acp_ext_callback, permissions_policy_config,
         serialize_create_vm_config_for_sidecar, serialize_mounts,
         serialize_root_filesystem_config_for_sidecar, wire_connection_ownership, JoinHandle,
+        ProcessEntry, ProcessExit, SessionEntry, ShellEntry, ShellExit, ShutdownAttempt,
     };
     use crate::config::{
         AgentOsConfig, AgentOsLimits, FsPermissionRule, FsPermissions, HttpLimits, JsRuntimeLimits,
@@ -1884,6 +2061,250 @@ mod tests {
         RootFilesystemEntryKind, RootFilesystemLowerDescriptor,
         RootFilesystemMode as ConfigRootFilesystemMode,
     };
+
+    #[tokio::test]
+    async fn failed_session_close_retains_host_ownership_and_retry_state() {
+        let shutdown_lock = tokio::sync::Mutex::new(());
+        let disposed = std::sync::atomic::AtomicBool::new(false);
+        let local_shutdown_complete = std::sync::atomic::AtomicBool::new(false);
+        let local_cleanup_runs = std::sync::atomic::AtomicUsize::new(0);
+        let routes_retained = std::sync::atomic::AtomicBool::new(true);
+        let lease_retained = std::sync::atomic::AtomicBool::new(true);
+        let active_vm_count = std::sync::atomic::AtomicUsize::new(1);
+
+        let failed = ShutdownAttempt::begin(&shutdown_lock, &disposed).await;
+
+        // A rejected/failed CloseSession returns from `shutdown` by dropping the attempt before
+        // host finalization. Model that exact branch: no route, lease, or active-count mutation.
+        drop(failed);
+        assert!(!disposed.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(!local_shutdown_complete.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(
+            local_cleanup_runs.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "failed close must not tear down local routes"
+        );
+        assert!(routes_retained.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(lease_retained.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(active_vm_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        let retry = ShutdownAttempt::begin(&shutdown_lock, &disposed).await;
+        assert!(
+            !retry.already_disposed,
+            "failed close must remain retryable"
+        );
+        local_cleanup_runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        local_shutdown_complete.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            local_cleanup_runs.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn confirmed_session_close_releases_host_ownership_once() {
+        let shutdown_lock = tokio::sync::Mutex::new(());
+        let disposed = std::sync::atomic::AtomicBool::new(false);
+        let routes_retained = std::sync::atomic::AtomicBool::new(true);
+        let lease_retained = std::sync::atomic::AtomicBool::new(true);
+        let active_vm_count = std::sync::atomic::AtomicUsize::new(1);
+
+        let successful = ShutdownAttempt::begin(&shutdown_lock, &disposed).await;
+        assert!(!successful.already_disposed);
+
+        // This is the production success order after SessionClosedResponse: the attempt runs host
+        // finalization, then and only then marks the shutdown complete.
+        successful
+            .complete_with(|| async {
+                routes_retained.store(false, std::sync::atomic::Ordering::SeqCst);
+                lease_retained.store(false, std::sync::atomic::Ordering::SeqCst);
+                active_vm_count.store(0, std::sync::atomic::Ordering::SeqCst);
+                Ok::<(), std::convert::Infallible>(())
+            })
+            .await
+            .expect("finalize confirmed close");
+
+        assert!(disposed.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(!routes_retained.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(!lease_retained.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(active_vm_count.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        let idempotent = ShutdownAttempt::begin(&shutdown_lock, &disposed).await;
+        assert!(idempotent.already_disposed);
+    }
+
+    #[tokio::test]
+    async fn confirmed_shutdown_terminally_clears_all_host_route_collections() {
+        use crate::stream::RoutedStreamEvent;
+        use std::sync::atomic::{AtomicBool, AtomicU64};
+        use tokio::sync::{broadcast, oneshot, watch};
+
+        let processes = scc::HashMap::new();
+        let (process_stdout_tx, mut process_stdout_rx) = broadcast::channel(2);
+        let (process_stderr_tx, mut process_stderr_rx) = broadcast::channel(2);
+        let (process_exit_tx, mut process_exit_rx) = watch::channel(None);
+        let process_task = tokio::spawn(futures::future::pending::<()>());
+        let process_task_abort = process_task.abort_handle();
+        assert!(
+            processes
+                .insert(
+                    7,
+                    ProcessEntry {
+                        stdout_tx: process_stdout_tx,
+                        stderr_tx: process_stderr_tx,
+                        exit_tx: process_exit_tx,
+                        process_id: String::from("process-7"),
+                        terminal_sequence: AtomicU64::new(0),
+                        output_tasks: vec![process_task],
+                    },
+                )
+                .is_ok(),
+            "insert process route"
+        );
+
+        let shells = scc::HashMap::new();
+        let (shell_data_tx, mut shell_data_rx) = broadcast::channel(2);
+        let (shell_stderr_tx, mut shell_stderr_rx) = broadcast::channel(2);
+        let (shell_exit_tx, mut shell_exit_rx) = watch::channel(None);
+        assert!(
+            shells
+                .insert(
+                    String::from("shell-1"),
+                    ShellEntry {
+                        data_tx: shell_data_tx,
+                        stderr_tx: shell_stderr_tx,
+                        process_id: String::from("process-shell-1"),
+                        exit_tx: shell_exit_tx,
+                        closing: AtomicBool::new(false),
+                    },
+                )
+                .is_ok(),
+            "insert shell route"
+        );
+
+        let sessions = scc::HashMap::new();
+        let (event_tx, mut event_rx) = broadcast::channel(2);
+        let (permission_tx, mut permission_rx) = broadcast::channel(2);
+        let (agent_exit_tx, mut agent_exit_rx) = broadcast::channel(2);
+        let (pending_tx, pending_rx) = oneshot::channel();
+        let pending_permission_replies = scc::HashMap::new();
+        assert!(
+            pending_permission_replies
+                .insert(String::from("permission-1"), pending_tx)
+                .is_ok(),
+            "insert pending permission route"
+        );
+        assert!(
+            sessions
+                .insert(
+                    String::from("acp-session-1"),
+                    SessionEntry {
+                        event_tx,
+                        permission_tx,
+                        agent_exit_tx,
+                        pending_permission_replies,
+                    },
+                )
+                .is_ok(),
+            "insert ACP session route"
+        );
+
+        close_process_routes(&processes);
+        close_shell_routes(&shells);
+        close_acp_routes(&sessions);
+
+        assert!(processes.is_empty(), "process routes must be removed");
+        assert!(shells.is_empty(), "shell routes must be removed");
+        assert!(sessions.is_empty(), "ACP session routes must be removed");
+        for _ in 0..100 {
+            if process_task_abort.is_finished() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            process_task_abort.is_finished(),
+            "process task must be aborted"
+        );
+        assert!(matches!(
+            process_exit_rx.borrow_and_update().as_ref(),
+            Some(ProcessExit::EventStreamClosed)
+        ));
+        assert!(matches!(
+            process_stdout_rx.recv().await,
+            Ok(RoutedStreamEvent::Closed { .. })
+        ));
+        assert!(matches!(
+            process_stderr_rx.recv().await,
+            Ok(RoutedStreamEvent::Closed { .. })
+        ));
+        assert!(matches!(
+            shell_exit_rx.borrow_and_update().as_ref(),
+            Some(ShellExit::EventStreamClosed)
+        ));
+        assert!(matches!(
+            shell_data_rx.recv().await,
+            Ok(RoutedStreamEvent::Closed { .. })
+        ));
+        assert!(matches!(
+            shell_stderr_rx.recv().await,
+            Ok(RoutedStreamEvent::Closed { .. })
+        ));
+        assert!(
+            pending_rx.await.is_err(),
+            "pending responder must be cancelled"
+        );
+        assert!(matches!(
+            event_rx.recv().await,
+            Ok(RoutedStreamEvent::Closed { .. })
+        ));
+        assert!(matches!(
+            permission_rx.recv().await,
+            Ok(RoutedStreamEvent::Closed { .. })
+        ));
+        assert!(matches!(
+            agent_exit_rx.recv().await,
+            Ok(RoutedStreamEvent::Closed { .. })
+        ));
+    }
+
+    #[test]
+    fn close_session_rejection_and_wrong_session_are_hard_failures() {
+        let rejection = confirm_closed_session(
+            agentos_sidecar_client::wire::ResponsePayload::RejectedResponse(
+                agentos_sidecar_client::wire::RejectedResponse {
+                    code: String::from("dispose_failed"),
+                    message: String::from("injected close failure"),
+                },
+            ),
+            "session-1",
+        )
+        .expect_err("sidecar rejection must propagate");
+        assert!(rejection.to_string().contains("injected close failure"));
+
+        let mismatch = confirm_closed_session(
+            agentos_sidecar_client::wire::ResponsePayload::SessionClosedResponse(
+                agentos_sidecar_client::wire::SessionClosedResponse {
+                    session_id: String::from("session-2"),
+                },
+            ),
+            "session-1",
+        )
+        .expect_err("wrong-session close must not release ownership");
+        assert!(mismatch
+            .to_string()
+            .contains("returned session session-2 for requested session session-1"));
+
+        confirm_closed_session(
+            agentos_sidecar_client::wire::ResponsePayload::SessionClosedResponse(
+                agentos_sidecar_client::wire::SessionClosedResponse {
+                    session_id: String::from("session-1"),
+                },
+            ),
+            "session-1",
+        )
+        .expect("matching close response");
+    }
 
     #[tokio::test]
     async fn malformed_permission_callback_params_are_not_replaced_with_empty_json() {

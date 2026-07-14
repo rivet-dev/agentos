@@ -20,9 +20,10 @@ use crate::extension::{
 use crate::filesystem::guest_filesystem_call as filesystem_guest_filesystem_call;
 use crate::limits::DEFAULT_ACP_STDOUT_BUFFER_BYTE_LIMIT;
 use crate::protocol::{
-    CancelCronJobRequest, CloseStdinRequest, CompleteCronRunRequest, CronAlarm, CronDispatchEvent,
-    CronEventRecord, CronRun, DisposeReason, EventFrame, EventPayload, ExecuteRequest, ExtEnvelope,
-    GuestFilesystemCallRequest, GuestFilesystemResultResponse, JavascriptChildProcessSpawnOptions,
+    CancelCronJobRequest, CloseSessionRequest, CloseStdinRequest, CompleteCronRunRequest,
+    CronAlarm, CronDispatchEvent, CronEventRecord, CronRun, DisposeReason, EventFrame,
+    EventPayload, ExecuteRequest, ExtEnvelope, GuestFilesystemCallRequest,
+    GuestFilesystemResultResponse, JavascriptChildProcessSpawnOptions,
     JavascriptChildProcessSpawnRequest, KillProcessRequest, OpenSessionRequest, OwnershipScope,
     ProcessKilledResponse, ProcessStartedResponse, PtyResizedResponse, RequestFrame, RequestId,
     RequestPayload, ResizePtyRequest, ResponseFrame, ResponsePayload, ScheduleCronRequest,
@@ -62,11 +63,17 @@ use agentos_native_sidecar_core::permissions::{
 };
 use agentos_native_sidecar_core::{
     apply_process_signal_state_update, authenticated_response as shared_authenticated_response,
-    parse_process_signal_state_request, reject as shared_reject, request_dispatch_mode,
-    respond as shared_respond, route_request_payload, session_opened_response,
+    parse_process_signal_state_request, record_session_close_outcome, reject as shared_reject,
+    request_dispatch_mode, respond as shared_respond, route_request_payload,
+    session_close_history_capacity, session_closed_response, session_id_was_allocated,
+    session_limit_near_capacity, session_limit_rejection_message, session_opened_response,
     unsupported_host_callback_direction_dispatch, validate_authenticate_versions,
     vm_lifecycle_event as shared_vm_lifecycle_event, AuthenticateVersionError, CronAction,
-    CronScheduler, RequestDispatchMode, RequestRoute, MAX_CRON_JOBS, MAX_CRON_STATE_BYTES,
+    CronScheduler, RequestDispatchMode, RequestRoute, SessionCloseOutcome,
+    CLOSE_SESSION_FAILED_ERROR_CODE, CLOSE_SESSION_HISTORY_EXPIRED_ERROR_CODE,
+    CLOSE_SESSION_INVALID_OWNERSHIP_ERROR_CODE, CLOSE_SESSION_OWNERSHIP_MISMATCH_ERROR_CODE,
+    CLOSE_SESSION_UNAUTHENTICATED_ERROR_CODE, MAX_CRON_JOBS, MAX_CRON_STATE_BYTES,
+    SESSION_LIMIT_ERROR_CODE,
 };
 use agentos_protocol::generated::v1::{
     AcpCloseSessionRequest, AcpCreateSessionRequest, AcpRequest, AcpResponse, AcpSessionRequest,
@@ -1204,6 +1211,9 @@ where
                 self.authenticate_connection(&request, payload).await
             }
             RequestRoute::OpenSession(payload) => self.open_session(&request, payload).await,
+            RequestRoute::CloseSession(payload) => {
+                self.close_session_request(&request, payload).await
+            }
             RequestRoute::CreateVm(payload) => self.create_vm(&request, payload).await,
             RequestRoute::InitializeVm(payload) => self.initialize_vm(&request, payload).await,
             RequestRoute::DisposeVm(payload) => self.dispose_vm(&request, payload).await,
@@ -2237,6 +2247,8 @@ where
             ConnectionState {
                 auth_token: payload.auth_token,
                 sessions: BTreeSet::new(),
+                session_close_outcomes: BTreeMap::new(),
+                session_close_outcome_order: VecDeque::new(),
             },
         );
 
@@ -2260,6 +2272,23 @@ where
         let connection_id = self.connection_id_for(&request.ownership)?;
         self.require_authenticated_connection(&connection_id)?;
 
+        let active_sessions = self
+            .connections
+            .get(&connection_id)
+            .expect("authenticated connection should exist")
+            .sessions
+            .len();
+        if active_sessions >= self.config.max_sessions_per_connection {
+            return Ok(DispatchResult {
+                response: self.reject(
+                    request,
+                    SESSION_LIMIT_ERROR_CODE,
+                    &session_limit_rejection_message(self.config.max_sessions_per_connection),
+                ),
+                events: Vec::new(),
+            });
+        }
+
         self.next_session_id += 1;
         let session_id = format!("session-{}", self.next_session_id);
         self.sessions.insert(
@@ -2275,10 +2304,172 @@ where
             .expect("authenticated connection should exist")
             .sessions
             .insert(session_id.clone());
+        let active_sessions = active_sessions + 1;
+        if session_limit_near_capacity(active_sessions, self.config.max_sessions_per_connection) {
+            tracing::warn!(
+                connection_id,
+                active_sessions,
+                max_sessions_per_connection = self.config.max_sessions_per_connection,
+                "sidecar session registry is near capacity"
+            );
+        }
 
         Ok(DispatchResult {
             response: session_opened_response(request.request_id, connection_id, session_id),
             events: Vec::new(),
+        })
+    }
+
+    async fn close_session_request(
+        &mut self,
+        request: &RequestFrame,
+        payload: CloseSessionRequest,
+    ) -> Result<DispatchResult, SidecarError> {
+        let connection_id = match &request.ownership {
+            OwnershipScope::ConnectionOwnership(scope) => scope.connection_id.clone(),
+            OwnershipScope::SessionOwnership(_) | OwnershipScope::VmOwnership(_) => {
+                return Ok(DispatchResult {
+                    response: self.reject(
+                        request,
+                        CLOSE_SESSION_INVALID_OWNERSHIP_ERROR_CODE,
+                        "close_session requires connection ownership",
+                    ),
+                    events: Vec::new(),
+                });
+            }
+        };
+        if !self.connections.contains_key(&connection_id) {
+            return Ok(DispatchResult {
+                response: self.reject(
+                    request,
+                    CLOSE_SESSION_UNAUTHENTICATED_ERROR_CODE,
+                    "close_session requires an authenticated connection",
+                ),
+                events: Vec::new(),
+            });
+        }
+
+        match self.sessions.get(&payload.session_id) {
+            Some(session) if session.connection_id != connection_id => {
+                return Ok(DispatchResult {
+                    response: self.reject(
+                        request,
+                        CLOSE_SESSION_OWNERSHIP_MISMATCH_ERROR_CODE,
+                        &format!(
+                            "session {} is not owned by connection {connection_id}",
+                            payload.session_id
+                        ),
+                    ),
+                    events: Vec::new(),
+                });
+            }
+            Some(_) => {}
+            None => {
+                let terminal = self.connections.iter().find_map(|(owner_id, state)| {
+                    state
+                        .session_close_outcomes
+                        .get(&payload.session_id)
+                        .cloned()
+                        .map(|outcome| (owner_id.clone(), outcome))
+                });
+                if let Some((owner_id, outcome)) = terminal {
+                    if owner_id != connection_id {
+                        return Ok(DispatchResult {
+                            response: self.reject(
+                                request,
+                                CLOSE_SESSION_OWNERSHIP_MISMATCH_ERROR_CODE,
+                                &format!(
+                                    "session {} is not owned by connection {connection_id}",
+                                    payload.session_id
+                                ),
+                            ),
+                            events: Vec::new(),
+                        });
+                    }
+                    let response = match outcome.error_message {
+                        Some(error) => {
+                            self.reject(request, CLOSE_SESSION_FAILED_ERROR_CODE, &error)
+                        }
+                        None => session_closed_response(request, payload.session_id),
+                    };
+                    return Ok(DispatchResult {
+                        response,
+                        events: Vec::new(),
+                    });
+                }
+                if session_id_was_allocated(&payload.session_id, "session-", self.next_session_id) {
+                    return Ok(DispatchResult {
+                        response: self.reject(
+                            request,
+                            CLOSE_SESSION_HISTORY_EXPIRED_ERROR_CODE,
+                            &format!(
+                                "terminal close outcome for session {} expired; raise max_sessions_per_connection to retain more close retry history",
+                                payload.session_id
+                            ),
+                        ),
+                        events: Vec::new(),
+                    });
+                }
+                return Ok(DispatchResult {
+                    response: session_closed_response(request, payload.session_id),
+                    events: Vec::new(),
+                });
+            }
+        }
+
+        let (events, error_message) = match self
+            .dispose_session(
+                &connection_id,
+                &payload.session_id,
+                DisposeReason::Requested,
+            )
+            .await
+        {
+            Ok(events) => (events, None),
+            Err(error) => (Vec::new(), Some(error.to_string())),
+        };
+
+        let history_capacity =
+            session_close_history_capacity(self.config.max_sessions_per_connection);
+        let connection = self
+            .connections
+            .get_mut(&connection_id)
+            .expect("authenticated connection remains present during close");
+        let evicted = record_session_close_outcome(
+            &mut connection.session_close_outcomes,
+            &mut connection.session_close_outcome_order,
+            payload.session_id.clone(),
+            SessionCloseOutcome {
+                error_message: error_message.clone(),
+            },
+            history_capacity,
+        );
+        if session_limit_near_capacity(connection.session_close_outcomes.len(), history_capacity) {
+            tracing::warn!(
+                connection_id,
+                retained_session_close_outcomes = connection.session_close_outcomes.len(),
+                session_close_history_capacity = history_capacity,
+                "sidecar terminal session-close history is near capacity"
+            );
+        }
+        if evicted {
+            tracing::warn!(
+                connection_id,
+                session_close_history_capacity = history_capacity,
+                "sidecar evicted its oldest terminal session-close outcome; raise max_sessions_per_connection to retain more retry history"
+            );
+        }
+
+        if let Some(error) = error_message {
+            return Ok(DispatchResult {
+                response: self.reject(request, CLOSE_SESSION_FAILED_ERROR_CODE, &error),
+                events,
+            });
+        }
+
+        Ok(DispatchResult {
+            response: session_closed_response(request, payload.session_id),
+            events,
         })
     }
 
@@ -2333,17 +2524,15 @@ where
             }
         }
 
-        // On client disconnect, give every registered extension a chance to free
-        // the per-session state it tracks (H4): the host owns the only signal an
-        // extension gets that a session has gone away.
-        if matches!(reason, DisposeReason::ConnectionClosed) {
-            if let Err(error) = self
-                .dispose_extension_session_state(connection_id, session_id)
-                .await
-            {
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
+        // Every terminal host-session path must notify extensions. Requested
+        // closes are just as final as connection loss and otherwise strand
+        // adapter-owned per-session resources.
+        if let Err(error) = self
+            .dispose_extension_session_state(connection_id, session_id)
+            .await
+        {
+            if first_error.is_none() {
+                first_error = Some(error);
             }
         }
 
@@ -4293,6 +4482,8 @@ mod dispose_lifecycle_tests {
             ConnectionState {
                 auth_token: String::new(),
                 sessions: BTreeSet::from([session_id.to_string()]),
+                session_close_outcomes: BTreeMap::new(),
+                session_close_outcome_order: VecDeque::new(),
             },
         );
         sidecar.sessions.insert(
@@ -4367,10 +4558,10 @@ mod dispose_lifecycle_tests {
         );
     }
 
-    // H4 (negative): a client-requested dispose is not a disconnect, so the
-    // teardown hook must not fire.
+    // Requested closes are terminal too, so extensions must receive the same
+    // teardown signal as connection-loss cleanup.
     #[test]
-    fn requested_dispose_does_not_invoke_extension_session_teardown() {
+    fn requested_dispose_invokes_extension_session_teardown() {
         let mut sidecar = test_sidecar();
         let counter = register_recording_extension(&mut sidecar);
         insert_session(&mut sidecar, "conn-1", "session-1", BTreeSet::new());
@@ -4380,8 +4571,8 @@ mod dispose_lifecycle_tests {
 
         assert_eq!(
             counter.load(Ordering::SeqCst),
-            0,
-            "the teardown hook is reserved for client disconnect"
+            1,
+            "requested close must release extension session state"
         );
     }
 

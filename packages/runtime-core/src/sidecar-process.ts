@@ -504,6 +504,29 @@ export class SidecarProcess {
 		};
 	}
 
+	async closeSession(session: AuthenticatedSession): Promise<void> {
+		const response = await this.sendRequest({
+			ownership: {
+				scope: "connection",
+				connection_id: session.connectionId,
+			},
+			payload: {
+				type: "close_session",
+				session_id: session.sessionId,
+			},
+		});
+		if (response.payload.type !== "session_closed") {
+			throw new Error(
+				`unexpected close_session response: ${response.payload.type}`,
+			);
+		}
+		if (response.payload.session_id !== session.sessionId) {
+			throw new Error(
+				`close_session returned ${response.payload.session_id} for ${session.sessionId}`,
+			);
+		}
+	}
+
 	/**
 	 * Atomically create and configure a VM. Omitted optional fields retain the
 	 * sidecar's defaults; partial initialization is rolled back by the sidecar.

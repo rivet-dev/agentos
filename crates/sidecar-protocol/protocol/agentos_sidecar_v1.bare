@@ -61,6 +61,10 @@ type OpenSessionRequest struct {
   placement: SidecarPlacement
 }
 
+type CloseSessionRequest struct {
+  sessionId: str
+}
+
 type GuestRuntimeKind enum {
   JAVA_SCRIPT
   PYTHON
@@ -529,7 +533,8 @@ type RequestPayload union {
   CompleteCronRunRequest |
   ExportCronStateRequest |
   ImportCronStateRequest |
-  InitializeVmRequest
+  InitializeVmRequest |
+  CloseSessionRequest
 }
 
 type RequestFrame struct {
@@ -548,6 +553,10 @@ type AuthenticatedResponse struct {
 type SessionOpenedResponse struct {
   sessionId: str
   ownerConnectionId: str
+}
+
+type SessionClosedResponse struct {
+  sessionId: str
 }
 
 type VmCreatedResponse struct {
@@ -916,7 +925,8 @@ type ResponsePayload union {
   CronRunCompletedResponse |
   CronStateExportedResponse |
   CronStateImportedResponse |
-  VmInitializedResponse
+  VmInitializedResponse |
+  SessionClosedResponse
 }
 
 type ResponseFrame struct {

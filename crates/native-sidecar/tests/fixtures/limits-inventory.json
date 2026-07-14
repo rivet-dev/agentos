@@ -483,6 +483,19 @@
 		"rationale": "Shared minimum for sidecar exited-process history and advertised client terminal-route retention; limits.resources.maxProcesses can raise the client bound."
 	},
 	{
+		"name": "DEFAULT_MAX_SESSIONS_PER_CONNECTION",
+		"path": "crates/native-sidecar-core/src/router.rs",
+		"class": "policy",
+		"rationale": "Bounds active host sessions owned by one authenticated connection; emits a near-capacity warning and a typed rejection at exhaustion.",
+		"wired": "NativeSidecarConfig.max_sessions_per_connection / BrowserSidecarConfig.max_sessions_per_connection / AGENTOS_MAX_SESSIONS_PER_CONNECTION"
+	},
+	{
+		"name": "SESSION_LIMIT_WARNING_PERCENT",
+		"path": "crates/native-sidecar-core/src/router.rs",
+		"class": "invariant",
+		"rationale": "Fixed observability threshold that warns when a connection reaches 80% of its configured session admission limit; it does not reject or retain resources."
+	},
+	{
 		"name": "JAVASCRIPT_NET_POLL_MAX_WAIT",
 		"path": "crates/native-sidecar/src/execution.rs",
 		"class": "invariant",

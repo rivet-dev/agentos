@@ -1,22 +1,91 @@
 use crate::frames::{reject, DispatchResult};
 use agentos_sidecar_protocol::protocol::{
-    AuthenticateRequest, BootstrapRootFilesystemRequest, CancelCronJobRequest, CloseStdinRequest,
-    CompleteCronRunRequest, ConfigureVmRequest, CreateLayerRequest, CreateOverlayRequest,
-    CreateVmRequest, DisposeVmRequest, ExecuteRequest, ExportCronStateRequest,
-    ExportSnapshotRequest, ExtEnvelope, FindBoundUdpRequest, FindListenerRequest,
-    GetProcessSnapshotRequest, GetResourceSnapshotRequest, GetSignalStateRequest,
-    GetZombieTimerCountRequest, GuestFilesystemCallRequest, GuestKernelCallRequest,
-    ImportCronStateRequest, ImportSnapshotRequest, InitializeVmRequest, KillProcessRequest,
-    LinkPackageRequest, ListCronJobsRequest, OpenSessionRequest, OwnershipScope,
-    ProvidedCommandsRequest, RegisterHostCallbacksRequest, RequestFrame, RequestPayload,
-    ResizePtyRequest, ScheduleCronRequest, SealLayerRequest, SnapshotRootFilesystemRequest,
-    VmFetchRequest, WakeCronRequest, WriteStdinRequest,
+    AuthenticateRequest, BootstrapRootFilesystemRequest, CancelCronJobRequest, CloseSessionRequest,
+    CloseStdinRequest, CompleteCronRunRequest, ConfigureVmRequest, CreateLayerRequest,
+    CreateOverlayRequest, CreateVmRequest, DisposeVmRequest, ExecuteRequest,
+    ExportCronStateRequest, ExportSnapshotRequest, ExtEnvelope, FindBoundUdpRequest,
+    FindListenerRequest, GetProcessSnapshotRequest, GetResourceSnapshotRequest,
+    GetSignalStateRequest, GetZombieTimerCountRequest, GuestFilesystemCallRequest,
+    GuestKernelCallRequest, ImportCronStateRequest, ImportSnapshotRequest, InitializeVmRequest,
+    KillProcessRequest, LinkPackageRequest, ListCronJobsRequest, OpenSessionRequest,
+    OwnershipScope, ProvidedCommandsRequest, RegisterHostCallbacksRequest, RequestFrame,
+    RequestPayload, ResizePtyRequest, ScheduleCronRequest, SealLayerRequest,
+    SnapshotRootFilesystemRequest, VmFetchRequest, WakeCronRequest, WriteStdinRequest,
 };
 use agentos_sidecar_protocol::wire as generated_wire;
+use std::collections::{BTreeMap, VecDeque};
 
 pub const UNSUPPORTED_HOST_CALLBACK_DIRECTION_CODE: &str = "unsupported_direction";
 pub const UNSUPPORTED_HOST_CALLBACK_DIRECTION_MESSAGE: &str =
     "host callback request categories are sidecar-to-host only in this scaffold";
+pub const DEFAULT_MAX_SESSIONS_PER_CONNECTION: usize = 1_024;
+pub const SESSION_LIMIT_ERROR_CODE: &str = "session_limit_exceeded";
+const SESSION_LIMIT_WARNING_PERCENT: usize = 80;
+pub const CLOSE_SESSION_INVALID_OWNERSHIP_ERROR_CODE: &str = "invalid_ownership";
+pub const CLOSE_SESSION_UNAUTHENTICATED_ERROR_CODE: &str = "unauthenticated";
+pub const CLOSE_SESSION_OWNERSHIP_MISMATCH_ERROR_CODE: &str = "ownership_mismatch";
+pub const CLOSE_SESSION_FAILED_ERROR_CODE: &str = "close_session_failed";
+pub const CLOSE_SESSION_HISTORY_EXPIRED_ERROR_CODE: &str = "close_session_history_expired";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionCloseOutcome {
+    pub error_message: Option<String>,
+}
+
+pub fn session_limit_near_capacity(active: usize, limit: usize) -> bool {
+    limit > 0 && active.saturating_mul(100) >= limit.saturating_mul(SESSION_LIMIT_WARNING_PERCENT)
+}
+
+pub fn session_limit_rejection_message(limit: usize) -> String {
+    format!(
+        "maximum sessions per connection reached ({limit}); raise the sidecar max_sessions_per_connection setting (AGENTOS_MAX_SESSIONS_PER_CONNECTION for stdio)"
+    )
+}
+
+/// Keep enough terminal close outcomes to cover two complete active-session
+/// generations. The configured session bound is also the operator-facing knob
+/// for this history: raising it increases both admission and retry history.
+pub fn session_close_history_capacity(max_sessions_per_connection: usize) -> usize {
+    max_sessions_per_connection.saturating_mul(2).max(1)
+}
+
+/// Record a terminal close result and evict the oldest result when the bounded
+/// history is full. Returns true when an old result was evicted.
+pub fn record_session_close_outcome(
+    outcomes: &mut BTreeMap<String, SessionCloseOutcome>,
+    order: &mut VecDeque<String>,
+    session_id: String,
+    outcome: SessionCloseOutcome,
+    capacity: usize,
+) -> bool {
+    if outcomes.contains_key(&session_id) {
+        outcomes.insert(session_id, outcome);
+        return false;
+    }
+
+    let capacity = capacity.max(1);
+    let mut evicted = false;
+    while outcomes.len() >= capacity {
+        let Some(oldest) = order.pop_front() else {
+            break;
+        };
+        evicted |= outcomes.remove(&oldest).is_some();
+    }
+    order.push_back(session_id.clone());
+    outcomes.insert(session_id, outcome);
+    evicted
+}
+
+/// Session IDs are allocated monotonically by each sidecar shell. This lets a
+/// bounded history distinguish a genuinely unknown future ID from a previously
+/// allocated ID whose terminal outcome has expired, without retaining another
+/// unbounded tombstone collection.
+pub fn session_id_was_allocated(session_id: &str, prefix: &str, next_session_id: usize) -> bool {
+    session_id
+        .strip_prefix(prefix)
+        .and_then(|suffix| suffix.parse::<usize>().ok())
+        .is_some_and(|id| id > 0 && id <= next_session_id)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequestDispatchMode {
@@ -31,6 +100,7 @@ pub enum RequestDispatchMode {
 pub enum RequestRoute {
     Authenticate(AuthenticateRequest),
     OpenSession(OpenSessionRequest),
+    CloseSession(CloseSessionRequest),
     CreateVm(CreateVmRequest),
     DisposeVm(DisposeVmRequest),
     BootstrapRootFilesystem(BootstrapRootFilesystemRequest),
@@ -74,12 +144,14 @@ pub enum RequestRoute {
 pub enum BlockingExtensionInterrupt<'a> {
     ExtensionPayload(&'a [u8]),
     KillProcess,
+    CloseSession,
 }
 
 pub fn route_request_payload(request: &RequestFrame) -> RequestRoute {
     match request.payload.clone() {
         RequestPayload::Authenticate(payload) => RequestRoute::Authenticate(payload),
         RequestPayload::OpenSession(payload) => RequestRoute::OpenSession(payload),
+        RequestPayload::CloseSession(payload) => RequestRoute::CloseSession(payload),
         RequestPayload::CreateVm(payload) => RequestRoute::CreateVm(payload),
         RequestPayload::DisposeVm(payload) => RequestRoute::DisposeVm(payload),
         RequestPayload::BootstrapRootFilesystem(payload) => {
@@ -133,6 +205,28 @@ pub fn generated_wire_blocking_extension_interrupt<'a>(
     blocking_namespace: &str,
     interrupting_request: &'a generated_wire::RequestFrame,
 ) -> Option<BlockingExtensionInterrupt<'a>> {
+    if let generated_wire::RequestPayload::CloseSessionRequest(close) =
+        &interrupting_request.payload
+    {
+        let (active_connection_id, active_session_id) = match &active_request.ownership {
+            generated_wire::OwnershipScope::SessionOwnership(scope) => {
+                (&scope.connection_id, &scope.session_id)
+            }
+            generated_wire::OwnershipScope::VmOwnership(scope) => {
+                (&scope.connection_id, &scope.session_id)
+            }
+            generated_wire::OwnershipScope::ConnectionOwnership(_) => return None,
+        };
+        let generated_wire::OwnershipScope::ConnectionOwnership(connection) =
+            &interrupting_request.ownership
+        else {
+            return None;
+        };
+        return (connection.connection_id == *active_connection_id
+            && close.session_id == *active_session_id)
+            .then_some(BlockingExtensionInterrupt::CloseSession);
+    }
+
     if interrupting_request.ownership != active_request.ownership {
         return None;
     }
@@ -156,6 +250,7 @@ pub fn generated_wire_blocking_extension_interrupt<'a>(
 pub fn request_dispatch_mode(request: &RequestFrame) -> RequestDispatchMode {
     match request.payload {
         RequestPayload::DisposeVm(_)
+        | RequestPayload::CloseSession(_)
         | RequestPayload::InitializeVm(_)
         | RequestPayload::WakeCron(_)
         | RequestPayload::Ext(_) => RequestDispatchMode::Async,
@@ -294,12 +389,16 @@ mod tests {
     }
 
     #[test]
-    fn dispose_and_ext_requests_are_async() {
+    fn dispose_close_and_ext_requests_are_async() {
         let ext = request(RequestPayload::Ext(ExtEnvelope {
             namespace: String::from("test"),
             payload: Vec::new(),
         }));
         assert_eq!(request_dispatch_mode(&ext), RequestDispatchMode::Async);
+        let close = request(RequestPayload::CloseSession(CloseSessionRequest {
+            session_id: String::from("session-1"),
+        }));
+        assert_eq!(request_dispatch_mode(&close), RequestDispatchMode::Async);
     }
 
     #[test]
@@ -427,6 +526,24 @@ mod tests {
             Some(BlockingExtensionInterrupt::KillProcess)
         );
 
+        let close = generated_request(
+            4,
+            generated_wire::OwnershipScope::ConnectionOwnership(
+                generated_wire::ConnectionOwnership {
+                    connection_id: String::from("conn"),
+                },
+            ),
+            generated_wire::RequestPayload::CloseSessionRequest(
+                generated_wire::CloseSessionRequest {
+                    session_id: String::from("session"),
+                },
+            ),
+        );
+        assert_eq!(
+            generated_wire_blocking_extension_interrupt(&active, "prompt", &close),
+            Some(BlockingExtensionInterrupt::CloseSession)
+        );
+
         let other_namespace = generated_request(
             4,
             ownership.clone(),
@@ -480,5 +597,44 @@ mod tests {
         assert_eq!(session_scope_of(&connection), None);
         assert_eq!(vm_id_of(&vm).as_deref(), Some("vm-1"));
         assert_eq!(vm_id_of(&session), None);
+    }
+
+    #[test]
+    fn terminal_session_close_history_is_bounded_and_recognizes_expired_ids() {
+        let mut outcomes = BTreeMap::new();
+        let mut order = VecDeque::new();
+        assert!(!record_session_close_outcome(
+            &mut outcomes,
+            &mut order,
+            String::from("session-1"),
+            SessionCloseOutcome {
+                error_message: Some(String::from("first failure")),
+            },
+            2,
+        ));
+        assert!(!record_session_close_outcome(
+            &mut outcomes,
+            &mut order,
+            String::from("session-2"),
+            SessionCloseOutcome {
+                error_message: None,
+            },
+            2,
+        ));
+        assert!(record_session_close_outcome(
+            &mut outcomes,
+            &mut order,
+            String::from("session-3"),
+            SessionCloseOutcome {
+                error_message: None,
+            },
+            2,
+        ));
+        assert!(!outcomes.contains_key("session-1"));
+        assert_eq!(outcomes.len(), 2);
+        assert!(session_id_was_allocated("session-1", "session-", 3));
+        assert!(!session_id_was_allocated("session-4", "session-", 3));
+        assert!(!session_id_was_allocated("other-1", "session-", 3));
+        assert_eq!(session_close_history_capacity(2), 4);
     }
 }
