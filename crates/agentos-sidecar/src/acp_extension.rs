@@ -1033,13 +1033,6 @@ impl AcpExtension {
                     .kill_process_wire(KillProcessRequest { process_id, signal })
                     .await
                     .map(|_| ())
-                    .or_else(|error| {
-                        if is_process_already_gone(&error) {
-                            Ok(())
-                        } else {
-                            Err(error)
-                        }
-                    })
                     .map_err(sidecar_to_core_error);
                 send_native_core_reply(reply, result, "kill agent");
             }
