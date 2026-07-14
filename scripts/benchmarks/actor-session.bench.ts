@@ -130,6 +130,7 @@ const iterations = positiveInteger("iterations", 5);
 const warmup = positiveInteger("warmup", 1, true);
 const settleMs = positiveInteger("settle-ms", 750, true);
 const timeoutMs = positiveInteger("timeout-ms", 30_000);
+const serverStartAttempts = positiveInteger("server-start-attempts", 3);
 const outputPath = arg("output", "");
 const requestedAgentIds = new Set(
 	arg(
@@ -430,25 +431,38 @@ async function main(): Promise<void> {
 
 	try {
 		await mock.start();
-		server = spawn(
-			"pnpm",
-			["exec", "tsx", "scripts/benchmarks/actor-session-server.ts"],
-			{
-				cwd: join(import.meta.dirname, "..", ".."),
-				detached: process.platform !== "win32",
-				env: {
-					...process.env,
-					BENCH_AGENTS: agents.map((agent) => agent.id).join(","),
-					RIVET_RUN_ENGINE_PORT: String(enginePort),
-					BENCH_MOCK_PORT: String(mockPort),
-					RIVETKIT_STORAGE_PATH: storagePath,
-					RIVET_EXPOSE_ERRORS: "1",
+		for (let attempt = 1; attempt <= serverStartAttempts; attempt += 1) {
+			server = spawn(
+				"pnpm",
+				["exec", "tsx", "scripts/benchmarks/actor-session-server.ts"],
+				{
+					cwd: join(import.meta.dirname, "..", ".."),
+					detached: process.platform !== "win32",
+					env: {
+						...process.env,
+						BENCH_AGENTS: agents.map((agent) => agent.id).join(","),
+						RIVET_RUN_ENGINE_PORT: String(enginePort),
+						BENCH_MOCK_PORT: String(mockPort),
+						RIVETKIT_STORAGE_PATH: storagePath,
+						RIVET_EXPOSE_ERRORS: "1",
+					},
+					stdio: ["ignore", "pipe", "pipe"],
 				},
-				stdio: ["ignore", "pipe", "pipe"],
-			},
-		);
-		pipeServerOutput(server);
-		await waitForServer(server, endpoint);
+			);
+			pipeServerOutput(server);
+			try {
+				await waitForServer(server, endpoint);
+				break;
+			} catch (error) {
+				await stopChild(server, storagePath);
+				server = undefined;
+				if (attempt === serverStartAttempts) throw error;
+				console.error(
+					`Actor server startup failed (attempt ${attempt}/${serverStartAttempts}); retrying`,
+				);
+				await sleep(500);
+			}
+		}
 
 		const client = createClient({ endpoint });
 		for (const agent of agents) {
