@@ -554,6 +554,9 @@ type VmCreatedResponse struct {
   vmId: str
   guestCwd: str
   guestEnv: map<str><str>
+  # Sidecar-resolved bound for completed host process callback routes. Clients
+  # retain only lightweight terminal correlation up to this count.
+  processRouteRetention: u64
 }
 
 type VmDisposedResponse struct {
@@ -579,6 +582,7 @@ type VmInitializedResponse struct {
   vmId: str
   guestCwd: str
   guestEnv: map<str><str>
+  processRouteRetention: u64
   appliedMounts: u32
   projectedCommands: list<ProjectedCommand>
   agents: list<AgentosProjectedAgent>

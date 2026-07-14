@@ -62,6 +62,7 @@ class MemorySidecarTransport implements SidecarProcessTransport {
 					projected_commands: [],
 					agents: [],
 					host_callbacks: [],
+					process_route_retention: 1024,
 				},
 			};
 		}
@@ -130,6 +131,7 @@ describe("sidecar process transport injection", () => {
 			vmId: "vm-initialized",
 			guestCwd: "/workspace",
 			guestEnv: { HOME: "/home/agentos" },
+			processRouteRetention: 1024,
 		});
 		expect(transport.requests).toEqual([
 			{

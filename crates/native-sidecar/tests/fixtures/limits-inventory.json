@@ -477,10 +477,10 @@
 		"rationale": "Internal stdin pump poll interval; not a guest-visible bound."
 	},
 	{
-		"name": "EXITED_PROCESS_SNAPSHOT_LIMIT",
-		"path": "crates/native-sidecar/src/execution.rs",
+		"name": "DEFAULT_PROCESS_ROUTE_RETENTION",
+		"path": "crates/native-sidecar-core/src/limits.rs",
 		"class": "invariant",
-		"rationale": "Bounded exited-process snapshot ring for wait/inspect bookkeeping."
+		"rationale": "Shared minimum for sidecar exited-process history and advertised client terminal-route retention; limits.resources.maxProcesses can raise the client bound."
 	},
 	{
 		"name": "JAVASCRIPT_NET_POLL_MAX_WAIT",
@@ -1249,12 +1249,6 @@
 		"path": "packages/core/src/cron/cron-manager.ts",
 		"class": "invariant",
 		"rationale": "Host alarm re-arming clamp imposed by JavaScript setTimeout's 32-bit delay ceiling, not scheduler policy."
-	},
-	{
-		"name": "PROCESS_REGISTRY_LIMIT",
-		"path": "crates/client/src/process.rs",
-		"class": "policy-deferred",
-		"rationale": "Host-only process callback/event route retention cap; runtime process state remains sidecar-owned."
 	},
 	{
 		"name": "PROCESS_STREAM_CAPACITY",

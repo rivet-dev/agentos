@@ -137,12 +137,14 @@ export type LiveResponsePayload =
 			vm_id: string;
 			guest_cwd: string;
 			guest_env: Record<string, string>;
+			process_route_retention: number;
 	  }
 	| {
 			type: "vm_initialized";
 			vm_id: string;
 			guest_cwd: string;
 			guest_env: Record<string, string>;
+			process_route_retention: number;
 			applied_mounts: number;
 			projected_commands: LiveProjectedCommand[];
 			agents: LiveAgentosProjectedAgent[];
@@ -348,6 +350,10 @@ export function fromGeneratedResponsePayload(
 				vm_id: payload.val.vmId,
 				guest_cwd: payload.val.guestCwd,
 				guest_env: Object.fromEntries(payload.val.guestEnv),
+				process_route_retention: bigIntToSafeNumber(
+					payload.val.processRouteRetention,
+					"vm_created.process_route_retention",
+				),
 			};
 		case "VmInitializedResponse":
 			return {
@@ -355,6 +361,10 @@ export function fromGeneratedResponsePayload(
 				vm_id: payload.val.vmId,
 				guest_cwd: payload.val.guestCwd,
 				guest_env: Object.fromEntries(payload.val.guestEnv),
+				process_route_retention: bigIntToSafeNumber(
+					payload.val.processRouteRetention,
+					"vm_initialized.process_route_retention",
+				),
 				applied_mounts: payload.val.appliedMounts,
 				projected_commands: payload.val.projectedCommands.map((command) => ({
 					name: command.name,

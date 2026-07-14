@@ -131,6 +131,7 @@ pub fn vm_created_response(
     vm_id: String,
     guest_cwd: String,
     guest_env: std::collections::HashMap<String, String>,
+    process_route_retention: u64,
 ) -> ResponseFrame {
     respond(
         request,
@@ -138,6 +139,7 @@ pub fn vm_created_response(
             vm_id,
             guest_cwd,
             guest_env,
+            process_route_retention,
         }),
     )
 }
@@ -546,6 +548,7 @@ mod tests {
             String::from("vm-1"),
             String::from("/workspace"),
             std::collections::HashMap::from([(String::from("HOME"), String::from("/root"))]),
+            1_024,
         );
         assert_eq!(created.request_id, request.request_id);
         assert_eq!(created.ownership, request.ownership);
@@ -553,6 +556,7 @@ mod tests {
             ResponsePayload::VmCreated(created) => {
                 assert_eq!(created.vm_id, "vm-1");
                 assert_eq!(created.guest_cwd, "/workspace");
+                assert_eq!(created.process_route_retention, 1_024);
                 assert_eq!(
                     created.guest_env.get("HOME").map(String::as_str),
                     Some("/root")

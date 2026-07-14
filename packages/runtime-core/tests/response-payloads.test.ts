@@ -358,6 +358,7 @@ describe("response payload conversion", () => {
 					],
 					agents: [],
 					hostCallbacks: [{ registration: "tools", commandCount: 2 }],
+					processRouteRetention: 1024n,
 				},
 			}),
 		).toEqual({
@@ -371,6 +372,7 @@ describe("response payload conversion", () => {
 			],
 			agents: [],
 			host_callbacks: [{ registration: "tools", command_count: 2 }],
+			process_route_retention: 1024,
 		});
 	});
 

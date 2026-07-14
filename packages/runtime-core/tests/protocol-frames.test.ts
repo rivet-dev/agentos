@@ -216,6 +216,7 @@ describe("protocol frame conversion", () => {
 							vmId: "vm",
 							guestCwd: "/workspace",
 							guestEnv: new Map([["HOME", "/root"]]),
+							processRouteRetention: 1024n,
 						},
 					},
 				},
@@ -230,6 +231,7 @@ describe("protocol frame conversion", () => {
 				vm_id: "vm",
 				guest_cwd: "/workspace",
 				guest_env: { HOME: "/root" },
+				process_route_retention: 1024,
 			},
 		});
 	});
@@ -308,6 +310,7 @@ describe("protocol frame conversion", () => {
 					vm_id: "vm",
 					guest_cwd: "/workspace",
 					guest_env: {},
+					process_route_retention: 1024,
 				},
 			}),
 		).toMatchObject({

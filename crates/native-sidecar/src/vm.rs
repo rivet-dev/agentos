@@ -49,11 +49,12 @@ use agentos_native_sidecar_core::permissions::{
 };
 use agentos_native_sidecar_core::{
     guest_environment_with_overrides, layer_created_response, layer_sealed_response,
-    overlay_created_response, package_linked_response, protocol_root_filesystem_mode,
-    provided_commands_response, root_filesystem_bootstrapped_response,
-    root_filesystem_protocol_descriptor_from_config, root_filesystem_snapshot_response,
-    snapshot_exported_response, snapshot_imported_response, vm_configured_response,
-    vm_created_response, vm_disposed_response, VmLayerStore, DEFAULT_GUEST_PATH_ENV,
+    overlay_created_response, package_linked_response, process_route_retention,
+    protocol_root_filesystem_mode, provided_commands_response,
+    root_filesystem_bootstrapped_response, root_filesystem_protocol_descriptor_from_config,
+    root_filesystem_snapshot_response, snapshot_exported_response, snapshot_imported_response,
+    vm_configured_response, vm_created_response, vm_disposed_response, VmLayerStore,
+    DEFAULT_GUEST_PATH_ENV,
 };
 use agentos_vm_config as vm_config;
 use base64::Engine;
@@ -328,6 +329,8 @@ where
             .expect("owned session should exist")
             .vm_ids
             .insert(vm_id.clone());
+        let process_route_retention = u64::try_from(process_route_retention(&limits))
+            .expect("process route retention must fit u64");
         self.vms.insert(
             vm_id.clone(),
             VmState {
@@ -386,6 +389,7 @@ where
                 vm_id,
                 guest_cwd,
                 guest_env.into_iter().collect(),
+                process_route_retention,
             ),
             events,
         })

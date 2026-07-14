@@ -1265,19 +1265,34 @@ function serializeToolkitsForSidecar(toolKits: ToolKit[]): Array<{
 	});
 }
 
+type RunningProcessRoute = {
+	state: "running";
+	proc: ManagedProcess;
+	stdoutHandlers: Set<(data: Uint8Array) => void>;
+	stderrHandlers: Set<(data: Uint8Array) => void>;
+	exitHandlers: Set<(exitCode: number) => void>;
+};
+
+type CompletedProcessRoute = {
+	state: "exited";
+	exitCode: number;
+};
+
+type FailedProcessRoute = {
+	state: "failed";
+	error: Error;
+};
+
+type ProcessRoute =
+	| RunningProcessRoute
+	| CompletedProcessRoute
+	| FailedProcessRoute;
+
 export class AgentOs {
 	#kernel: Kernel;
 	readonly sidecar: AgentOsSidecar;
 	private _sessions = new Map<string, AgentSessionEntry>();
-	private _processes = new Map<
-		number,
-		{
-			proc: ManagedProcess;
-			stdoutHandlers: Set<(data: Uint8Array) => void>;
-			stderrHandlers: Set<(data: Uint8Array) => void>;
-			exitHandlers: Set<(exitCode: number) => void>;
-		}
-	>();
+	private _processes = new Map<number, ProcessRoute>();
 	private _shells = new Map<string, ShellEntry>();
 	private _pendingShellExitPromises = new Map<string, Promise<number>>();
 	private _cronManager!: CronManager;
@@ -1612,13 +1627,48 @@ export class AgentOs {
 		return kernel.execArgv(command, args, options);
 	}
 
-	private _trackProcess(
+	private _pruneCompletedProcessRoutes(): void {
+		let completedRoutes = 0;
+		for (const entry of this._processes.values()) {
+			if (entry.state !== "running") completedRoutes++;
+		}
+		let removeCount = Math.max(
+			0,
+			completedRoutes - this._sidecarVm.processRouteRetention,
+		);
+		for (const [pid, entry] of this._processes) {
+			if (removeCount === 0) break;
+			if (entry.state !== "running") {
+				this._processes.delete(pid);
+				removeCount--;
+			}
+		}
+	}
+
+	private async _trackProcess(
 		proc: ManagedProcess,
 		stdoutHandlers: Set<(data: Uint8Array) => void>,
 		stderrHandlers: Set<(data: Uint8Array) => void>,
 		exitHandlers: Set<(exitCode: number) => void>,
-	): { pid: number } {
-		const entry = {
+	): Promise<{ pid: number }> {
+		const existing = this._processes.get(proc.pid);
+		if (existing?.state === "running") {
+			const duplicateError = new Error(
+				`Sidecar returned an already-active kernel pid: ${proc.pid}`,
+			);
+			try {
+				await proc.kill(9);
+			} catch (cleanupError) {
+				throw new AggregateError(
+					[duplicateError, cleanupError],
+					"Sidecar returned a duplicate active pid and cleanup failed",
+				);
+			}
+			throw duplicateError;
+		}
+		this._processes.delete(proc.pid);
+		const entry: RunningProcessRoute = {
+			state: "running",
 			proc,
 			stdoutHandlers,
 			stderrHandlers,
@@ -1626,17 +1676,33 @@ export class AgentOs {
 		};
 		this._processes.set(proc.pid, entry);
 
-		// NOTE: do NOT delete from `_processes` on exit — the public API contract
-		// (getProcess/listProcesses/stopProcess, see process-management.test.ts)
-		// requires exited processes to stay queryable (running:false, exitCode set).
-		// `_processes` is a process table for this VM's lifetime; it is freed wholesale
-		// in dispose(). (H5: the leak was that dispose() never cleared it.)
 		void proc
 			.wait()
 			.then((code) => {
-				for (const h of exitHandlers) h(code);
+				if (this._processes.get(proc.pid) !== entry) return;
+				const handlers = [...exitHandlers];
+				stdoutHandlers.clear();
+				stderrHandlers.clear();
+				exitHandlers.clear();
+				this._processes.delete(proc.pid);
+				this._processes.set(proc.pid, { state: "exited", exitCode: code });
+				this._pruneCompletedProcessRoutes();
+				for (const handler of handlers) handler(code);
 			})
 			.catch((error) => {
+				if (this._processes.get(proc.pid) === entry) {
+					const routeError =
+						error instanceof Error ? error : new Error(String(error));
+					stdoutHandlers.clear();
+					stderrHandlers.clear();
+					exitHandlers.clear();
+					this._processes.delete(proc.pid);
+					this._processes.set(proc.pid, {
+						state: "failed",
+						error: routeError,
+					});
+					this._pruneCompletedProcessRoutes();
+				}
 				console.error(`[agent-os] process ${proc.pid} wait failed`, error);
 			});
 
@@ -1666,7 +1732,7 @@ export class AgentOs {
 			},
 		});
 
-		return this._trackProcess(
+		return await this._trackProcess(
 			proc,
 			stdoutHandlers,
 			stderrHandlers,
@@ -1678,6 +1744,8 @@ export class AgentOs {
 	writeProcessStdin(pid: number, data: string | Uint8Array): Promise<void> {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
+		if (entry.state === "exited") return Promise.resolve();
+		if (entry.state === "failed") return Promise.reject(entry.error);
 		return entry.proc.writeStdin(data);
 	}
 
@@ -1685,6 +1753,8 @@ export class AgentOs {
 	closeProcessStdin(pid: number): Promise<void> {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
+		if (entry.state === "exited") return Promise.resolve();
+		if (entry.state === "failed") return Promise.reject(entry.error);
 		return entry.proc.closeStdin();
 	}
 
@@ -1695,6 +1765,8 @@ export class AgentOs {
 	): () => void {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
+		if (entry.state === "exited") return () => {};
+		if (entry.state === "failed") throw entry.error;
 		entry.stdoutHandlers.add(handler);
 		return () => {
 			entry.stdoutHandlers.delete(handler);
@@ -1708,6 +1780,8 @@ export class AgentOs {
 	): () => void {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
+		if (entry.state === "exited") return () => {};
+		if (entry.state === "failed") throw entry.error;
 		entry.stderrHandlers.add(handler);
 		return () => {
 			entry.stderrHandlers.delete(handler);
@@ -1719,10 +1793,11 @@ export class AgentOs {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
 		// If already exited, call immediately.
-		if (entry.proc.exitCode !== null) {
-			handler(entry.proc.exitCode);
+		if (entry.state === "exited") {
+			handler(entry.exitCode);
 			return () => {};
 		}
+		if (entry.state === "failed") throw entry.error;
 		entry.exitHandlers.add(handler);
 		return () => {
 			entry.exitHandlers.delete(handler);
@@ -1733,6 +1808,8 @@ export class AgentOs {
 	waitProcess(pid: number): Promise<number> {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
+		if (entry.state === "exited") return Promise.resolve(entry.exitCode);
+		if (entry.state === "failed") return Promise.reject(entry.error);
 		return entry.proc.wait();
 	}
 
@@ -2038,6 +2115,8 @@ export class AgentOs {
 		if (!entry) {
 			throw new Error(`Process not found: ${pid}`);
 		}
+		if (entry.state === "exited") return;
+		if (entry.state === "failed") throw entry.error;
 		await entry.proc.kill();
 	}
 
@@ -2047,6 +2126,8 @@ export class AgentOs {
 		if (!entry) {
 			throw new Error(`Process not found: ${pid}`);
 		}
+		if (entry.state === "exited") return;
+		if (entry.state === "failed") throw entry.error;
 		await entry.proc.kill(9);
 	}
 

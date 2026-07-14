@@ -24,9 +24,6 @@ use crate::stream::{ByteStream, RoutedStreamEvent, Subscription};
 /// Broadcast channel capacity for a spawned process's stdout/stderr fan-out.
 const PROCESS_STREAM_CAPACITY: usize = 1024;
 
-/// Maximum SDK-spawned process entries retained per VM.
-const PROCESS_REGISTRY_LIMIT: usize = 1024;
-
 /// A lost output/exit route leaves the host unable to supervise the guest, so cleanup is always
 /// forceful and does not inherit a caller-selected graceful signal.
 const ROUTE_FAILURE_KILL_SIGNAL: &str = "SIGKILL";
@@ -306,13 +303,7 @@ impl AgentOs {
     ) -> Result<SpawnHandle> {
         {
             let _registry_guard = self.inner().process_registry_lock.lock();
-            self.prune_exited_processes_locked(1);
-            if self.process_registry_len_locked() >= PROCESS_REGISTRY_LIMIT {
-                return Err(ClientError::Sidecar(format!(
-                    "process registry limit exceeded: at most {PROCESS_REGISTRY_LIMIT} processes can be tracked per VM"
-                ))
-                .into());
-            }
+            self.prune_exited_processes_locked();
         }
 
         let (stdout_tx, _) =
@@ -359,16 +350,13 @@ impl AgentOs {
             stderr_tx: stderr_tx.clone(),
             exit_tx: exit_tx.clone(),
             process_id: process_id.clone(),
+            terminal_sequence: std::sync::atomic::AtomicU64::new(0),
             output_tasks,
         };
         let registration_error = {
             let _registry_guard = self.inner().process_registry_lock.lock();
-            self.prune_exited_processes_locked(1);
-            if self.process_registry_len_locked() >= PROCESS_REGISTRY_LIMIT {
-                Some(ClientError::Sidecar(format!(
-                    "process registry limit exceeded: at most {PROCESS_REGISTRY_LIMIT} processes can be tracked per VM"
-                )))
-            } else if self.inner().processes.insert(pid, entry).is_err() {
+            self.prune_exited_processes_locked();
+            if self.inner().processes.insert(pid, entry).is_err() {
                 Some(ClientError::Sidecar(format!(
                     "spawn: kernel pid {pid} is already tracked"
                 )))
@@ -389,8 +377,10 @@ impl AgentOs {
 
         let this = self.clone();
         tokio::spawn(async move {
-            this.run_spawn_events(ownership, process_id, events, stdout_tx, stderr_tx, exit_tx)
-                .await;
+            this.run_spawn_events(
+                pid, ownership, process_id, events, stdout_tx, stderr_tx, exit_tx,
+            )
+            .await;
         });
 
         Ok(SpawnHandle { pid })
@@ -813,37 +803,11 @@ impl AgentOs {
         }
     }
 
-    fn process_registry_len_locked(&self) -> usize {
-        let mut count = 0usize;
-        self.inner().processes.scan(|_, _| {
-            count += 1;
-        });
-        count
-    }
-
-    fn prune_exited_processes_locked(&self, reserve_slots: usize) {
-        let mut entries = Vec::new();
-        self.inner().processes.scan(|pid, entry| {
-            entries.push((
-                *pid,
-                matches!(
-                    entry.exit_tx.borrow().as_ref(),
-                    Some(ProcessExit::Exited(_))
-                ),
-            ));
-        });
-        let target_len = PROCESS_REGISTRY_LIMIT.saturating_sub(reserve_slots);
-        if entries.len() <= target_len {
-            return;
-        }
-
-        for pid in exited_pids_to_prune(entries, target_len) {
-            self.remove_process_tracking_locked(pid);
-        }
-    }
-
-    fn remove_process_tracking_locked(&self, pid: u32) {
-        let _ = self.inner().processes.remove(&pid);
+    fn prune_exited_processes_locked(&self) {
+        prune_terminal_processes(
+            &self.inner().processes,
+            self.inner().process_route_retention,
+        );
     }
 
     /// Background pump for a spawned process: fan kernel `ProcessOutput`/`ProcessExited` events for
@@ -852,6 +816,7 @@ impl AgentOs {
     /// under registry pressure.
     async fn run_spawn_events(
         self,
+        pid: u32,
         ownership: wire::OwnershipScope,
         process_id: String,
         mut events: WireEventSubscription,
@@ -909,7 +874,16 @@ impl AgentOs {
             }
         }
         let _guard = self.inner().process_registry_lock.lock();
-        self.prune_exited_processes_locked(0);
+        let terminal_sequence = self
+            .inner()
+            .next_process_terminal_sequence
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        record_process_terminal_and_prune(
+            &self.inner().processes,
+            pid,
+            terminal_sequence,
+            self.inner().process_route_retention,
+        );
     }
 }
 
@@ -1163,24 +1137,48 @@ fn stdin_to_bytes(input: StdinInput) -> Vec<u8> {
     }
 }
 
-fn exited_pids_to_prune(mut entries: Vec<(u32, bool)>, target_len: usize) -> Vec<u32> {
-    if entries.len() <= target_len {
+fn terminal_pids_to_prune(entries: Vec<(u32, u64)>, terminal_retention: usize) -> Vec<u32> {
+    let mut terminal_entries: Vec<(u32, u64)> = entries
+        .into_iter()
+        .filter(|(_, sequence)| *sequence != 0)
+        .collect();
+    if terminal_entries.len() <= terminal_retention {
         return Vec::new();
     }
-    let mut remove_count = entries.len() - target_len;
-    entries.sort_by_key(|(pid, _)| *pid);
-    let mut out = Vec::new();
-    for (pid, exited) in entries {
-        if remove_count == 0 {
-            break;
-        }
-        if !exited {
-            continue;
-        }
-        out.push(pid);
-        remove_count -= 1;
+    terminal_entries.sort_by_key(|(_, sequence)| *sequence);
+    let remove_count = terminal_entries.len() - terminal_retention;
+    terminal_entries
+        .into_iter()
+        .take(remove_count)
+        .map(|(pid, _)| pid)
+        .collect()
+}
+
+fn prune_terminal_processes(processes: &SccHashMap<u32, ProcessEntry>, terminal_retention: usize) {
+    let mut entries = Vec::new();
+    processes.scan(|pid, entry| {
+        let terminal_sequence = entry
+            .terminal_sequence
+            .load(std::sync::atomic::Ordering::Acquire);
+        entries.push((*pid, terminal_sequence));
+    });
+    for pid in terminal_pids_to_prune(entries, terminal_retention) {
+        let _ = processes.remove(&pid);
     }
-    out
+}
+
+fn record_process_terminal_and_prune(
+    processes: &SccHashMap<u32, ProcessEntry>,
+    pid: u32,
+    terminal_sequence: u64,
+    terminal_retention: usize,
+) {
+    let _ = processes.update(&pid, |_, entry| {
+        entry
+            .terminal_sequence
+            .store(terminal_sequence, std::sync::atomic::Ordering::Release);
+    });
+    prune_terminal_processes(processes, terminal_retention);
 }
 
 /// Drive a caller-supplied output callback from a fresh subscription on the given broadcast channel.
@@ -1246,9 +1244,9 @@ pub(crate) fn drain_process_output_tasks(processes: &SccHashMap<u32, ProcessEntr
 mod tests {
     use super::{
         apply_exec_event, build_process_execute_request, byte_stream_for_process_route,
-        drain_process_output_tasks, exited_pids_to_prune, handle_route_failure_abort_result,
-        install_output_callback, process_exit_result, timeout_to_wire, ExecOptions, OutputCallback,
-        ROUTE_FAILURE_KILL_SIGNAL,
+        drain_process_output_tasks, handle_route_failure_abort_result, install_output_callback,
+        process_exit_result, record_process_terminal_and_prune, terminal_pids_to_prune,
+        timeout_to_wire, ExecOptions, OutputCallback, ROUTE_FAILURE_KILL_SIGNAL,
     };
     use crate::agent_os::{ProcessEntry, ProcessExit};
     use crate::stream::RoutedStreamEvent;
@@ -1415,6 +1413,7 @@ mod tests {
             stderr_tx,
             exit_tx,
             process_id: "proc-test".to_string(),
+            terminal_sequence: std::sync::atomic::AtomicU64::new(0),
             output_tasks: vec![task],
         };
         let _ = processes.insert(1, entry);
@@ -1466,6 +1465,7 @@ mod tests {
             stderr_tx,
             exit_tx,
             process_id: "proc-test".to_string(),
+            terminal_sequence: std::sync::atomic::AtomicU64::new(0),
             output_tasks,
         };
 
@@ -1519,8 +1519,60 @@ mod tests {
     }
 
     #[test]
-    fn exited_pid_pruning_keeps_live_entries_and_removes_oldest_exited() {
-        let pids = exited_pids_to_prune(vec![(3, true), (1, false), (2, true), (4, true)], 2);
-        assert_eq!(pids, vec![2, 3]);
+    fn terminal_pid_pruning_keeps_live_entries_and_uses_completion_order() {
+        let pids = terminal_pids_to_prune(vec![(30, 3), (10, 0), (20, 1), (40, 2), (50, 0)], 2);
+        assert_eq!(pids, vec![20]);
+    }
+
+    #[tokio::test]
+    async fn terminal_pruning_preserves_an_in_flight_wait_receiver() {
+        let processes: SccHashMap<u32, ProcessEntry> = SccHashMap::new();
+        let make_entry = |process_id: &str| {
+            let (stdout_tx, _) = broadcast::channel(1);
+            let (stderr_tx, _) = broadcast::channel(1);
+            let (exit_tx, _) = watch::channel(None);
+            ProcessEntry {
+                stdout_tx,
+                stderr_tx,
+                exit_tx,
+                process_id: process_id.to_owned(),
+                terminal_sequence: std::sync::atomic::AtomicU64::new(0),
+                output_tasks: Vec::new(),
+            }
+        };
+
+        let _ = processes.insert(10, make_entry("proc-10"));
+        let _ = processes.insert(20, make_entry("proc-20"));
+        let mut in_flight_wait = processes
+            .read(&10, |_, entry| entry.exit_tx.subscribe())
+            .expect("first process route");
+
+        processes
+            .read(&10, |_, entry| {
+                entry
+                    .exit_tx
+                    .send(Some(ProcessExit::Exited(7)))
+                    .expect("in-flight waiter keeps the channel open");
+            })
+            .expect("first process route");
+        record_process_terminal_and_prune(&processes, 10, 1, 1);
+
+        processes
+            .read(&20, |_, entry| {
+                let _ = entry.exit_tx.send(Some(ProcessExit::Exited(0)));
+            })
+            .expect("second process route");
+        record_process_terminal_and_prune(&processes, 20, 2, 1);
+
+        assert!(!processes.contains(&10), "oldest terminal route pruned");
+        assert!(processes.contains(&20), "newest terminal route retained");
+        in_flight_wait
+            .changed()
+            .await
+            .expect("terminal value remains observable after route pruning");
+        assert!(matches!(
+            in_flight_wait.borrow_and_update().clone(),
+            Some(ProcessExit::Exited(7))
+        ));
     }
 }

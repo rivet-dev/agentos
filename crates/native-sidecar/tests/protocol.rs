@@ -25,6 +25,7 @@ fn vm_created(vm_id: &str) -> agentos_native_sidecar::protocol::VmCreatedRespons
         vm_id: vm_id.to_owned(),
         guest_cwd: String::from("/workspace"),
         guest_env: std::collections::HashMap::new(),
+        process_route_retention: 1_024,
     }
 }
 

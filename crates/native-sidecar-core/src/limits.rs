@@ -14,6 +14,19 @@ use crate::SidecarCoreError;
 /// cap; decoupled here but still validated to stay within the negotiated frame budget.
 pub const DEFAULT_MAX_FETCH_RESPONSE_BYTES: usize = 1024 * 1024;
 
+/// Minimum number of lightweight completed process routes clients may retain for late host
+/// callbacks. A higher explicit `limits.resources.maxProcesses` raises this bound; the sidecar
+/// advertises the resolved value so clients never copy the default.
+pub const DEFAULT_PROCESS_ROUTE_RETENTION: usize = 1024;
+
+pub fn process_route_retention(limits: &VmLimits) -> usize {
+    limits
+        .resources
+        .max_processes
+        .unwrap_or_default()
+        .max(DEFAULT_PROCESS_ROUTE_RETENTION)
+}
+
 pub const DEFAULT_TOOL_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_TOOL_TIMEOUT_MS: u64 = 300_000;
 pub const MAX_REGISTERED_TOOLKITS: usize = 64;
@@ -553,6 +566,33 @@ fn apply_resource_limits_config(
         "limits.resources.maxWasmStackBytes",
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod process_route_retention_tests {
+    use super::{process_route_retention, VmLimits, DEFAULT_PROCESS_ROUTE_RETENTION};
+
+    #[test]
+    fn sidecar_resolves_process_route_retention_from_runtime_limits() {
+        let mut limits = VmLimits::default();
+        assert_eq!(
+            process_route_retention(&limits),
+            DEFAULT_PROCESS_ROUTE_RETENTION
+        );
+
+        limits.resources.max_processes = Some(DEFAULT_PROCESS_ROUTE_RETENTION * 2);
+        assert_eq!(
+            process_route_retention(&limits),
+            DEFAULT_PROCESS_ROUTE_RETENTION * 2
+        );
+
+        limits.resources.max_processes = Some(0);
+        assert_eq!(
+            process_route_retention(&limits),
+            DEFAULT_PROCESS_ROUTE_RETENTION,
+            "maxProcesses may raise but never erase late host callback correlation"
+        );
+    }
 }
 
 fn set_usize(target: &mut usize, value: Option<u64>, key: &str) -> Result<(), SidecarCoreError> {

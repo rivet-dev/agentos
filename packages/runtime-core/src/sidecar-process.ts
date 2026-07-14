@@ -234,6 +234,7 @@ export interface CreatedVm {
 	vmId: string;
 	guestCwd: string;
 	guestEnv: Record<string, string>;
+	processRouteRetention: number;
 }
 
 export interface InitializedVm extends CreatedVm {
@@ -499,6 +500,7 @@ export class SidecarProcess {
 			vmId: response.payload.vm_id,
 			guestCwd: response.payload.guest_cwd,
 			guestEnv: { ...response.payload.guest_env },
+			processRouteRetention: response.payload.process_route_retention,
 		};
 	}
 
@@ -554,6 +556,7 @@ export class SidecarProcess {
 			vmId: response.payload.vm_id,
 			guestCwd: response.payload.guest_cwd,
 			guestEnv: { ...response.payload.guest_env },
+			processRouteRetention: response.payload.process_route_retention,
 			appliedMounts: response.payload.applied_mounts,
 			projectedCommands: response.payload.projected_commands.map((command) => ({
 				name: command.name,

@@ -2282,9 +2282,52 @@ fn browser_wire_dispatcher_initializes_vm_atomically() {
         panic!("unexpected initialize response: {:?}", response.payload);
     };
     assert_eq!(initialized.applied_mounts, 0);
+    assert_eq!(initialized.process_route_retention, 1_024);
     assert_eq!(initialized.host_callbacks.len(), 1);
     assert_eq!(initialized.host_callbacks[0].registration, "browser");
     assert_eq!(dispatcher.vm_count(), 1);
+}
+
+#[test]
+fn browser_wire_dispatcher_advertises_raised_process_route_retention() {
+    let codec = WireFrameCodec::default();
+    let mut dispatcher = BrowserWireDispatcher::new(RecordingBridge::default());
+    let ownership = open_wire_session(&codec, &mut dispatcher);
+    let create = CreateVmRequest::json_config(
+        GuestRuntimeKind::JavaScript,
+        agentos_vm_config::CreateVmConfig {
+            limits: Some(agentos_vm_config::VmLimitsConfig {
+                resources: Some(agentos_vm_config::ResourceLimitsConfig {
+                    max_processes: Some(2_048),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    );
+
+    let response = dispatch(
+        &codec,
+        &mut dispatcher,
+        RequestFrame {
+            schema: protocol_schema(),
+            request_id: 3,
+            ownership,
+            payload: RequestPayload::InitializeVmRequest(InitializeVmRequest {
+                runtime: create.runtime,
+                config: create.config,
+                mounts: None,
+                packages: None,
+                packages_mount_at: None,
+                host_callbacks: None,
+            }),
+        },
+    );
+    let ResponsePayload::VmInitializedResponse(initialized) = response.payload else {
+        panic!("unexpected initialize response: {:?}", response.payload);
+    };
+    assert_eq!(initialized.process_route_retention, 2_048);
 }
 
 #[test]

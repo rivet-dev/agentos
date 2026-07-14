@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -69,6 +69,9 @@ pub(crate) struct ProcessEntry {
     pub exit_tx: watch::Sender<Option<ProcessExit>>,
     /// The sidecar-side process id used on the wire.
     pub process_id: String,
+    /// Monotonic host terminal-observation order. Zero while live; assigned exactly once before
+    /// pruning so success and route failure evict by completion order rather than pid.
+    pub terminal_sequence: AtomicU64,
     /// Handles for the per-process output-callback tasks seeded at spawn (`on_stdout`/`on_stderr`).
     /// The entry retains its own `stdout_tx`/`stderr_tx` clones for late subscribers, so these tasks
     /// never observe the broadcast `Closed`; `shutdown` aborts them when draining the registry.
@@ -141,6 +144,8 @@ pub(crate) struct AgentOsInner {
 
     // Process registries.
     pub(crate) process_registry_lock: parking_lot::Mutex<()>,
+    pub(crate) process_route_retention: usize,
+    pub(crate) next_process_terminal_sequence: AtomicU64,
     pub(crate) processes: SccHashMap<u32, ProcessEntry>,
     // Shell registries.
     pub(crate) shells: SccHashMap<String, ShellEntry>,
@@ -288,6 +293,13 @@ impl AgentOs {
                 )));
             }
         };
+        let process_route_retention = usize::try_from(initialized.process_route_retention)
+            .map_err(|_| {
+                ClientError::Sidecar(format!(
+                    "sidecar process route retention exceeds this host's range: {}",
+                    initialized.process_route_retention
+                ))
+            })?;
         let vm_id = initialized.vm_id;
         let projected_commands = initialized
             .projected_commands
@@ -319,6 +331,8 @@ impl AgentOs {
             projected_commands: parking_lot::Mutex::new(projected_commands),
             projected_agents: parking_lot::Mutex::new(projected_agents),
             process_registry_lock: parking_lot::Mutex::new(()),
+            process_route_retention,
+            next_process_terminal_sequence: AtomicU64::new(1),
             processes: SccHashMap::new(),
             shells: SccHashMap::new(),
             pending_shell_exits: SccHashMap::new(),

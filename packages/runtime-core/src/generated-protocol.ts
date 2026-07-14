@@ -2919,6 +2919,11 @@ export type VmCreatedResponse = {
     readonly vmId: string
     readonly guestCwd: string
     readonly guestEnv: ReadonlyMap<string, string>
+    /**
+     * Sidecar-resolved bound for completed host process callback routes. Clients
+     * retain only lightweight terminal correlation up to this count.
+     */
+    readonly processRouteRetention: u64
 }
 
 export function readVmCreatedResponse(bc: bare.ByteCursor): VmCreatedResponse {
@@ -2926,6 +2931,7 @@ export function readVmCreatedResponse(bc: bare.ByteCursor): VmCreatedResponse {
         vmId: bare.readString(bc),
         guestCwd: bare.readString(bc),
         guestEnv: read33(bc),
+        processRouteRetention: bare.readU64(bc),
     }
 }
 
@@ -2933,6 +2939,7 @@ export function writeVmCreatedResponse(bc: bare.ByteCursor, x: VmCreatedResponse
     bare.writeString(bc, x.vmId)
     bare.writeString(bc, x.guestCwd)
     write33(bc, x.guestEnv)
+    bare.writeU64(bc, x.processRouteRetention)
 }
 
 export type VmDisposedResponse = {
@@ -3023,6 +3030,7 @@ export type VmInitializedResponse = {
     readonly vmId: string
     readonly guestCwd: string
     readonly guestEnv: ReadonlyMap<string, string>
+    readonly processRouteRetention: u64
     readonly appliedMounts: u32
     readonly projectedCommands: readonly ProjectedCommand[]
     readonly agents: readonly AgentosProjectedAgent[]
@@ -3034,6 +3042,7 @@ export function readVmInitializedResponse(bc: bare.ByteCursor): VmInitializedRes
         vmId: bare.readString(bc),
         guestCwd: bare.readString(bc),
         guestEnv: read33(bc),
+        processRouteRetention: bare.readU64(bc),
         appliedMounts: bare.readU32(bc),
         projectedCommands: read15(bc),
         agents: read16(bc),
@@ -3045,6 +3054,7 @@ export function writeVmInitializedResponse(bc: bare.ByteCursor, x: VmInitialized
     bare.writeString(bc, x.vmId)
     bare.writeString(bc, x.guestCwd)
     write33(bc, x.guestEnv)
+    bare.writeU64(bc, x.processRouteRetention)
     bare.writeU32(bc, x.appliedMounts)
     write15(bc, x.projectedCommands)
     write16(bc, x.agents)

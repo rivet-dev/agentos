@@ -69,9 +69,9 @@ pub use guest_net::handle_guest_kernel_call;
 pub use identity::{shared_guest_runtime_identity, SharedGuestRuntimeIdentity};
 pub use layers::{VmLayerStore, MAX_VM_LAYERS};
 pub use limits::{
-    validate_vm_limits, virtual_os_cpu_count, virtual_os_freemem_bytes, virtual_os_totalmem_bytes,
-    vm_limits_from_config, AcpLimits, HttpLimits, JsRuntimeLimits, PluginLimits, PythonLimits,
-    ToolLimits, VmLimits, WasmLimits,
+    process_route_retention, validate_vm_limits, virtual_os_cpu_count, virtual_os_freemem_bytes,
+    virtual_os_totalmem_bytes, vm_limits_from_config, AcpLimits, HttpLimits, JsRuntimeLimits,
+    PluginLimits, PythonLimits, ToolLimits, VmLimits, WasmLimits, DEFAULT_PROCESS_ROUTE_RETENTION,
 };
 pub use net::{
     local_endpoint_value, remote_endpoint_value, socket_addr_family, socket_address_value,

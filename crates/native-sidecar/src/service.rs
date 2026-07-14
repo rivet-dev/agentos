@@ -1442,6 +1442,7 @@ where
                     vm_id,
                     guest_cwd: created.guest_cwd,
                     guest_env: created.guest_env,
+                    process_route_retention: created.process_route_retention,
                     applied_mounts: configured.applied_mounts,
                     projected_commands: configured.projected_commands,
                     agents: configured.agents,

@@ -6414,6 +6414,7 @@ ykAheWCsAteSEWVc0w==\n\
                         vm_id: String::from("vm-1"),
                         guest_cwd: String::from("/workspace"),
                         guest_env: std::collections::HashMap::new(),
+                        process_route_retention: 1_024,
                     }),
                 ),
                 events: Vec::new(),

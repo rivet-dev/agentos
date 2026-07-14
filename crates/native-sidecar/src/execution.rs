@@ -12774,7 +12774,8 @@ fn snapshot_vm_processes_inner(
 }
 
 fn prune_exited_process_snapshots(vm: &mut VmState) {
-    while vm.exited_process_snapshots.len() > EXITED_PROCESS_SNAPSHOT_LIMIT {
+    let retention = agentos_native_sidecar_core::process_route_retention(&vm.limits);
+    while vm.exited_process_snapshots.len() > retention {
         vm.exited_process_snapshots.pop_front();
     }
 }
@@ -23020,8 +23021,6 @@ where
 }
 
 const JAVASCRIPT_NET_POLL_MAX_WAIT: Duration = Duration::from_millis(50);
-const EXITED_PROCESS_SNAPSHOT_LIMIT: usize = 1024;
-
 fn resolve_http2_file_response_guest_path(process: &ActiveProcess, path: &str) -> String {
     if Path::new(path).is_absolute() {
         normalize_path(path)

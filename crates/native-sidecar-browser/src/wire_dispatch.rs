@@ -13,17 +13,18 @@ use agentos_native_sidecar_core::{
     execution_signal_from_number, guest_environment_with_overrides, layer_created_response,
     layer_sealed_response, listener_snapshot_response, overlay_created_response,
     permissions_from_policy, permissions_with_allow_all_defaults, process_exited_event_with_result,
-    process_killed_response, process_output_event, process_snapshot_response,
-    process_started_response, protocol_process_snapshot_entry, protocol_root_filesystem_mode,
-    reject, resolve_command_line, respond, root_filesystem_bootstrapped_response,
-    root_filesystem_snapshot_response, root_snapshot_entry, route_request_payload,
-    session_opened_response, session_scope_of, signal_state_response, snapshot_exported_response,
-    snapshot_imported_response, stdin_closed_response, stdin_written_response,
-    unsupported_guest_kernel_call_event, unsupported_host_callback_direction_dispatch,
-    validate_authenticate_versions, validate_process_id, vm_configured_response,
-    vm_created_response, vm_disposed_response, vm_id_of, vm_lifecycle_event,
-    zombie_timer_count_response, CaptureChunkOutcome, CapturedOutputBudget, CapturedOutputState,
-    CronAction, CronScheduler, DispatchResult, RequestRoute, VmLimits,
+    process_killed_response, process_output_event, process_route_retention,
+    process_snapshot_response, process_started_response, protocol_process_snapshot_entry,
+    protocol_root_filesystem_mode, reject, resolve_command_line, respond,
+    root_filesystem_bootstrapped_response, root_filesystem_snapshot_response, root_snapshot_entry,
+    route_request_payload, session_opened_response, session_scope_of, signal_state_response,
+    snapshot_exported_response, snapshot_imported_response, stdin_closed_response,
+    stdin_written_response, unsupported_guest_kernel_call_event,
+    unsupported_host_callback_direction_dispatch, validate_authenticate_versions,
+    validate_process_id, vm_configured_response, vm_created_response, vm_disposed_response,
+    vm_id_of, vm_lifecycle_event, zombie_timer_count_response, CaptureChunkOutcome,
+    CapturedOutputBudget, CapturedOutputState, CronAction, CronScheduler, DispatchResult,
+    RequestRoute, VmLimits,
 };
 use agentos_sidecar_protocol::protocol::{
     AuthenticateRequest, BootstrapRootFilesystemRequest, CancelCronJobRequest, CloseStdinRequest,
@@ -1173,6 +1174,8 @@ where
             let _ = self.sidecar.dispose_vm(&vm_id);
             return rejected(request, "create_vm_failed", &error.to_string());
         }
+        let process_route_retention = u64::try_from(process_route_retention(&limits))
+            .expect("process route retention must fit u64");
         self.active_vms.insert(vm_id.clone());
         self.vm_capture_budgets
             .insert(vm_id.clone(), CapturedOutputBudget::for_vm(&limits));
@@ -1180,7 +1183,13 @@ where
 
         let ownership = OwnershipScope::vm(&connection_id, &session_id, &vm_id);
         DispatchResult {
-            response: vm_created_response(request, vm_id.clone(), guest_cwd, guest_env),
+            response: vm_created_response(
+                request,
+                vm_id.clone(),
+                guest_cwd,
+                guest_env,
+                process_route_retention,
+            ),
             events: vec![
                 vm_lifecycle_event(
                     &connection_id,
@@ -1292,6 +1301,7 @@ where
                         vm_id,
                         guest_cwd: created.guest_cwd,
                         guest_env: created.guest_env,
+                        process_route_retention: created.process_route_retention,
                         applied_mounts: configured.applied_mounts,
                         projected_commands: configured.projected_commands,
                         agents: configured.agents,
