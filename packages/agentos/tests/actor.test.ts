@@ -429,14 +429,20 @@ describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
 		}));
 
 		expect(calls.map((call) => call.name).sort()).toEqual([
+			"closeSession",
 			"closeShell",
 			"createSession",
+			"createSignedPreviewUrl",
+			"deleteFile",
+			"expireSignedPreviewUrl",
 			"getSessionEvents",
 			"killProcess",
 			"listMounts",
 			"listPersistedSessions",
 			"listProcesses",
 			"listSoftware",
+			"mkdir",
+			"move",
 			"openShell",
 			"processTree",
 			"readFile",
@@ -446,6 +452,7 @@ describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
 			"sendPrompt",
 			"stat",
 			"stopProcess",
+			"writeFile",
 			"writeShell",
 		]);
 		for (const call of calls) {

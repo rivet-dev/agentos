@@ -15,6 +15,7 @@ import type {
 	ProcessInfo,
 	ProcessTreeNode,
 	ReaddirEntry,
+	SignedPreviewUrl,
 	SoftwareBundle,
 	SoftwareInfo,
 	TranscriptEvent,
@@ -72,6 +73,9 @@ export function decodeActionBytes(output: unknown): Uint8Array {
 	}
 	return new Uint8Array();
 }
+
+/** Preview limit for the file viewer; larger files load only on request. */
+const MAX_PREVIEW_BYTES = 4 * 1024 * 1024;
 
 function bytesToDisplay(bytes: Uint8Array): string | null {
 	// Heuristic binary check: NUL byte in the first 8 KiB.
@@ -221,6 +225,7 @@ export const agentOsSource = {
 							name: e.name,
 							path: p,
 							dir: e.isDirectory,
+							symlink: e.isSymbolicLink,
 						};
 					});
 				return entries.sort(
@@ -229,21 +234,36 @@ export const agentOsSource = {
 			},
 		}),
 
-	fileContentQueryOptions: (actorId: string, path: string | null) =>
+	fileContentQueryOptions: (actorId: string, path: string | null, force = false) =>
 		queryOptions({
-			queryKey: k(actorId, "file", path ?? ""),
+			queryKey: k(actorId, "file", path ?? "", force ? "force" : "guarded"),
 			enabled: !!path,
 			queryFn: async (): Promise<FileContent> => {
 				const p = path as string;
-				const [bytes, stat] = await Promise.all([
-					callAction("readFile", [p]).then(decodeActionBytes),
-					callAction<VirtualStat>("stat", [p]),
-				]);
+				// Stat first: reading a huge file drags megabytes through the
+				// gateway just to preview it. Past the limit, skip the read until
+				// the viewer's explicit "Load anyway".
+				const stat = await callAction<VirtualStat>("stat", [p]);
+				if (!force && stat.size > MAX_PREVIEW_BYTES) {
+					return {
+						path: p,
+						sizeBytes: stat.size,
+						mtimeMs: stat.mtimeMs,
+						text: null,
+						bytes: null,
+						oversize: true,
+					};
+				}
+				const bytes = decodeActionBytes(
+					await callAction("readFile", [p], { timeoutMs: 30_000 }),
+				);
 				return {
 					path: p,
 					sizeBytes: stat.size,
 					mtimeMs: stat.mtimeMs,
 					text: bytesToDisplay(bytes),
+					bytes,
+					oversize: false,
 				};
 			},
 		}),
@@ -305,4 +325,20 @@ export const agentOsSource = {
 	resizeShell: (shellId: string, cols: number, rows: number) =>
 		callAction("resizeShell", [shellId, cols, rows]),
 	closeShell: (shellId: string) => callAction("closeShell", [shellId]),
+
+	// ── Filesystem mutations (filesystem tab) ──────────────────────────────
+	writeFile: (path: string, content: Uint8Array | string) =>
+		callAction("writeFile", [path, content], { timeoutMs: 30_000 }),
+	mkdir: (path: string) => callAction("mkdir", [path]),
+	moveEntry: (from: string, to: string) => callAction("move", [from, to]),
+	deleteFile: (path: string, options: { recursive?: boolean }) =>
+		callAction("deleteFile", [path, options]),
+
+	// ── Session management (transcript tab) ────────────────────────────────
+	closeSession: (sessionId: string) => callAction("closeSession", [sessionId]),
+
+	// ── Signed preview URLs (system tab) ───────────────────────────────────
+	createSignedPreviewUrl: (port: number, ttlSeconds: number) =>
+		callAction<SignedPreviewUrl>("createSignedPreviewUrl", [port, ttlSeconds]),
+	expireSignedPreviewUrl: (token: string) => callAction("expireSignedPreviewUrl", [token]),
 };

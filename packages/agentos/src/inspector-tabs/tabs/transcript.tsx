@@ -7,6 +7,7 @@ import { cancelPrompt, liveSessionsQueryOptions } from "../lib/health";
 import { useAgentOsActor } from "../lib/rivet";
 import { agentOsSource, mapNotification } from "../lib/source";
 import type {
+	AgentCrashedPayload,
 	JsonRpcNotification,
 	PermissionRequestPayload,
 	SessionEventPayload,
@@ -258,12 +259,14 @@ const DEFAULT_ENV_JSON = JSON.stringify(
 );
 
 function Composer({
+	actorId,
 	sessionId,
 	sessionStatus,
 	onSessionCreated,
 	onErrorEvent,
 	onBusyChange,
 }: {
+	actorId: string;
 	sessionId: string | null;
 	sessionStatus?: string;
 	onSessionCreated: (sessionId: string) => void;
@@ -284,6 +287,17 @@ function Composer({
 	const [envJson, setEnvJson] = useState(() => localStorage.getItem(LS_ENV_JSON) ?? DEFAULT_ENV_JSON);
 	// The in-flight session survives re-renders; also used by Stop.
 	const activeSessionRef = useRef<string | null>(null);
+	// Agent-type suggestions from the installed software (fetched only while the
+	// options panel is open). Free text stays authoritative: the datalist is a
+	// hint, and agent types are derived from package names heuristically.
+	const software = useQuery({
+		...agentOsSource.softwareQueryOptions(actorId),
+		enabled: optionsOpen,
+	});
+	const agentTypeSuggestions = (software.data ?? [])
+		.filter((bundle) => bundle.name.endsWith("· agent"))
+		.map((bundle) => bundle.name.split(" · ")[0]?.split("/").pop() ?? "")
+		.filter(Boolean);
 
 	const send = async () => {
 		const text = draft.trim();
@@ -347,8 +361,14 @@ function Composer({
 									setAgentType(e.target.value);
 									localStorage.setItem(LS_AGENT_TYPE, e.target.value);
 								}}
+								list="agentos-composer-agent-types"
 								className="flex-1 rounded border bg-background px-2 py-1 font-mono"
 							/>
+							<datalist id="agentos-composer-agent-types">
+								{agentTypeSuggestions.map((type) => (
+									<option key={type} value={type} />
+								))}
+							</datalist>
 						</label>
 						<label className="flex items-start gap-2">
 							<span className="w-24 shrink-0 pt-1 text-muted-foreground">Session env</span>
@@ -506,6 +526,21 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 			},
 		]);
 	});
+	// Agent crashes surface in the thread; the runtime may auto-restart.
+	useAgentEvent("agentCrashed", (raw) => {
+		const payload = raw as AgentCrashedPayload | undefined;
+		const cur = sessionIdRef.current;
+		if (!cur || payload?.sessionId !== cur) return;
+		const crash = payload?.event;
+		setLive((prev) => [
+			...prev,
+			{
+				kind: "error",
+				seq: seqRef.current++,
+				text: `Agent crashed (exit ${crash?.exitCode ?? "?"}) — restart: ${crash?.restart ?? "unknown"}${crash?.restartCount ? ` (attempt ${crash.restartCount})` : ""}`,
+			},
+		]);
+	});
 	// Composer callbacks: failed turns render as error rows in the live stream
 	// (fixes invisible failures); new sessions get selected + the list refreshed.
 	const pushErrorEvent = (text: string) =>
@@ -517,6 +552,19 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 		});
 	};
 	const [turnActive, setTurnActive] = useState(false);
+	// Close ends the live agent process; the persisted transcript stays. Errors
+	// (e.g. the session is idle, nothing to close) land in the thread.
+	const closeSession = async (sid: string) => {
+		try {
+			await agentOsSource.closeSession(sid);
+		} catch (error) {
+			pushErrorEvent(error instanceof Error ? error.message : String(error));
+		}
+		setSelected(undefined);
+		void queryClient.invalidateQueries({
+			queryKey: agentOsSource.sessionsQueryOptions(actorId).queryKey,
+		});
+	};
 	const events = useMemo(
 		() =>
 			coalesceTranscript([
@@ -585,6 +633,34 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 					</AgentOsEmpty>
 				) : (
 					<>
+						{(() => {
+							const record = sessions.find((s) => s.sessionId === sessionId);
+							const live = record ? isLive(record) : false;
+							return (
+								<div className="flex shrink-0 items-center gap-2 border-b px-4 py-2 text-xs">
+									<StatusDot color={live ? "green" : "muted"} />
+									<span className="font-mono">{record?.agentType ?? "session"}</span>
+									<span className="text-muted-foreground">
+										{record ? relativeTime(record.createdAt) : null}
+									</span>
+									<span className="font-mono text-[10px] text-muted-foreground/60">
+										…{sessionId.slice(-10)}
+									</span>
+									<span className="text-muted-foreground/70">{live ? "live" : "idle"}</span>
+									<span className="ml-auto" />
+									{live ? (
+										<button
+											type="button"
+											onClick={() => void closeSession(sessionId)}
+											title="End the live agent process; the transcript stays"
+											className="rounded border px-2 py-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+										>
+											Close session
+										</button>
+									) : null}
+								</div>
+							);
+						})()}
 						<ScrollArea className="min-h-0 flex-1">
 							{events.length === 0 && !turnActive ? (
 								<AgentOsEmpty>No activity yet — send a prompt below.</AgentOsEmpty>
@@ -601,6 +677,7 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 					</>
 				)}
 				<Composer
+					actorId={actorId}
 					sessionId={sessionId}
 					sessionStatus={
 						sessionId

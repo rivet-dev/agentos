@@ -78,6 +78,26 @@ export interface ShellExitPayload {
 	exitCode: number;
 }
 
+/** Mirror of the `agentCrashed` broadcast payload (Rust owns broadcasts). */
+export interface AgentCrashedPayload {
+	sessionId: string;
+	event: {
+		agentType?: string;
+		exitCode?: number | null;
+		restart?: string;
+		restartCount?: number;
+	};
+}
+
+/** Raw `createSignedPreviewUrl` result. `path` is relative to the gateway
+ * origin serving this iframe. */
+export interface SignedPreviewUrl {
+	path: string;
+	token: string;
+	port: number;
+	expiresAt: number;
+}
+
 // ── Filesystem ────────────────────────────────────────────────────────
 /** Raw `readdirRecursive` entry. */
 export interface DirEntry {
@@ -93,6 +113,8 @@ export interface FsEntry {
 	path: string;
 	dir: boolean;
 	size?: number;
+	/** Reported lstat-style (not followed); rendered with a link marker. */
+	symlink?: boolean;
 	/** Virtual/system fs (/proc, /sys, …) — shown but not stat-ed or expanded,
 	 * because touching it wedges the VM sidecar. */
 	virtual?: boolean;
@@ -115,7 +137,11 @@ export interface FileContent {
 	path: string;
 	sizeBytes: number;
 	mtimeMs: number;
-	text: string | null; // null = binary
+	text: string | null; // null = binary or not loaded
+	/** Raw bytes for download / image preview; null when skipped (oversize). */
+	bytes: Uint8Array | null;
+	/** True when the file exceeded the preview limit and was not read. */
+	oversize: boolean;
 }
 
 // ── Mounts ────────────────────────────────────────────────────────────

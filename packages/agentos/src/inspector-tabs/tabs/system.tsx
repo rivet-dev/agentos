@@ -3,10 +3,10 @@
 // the tab bar stays flat as higher-traffic tabs (terminal, processes) land.
 import { useSuspenseQueries } from "@tanstack/react-query";
 import { useState } from "react";
-import { ChevronRight, CopyButton } from "../common";
+import { ActionErrorNote, ChevronRight, CopyButton } from "../common";
 import { cn } from "../lib/cn";
 import { agentOsSource } from "../lib/source";
-import type { MountInfo, SoftwareBundle } from "../lib/types";
+import type { MountInfo, SignedPreviewUrl, SoftwareBundle } from "../lib/types";
 import { Badge } from "../ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { ScrollArea } from "../ui/scroll-area";
@@ -111,6 +111,99 @@ function MountsTable({ mounts }: { mounts: MountInfo[] }) {
 	);
 }
 
+// Signed preview links: proxy HTTP to a port inside the VM. Local state only —
+// links created here are revocable here; links created by code are not listed
+// (there is no enumeration action).
+function PreviewLinks() {
+	const [portDraft, setPortDraft] = useState("3000");
+	const [links, setLinks] = useState<SignedPreviewUrl[]>([]);
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<unknown>(null);
+
+	const create = async () => {
+		const port = Number.parseInt(portDraft, 10);
+		if (!Number.isInteger(port) || port < 1 || port > 65535) {
+			setError(new Error(`Not a valid port: ${portDraft}`));
+			return;
+		}
+		setBusy(true);
+		setError(null);
+		try {
+			const link = await agentOsSource.createSignedPreviewUrl(port, 900);
+			setLinks((prev) => [...prev.filter((l) => l.token !== link.token), link]);
+		} catch (err) {
+			setError(err);
+		} finally {
+			setBusy(false);
+		}
+	};
+	const revoke = async (link: SignedPreviewUrl) => {
+		setError(null);
+		try {
+			await agentOsSource.expireSignedPreviewUrl(link.token);
+			setLinks((prev) => prev.filter((l) => l.token !== link.token));
+		} catch (err) {
+			setError(err);
+		}
+	};
+
+	return (
+		<div className="px-4 py-3 text-xs">
+			<div className="flex items-center gap-2">
+				<label className="text-muted-foreground" htmlFor="agentos-preview-port">
+					Port
+				</label>
+				<input
+					id="agentos-preview-port"
+					value={portDraft}
+					onChange={(e) => setPortDraft(e.target.value)}
+					onKeyDown={(e) => e.key === "Enter" && void create()}
+					inputMode="numeric"
+					className="w-20 rounded border bg-background px-2 py-1 font-mono focus:outline-none"
+				/>
+				<button
+					type="button"
+					disabled={busy}
+					onClick={() => void create()}
+					className="rounded-md border px-2.5 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+				>
+					{busy ? "Creating…" : "Create preview link"}
+				</button>
+				<span className="text-muted-foreground/60">
+					Signed URL to an HTTP server on that port, valid 15 minutes. Boots the VM if asleep.
+				</span>
+			</div>
+			{error ? <ActionErrorNote error={error} className="py-2" /> : null}
+			{links.length > 0 ? (
+				<div className="mt-2 flex flex-col gap-1">
+					{links.map((link) => (
+						<div key={link.token} className="flex items-center gap-2">
+							<a
+								href={link.path}
+								target="_blank"
+								rel="noreferrer"
+								className="truncate font-mono text-primary hover:underline"
+							>
+								port {link.port}: {link.path}
+							</a>
+							<span className="text-muted-foreground/60">
+								expires {new Date(link.expiresAt).toLocaleTimeString()}
+							</span>
+							<button
+								type="button"
+								onClick={() => void revoke(link)}
+								className="rounded border px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+							>
+								Revoke
+							</button>
+						</div>
+					))}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
 function SectionHeader({ children }: { children: string }) {
 	return (
 		<div className="border-b bg-muted/30 px-4 py-1.5 text-[11px] font-medium text-muted-foreground">
@@ -151,6 +244,10 @@ export function SystemTabConnected({ actorId }: { actorId: string }) {
 				) : (
 					<MountsTable mounts={mounts.data} />
 				)}
+			</section>
+			<section>
+				<SectionHeader>Preview links</SectionHeader>
+				<PreviewLinks />
 			</section>
 		</ScrollArea>
 	);
