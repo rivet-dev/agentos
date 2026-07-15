@@ -1,6 +1,14 @@
 import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AgentOsEmpty, ChevronRight, IconButton, PlusIcon, relativeTime, StatusDot } from "../common";
+import {
+	AgentOsEmpty,
+	AgentOsMark,
+	ChevronRight,
+	IconButton,
+	PlusIcon,
+	relativeTime,
+	StatusDot,
+} from "../common";
 import { isInspectorActionError } from "../lib/actor-client";
 import { cn } from "../lib/cn";
 import { useAgentOsActor } from "../lib/rivet";
@@ -672,20 +680,28 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 				</div>
 				{!sessionId ? (
 					<AgentOsEmpty>
-						<span>
-							No session selected — send a prompt below to start one.
-							<br />
-							<span className="text-xs text-muted-foreground/70">
-								Sessions and their transcripts persist, but the VM's root filesystem is
-								in-memory: files do not survive VM restarts.
+						<div className="flex flex-col items-center gap-5">
+							<AgentOsMark className="size-24 text-muted-foreground/15" />
+							<span>
+								No session selected — send a prompt below to start one.
+								<br />
+								<span className="text-xs text-muted-foreground/70">
+									Sessions and their transcripts persist, but the VM's root filesystem is
+									in-memory: files do not survive VM restarts.
+								</span>
 							</span>
-						</span>
+						</div>
 					</AgentOsEmpty>
 				) : (
 					<>
 						<ScrollArea className="min-h-0 flex-1">
 							{events.length === 0 && !turnActive ? (
-								<AgentOsEmpty>No activity yet — send a prompt below.</AgentOsEmpty>
+								<AgentOsEmpty>
+									<div className="flex flex-col items-center gap-5">
+										<AgentOsMark className="size-24 text-muted-foreground/15" />
+										<span>No activity yet — send a prompt below.</span>
+									</div>
+								</AgentOsEmpty>
 							) : (
 								<div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
 									{events.map((e) => (

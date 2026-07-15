@@ -160,6 +160,37 @@ export function CopyButton({ value, className }: { value: string; className?: st
 	);
 }
 
+/** agentOS mark (rounded square + OS) redrawn from the website logo in
+ * currentColor — tint via text color, e.g. `text-muted-foreground/15` for the
+ * empty-state watermark. */
+export function AgentOsMark({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 176 173" fill="none" className={className} aria-hidden="true">
+			<rect
+				x="10"
+				y="11"
+				width="156"
+				height="152"
+				rx="45"
+				stroke="currentColor"
+				strokeWidth="15"
+			/>
+			<text
+				x="88"
+				y="112"
+				textAnchor="middle"
+				fontFamily='"IBM Plex Sans", ui-sans-serif, sans-serif'
+				fontWeight={700}
+				fontSize="74"
+				fill="currentColor"
+				stroke="none"
+			>
+				OS
+			</text>
+		</svg>
+	);
+}
+
 /** Small bordered icon button for tab chrome (new/refresh/upload/…). The
  * accessible name comes from `title`, which doubles as the tooltip. */
 export function IconButton({
