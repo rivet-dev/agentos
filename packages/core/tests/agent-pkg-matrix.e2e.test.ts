@@ -10,7 +10,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
  * For every package manager (npm/pnpm/yarn/bun) × every agent
  * (pi/pi-cli/claude/opencode) this installs the PUBLISHED packages into an
  * isolated temp project and asserts a real user can: install → create a session
- * → prompt → stream tokens LIVE. It is the regression net for the exact issues
+ * → prompt → stream tokens LIVE → native resume → transcript restore. It is the
+ * regression net for the exact issues
  * that bit us shipping the preview:
  *
  *  - retired/stale model ids (Anthropic 404 → empty turn),
@@ -30,6 +31,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
  *   ANTHROPIC_API_KEY          required
  *   AGENTOS_MATRIX_CORE        @rivet-dev/agentos-core version/tag (default "latest")
  *   AGENTOS_MATRIX_AGENTS      @agentos-software/* version/tag (default "latest")
+ *   AGENTOS_MATRIX_CORE_SPEC   exact install spec, e.g. file:/path/to/packages/core
+ *   AGENTOS_MATRIX_<AGENT>_SPEC exact per-agent install spec; PI_CLI uses an underscore
+ *   AGENTOS_MATRIX_REPO_ROOT   import built artifacts from this checkout; skips installation
  *   AGENTOS_MATRIX_MODEL       opencode model id (default a current Haiku)
  *   AGENTOS_MATRIX_PMS         comma list to restrict package managers
  *   AGENTOS_MATRIX_AGENTS_LIST comma list to restrict agents
@@ -40,6 +44,7 @@ const CORE_VERSION = process.env.AGENTOS_MATRIX_CORE || "latest";
 const AGENTS_VERSION = process.env.AGENTOS_MATRIX_AGENTS || "latest";
 const CELL = resolve(import.meta.dirname, "fixtures/agent-matrix-cell.mjs");
 const CELL_TIMEOUT_MS = 240_000;
+const REPO_ROOT = process.env.AGENTOS_MATRIX_REPO_ROOT;
 
 const AGENT_PKGS: Record<string, string> = {
 	pi: "@agentos-software/pi",
@@ -47,6 +52,11 @@ const AGENT_PKGS: Record<string, string> = {
 	claude: "@agentos-software/claude-code",
 	opencode: "@agentos-software/opencode",
 };
+
+function agentInstallSpec(agent: string): string {
+	const envName = `AGENTOS_MATRIX_${agent.toUpperCase().replaceAll("-", "_")}_SPEC`;
+	return process.env[envName] || `${AGENT_PKGS[agent]}@${AGENTS_VERSION}`;
+}
 
 function commandAvailable(cmd: string): boolean {
 	try {
@@ -97,6 +107,7 @@ const ALL_AGENTS = (
 
 const availablePms = ALL_PMS.filter(commandAvailable);
 
+// biome-ignore format: keep the matrix definition readable with inline Vitest options.
 describe.skipIf(!ENABLED)("agent × package-manager e2e matrix (real API)", () => {
 	const tmpDirs: string[] = [];
 
@@ -130,13 +141,14 @@ describe.skipIf(!ENABLED)("agent × package-manager e2e matrix (real API)", () =
 	for (const pm of availablePms) {
 		for (const agent of ALL_AGENTS) {
 			it(
-				`${pm} + ${agent}: install → session → live token streaming`,
-				// opencode's ACP bootstrap (and real LLM APIs) flake transiently;
-				// retry the whole cell so a flake doesn't red the gate. Persistent
-				// failures still fail after the retries.
+				`${pm} + ${agent}: install → stream → native resume → transcript restore`,
+				// OpenCode's ACP bootstrap and real LLM APIs can flake transiently.
+				// Retry the whole cell; persistent failures still fail the gate.
 				{ timeout: CELL_TIMEOUT_MS + 200_000, retry: 2 },
 				async () => {
-					const dir = mkdtempSync(join(tmpdir(), `agentos-matrix-${pm}-${agent}-`));
+					const dir = mkdtempSync(
+						join(tmpdir(), `agentos-matrix-${pm}-${agent}-`),
+					);
 					tmpDirs.push(dir);
 					// yarn 1.x global cache contends under repeated runs; isolate it.
 					const cacheDir = join(dir, ".pm-cache");
@@ -147,17 +159,20 @@ describe.skipIf(!ENABLED)("agent × package-manager e2e matrix (real API)", () =
 						npm_config_cache: cacheDir,
 					};
 
-					const pkgs = [
-						`@rivet-dev/agentos-core@${CORE_VERSION}`,
-						`${AGENT_PKGS[agent]}@${AGENTS_VERSION}`,
-					];
-					for (const [cmd, args] of installArgs(pm, pkgs)) {
-						execFileSync(cmd, args, {
-							cwd: dir,
-							env: childEnv,
-							stdio: "pipe",
-							timeout: 180_000,
-						});
+					if (!REPO_ROOT) {
+						const pkgs = [
+							process.env.AGENTOS_MATRIX_CORE_SPEC ||
+								`@rivet-dev/agentos-core@${CORE_VERSION}`,
+							agentInstallSpec(agent),
+						];
+						for (const [cmd, args] of installArgs(pm, pkgs)) {
+							execFileSync(cmd, args, {
+								cwd: dir,
+								env: childEnv,
+								stdio: "pipe",
+								timeout: 180_000,
+							});
+						}
 					}
 
 					cpSync(CELL, join(dir, "agent-matrix-cell.mjs"));
@@ -180,14 +195,26 @@ describe.skipIf(!ENABLED)("agent × package-manager e2e matrix (real API)", () =
 					const result = JSON.parse(line.slice("E2E_RESULT_JSON:".length));
 
 					// eslint-disable-next-line no-console
-					console.log(`[matrix] ${pm}/${agent}:`, JSON.stringify(result.metrics));
-
-					expect(result.ok, `prompt produced output (err: ${result.error})`).toBe(
-						true,
+					console.log(
+						`[matrix] ${pm}/${agent}:`,
+						JSON.stringify({ metrics: result.metrics, error: result.error }),
 					);
+
+					expect(
+						result.ok,
+						`prompt produced output (err: ${result.error})`,
+					).toBe(true);
 					expect(
 						result.streaming,
 						`tokens streamed live (metrics: ${JSON.stringify(result.metrics)})`,
+					).toBe(true);
+					expect(
+						result.nativeResume,
+						`native session state resumed (metrics: ${JSON.stringify(result.metrics)})`,
+					).toBe(true);
+					expect(
+						result.transcriptRestore,
+						`missing native state restored from transcript (metrics: ${JSON.stringify(result.metrics)})`,
 					).toBe(true);
 				},
 			);

@@ -19,6 +19,13 @@ Set the relevant variable(s) on the session's `env`, sourced from your server's 
 
 See [LLM Credentials](/docs/llm-credentials), and Claude Code's [environment variables](https://code.claude.com/docs/en/env-vars) for the full list.
 
+## Persistent sessions
+
+Claude sessions persist to Claude Code's standard project store by default and
+support native ACP `session/load`. Keep the VM root durable so the adapter can
+restore full native context after sleep or restart. If that store is unavailable,
+agentOS falls back to its persisted transcript.
+
 ## Skills
 
 Claude Code discovers [agent skills](https://docs.claude.com/en/docs/claude-code/skills) from `SKILL.md` files under its skills directory. Write the skill into the VM before creating a session and Claude Code loads it automatically.

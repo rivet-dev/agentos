@@ -2788,27 +2788,37 @@ fn trace_acp_response(method: &str, response: &Value) {
 /// Normalize adapter-specific "no such session" errors from `session/load` into
 /// the shared `unknown_session` discriminator used by the resume state machine.
 ///
-/// OpenCode currently reports a missing session as JSON-RPC `-32603` with
-/// `error.data.details == "NotFoundError"`: its ACP server converts thrown
-/// non-`RequestError` exceptions into `internalError({ details: error.message })`,
-/// and `Session.get` throws a `NotFoundError` whose message is the class name.
-/// Convert exactly that shape into `error.data.kind = "unknown_session"` before
-/// fallback matching. Do not broaden this to message substrings or all
-/// `-32603`/`-32602` errors; malformed `session/load` must still propagate.
+/// OpenCode reports `-32603` plus `{ details: "NotFoundError" }`. pi-acp 0.0.23
+/// reports `-32602` with a string data value beginning `Unknown sessionId:`.
+/// Normalize only those exact adapter shapes; malformed load requests and other
+/// internal errors must still propagate.
 fn normalize_unknown_session_error(response: &mut Value) {
     let Some(error) = response.get_mut("error").and_then(Value::as_object_mut) else {
         return;
     };
     let code = error.get("code").and_then(Value::as_i64);
-    let Some(data) = error.get_mut("data").and_then(Value::as_object_mut) else {
+    if code == Some(-32603) {
+        let Some(data) = error.get_mut("data").and_then(Value::as_object_mut) else {
+            return;
+        };
+        if data.get("details").and_then(Value::as_str) == Some("NotFoundError") {
+            data.insert(
+                String::from("kind"),
+                Value::String(String::from("unknown_session")),
+            );
+        }
         return;
-    };
-    let details = data.get("details").and_then(Value::as_str);
-    if code == Some(-32603) && details == Some("NotFoundError") {
-        data.insert(
-            String::from("kind"),
-            Value::String(String::from("unknown_session")),
-        );
+    }
+    if code == Some(-32602) {
+        let Some(details) = error.get("data").and_then(Value::as_str) else {
+            return;
+        };
+        if details.starts_with("Unknown sessionId:") {
+            error.insert(
+                String::from("data"),
+                serde_json::json!({ "kind": "unknown_session", "details": details }),
+            );
+        }
     }
 }
 
@@ -3100,7 +3110,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_session_normalization_pins_opencode_shape() {
+    fn unknown_session_normalization_pins_adapter_shapes() {
         let mut opencode = serde_json::json!({
             "error": { "code": -32603, "message": "Internal error", "data": { "details": "NotFoundError" } }
         });
@@ -3111,12 +3121,30 @@ mod tests {
         );
         assert!(is_unknown_session_error(&opencode));
 
+        let mut pi_acp = serde_json::json!({
+            "error": { "code": -32602, "message": "Invalid params",
+                       "data": "Unknown sessionId: missing-pi-session" }
+        });
+        normalize_unknown_session_error(&mut pi_acp);
+        assert_eq!(
+            pi_acp.pointer("/error/data/kind").and_then(Value::as_str),
+            Some("unknown_session")
+        );
+        assert!(is_unknown_session_error(&pi_acp));
+
         let mut malformed = serde_json::json!({
             "error": { "code": -32602, "message": "Invalid params",
                        "data": { "_errors": [], "sessionId": { "_errors": ["expected string"] } } }
         });
         normalize_unknown_session_error(&mut malformed);
         assert!(!is_unknown_session_error(&malformed));
+
+        let mut other_invalid_params = serde_json::json!({
+            "error": { "code": -32602, "message": "Invalid params",
+                       "data": "cwd must be an absolute path" }
+        });
+        normalize_unknown_session_error(&mut other_invalid_params);
+        assert!(!is_unknown_session_error(&other_invalid_params));
 
         let mut other_internal = serde_json::json!({
             "error": { "code": -32603, "message": "Internal error", "data": { "details": "SomethingElse" } }

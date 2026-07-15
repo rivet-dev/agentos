@@ -1098,24 +1098,36 @@ fn native_resume_method(agent_capabilities: Option<&Value>) -> Option<&'static s
     None
 }
 
-/// Normalize an adapter "no such session" error (`-32603` + `details ==
-/// "NotFoundError"`) into the shared `unknown_session` discriminator. Strict on
-/// purpose: malformed `session/load` must still propagate. Mirrors the native
-/// `normalize_unknown_session_error`.
+/// Normalize the exact missing-session shapes emitted by OpenCode and pi-acp
+/// into the shared `unknown_session` discriminator. Strict on purpose: malformed
+/// `session/load` must still propagate. Mirrors the native sidecar implementation.
 fn normalize_unknown_session_error(response: &mut Value) {
     let Some(error) = response.get_mut("error").and_then(Value::as_object_mut) else {
         return;
     };
     let code = error.get("code").and_then(Value::as_i64);
-    let Some(data) = error.get_mut("data").and_then(Value::as_object_mut) else {
+    if code == Some(-32603) {
+        let Some(data) = error.get_mut("data").and_then(Value::as_object_mut) else {
+            return;
+        };
+        if data.get("details").and_then(Value::as_str) == Some("NotFoundError") {
+            data.insert(
+                String::from("kind"),
+                Value::String(String::from("unknown_session")),
+            );
+        }
         return;
-    };
-    let details = data.get("details").and_then(Value::as_str);
-    if code == Some(-32603) && details == Some("NotFoundError") {
-        data.insert(
-            String::from("kind"),
-            Value::String(String::from("unknown_session")),
-        );
+    }
+    if code == Some(-32602) {
+        let Some(details) = error.get("data").and_then(Value::as_str) else {
+            return;
+        };
+        if details.starts_with("Unknown sessionId:") {
+            error.insert(
+                String::from("data"),
+                serde_json::json!({ "kind": "unknown_session", "details": details }),
+            );
+        }
     }
 }
 
@@ -1256,6 +1268,26 @@ mod tests {
     use super::*;
     use crate::host::{AgentOutput, SpawnAgentRequest, SpawnedAgent};
 
+    #[test]
+    fn unknown_session_normalization_pins_adapter_shapes() {
+        let mut opencode = json!({
+            "error": { "code": -32603, "data": { "details": "NotFoundError" } }
+        });
+        normalize_unknown_session_error(&mut opencode);
+        assert!(is_unknown_session_error(&opencode));
+
+        let mut pi_acp = json!({
+            "error": { "code": -32602, "data": "Unknown sessionId: missing" }
+        });
+        normalize_unknown_session_error(&mut pi_acp);
+        assert!(is_unknown_session_error(&pi_acp));
+
+        let mut malformed = json!({
+            "error": { "code": -32602, "data": { "sessionId": ["expected string"] } }
+        });
+        normalize_unknown_session_error(&mut malformed);
+        assert!(!is_unknown_session_error(&malformed));
+    }
     #[derive(Default)]
     struct MockHost {
         killed: Vec<(String, String)>,

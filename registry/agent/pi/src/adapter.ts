@@ -15,7 +15,7 @@
 import {
 	type Agent,
 	AgentSideConnection,
-	type RequestError,
+	RequestError,
 	ndJsonStream,
 } from "@agentclientprotocol/sdk";
 import type {
@@ -24,6 +24,8 @@ import type {
 	CancelNotification,
 	InitializeRequest,
 	InitializeResponse,
+	LoadSessionRequest,
+	LoadSessionResponse,
 	NewSessionRequest,
 	NewSessionResponse,
 	PromptRequest,
@@ -102,31 +104,49 @@ Object.defineProperty(process, "stdin", {
 });
 
 type SessionManagerLike = {
-	inMemory(cwd?: string): unknown;
-	continueRecent(cwd: string, sessionDir: string): unknown;
+	create(cwd: string, sessionDir?: string): unknown;
+	open(path: string, sessionDir?: string): unknown;
+	list(
+		cwd: string,
+		sessionDir?: string,
+	): Promise<Array<{ id: string; path: string }>>;
 };
 
 /**
- * Choose the Pi `SessionManager` for a new session.
- *
- * By default sessions are in-memory (nothing is written to disk), so a
- * conversation is lost when the adapter process restarts. When the embedder
- * provides a session directory via the `PI_SESSION_DIR` env var, use pi's
- * `continueRecent` instead: it persists the session's `.jsonl` under that
- * directory and resumes the most recent one, so conversations survive an adapter
- * restart. No behavior change unless `PI_SESSION_DIR` is set.
- *
- * Exported for unit testing (the real `newSession` path needs the Pi SDK).
+ * Create a fresh persisted Pi session. `PI_SESSION_DIR` overrides Pi's default
+ * per-cwd session directory; it does not control whether persistence is enabled.
  */
-export function resolveSessionManager(
+export function createSessionManager(
 	SessionManager: SessionManagerLike,
 	cwd: string,
 	env: Record<string, string | undefined> = process.env,
 ): unknown {
-	const sessionDir = env.PI_SESSION_DIR?.trim();
-	return sessionDir
-		? SessionManager.continueRecent(cwd, sessionDir)
-		: SessionManager.inMemory(cwd);
+	return SessionManager.create(cwd, resolveSessionDir(env));
+}
+
+/** Open one exact persisted Pi session for ACP `session/load`. */
+export async function loadSessionManager(
+	SessionManager: SessionManagerLike,
+	cwd: string,
+	sessionId: string,
+	env: Record<string, string | undefined> = process.env,
+): Promise<unknown> {
+	const sessionDir = resolveSessionDir(env);
+	const sessions = await SessionManager.list(cwd, sessionDir);
+	const match = sessions.find((session) => session.id === sessionId);
+	if (!match) {
+		throw RequestError.invalidParams(
+			{ kind: "unknown_session" },
+			`Unknown Pi session: ${sessionId}`,
+		);
+	}
+	return SessionManager.open(match.path, sessionDir);
+}
+
+function resolveSessionDir(
+	env: Record<string, string | undefined>,
+): string | undefined {
+	return env.PI_SESSION_DIR?.trim() || undefined;
 }
 
 type ModelLike = {
@@ -842,6 +862,7 @@ export class PiSdkAgent implements Agent {
 				version: "0.1.0",
 			},
 			agentCapabilities: {
+				loadSession: true,
 				promptCapabilities: {
 					image: true,
 					audio: false,
@@ -853,6 +874,20 @@ export class PiSdkAgent implements Agent {
 
 	async newSession(
 		params: NewSessionRequest,
+	): Promise<NewSessionResponse> {
+		return this.activateSession(params, "new");
+	}
+
+	async loadSession(
+		params: LoadSessionRequest,
+	): Promise<LoadSessionResponse> {
+		const response = await this.activateSession(params, "load");
+		return { modes: response.modes };
+	}
+
+	private async activateSession(
+		params: NewSessionRequest | LoadSessionRequest,
+		mode: "new" | "load",
 	): Promise<NewSessionResponse> {
 		const __trace = startPhaseTrace();
 		this.cwd = params.cwd;
@@ -893,11 +928,19 @@ export class PiSdkAgent implements Agent {
 			params.cwd,
 			agentDir,
 		);
+		const sessionManager =
+			mode === "load"
+				? await loadSessionManager(
+						SessionManager,
+						params.cwd,
+						(params as LoadSessionRequest).sessionId,
+					)
+				: createSessionManager(SessionManager, params.cwd);
 
 		const { session } = await __trace.span("createAgentSession", () =>
 			createAgentSession({
 				cwd: params.cwd,
-				sessionManager: resolveSessionManager(SessionManager, params.cwd),
+				sessionManager,
 				resourceLoader,
 				tools: this.wrapTools(
 					createCodingTools(params.cwd, {
