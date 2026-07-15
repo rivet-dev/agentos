@@ -431,14 +431,18 @@ describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
 		expect(calls.map((call) => call.name).sort()).toEqual([
 			"createSession",
 			"getSessionEvents",
+			"killProcess",
 			"listMounts",
 			"listPersistedSessions",
 			"listProcesses",
 			"listSoftware",
+			"processTree",
 			"readFile",
 			"readdirEntries",
+			"respondPermission",
 			"sendPrompt",
 			"stat",
+			"stopProcess",
 		]);
 		for (const call of calls) {
 			expect(declared.has(call.name), `${call.name} is declared`).toBe(true);

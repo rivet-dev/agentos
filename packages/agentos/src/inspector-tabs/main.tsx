@@ -3,6 +3,7 @@ import { lazy, type ComponentType, StrictMode, useEffect, useState } from "react
 import { createRoot } from "react-dom/client";
 import { isInspectorActionError, tabIdFromUrl } from "./lib/actor-client";
 import { RivetProvider } from "./lib/rivet";
+import { PermissionPrompts } from "./permission-prompts";
 import { TabBoundary } from "./tab-boundary";
 import { VmStatusStrip } from "./vm-status-strip";
 import React from "react";
@@ -83,6 +84,10 @@ function App() {
 		<RivetProvider actorId={auth.actorId} authToken={auth.authToken}>
 			<div className="flex h-full min-h-0 flex-col">
 				<VmStatusStrip actorId={auth.actorId} />
+				{/* Permission prompts sit with the strip, outside the boundary: an
+				    agent blocked on approval must stay answerable from every tab even
+				    when the tab body itself is broken. */}
+				<PermissionPrompts />
 				<div className="min-h-0 flex-1">
 					<TabBoundary>
 						<Tab actorId={auth.actorId} />

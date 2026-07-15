@@ -13,6 +13,7 @@ import type {
 	PersistedSessionEvent,
 	PersistedSessionRecord,
 	ProcessInfo,
+	ProcessTreeNode,
 	ReaddirEntry,
 	SoftwareBundle,
 	SoftwareInfo,
@@ -48,7 +49,7 @@ function joinPath(dir: string, name: string): string {
 	return dir === "/" ? `/${name}` : `${dir}/${name}`;
 }
 
-function decodeActionBytes(output: unknown): Uint8Array {
+export function decodeActionBytes(output: unknown): Uint8Array {
 	// rivetkit's json decoder may already hand back a real Uint8Array.
 	if (output instanceof Uint8Array) return output;
 	// JSON encoding wraps Uint8Array as ["$Uint8Array", base64].
@@ -98,13 +99,63 @@ export function mapNotification(n: JsonRpcNotification, seq: number): Transcript
 			case "agent_thought_chunk":
 				return { kind: "thinking", seq, text };
 			case "tool_call":
-			case "tool_call_update":
+			case "tool_call_update": {
+				// ACP tool content: text blocks become output; diff entries are
+				// summarized by path (full diff rendering stays behind "raw").
+				const outputParts: string[] = [];
+				if (Array.isArray(u.content)) {
+					for (const c of u.content as Record<string, unknown>[]) {
+						if (!c || typeof c !== "object") continue;
+						if (c.type === "content") {
+							const inner = c.content as { type?: string; text?: string } | undefined;
+							if (inner?.type === "text" && typeof inner.text === "string") {
+								outputParts.push(inner.text);
+							}
+						} else if (c.type === "diff" && typeof c.path === "string") {
+							outputParts.push(`[edit] ${c.path}`);
+						}
+					}
+				}
+				const locations = Array.isArray(u.locations)
+					? (u.locations as { path?: string }[])
+							.map((l) => l?.path)
+							.filter((p): p is string => typeof p === "string")
+					: undefined;
 				return {
 					kind: "tool",
 					seq,
+					toolCallId: typeof u.toolCallId === "string" ? u.toolCallId : undefined,
 					tool: (u.title as string) ?? (u.toolCallId as string) ?? "tool",
 					status: u.status as string | undefined,
+					input: u.rawInput,
+					output: outputParts.length > 0 ? outputParts.join("\n") : undefined,
+					locations: locations && locations.length > 0 ? locations : undefined,
 				};
+			}
+			case "plan": {
+				const entries = Array.isArray(u.entries)
+					? (u.entries as Record<string, unknown>[]).map((e) => ({
+							content:
+								typeof e?.content === "string" ? e.content : JSON.stringify(e?.content ?? ""),
+							status: typeof e?.status === "string" ? e.status : undefined,
+						}))
+					: [];
+				return { kind: "plan", seq, entries };
+			}
+			case "current_mode_update":
+				return {
+					kind: "notice",
+					seq,
+					text: `Mode changed to ${String(u.currentModeId ?? "unknown")}`,
+				};
+			case "available_commands_update": {
+				const count = Array.isArray(u.availableCommands) ? u.availableCommands.length : 0;
+				return {
+					kind: "notice",
+					seq,
+					text: `${count} agent command${count === 1 ? "" : "s"} available`,
+				};
+			}
 			default:
 				return { kind: "raw", seq, label: kind ?? n.method, json: u };
 		}
@@ -130,6 +181,17 @@ export const agentOsSource = {
 		queryOptions({
 			queryKey: k(actorId, "processes"),
 			queryFn: () => callAction<ProcessInfo[]>("listProcesses", []),
+			// Keep the table current while the tab is open; processExit broadcasts
+			// also invalidate it immediately.
+			refetchInterval: 5_000,
+		}),
+
+	// Full kernel process forest (every process, not just SDK-spawned).
+	processTreeQueryOptions: (actorId: string) =>
+		queryOptions({
+			queryKey: k(actorId, "process-tree"),
+			queryFn: () => callAction<ProcessTreeNode[]>("processTree", [], { timeoutMs: 10_000 }),
+			refetchInterval: 5_000,
 		}),
 
 	// Lazy per-directory listing via ONE `readdirEntries` call: the sidecar
@@ -223,4 +285,15 @@ export const agentOsSource = {
 	// `{ sessionId }` — callers normalize.
 	createSession: (agentType: string, options: { env?: Record<string, string> }) =>
 		callAction<string | { sessionId: string }>("createSession", [agentType, options]),
+
+	// ── Permission approvals (global banner, permission-prompts.tsx) ─────
+	// Answers a pending `permissionRequest` broadcast. The runtime auto-rejects
+	// after its permission timeout, so a late reply fails with a runtime error
+	// ("no pending permission") — callers render that as already-handled.
+	respondPermission: (sessionId: string, permissionId: string, reply: "once" | "always" | "reject") =>
+		callAction("respondPermission", [sessionId, permissionId, reply]),
+
+	// ── Process control (processes tab) ───────────────────────────────────
+	killProcess: (pid: number) => callAction("killProcess", [pid]),
+	stopProcess: (pid: number) => callAction("stopProcess", [pid]),
 };

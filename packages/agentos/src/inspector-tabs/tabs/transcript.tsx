@@ -1,12 +1,17 @@
 import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
-import { AgentOsEmpty, relativeTime, StatusDot } from "../common";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AgentOsEmpty, ChevronRight, relativeTime, StatusDot } from "../common";
 import { isInspectorActionError } from "../lib/actor-client";
 import { cn } from "../lib/cn";
 import { cancelPrompt, liveSessionsQueryOptions } from "../lib/health";
 import { useAgentOsActor } from "../lib/rivet";
 import { agentOsSource, mapNotification } from "../lib/source";
-import type { JsonRpcNotification, SessionEventPayload, TranscriptEvent } from "../lib/types";
+import type {
+	JsonRpcNotification,
+	PermissionRequestPayload,
+	SessionEventPayload,
+	TranscriptEvent,
+} from "../lib/types";
 import { ScrollArea } from "../ui/scroll-area";
 import React from "react";
 
@@ -39,16 +44,93 @@ function TranscriptEventView({ event }: { event: TranscriptEvent }) {
 					</div>
 				</div>
 			);
-		case "tool":
-			return (
-				<div className="flex items-center gap-2 text-xs text-muted-foreground">
-					<span aria-hidden="true">⚙</span>
+		case "tool": {
+			const hasBody =
+				event.input !== undefined || event.output !== undefined || !!event.locations?.length;
+			const summary = (
+				<>
 					<span className="font-mono">{event.tool}</span>
 					{event.status ? (
-						<span className="rounded-full border px-1.5 py-px text-[10px] uppercase tracking-wide">
-							{event.status}
-						</span>
+						<span className="rounded-full border px-1.5 py-px text-[10px]">{event.status}</span>
 					) : null}
+				</>
+			);
+			if (!hasBody) {
+				return (
+					<div className="flex items-center gap-2 text-xs text-muted-foreground">{summary}</div>
+				);
+			}
+			return (
+				<details className="group rounded-lg border border-foreground/10 bg-muted/20 text-xs text-muted-foreground">
+					<summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 [&::-webkit-details-marker]:hidden">
+						<ChevronRight className="size-3 shrink-0 transition-transform group-open:rotate-90" />
+						{summary}
+					</summary>
+					<div className="flex flex-col gap-2 border-t border-foreground/10 px-2.5 py-2">
+						{event.input !== undefined ? (
+							<div>
+								<div className="mb-1 text-[10px] text-muted-foreground/70">Input</div>
+								<pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
+									{JSON.stringify(event.input, null, 2)}
+								</pre>
+							</div>
+						) : null}
+						{event.output !== undefined ? (
+							<div>
+								<div className="mb-1 text-[10px] text-muted-foreground/70">Output</div>
+								<pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
+									{event.output}
+								</pre>
+							</div>
+						) : null}
+						{event.locations?.length ? (
+							<div className="font-mono text-[11px] text-muted-foreground/70">
+								{event.locations.join("  ")}
+							</div>
+						) : null}
+					</div>
+				</details>
+			);
+		}
+		case "plan":
+			return (
+				<div className="rounded-lg border border-foreground/10 bg-muted/20 px-2.5 py-2 text-xs text-muted-foreground">
+					<div className="mb-1 text-[10px] text-muted-foreground/70">Plan</div>
+					<ul className="flex flex-col gap-1">
+						{event.entries.map((entry, i) => (
+							<li key={`${i}-${entry.content.slice(0, 24)}`} className="flex items-start gap-2">
+								<StatusDot
+									color={
+										entry.status === "completed"
+											? "green"
+											: entry.status === "in_progress"
+												? "amber"
+												: "muted"
+									}
+									className="mt-1"
+								/>
+								<span
+									className={cn(
+										"min-w-0 flex-1",
+										entry.status === "completed" && "text-muted-foreground/60 line-through",
+									)}
+								>
+									{entry.content}
+								</span>
+							</li>
+						))}
+					</ul>
+				</div>
+			);
+		case "notice":
+			return (
+				<div className="text-center text-[11px] text-muted-foreground/60">{event.text}</div>
+			);
+		case "permission":
+			return (
+				<div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-2.5 py-1.5 text-xs text-amber-500/90">
+					<StatusDot color="amber" className="size-1.5" />
+					{event.text}
 				</div>
 			);
 		case "error":
@@ -59,9 +141,7 @@ function TranscriptEventView({ event }: { event: TranscriptEvent }) {
 			return (
 				<details className="group text-xs text-muted-foreground/70">
 					<summary className="flex cursor-pointer list-none items-center gap-1.5 [&::-webkit-details-marker]:hidden">
-						<span className="transition-transform group-open:rotate-90" aria-hidden="true">
-							▸
-						</span>
+						<ChevronRight className="size-3 shrink-0 transition-transform group-open:rotate-90" />
 						<span className="font-mono">{event.label}</span>
 					</summary>
 					<pre className="mt-1.5 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
@@ -72,13 +152,95 @@ function TranscriptEventView({ event }: { event: TranscriptEvent }) {
 	}
 }
 
-// Pins the transcript to the newest event whenever one arrives.
+// Pins the transcript to the newest event — but only while the user is already
+// at the bottom. Scrolling up to read history detaches the pin (tracked by an
+// IntersectionObserver against the ScrollArea viewport); returning to the
+// bottom re-attaches it.
 function ScrollAnchor({ count }: { count: number }) {
 	const ref = useRef<HTMLDivElement>(null);
+	const stickRef = useRef(true);
 	useEffect(() => {
-		ref.current?.scrollIntoView({ block: "end" });
+		const el = ref.current;
+		const viewport = el?.closest("[data-radix-scroll-area-viewport]");
+		if (!el || !viewport) return;
+		const observer = new IntersectionObserver(
+			([entry]) => {
+				stickRef.current = entry.isIntersecting;
+			},
+			{ root: viewport, rootMargin: "0px 0px 96px 0px" },
+		);
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, []);
+	useEffect(() => {
+		if (stickRef.current) ref.current?.scrollIntoView({ block: "end" });
 	}, [count]);
-	return <div ref={ref} />;
+	return <div ref={ref} className="h-px" />;
+}
+
+// ── Render pipeline: raw event list → displayable rows ────────────────────
+// The ACP stream is chunked (one event per message fragment) and tool calls
+// arrive as a `tool_call` plus N `tool_call_update`s. Coalesce so one message
+// renders as one bubble and one tool call as one card that updates in place.
+type KeyedEvent = TranscriptEvent & { key: string };
+
+function coalesceTranscript(events: KeyedEvent[]): KeyedEvent[] {
+	const out: KeyedEvent[] = [];
+	const toolIndex = new Map<string, number>();
+	let planIndex: number | null = null;
+	for (const e of events) {
+		const last = out[out.length - 1];
+		if (
+			(e.kind === "user" || e.kind === "assistant" || e.kind === "thinking") &&
+			last?.kind === e.kind
+		) {
+			out[out.length - 1] = { ...last, text: last.text + e.text };
+			continue;
+		}
+		if (e.kind === "tool" && e.toolCallId) {
+			const idx = toolIndex.get(e.toolCallId);
+			if (idx !== undefined) {
+				const prev = out[idx] as Extract<KeyedEvent, { kind: "tool" }>;
+				out[idx] = {
+					...prev,
+					// Updates often omit the title (the mapper then falls back to the
+					// id) — never overwrite a real title with the id.
+					tool: e.tool !== e.toolCallId ? e.tool : prev.tool,
+					status: e.status ?? prev.status,
+					input: e.input ?? prev.input,
+					output: e.output ?? prev.output,
+					locations: e.locations ?? prev.locations,
+				};
+				continue;
+			}
+			toolIndex.set(e.toolCallId, out.length);
+		}
+		if (e.kind === "plan") {
+			// Plan updates are full snapshots: replace the existing card in place.
+			if (planIndex !== null) {
+				out[planIndex] = { ...out[planIndex], entries: e.entries } as KeyedEvent;
+				continue;
+			}
+			planIndex = out.length;
+		}
+		out.push(e);
+	}
+	return out;
+}
+
+// Subtle three-dot pulse shown as the last row while a turn is in flight.
+function TurnInFlight() {
+	return (
+		<div className="flex items-center gap-1 px-1 py-0.5" aria-label="Turn in progress">
+			{[0, 1, 2].map((i) => (
+				<span
+					key={i}
+					className="size-1.5 animate-pulse rounded-full bg-muted-foreground/50"
+					style={{ animationDelay: `${i * 200}ms` }}
+				/>
+			))}
+		</div>
+	);
 }
 
 // Composer defaults persist in localStorage: they contain the API key the
@@ -100,14 +262,20 @@ function Composer({
 	sessionStatus,
 	onSessionCreated,
 	onErrorEvent,
+	onBusyChange,
 }: {
 	sessionId: string | null;
 	sessionStatus?: string;
 	onSessionCreated: (sessionId: string) => void;
 	onErrorEvent: (text: string) => void;
+	onBusyChange?: (busy: boolean) => void;
 }) {
 	const [draft, setDraft] = useState("");
-	const [busy, setBusy] = useState(false);
+	const [busy, setBusyState] = useState(false);
+	const setBusy = (b: boolean) => {
+		setBusyState(b);
+		onBusyChange?.(b);
+	};
 	const [stopUnsupported, setStopUnsupported] = useState(false);
 	const [optionsOpen, setOptionsOpen] = useState(false);
 	const [agentType, setAgentType] = useState(
@@ -279,8 +447,11 @@ function Composer({
 export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 	const { data: sessions } = useSuspenseQuery(agentOsSource.sessionsQueryOptions(actorId));
 	const queryClient = useQueryClient();
-	const [selected, setSelected] = useState<string | null>(null);
-	const sessionId = selected ?? sessions[0]?.sessionId ?? null;
+	// undefined = no explicit choice (default to the newest session); null =
+	// explicitly composing a new session. Without the distinction, once any
+	// session exists the UI can never start another one.
+	const [selected, setSelected] = useState<string | null | undefined>(undefined);
+	const sessionId = selected === undefined ? (sessions[0]?.sessionId ?? null) : selected;
 	// Liveness: cross-reference listSessions (records carry no status on the
 	// current runtime); fall back to the record's own status where it exists.
 	const { data: liveIds } = useQuery(liveSessionsQueryOptions(actorId));
@@ -295,7 +466,7 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 	const actor = useAgentOsActor();
 	const useAgentEvent = actor.useEvent as (
 		name: string,
-		handler: (payload: SessionEventPayload) => void,
+		handler: (payload: unknown) => void,
 	) => void;
 	const [live, setLive] = useState<TranscriptEvent[]>([]);
 	// Synthetic monotonic seq (broadcasts carry none); latest sessionId via ref so
@@ -307,7 +478,8 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 		setLive([]);
 		seqRef.current = 0;
 	}, [sessionId]);
-	useAgentEvent("sessionEvent", (payload) => {
+	useAgentEvent("sessionEvent", (raw) => {
+		const payload = raw as SessionEventPayload | undefined;
 		const cur = sessionIdRef.current;
 		if (!cur) return;
 		// Broadcast may omit sessionId; when present, keep only this session's.
@@ -316,6 +488,23 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 			payload?.event ?? (payload as unknown as JsonRpcNotification);
 		if (!notification) return;
 		setLive((prev) => [...prev, mapNotification(notification, seqRef.current++)]);
+	});
+	// Permission requests render inline (non-interactive) so the history shows
+	// "agent asked" in conversation position; the global banner above the tab is
+	// the interactive surface.
+	useAgentEvent("permissionRequest", (raw) => {
+		const payload = raw as PermissionRequestPayload | undefined;
+		const cur = sessionIdRef.current;
+		if (!cur || payload?.sessionId !== cur) return;
+		const request = payload?.request;
+		setLive((prev) => [
+			...prev,
+			{
+				kind: "permission",
+				seq: seqRef.current++,
+				text: `Permission requested: ${request?.description ?? request?.permissionId ?? "unknown"} (answer in the banner above)`,
+			},
+		]);
 	});
 	// Composer callbacks: failed turns render as error rows in the live stream
 	// (fixes invisible failures); new sessions get selected + the list refreshed.
@@ -327,11 +516,30 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 			queryKey: agentOsSource.sessionsQueryOptions(actorId).queryKey,
 		});
 	};
+	const [turnActive, setTurnActive] = useState(false);
+	const events = useMemo(
+		() =>
+			coalesceTranscript([
+				...backfill.map((e) => ({ ...e, key: `b-${e.seq}` })),
+				...live.map((e) => ({ ...e, key: `l-${e.seq}` })),
+			]),
+		[backfill, live],
+	);
 	return (
 		<div className="flex h-full min-h-0">
 			<div className="flex h-full w-56 shrink-0 flex-col border-r">
-				<div className="px-3 pb-1 pt-2.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-					Sessions
+				<div className="flex items-center px-3 pb-1 pt-2.5">
+					<span className="text-[11px] font-medium text-muted-foreground">Sessions</span>
+					{sessionId !== null ? (
+						<button
+							type="button"
+							onClick={() => setSelected(null)}
+							title="Compose a prompt that starts a fresh session"
+							className="ml-auto rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+						>
+							New session
+						</button>
+					) : null}
 				</div>
 				<ScrollArea className="min-h-0 flex-1">
 					{sessions.length === 0 ? (
@@ -378,16 +586,14 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 				) : (
 					<>
 						<ScrollArea className="min-h-0 flex-1">
-							{backfill.length + live.length === 0 ? (
+							{events.length === 0 && !turnActive ? (
 								<AgentOsEmpty>No activity yet — send a prompt below.</AgentOsEmpty>
 							) : (
 								<div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
-									{backfill.map((e) => (
-										<TranscriptEventView key={`b-${e.seq}`} event={e} />
+									{events.map((e) => (
+										<TranscriptEventView key={e.key} event={e} />
 									))}
-									{live.map((e) => (
-										<TranscriptEventView key={`l-${e.seq}`} event={e} />
-									))}
+									{turnActive ? <TurnInFlight /> : null}
 									<ScrollAnchor count={backfill.length + live.length} />
 								</div>
 							)}
@@ -406,6 +612,7 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 					}
 					onSessionCreated={handleSessionCreated}
 					onErrorEvent={pushErrorEvent}
+					onBusyChange={setTurnActive}
 				/>
 			</div>
 		</div>

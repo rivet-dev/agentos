@@ -29,6 +29,40 @@ export interface ProcessInfo {
 	/** Epoch milliseconds when the process was spawned. */
 	startedAt: number;
 }
+/** Raw `allProcesses`/`processTree` node fields — the full kernel process
+ * table (every process, not just SDK-spawned). Mirrors the Rust wire shape;
+ * `startTime`/`exitTime` are epoch milliseconds. */
+export interface KernelProcessInfo {
+	pid: number;
+	ppid: number;
+	pgid: number;
+	sid: number;
+	driver: string;
+	command: string;
+	args: string[];
+	cwd: string;
+	status: "running" | "exited";
+	exitCode: number | null;
+	startTime: number;
+	exitTime: number | null;
+}
+/** Raw `processTree` node: kernel info + children. */
+export interface ProcessTreeNode extends KernelProcessInfo {
+	children: ProcessTreeNode[];
+}
+/** Live `processOutput` broadcast payload mirror (Rust owns broadcasts).
+ * `data` arrives Uint8Array-shaped but encoding-dependent — normalize with
+ * `decodeActionBytes`. Only SDK-`spawn`ed pids have output pumps. */
+export interface ProcessOutputPayload {
+	pid: number;
+	stream: "stdout" | "stderr";
+	data: unknown;
+}
+/** Live `processExit` broadcast payload mirror. */
+export interface ProcessExitPayload {
+	pid: number;
+	exitCode: number;
+}
 
 // ── Filesystem ────────────────────────────────────────────────────────
 /** Raw `readdirRecursive` entry. */
@@ -110,13 +144,37 @@ export interface PersistedSessionEvent {
 	createdAt: number;
 }
 /** Mapped, displayable transcript event (defensive; unknown → "raw"). Carries
- * the source `seq` for stable keys/ordering. */
+ * the source `seq` for stable keys/ordering. Tool events keep `toolCallId` so
+ * the render pipeline can merge a call and its status updates into one card. */
 export type TranscriptEvent = { seq: number } & (
 	| { kind: "user" | "assistant" | "thinking"; text: string }
-	| { kind: "tool"; tool: string; status?: string }
+	| {
+			kind: "tool";
+			tool: string;
+			toolCallId?: string;
+			status?: string;
+			input?: unknown;
+			output?: string;
+			locations?: string[];
+	  }
+	| { kind: "plan"; entries: { content: string; status?: string }[] }
+	| { kind: "notice"; text: string }
+	| { kind: "permission"; text: string }
 	| { kind: "raw"; label: string; json: unknown }
 	| { kind: "error"; text: string }
 );
+
+/** Mirror of the `permissionRequest` broadcast payload (Rust owns broadcasts).
+ * The agent's turn blocks on the reply and the runtime auto-rejects after its
+ * permission timeout (~120s). */
+export interface PermissionRequestPayload {
+	sessionId: string;
+	request: {
+		permissionId: string;
+		description?: string;
+		params: Record<string, unknown>;
+	};
+}
 
 // ── Runtime health (optional `getRuntimeHealth` action; see lib/health.ts) ─
 export interface RuntimeLimitWarning {
