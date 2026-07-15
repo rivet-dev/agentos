@@ -38,10 +38,13 @@ function stripState(
 	if (!health.booted && live?.kind !== "booted") {
 		return { color: "muted", label: "VM not booted (boots on first session)" };
 	}
+	// Healthy running state: the dashboard sidebar already shows the actor
+	// awake and the green dot carries "VM booted", so the words would be
+	// redundant — spend the label on what nothing else shows.
 	const sessions = health.sessions ?? 0;
 	return {
 		color: "green",
-		label: `VM running · ${sessions} live session${sessions === 1 ? "" : "s"}`,
+		label: `${sessions} live session${sessions === 1 ? "" : "s"}`,
 	};
 }
 
