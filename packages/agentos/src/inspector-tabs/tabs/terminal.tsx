@@ -16,7 +16,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
-import { ActionErrorNote, AgentOsEmpty, relativeTime, StatusDot } from "../common";
+import { ActionErrorNote, AgentOsEmpty, IconButton, PlusIcon, relativeTime, StatusDot } from "../common";
 import { cn } from "../lib/cn";
 import { useAgentOsActor } from "../lib/rivet";
 import { agentOsSource, decodeActionBytes } from "../lib/source";
@@ -379,14 +379,9 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 					{opening ? (
 						<span className="text-[10px] text-muted-foreground">Starting…</span>
 					) : hasShells ? (
-						<button
-							type="button"
-							onClick={() => void start()}
-							title="Open another shell"
-							className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-						>
-							New shell
-						</button>
+						<IconButton title="New shell" onClick={() => void start()}>
+							<PlusIcon className="size-3.5" />
+						</IconButton>
 					) : null}
 				</div>
 				<ScrollArea className="min-h-0 flex-1">

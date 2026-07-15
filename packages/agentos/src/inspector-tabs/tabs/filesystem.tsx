@@ -1,6 +1,21 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ActionErrorNote, AgentOsEmpty, ChevronRight, FileGlyph, formatBytes, relativeTime } from "../common";
+import {
+	ActionErrorNote,
+	AgentOsEmpty,
+	CheckIcon,
+	ChevronRight,
+	DownloadIcon,
+	FileGlyph,
+	FolderPlusIcon,
+	formatBytes,
+	IconButton,
+	PencilIcon,
+	RefreshIcon,
+	relativeTime,
+	TrashIcon,
+	UploadIcon,
+} from "../common";
 import { cn } from "../lib/cn";
 import { agentOsSource } from "../lib/source";
 import type { FsEntry } from "../lib/types";
@@ -197,29 +212,38 @@ function FileViewer({
 				)}
 				<span className="shrink-0 text-xs text-muted-foreground">{formatBytes(data.sizeBytes)}</span>
 				<span className="shrink-0 text-xs text-muted-foreground">{relativeTime(data.mtimeMs)}</span>
-				<button
-					type="button"
+				<IconButton
+					title={data.bytes ? "Download this file" : "Load the file first"}
 					disabled={!data.bytes}
 					onClick={() => data.bytes && downloadBytes(data.bytes, filename)}
-					title={data.bytes ? "Download this file" : "Load the file first"}
-					className="shrink-0 rounded border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
 				>
-					Download
-				</button>
-				<button
-					type="button"
+					<DownloadIcon className="size-3.5" />
+				</IconButton>
+				<IconButton
+					title={renameDraft !== null ? "Save new name" : "Rename this file"}
 					onClick={() => (renameDraft !== null ? void rename() : setRenameDraft(data.path))}
-					className="shrink-0 rounded border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
 				>
-					{renameDraft !== null ? "Save" : "Rename"}
-				</button>
-				<button
-					type="button"
-					onClick={() => void remove()}
-					className="shrink-0 rounded border border-destructive/50 px-2 py-1 text-xs text-destructive transition-colors hover:bg-destructive/10"
-				>
-					{confirmingDelete ? "Confirm delete?" : "Delete"}
-				</button>
+					{renameDraft !== null ? (
+						<CheckIcon className="size-3.5" />
+					) : (
+						<PencilIcon className="size-3.5" />
+					)}
+				</IconButton>
+				{/* Delete keeps a two-step confirm: the icon arms it, the explicit
+				    text disarms accidental clicks on an irreversible action. */}
+				{confirmingDelete ? (
+					<button
+						type="button"
+						onClick={() => void remove()}
+						className="shrink-0 rounded border border-destructive/50 px-2 py-1 text-xs text-destructive transition-colors hover:bg-destructive/10"
+					>
+						Confirm delete?
+					</button>
+				) : (
+					<IconButton title="Delete this file" destructive onClick={() => void remove()}>
+						<TrashIcon className="size-3.5" />
+					</IconButton>
+				)}
 			</div>
 			{mutationError ? <ActionErrorNote error={mutationError} className="border-b py-2" /> : null}
 			<ScrollArea className="min-h-0 flex-1">
@@ -362,30 +386,21 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 						placeholder="/"
 						className="min-w-0 flex-1 bg-transparent font-mono text-xs text-muted-foreground outline-none placeholder:text-muted-foreground/40 focus:text-foreground"
 					/>
-					<button
-						type="button"
-						onClick={() => void refreshTree()}
-						title="Refresh the tree"
-						className="shrink-0 rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-					>
-						Refresh
-					</button>
-					<button
-						type="button"
+					<IconButton title="Refresh the tree" onClick={() => void refreshTree()}>
+						<RefreshIcon className="size-3.5" />
+					</IconButton>
+					<IconButton
+						title={`New folder under ${root}`}
 						onClick={() => setNewFolderDraft((v) => (v === null ? "" : null))}
-						title={`Create a folder under ${root}`}
-						className="shrink-0 rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
 					>
-						New folder
-					</button>
-					<button
-						type="button"
-						onClick={() => uploadInputRef.current?.click()}
+						<FolderPlusIcon className="size-3.5" />
+					</IconButton>
+					<IconButton
 						title={`Upload a file into ${root}`}
-						className="shrink-0 rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+						onClick={() => uploadInputRef.current?.click()}
 					>
-						Upload
-					</button>
+						<UploadIcon className="size-3.5" />
+					</IconButton>
 					<VmStatusBadges actorId={actorId} />
 					<input
 						ref={uploadInputRef}

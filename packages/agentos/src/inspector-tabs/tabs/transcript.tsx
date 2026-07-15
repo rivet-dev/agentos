@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AgentOsEmpty, ChevronRight, relativeTime, StatusDot } from "../common";
+import { AgentOsEmpty, ChevronRight, IconButton, PlusIcon, relativeTime, StatusDot } from "../common";
 import { isInspectorActionError } from "../lib/actor-client";
 import { cn } from "../lib/cn";
 import { useAgentOsActor } from "../lib/rivet";
@@ -596,14 +596,13 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 						})()}
 					</span>
 					{sessionId !== null ? (
-						<button
-							type="button"
+						<IconButton
+							title="New session"
 							onClick={() => setSelected(null)}
-							title="Compose a prompt that starts a fresh session"
-							className="ml-auto rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+							className="ml-auto"
 						>
-							New session
-						</button>
+							<PlusIcon className="size-3.5" />
+						</IconButton>
 					) : null}
 				</div>
 				<ScrollArea className="min-h-0 flex-1">
