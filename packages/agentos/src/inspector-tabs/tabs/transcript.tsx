@@ -4,6 +4,7 @@ import {
 	AgentOsEmpty,
 	AgentOsWordmark,
 	ChevronRight,
+	CopyButton,
 	IconButton,
 	PlusIcon,
 	relativeTime,
@@ -635,11 +636,15 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 								>
 									<StatusDot color={isLive(s) ? "green" : "muted"} />
 									<div className="min-w-0 flex-1" title={isLive(s) ? "Live in the current VM" : "Idle — persisted, not loaded in the current VM"}>
-										<div className="truncate text-xs">
-											{s.agentType} · {relativeTime(s.createdAt)}
+										<div className="flex items-center gap-1 text-xs">
+											<span className="truncate font-mono">…{s.sessionId.slice(-12)}</span>
+											<CopyButton
+												value={s.sessionId}
+												className="opacity-0 focus:opacity-100 group-hover:opacity-100"
+											/>
 										</div>
-										<div className="truncate font-mono text-[10px] text-muted-foreground/60">
-											…{s.sessionId.slice(-10)}
+										<div className="truncate text-[10px] text-muted-foreground/60">
+											{s.agentType} · {relativeTime(s.createdAt)}
 										</div>
 									</div>
 									{isLive(s) ? (
