@@ -256,13 +256,9 @@ function SystemLoaded({ actorId }: { actorId: string }) {
 		<ScrollArea className="h-full min-h-0">
 			<section>
 				<SectionHeader right={<VmStatusBadges actorId={actorId} />}>Overview</SectionHeader>
-				<div className="grid grid-cols-2 gap-x-8 gap-y-2 border-b px-4 py-3 text-xs sm:grid-cols-4">
-					<OverviewField label="Actor">
-						<span className="truncate" title={actorId}>
-							{actorId}
-						</span>
-						<CopyButton value={actorId} />
-					</OverviewField>
+				{/* Inside-the-VM facts only: actor identity (id, key, runner) lives
+				    in the dashboard's own Metadata tab. */}
+				<div className="grid grid-cols-2 gap-x-8 gap-y-2 border-b px-4 py-3 text-xs sm:grid-cols-3">
 					<OverviewField label="Live sessions">
 						{sessions == null ? "—" : String(sessions)}
 					</OverviewField>

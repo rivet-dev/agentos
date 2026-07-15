@@ -43,7 +43,8 @@ Everything about the machine itself, in one scroll view. When the VM is asleep, 
 - **Software** — installed software bundles with their commands and versions. See [Software](/docs/software).
 - **Mounts** — the configured mounts with their access modes. See [Sandbox Mounting](/docs/sandbox).
 - **Preview links** — create a signed URL to an HTTP server on a port inside the VM. See [Networking](/docs/networking).
-- **Actor** — the Rivet actor id backing this VM.
+
+Actor identity and lifecycle controls (id, key, runner, sleep, destroy) live in the dashboard's own Metadata tab; the System tab covers only what is inside the VM.
 
 ## VM status badges
 

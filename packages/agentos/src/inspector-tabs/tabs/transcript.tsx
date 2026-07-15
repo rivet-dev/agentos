@@ -595,7 +595,6 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 							return liveCount > 0 ? ` · ${liveCount} live` : "";
 						})()}
 					</span>
-					<VmStatusBadges actorId={actorId} align="left" />
 					{sessionId !== null ? (
 						<button
 							type="button"
@@ -613,12 +612,16 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 					) : (
 						<div className="p-1.5">
 							{sessions.map((s) => (
-								<button
+								<div
 									key={s.sessionId}
-									type="button"
+									role="button"
+									tabIndex={0}
 									onClick={() => setSelected(s.sessionId)}
+									onKeyDown={(e) => {
+										if (e.key === "Enter" || e.key === " ") setSelected(s.sessionId);
+									}}
 									className={cn(
-										"flex w-full items-center gap-2 rounded px-2 py-1.5 text-left",
+										"group flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-left",
 										s.sessionId === sessionId ? "bg-muted" : "hover:bg-muted/50",
 									)}
 								>
@@ -631,13 +634,42 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 											…{s.sessionId.slice(-10)}
 										</div>
 									</div>
-								</button>
+									{isLive(s) ? (
+										<button
+											type="button"
+											onClick={(e) => {
+												e.stopPropagation();
+												void closeSession(s.sessionId);
+											}}
+											title="End the live agent process; the transcript stays"
+											aria-label="Close session"
+											className="text-muted-foreground/40 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 group-hover:opacity-100"
+										>
+											<svg
+												viewBox="0 0 12 12"
+												className="size-2.5"
+												fill="none"
+												stroke="currentColor"
+												strokeWidth="1.5"
+												strokeLinecap="round"
+												aria-hidden="true"
+											>
+												<path d="M3 3l6 6M9 3l-6 6" />
+											</svg>
+										</button>
+									) : null}
+								</div>
 							))}
 						</div>
 					)}
 				</ScrollArea>
 			</div>
-			<div className="flex min-h-0 flex-1 flex-col">
+			<div className="relative flex min-h-0 flex-1 flex-col">
+				{/* VM trouble chips float over the thread's top-right corner;
+				    they render nothing while the VM is healthy. */}
+				<div className="absolute right-3 top-2 z-10">
+					<VmStatusBadges actorId={actorId} />
+				</div>
 				{!sessionId ? (
 					<AgentOsEmpty>
 						<span>
@@ -651,34 +683,6 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 					</AgentOsEmpty>
 				) : (
 					<>
-						{(() => {
-							const record = sessions.find((s) => s.sessionId === sessionId);
-							const live = record ? isLive(record) : false;
-							return (
-								<div className="flex shrink-0 items-center gap-2 border-b px-4 py-2 text-xs">
-									<StatusDot color={live ? "green" : "muted"} />
-									<span className="font-mono">{record?.agentType ?? "session"}</span>
-									<span className="text-muted-foreground">
-										{record ? relativeTime(record.createdAt) : null}
-									</span>
-									<span className="font-mono text-[10px] text-muted-foreground/60">
-										…{sessionId.slice(-10)}
-									</span>
-									<span className="text-muted-foreground/70">{live ? "live" : "idle"}</span>
-									<span className="ml-auto" />
-									{live ? (
-										<button
-											type="button"
-											onClick={() => void closeSession(sessionId)}
-											title="End the live agent process; the transcript stays"
-											className="rounded border px-2 py-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-										>
-											Close session
-										</button>
-									) : null}
-								</div>
-							);
-						})()}
 						<ScrollArea className="min-h-0 flex-1">
 							{events.length === 0 && !turnActive ? (
 								<AgentOsEmpty>No activity yet — send a prompt below.</AgentOsEmpty>
