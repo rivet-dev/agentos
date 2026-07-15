@@ -1,10 +1,13 @@
+// Kernel process table for the System tab: one dense table sized to content,
+// with detail on demand — clicking a row expands it inline (fields, stop/kill,
+// live output tail) instead of a permanently open side pane.
 import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useRef, useState } from "react";
-import { ActionErrorNote, AgentOsEmpty, relativeTime, StatusDot } from "../common";
+import { ActionErrorNote, ChevronRight, relativeTime, StatusDot } from "../common";
+import { cn } from "../lib/cn";
 import { useAgentOsActor } from "../lib/rivet";
 import { agentOsSource, decodeActionBytes } from "../lib/source";
 import type { KernelProcessInfo, ProcessExitPayload, ProcessOutputPayload, ProcessTreeNode } from "../lib/types";
-import { ScrollArea } from "../ui/scroll-area";
 import React from "react";
 
 /** Format an epoch-ms spawn time for display; `—` when absent. */
@@ -58,7 +61,20 @@ class OutputBuffers {
 	}
 }
 
-function ProcessDetail({
+/** Label-over-value cell for the expanded detail grid — compact, no divider
+ * rows, the layout VM dashboards use for inspect summaries. */
+function Field({ label, value }: { label: string; value: string }) {
+	return (
+		<div className="min-w-0">
+			<div className="text-muted-foreground/70">{label}</div>
+			<div className="truncate font-mono" title={value}>
+				{value}
+			</div>
+		</div>
+	);
+}
+
+function ExpandedDetail({
 	p,
 	outputTail,
 	onStop,
@@ -84,81 +100,68 @@ function ProcessDetail({
 		clearTimeout(confirmTimer.current);
 		confirmTimer.current = setTimeout(() => setConfirming(null), 3_000);
 	};
-	const rows: [string, string][] = [
-		["pid", String(p.pid)],
-		["ppid", p.ppid ? String(p.ppid) : "—"],
-		["command", p.command],
-		["args", p.args.join(" ") || "—"],
-		["cwd", p.cwd || "—"],
-		["driver", p.driver || "—"],
-		["status", p.status],
-		["exit code", p.exitCode == null ? "—" : String(p.exitCode)],
-		["started", formatStartedAt(p.startTime)],
-		["exited", p.exitTime == null ? "—" : relativeTime(p.exitTime)],
-	];
 	return (
-		<div className="flex h-full flex-col">
-			<div className="flex items-center gap-2 border-b px-4 py-3">
-				<span className="font-mono text-sm">pid {p.pid}</span>
-				<span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-					{p.command}
-				</span>
-				{p.status === "running" ? (
-					<>
-						<button
-							type="button"
-							onClick={() => arm("stop", onStop)}
-							title="Graceful stop (SIGTERM-style)"
-							className="shrink-0 rounded-md border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-						>
-							{confirming === "stop" ? "Confirm stop?" : "Stop"}
-						</button>
-						<button
-							type="button"
-							onClick={() => arm("kill", onKill)}
-							title="Force kill"
-							className="shrink-0 rounded-md border border-destructive/50 px-2 py-1 text-xs text-destructive transition-colors hover:bg-destructive/10"
-						>
-							{confirming === "kill" ? "Confirm kill?" : "Kill"}
-						</button>
-					</>
-				) : null}
+		<div className="flex flex-col gap-3 px-4 py-3 text-xs">
+			<div className="grid grid-cols-2 gap-x-8 gap-y-2 sm:grid-cols-4">
+				<Field label="ppid" value={p.ppid ? String(p.ppid) : "—"} />
+				<Field label="cwd" value={p.cwd || "—"} />
+				<Field label="driver" value={p.driver || "—"} />
+				<Field label="exit code" value={p.exitCode == null ? "—" : String(p.exitCode)} />
+				<Field label="args" value={p.args.join(" ") || "—"} />
+				<Field label="started" value={formatStartedAt(p.startTime)} />
+				<Field label="exited" value={p.exitTime == null ? "—" : relativeTime(p.exitTime)} />
+				<Field label="group / session" value={`${p.pgid} / ${p.sid}`} />
 			</div>
-			{actionError ? <ActionErrorNote error={actionError} className="border-b py-2" /> : null}
-			<ScrollArea className="min-h-0 flex-1">
-				<dl className="px-4 py-2 text-xs">
-					{rows.map(([key, val]) => (
-						<div key={key} className="flex gap-3 border-b border-foreground/[0.06] py-2 last:border-0">
-							<dt className="w-24 shrink-0 text-muted-foreground">{key}</dt>
-							<dd className="min-w-0 flex-1 break-words font-mono">{val}</dd>
-						</div>
-					))}
-				</dl>
-				{outputTail ? (
-					<div className="px-4 pb-3">
-						<div className="mb-1 text-[10px] text-muted-foreground/70">Output (live tail)</div>
-						<pre className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
-							{outputTail}
-						</pre>
-					</div>
-				) : (
-					<div className="px-4 pb-3 text-[11px] text-muted-foreground/60">
-						No live output. Only processes spawned through the SDK stream stdout/stderr here.
-					</div>
-				)}
-			</ScrollArea>
+			{p.status === "running" ? (
+				<div className="flex items-center gap-2">
+					<button
+						type="button"
+						onClick={() => arm("stop", onStop)}
+						className="rounded border px-2 py-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+					>
+						{confirming === "stop" ? "Confirm stop?" : "Stop"}
+					</button>
+					<button
+						type="button"
+						onClick={() => arm("kill", onKill)}
+						className="rounded border border-destructive/40 px-2 py-0.5 text-destructive transition-colors hover:bg-destructive/10"
+					>
+						{confirming === "kill" ? "Confirm kill?" : "Kill"}
+					</button>
+				</div>
+			) : null}
+			{actionError ? <ActionErrorNote error={actionError} className="p-0" /> : null}
+			{outputTail ? (
+				<div>
+					<div className="mb-1 text-muted-foreground/70">Output (live tail)</div>
+					<pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
+						{outputTail}
+					</pre>
+				</div>
+			) : (
+				<div className="text-muted-foreground/60">
+					No live output. Only processes spawned through the SDK stream stdout/stderr here.
+				</div>
+			)}
 		</div>
 	);
 }
 
-export function ProcessesLoaded({ actorId }: { actorId: string }) {
+/** Running/total counts for the System overview; same query key as the table
+ * so React Query serves both from one fetch. */
+export function useProcessCounts(actorId: string): { running: number; total: number } {
+	const { data: tree } = useSuspenseQuery(agentOsSource.processTreeQueryOptions(actorId));
+	const rows = flattenTree(tree);
+	return { running: rows.filter((p) => p.status === "running").length, total: rows.length };
+}
+
+export function ProcessTable({ actorId }: { actorId: string }) {
 	const { data: tree } = useSuspenseQuery(agentOsSource.processTreeQueryOptions(actorId));
 	const queryClient = useQueryClient();
-	const [selectedPid, setSelectedPid] = useState<number>();
+	const [expandedPid, setExpandedPid] = useState<number | null>(null);
 	const [actionError, setActionError] = useState<unknown>(null);
 
 	const rows = flattenTree(tree);
-	const selected = rows.find((p) => p.pid === selectedPid) ?? rows[0];
 
 	// Live output tail for SDK-spawned pids; exit refreshes the table.
 	const buffersRef = useRef(new OutputBuffers());
@@ -203,64 +206,76 @@ export function ProcessesLoaded({ actorId }: { actorId: string }) {
 	};
 
 	if (rows.length === 0) {
-		return <AgentOsEmpty>No processes in the VM.</AgentOsEmpty>;
+		return <div className="px-4 py-3 text-sm text-muted-foreground">No processes in the VM.</div>;
 	}
 	return (
-		<div className="flex min-h-0 flex-1">
-			<ScrollArea className="min-h-0 w-3/5 border-r">
-				<table className="w-full text-sm">
-					<thead className="text-[11px] text-muted-foreground">
-						<tr className="border-b">
-							<th className="px-3 py-2 text-left font-medium">PID</th>
-							<th className="px-3 py-2 text-left font-medium">Command</th>
-							<th className="px-3 py-2 text-left font-medium">Started</th>
-							<th className="px-3 py-2 text-left font-medium">Status</th>
-						</tr>
-					</thead>
-					<tbody>
-						{rows.map((p) => (
+		<div className="max-h-96 overflow-y-auto">
+			<table className="w-full text-sm">
+				<thead className="sticky top-0 bg-background text-[11px] text-muted-foreground">
+					<tr className="border-b">
+						<th className="w-8 px-3 py-2" aria-label="Expand" />
+						<th className="w-16 px-2 py-2 text-left font-medium">PID</th>
+						<th className="px-2 py-2 text-left font-medium">Command</th>
+						<th className="w-28 px-2 py-2 text-left font-medium">Started</th>
+						<th className="w-28 px-2 py-2 text-left font-medium">Status</th>
+					</tr>
+				</thead>
+				<tbody>
+					{rows.map((p) => (
+						<React.Fragment key={p.pid}>
 							<tr
-								key={p.pid}
-								onClick={() => setSelectedPid(p.pid)}
-								className={`cursor-pointer border-b border-foreground/[0.06] hover:bg-muted/50 ${
-									selected?.pid === p.pid ? "bg-muted/50" : ""
-								} ${p.status === "exited" ? "opacity-50" : ""}`}
+								onClick={() => setExpandedPid((cur) => (cur === p.pid ? null : p.pid))}
+								className={cn(
+									"cursor-pointer border-b border-foreground/[0.06] hover:bg-muted/50",
+									expandedPid === p.pid && "bg-muted/40",
+									p.status === "exited" && "opacity-50",
+								)}
 							>
-								<td className="px-3 py-2 font-mono">{p.pid}</td>
-								<td className="px-3 py-2 font-mono text-xs">
+								<td className="px-3 py-1.5">
+									<ChevronRight
+										className={cn(
+											"size-3 text-muted-foreground/60 transition-transform",
+											expandedPid === p.pid && "rotate-90",
+										)}
+									/>
+								</td>
+								<td className="px-2 py-1.5 font-mono">{p.pid}</td>
+								<td className="px-2 py-1.5 font-mono text-xs">
 									<span style={{ paddingLeft: `${p.depth * 14}px` }}>
 										{p.depth > 0 ? <span className="text-muted-foreground/40">└ </span> : null}
-										{p.command} {p.args.join(" ")}
+										{p.command}
+										{p.args.length > 0 ? (
+											<span className="text-muted-foreground/60"> {p.args.join(" ")}</span>
+										) : null}
 									</span>
 								</td>
-								<td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+								<td className="px-2 py-1.5 font-mono text-xs text-muted-foreground">
 									{formatStartedAt(p.startTime)}
 								</td>
-								<td className="px-3 py-2">
+								<td className="px-2 py-1.5">
 									<span className="inline-flex items-center gap-1.5 text-xs">
-										<StatusDot color={p.status === "running" ? "green" : "red"} />
+										<StatusDot color={p.status === "running" ? "green" : "muted"} />
 										{p.status}
 									</span>
 								</td>
 							</tr>
-						))}
-					</tbody>
-				</table>
-			</ScrollArea>
-			<div className="min-h-0 w-2/5">
-				{selected ? (
-					<ProcessDetail
-						p={selected}
-						outputTail={buffersRef.current.get(selected.pid)}
-						onStop={() => void runControl(() => agentOsSource.stopProcess(selected.pid))}
-						onKill={() => void runControl(() => agentOsSource.killProcess(selected.pid))}
-						actionError={actionError}
-					/>
-				) : (
-					<AgentOsEmpty>Select a process.</AgentOsEmpty>
-				)}
-			</div>
+							{expandedPid === p.pid ? (
+								<tr className="border-b border-foreground/[0.06] bg-muted/20">
+									<td colSpan={5}>
+										<ExpandedDetail
+											p={p}
+											outputTail={buffersRef.current.get(p.pid)}
+											onStop={() => void runControl(() => agentOsSource.stopProcess(p.pid))}
+											onKill={() => void runControl(() => agentOsSource.killProcess(p.pid))}
+											actionError={actionError}
+										/>
+									</td>
+								</tr>
+							) : null}
+						</React.Fragment>
+					))}
+				</tbody>
+			</table>
 		</div>
 	);
 }
-

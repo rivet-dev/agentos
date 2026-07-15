@@ -2,18 +2,18 @@
 // installed software, configured mounts, preview links, and the actor id in
 // one scroll view, keeping the tab bar to the high-traffic surfaces
 // (transcript, terminal, filesystem).
-import { useSuspenseQueries } from "@tanstack/react-query";
+import { useQuery, useSuspenseQueries } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { ActionErrorNote, ChevronRight, CopyButton } from "../common";
 import { cn } from "../lib/cn";
-import { agentOsSource } from "../lib/source";
+import { agentOsSource, healthQueryOptions } from "../lib/source";
 import type { MountInfo, SignedPreviewUrl, SoftwareBundle } from "../lib/types";
 import { Badge } from "../ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { ScrollArea } from "../ui/scroll-area";
 import { VmBootGate } from "../vm-boot-gate";
 import { VmStatusBadges } from "../vm-status-badges";
-import { ProcessesLoaded } from "./processes";
+import { ProcessTable, useProcessCounts } from "./processes";
 import React from "react";
 
 function SoftwareRow({ bundle }: { bundle: SoftwareBundle }) {
@@ -232,6 +232,16 @@ export function SystemTabConnected({ actorId }: { actorId: string }) {
 	);
 }
 
+/** Label-over-value cell for the overview grid. */
+function OverviewField({ label, children }: { label: string; children: ReactNode }) {
+	return (
+		<div className="min-w-0">
+			<div className="text-muted-foreground/70">{label}</div>
+			<div className="flex min-w-0 items-center gap-1 font-mono">{children}</div>
+		</div>
+	);
+}
+
 function SystemLoaded({ actorId }: { actorId: string }) {
 	const [software, mounts] = useSuspenseQueries({
 		queries: [
@@ -239,14 +249,35 @@ function SystemLoaded({ actorId }: { actorId: string }) {
 			agentOsSource.mountsQueryOptions(actorId),
 		],
 	});
+	const processCounts = useProcessCounts(actorId);
+	const health = useQuery(healthQueryOptions(actorId));
+	const sessions = health.data?.sessions;
 	return (
 		<ScrollArea className="h-full min-h-0">
 			<section>
-				<SectionHeader right={<VmStatusBadges actorId={actorId} />}>Processes</SectionHeader>
-				{/* The process view manages its own two-pane layout and live
-				    output tail; give it a bounded height inside the scroll view. */}
-				<div className="flex h-[26rem] flex-col border-b">
-					<ProcessesLoaded actorId={actorId} />
+				<SectionHeader right={<VmStatusBadges actorId={actorId} />}>Overview</SectionHeader>
+				<div className="grid grid-cols-2 gap-x-8 gap-y-2 border-b px-4 py-3 text-xs sm:grid-cols-4">
+					<OverviewField label="Actor">
+						<span className="truncate" title={actorId}>
+							{actorId}
+						</span>
+						<CopyButton value={actorId} />
+					</OverviewField>
+					<OverviewField label="Live sessions">
+						{sessions == null ? "—" : String(sessions)}
+					</OverviewField>
+					<OverviewField label="Processes">
+						{`${processCounts.running} running / ${processCounts.total}`}
+					</OverviewField>
+					<OverviewField label="Software / mounts">
+						{`${software.data.length} / ${mounts.data.length}`}
+					</OverviewField>
+				</div>
+			</section>
+			<section>
+				<SectionHeader>Processes</SectionHeader>
+				<div className="border-b">
+					<ProcessTable actorId={actorId} />
 				</div>
 			</section>
 			<section>
@@ -276,14 +307,6 @@ function SystemLoaded({ actorId }: { actorId: string }) {
 			<section>
 				<SectionHeader>Preview links</SectionHeader>
 				<PreviewLinks />
-			</section>
-			<section>
-				<SectionHeader>Actor</SectionHeader>
-				<div className="flex items-center gap-2 px-4 py-3 text-xs">
-					<span className="text-muted-foreground">id</span>
-					<span className="truncate font-mono">{actorId}</span>
-					<CopyButton value={actorId} />
-				</div>
 			</section>
 		</ScrollArea>
 	);
