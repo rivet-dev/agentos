@@ -317,13 +317,42 @@ export function FilesystemTabConnected({ actorId }: { actorId: string }) {
 	);
 }
 
+// Browsing state survives tab switches: the dashboard swaps the iframe per
+// tab, so the root path and open file persist per actor (same pattern as the
+// terminal's shells).
+const fsStateKey = (actorId: string) => `agentos-inspector:fs:${actorId}`;
+
+function loadFsState(actorId: string): { root: string; selectedPath: string | null } {
+	try {
+		const raw = sessionStorage.getItem(fsStateKey(actorId));
+		if (raw) {
+			const parsed = JSON.parse(raw) as { root?: unknown; selectedPath?: unknown };
+			return {
+				root: typeof parsed.root === "string" ? parsed.root : "/",
+				selectedPath: typeof parsed.selectedPath === "string" ? parsed.selectedPath : null,
+			};
+		}
+	} catch {
+		// Malformed storage falls back to defaults.
+	}
+	return { root: "/", selectedPath: null };
+}
+
 function FilesystemLoaded({ actorId }: { actorId: string }) {
 	// `root` drives the listing/refetch; `draft` tracks keystrokes locally so
 	// typing never refetches. `root` is committed 500ms after typing stops (or
 	// immediately on Enter) so we don't refetch on every keystroke.
-	const [root, setRoot] = useState("/");
-	const [draft, setDraft] = useState("/");
-	const [selectedPath, setSelectedPath] = useState<string | null>(null);
+	const initial = useRef(loadFsState(actorId)).current;
+	const [root, setRoot] = useState(initial.root);
+	const [draft, setDraft] = useState(initial.root);
+	const [selectedPath, setSelectedPath] = useState<string | null>(initial.selectedPath);
+	useEffect(() => {
+		try {
+			sessionStorage.setItem(fsStateKey(actorId), JSON.stringify({ root, selectedPath }));
+		} catch (error) {
+			console.warn("agentos inspector: failed to persist filesystem state", error);
+		}
+	}, [actorId, root, selectedPath]);
 	const [newFolderDraft, setNewFolderDraft] = useState<string | null>(null);
 	const [treeError, setTreeError] = useState<unknown>(null);
 	const uploadInputRef = useRef<HTMLInputElement>(null);
