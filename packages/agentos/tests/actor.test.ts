@@ -600,7 +600,9 @@ describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
 			use: {
 				os: agentOS({
 					defaultSoftware: false,
-					software: [],
+					// The shell round-trip below needs a real `sh`; common is the
+					// sh + coreutils bundle and resolves from the local registry.
+					software: [common],
 					permissions: {
 						fs: "allow",
 						network: "allow",
@@ -701,6 +703,57 @@ describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
 				"direct actor-id readFile",
 			);
 			expect(bytesToString(directContent)).toBe("hello actor id");
+
+			// Shell round-trip: command stdout must arrive on the `shellData`
+			// broadcast — the inspector terminal renders from exactly this
+			// stream. The marker is computed by the shell so the PTY echo of
+			// the typed input cannot satisfy the assertion.
+			const shellOutput: string[] = [];
+			const unsubscribe = (
+				conn as unknown as {
+					on: (name: string, cb: (payload: unknown) => void) => () => void;
+				}
+			).on("shellData", (payload) => {
+				const p = payload as { data?: unknown } | undefined;
+				if (p?.data !== undefined) shellOutput.push(bytesToString(p.data));
+			});
+			try {
+				// Non-interactive on purpose: an interactive `sh` prompt probes
+				// the cursor position (DSR, ESC[6n) and hangs without a terminal
+				// answering — xterm.js does in the real inspector, this test does
+				// not. `sh -c` prints and exits without prompting.
+				const { shellId } = (await waitForPromise(
+					handle.action({
+						name: "openShell",
+						args: [
+							{
+								command: "sh",
+								args: ["-c", "echo shell-roundtrip-$((40+2))"],
+								cols: 80,
+								rows: 24,
+							},
+						],
+					}),
+					30_000,
+					"openShell",
+				)) as { shellId: string };
+				const exitCode = await waitForPromise(
+					handle.action({ name: "waitShell", args: [shellId] }),
+					30_000,
+					"waitShell",
+				);
+				expect(exitCode).toBe(0);
+				const deadline = Date.now() + 30_000;
+				while (
+					Date.now() < deadline &&
+					!shellOutput.join("").includes("shell-roundtrip-42")
+				) {
+					await new Promise((resolve) => setTimeout(resolve, 250));
+				}
+				expect(shellOutput.join("")).toContain("shell-roundtrip-42");
+			} finally {
+				unsubscribe();
+			}
 		} finally {
 			await conn.dispose();
 		}
