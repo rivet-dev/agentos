@@ -87,7 +87,7 @@ function App() {
 				{/* Permission prompts sit with the strip, outside the boundary: an
 				    agent blocked on approval must stay answerable from every tab even
 				    when the tab body itself is broken. */}
-				<PermissionPrompts />
+				<PermissionPrompts actorId={auth.actorId} />
 				<div className="min-h-0 flex-1">
 					<TabBoundary>
 						<Tab actorId={auth.actorId} />

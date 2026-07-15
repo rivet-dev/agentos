@@ -36,7 +36,12 @@ fn observe_only_actions_are_contract_rows() {
     // The non-waking lane exists for exactly the promoted inspector actions.
     assert_eq!(
         agentos_actor_plugin::actions::OBSERVE_ONLY,
-        &["cancelPrompt", "getRuntimeHealth", "listSessions"]
+        &[
+            "cancelPrompt",
+            "getRuntimeHealth",
+            "listPendingPermissions",
+            "listSessions"
+        ]
     );
 }
 

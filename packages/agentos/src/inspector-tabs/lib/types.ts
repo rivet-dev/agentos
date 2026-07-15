@@ -215,6 +215,26 @@ export interface PermissionRequestPayload {
 		params: Record<string, unknown>;
 	};
 }
+/** Mirror of the `permissionResolved` broadcast payload (Rust owns
+ * broadcasts): a `respondPermission` succeeded, so any other viewer's pending
+ * card for this `sessionId:permissionId` is stale and should drop. */
+export interface PermissionResolvedPayload {
+	sessionId: string;
+	permissionId: string;
+	reply: "once" | "always" | "reject";
+}
+/** Raw `listPendingPermissions` row (observe-only; never boots the VM) — an
+ * unanswered permission request buffered runtime-side so a banner opened
+ * AFTER the `permissionRequest` broadcast can still backfill it. Same
+ * `sessionId:permissionId` identity as the broadcast; `requestedAt` is the
+ * runtime's receipt time (epoch ms), used for the ~120s expiry countdown. */
+export interface PendingPermissionInfo {
+	sessionId: string;
+	permissionId: string;
+	description?: string;
+	params: Record<string, unknown>;
+	requestedAt: number;
+}
 
 // ── Runtime health (`getRuntimeHealth`, observe-only; see lib/source.ts) ──
 export interface RuntimeLimitWarning {

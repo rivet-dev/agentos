@@ -123,6 +123,14 @@ export interface LiveSessionInfo {
 	agentType: string;
 }
 
+export interface PendingPermissionInfo {
+	sessionId: string;
+	permissionId: string;
+	description?: string;
+	params: Record<string, unknown>;
+	requestedAt: number;
+}
+
 export interface RuntimeLimitWarning {
 	ts: number;
 	limit: string;
@@ -206,4 +214,5 @@ export type AgentOsActions = {
 	getRuntimeHealth: (c: Ctx) => Promise<RuntimeHealth>;
 	listSessions: (c: Ctx) => Promise<LiveSessionInfo[]>;
 	cancelPrompt: (c: Ctx, sessionId: string) => Promise<void>;
+	listPendingPermissions: (c: Ctx) => Promise<PendingPermissionInfo[]>;
 };

@@ -274,6 +274,12 @@ pub const ACTION_CONTRACTS: &[ActionContract] = &[
         reply_shape: ReplyShape::Unit,
         ts_signature: "cancelPrompt: (c: Ctx, sessionId: string) => Promise<void>;",
     },
+    ActionContract {
+        name: "listPendingPermissions",
+        reply_shape: ReplyShape::Array,
+        ts_signature:
+            "listPendingPermissions: (c: Ctx) => Promise<PendingPermissionInfo[]>;",
+    },
 ];
 
 #[allow(dead_code)]
@@ -287,6 +293,11 @@ pub const EVENT_CONTRACTS: &[EventContract] = &[
         name: "permissionRequest",
         payload_shape: ReplyShape::Object(&["request", "sessionId"]),
         ts_signature: "permissionRequest: PermissionRequestPayload;",
+    },
+    EventContract {
+        name: "permissionResolved",
+        payload_shape: ReplyShape::Object(&["permissionId", "reply", "sessionId"]),
+        ts_signature: "permissionResolved: PermissionResolvedPayload;",
     },
     EventContract {
         name: "agentCrashed",
@@ -538,6 +549,16 @@ const DTO_INTERFACES: &[TsInterface] = &[
     TsInterface {
         name: "LiveSessionInfo",
         fields: &[field("sessionId", "string"), field("agentType", "string")],
+    },
+    TsInterface {
+        name: "PendingPermissionInfo",
+        fields: &[
+            field("sessionId", "string"),
+            field("permissionId", "string"),
+            optional_field("description", "string"),
+            field("params", "Record<string, unknown>"),
+            field("requestedAt", "number"),
+        ],
     },
     TsInterface {
         name: "RuntimeLimitWarning",

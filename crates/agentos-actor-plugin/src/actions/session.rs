@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 
 use super::health::HealthBuffers;
+use super::permissions::PENDING_PERMISSIONS_CAP;
 use super::Vars;
 use crate::persistence::{
     insert_session_event, query_rows, reconstruct_transcript_to_file, run_stmt,
@@ -199,6 +200,34 @@ pub(crate) fn encode_permission_request_event(
     ))
 }
 
+/// Build the `permissionResolved` broadcast body: `{ sessionId, permissionId,
+/// reply }` (TS `PermissionResolvedPayload`), broadcast after a successful
+/// `respondPermission` so every open inspector drops its card — without it a
+/// second viewer's card dangles until the request would have expired.
+fn permission_resolved_payload(
+    external_session_id: &str,
+    permission_id: &str,
+    reply: &str,
+) -> JsonValue {
+    json!({
+        "sessionId": external_session_id,
+        "permissionId": permission_id,
+        "reply": reply,
+    })
+}
+
+pub(crate) fn encode_permission_resolved_event(
+    external_session_id: &str,
+    permission_id: &str,
+    reply: &str,
+) -> Result<Vec<u8>> {
+    super::encode_event_arg(&permission_resolved_payload(
+        external_session_id,
+        permission_id,
+        reply,
+    ))
+}
+
 /// Map the wire reply string to a [`PermissionReply`] (`"once"` / `"always"` /
 /// `"reject"`), matching the TS `PermissionReply` union.
 fn parse_permission_reply(reply: &str) -> Result<PermissionReply> {
@@ -245,12 +274,30 @@ fn spawn_permission_pump(
         old.abort();
     }
     let ctx = ctx.clone();
+    let pending = vars.pending_permissions.clone();
     let external = external_session_id.to_owned();
     let handle = tokio::spawn(async move {
         // Keep the RAII guard alive for the pump's lifetime; dropping the stream
         // (on abort / channel close) is the unsubscribe.
         let _subscription = subscription;
         while let Some(request) = stream.next().await {
+            // Buffer for the `listPendingPermissions` backfill BEFORE the live
+            // broadcast, so an inspector opened later still sees the request.
+            // At cap the oldest entry is evicted — host-visible per repo
+            // policy, never silent (that request becomes unanswerable through
+            // `respondPermission` until it times out server-side).
+            if let Some(dropped) = pending.insert(
+                &external,
+                &request.permission_id,
+                request.description.as_deref(),
+                &request.params,
+            ) {
+                ctx.log_warn(&format!(
+                    "agent-os pending permission buffer full (cap {PENDING_PERMISSIONS_CAP}): \
+                     dropped oldest request {} for session {}",
+                    dropped.permission_id, dropped.session_id
+                ));
+            }
             let body = encode_permission_request_event(
                 &external,
                 &request.permission_id,
@@ -271,20 +318,52 @@ fn spawn_permission_pump(
         .insert(live_session_id.to_owned(), handle);
 }
 
+/// Typed guard for [`respond_permission`]: the id must still be in the
+/// plugin-side pending map (inserted by the permission pump, removed on the
+/// first successful reply, lazily expired past the runtime's
+/// `PERMISSION_TIMEOUT_MS`, dropped wholesale on VM teardown). The
+/// "already answered or expired" text is stable — the inspector matches it to
+/// render a quiet expired card instead of a failure.
+fn require_pending(vars: &Vars, session_id: &str, permission_id: &str) -> Result<()> {
+    if vars.pending_permissions.contains(session_id, permission_id) {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "no pending permission request {permission_id} for session {session_id}: \
+         it was already answered or expired"
+    ))
+}
+
 /// Answer a permission request raised by the session's guest agent
-/// (`respondPermission`). Resolves the pending reply slot through the client's
-/// `respond_permission`, keyed by the live session id.
+/// (`respondPermission`). Requires the request to still be pending
+/// plugin-side (typed error otherwise), resolves the reply slot through the
+/// client's `respond_permission` keyed by the live session id, then removes
+/// the pending entry and broadcasts `permissionResolved` so every other open
+/// inspector drops its card.
 pub async fn respond_permission(
+    ctx: &HostCtx,
     vm: &AgentOs,
     vars: &Vars,
     session_id: &str,
     permission_id: &str,
     reply: &str,
 ) -> Result<()> {
-    let reply = parse_permission_reply(reply)?;
+    let parsed = parse_permission_reply(reply)?;
+    require_pending(vars, session_id, permission_id)?;
     let live_session_id = vars.live_id(session_id).to_owned();
-    vm.respond_permission(&live_session_id, permission_id, reply)
+    vm.respond_permission(&live_session_id, permission_id, parsed)
         .await?;
+    // Only after the reply slot actually resolved: a failed forward keeps the
+    // entry so the request stays answerable (or expires on its own).
+    vars.pending_permissions.remove(session_id, permission_id);
+    match encode_permission_resolved_event(session_id, permission_id, reply) {
+        Ok(cbor) => {
+            let _ = ctx.broadcast(b"permissionResolved".to_vec(), cbor);
+        }
+        Err(error) => {
+            tracing::warn!(?error, "failed to encode permission resolved broadcast");
+        }
+    }
     Ok(())
 }
 
@@ -751,6 +830,45 @@ mod tests {
     fn permission_event_body_serializes_absent_description_as_null() {
         let body = permission_event_payload("sess-1", "perm-1", None, &json!({}));
         assert_eq!(body["request"]["description"], JsonValue::Null);
+    }
+
+    #[test]
+    fn permission_resolved_body_matches_ts_payload_shape() {
+        // The TS listener arg is `PermissionResolvedPayload { sessionId,
+        // permissionId, reply }` — flat, unlike the request's nested shape.
+        let data = permission_resolved_payload("sess-1", "perm-7", "always");
+        assert_eq!(
+            data,
+            json!({
+                "sessionId": "sess-1",
+                "permissionId": "perm-7",
+                "reply": "always",
+            })
+        );
+    }
+
+    #[test]
+    fn respond_permission_on_missing_id_is_a_typed_error() {
+        // Not in the pending map — already answered by another viewer, expired
+        // past PERMISSION_TIMEOUT_MS, or dropped with the VM. The inspector
+        // matches the stable "already answered or expired" text to show the
+        // quiet expired state, so this guard must fire BEFORE the forward.
+        let vars = Vars::default();
+        let err = require_pending(&vars, "session-1", "perm-1")
+            .expect_err("missing pending entry must be a typed error");
+        assert!(
+            err.to_string().contains("already answered or expired"),
+            "got: {err}"
+        );
+        assert!(err.to_string().contains("perm-1"), "names the id: {err}");
+    }
+
+    #[test]
+    fn require_pending_passes_for_a_buffered_request() {
+        let vars = Vars::default();
+        vars.pending_permissions
+            .insert("session-1", "perm-1", None, &json!({}));
+        require_pending(&vars, "session-1", "perm-1").expect("buffered request is answerable");
     }
 
     #[test]

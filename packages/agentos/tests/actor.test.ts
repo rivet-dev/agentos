@@ -440,6 +440,7 @@ describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
 			"getSessionEvents",
 			"killProcess",
 			"listMounts",
+			"listPendingPermissions",
 			"listPersistedSessions",
 			"listProcesses",
 			"listSessions",

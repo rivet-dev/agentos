@@ -10,6 +10,7 @@ import type {
 	FsEntry,
 	JsonRpcNotification,
 	MountInfo,
+	PendingPermissionInfo,
 	PersistedSessionEvent,
 	PersistedSessionRecord,
 	ProcessInfo,
@@ -309,8 +310,9 @@ export const agentOsSource = {
 
 	// ── Permission approvals (global banner, permission-prompts.tsx) ─────
 	// Answers a pending `permissionRequest` broadcast. The runtime auto-rejects
-	// after its permission timeout, so a late reply fails with a runtime error
-	// ("no pending permission") — callers render that as already-handled.
+	// after its permission timeout and another viewer may answer first, so a
+	// late reply fails with a typed runtime error ("already answered or
+	// expired") — callers render that as already-handled, not a failure.
 	respondPermission: (sessionId: string, permissionId: string, reply: "once" | "always" | "reject") =>
 		callAction("respondPermission", [sessionId, permissionId, reply]),
 
@@ -380,6 +382,26 @@ export const liveSessionsQueryOptions = (actorId: string) =>
 			}
 		},
 		refetchInterval: 10_000,
+		retry: false,
+	});
+
+/** Pending permission requests buffered runtime-side — the one-off backfill
+ * for the permission banner (permission-prompts.tsx), so requests broadcast
+ * while no inspector iframe was open still render. No refetchInterval: after
+ * the mount fetch, updates arrive on the `permissionRequest` /
+ * `permissionResolved` broadcasts. Returns null when the runtime doesn't
+ * expose the action (older runtime) — the banner then stays live-only. */
+export const pendingPermissionsQueryOptions = (actorId: string) =>
+	queryOptions({
+		queryKey: k(actorId, "pending-permissions"),
+		queryFn: async (): Promise<PendingPermissionInfo[] | null> => {
+			try {
+				return await callAction<PendingPermissionInfo[]>("listPendingPermissions", []);
+			} catch (error) {
+				if (isInspectorActionError(error) && error.layer === "contract") return null;
+				throw error;
+			}
+		},
 		retry: false,
 	});
 

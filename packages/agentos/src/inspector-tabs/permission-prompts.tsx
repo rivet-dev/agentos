@@ -2,14 +2,17 @@
 // tab is its own iframe, so "global" means "in every iframe's chrome"). An
 // agent blocked on a `permissionRequest` broadcast otherwise looks frozen: the
 // turn hangs until the runtime auto-rejects at its permission timeout (~120s).
-// Cards are live-only for now — requests broadcast while no inspector iframe
-// was open are missed until a `listPendingPermissions` backfill action exists.
+// Cards come from two sources merged on `sessionId:permissionId`: a one-off
+// `listPendingPermissions` backfill on mount (requests broadcast while no
+// inspector iframe was open) plus the live `permissionRequest` stream. The
+// `permissionResolved` broadcast drops cards another viewer already answered.
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { ChevronRight } from "./common";
 import { isInspectorActionError } from "./lib/actor-client";
 import { useAgentOsActor } from "./lib/rivet";
-import { agentOsSource } from "./lib/source";
-import type { PermissionRequestPayload } from "./lib/types";
+import { agentOsSource, pendingPermissionsQueryOptions } from "./lib/source";
+import type { PermissionRequestPayload, PermissionResolvedPayload } from "./lib/types";
 import React from "react";
 
 // Mirrors the runtime's PERMISSION_TIMEOUT_MS: past this the reply slot is
@@ -39,10 +42,42 @@ const REPLIES = [
 	{ reply: "reject", label: "Deny" },
 ] as const;
 
-export function PermissionPrompts() {
+export function PermissionPrompts({ actorId }: { actorId: string }) {
 	const [cards, setCards] = useState<PermissionCard[]>([]);
 	const cardsRef = useRef(cards);
 	cardsRef.current = cards;
+
+	// One-off backfill of requests broadcast before this iframe subscribed.
+	// `data === null` means the runtime predates `listPendingPermissions`
+	// (contract-layer error) — stay live-only silently.
+	const backfill = useQuery(pendingPermissionsQueryOptions(actorId));
+	const backfillRows = backfill.data;
+	useEffect(() => {
+		if (!backfillRows || backfillRows.length === 0) return;
+		setCards((prev) => {
+			// Live cards win the dedupe: a broadcast that raced the fetch already
+			// carries the same request (identity is sessionId:permissionId).
+			const have = new Set(prev.map(cardKey));
+			const added = backfillRows
+				.filter((row) => !have.has(cardKey(row)))
+				.map(
+					(row): PermissionCard => ({
+						sessionId: row.sessionId,
+						permissionId: row.permissionId,
+						description: row.description,
+						params: row.params ?? {},
+						// Runtime receipt time, so the expiry countdown measures the
+						// request's real age rather than when this viewer opened.
+						receivedAt: row.requestedAt,
+						state: "pending",
+					}),
+				);
+			if (added.length === 0) return prev;
+			return [...prev, ...added]
+				.sort((a, b) => a.receivedAt - b.receivedAt)
+				.slice(-MAX_CARDS);
+		});
+	}, [backfillRows]);
 
 	// Broadcast names aren't in the typed event schema (Rust owns broadcasts) —
 	// same cast pattern as transcript.tsx / vm-status-strip.tsx.
@@ -67,6 +102,16 @@ export function PermissionPrompts() {
 			const deduped = prev.filter((c) => cardKey(c) !== cardKey(next));
 			return [...deduped, next].slice(-MAX_CARDS);
 		});
+	});
+	// Another viewer (or a headless client) answered: its card is stale here,
+	// so drop it outright — an untouched card needs no "handled elsewhere"
+	// residue. A busy card stays: its own in-flight respond reports the
+	// outcome (the "already answered or expired" error → quiet expired state).
+	useAgentEvent("permissionResolved", (payload) => {
+		const p = payload as PermissionResolvedPayload | undefined;
+		if (!p?.sessionId || !p?.permissionId) return;
+		const key = cardKey(p);
+		setCards((prev) => prev.filter((c) => cardKey(c) !== key || c.state === "busy"));
 	});
 
 	// Flip pending cards to expired once the runtime's reply slot is gone.

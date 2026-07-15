@@ -75,6 +75,7 @@ export type {
 	AgentOsEvents,
 	CronEventPayload,
 	PermissionRequestPayload,
+	PermissionResolvedPayload,
 	PersistedSessionEvent,
 	PersistedSessionRecord,
 	ProcessExitPayload,

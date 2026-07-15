@@ -15,6 +15,7 @@ pub(crate) mod cron;
 pub(crate) mod filesystem;
 pub(crate) mod health;
 pub(crate) mod network;
+pub(crate) mod permissions;
 pub(crate) mod preview;
 pub(crate) mod process;
 pub(crate) mod session;
@@ -57,6 +58,13 @@ pub struct Vars {
     /// VM teardown aborts the feeds; the [`health::HealthBuffers`] they write
     /// into are owned by `actor_worker` and deliberately SURVIVE teardown.
     pub health_tasks: Vec<JoinHandle<()>>,
+    /// Bounded buffer of unanswered permission requests, fed by the permission
+    /// pump and served by the observe-only `listPendingPermissions` backfill.
+    /// Lives here (NOT next to `health` in `actor_worker`) because the
+    /// client-side reply slots die with the VM: pending entries must not
+    /// survive sleep, and [`Vars::clear`] drops them with the rest of the
+    /// per-VM state.
+    pub pending_permissions: permissions::PendingPermissions,
 }
 
 impl Vars {
@@ -88,6 +96,9 @@ impl Vars {
             task.abort();
         }
         self.live_sessions.clear();
+        // The reply slots behind these entries die with the VM — keeping them
+        // would advertise requests that can no longer be answered.
+        self.pending_permissions.clear();
     }
 }
 
@@ -95,8 +106,15 @@ impl Vars {
 /// against the CURRENT `Option<AgentOs>` and MUST NOT boot a sleeping VM. The
 /// inspector's status strip polls `getRuntimeHealth`/`listSessions` on every
 /// open tab, and observing a sleeping actor must not wake it; `cancelPrompt`
-/// has nothing to cancel without a live VM (typed error, never a boot).
-pub const OBSERVE_ONLY: &[&str] = &["cancelPrompt", "getRuntimeHealth", "listSessions"];
+/// has nothing to cancel without a live VM (typed error, never a boot); and
+/// `listPendingPermissions` is `[]` while asleep because pending requests die
+/// with the VM (`Vars::clear`).
+pub const OBSERVE_ONLY: &[&str] = &[
+    "cancelPrompt",
+    "getRuntimeHealth",
+    "listPendingPermissions",
+    "listSessions",
+];
 
 /// Decode positional CBOR args into `T`.
 ///
@@ -226,7 +244,7 @@ pub mod contract {
     use rivet_actor_plugin_abi as abi;
     use serde_json::json;
 
-    use super::{cron, filesystem, health, network, preview, process, session, shell};
+    use super::{cron, filesystem, health, network, permissions, preview, process, session, shell};
 
     pub use super::contract_surface::{
         render_actor_actions_ts, ActionContract, EventContract, ReplyShape, ACTION_CONTRACTS,
@@ -274,7 +292,8 @@ pub mod contract {
             | "listMounts"
             | "listSoftware"
             | "getRuntimeHealth"
-            | "listSessions" => super::decode_as::<()>(args).map(|_| ()),
+            | "listSessions"
+            | "listPendingPermissions" => super::decode_as::<()>(args).map(|_| ()),
             "writeProcessStdin" => {
                 super::decode_as::<(u32, filesystem::WriteFileContent)>(args).map(|_| ())
             }
@@ -356,7 +375,8 @@ pub mod contract {
             | "listMounts"
             | "listSoftware"
             | "getRuntimeHealth"
-            | "listSessions" => vec![json!([])],
+            | "listSessions"
+            | "listPendingPermissions" => vec![json!([])],
             "writeProcessStdin" => vec![json!([42, ["$Uint8Array", "aGVsbG8="]])],
             "openShell" => vec![
                 json!([]),
@@ -438,7 +458,8 @@ pub mod contract {
             | "listMounts"
             | "listSoftware"
             | "getRuntimeHealth"
-            | "listSessions" => vec![(
+            | "listSessions"
+            | "listPendingPermissions" => vec![(
                 "zero-arg action must not accept extras",
                 json!(["unexpected"]),
             )],
@@ -641,6 +662,13 @@ pub mod contract {
                 session_id: "session-1".to_owned(),
                 agent_type: "default".to_owned(),
             }]),
+            "listPendingPermissions" => encode(&vec![permissions::PendingPermissionDto {
+                session_id: "session-1".to_owned(),
+                permission_id: "permission-1".to_owned(),
+                description: Some("run command".to_owned()),
+                params: json!({ "toolCall": { "title": "Bash" } }),
+                requested_at: 1.0,
+            }]),
             other => Err(anyhow!("unknown action {other}")),
         }
     }
@@ -657,6 +685,9 @@ pub mod contract {
                 Some("run command"),
                 &json!({ "toolCall": { "title": "Bash" } }),
             ),
+            "permissionResolved" => {
+                session::encode_permission_resolved_event("session-1", "permission-1", "once")
+            }
             "agentCrashed" => session::encode_agent_crashed_event(
                 "session-1",
                 &AgentExitEvent {
@@ -1036,8 +1067,15 @@ pub(crate) async fn dispatch(
         },
         "respondPermission" => match decode_as::<(String, String, String)>(args) {
             Ok((session_id, permission_id, reply)) => {
-                match session::respond_permission(vm, vars, &session_id, &permission_id, &reply)
-                    .await
+                match session::respond_permission(
+                    host,
+                    vm,
+                    vars,
+                    &session_id,
+                    &permission_id,
+                    &reply,
+                )
+                .await
                 {
                     Ok(()) => reply_ok(host, token, &()),
                     Err(error) => reply_err(host, token, error),
@@ -1163,6 +1201,10 @@ pub(crate) async fn dispatch_observe(
     match name {
         "getRuntimeHealth" => reply_ok(host, token, &health::runtime_health(vm, health)),
         "listSessions" => reply_ok(host, token, &health::list_live_sessions(vm, vars)),
+        // Pending permission backfill for the inspector banner. `list()`
+        // expire-sweeps first; a sleeping VM already cleared the buffer via
+        // `Vars::clear` (the reply slots died with it), so this is `[]` then.
+        "listPendingPermissions" => reply_ok(host, token, &vars.pending_permissions.list()),
         "cancelPrompt" => match decode_as::<(String,)>(args) {
             Ok((session_id,)) => match session::cancel_prompt(vm, vars, &session_id).await {
                 Ok(()) => reply_ok(host, token, &()),

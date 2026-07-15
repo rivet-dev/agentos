@@ -5,6 +5,7 @@ import type {
 	AgentOs,
 	JsonRpcNotification,
 	JsonRpcResponse,
+	PermissionReply,
 	PermissionRequest,
 } from "@rivet-dev/agentos-core";
 import type { ActionContext } from "rivetkit";
@@ -35,6 +36,14 @@ export interface SessionEventPayload {
 export interface PermissionRequestPayload {
 	sessionId: string;
 	request: PermissionRequest;
+}
+
+/** Broadcast after a successful `respondPermission` so every connected client
+ * (e.g. a second inspector viewer) can drop its pending card. */
+export interface PermissionResolvedPayload {
+	sessionId: string;
+	permissionId: string;
+	reply: PermissionReply;
 }
 
 export interface AgentCrashedPayload {
@@ -83,6 +92,7 @@ export interface CronEventPayload {
 export interface AgentOsEvents {
 	sessionEvent: SessionEventPayload;
 	permissionRequest: PermissionRequestPayload;
+	permissionResolved: PermissionResolvedPayload;
 	agentCrashed: AgentCrashedPayload;
 	vmBooted: VmBootedPayload;
 	vmShutdown: VmShutdownPayload;
