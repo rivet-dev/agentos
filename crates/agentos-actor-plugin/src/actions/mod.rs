@@ -13,6 +13,7 @@
 mod contract_surface;
 pub(crate) mod cron;
 pub(crate) mod filesystem;
+pub(crate) mod health;
 pub(crate) mod network;
 pub(crate) mod preview;
 pub(crate) mod process;
@@ -51,6 +52,11 @@ pub struct Vars {
     /// One cron event pump per VM lifetime. It fans `AgentOs::cron_events()` to
     /// actor clients as `cronEvent` broadcasts.
     pub cron_task: Option<JoinHandle<()>>,
+    /// Health pump tasks (one `limit_warning` subscription per VM lifetime,
+    /// spawned by `health::spawn_health_pumps` on fresh boot). Tracked here so
+    /// VM teardown aborts the feeds; the [`health::HealthBuffers`] they write
+    /// into are owned by `actor_worker` and deliberately SURVIVE teardown.
+    pub health_tasks: Vec<JoinHandle<()>>,
 }
 
 impl Vars {
@@ -78,9 +84,19 @@ impl Vars {
         if let Some(task) = self.cron_task.take() {
             task.abort();
         }
+        for task in self.health_tasks.drain(..) {
+            task.abort();
+        }
         self.live_sessions.clear();
     }
 }
+
+/// Actions dispatched on the observe-only lane (`dispatch_observe`): they run
+/// against the CURRENT `Option<AgentOs>` and MUST NOT boot a sleeping VM. The
+/// inspector's status strip polls `getRuntimeHealth`/`listSessions` on every
+/// open tab, and observing a sleeping actor must not wake it; `cancelPrompt`
+/// has nothing to cancel without a live VM (typed error, never a boot).
+pub const OBSERVE_ONLY: &[&str] = &["cancelPrompt", "getRuntimeHealth", "listSessions"];
 
 /// Decode positional CBOR args into `T`.
 ///
@@ -210,7 +226,7 @@ pub mod contract {
     use rivet_actor_plugin_abi as abi;
     use serde_json::json;
 
-    use super::{cron, filesystem, network, preview, process, session, shell};
+    use super::{cron, filesystem, health, network, preview, process, session, shell};
 
     pub use super::contract_surface::{
         render_actor_actions_ts, ActionContract, EventContract, ReplyShape, ACTION_CONTRACTS,
@@ -256,7 +272,9 @@ pub mod contract {
             | "listCronJobs"
             | "listPersistedSessions"
             | "listMounts"
-            | "listSoftware" => super::decode_as::<()>(args).map(|_| ()),
+            | "listSoftware"
+            | "getRuntimeHealth"
+            | "listSessions" => super::decode_as::<()>(args).map(|_| ()),
             "writeProcessStdin" => {
                 super::decode_as::<(u32, filesystem::WriteFileContent)>(args).map(|_| ())
             }
@@ -272,6 +290,7 @@ pub mod contract {
             | "cancelCronJob"
             | "closeSession"
             | "getSessionEvents"
+            | "cancelPrompt"
             | "expireSignedPreviewUrl" => super::decode_as::<(String,)>(args).map(|_| ()),
             "vmFetch" => super::decode_as::<(u16, String, Option<network::FetchOptions>)>(args)
                 .map(|_| ())
@@ -303,6 +322,7 @@ pub mod contract {
             | "cancelCronJob"
             | "closeSession"
             | "getSessionEvents"
+            | "cancelPrompt"
             | "expireSignedPreviewUrl" => {
                 vec![json!(["/workspace/file.txt"])]
             }
@@ -334,7 +354,9 @@ pub mod contract {
             | "listCronJobs"
             | "listPersistedSessions"
             | "listMounts"
-            | "listSoftware" => vec![json!([])],
+            | "listSoftware"
+            | "getRuntimeHealth"
+            | "listSessions" => vec![json!([])],
             "writeProcessStdin" => vec![json!([42, ["$Uint8Array", "aGVsbG8="]])],
             "openShell" => vec![
                 json!([]),
@@ -377,6 +399,7 @@ pub mod contract {
             | "cancelCronJob"
             | "closeSession"
             | "getSessionEvents"
+            | "cancelPrompt"
             | "expireSignedPreviewUrl" => {
                 vec![("path/id must be a string", json!([42]))]
             }
@@ -413,7 +436,9 @@ pub mod contract {
             | "listCronJobs"
             | "listPersistedSessions"
             | "listMounts"
-            | "listSoftware" => vec![(
+            | "listSoftware"
+            | "getRuntimeHealth"
+            | "listSessions" => vec![(
                 "zero-arg action must not accept extras",
                 json!(["unexpected"]),
             )],
@@ -467,6 +492,7 @@ pub mod contract {
             | "cancelCronJob"
             | "closeSession"
             | "respondPermission"
+            | "cancelPrompt"
             | "expireSignedPreviewUrl" => encode(&()),
             "stat" => encode(&VirtualStat {
                 mode: 0o100644,
@@ -580,6 +606,41 @@ pub mod contract {
                 version: Some("0.0.1".to_owned()),
                 commands: vec!["ls".to_owned()],
             }]),
+            // Booted-VM sample with every buffer populated so the nested
+            // warning/exit/stderr shapes are exercised too (the runtime ships
+            // an empty stderrTail today — see `health::runtime_health`).
+            "getRuntimeHealth" => encode(&health::RuntimeHealthDto {
+                booted: true,
+                sessions: Some(1),
+                sidecar: Some(health::RuntimeSidecarInfoDto {
+                    state: "ready".to_owned(),
+                    active_vm_count: 1,
+                }),
+                warnings: vec![health::RuntimeLimitWarningDto {
+                    ts: 1.0,
+                    limit: "javascript_event_channel".to_owned(),
+                    category: "queue".to_owned(),
+                    observed: 82.0,
+                    capacity: 100.0,
+                    fill_percent: 82.0,
+                }],
+                agent_exits: vec![health::RuntimeAgentExitDto {
+                    ts: 1.0,
+                    session_id: "session-1".to_owned(),
+                    agent_type: "pi".to_owned(),
+                    exit_code: Some(1),
+                    restart: "restarted".to_owned(),
+                    restart_count: 1,
+                }],
+                stderr_tail: vec![health::RuntimeStderrLineDto {
+                    ts: 1.0,
+                    line: "adapter warning".to_owned(),
+                }],
+            }),
+            "listSessions" => encode(&vec![health::LiveSessionInfoDto {
+                session_id: "session-1".to_owned(),
+                agent_type: "default".to_owned(),
+            }]),
             other => Err(anyhow!("unknown action {other}")),
         }
     }
@@ -667,19 +728,22 @@ pub mod contract {
 /// Dispatch one decoded action against a live VM. `host` provides the actor's
 /// SQLite database (via `db_*`) for the persistence-backed arms (signed preview
 /// URLs + session metadata); `vm` is the live `AgentOs`; `vars` is the
-/// ephemeral session-resume state.
+/// ephemeral session-resume state; `health` is the worker-owned post-mortem
+/// buffer store the session exit pump tees into.
 ///
 /// ⚠️ SOURCE OF TRUTH / KEEP IN SYNC ⚠️
-/// This match statement is mirrored one-to-one by `contract_surface.rs`, which
-/// generates the TypeScript `AgentOsActions` surface used to type
-/// `createClient<typeof registry>()`. Every `"name" =>` arm below must have a
-/// corresponding contract row with matching positional args and serialized
-/// return type. Update both in the same change.
+/// This match statement — together with the observe-only arms in
+/// [`dispatch_observe`] below — is mirrored one-to-one by
+/// `contract_surface.rs`, which generates the TypeScript `AgentOsActions`
+/// surface used to type `createClient<typeof registry>()`. Every `"name" =>`
+/// arm must have a corresponding contract row with matching positional args
+/// and serialized return type. Update both in the same change.
 pub(crate) async fn dispatch(
     host: &HostCtx,
     vm: &AgentOs,
     config: &crate::config::AgentOsConfigJson,
     vars: &mut Vars,
+    health: &health::HealthBuffers,
     name: &str,
     args: &[u8],
     token: u64,
@@ -926,7 +990,9 @@ pub(crate) async fn dispatch(
                 });
             match decoded {
                 Ok((agent_type, options)) => {
-                    match session::create_session(host, vm, vars, &agent_type, options).await {
+                    match session::create_session(host, vm, vars, health, &agent_type, options)
+                        .await
+                    {
                         Ok(id) => reply_ok_encoded(
                             host,
                             token,
@@ -1071,6 +1137,43 @@ pub(crate) async fn dispatch(
             host.reply_err(
                 token,
                 &format!("agent-os action not implemented yet: {other}"),
+            );
+        }
+    }
+}
+
+/// Dispatch one [`OBSERVE_ONLY`] action against the CURRENT VM state. Unlike
+/// [`dispatch`], `vm` is optional and this path is reached BEFORE
+/// `vm::ensure_vm` in `actor_worker` — these are poll-style inspector actions
+/// (the status strip hits `getRuntimeHealth` every 5s, `listSessions` every
+/// 10s), and observing a sleeping actor must never boot its VM.
+///
+/// ⚠️ Same contract-sync rule as [`dispatch`]: every arm here needs a matching
+/// `contract_surface.rs` row (the `action_contract` test parses both match
+/// statements together).
+pub(crate) async fn dispatch_observe(
+    host: &HostCtx,
+    vm: Option<&AgentOs>,
+    vars: &Vars,
+    health: &health::HealthBuffers,
+    name: &str,
+    args: &[u8],
+    token: u64,
+) {
+    match name {
+        "getRuntimeHealth" => reply_ok(host, token, &health::runtime_health(vm, health)),
+        "listSessions" => reply_ok(host, token, &health::list_live_sessions(vm, vars)),
+        "cancelPrompt" => match decode_as::<(String,)>(args) {
+            Ok((session_id,)) => match session::cancel_prompt(vm, vars, &session_id).await {
+                Ok(()) => reply_ok(host, token, &()),
+                Err(error) => reply_err(host, token, error),
+            },
+            Err(error) => reply_err(host, token, error),
+        },
+        other => {
+            host.reply_err(
+                token,
+                &format!("agent-os action is not observe-only: {other}"),
             );
         }
     }

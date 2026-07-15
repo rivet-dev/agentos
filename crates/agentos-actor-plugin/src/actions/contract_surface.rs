@@ -250,6 +250,30 @@ pub const ACTION_CONTRACTS: &[ActionContract] = &[
         reply_shape: ReplyShape::Array,
         ts_signature: "listSoftware: (c: Ctx) => Promise<SoftwareInfo[]>;",
     },
+    // Observe-only actions (`actions::OBSERVE_ONLY`): dispatched without
+    // booting a sleeping VM. See `dispatch_observe` in actions/mod.rs.
+    ActionContract {
+        name: "getRuntimeHealth",
+        reply_shape: ReplyShape::Object(&[
+            "agentExits",
+            "booted",
+            "sessions",
+            "sidecar",
+            "stderrTail",
+            "warnings",
+        ]),
+        ts_signature: "getRuntimeHealth: (c: Ctx) => Promise<RuntimeHealth>;",
+    },
+    ActionContract {
+        name: "listSessions",
+        reply_shape: ReplyShape::Array,
+        ts_signature: "listSessions: (c: Ctx) => Promise<LiveSessionInfo[]>;",
+    },
+    ActionContract {
+        name: "cancelPrompt",
+        reply_shape: ReplyShape::Unit,
+        ts_signature: "cancelPrompt: (c: Ctx, sessionId: string) => Promise<void>;",
+    },
 ];
 
 #[allow(dead_code)]
@@ -509,6 +533,51 @@ const DTO_INTERFACES: &[TsInterface] = &[
             field("kind", r#""wasm-commands" | "agent" | "tool""#),
             field("version", "string | null"),
             field("commands", "string[]"),
+        ],
+    },
+    TsInterface {
+        name: "LiveSessionInfo",
+        fields: &[field("sessionId", "string"), field("agentType", "string")],
+    },
+    TsInterface {
+        name: "RuntimeLimitWarning",
+        fields: &[
+            field("ts", "number"),
+            field("limit", "string"),
+            field("category", "string"),
+            field("observed", "number"),
+            field("capacity", "number"),
+            field("fillPercent", "number"),
+        ],
+    },
+    TsInterface {
+        name: "RuntimeAgentExit",
+        fields: &[
+            field("ts", "number"),
+            field("sessionId", "string"),
+            field("agentType", "string"),
+            field("exitCode", "number | null"),
+            field("restart", "string"),
+            field("restartCount", "number"),
+        ],
+    },
+    TsInterface {
+        name: "RuntimeStderrLine",
+        fields: &[field("ts", "number"), field("line", "string")],
+    },
+    TsInterface {
+        name: "RuntimeSidecarInfo",
+        fields: &[field("state", "string"), field("activeVmCount", "number")],
+    },
+    TsInterface {
+        name: "RuntimeHealth",
+        fields: &[
+            field("booted", "boolean"),
+            field("sessions", "number | null"),
+            field("sidecar", "RuntimeSidecarInfo | null"),
+            field("warnings", "RuntimeLimitWarning[]"),
+            field("agentExits", "RuntimeAgentExit[]"),
+            field("stderrTail", "RuntimeStderrLine[]"),
         ],
     },
 ];

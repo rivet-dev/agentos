@@ -1,13 +1,14 @@
 // Shared VM status strip rendered above every tab (mounted in main.tsx):
 // lifecycle dot + session count on the left, runtime warnings badge + panel on
-// the right. Data comes from the OPTIONAL `getRuntimeHealth` action polled at
-// 5s (see lib/health.ts) with instant flips from the `vmBooted`/`vmShutdown`
-// broadcasts; when the actor doesn't provide the action the strip renders
-// nothing, preserving stock behavior.
+// the right. Data comes from the observe-only `getRuntimeHealth` action polled
+// at 5s (see lib/source.ts) with instant flips from the `vmBooted`/`vmShutdown`
+// broadcasts; when the actor doesn't provide the action (older runtime) the
+// strip renders nothing, preserving stock behavior.
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { relativeTime, StatusDot, type DotColor } from "./common";
-import { healthQueryOptions, isMissingHealthAction } from "./lib/health";
+import { isMissingHealthAction } from "./lib/health";
+import { healthQueryOptions } from "./lib/source";
 import { useAgentOsActor } from "./lib/rivet";
 import type { RuntimeHealth, VmShutdownPayload } from "./lib/types";
 import React from "react";

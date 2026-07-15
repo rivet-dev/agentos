@@ -8,8 +8,11 @@ use ciborium::Value as CborValue;
 #[test]
 fn dispatcher_arms_have_contract_rows() {
     let dispatcher = include_str!("../src/actions/mod.rs");
+    // Everything from the first dispatcher onward: `dispatch` (VM-required
+    // arms) and `dispatch_observe` (the observe-only arms) are the last two
+    // items in the file and together mirror ACTION_CONTRACTS one-to-one.
     let dispatch = dispatcher
-        .split("pub(crate) async fn dispatch")
+        .splitn(2, "pub(crate) async fn dispatch")
         .nth(1)
         .expect("dispatch function exists");
     let dispatch_arms = dispatch_arm_names(dispatch);
@@ -19,6 +22,79 @@ fn dispatcher_arms_have_contract_rows() {
         dispatch_arms, contract_names,
         "dispatcher arms and ACTION_CONTRACTS drifted"
     );
+}
+
+#[test]
+fn observe_only_actions_are_contract_rows() {
+    let contract_names = contract_names();
+    for name in agentos_actor_plugin::actions::OBSERVE_ONLY {
+        assert!(
+            contract_names.contains(name),
+            "observe-only action {name} missing from ACTION_CONTRACTS"
+        );
+    }
+    // The non-waking lane exists for exactly the promoted inspector actions.
+    assert_eq!(
+        agentos_actor_plugin::actions::OBSERVE_ONLY,
+        &["cancelPrompt", "getRuntimeHealth", "listSessions"]
+    );
+}
+
+#[test]
+fn runtime_health_reply_buffers_use_camel_case_field_names() {
+    let encoded = contract::encode_sample_reply("getRuntimeHealth").unwrap();
+    let decoded = contract::decode_reply_value(&encoded).unwrap();
+    let CborValue::Map(payload) = decoded else {
+        panic!("getRuntimeHealth reply must be an object");
+    };
+    let CborValue::Array(warnings) = object_field(&payload, "warnings") else {
+        panic!("warnings must be an array");
+    };
+    assert_object_keys(
+        "getRuntimeHealth.warnings[0]",
+        &warnings[0],
+        &["ts", "limit", "category", "observed", "capacity", "fillPercent"],
+    );
+    let CborValue::Array(exits) = object_field(&payload, "agentExits") else {
+        panic!("agentExits must be an array");
+    };
+    assert_object_keys(
+        "getRuntimeHealth.agentExits[0]",
+        &exits[0],
+        &[
+            "ts",
+            "sessionId",
+            "agentType",
+            "exitCode",
+            "restart",
+            "restartCount",
+        ],
+    );
+    assert_object_keys(
+        "getRuntimeHealth.sidecar",
+        object_field(&payload, "sidecar"),
+        &["state", "activeVmCount"],
+    );
+    let CborValue::Array(stderr_tail) = object_field(&payload, "stderrTail") else {
+        panic!("stderrTail must be an array");
+    };
+    assert_object_keys(
+        "getRuntimeHealth.stderrTail[0]",
+        &stderr_tail[0],
+        &["ts", "line"],
+    );
+}
+
+#[test]
+fn list_sessions_reply_rows_match_persisted_session_id_keys() {
+    let encoded = contract::encode_sample_reply("listSessions").unwrap();
+    let decoded = contract::decode_reply_value(&encoded).unwrap();
+    let CborValue::Array(rows) = decoded else {
+        panic!("listSessions reply must be an array");
+    };
+    // Rows carry the EXTERNAL session id under the same `sessionId` key as
+    // `listPersistedSessions` records so the inspector can cross-reference.
+    assert_object_keys("listSessions[0]", &rows[0], &["sessionId", "agentType"]);
 }
 
 #[test]
@@ -208,7 +284,7 @@ fn ts_dto_field_names_match_rust_contract_fixture() {
             "VirtualStat",
             "packages/core/src/runtime.ts",
             core_runtime,
-            "export interface VirtualStat { mode: number; size: number; blocks: number; dev: number; rdev: number; isDirectory: boolean; isSymbolicLink: boolean; atimeMs: number; mtimeMs: number; ctimeMs: number; birthtimeMs: number; ino: number; nlink: number; uid: number; gid: number; }",
+            "export interface VirtualStat { mode: number; size: number; sizeExact?: bigint; blocks: number; dev: number; rdev: number; isDirectory: boolean; isSymbolicLink: boolean; atimeMs: number; mtimeMs: number; ctimeMs: number; birthtimeMs: number; ino: number; inoExact?: bigint; nlink: number; nlinkExact?: bigint; uid: number; gid: number; }",
         ),
         (
             "ExecResult",

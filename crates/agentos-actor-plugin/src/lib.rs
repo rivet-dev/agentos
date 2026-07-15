@@ -337,6 +337,12 @@ async fn actor_worker(
 ) {
     let mut vm: Option<agentos_client::AgentOs> = None;
     let mut vars = actions::Vars::default();
+    // Post-mortem runtime health buffers (limit warnings + agent exits) for the
+    // observe-only `getRuntimeHealth` action. Owned here NEXT TO `vm` — not in
+    // `vars` — because they deliberately SURVIVE VM sleep: the inspector reads
+    // warnings and crash exits post-mortem while `booted == false`. Only the
+    // pump tasks feeding them (tracked in `vars.health_tasks`) die with the VM.
+    let health = actions::health::HealthBuffers::default();
     loop {
         let job = tokio::select! {
             _ = cancel.cancelled() => break,
@@ -347,6 +353,34 @@ async fn actor_worker(
         };
         match job {
             ActorJob::Action { token, payload } => {
+                // Decode BEFORE VM bring-up: observe-only actions (and
+                // malformed payloads) must never boot a sleeping VM.
+                let (name, action_args) = match abi::decode_action_payload(&payload) {
+                    Ok(decoded) => decoded,
+                    Err(_) => {
+                        let _ = host.reply_err(token, "malformed action event payload");
+                        continue;
+                    }
+                };
+                if actions::OBSERVE_ONLY.contains(&name.as_str()) {
+                    // Observe-only lane: dispatch against the current
+                    // `Option<AgentOs>` without `ensure_vm`. A sleeping VM
+                    // stays asleep; `cancelPrompt` replies with a typed error.
+                    tracing::debug!(action = %name, "agent-os observe action start");
+                    actions::dispatch_observe(
+                        &host,
+                        vm.as_ref(),
+                        &vars,
+                        &health,
+                        &name,
+                        &action_args,
+                        token,
+                    )
+                    .await;
+                    tracing::debug!(action = %name, "agent-os observe action done");
+                    continue;
+                }
+                let was_booted = vm.is_some();
                 if let Err(error) =
                     vm::ensure_vm(&host, &sidecar_path, &config, &pool, &mut vm).await
                 {
@@ -358,25 +392,25 @@ async fn actor_worker(
                     let _ = host.reply_err(token, "vm unavailable after bring-up");
                     continue;
                 };
-                match abi::decode_action_payload(&payload) {
-                    Ok((name, action_args)) => {
-                        tracing::debug!(action = %name, "agent-os action start");
-                        actions::dispatch(
-                            &host,
-                            vm_ref,
-                            &config,
-                            &mut vars,
-                            &name,
-                            &action_args,
-                            token,
-                        )
-                        .await;
-                        tracing::debug!(action = %name, "agent-os action done");
-                    }
-                    Err(_) => {
-                        let _ = host.reply_err(token, "malformed action event payload");
-                    }
+                if !was_booted {
+                    // Fresh boot: start the per-VM-lifetime health pumps.
+                    // Aborted via `vars.clear()` on sleep/destroy; the buffers
+                    // themselves survive in `health`.
+                    actions::health::spawn_health_pumps(&host, vm_ref, &mut vars, &health);
                 }
+                tracing::debug!(action = %name, "agent-os action start");
+                actions::dispatch(
+                    &host,
+                    vm_ref,
+                    &config,
+                    &mut vars,
+                    &health,
+                    &name,
+                    &action_args,
+                    token,
+                )
+                .await;
+                tracing::debug!(action = %name, "agent-os action done");
             }
             ActorJob::Http { token, payload } => {
                 // Preview proxy: do NOT bring the VM up for HTTP (matches r6's

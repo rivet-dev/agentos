@@ -7,10 +7,12 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::Write;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
+use futures::Stream;
 use scc::{HashMap as SccHashMap, HashSet as SccHashSet};
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -40,6 +42,7 @@ use crate::session::{
     SessionModeState,
 };
 use crate::sidecar::{AgentOsSidecar, AgentOsSidecarPlacement, AgentOsSidecarVmLease};
+use crate::stream::Subscription;
 use crate::transport::{SidecarProcess, WireSidecarCallback};
 use agentos_sidecar_client::TransportError;
 
@@ -172,6 +175,32 @@ pub struct AgentOs {
     inner: Arc<AgentOsInner>,
 }
 
+/// A near-capacity warning for one bounded limit (a queue/buffer, a saturating
+/// resource cap, or a memory envelope) inside the VM runtime, parsed from the
+/// sidecar's `limit_warning` structured event. Mirrors the TS `LimitWarning`
+/// delivered to the `onLimitWarning` option: delivered once per threshold
+/// crossing (the runtime edge-triggers with hysteresis, so this never spams).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LimitWarning {
+    /// Stable limit name, e.g. `"javascript_event_channel"` or `"vm_open_fds"`.
+    pub limit: String,
+    /// Limit class: `"queue"`, `"resource"`, or `"memory"`.
+    pub category: String,
+    /// Current observed usage.
+    pub observed: f64,
+    /// Configured capacity.
+    pub capacity: f64,
+    /// Observed fill as a percentage of capacity (0–100).
+    pub fill_percent: f64,
+}
+
+pub type LimitWarningStream = Pin<Box<dyn Stream<Item = LimitWarning> + Send>>;
+pub type LimitWarningSubscription = (LimitWarningStream, Subscription);
+
+/// Broadcast capacity for `on_limit_warning` subscribers. Warnings are
+/// edge-triggered (once per threshold crossing), so a small buffer suffices.
+const LIMIT_WARNING_CHANNEL_CAPACITY: usize = 64;
+
 pub(crate) struct AgentOsInner {
     // Transport / connection / VM handle.
     pub(crate) transport: Arc<SidecarProcess>,
@@ -243,6 +272,9 @@ pub(crate) struct AgentOsInner {
     /// can abort it; the pump only exits on its own when the shared transport's event channel closes,
     /// which does not happen while sibling VMs keep the transport alive. Mirrors `pending_shell_exits`.
     pub(crate) acp_event_pump: parking_lot::Mutex<Option<JoinHandle<()>>>,
+    /// Fan-out for the sidecar's `limit_warning` structured events
+    /// ([`AgentOs::on_limit_warning`]); fed by the ACP event pump.
+    pub(crate) limit_warning_tx: broadcast::Sender<LimitWarning>,
 }
 
 impl AgentOs {
@@ -614,6 +646,7 @@ impl AgentOs {
             in_process_mounts: SccHashMap::new(),
             disposed: AtomicBool::new(false),
             acp_event_pump: parking_lot::Mutex::new(None),
+            limit_warning_tx: broadcast::channel(LIMIT_WARNING_CHANNEL_CAPACITY).0,
         };
 
         let client = AgentOs {
@@ -867,6 +900,24 @@ impl AgentOs {
         self.inner.sidecar.clone()
     }
 
+    /// Subscribe to near-capacity limit warnings from the VM runtime (the sidecar's
+    /// `limit_warning` structured events). Parity surface for the TS `onLimitWarning` create-time
+    /// option, expressed in this client's subscription style (`on_session_event` / `on_agent_exit`):
+    /// only warnings observed after subscription are delivered.
+    pub fn on_limit_warning(&self) -> LimitWarningSubscription {
+        let rx = self.inner.limit_warning_tx.subscribe();
+        let stream = futures::stream::unfold(rx, move |mut rx| async move {
+            loop {
+                match rx.recv().await {
+                    Ok(warning) => return Some((warning, rx)),
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => return None,
+                }
+            }
+        });
+        (Box::pin(stream), Subscription::noop())
+    }
+
     pub fn projected_agents(&self) -> Vec<ProjectedAgent> {
         self.inner.projected_agents.lock().clone()
     }
@@ -900,12 +951,28 @@ fn spawn_acp_event_pump(client: &AgentOs) {
                         tracing::warn!(?error, "failed to deliver acp extension event");
                     }
                 }
+                Ok((_, wire::EventPayload::StructuredEvent(event))) => {
+                    // Runtime limit warnings fan out to `on_limit_warning` subscribers.
+                    // Process-global signal, so no ownership filter — mirrors the TS
+                    // `_handleSidecarEvent` `limit_warning` path.
+                    if event.name != "limit_warning" {
+                        continue;
+                    }
+                    let Some(inner) = inner.upgrade() else {
+                        break;
+                    };
+                    if inner.disposed.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let _ = inner
+                        .limit_warning_tx
+                        .send(parse_limit_warning(&event.detail));
+                }
                 Ok((
                     _,
                     wire::EventPayload::VmLifecycleEvent(_)
                     | wire::EventPayload::ProcessOutputEvent(_)
-                    | wire::EventPayload::ProcessExitedEvent(_)
-                    | wire::EventPayload::StructuredEvent(_),
+                    | wire::EventPayload::ProcessExitedEvent(_),
                 )) => {}
                 Err(broadcast::error::RecvError::Lagged(_)) => {}
                 Err(broadcast::error::RecvError::Closed) => break,
@@ -913,6 +980,25 @@ fn spawn_acp_event_pump(client: &AgentOs) {
         }
     });
     *client.inner.acp_event_pump.lock() = Some(handle);
+}
+
+/// Parse the string detail map of a `limit_warning` structured event into a
+/// [`LimitWarning`], matching the TS `_handleLimitWarning` parsing exactly
+/// (missing keys -> empty string, unparsable numbers -> 0).
+fn parse_limit_warning(detail: &HashMap<String, String>) -> LimitWarning {
+    let to_number = |key: &str| -> f64 {
+        detail
+            .get(key)
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(0.0)
+    };
+    LimitWarning {
+        limit: detail.get("limit").cloned().unwrap_or_default(),
+        category: detail.get("category").cloned().unwrap_or_default(),
+        observed: to_number("observed"),
+        capacity: to_number("capacity"),
+        fill_percent: to_number("fillPercent"),
+    }
 }
 
 fn deliver_acp_ext_event(

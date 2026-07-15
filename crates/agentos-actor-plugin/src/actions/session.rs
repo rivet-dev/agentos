@@ -19,6 +19,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 
+use super::health::HealthBuffers;
 use super::Vars;
 use crate::persistence::{
     insert_session_event, query_rows, reconstruct_transcript_to_file, run_stmt,
@@ -287,6 +288,25 @@ pub async fn respond_permission(
     Ok(())
 }
 
+/// Cancel the in-flight prompt for a session (`cancelPrompt`) — the
+/// observe-only port of the rivetkit 2.3.3 wrapper's `cancelPrompt`, which
+/// forwarded `AgentOs.cancelSession` against the live VM and refused to boot
+/// one. `vm` is optional because the action dispatches on the observe-only
+/// lane: with the VM asleep there is nothing running to cancel, and that must
+/// be a typed error rather than a silent success (or a VM boot).
+pub async fn cancel_prompt(vm: Option<&AgentOs>, vars: &Vars, session_id: &str) -> Result<()> {
+    let Some(vm) = vm else {
+        return Err(anyhow!("VM is not booted; no prompt to cancel"));
+    };
+    // Map external -> live like the other session actions.
+    let live_session_id = vars.live_id(session_id).to_owned();
+    // `cancel_session` resolves any pending prompt with `stopReason: cancelled`
+    // and forwards `session/cancel`; an unknown/not-live session surfaces as a
+    // typed client error.
+    vm.cancel_session(&live_session_id).await?;
+    Ok(())
+}
+
 /// Exit-capture task key for [`Vars::capture_tasks`]: distinct from the
 /// session/update pump key so both tasks are tracked (and cancelled)
 /// independently for one live session.
@@ -298,7 +318,10 @@ fn exit_capture_key(live_session_id: &str) -> String {
 /// `live_session_id` and spawn a task that live-broadcasts each event to
 /// connected clients (`conn.on("agentCrashed")`), including the sidecar's
 /// auto-restart outcome — the actor-side counterpart of the core
-/// `onAgentExit` hook. Broadcast-only: the durable transcript stays limited to
+/// `onAgentExit` hook. Each event is also teed into the post-mortem
+/// [`HealthBuffers`] (the `getRuntimeHealth` `agentExits` buffer, which
+/// survives VM sleep) so this stays the single per-session exit subscription.
+/// Broadcast-only otherwise: the durable transcript stays limited to
 /// real session events. Tracked in [`Vars::capture_tasks`] under
 /// [`exit_capture_key`] so it shares the close/sleep/destroy cancellation path
 /// with the session/update pump.
@@ -306,6 +329,7 @@ fn spawn_exit_capture(
     ctx: &HostCtx,
     vm: &AgentOs,
     vars: &mut Vars,
+    health: &HealthBuffers,
     external_session_id: &str,
     live_session_id: &str,
 ) {
@@ -321,6 +345,7 @@ fn spawn_exit_capture(
         old.abort();
     }
     let ctx = ctx.clone();
+    let health = health.clone();
     let external = external_session_id.to_owned();
     let handle = tokio::spawn(async move {
         // Keep the RAII guard alive for the lifetime of the pump; dropping the
@@ -336,6 +361,7 @@ fn spawn_exit_capture(
                 max_restarts = event.max_restarts,
                 "agent adapter exited unexpectedly",
             );
+            health.push_agent_exit(&external, &event);
             let event_value = match serde_json::to_value(&event) {
                 Ok(value) => value,
                 Err(error) => {
@@ -360,6 +386,7 @@ pub async fn create_session(
     ctx: &HostCtx,
     vm: &AgentOs,
     vars: &mut Vars,
+    health: &HealthBuffers,
     agent_type: &str,
     dto: CreateSessionOptionsDto,
 ) -> Result<String> {
@@ -402,8 +429,9 @@ pub async fn create_session(
     // subscribed before the agent runs, or requests would auto-reject.
     spawn_event_capture(ctx, vm, vars, &session_id, &session_id);
     spawn_permission_pump(ctx, vm, vars, &session_id, &session_id);
-    // Live adapter-crash notifications for connected clients (`agentCrashed`).
-    spawn_exit_capture(ctx, vm, vars, &session_id, &session_id);
+    // Live adapter-crash notifications for connected clients (`agentCrashed`),
+    // teed into the post-mortem health buffers for `getRuntimeHealth`.
+    spawn_exit_capture(ctx, vm, vars, health, &session_id, &session_id);
     // The generated TS action surface types this as `Promise<string>`, so the
     // reply must be the bare session id, not a `{ sessionId }` wrapper.
     Ok(session_id)
@@ -746,5 +774,21 @@ mod tests {
         let err = parse_permission_reply("maybe").unwrap_err().to_string();
         assert!(err.contains("invalid permission reply"), "got: {err}");
         assert!(err.contains("maybe"), "names the bad value: {err}");
+    }
+
+    #[tokio::test]
+    async fn cancel_prompt_with_vm_asleep_is_a_typed_error() {
+        // Observe-only lane contract: with no live VM there is no prompt to
+        // cancel — a typed error naming the situation, never a silent success
+        // (and never a VM boot; `cancel_prompt` cannot even reach `ensure_vm`).
+        let vars = Vars::default();
+        let err = cancel_prompt(None, &vars, "session-1")
+            .await
+            .expect_err("asleep VM must not silently succeed");
+        assert!(
+            err.to_string()
+                .contains("VM is not booted; no prompt to cancel"),
+            "got: {err}"
+        );
     }
 }

@@ -3,9 +3,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentOsEmpty, ChevronRight, relativeTime, StatusDot } from "../common";
 import { isInspectorActionError } from "../lib/actor-client";
 import { cn } from "../lib/cn";
-import { cancelPrompt, liveSessionsQueryOptions } from "../lib/health";
 import { useAgentOsActor } from "../lib/rivet";
-import { agentOsSource, mapNotification } from "../lib/source";
+import {
+	agentOsSource,
+	cancelPrompt,
+	liveSessionsQueryOptions,
+	mapNotification,
+} from "../lib/source";
 import type {
 	AgentCrashedPayload,
 	JsonRpcNotification,

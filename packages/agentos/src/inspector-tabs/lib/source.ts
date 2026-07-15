@@ -4,7 +4,7 @@
 // ported component expects. Action names/shapes are the actual ones, not the
 // mockup's aspirational `agentOs*` names.
 import { queryOptions } from "@tanstack/react-query";
-import { callAction } from "./actor-client";
+import { callAction, isInspectorActionError } from "./actor-client";
 import type {
 	FileContent,
 	FsEntry,
@@ -15,6 +15,7 @@ import type {
 	ProcessInfo,
 	ProcessTreeNode,
 	ReaddirEntry,
+	RuntimeHealth,
 	SignedPreviewUrl,
 	SoftwareBundle,
 	SoftwareInfo,
@@ -342,3 +343,55 @@ export const agentOsSource = {
 		callAction<SignedPreviewUrl>("createSignedPreviewUrl", [port, ttlSeconds]),
 	expireSignedPreviewUrl: (token: string) => callAction("expireSignedPreviewUrl", [token]),
 };
+
+// ── Runtime health (observe-only actions) ─────────────────────────────
+// getRuntimeHealth / listSessions / cancelPrompt are real contract actions on
+// the current runtime, dispatched on its non-waking observe-only lane (they
+// never boot a sleeping VM). Feature detection stays: vendored tab bundles run
+// against OLDER runtimes without these actions, which reject at the contract
+// layer (see lib/health.ts's isMissingHealthAction) — the status strip hides
+// itself and the composer disables its Stop button.
+
+export const healthQueryOptions = (actorId: string) =>
+	queryOptions({
+		queryKey: k(actorId, "runtime-health"),
+		queryFn: () => callAction<RuntimeHealth>("getRuntimeHealth", [], { timeoutMs: 8_000 }),
+		refetchInterval: 5_000,
+		// Contract-missing is permanent for this actor: never retry, and stop
+		// polling (react-query keeps refetching errored queries otherwise).
+		retry: false,
+		refetchOnMount: false,
+	});
+
+/** Live (loaded-in-VM) sessions — used to mark sidebar rows as running. Rows
+ * carry the EXTERNAL session id, so they cross-reference listPersistedSessions
+ * records directly. Returns null when the runtime doesn't expose the action
+ * (callers fall back to record.status). */
+export const liveSessionsQueryOptions = (actorId: string) =>
+	queryOptions({
+		queryKey: k(actorId, "live-sessions"),
+		queryFn: async (): Promise<Set<string> | null> => {
+			try {
+				const live = await callAction<{ sessionId: string }[]>("listSessions", []);
+				return new Set(live.map((s) => s.sessionId));
+			} catch (error) {
+				if (isInspectorActionError(error) && error.layer === "contract") return null;
+				throw error;
+			}
+		},
+		refetchInterval: 10_000,
+		retry: false,
+	});
+
+/** Best-effort prompt cancellation; resolves false when unsupported. A booted
+ * runtime with nothing running rejects with a runtime error ("VM is not
+ * booted" / unknown session), which propagates to the caller. */
+export async function cancelPrompt(sessionId: string): Promise<boolean> {
+	try {
+		await callAction("cancelPrompt", [sessionId]);
+		return true;
+	} catch (error) {
+		if (isInspectorActionError(error) && error.layer === "contract") return false;
+		throw error;
+	}
+}

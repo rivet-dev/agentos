@@ -118,6 +118,48 @@ export interface SoftwareInfo {
 	commands: string[];
 }
 
+export interface LiveSessionInfo {
+	sessionId: string;
+	agentType: string;
+}
+
+export interface RuntimeLimitWarning {
+	ts: number;
+	limit: string;
+	category: string;
+	observed: number;
+	capacity: number;
+	fillPercent: number;
+}
+
+export interface RuntimeAgentExit {
+	ts: number;
+	sessionId: string;
+	agentType: string;
+	exitCode: number | null;
+	restart: string;
+	restartCount: number;
+}
+
+export interface RuntimeStderrLine {
+	ts: number;
+	line: string;
+}
+
+export interface RuntimeSidecarInfo {
+	state: string;
+	activeVmCount: number;
+}
+
+export interface RuntimeHealth {
+	booted: boolean;
+	sessions: number | null;
+	sidecar: RuntimeSidecarInfo | null;
+	warnings: RuntimeLimitWarning[];
+	agentExits: RuntimeAgentExit[];
+	stderrTail: RuntimeStderrLine[];
+}
+
 export type AgentOsActions = {
 	readFile: (c: Ctx, path: string) => Promise<Uint8Array>;
 	writeFile: (c: Ctx, path: string, content: string | Uint8Array) => Promise<void>;
@@ -161,4 +203,7 @@ export type AgentOsActions = {
 	expireSignedPreviewUrl: (c: Ctx, token: string) => Promise<void>;
 	listMounts: (c: Ctx) => Promise<MountInfo[]>;
 	listSoftware: (c: Ctx) => Promise<SoftwareInfo[]>;
+	getRuntimeHealth: (c: Ctx) => Promise<RuntimeHealth>;
+	listSessions: (c: Ctx) => Promise<LiveSessionInfo[]>;
+	cancelPrompt: (c: Ctx, sessionId: string) => Promise<void>;
 };

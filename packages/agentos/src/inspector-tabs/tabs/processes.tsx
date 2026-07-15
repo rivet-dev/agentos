@@ -1,9 +1,8 @@
 import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { ActionErrorNote, AgentOsEmpty, relativeTime, StatusDot } from "../common";
-import { healthQueryOptions } from "../lib/health";
 import { useAgentOsActor } from "../lib/rivet";
-import { agentOsSource, decodeActionBytes } from "../lib/source";
+import { agentOsSource, decodeActionBytes, healthQueryOptions } from "../lib/source";
 import type { KernelProcessInfo, ProcessExitPayload, ProcessOutputPayload, ProcessTreeNode } from "../lib/types";
 import { ScrollArea } from "../ui/scroll-area";
 import React from "react";

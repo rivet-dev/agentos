@@ -161,7 +161,7 @@ export interface PersistedSessionRecord {
 	createdAt: number;
 	/** VM-liveness activity status: "running" = loaded in the VM, "idle" =
 	 * persisted but hibernated (resumable). Absent on runtimes whose records
-	 * carry no status — liveness then comes from `listSessions` (lib/health.ts). */
+	 * carry no status — liveness then comes from `listSessions` (lib/source.ts). */
 	status?: "running" | "idle";
 }
 export interface JsonRpcNotification {
@@ -216,7 +216,7 @@ export interface PermissionRequestPayload {
 	};
 }
 
-// ── Runtime health (optional `getRuntimeHealth` action; see lib/health.ts) ─
+// ── Runtime health (`getRuntimeHealth`, observe-only; see lib/source.ts) ──
 export interface RuntimeLimitWarning {
 	ts: number;
 	limit: string;
