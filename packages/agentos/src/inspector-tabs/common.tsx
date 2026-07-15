@@ -160,28 +160,32 @@ export function CopyButton({ value, className }: { value: string; className?: st
 	);
 }
 
-/** agentOS mark (rounded square + OS) redrawn from the website logo in
- * currentColor — tint via text color, e.g. `text-muted-foreground/15` for the
- * empty-state watermark. */
-export function AgentOsMark({ className }: { className?: string }) {
+/** agentOS wordmark ("agent" + the OS box) redrawn from the website hero logo
+ * in currentColor with the inspector's own font — tint via text color, e.g.
+ * `text-muted-foreground/15` for the empty-state watermark. */
+export function AgentOsWordmark({ className }: { className?: string }) {
+	const font = '"IBM Plex Sans", ui-sans-serif, sans-serif';
 	return (
-		<svg viewBox="0 0 176 173" fill="none" className={className} aria-hidden="true">
+		<svg viewBox="0 0 305 102" fill="none" className={className} aria-hidden="true">
+			<text x="0" y="76" fontFamily={font} fontWeight={700} fontSize="72" fill="currentColor">
+				agent
+			</text>
 			<rect
-				x="10"
-				y="11"
-				width="156"
-				height="152"
-				rx="45"
+				x="212"
+				y="9"
+				width="86"
+				height="84"
+				rx="25"
 				stroke="currentColor"
-				strokeWidth="15"
+				strokeWidth="9"
 			/>
 			<text
-				x="88"
-				y="112"
+				x="255"
+				y="66"
 				textAnchor="middle"
-				fontFamily='"IBM Plex Sans", ui-sans-serif, sans-serif'
+				fontFamily={font}
 				fontWeight={700}
-				fontSize="74"
+				fontSize="40"
 				fill="currentColor"
 				stroke="none"
 			>
