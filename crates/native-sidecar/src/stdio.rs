@@ -199,7 +199,6 @@ async fn run_async(extensions: Vec<Box<dyn Extension>>) -> Result<(), Box<dyn Er
 
     thread::spawn({
         let callback_transport = callback_transport.clone();
-        let read_error_tx = write_error_tx.clone();
         move || {
             let mut stdin = io::stdin();
             loop {
@@ -222,10 +221,6 @@ async fn run_async(extensions: Vec<Box<dyn Extension>>) -> Result<(), Box<dyn Er
                         stdin_gauge.observe_depth(
                             stdin_tx.max_capacity().saturating_sub(stdin_tx.capacity()),
                         );
-                    }
-                    Err(StdinFrameQueueError::Full(message)) => {
-                        let _ = read_error_tx.send(message);
-                        break;
                     }
                     Err(StdinFrameQueueError::Closed) => break,
                 }
@@ -655,20 +650,28 @@ fn frame_kind(frame: &ProtocolFrame) -> &'static str {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum StdinFrameQueueError {
-    Full(String),
     Closed,
 }
 
+// Apply backpressure rather than killing the sidecar when the host writes
+// faster than the event loop drains — the exact mirror of the stdout fix in
+// `send_output_frame`. Booting a VM with an agent floods stdin (config,
+// software projection, session setup) while the loop is busy; previously
+// `try_send` turned that transient backlog into a "stdin frame queue exceeded
+// 128 pending frames" error that exited the whole sidecar and made agent boots
+// fail outright. Parking the dedicated reader thread stops further reads, the
+// OS pipe buffer fills, and the host's writes block — natural, recoverable
+// backpressure. It never deadlocks: the async loop drains the queue
+// independently, and if the receiver is gone the send fails and the reader
+// exits (same terminal path as before). Near-capacity telemetry still flows
+// through the `sidecar_stdin_frames` gauge.
 fn enqueue_stdin_frame(
     sender: &tokio::sync::mpsc::Sender<Result<Option<ProtocolFrame>, String>>,
     frame: Result<Option<ProtocolFrame>, String>,
 ) -> Result<(), StdinFrameQueueError> {
-    sender.try_send(frame).map_err(|error| match error {
-        tokio::sync::mpsc::error::TrySendError::Full(_) => StdinFrameQueueError::Full(format!(
-            "stdin frame queue exceeded {MAX_STDIN_FRAME_QUEUE} pending frames"
-        )),
-        tokio::sync::mpsc::error::TrySendError::Closed(_) => StdinFrameQueueError::Closed,
-    })
+    sender
+        .blocking_send(frame)
+        .map_err(|_closed| StdinFrameQueueError::Closed)
 }
 
 fn flush_sidecar_requests(
@@ -791,17 +794,6 @@ mod tests {
 
     #[test]
     fn stdio_work_queues_are_bounded() {
-        let (stdin_tx, _stdin_rx) =
-            channel::<Result<Option<ProtocolFrame>, String>>(MAX_STDIN_FRAME_QUEUE);
-        for _ in 0..MAX_STDIN_FRAME_QUEUE {
-            enqueue_stdin_frame(&stdin_tx, Ok(None))
-                .expect("stdin frame queue should accept capacity");
-        }
-        assert!(matches!(
-            enqueue_stdin_frame(&stdin_tx, Ok(None)),
-            Err(StdinFrameQueueError::Full(_))
-        ));
-
         let (event_ready_tx, _event_ready_rx) = channel::<()>(MAX_EVENT_READY_QUEUE);
         event_ready_tx
             .try_send(())
@@ -809,6 +801,39 @@ mod tests {
         assert!(matches!(
             event_ready_tx.try_send(()),
             Err(tokio::sync::mpsc::error::TrySendError::Full(_))
+        ));
+    }
+
+    // Regression: a full stdin frame queue must apply backpressure (park the
+    // reader thread until the async loop drains a slot), NOT tear the sidecar
+    // down. Booting a VM with an agent floods stdin (config, software
+    // projection, session setup) while the loop is busy; the old `try_send`
+    // turned that backlog into a "stdin frame queue exceeded 128 pending
+    // frames" error that exited the whole sidecar and failed the boot.
+    #[test]
+    fn stdin_frame_queue_applies_backpressure_instead_of_crashing() {
+        const SENDS: usize = 8;
+        let (stdin_tx, mut stdin_rx) = channel::<Result<Option<ProtocolFrame>, String>>(2);
+        let producer = thread::spawn(move || {
+            for _ in 0..SENDS {
+                enqueue_stdin_frame(&stdin_tx, Ok(None))
+                    .expect("a full queue must park the sender, not fail");
+            }
+        });
+        let mut received = 0;
+        while received < SENDS {
+            if stdin_rx.blocking_recv().is_some() {
+                received += 1;
+            }
+        }
+        producer.join().expect("producer thread");
+
+        // A dropped receiver (dead event loop) is the only terminal condition.
+        let (closed_tx, closed_rx) = channel::<Result<Option<ProtocolFrame>, String>>(1);
+        drop(closed_rx);
+        assert!(matches!(
+            enqueue_stdin_frame(&closed_tx, Ok(None)),
+            Err(StdinFrameQueueError::Closed)
         ));
     }
 
