@@ -681,7 +681,7 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 				{!sessionId ? (
 					<AgentOsEmpty>
 						<div className="flex flex-col items-center gap-5">
-							<AgentOsWordmark className="w-44 text-muted-foreground/15" />
+							<AgentOsWordmark className="w-44" />
 							<span>
 								No session selected — send a prompt below to start one.
 								<br />
@@ -698,7 +698,7 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 							{events.length === 0 && !turnActive ? (
 								<AgentOsEmpty>
 									<div className="flex flex-col items-center gap-5">
-										<AgentOsWordmark className="w-44 text-muted-foreground/15" />
+										<AgentOsWordmark className="w-44" />
 										<span>No activity yet — send a prompt below.</span>
 									</div>
 								</AgentOsEmpty>

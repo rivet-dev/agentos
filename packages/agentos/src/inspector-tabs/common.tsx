@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import agentOsHeroLogo from "./assets/agentos-hero-logo.svg";
 import { type ActionErrorLayer, isInspectorActionError } from "./lib/actor-client";
 import { cn } from "./lib/cn";
 import React, { useState } from "react";
@@ -160,38 +161,19 @@ export function CopyButton({ value, className }: { value: string; className?: st
 	);
 }
 
-/** agentOS wordmark ("agent" + the OS box) redrawn from the website hero logo
- * in currentColor with the inspector's own font — tint via text color, e.g.
- * `text-muted-foreground/15` for the empty-state watermark. */
+/** agentOS wordmark — the website hero logo, verbatim, bundled as an asset.
+ * The source SVG is stroked black (drawn for light backgrounds); `invert`
+ * flips it white for the dark theme, and the low opacity makes the
+ * empty-state watermark. */
 export function AgentOsWordmark({ className }: { className?: string }) {
-	const font = '"IBM Plex Sans", ui-sans-serif, sans-serif';
 	return (
-		<svg viewBox="0 0 305 102" fill="none" className={className} aria-hidden="true">
-			<text x="0" y="76" fontFamily={font} fontWeight={700} fontSize="72" fill="currentColor">
-				agent
-			</text>
-			<rect
-				x="212"
-				y="9"
-				width="86"
-				height="84"
-				rx="25"
-				stroke="currentColor"
-				strokeWidth="9"
-			/>
-			<text
-				x="255"
-				y="66"
-				textAnchor="middle"
-				fontFamily={font}
-				fontWeight={700}
-				fontSize="40"
-				fill="currentColor"
-				stroke="none"
-			>
-				OS
-			</text>
-		</svg>
+		<img
+			src={agentOsHeroLogo}
+			alt=""
+			aria-hidden="true"
+			draggable={false}
+			className={cn("select-none opacity-[0.14] invert", className)}
+		/>
 	);
 }
 
