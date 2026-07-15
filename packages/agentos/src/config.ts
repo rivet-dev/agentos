@@ -58,6 +58,7 @@ export const agentOsActorConfigSchema = z
 			})
 			.strict()
 			.prefault(() => ({})),
+		createOptions: zFunction().optional(),
 		onBeforeConnect: zFunction().optional(),
 		onSessionEvent: zFunction().optional(),
 		onPermissionRequest: zFunction().optional(),
@@ -87,49 +88,64 @@ export type NativeAgentOsOptions = Pick<
 	sidecar?: { kind: "shared"; pool?: string };
 };
 
-type AgentOsActorContext<TConnParams> = ActorContext<
+export type AgentOsActorContext<TInput, TConnParams> = ActorContext<
 	AgentOsActorState,
 	TConnParams,
 	undefined,
 	AgentOsActorVars,
-	undefined,
+	TInput,
 	any
 >;
 
-interface AgentOsActorConfigCallbacks<TConnParams> {
+interface AgentOsActorConfigCallbacks<TInput, TConnParams> {
+	createOptions?: (
+		c: AgentOsActorContext<TInput, TConnParams>,
+		input: TInput | undefined,
+	) => NativeAgentOsOptions | Promise<NativeAgentOsOptions>;
 	onBeforeConnect?: (
-		c: BeforeConnectContext<
-			AgentOsActorState,
-			AgentOsActorVars,
-			undefined,
-			any
-		>,
+		c: BeforeConnectContext<AgentOsActorState, AgentOsActorVars, TInput, any>,
 		params: TConnParams,
 	) => void | Promise<void>;
 	onSessionEvent?: (
-		c: AgentOsActorContext<TConnParams>,
+		c: AgentOsActorContext<TInput, TConnParams>,
 		sessionId: string,
 		event: JsonRpcNotification,
 	) => void | Promise<void>;
 	onPermissionRequest?: (
-		c: AgentOsActorContext<TConnParams>,
+		c: AgentOsActorContext<TInput, TConnParams>,
 		sessionId: string,
 		request: PermissionRequest,
 	) => void | Promise<void>;
 }
 
 // Parsed config (after Zod defaults/transforms applied).
-export type AgentOsActorConfig<TConnParams = undefined> = Omit<
+export type AgentOsActorConfig<
+	TInput = undefined,
+	TConnParams = undefined,
+> = Omit<
 	z.infer<typeof agentOsActorConfigSchema>,
-	"options" | "onBeforeConnect" | "onSessionEvent" | "onPermissionRequest"
-> &
-	{ options?: NativeAgentOsOptions } &
-	AgentOsActorConfigCallbacks<TConnParams>;
+	| "options"
+	| "createOptions"
+	| "onBeforeConnect"
+	| "onSessionEvent"
+	| "onPermissionRequest"
+> & { options?: NativeAgentOsOptions } & AgentOsActorConfigCallbacks<
+		TInput,
+		TConnParams
+	>;
 
 // Input config (what users pass in before Zod transforms).
-export type AgentOsActorConfigInput<TConnParams = undefined> = Omit<
+export type AgentOsActorConfigInput<
+	TInput = undefined,
+	TConnParams = undefined,
+> = Omit<
 	z.input<typeof agentOsActorConfigSchema>,
-	"options" | "onBeforeConnect" | "onSessionEvent" | "onPermissionRequest"
-> &
-	{ options?: NativeAgentOsOptions } &
-	AgentOsActorConfigCallbacks<TConnParams>;
+	| "options"
+	| "createOptions"
+	| "onBeforeConnect"
+	| "onSessionEvent"
+	| "onPermissionRequest"
+> & { options?: NativeAgentOsOptions } & AgentOsActorConfigCallbacks<
+		TInput,
+		TConnParams
+	>;

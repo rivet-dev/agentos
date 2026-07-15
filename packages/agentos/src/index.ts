@@ -91,13 +91,23 @@ export type {
 	VmShutdownPayload,
 } from "./types.js";
 
-export type AgentOSActorConfigInput<TConnParams = undefined> =
-	NativeAgentOsOptions & Omit<AgentOsActorConfigInput<TConnParams>, "options">;
+export type AgentOSActorConfigInput<
+	TInput = undefined,
+	TConnParams = undefined,
+> = NativeAgentOsOptions &
+	Omit<AgentOsActorConfigInput<TInput, TConnParams>, "options">;
 
-export type AgentOSConfigInput<TConnParams = undefined> = AgentOsOptions & {
-	preview?: AgentOsActorConfigInput<TConnParams>["preview"];
-	actorOptions?: AgentOsActorConfigInput<TConnParams>["actorOptions"];
-	onBeforeConnect?: AgentOsActorConfigInput<TConnParams>["onBeforeConnect"];
+export type AgentOSConfigInput<
+	TInput = undefined,
+	TConnParams = undefined,
+> = AgentOsOptions & {
+	preview?: AgentOsActorConfigInput<TInput, TConnParams>["preview"];
+	actorOptions?: AgentOsActorConfigInput<TInput, TConnParams>["actorOptions"];
+	createOptions?: AgentOsActorConfigInput<TInput, TConnParams>["createOptions"];
+	onBeforeConnect?: AgentOsActorConfigInput<
+		TInput,
+		TConnParams
+	>["onBeforeConnect"];
 	onSessionEvent?: (
 		sessionId: string,
 		event: JsonRpcNotification,
@@ -108,12 +118,13 @@ export type AgentOSConfigInput<TConnParams = undefined> = AgentOsOptions & {
 	) => void | Promise<void>;
 };
 
-export function agentOS<TConnParams = undefined>(
-	config: AgentOSConfigInput<TConnParams> = {},
-): AgentOsActorDefinition<TConnParams> {
+export function agentOS<TInput = undefined, TConnParams = undefined>(
+	config: AgentOSConfigInput<TInput, TConnParams> = {},
+): AgentOsActorDefinition<TInput, TConnParams> {
 	const {
 		preview,
 		actorOptions,
+		createOptions,
 		onBeforeConnect,
 		onSessionEvent,
 		onPermissionRequest,
@@ -124,6 +135,7 @@ export function agentOS<TConnParams = undefined>(
 		options,
 		actorOptions,
 		preview,
+		createOptions,
 		onBeforeConnect,
 		onSessionEvent: onSessionEvent
 			? (_ctx, sessionId, event) => onSessionEvent(sessionId, event)
@@ -131,5 +143,5 @@ export function agentOS<TConnParams = undefined>(
 		onPermissionRequest: onPermissionRequest
 			? (_ctx, sessionId, request) => onPermissionRequest(sessionId, request)
 			: undefined,
-	} as AgentOsActorConfigInput<TConnParams>);
+	} as AgentOsActorConfigInput<TInput, TConnParams>);
 }

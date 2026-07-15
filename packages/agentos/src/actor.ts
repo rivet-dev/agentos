@@ -22,12 +22,14 @@ import {
 	type CoreRuntime,
 	type DatabaseProvider,
 	type NapiNativePluginOptions,
+	type NativeFactoryBuilderOptions,
 	type RawAccess,
 } from "rivetkit";
 import {
 	type AgentOsActorConfig,
 	type AgentOsActorConfigInput,
 	agentOsActorConfigSchema,
+	type NativeAgentOsOptions,
 	nativeAgentOsOptionsSchema,
 } from "./config.js";
 import type { AgentOsActions } from "./generated/actor-actions.generated.js";
@@ -136,11 +138,11 @@ function normalizedPackageRefs(software: unknown[]): NormalizedPackageRef[] {
 	return refs;
 }
 
-export function buildConfigJson<TConnParams>(
-	parsed: AgentOsActorConfig<TConnParams>,
-): string {
+function buildConfigEnvelope(
+	optionsInput: NativeAgentOsOptions | undefined,
+): Record<string, unknown> {
 	const options = nativeAgentOsOptionsSchema.parse(
-		parsed.options ?? {},
+		optionsInput ?? {},
 	) as Record<string, unknown>;
 	const softwareInput = Array.isArray(options.software) ? options.software : [];
 	const defaultSoftwareEnabled = options.defaultSoftware !== false;
@@ -150,21 +152,29 @@ export function buildConfigJson<TConnParams>(
 	const packages = packageRefs.map((ref) => ({ packagePath: ref.path }));
 	const mounts = serializeNativeMounts(options.mounts);
 	const sidecar = serializeSidecar(options.sidecar);
-	return JSON.stringify({
-		// The actor forwards ONLY package dirs; the sidecar resolves each agent from
-		// the projected `/opt/agentos/<name>/current/agentos-package.json` (no
-		// client-side adapter-entrypoint resolution — see root CLAUDE.md).
-		packages,
-		packagesMountAt: OPT_AGENTOS_ROOT,
-		additionalInstructions: options.additionalInstructions,
-		loopbackExemptPorts: options.loopbackExemptPorts,
-		allowedNodeBuiltins: options.allowedNodeBuiltins,
-		permissions: options.permissions,
-		rootFilesystem: options.rootFilesystem,
-		mounts,
-		limits: options.limits,
-		sidecar,
-	});
+	return JSON.parse(
+		JSON.stringify({
+			// The actor forwards ONLY package dirs; the sidecar resolves each agent from
+			// the projected `/opt/agentos/<name>/current/agentos-package.json` (no
+			// client-side adapter-entrypoint resolution — see root CLAUDE.md).
+			packages,
+			packagesMountAt: OPT_AGENTOS_ROOT,
+			additionalInstructions: options.additionalInstructions,
+			loopbackExemptPorts: options.loopbackExemptPorts,
+			allowedNodeBuiltins: options.allowedNodeBuiltins,
+			permissions: options.permissions,
+			rootFilesystem: options.rootFilesystem,
+			mounts,
+			limits: options.limits,
+			sidecar,
+		}),
+	) as Record<string, unknown>;
+}
+
+export function buildConfigJson<TInput, TConnParams>(
+	parsed: AgentOsActorConfig<TInput, TConnParams>,
+): string {
+	return JSON.stringify(buildConfigEnvelope(parsed.options));
 }
 
 function serializeNativeMounts(input: unknown): NativeMountLike[] | undefined {
@@ -227,11 +237,13 @@ function serializeSidecar(input: unknown): { pool?: string } | undefined {
 	return typeof record.pool === "string" ? { pool: record.pool } : {};
 }
 
-function buildNativeFactoryBuilder<TConnParams>(
-	parsed: AgentOsActorConfig<TConnParams>,
-	actorOptions: Record<string, unknown>,
-): (runtime: CoreRuntime) => ActorFactoryHandle {
-	return (runtime) => {
+function buildNativeFactoryBuilder<TInput, TConnParams>(
+	parsed: AgentOsActorConfig<TInput, TConnParams>,
+): (
+	runtime: CoreRuntime,
+	options?: NativeFactoryBuilderOptions,
+) => ActorFactoryHandle {
+	return (runtime, builderOptions) => {
 		if (runtime.kind !== "napi") {
 			throw new Error(
 				`agentOS() is only supported on the native NAPI runtime (current runtime kind: ${runtime.kind})`,
@@ -248,9 +260,6 @@ function buildNativeFactoryBuilder<TConnParams>(
 			pluginPath: getPluginPath(),
 			// Opaque config envelope the plugin parses (config.rs::AgentOsConfigJson).
 			configJson: buildConfigJson(parsed),
-			// RivetKit's native-plugin bridge owns the runtime ActorConfig for
-			// cdylib actors, so forward the merged per-actor lifecycle options too.
-			actorOptions,
 			// Resolve the prebuilt sidecar binary from the npm package so the plugin
 			// spawns the bundled binary rather than relying on `agentos-sidecar`
 			// being on PATH.
@@ -264,10 +273,34 @@ function buildNativeFactoryBuilder<TConnParams>(
 			// native-plugin actors.)
 			inspectorTabs: AGENTOS_INSPECTOR_CONFIG.tabs,
 		} as NapiNativePluginOptions & {
-			actorOptions?: Record<string, unknown>;
 			inspectorTabs: typeof AGENTOS_INSPECTOR_CONFIG.tabs;
 		};
-		return runtime.createNativePluginFactory(options);
+		const callbacks = {
+			...(builderOptions?.callbacks ?? {}),
+		} as Record<string, unknown>;
+		if (parsed.createOptions) {
+			if (!builderOptions) {
+				throw new Error(
+					"agentOS() createOptions requires RivetKit's composed native factory builder",
+				);
+			}
+			callbacks.createNativeOptions =
+				builderOptions.createNativeOptionsCallback(
+					async (c, input: TInput | undefined) => {
+						const instanceOptions = await parsed.createOptions?.(c, input);
+						const merged = nativeAgentOsOptionsSchema.parse({
+							...(parsed.options ?? {}),
+							...(instanceOptions ?? {}),
+						}) as NativeAgentOsOptions;
+						return buildConfigEnvelope(merged);
+					},
+				);
+		}
+		return runtime.createNativePluginFactory(
+			options,
+			builderOptions ? callbacks : undefined,
+			builderOptions?.config,
+		);
 	};
 }
 
@@ -279,10 +312,13 @@ function buildNativeFactoryBuilder<TConnParams>(
  * That is what gives `createClient<typeof registry>()` a fully-typed handle
  * (e.g. `handle.exec()` returns `ExecResult`, not `unknown`).
  */
-export type AgentOsActorDefinition<TConnParams> = ActorDefinition<
+export type AgentOsActorDefinition<
+	TInput = undefined,
+	TConnParams = undefined,
+> = ActorDefinition<
 	AgentOsActorState,
 	TConnParams,
-	undefined,
+	TInput,
 	AgentOsActorVars,
 	undefined,
 	DatabaseProvider<RawAccess>,
@@ -385,12 +421,13 @@ const AGENTOS_INSPECTOR_CONFIG = {
 	],
 };
 
-export function createAgentOS<TConnParams = undefined>(
-	config: AgentOsActorConfigInput<TConnParams>,
-): AgentOsActorDefinition<TConnParams> {
-	const parsed = agentOsActorConfigSchema.parse(
-		config,
-	) as AgentOsActorConfig<TConnParams>;
+export function createAgentOS<TInput = undefined, TConnParams = undefined>(
+	config: AgentOsActorConfigInput<TInput, TConnParams>,
+): AgentOsActorDefinition<TInput, TConnParams> {
+	const parsed = agentOsActorConfigSchema.parse(config) as AgentOsActorConfig<
+		TInput,
+		TConnParams
+	>;
 
 	// Construct a minimal definition through the existing actor() helper, then
 	// attach the Rust factory builder marker. The actions block stays empty
@@ -411,12 +448,10 @@ export function createAgentOS<TConnParams = undefined>(
 		// rivetkit tabs) so the dashboard renders the agent-os UI. Without this
 		// the shipped tab assets are never surfaced.
 		inspector: AGENTOS_INSPECTOR_CONFIG,
-	} as Parameters<
-		typeof actor
-	>[0]) as unknown as AgentOsActorDefinition<TConnParams>;
-	definition.nativeFactoryBuilder = buildNativeFactoryBuilder(
-		parsed,
-		actorOptions,
-	);
+	} as Parameters<typeof actor>[0]) as unknown as AgentOsActorDefinition<
+		TInput,
+		TConnParams
+	>;
+	definition.nativeFactoryBuilder = buildNativeFactoryBuilder(parsed);
 	return definition;
 }

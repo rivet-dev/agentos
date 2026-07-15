@@ -123,6 +123,14 @@ impl AgentOsConfigJson {
         serde_json::from_str(config_json).context("agent-os config JSON parse error")
     }
 
+    /// Decode the validated per-instance options returned by the TypeScript
+    /// host overlay. RivetKit transports these as CBOR bytes separately from
+    /// the actor's public create input.
+    pub(crate) fn parse_instance_options(bytes: &[u8]) -> Result<Self> {
+        ciborium::from_reader(std::io::Cursor::new(bytes))
+            .context("agent-os instance options CBOR parse error")
+    }
+
     /// Build a fresh [`AgentOsConfig`] (non-`Clone`, so rebuilt per bring-up).
     ///
     /// `fallback_pool` is the per-plugin-runtime sidecar pool used when the
@@ -203,6 +211,47 @@ impl AgentOsConfigJson {
             .iter()
             .filter_map(|package| read_package_software_info(&package.path))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentOsConfigJson;
+
+    #[test]
+    fn decodes_per_instance_options_from_cbor() {
+        let mut bytes = Vec::new();
+        ciborium::into_writer(
+            &serde_json::json!({
+                "additionalInstructions": "tenant-specific",
+                "loopbackExemptPorts": [4100]
+            }),
+            &mut bytes,
+        )
+        .expect("encode options");
+
+        let config =
+            AgentOsConfigJson::parse_instance_options(&bytes).expect("decode per-instance options");
+        assert_eq!(
+            config.additional_instructions.as_deref(),
+            Some("tenant-specific")
+        );
+        assert_eq!(config.loopback_exempt_ports, vec![4100]);
+    }
+
+    #[test]
+    fn rejects_unknown_per_instance_options() {
+        let mut bytes = Vec::new();
+        ciborium::into_writer(
+            &serde_json::json!({ "notAnAgentOsOption": true }),
+            &mut bytes,
+        )
+        .expect("encode options");
+
+        let error = AgentOsConfigJson::parse_instance_options(&bytes)
+            .err()
+            .expect("unknown options must fail");
+        assert!(error.to_string().contains("instance options CBOR"));
     }
 }
 

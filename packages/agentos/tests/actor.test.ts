@@ -8,6 +8,7 @@ import type {
 	ActorFactoryHandle,
 	CoreRuntime,
 	NapiNativePluginOptions,
+	NativeFactoryBuilderOptions,
 } from "rivetkit";
 import type { createClient } from "rivetkit/client";
 import { setupTest } from "rivetkit/test";
@@ -207,15 +208,34 @@ describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
 			"native-factory",
 		) as unknown as ActorFactoryHandle;
 		const calls: NapiNativePluginOptions[] = [];
+		let receivedConfig: unknown;
 		const runtime = {
 			kind: "napi",
-			createNativePluginFactory(options: NapiNativePluginOptions) {
+			createNativePluginFactory(
+				options: NapiNativePluginOptions,
+				_callbacks?: object,
+				config?: unknown,
+			) {
 				calls.push(options);
+				receivedConfig = config;
 				return expectedHandle;
 			},
 		} as CoreRuntime;
 
-		const handle = definition.nativeFactoryBuilder?.(runtime);
+		const handle = definition.nativeFactoryBuilder?.(runtime, {
+			callbacks: {},
+			config: {
+				actionTimeoutMs: 3_600_000,
+				sleepTimeoutMs: 500,
+				sleepGracePeriodMs: 1_000,
+			},
+			createNativeOptionsCallback() {
+				throw new Error("not used");
+			},
+			createNativeHostCallCallback() {
+				throw new Error("not used");
+			},
+		} as unknown as NativeFactoryBuilderOptions);
 
 		expect(handle).toBe(expectedHandle);
 		expect(calls).toHaveLength(1);
@@ -239,11 +259,108 @@ describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
 				},
 			],
 		});
-		expect((calls[0] as any).actorOptions).toMatchObject({
-			actionTimeout: 3_600_000,
-			sleepTimeout: 500,
-			sleepGracePeriod: 1_000,
+		expect(receivedConfig).toMatchObject({
+			actionTimeoutMs: 3_600_000,
+			sleepTimeoutMs: 500,
+			sleepGracePeriodMs: 1_000,
 		});
+	});
+
+	test("resolves validated native options from actor create input", async () => {
+		const definition = agentOS<{ tenantId: string }>({
+			defaultSoftware: false,
+			software: [],
+			additionalInstructions: "static instructions",
+			createOptions: async (c, input) => {
+				expect(c).toEqual({ actorId: "actor-1" });
+				return {
+					defaultSoftware: false,
+					software: [],
+					additionalInstructions: `tenant:${input?.tenantId}`,
+					loopbackExemptPorts: [4100],
+				};
+			},
+		});
+		let resolveOptions:
+			| ((ctx: unknown, input: unknown, isNew: boolean) => Promise<unknown>)
+			| undefined;
+		const wrappedCallback = Symbol("create-native-options");
+		const nativeCalls: Array<{
+			callbacks?: Record<string, unknown>;
+		}> = [];
+		const runtime = {
+			kind: "napi",
+			createNativePluginFactory(
+				_options: NapiNativePluginOptions,
+				callbacks?: object,
+			) {
+				nativeCalls.push({
+					callbacks: callbacks as Record<string, unknown> | undefined,
+				});
+				return Symbol("native-factory") as unknown as ActorFactoryHandle;
+			},
+		} as CoreRuntime;
+		const builderOptions = {
+			callbacks: {},
+			config: {},
+			createNativeOptionsCallback(handler: (...args: unknown[]) => unknown) {
+				resolveOptions = async (ctx, input, isNew) =>
+					await handler(ctx, input, isNew);
+				return wrappedCallback;
+			},
+			createNativeHostCallCallback() {
+				throw new Error("not used");
+			},
+		} as unknown as NativeFactoryBuilderOptions;
+
+		definition.nativeFactoryBuilder?.(runtime, builderOptions);
+
+		expect(nativeCalls[0].callbacks?.createNativeOptions).toBe(wrappedCallback);
+		expect(resolveOptions).toEqual(expect.any(Function));
+		const resolved = await resolveOptions?.(
+			{ actorId: "actor-1" },
+			{ tenantId: "acme" },
+			true,
+		);
+		expect(resolved).toMatchObject({
+			additionalInstructions: "tenant:acme",
+			loopbackExemptPorts: [4100],
+			packages: [],
+			packagesMountAt: "/opt/agentos",
+		});
+	});
+
+	test("rejects invalid per-instance options before plugin startup", async () => {
+		const definition = agentOS<{ tenantId: string }>({
+			defaultSoftware: false,
+			software: [],
+			createOptions: async () => ({ notAnAgentOsOption: true }) as never,
+		});
+		let resolveOptions:
+			| ((ctx: unknown, input: unknown, isNew: boolean) => Promise<unknown>)
+			| undefined;
+		const runtime = {
+			kind: "napi",
+			createNativePluginFactory() {
+				return Symbol("native-factory") as unknown as ActorFactoryHandle;
+			},
+		} as CoreRuntime;
+		definition.nativeFactoryBuilder?.(runtime, {
+			callbacks: {},
+			config: {},
+			createNativeOptionsCallback(handler: (...args: unknown[]) => unknown) {
+				resolveOptions = async (ctx, input, isNew) =>
+					await handler(ctx, input, isNew);
+				return (() => {}) as never;
+			},
+			createNativeHostCallCallback() {
+				throw new Error("not used");
+			},
+		} as unknown as NativeFactoryBuilderOptions);
+
+		await expect(
+			resolveOptions?.({}, { tenantId: "acme" }, true),
+		).rejects.toThrow(/notAnAgentOsOption/);
 	});
 
 	test("agentOS flat config keeps callbacks outside native VM options", () => {

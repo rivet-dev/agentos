@@ -180,7 +180,7 @@ extern "C" fn instance_new(
         write_err(out_err, "null factory or host handle");
         return std::ptr::null_mut();
     }
-    let _: abi::InstanceStart =
+    let start: abi::InstanceStart =
         match ciborium::from_reader(Cursor::new(unsafe { start.as_slice() })) {
             Ok(start) => start,
             Err(error) => {
@@ -189,11 +189,20 @@ extern "C" fn instance_new(
             }
         };
     let factory = unsafe { &*(factory as *const Factory) };
+    let config = match start.instance_options {
+        Some(options) => match config::AgentOsConfigJson::parse_instance_options(&options) {
+            Ok(config) => Arc::new(config),
+            Err(error) => {
+                write_err(out_err, &format!("decode instance options: {error:#}"));
+                return std::ptr::null_mut();
+            }
+        },
+        None => factory.config.clone(),
+    };
     let (backend, bridge) = unsafe { abi::DylibBackend::from_host_vtable(&*host) };
     let host_ctx = host_ctx::HostCtx::from_backend(backend);
     let runtime = factory.runtime.clone();
     let sidecar_path = factory.sidecar_path.clone();
-    let config = factory.config.clone();
     let pool = factory.pool.clone();
     let cancel = CancellationToken::new();
     let run_cancel = cancel.clone();
