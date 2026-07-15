@@ -595,15 +595,16 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 							return liveCount > 0 ? ` · ${liveCount} live` : "";
 						})()}
 					</span>
-					{sessionId !== null ? (
-						<IconButton
-							title="New session"
-							onClick={() => setSelected(null)}
-							className="ml-auto"
-						>
-							<PlusIcon className="size-3.5" />
-						</IconButton>
-					) : null}
+					{/* Always visible: hiding it after click made the button seem to
+					    vanish. Composing state just disables it. */}
+					<IconButton
+						title={sessionId !== null ? "New session" : "Already composing a new session"}
+						onClick={() => setSelected(null)}
+						disabled={sessionId === null}
+						className="ml-auto"
+					>
+						<PlusIcon className="size-3.5" />
+					</IconButton>
 				</div>
 				<ScrollArea className="min-h-0 flex-1">
 					{sessions.length === 0 ? (

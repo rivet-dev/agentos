@@ -369,23 +369,9 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 	return (
 		<div className="flex h-full min-h-0">
 			<div className="flex h-full w-64 shrink-0 flex-col border-r">
-				<div className="flex items-center gap-1 border-b px-3 py-1.5">
-					<input
-						value={draft}
-						onChange={(e) => setDraft(e.target.value)}
-						onKeyDown={(e) => {
-							if (e.key === "Enter") {
-								const next = normalizeRoot(draft);
-								setDraft(next);
-								setRoot((cur) => (next !== cur ? next : cur));
-							}
-						}}
-						spellCheck={false}
-						autoComplete="off"
-						aria-label="Root directory"
-						placeholder="/"
-						className="min-w-0 flex-1 bg-transparent font-mono text-xs text-muted-foreground outline-none placeholder:text-muted-foreground/40 focus:text-foreground"
-					/>
+				<div className="flex items-center gap-1 px-3 pb-1 pt-2.5">
+					<span className="text-[11px] font-medium text-muted-foreground">Files</span>
+					<span className="ml-auto" />
 					<IconButton title="Refresh the tree" onClick={() => void refreshTree()}>
 						<RefreshIcon className="size-3.5" />
 					</IconButton>
@@ -401,7 +387,6 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 					>
 						<UploadIcon className="size-3.5" />
 					</IconButton>
-					<VmStatusBadges actorId={actorId} />
 					<input
 						ref={uploadInputRef}
 						type="file"
@@ -411,6 +396,26 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 							e.target.value = "";
 							if (file) void upload(file);
 						}}
+					/>
+				</div>
+				{/* The browsing root gets its own bar: sharing the header row with
+				    the action icons left it truncated and cramped. */}
+				<div className="border-b px-3 pb-1.5">
+					<input
+						value={draft}
+						onChange={(e) => setDraft(e.target.value)}
+						onKeyDown={(e) => {
+							if (e.key === "Enter") {
+								const next = normalizeRoot(draft);
+								setDraft(next);
+								setRoot((cur) => (next !== cur ? next : cur));
+							}
+						}}
+						spellCheck={false}
+						autoComplete="off"
+						aria-label="Root directory"
+						placeholder="/"
+						className="w-full bg-transparent font-mono text-xs text-muted-foreground outline-none placeholder:text-muted-foreground/40 focus:text-foreground"
 					/>
 				</div>
 				{newFolderDraft !== null ? (
@@ -463,7 +468,13 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 					)}
 				</ScrollArea>
 			</div>
-			<div className="min-h-0 min-w-0 flex-1">
+			<div className="relative min-h-0 min-w-0 flex-1">
+				{/* VM trouble chips float over the viewer, below its header row so
+				    they never cover the file action buttons; the dropdown has the
+				    full pane width to open into (it clipped inside the sidebar). */}
+				<div className="absolute right-3 top-11 z-10">
+					<VmStatusBadges actorId={actorId} />
+				</div>
 				<FileViewer
 					actorId={actorId}
 					path={selectedPath}
