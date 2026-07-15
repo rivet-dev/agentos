@@ -19,18 +19,17 @@ const TABS: Record<string, () => Promise<{ default: ComponentType<{ actorId: str
 		import("./tabs/terminal").then((m) => ({ default: m.TerminalTabConnected })),
 	filesystem: () =>
 		import("./tabs/filesystem").then((m) => ({ default: m.FilesystemTabConnected })),
-	processes: () =>
-		import("./tabs/processes").then((m) => ({ default: m.ProcessesTabConnected })),
 	system: () =>
 		import("./tabs/system").then((m) => ({ default: m.SystemTabConnected })),
 };
 
 // Hosts vendor built copies of this bundle and pin their tab-id config at
 // server start, so ids that existed in older configs must keep rendering.
-// Software and Mounts merged into System; route their ids there.
+// Software, Mounts, and Processes merged into System; route their ids there.
 const LEGACY_TAB_ALIASES: Record<string, string> = {
 	software: "system",
 	mounts: "system",
+	processes: "system",
 };
 
 const queryClient = new QueryClient({

@@ -62,7 +62,7 @@
     },
     "/docs/docs/inspector": {
       "title": "Inspector",
-      "description": "Watch and drive a live VM from the Rivet dashboard: transcript, terminal, filesystem, processes, and system tabs."
+      "description": "Watch and drive a live VM from the Rivet dashboard: transcript, terminal, filesystem, and system tabs."
     },
     "/docs/docs/js-runtime": {
       "title": "JavaScript Runtime",

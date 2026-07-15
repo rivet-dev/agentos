@@ -368,17 +368,14 @@ const AGENTOS_INSPECTOR_CONFIG = {
 			icon: "folder-tree",
 		},
 		{
-			id: "processes",
-			label: "Processes",
-			source: INSPECTOR_TABS_ASSET_DIR,
-			icon: "microchip",
-		},
-		{
 			id: "system",
 			label: "System",
 			source: INSPECTOR_TABS_ASSET_DIR,
 			icon: "layer-group",
 		},
+		// Processes/software/mounts live as sections inside the System tab.
+		// `metadata` is dashboard-owned and not hideable (the schema only
+		// accepts the six built-in ids below), so it stays.
 		...["workflow", "database", "state", "queue", "connections", "console"].map(
 			(id) => ({ id, hidden: true as const }),
 		),

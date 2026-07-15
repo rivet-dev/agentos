@@ -1,6 +1,6 @@
 ---
 title: "Inspector"
-description: "Watch and drive a live VM from the Rivet dashboard: transcript, terminal, filesystem, processes, and system tabs."
+description: "Watch and drive a live VM from the Rivet dashboard: transcript, terminal, filesystem, and system tabs."
 ---
 
 Every agentOS actor ships a set of tabs for the Rivet dashboard's actor inspector. Open a running VM and you can read the agent's transcript, send it prompts, answer permission requests, open a shell, browse the filesystem, and watch its processes. Nothing to configure: the tabs register automatically when you use `agentOS()`.
@@ -38,13 +38,15 @@ An interactive shell into the VM (`sh` by default). Starting a shell boots the V
 
 Browse the VM's filesystem and read files, the same view your code gets through the fs API. Note that the root filesystem is in-memory; files outside persisted mounts do not survive VM restarts. See [Filesystem](/docs/filesystem).
 
-## Processes
-
-The full kernel process tree, refreshed live. Select a process for its details (ppid, cwd, driver, exit code), stop or kill it, and watch a live output tail for processes spawned through the SDK. When the VM is asleep, the tab says so instead of waking it. See [Processes & Shell](/docs/processes).
-
 ## System
 
-What the VM is made of: installed software bundles with their commands and versions, and the configured mounts with their access modes. See [Software](/docs/software) and [Sandbox Mounting](/docs/sandbox).
+Everything about the machine itself, in one scroll view. When the VM is asleep, the tab says so instead of waking it.
+
+- **Processes** — the full kernel process tree, refreshed live. Select a process for its details (ppid, cwd, driver, exit code), stop or kill it, and watch a live output tail for processes spawned through the SDK. See [Processes & Shell](/docs/processes).
+- **Software** — installed software bundles with their commands and versions. See [Software](/docs/software).
+- **Mounts** — the configured mounts with their access modes. See [Sandbox Mounting](/docs/sandbox).
+- **Preview links** — create a signed URL to an HTTP server on a port inside the VM. See [Networking](/docs/networking).
+- **Actor** — the Rivet actor id backing this VM.
 
 ## VM status strip
 

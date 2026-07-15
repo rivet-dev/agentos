@@ -1,6 +1,7 @@
-// "What is this VM made of": installed software bundles and configured mounts
-// in one scroll view. Both are low-frequency configuration views — merged so
-// the tab bar stays flat as higher-traffic tabs (terminal, processes) land.
+// "What is this VM made of and what is it doing": the live process tree plus
+// installed software, configured mounts, preview links, and the actor id in
+// one scroll view, keeping the tab bar to the high-traffic surfaces
+// (transcript, terminal, filesystem).
 import { useSuspenseQueries } from "@tanstack/react-query";
 import { useState } from "react";
 import { ActionErrorNote, ChevronRight, CopyButton } from "../common";
@@ -11,6 +12,7 @@ import { Badge } from "../ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { ScrollArea } from "../ui/scroll-area";
 import { VmBootGate } from "../vm-boot-gate";
+import { ProcessesLoaded } from "./processes";
 import React from "react";
 
 function SoftwareRow({ bundle }: { bundle: SoftwareBundle }) {
@@ -214,13 +216,13 @@ function SectionHeader({ children }: { children: string }) {
 }
 
 export function SystemTabConnected({ actorId }: { actorId: string }) {
-	// `listSoftware` enumerates commands via the VM and `listMounts` dispatches
-	// through the same boot-on-demand lane, so opening the tab would wake a
-	// sleeping VM. Gate first.
+	// Every section here (process tree, software commands, mounts) is
+	// enumerated by the running VM, so opening the tab would wake a sleeping
+	// one. Gate first.
 	return (
 		<VmBootGate
 			actorId={actorId}
-			note="VM not booted — software and mounts are enumerated by the running VM."
+			note="VM not booted — processes, software, and mounts are enumerated by the running VM."
 			actionLabel="Boot the VM and show system info"
 		>
 			<SystemLoaded actorId={actorId} />
@@ -237,6 +239,14 @@ function SystemLoaded({ actorId }: { actorId: string }) {
 	});
 	return (
 		<ScrollArea className="h-full min-h-0">
+			<section>
+				<SectionHeader>Processes</SectionHeader>
+				{/* The process view manages its own two-pane layout and live
+				    output tail; give it a bounded height inside the scroll view. */}
+				<div className="flex h-[26rem] flex-col border-b">
+					<ProcessesLoaded actorId={actorId} />
+				</div>
+			</section>
 			<section>
 				<SectionHeader>Software</SectionHeader>
 				{software.data.length === 0 ? (
@@ -264,6 +274,14 @@ function SystemLoaded({ actorId }: { actorId: string }) {
 			<section>
 				<SectionHeader>Preview links</SectionHeader>
 				<PreviewLinks />
+			</section>
+			<section>
+				<SectionHeader>Actor</SectionHeader>
+				<div className="flex items-center gap-2 px-4 py-3 text-xs">
+					<span className="text-muted-foreground">id</span>
+					<span className="truncate font-mono">{actorId}</span>
+					<CopyButton value={actorId} />
+				</div>
 			</section>
 		</ScrollArea>
 	);

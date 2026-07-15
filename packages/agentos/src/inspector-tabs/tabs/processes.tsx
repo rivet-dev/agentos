@@ -4,7 +4,6 @@ import { ActionErrorNote, AgentOsEmpty, relativeTime, StatusDot } from "../commo
 import { useAgentOsActor } from "../lib/rivet";
 import { agentOsSource, decodeActionBytes } from "../lib/source";
 import type { KernelProcessInfo, ProcessExitPayload, ProcessOutputPayload, ProcessTreeNode } from "../lib/types";
-import { VmBootGate } from "../vm-boot-gate";
 import { ScrollArea } from "../ui/scroll-area";
 import React from "react";
 
@@ -152,7 +151,7 @@ function ProcessDetail({
 	);
 }
 
-function ProcessesLoaded({ actorId }: { actorId: string }) {
+export function ProcessesLoaded({ actorId }: { actorId: string }) {
 	const { data: tree } = useSuspenseQuery(agentOsSource.processTreeQueryOptions(actorId));
 	const queryClient = useQueryClient();
 	const [selectedPid, setSelectedPid] = useState<number>();
@@ -265,16 +264,3 @@ function ProcessesLoaded({ actorId }: { actorId: string }) {
 	);
 }
 
-export function ProcessesTabConnected({ actorId }: { actorId: string }) {
-	return (
-		<VmBootGate
-			actorId={actorId}
-			note="VM not booted — there are no processes to list."
-			actionLabel="Boot the VM and list processes"
-		>
-			<div className="flex h-full flex-col">
-				<ProcessesLoaded actorId={actorId} />
-			</div>
-		</VmBootGate>
-	);
-}
