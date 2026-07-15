@@ -13,18 +13,16 @@ import "./styles.css";
 // Tab registry: id → lazy component. Add a tab here + register the same id in
 // actor.ts `inspectorTabs` pointing `source` at this shared asset dir.
 const TABS: Record<string, () => Promise<{ default: ComponentType<{ actorId: string }> }>> = {
-	software: () =>
-		import("./tabs/software").then((m) => ({ default: m.SoftwareTabConnected })),
-	processes: () =>
-		import("./tabs/processes").then((m) => ({ default: m.ProcessesTabConnected })),
-	filesystem: () =>
-		import("./tabs/filesystem").then((m) => ({ default: m.FilesystemTabConnected })),
-	mounts: () =>
-		import("./tabs/mounts").then((m) => ({ default: m.MountsTabConnected })),
 	transcript: () =>
 		import("./tabs/transcript").then((m) => ({ default: m.TranscriptTabConnected })),
 	terminal: () =>
 		import("./tabs/terminal").then((m) => ({ default: m.TerminalTabConnected })),
+	filesystem: () =>
+		import("./tabs/filesystem").then((m) => ({ default: m.FilesystemTabConnected })),
+	processes: () =>
+		import("./tabs/processes").then((m) => ({ default: m.ProcessesTabConnected })),
+	system: () =>
+		import("./tabs/system").then((m) => ({ default: m.SystemTabConnected })),
 };
 
 const queryClient = new QueryClient({

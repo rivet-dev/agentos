@@ -374,16 +374,10 @@ const AGENTOS_INSPECTOR_CONFIG = {
 			icon: "microchip",
 		},
 		{
-			id: "software",
-			label: "Software",
+			id: "system",
+			label: "System",
 			source: INSPECTOR_TABS_ASSET_DIR,
-			icon: "box-archive",
-		},
-		{
-			id: "mounts",
-			label: "Mounts",
-			source: INSPECTOR_TABS_ASSET_DIR,
-			icon: "hard-drive",
+			icon: "layer-group",
 		},
 		...["workflow", "database", "state", "queue", "connections", "console"].map(
 			(id) => ({ id, hidden: true as const }),
