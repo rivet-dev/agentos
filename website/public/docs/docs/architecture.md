@@ -173,7 +173,7 @@ An agent (such as [Pi](https://github.com/mariozechner/pi-coding-agent)) is just
 
 ## Orchestration (Rivet Actors)
 
-The `agentOS()` actor (from `@rivet-dev/agentos`) wraps the raw VM in a [Rivet Actor](/docs/core), which adds durable state, scheduling, and orchestration. This is what gives you persistence, cron, and workflows out of the box.
+The `agentOS()` actor (from `@rivet-dev/agentos`) wraps the raw VM in a [Rivet Actor](/docs/core), which adds durable state, scheduling, and orchestration. This is what gives you persistence, cron, and workflows out of the box. It also registers the [inspector](/docs/inspector) tabs in the Rivet dashboard, so every actor comes with a live view of its transcript, filesystem, and processes.
 
   <text x="64" y="46" font-family="var(--sl-font)" font-size="13" font-weight="600" fill="#1b1916">Rivet Actor</text>
   <text x="64" y="64" font-family="var(--sl-font)" font-size="10.5" fill="#56524a">durable, addressable server object</text>

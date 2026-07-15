@@ -43,6 +43,10 @@ The full kernel process tree, refreshed live. Select a process for its details (
 
 What the VM is made of: installed software bundles with their commands and versions, and the configured mounts with their access modes. See [Software](/docs/software) and [Sandbox Mounting](/docs/sandbox).
 
+## VM status strip
+
+Above every tab, a persistent strip shows the VM lifecycle (booted, asleep, shut down after an error), the live session count, and a warnings panel collecting resource-limit warnings and agent crash exits. It polls without waking a sleeping VM, so leaving the inspector open never boots anything. The warnings are the same data your code receives through `onLimitWarning` and `onAgentExit`; see [Resource Limits](/docs/resource-limits) and [Debugging](/docs/debugging).
+
 ## Access control
 
 The dashboard holds a single per-actor inspector token, and that token authorizes every action the tabs can perform, including sending prompts, answering permission requests, writing to a shell, and killing processes. There is no per-action scoping: treat dashboard access to an actor as operator access to its VM.

@@ -2,7 +2,7 @@
 
 Create agent sessions, send prompts, stream responses, and subscribe to events.
 
-Sessions launch an agent inside the VM, stream its responses in real time over `sessionEvent`, and persist a replayable ACP transcript that survives sleep/wake.
+Sessions launch an agent inside the VM, stream its responses in real time over `sessionEvent`, and persist a replayable ACP transcript that survives sleep/wake. The [inspector](/docs/inspector)'s Transcript tab renders this same stream live, with a composer for prompting sessions by hand.
 
 ## Create a session
 
