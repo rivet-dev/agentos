@@ -18,34 +18,27 @@ type LiveVmState =
 	| { kind: "shutdown"; reason?: string }
 	| null;
 
+// `null` = nothing worth a bar: the VM is simply healthy (or still being
+// checked). The strip renders only when it carries signal — the session count
+// lives in the transcript's Sessions column, not here.
 function stripState(
 	health: RuntimeHealth | undefined,
 	live: LiveVmState,
-): { color: DotColor; label: string } {
+): { color: DotColor; label: string } | null {
 	if (live?.kind === "shutdown") {
 		const reason = live.reason ?? "unknown";
 		return reason === "error"
 			? { color: "red", label: "VM shut down after an error" }
 			: { color: "muted", label: `VM shut down (${reason})` };
 	}
-	if (!health && live?.kind === "booted") {
-		return { color: "green", label: "VM running" };
-	}
-	if (!health) return { color: "muted", label: "checking VM…" };
+	if (!health) return null;
 	if (health.sidecar && health.sidecar.state !== "ready") {
 		return { color: "red", label: `sidecar ${health.sidecar.state}` };
 	}
 	if (!health.booted && live?.kind !== "booted") {
 		return { color: "muted", label: "VM not booted (boots on first session)" };
 	}
-	// Healthy running state: the dashboard sidebar already shows the actor
-	// awake and the green dot carries "VM booted", so the words would be
-	// redundant — spend the label on what nothing else shows.
-	const sessions = health.sessions ?? 0;
-	return {
-		color: "green",
-		label: `${sessions} live session${sessions === 1 ? "" : "s"}`,
-	};
+	return null;
 }
 
 export function VmStatusStrip({ actorId }: { actorId: string }) {
@@ -73,10 +66,13 @@ export function VmStatusStrip({ actorId }: { actorId: string }) {
 	if (health.error && isMissingHealthAction(health.error)) return null;
 
 	const data = health.data;
-	const { color, label } = health.error
+	const state = health.error
 		? { color: "amber" as DotColor, label: "health unavailable" }
 		: stripState(data, live);
 	const warningCount = (data?.warnings.length ?? 0) + (data?.agentExits.length ?? 0);
+	// Nothing to say (healthy VM, no warnings) → no bar at all.
+	if (!state && warningCount === 0) return null;
+	const { color, label } = state ?? { color: "amber" as DotColor, label: "" };
 
 	return (
 		<div className="shrink-0 border-b bg-muted/30">

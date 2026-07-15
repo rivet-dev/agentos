@@ -581,7 +581,17 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 		<div className="flex h-full min-h-0">
 			<div className="flex h-full w-56 shrink-0 flex-col border-r">
 				<div className="flex items-center px-3 pb-1 pt-2.5">
-					<span className="text-[11px] font-medium text-muted-foreground">Sessions</span>
+					{/* Live count lives here, next to the rows it describes — the
+					    status strip stays hidden while the VM is simply healthy. */}
+					<span className="text-[11px] font-medium text-muted-foreground">
+						Sessions
+						{(() => {
+							const liveCount = liveIds
+								? liveIds.size
+								: sessions.filter((s) => s.status === "running").length;
+							return liveCount > 0 ? ` · ${liveCount} live` : "";
+						})()}
+					</span>
 					{sessionId !== null ? (
 						<button
 							type="button"

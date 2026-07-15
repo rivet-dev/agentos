@@ -47,7 +47,7 @@ Everything about the machine itself, in one scroll view. When the VM is asleep, 
 
 ## VM status strip
 
-Above every tab, a persistent strip shows the VM lifecycle (booted, asleep, shut down after an error), the live session count, and a warnings panel collecting resource-limit warnings and agent crash exits. It polls without waking a sleeping VM, so leaving the inspector open never boots anything. The warnings are the same data your code receives through `onLimitWarning` and `onAgentExit`; see [Resource Limits](/docs/resource-limits) and [Debugging](/docs/debugging).
+When something needs attention, a strip appears above every tab: the VM is asleep, shut down after an error, the sidecar is unhealthy, or there are pending warnings (resource-limit warnings and agent crash exits, expandable into a panel). While the VM is simply healthy the strip stays hidden; the live session count shows in the Transcript tab's session list instead. The strip polls without waking a sleeping VM, so leaving the inspector open never boots anything. The warnings are the same data your code receives through `onLimitWarning` and `onAgentExit`; see [Resource Limits](/docs/resource-limits) and [Debugging](/docs/debugging).
 
 ## Access control
 
