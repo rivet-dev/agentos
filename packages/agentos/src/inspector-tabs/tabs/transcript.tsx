@@ -356,7 +356,7 @@ function Composer({
 	return (
 		<div className="shrink-0">
 			<div className="mx-auto w-full max-w-3xl px-3 pb-3">
-				{optionsOpen ? (
+				{optionsOpen && !sessionId ? (
 					<div className="mb-2 flex flex-col gap-2 rounded-xl border bg-muted/30 p-3 text-xs">
 						<label className="flex items-center gap-2">
 							<span className="w-24 shrink-0 text-muted-foreground">Agent type</span>
@@ -411,21 +411,23 @@ function Composer({
 						className="max-h-48 min-h-[3.25rem] w-full resize-none bg-transparent px-4 pt-3 text-sm placeholder:text-muted-foreground/50 focus:outline-none"
 					/>
 					<div className="flex items-center gap-1.5 px-2.5 pb-2.5">
-						<button
-							type="button"
-							onClick={() => setOptionsOpen((v) => !v)}
-							title="Session options"
-							className="inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-						>
-							<span aria-hidden="true" className="text-sm leading-none">
-								+
-							</span>
-							Options
-						</button>
+						{/* Agent choice and session env only matter when the next send
+						    CREATES a session — an existing session already carries both,
+						    so the control disappears once one is selected. */}
+						{!sessionId ? (
+							<button
+								type="button"
+								onClick={() => setOptionsOpen((v) => !v)}
+								title="New-session options (agent, env)"
+								className="inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+							>
+								<span aria-hidden="true" className="text-sm leading-none">
+									+
+								</span>
+								Options
+							</button>
+						) : null}
 						<span className="ml-auto" />
-						<span className="px-1 font-mono text-[11px] text-muted-foreground/60">
-							{agentType.trim() || "opencode"}
-						</span>
 						{busy ? (
 							<button
 								type="button"
