@@ -18,6 +18,7 @@ import type {
 	TranscriptEvent,
 } from "../lib/types";
 import { ScrollArea } from "../ui/scroll-area";
+import { VmStatusBadges } from "../vm-status-badges";
 import React from "react";
 
 // Chat-style transcript rendering. Conversation content (user/assistant) gets
@@ -592,6 +593,7 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 							return liveCount > 0 ? ` · ${liveCount} live` : "";
 						})()}
 					</span>
+					<VmStatusBadges actorId={actorId} align="left" />
 					{sessionId !== null ? (
 						<button
 							type="button"

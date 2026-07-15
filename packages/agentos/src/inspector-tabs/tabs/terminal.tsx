@@ -20,6 +20,7 @@ import { ActionErrorNote, AgentOsEmpty, StatusDot } from "../common";
 import { useAgentOsActor } from "../lib/rivet";
 import { agentOsSource, decodeActionBytes } from "../lib/source";
 import type { ShellDataPayload, ShellExitPayload } from "../lib/types";
+import { VmStatusBadges } from "../vm-status-badges";
 import "@xterm/xterm/css/xterm.css";
 import React from "react";
 
@@ -410,6 +411,7 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 						</span>
 					))}
 					<span className="ml-auto" />
+					<VmStatusBadges actorId={actorId} />
 					{startError ? (
 						<span className="text-destructive">
 							{startError instanceof Error ? startError.message : String(startError)}

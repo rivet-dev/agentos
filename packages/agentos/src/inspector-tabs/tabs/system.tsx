@@ -3,7 +3,7 @@
 // one scroll view, keeping the tab bar to the high-traffic surfaces
 // (transcript, terminal, filesystem).
 import { useSuspenseQueries } from "@tanstack/react-query";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { ActionErrorNote, ChevronRight, CopyButton } from "../common";
 import { cn } from "../lib/cn";
 import { agentOsSource } from "../lib/source";
@@ -12,6 +12,7 @@ import { Badge } from "../ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { ScrollArea } from "../ui/scroll-area";
 import { VmBootGate } from "../vm-boot-gate";
+import { VmStatusBadges } from "../vm-status-badges";
 import { ProcessesLoaded } from "./processes";
 import React from "react";
 
@@ -207,10 +208,11 @@ function PreviewLinks() {
 	);
 }
 
-function SectionHeader({ children }: { children: string }) {
+function SectionHeader({ children, right }: { children: string; right?: ReactNode }) {
 	return (
-		<div className="border-b bg-muted/30 px-4 py-1.5 text-[11px] font-medium text-muted-foreground">
+		<div className="flex items-center border-b bg-muted/30 px-4 py-1.5 text-[11px] font-medium text-muted-foreground">
 			{children}
+			{right ? <span className="ml-auto">{right}</span> : null}
 		</div>
 	);
 }
@@ -240,7 +242,7 @@ function SystemLoaded({ actorId }: { actorId: string }) {
 	return (
 		<ScrollArea className="h-full min-h-0">
 			<section>
-				<SectionHeader>Processes</SectionHeader>
+				<SectionHeader right={<VmStatusBadges actorId={actorId} />}>Processes</SectionHeader>
 				{/* The process view manages its own two-pane layout and live
 				    output tail; give it a bounded height inside the scroll view. */}
 				<div className="flex h-[26rem] flex-col border-b">

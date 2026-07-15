@@ -80,7 +80,7 @@ export function PermissionPrompts({ actorId }: { actorId: string }) {
 	}, [backfillRows]);
 
 	// Broadcast names aren't in the typed event schema (Rust owns broadcasts) —
-	// same cast pattern as transcript.tsx / vm-status-strip.tsx.
+	// same cast pattern as transcript.tsx / vm-status-badges.tsx.
 	const actor = useAgentOsActor();
 	const useAgentEvent = actor.useEvent as (
 		name: string,

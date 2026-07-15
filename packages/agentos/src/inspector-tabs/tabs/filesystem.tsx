@@ -6,6 +6,7 @@ import { agentOsSource } from "../lib/source";
 import type { FsEntry } from "../lib/types";
 import { ScrollArea } from "../ui/scroll-area";
 import { VmBootGate } from "../vm-boot-gate";
+import { VmStatusBadges } from "../vm-status-badges";
 import React from "react";
 
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/i;
@@ -385,6 +386,7 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 					>
 						Upload
 					</button>
+					<VmStatusBadges actorId={actorId} />
 					<input
 						ref={uploadInputRef}
 						type="file"

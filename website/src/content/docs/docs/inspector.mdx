@@ -48,9 +48,9 @@ Everything about the machine itself, in one scroll view. When the VM is asleep, 
 - **Preview links** — create a signed URL to an HTTP server on a port inside the VM. See [Networking](/docs/networking).
 - **Actor** — the Rivet actor id backing this VM.
 
-## VM status strip
+## VM status badges
 
-When something needs attention, a strip appears above every tab: the VM is asleep, shut down after an error, the sidecar is unhealthy, or there are pending warnings (resource-limit warnings and agent crash exits, expandable into a panel). While the VM is simply healthy the strip stays hidden; the live session count shows in the Transcript tab's session list instead. The strip polls without waking a sleeping VM, so leaving the inspector open never boots anything. The warnings are the same data your code receives through `onLimitWarning` and `onAgentExit`; see [Resource Limits](/docs/resource-limits) and [Debugging](/docs/debugging).
+When something needs attention, compact badges appear in each tab's own toolbar: a state note when the VM is asleep, shut down after an error, or the sidecar is unhealthy, and an amber warnings pill (resource-limit warnings and agent crash exits, expandable into a panel). While the VM is simply healthy nothing shows; the live session count sits in the Transcript tab's session list. The health poll behind the badges never wakes a sleeping VM, so leaving the inspector open never boots anything. The warnings are the same data your code receives through `onLimitWarning` and `onAgentExit`; see [Resource Limits](/docs/resource-limits) and [Debugging](/docs/debugging).
 
 ## Access control
 

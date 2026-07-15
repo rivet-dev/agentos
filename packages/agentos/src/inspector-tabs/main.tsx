@@ -5,7 +5,6 @@ import { isInspectorActionError, tabIdFromUrl } from "./lib/actor-client";
 import { RivetProvider } from "./lib/rivet";
 import { PermissionPrompts } from "./permission-prompts";
 import { TabBoundary } from "./tab-boundary";
-import { VmStatusStrip } from "./vm-status-strip";
 import React from "react";
 
 import "./styles.css";
@@ -85,15 +84,15 @@ function App() {
 	const Tab = lazy(loader);
 	// RivetProvider owns the shared rivetkit client (typed `useActor` + the
 	// `callAction` transport). One boundary catches both the code-split chunk
-	// load and the tab's useSuspenseQuery data load. The status strip sits
-	// outside the boundary so a broken tab still shows VM health.
+	// load and the tab's useSuspenseQuery data load. VM status renders as
+	// compact badges inside each tab's own top bar (vm-status-badges.tsx),
+	// not as a dedicated row here.
 	return (
 		<RivetProvider actorId={auth.actorId} authToken={auth.authToken}>
 			<div className="flex h-full min-h-0 flex-col">
-				<VmStatusStrip actorId={auth.actorId} />
-				{/* Permission prompts sit with the strip, outside the boundary: an
-				    agent blocked on approval must stay answerable from every tab even
-				    when the tab body itself is broken. */}
+				{/* Permission prompts sit outside the boundary: an agent blocked on
+				    approval must stay answerable from every tab even when the tab
+				    body itself is broken. */}
 				<PermissionPrompts actorId={auth.actorId} />
 				<div className="min-h-0 flex-1">
 					<TabBoundary>
