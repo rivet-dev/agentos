@@ -8,7 +8,7 @@
 // nothing, preserving stock behavior.
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { relativeTime } from "./common";
+import { CopyButton, relativeTime } from "./common";
 import { isMissingHealthAction } from "./lib/health";
 import { useAgentOsActor } from "./lib/rivet";
 import { healthQueryOptions } from "./lib/source";
@@ -107,7 +107,17 @@ export function VmStatusBadges({
 						>
 							{data.warnings.length > 0 ? (
 								<div className="mb-2">
-									<div className="mb-1 font-medium text-muted-foreground">Limit warnings</div>
+									<div className="mb-1 flex items-center gap-1 font-medium text-muted-foreground">
+										Limit warnings
+										<CopyButton
+											value={data.warnings
+												.map(
+													(w) =>
+														`${new Date(w.ts).toISOString()} ${w.limit} ${w.observed}/${w.capacity} · ${w.fillPercent}%`,
+												)
+												.join("\n")}
+										/>
+									</div>
 									{data.warnings.map((w, i) => (
 										<div key={`w-${i}`} className="flex items-center gap-2 font-mono">
 											<span>
@@ -120,7 +130,17 @@ export function VmStatusBadges({
 							) : null}
 							{data.agentExits.length > 0 ? (
 								<div className="mb-2">
-									<div className="mb-1 font-medium text-muted-foreground">Agent exits</div>
+									<div className="mb-1 flex items-center gap-1 font-medium text-muted-foreground">
+										Agent exits
+										<CopyButton
+											value={data.agentExits
+												.map(
+													(e) =>
+														`${new Date(e.ts).toISOString()} ${e.agentType} session=${e.sessionId} exit=${e.exitCode ?? "?"} restart=${e.restart} (${e.restartCount})`,
+												)
+												.join("\n")}
+										/>
+									</div>
 									{data.agentExits.map((e, i) => (
 										<div key={`e-${i}`} className="flex items-center gap-2 font-mono">
 											<span>
@@ -133,8 +153,9 @@ export function VmStatusBadges({
 							) : null}
 							{data.stderrTail.length > 0 ? (
 								<div>
-									<div className="mb-1 font-medium text-muted-foreground">
+									<div className="mb-1 flex items-center gap-1 font-medium text-muted-foreground">
 										Adapter stderr (tail)
+										<CopyButton value={data.stderrTail.map((l) => l.line).join("\n")} />
 									</div>
 									<pre className="whitespace-pre-wrap break-words font-mono text-muted-foreground">
 										{data.stderrTail.map((l) => l.line).join("\n")}
