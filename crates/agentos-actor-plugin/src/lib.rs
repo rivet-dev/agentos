@@ -7,8 +7,8 @@
 //! **unmodified** `agentos-client` to spawn + drive the sidecar, calling back
 //! into the host `HostVtable` for durable storage and events.
 //!
-//! This file is the export/ABI/runtime skeleton (spec phase 4 foundation). The
-//! actor run loop + the plugin-side host-vtable bridge are layered on top next.
+//! The actor loop is implemented against RivetKit's portable context so the
+//! dylib owns AgentOS behavior while the host owns lifecycle dispatch.
 
 #![allow(unsafe_op_in_unsafe_fn)]
 
@@ -27,7 +27,10 @@ mod vm;
 #[cfg(test)]
 mod persistence_e2e;
 
-use std::sync::Arc;
+use std::io::Cursor;
+use std::panic::AssertUnwindSafe;
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 /// Process-global plugin state created once per `dlopen` (spec §5.2): the
 /// plugin's own tokio runtime (`enable_all` — the time driver is required by
@@ -48,18 +51,7 @@ fn write_err(out: *mut abi::OwnedBuf, msg: &str) {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn rivet_actor_abi_magic() -> u64 {
-    abi::RIVET_ACTOR_ABI_MAGIC
-}
-
-#[no_mangle]
-pub extern "C" fn rivet_actor_abi_version() -> u64 {
-    abi::RIVET_ACTOR_ABI_VERSION
-}
-
-#[no_mangle]
-pub extern "C" fn rivet_actor_plugin_init(out_err: *mut abi::OwnedBuf) -> *mut c_void {
+extern "C" fn plugin_init(out_err: *mut abi::OwnedBuf) -> *mut c_void {
     // Debug-only tracing to stderr, gated on AGENTOS_PLUGIN_LOG (RUST_LOG
     // syntax). Without a subscriber every tracing::warn! from the embedded
     // agentos-client (e.g. a failed fire-and-forget shell write) is silently
@@ -105,8 +97,7 @@ struct Factory {
     pool: String,
 }
 
-#[no_mangle]
-pub extern "C" fn rivet_actor_factory_new(
+extern "C" fn factory_new(
     plugin: *mut c_void,
     config_json: abi::BorrowedBuf,
     sidecar_path: abi::BorrowedBuf,
@@ -136,85 +127,102 @@ pub extern "C" fn rivet_actor_factory_new(
     })) as *mut c_void
 }
 
-/// Send wrapper for the host completion `user_data` so it can move into the
-/// spawned actor task.
 struct SendUserData(*mut c_void);
 unsafe impl Send for SendUserData {}
 
-struct RunGuard {
+struct CompletionTarget {
     done: abi::CompletionFn,
-    ud: SendUserData,
-    fired: bool,
+    user_data: SendUserData,
 }
 
-impl RunGuard {
-    fn finish(&mut self, result: abi::AbiResult) {
-        if !self.fired {
-            self.fired = true;
-            (self.done)(self.ud.0, result);
+impl CompletionTarget {
+    fn finish(self, result: abi::AbiResult) {
+        (self.done)(self.user_data.0, result);
+    }
+
+    fn finish_outcome(self, outcome: &Result<(), String>) {
+        match outcome {
+            Ok(()) => self.finish(abi::AbiResult::ok(abi::OwnedBuf::empty())),
+            Err(message) => self.finish(abi::AbiResult::err(abi::OwnedBuf::from_vec(
+                message.clone().into_bytes(),
+            ))),
         }
     }
 }
 
-impl Drop for RunGuard {
-    fn drop(&mut self) {
-        self.finish(abi::AbiResult::status_only(abi::AbiStatus::Cancelled));
-    }
+struct Instance {
+    inner: Arc<InstanceInner>,
 }
 
-/// Run one actor instance: build the `HostCtx` bridge over the host vtable,
-/// spawn the actor loop on the plugin runtime, and signal completion when the
-/// event stream closes (host cancel). The VM-dispatch layer (decode actions +
-/// drive the sidecar via `agentos-client`) slots into `actor_loop` next.
-#[no_mangle]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn rivet_actor_run(
+struct InstanceInner {
+    bridge: abi::DylibEventBridge,
+    join: Mutex<Option<thread::JoinHandle<()>>>,
+    shutdown: Mutex<ShutdownState>,
+    cancel: CancellationToken,
+}
+
+#[derive(Default)]
+struct ShutdownState {
+    started: bool,
+    outcome: Option<Result<(), String>>,
+    waiters: Vec<CompletionTarget>,
+}
+
+extern "C" fn instance_new(
     factory: *mut c_void,
     host: *const abi::HostVtable,
-    done: abi::CompletionFn,
+    start: abi::BorrowedBuf,
+    out_err: *mut abi::OwnedBuf,
+    terminal_done: abi::CompletionFn,
     user_data: *mut c_void,
 ) -> *mut c_void {
-    let instance = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
-        let factory = &*(factory as *const Factory);
-        let host_ctx = host_ctx::HostCtx::from_vtable(*host);
-        let sidecar_path = factory.sidecar_path.clone();
-        let config = factory.config.clone();
-        let pool = factory.pool.clone();
-        let ud = SendUserData(user_data);
-        let cancel = CancellationToken::new();
-        let run_cancel = cancel.clone();
-        let handle = factory.runtime.spawn(async move {
-            let mut guard = RunGuard {
-                done,
-                ud,
-                fired: false,
-            };
-            actor_loop(host_ctx, sidecar_path, config, pool, run_cancel).await;
-            guard.finish(abi::AbiResult::ok(abi::OwnedBuf::empty()));
-        });
-        Instance {
-            abort: Some(handle.abort_handle()),
-            cancel,
-        }
-    }))
-    .unwrap_or_else(|_| {
-        done(
-            user_data,
-            abi::AbiResult::status_only(abi::AbiStatus::Panic),
-        );
-        Instance {
-            abort: None,
-            cancel: CancellationToken::new(),
+    if factory.is_null() || host.is_null() {
+        write_err(out_err, "null factory or host handle");
+        return std::ptr::null_mut();
+    }
+    let _: abi::InstanceStart =
+        match ciborium::from_reader(Cursor::new(unsafe { start.as_slice() })) {
+            Ok(start) => start,
+            Err(error) => {
+                write_err(out_err, &format!("decode instance start: {error}"));
+                return std::ptr::null_mut();
+            }
+        };
+    let factory = unsafe { &*(factory as *const Factory) };
+    let (backend, bridge) = unsafe { abi::DylibBackend::from_host_vtable(&*host) };
+    let host_ctx = host_ctx::HostCtx::from_backend(backend);
+    let runtime = factory.runtime.clone();
+    let sidecar_path = factory.sidecar_path.clone();
+    let config = factory.config.clone();
+    let pool = factory.pool.clone();
+    let cancel = CancellationToken::new();
+    let run_cancel = cancel.clone();
+    let terminal = CompletionTarget {
+        done: terminal_done,
+        user_data: SendUserData(user_data),
+    };
+    let join = thread::spawn(move || {
+        let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            runtime.block_on(actor_loop(host_ctx, sidecar_path, config, pool, run_cancel));
+        }));
+        match outcome {
+            Ok(()) => terminal.finish(abi::AbiResult::ok(abi::OwnedBuf::empty())),
+            Err(_) => terminal.finish(abi::AbiResult::status_only(abi::AbiStatus::Panic)),
         }
     });
-    Box::into_raw(Box::new(instance)) as *mut c_void
+    Box::into_raw(Box::new(Instance {
+        inner: Arc::new(InstanceInner {
+            bridge,
+            join: Mutex::new(Some(join)),
+            shutdown: Mutex::new(ShutdownState::default()),
+            cancel,
+        }),
+    })) as *mut c_void
 }
 
-/// Plugin-side actor run loop (ported from `rivetkit-agent-os::run`): drains
-/// host lifecycle events via the `HostCtx` bridge, brings the VM up lazily on
-/// the first action, tears it down on Sleep/Destroy, and ends when the host
-/// closes the stream. Action dispatch (decode + drive the VM) is the remaining
-/// layer; until it lands, actions reply with a clear not-yet-ported error.
+/// Plugin-side actor run loop: drains host lifecycle events through the
+/// portable bridge, brings the VM up lazily on the first action, tears it down
+/// on Sleep/Destroy, and ends when the host closes the stream.
 async fn actor_loop(
     host: host_ctx::HostCtx,
     sidecar_path: String,
@@ -222,10 +230,16 @@ async fn actor_loop(
     pool: String,
     cancel: CancellationToken,
 ) {
-    // Ensure the agent-os schema exists before handling events (best-effort;
-    // mirrors rivetkit-agent-os run.rs).
+    // Ensure the durable schema exists before accepting work. Starting with a
+    // half-migrated actor would turn every later filesystem/session failure
+    // into a misleading action error.
     if host.sql_is_enabled() {
-        let _ = persistence::migrate(&host).await;
+        if let Err(error) = persistence::migrate(&host).await {
+            let message = format!("agent-os schema migration failed: {error:#}");
+            host.log_warn(&message);
+            host.startup_ready(false, &message);
+            return;
+        }
     }
     // The VM handle + actor vars live on a dedicated worker task that drains
     // stateful jobs (Action/Http/Sleep/Destroy) serially in submission order.
@@ -237,7 +251,7 @@ async fn actor_loop(
     // `ensure_vm().await` ran inline in this loop, so the first action starved
     // ConnOpen, the actor websocket connection setup timed out at 5000ms, and
     // live `sessionEvent` streaming silently delivered zero events.
-    let (job_tx, job_rx) = tokio::sync::mpsc::unbounded_channel::<ActorJob>();
+    let (job_tx, job_rx) = tokio::sync::mpsc::channel::<ActorJob>(MAX_PENDING_ACTOR_JOBS);
     let worker = tokio::spawn(actor_worker(
         host.clone(),
         sidecar_path,
@@ -256,27 +270,40 @@ async fn actor_loop(
             _ = cancel.cancelled() => break,
             event = host.next_event() => event,
         };
-        let Some((tag, token, payload)) = event else {
+        let Some(event) = event else {
             break;
         };
-        match abi::AbiEventTag::from_u32(tag) {
-            Some(abi::AbiEventTag::Action) => {
-                if job_tx.send(ActorJob::Action { token, payload }).is_err() {
-                    let _ = host.reply_err(token, "agent-os actor worker unavailable");
-                }
+        match event {
+            abi::Event::Action {
+                name, args, reply, ..
+            } => {
+                enqueue_job(
+                    &host,
+                    &job_tx,
+                    ActorJob::Action {
+                        token: reply.0,
+                        name,
+                        args,
+                    },
+                );
             }
-            Some(abi::AbiEventTag::Http) => {
-                if job_tx.send(ActorJob::Http { token, payload }).is_err() {
-                    let _ = host.reply_err(token, "agent-os actor worker unavailable");
-                }
+            abi::Event::Http { request, reply } => {
+                enqueue_job(
+                    &host,
+                    &job_tx,
+                    ActorJob::Http {
+                        token: reply.0,
+                        request,
+                    },
+                );
             }
-            Some(abi::AbiEventTag::ConnPreflight) => {
-                let _ = host.reply_ok(token, Vec::new());
+            abi::Event::ConnPreflight { reply, .. } => {
+                let _ = host.reply_ok(reply.0, Vec::new());
             }
-            Some(abi::AbiEventTag::ConnOpen) => {
-                let _ = host.reply_ok(token, Vec::new());
+            abi::Event::ConnOpen { reply, .. } => {
+                let _ = host.reply_ok(reply.0, Vec::new());
             }
-            Some(abi::AbiEventTag::Subscribe) => {
+            abi::Event::Subscribe { reply, .. } => {
                 // Accept the connection's event subscription (e.g. `sessionEvent`)
                 // so RivetKit registers it and routes matching broadcasts to this
                 // connection. Subscription state is tracked by RivetKit core; the
@@ -285,43 +312,94 @@ async fn actor_loop(
                 // subscription — so the connection was never registered and every
                 // broadcast (sessionEvent, vmBooted, ...) was silently dropped,
                 // making live `sessionEvent` streaming deliver nothing.
-                let _ = host.reply_ok(token, Vec::new());
+                let _ = host.reply_ok(reply.0, Vec::new());
             }
-            Some(abi::AbiEventTag::SerializeState) => {
+            abi::Event::SerializeState { reply } => {
                 // Agent OS persists durable data through SQLite and rebuilds VM/process
                 // state after wake, so there is no opaque actor state payload to return.
-                let _ = host.reply_ok(token, Vec::new());
+                let _ = host.reply_ok(reply.0, Vec::new());
             }
-            Some(abi::AbiEventTag::Sleep) => {
-                if job_tx.send(ActorJob::Sleep { token }).is_err() {
-                    let _ = host.reply_ok(token, Vec::new());
-                }
+            abi::Event::Sleep { reply } => {
+                enqueue_job(&host, &job_tx, ActorJob::Sleep { token: reply.0 });
             }
-            Some(abi::AbiEventTag::Destroy) => {
-                if job_tx.send(ActorJob::Destroy { token }).is_err() {
-                    let _ = host.reply_ok(token, Vec::new());
-                }
+            abi::Event::Destroy { reply } => {
+                enqueue_job(&host, &job_tx, ActorJob::Destroy { token: reply.0 });
             }
-            Some(t) if t.needs_reply() => {
-                let _ = host.reply_err(token, "event not supported by agent-os actor");
+            abi::Event::QueueSend { reply, .. } | abi::Event::WebSocketOpen { reply, .. } => {
+                let _ = host.reply_err(reply.0, "event not supported by agent-os actor");
             }
-            _ => {}
+            abi::Event::ConnClosed { .. } => {}
         }
     }
     // Stream closed (cancel/teardown): stop accepting new jobs and let the
     // worker drain in-flight work + shut the VM down before we return.
     drop(job_tx);
-    let _ = worker.await;
+    if let Err(error) = worker.await {
+        host.log_warn(&format!("agent-os actor worker task failed: {error}"));
+    }
 }
 
 /// Stateful actor jobs serviced by the worker task in submission order. Keeping
 /// VM-touching work (bring-up, action dispatch, HTTP proxy, shutdown) off the
 /// event loop is what lets the loop answer connection-lifecycle events promptly.
 enum ActorJob {
-    Action { token: u64, payload: Vec<u8> },
-    Http { token: u64, payload: Vec<u8> },
-    Sleep { token: u64 },
-    Destroy { token: u64 },
+    Action {
+        token: u64,
+        name: String,
+        args: Vec<u8>,
+    },
+    Http {
+        token: u64,
+        request: Vec<u8>,
+    },
+    Sleep {
+        token: u64,
+    },
+    Destroy {
+        token: u64,
+    },
+}
+
+const MAX_PENDING_ACTOR_JOBS: usize = 64;
+const PENDING_ACTOR_JOBS_WARN_REMAINING: usize = 13;
+
+impl ActorJob {
+    fn token(&self) -> u64 {
+        match self {
+            Self::Action { token, .. }
+            | Self::Http { token, .. }
+            | Self::Sleep { token }
+            | Self::Destroy { token } => *token,
+        }
+    }
+}
+
+fn enqueue_job(
+    host: &host_ctx::HostCtx,
+    sender: &tokio::sync::mpsc::Sender<ActorJob>,
+    job: ActorJob,
+) {
+    let token = job.token();
+    if sender.capacity() <= PENDING_ACTOR_JOBS_WARN_REMAINING {
+        host.log_warn(&format!(
+            "agent-os actor job queue is near its limit: remaining={} limit={MAX_PENDING_ACTOR_JOBS}",
+            sender.capacity()
+        ));
+    }
+    match sender.try_send(job) {
+        Ok(()) => {}
+        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+            let _ = host.reply_err(
+                token,
+                &format!(
+                    "agent-os actor pending-job limit {MAX_PENDING_ACTOR_JOBS} exceeded; raise MAX_PENDING_ACTOR_JOBS in the plugin build"
+                ),
+            );
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+            let _ = host.reply_err(token, "agent-os actor worker unavailable");
+        }
+    }
 }
 
 /// Owns the VM handle + actor vars and processes `ActorJob`s serially. Runs as a
@@ -332,7 +410,7 @@ async fn actor_worker(
     sidecar_path: String,
     config: Arc<config::AgentOsConfigJson>,
     pool: String,
-    mut job_rx: tokio::sync::mpsc::UnboundedReceiver<ActorJob>,
+    mut job_rx: tokio::sync::mpsc::Receiver<ActorJob>,
     cancel: CancellationToken,
 ) {
     let mut vm: Option<agentos_client::AgentOs> = None;
@@ -346,7 +424,11 @@ async fn actor_worker(
             },
         };
         match job {
-            ActorJob::Action { token, payload } => {
+            ActorJob::Action {
+                token,
+                name,
+                args: action_args,
+            } => {
                 if let Err(error) =
                     vm::ensure_vm(&host, &sidecar_path, &config, &pool, &mut vm).await
                 {
@@ -358,30 +440,23 @@ async fn actor_worker(
                     let _ = host.reply_err(token, "vm unavailable after bring-up");
                     continue;
                 };
-                match abi::decode_action_payload(&payload) {
-                    Ok((name, action_args)) => {
-                        tracing::debug!(action = %name, "agent-os action start");
-                        actions::dispatch(
-                            &host,
-                            vm_ref,
-                            &config,
-                            &mut vars,
-                            &name,
-                            &action_args,
-                            token,
-                        )
-                        .await;
-                        tracing::debug!(action = %name, "agent-os action done");
-                    }
-                    Err(_) => {
-                        let _ = host.reply_err(token, "malformed action event payload");
-                    }
-                }
+                tracing::debug!(action = %name, "agent-os action start");
+                actions::dispatch(
+                    &host,
+                    vm_ref,
+                    &config,
+                    &mut vars,
+                    &name,
+                    &action_args,
+                    token,
+                )
+                .await;
+                tracing::debug!(action = %name, "agent-os action done");
             }
-            ActorJob::Http { token, payload } => {
+            ActorJob::Http { token, request } => {
                 // Preview proxy: do NOT bring the VM up for HTTP (matches r6's
                 // run loop, which passes `vm.as_ref()`); no VM → 404.
-                let response = http::proxy_preview(&host, vm.as_ref(), &payload).await;
+                let response = http::proxy_preview(&host, vm.as_ref(), &request).await;
                 let _ = host.reply_ok(token, response);
             }
             ActorJob::Sleep { token } => {
@@ -401,59 +476,111 @@ async fn actor_worker(
     vm::shutdown_vm(&host, &mut vm, "error").await;
 }
 
-struct Instance {
-    abort: Option<tokio::task::AbortHandle>,
-    cancel: CancellationToken,
+extern "C" fn handle_event(
+    instance: *mut c_void,
+    event_id: u64,
+    event: abi::AbiEvent,
+    done: abi::CompletionFn,
+    user_data: *mut c_void,
+) {
+    let instance = unsafe { &*(instance as *const Instance) };
+    instance
+        .inner
+        .bridge
+        .handle_event(event_id, event, done, user_data);
 }
 
-#[no_mangle]
-pub extern "C" fn rivet_actor_cancel(instance: *mut c_void) {
-    if instance.is_null() {
-        return;
-    }
-    let _ = std::panic::catch_unwind(|| unsafe {
-        let inst = &*(instance as *const Instance);
-        inst.cancel.cancel();
-    });
+extern "C" fn cancel_event(instance: *mut c_void, event_id: u64) {
+    let instance = unsafe { &*(instance as *const Instance) };
+    instance.inner.bridge.cancel_event(event_id);
 }
 
-#[no_mangle]
-pub extern "C" fn rivet_actor_grace_deadline(instance: *mut c_void) {
-    if instance.is_null() {
+extern "C" fn shutdown(
+    instance: *mut c_void,
+    force: u8,
+    done: abi::CompletionFn,
+    user_data: *mut c_void,
+) {
+    let instance = unsafe { &*(instance as *const Instance) };
+    let inner = instance.inner.clone();
+    let completion = CompletionTarget {
+        done,
+        user_data: SendUserData(user_data),
+    };
+    if force != 0 {
+        inner.cancel.cancel();
+    }
+    inner.bridge.close(force != 0);
+
+    let mut shutdown = inner.shutdown.lock().expect("shutdown lock");
+    if let Some(outcome) = &shutdown.outcome {
+        completion.finish_outcome(outcome);
         return;
     }
-    let _ = std::panic::catch_unwind(|| unsafe {
-        let inst = &*(instance as *const Instance);
-        inst.cancel.cancel();
-        if let Some(abort) = inst.abort.as_ref() {
-            abort.abort();
+    shutdown.waiters.push(completion);
+    if shutdown.started {
+        return;
+    }
+    shutdown.started = true;
+    drop(shutdown);
+
+    thread::spawn(move || {
+        let outcome = inner
+            .join
+            .lock()
+            .expect("instance join lock")
+            .take()
+            .map(|join| {
+                join.join()
+                    .map_err(|_| "agent-os actor thread panicked".to_owned())
+            })
+            .transpose()
+            .map(|_| ());
+        inner.bridge.finish_shutdown();
+        let waiters = {
+            let mut shutdown = inner.shutdown.lock().expect("shutdown lock");
+            shutdown.outcome = Some(outcome.clone());
+            std::mem::take(&mut shutdown.waiters)
+        };
+        for waiter in waiters {
+            waiter.finish_outcome(&outcome);
         }
     });
 }
 
-#[no_mangle]
-pub extern "C" fn rivet_actor_instance_free(instance: *mut c_void) {
+extern "C" fn instance_free(instance: *mut c_void) {
     if !instance.is_null() {
-        let _ = std::panic::catch_unwind(|| unsafe {
-            drop(Box::from_raw(instance as *mut Instance));
-        });
+        unsafe { drop(Box::from_raw(instance as *mut Instance)) };
     }
 }
 
-#[no_mangle]
-pub extern "C" fn rivet_actor_factory_free(factory: *mut c_void) {
+extern "C" fn factory_free(factory: *mut c_void) {
     if !factory.is_null() {
-        let _ = std::panic::catch_unwind(|| unsafe {
-            drop(Box::from_raw(factory as *mut Factory));
-        });
+        unsafe { drop(Box::from_raw(factory as *mut Factory)) };
     }
 }
 
-#[no_mangle]
-pub extern "C" fn rivet_actor_plugin_shutdown(plugin: *mut c_void) {
+extern "C" fn plugin_shutdown(plugin: *mut c_void) {
     if !plugin.is_null() {
-        let _ = std::panic::catch_unwind(|| unsafe {
-            drop(Box::from_raw(plugin as *mut Plugin));
-        });
+        unsafe { drop(Box::from_raw(plugin as *mut Plugin)) };
     }
+}
+
+static PLUGIN_API: abi::PluginApi = abi::PluginApi::new(
+    plugin_init,
+    factory_new,
+    factory_free,
+    instance_new,
+    handle_event,
+    cancel_event,
+    shutdown,
+    instance_free,
+    plugin_shutdown,
+);
+
+/// AgentOS exports one process-lifetime descriptor. RivetKit validates and
+/// copies this table while retaining the loaded library for process lifetime.
+#[no_mangle]
+pub extern "C" fn rivet_actor_plugin_api() -> *const abi::PluginApi {
+    &PLUGIN_API
 }

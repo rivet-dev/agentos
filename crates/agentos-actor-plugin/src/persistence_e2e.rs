@@ -39,15 +39,6 @@ extern "C" fn sql_is_enabled(_ctx: *const c_void) -> u8 {
 }
 
 // Unused-by-persistence vtable stubs.
-extern "C" fn next_event(_ctx: *const c_void, done: abi::CompletionFn, ud: *mut c_void) {
-    done(ud, abi::AbiResult::channel_closed());
-}
-extern "C" fn reply_ok(_c: *const c_void, _t: u64, _p: abi::OwnedBuf) -> abi::AbiStatus {
-    abi::AbiStatus::Ok
-}
-extern "C" fn reply_err(_c: *const c_void, _t: u64, _p: abi::OwnedBuf) -> abi::AbiStatus {
-    abi::AbiStatus::Ok
-}
 extern "C" fn startup_ready(_c: *const c_void, _ok: u8, _e: abi::BorrowedBuf) {}
 extern "C" fn broadcast(_c: *const c_void, _n: abi::OwnedBuf, _p: abi::OwnedBuf) -> abi::AbiStatus {
     abi::AbiStatus::Ok
@@ -125,6 +116,24 @@ extern "C" fn async_unavailable(
         ud,
         abi::AbiResult::err(abi::OwnedBuf::from_vec(
             b"not available in persistence test".to_vec(),
+        )),
+    );
+}
+extern "C" fn host_call_unavailable(
+    _c: *const c_void,
+    name: abi::OwnedBuf,
+    request: abi::OwnedBuf,
+    done: abi::CompletionFn,
+    ud: *mut c_void,
+) {
+    unsafe {
+        name.free_self();
+        request.free_self();
+    }
+    done(
+        ud,
+        abi::AbiResult::err(abi::OwnedBuf::from_vec(
+            b"host callbacks are not available in persistence tests".to_vec(),
         )),
     );
 }
@@ -273,6 +282,7 @@ fn mock_host_ctx(host: &MockHost) -> HostCtx {
         db_exec,
         db_query,
         db_run,
+        host_call: host_call_unavailable,
         sql_is_enabled,
         state_get,
         state_set,
@@ -303,14 +313,12 @@ fn mock_host_ctx(host: &MockHost) -> HostCtx {
         conn_disconnect: async_unavailable,
         hibernatable_ws_ack,
         conn_send,
-        next_event,
-        reply_ok,
-        reply_err,
         startup_ready,
         broadcast,
         log,
     };
-    HostCtx::from_vtable(vtable)
+    let (backend, _event_bridge) = unsafe { abi::DylibBackend::from_host_vtable(&vtable) };
+    HostCtx::from_backend(backend)
 }
 
 #[tokio::test]
