@@ -344,7 +344,7 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 
 	return (
 		<div className="flex h-full min-h-0">
-			<div className="flex h-full w-2/5 flex-col border-r">
+			<div className="flex h-full w-64 shrink-0 flex-col border-r">
 				<div className="flex items-center gap-1 border-b px-3 py-1.5">
 					<input
 						value={draft}
@@ -448,7 +448,7 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 					)}
 				</ScrollArea>
 			</div>
-			<div className="min-h-0 w-3/5">
+			<div className="min-h-0 min-w-0 flex-1">
 				<FileViewer
 					actorId={actorId}
 					path={selectedPath}

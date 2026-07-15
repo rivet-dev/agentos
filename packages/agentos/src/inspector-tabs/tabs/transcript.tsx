@@ -582,7 +582,7 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 	);
 	return (
 		<div className="flex h-full min-h-0">
-			<div className="flex h-full w-56 shrink-0 flex-col border-r">
+			<div className="flex h-full w-64 shrink-0 flex-col border-r">
 				<div className="flex items-center px-3 pb-1 pt-2.5">
 					{/* Live count lives here, next to the rows it describes — the
 					    status strip stays hidden while the VM is simply healthy. */}

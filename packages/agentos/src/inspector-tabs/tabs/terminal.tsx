@@ -16,10 +16,12 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
-import { ActionErrorNote, AgentOsEmpty, StatusDot } from "../common";
+import { ActionErrorNote, AgentOsEmpty, relativeTime, StatusDot } from "../common";
+import { cn } from "../lib/cn";
 import { useAgentOsActor } from "../lib/rivet";
 import { agentOsSource, decodeActionBytes } from "../lib/source";
 import type { ShellDataPayload, ShellExitPayload } from "../lib/types";
+import { ScrollArea } from "../ui/scroll-area";
 import { VmStatusBadges } from "../vm-status-badges";
 import "@xterm/xterm/css/xterm.css";
 import React from "react";
@@ -39,13 +41,17 @@ type ShellStatus = "live" | "exited" | "dead";
 
 interface ShellEntry {
 	shellId: string;
+	/** Display name ("sh 1", "sh 2", …) — shell ids are opaque and unreadable. */
+	name: string;
+	openedAt: number;
 	status: ShellStatus;
 	exitCode?: number;
 }
 
 interface PersistedShells {
-	shells: { shellId: string; scrollback: string }[];
+	shells: { shellId: string; name?: string; openedAt?: number; scrollback: string }[];
 	active: string | null;
+	counter?: number;
 }
 
 function loadPersisted(actorId: string): PersistedShells | null {
@@ -77,6 +83,9 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 	// Per-shell scrollback + a streaming decoder (chunk boundaries can split
 	// multibyte UTF-8; a fresh decode per chunk would corrupt them).
 	const scrollbackRef = useRef(new Map<string, { text: string; decoder: TextDecoder }>());
+	// Monotonic display-name counter ("sh 1", "sh 2", …), persisted so names
+	// stay unique across tab switches.
+	const nameCounterRef = useRef(1);
 
 	// Close a shell without awaiting the caller's flow; the failure is logged,
 	// not surfaced — the runtime reaps shells on VM sleep regardless.
@@ -163,7 +172,8 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 				cols: term?.cols,
 				rows: term?.rows,
 			});
-			setShells((prev) => [...prev, { shellId, status: "live" }]);
+			const name = `sh ${nameCounterRef.current++}`;
+			setShells((prev) => [...prev, { shellId, name, openedAt: Date.now(), status: "live" }]);
 			setActiveId(shellId);
 			term?.reset();
 			term?.focus();
@@ -203,9 +213,12 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 			const payload: PersistedShells = {
 				shells: live.map((s) => ({
 					shellId: s.shellId,
+					name: s.name,
+					openedAt: s.openedAt,
 					scrollback: scrollbackRef.current.get(s.shellId)?.text ?? "",
 				})),
 				active: activeIdRef.current,
+				counter: nameCounterRef.current,
 			};
 			try {
 				sessionStorage.setItem(shellsKey(actorId), JSON.stringify(payload));
@@ -234,7 +247,15 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 				"\r\n\x1b[2m[reattached — output while this tab was hidden was not captured]\x1b[0m\r\n",
 			);
 		}
-		setShells(persisted.shells.map((s) => ({ shellId: s.shellId, status: "live" as const })));
+		nameCounterRef.current = persisted.counter ?? persisted.shells.length + 1;
+		setShells(
+			persisted.shells.map((s, i) => ({
+				shellId: s.shellId,
+				name: s.name ?? `sh ${i + 1}`,
+				openedAt: s.openedAt ?? Date.now(),
+				status: "live" as const,
+			})),
+		);
 		const active = persisted.active ?? persisted.shells[0]?.shellId ?? null;
 		setActiveId(active);
 		// Render after the container is visible (state update above unhides it).
@@ -344,96 +365,138 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 	});
 
 	const hasShells = shells.length > 0;
+	const liveCount = shells.filter((s) => s.status === "live").length;
+	// Sidebar + content, matching the transcript and filesystem tabs. Exited
+	// shells stay listed with their scrollback (readable history) until closed.
 	return (
-		<div className="flex h-full min-h-0 flex-col">
-			{!hasShells && !opening ? (
-				<AgentOsEmpty>
-					<div className="flex max-w-sm flex-col items-center gap-2">
-						<span>Interactive shell into the VM.</span>
-						<button
-							type="button"
-							onClick={() => void start()}
-							className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground transition-opacity hover:opacity-90"
-						>
-							Start shell
-						</button>
-						<span className="text-xs text-muted-foreground/70">
-							Runs sh in the VM, booting it first if it is asleep. Shells stay open across
-							inspector tabs, but die when the VM sleeps; the root filesystem is in-memory
-							and does not survive VM restarts.
-						</span>
-						{startError ? <ActionErrorNote error={startError} className="p-0 text-left" /> : null}
-					</div>
-				</AgentOsEmpty>
-			) : (
-				<div className="flex items-center gap-1.5 border-b px-2 py-1.5 text-xs">
-					{shells.map((s) => (
-						<span
-							key={s.shellId}
-							className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 ${
-								s.shellId === activeId ? "bg-muted text-foreground" : "text-muted-foreground"
-							}`}
-						>
-							<button
-								type="button"
-								onClick={() => switchTo(s.shellId)}
-								title={
-									s.status === "live"
-										? `Shell ${s.shellId}`
-										: s.status === "exited"
-											? `Exited with code ${s.exitCode}`
-											: "Shell no longer exists"
-								}
-								className="inline-flex items-center gap-1.5"
-							>
-								<StatusDot color={s.status === "live" ? "green" : "muted"} className="size-1.5" />
-								<span className="font-mono text-[10px]">…{s.shellId.slice(-6)}</span>
-							</button>
-							<button
-								type="button"
-								onClick={() => closeOne(s.shellId)}
-								title="Close shell"
-								aria-label="Close shell"
-								className="text-muted-foreground/50 transition-colors hover:text-foreground"
-							>
-								<svg
-									viewBox="0 0 12 12"
-									className="size-2.5"
-									fill="none"
-									stroke="currentColor"
-									strokeWidth="1.5"
-									strokeLinecap="round"
-									aria-hidden="true"
-								>
-									<path d="M3 3l6 6M9 3l-6 6" />
-								</svg>
-							</button>
-						</span>
-					))}
+		<div className="flex h-full min-h-0">
+			<div className="flex h-full w-64 shrink-0 flex-col border-r">
+				<div className="flex items-center px-3 pb-1 pt-2.5">
+					<span className="text-[11px] font-medium text-muted-foreground">
+						Shells{liveCount > 0 ? ` · ${liveCount} live` : ""}
+					</span>
 					<span className="ml-auto" />
-					<VmStatusBadges actorId={actorId} />
-					{startError ? (
-						<span className="text-destructive">
-							{startError instanceof Error ? startError.message : String(startError)}
-						</span>
-					) : null}
 					{opening ? (
-						<span className="text-muted-foreground">Starting shell…</span>
-					) : (
+						<span className="text-[10px] text-muted-foreground">Starting…</span>
+					) : hasShells ? (
 						<button
 							type="button"
 							onClick={() => void start()}
-							className="rounded-md bg-primary px-2.5 py-0.5 text-primary-foreground transition-opacity hover:opacity-90"
+							title="Open another shell"
+							className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
 						>
 							New shell
 						</button>
-					)}
+					) : null}
 				</div>
-			)}
-			<div
-				ref={containerRef}
-				className={!hasShells && !opening ? "hidden" : "min-h-0 flex-1 bg-[#0a0a0b] p-2"}
-			/>
+				<ScrollArea className="min-h-0 flex-1">
+					{!hasShells ? (
+						<AgentOsEmpty>No shells yet.</AgentOsEmpty>
+					) : (
+						<div className="p-1.5">
+							{shells.map((s) => (
+								<div
+									key={s.shellId}
+									role="button"
+									tabIndex={0}
+									onClick={() => switchTo(s.shellId)}
+									onKeyDown={(e) => {
+										if (e.key === "Enter" || e.key === " ") switchTo(s.shellId);
+									}}
+									className={cn(
+										"group flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-left",
+										s.shellId === activeId ? "bg-muted" : "hover:bg-muted/50",
+									)}
+								>
+									<StatusDot color={s.status === "live" ? "green" : "muted"} />
+									<div
+										className="min-w-0 flex-1"
+										title={
+											s.status === "live"
+												? "Live"
+												: s.status === "exited"
+													? `Exited with code ${s.exitCode}`
+													: "Shell no longer exists (VM slept or shut down)"
+										}
+									>
+										<div className="truncate text-xs">
+											{s.name} · {relativeTime(s.openedAt)}
+											{s.status === "exited" ? (
+												<span className="text-muted-foreground/70"> · exited</span>
+											) : null}
+											{s.status === "dead" ? (
+												<span className="text-muted-foreground/70"> · gone</span>
+											) : null}
+										</div>
+										<div className="truncate font-mono text-[10px] text-muted-foreground/60">
+											…{s.shellId.slice(-10)}
+										</div>
+									</div>
+									<button
+										type="button"
+										onClick={(e) => {
+											e.stopPropagation();
+											closeOne(s.shellId);
+										}}
+										title={s.status === "live" ? "Close shell" : "Remove from list"}
+										aria-label="Close shell"
+										className="text-muted-foreground/40 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 group-hover:opacity-100"
+									>
+										<svg
+											viewBox="0 0 12 12"
+											className="size-2.5"
+											fill="none"
+											stroke="currentColor"
+											strokeWidth="1.5"
+											strokeLinecap="round"
+											aria-hidden="true"
+										>
+											<path d="M3 3l6 6M9 3l-6 6" />
+										</svg>
+									</button>
+								</div>
+							))}
+						</div>
+					)}
+				</ScrollArea>
+			</div>
+			<div className="relative flex min-h-0 flex-1 flex-col">
+				{/* VM trouble chips float over the top-right corner; nothing renders
+				    while the VM is healthy. */}
+				<div className="absolute right-3 top-2 z-10">
+					<VmStatusBadges actorId={actorId} />
+				</div>
+				{!hasShells && !opening ? (
+					<AgentOsEmpty>
+						<div className="flex max-w-sm flex-col items-center gap-2">
+							<span>Interactive shell into the VM.</span>
+							<button
+								type="button"
+								onClick={() => void start()}
+								className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground transition-opacity hover:opacity-90"
+							>
+								Start shell
+							</button>
+							<span className="text-xs text-muted-foreground/70">
+								Runs sh in the VM, booting it first if it is asleep. Shells stay open across
+								inspector tabs, but die when the VM sleeps; the root filesystem is in-memory
+								and does not survive VM restarts.
+							</span>
+							{startError ? (
+								<ActionErrorNote error={startError} className="p-0 text-left" />
+							) : null}
+						</div>
+					</AgentOsEmpty>
+				) : startError ? (
+					<div className="shrink-0 border-b px-3 py-1.5 text-xs text-destructive">
+						{startError instanceof Error ? startError.message : String(startError)}
+					</div>
+				) : null}
+				<div
+					ref={containerRef}
+					className={!hasShells && !opening ? "hidden" : "min-h-0 flex-1 bg-[#0a0a0b] p-2"}
+				/>
+			</div>
 		</div>
 	);
 }
