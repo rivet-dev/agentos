@@ -5,9 +5,14 @@
 // main bundle.
 //
 // Starting is an explicit gate because `openShell` boots a sleeping VM; merely
-// opening the tab must never wake anything. There is no scrollback-replay
-// action, so an iframe remount cannot reattach — a stale shell id (kept in
-// sessionStorage) is closed best-effort and a fresh shell started instead.
+// opening the tab must never wake anything.
+//
+// Shells survive tab switches: the dashboard swaps this iframe out when
+// another tab is opened, so open shell ids plus locally captured scrollback
+// persist in sessionStorage (saved on pagehide) and reattach on return. The
+// runtime has no scrollback-replay action, so output produced while the tab
+// was hidden is not captured — reattach says so. Shells die with the VM
+// (sleep/shutdown) regardless.
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
@@ -22,25 +27,55 @@ import React from "react";
 // actions serially, so per-keystroke calls would queue behind slow actions.
 const WRITE_FLUSH_MS = 16;
 const RESIZE_DEBOUNCE_MS = 150;
+// Bounded: shells fan their output out to every connected dashboard client,
+// and scrollback lives in sessionStorage (~5 MB budget shared per origin).
+const MAX_SHELLS = 4;
+const MAX_SCROLLBACK_CHARS = 128 * 1024;
 
-const staleShellKey = (actorId: string) => `agentos-inspector:shell:${actorId}`;
+const shellsKey = (actorId: string) => `agentos-inspector:shells:${actorId}`;
 
-type ShellState =
-	| { kind: "gate" }
-	| { kind: "opening" }
-	| { kind: "live"; shellId: string }
-	| { kind: "exited"; code: number }
-	| { kind: "vm-down"; reason?: string };
+type ShellStatus = "live" | "exited" | "dead";
+
+interface ShellEntry {
+	shellId: string;
+	status: ShellStatus;
+	exitCode?: number;
+}
+
+interface PersistedShells {
+	shells: { shellId: string; scrollback: string }[];
+	active: string | null;
+}
+
+function loadPersisted(actorId: string): PersistedShells | null {
+	try {
+		const raw = sessionStorage.getItem(shellsKey(actorId));
+		if (!raw) return null;
+		const parsed = JSON.parse(raw) as PersistedShells;
+		return Array.isArray(parsed?.shells) && parsed.shells.length > 0 ? parsed : null;
+	} catch {
+		return null;
+	}
+}
 
 export function TerminalTabConnected({ actorId }: { actorId: string }) {
-	const [state, setState] = useState<ShellState>({ kind: "gate" });
+	const [shells, setShells] = useState<ShellEntry[]>([]);
+	const [activeId, setActiveId] = useState<string | null>(null);
+	const [opening, setOpening] = useState(false);
 	const [startError, setStartError] = useState<unknown>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const termRef = useRef<Terminal | null>(null);
 	const fitRef = useRef<FitAddon | null>(null);
-	const shellIdRef = useRef<string | null>(null);
 	const writeBufRef = useRef("");
 	const flushTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+	// Ref mirrors for the ref-stable broadcast handlers.
+	const shellsRef = useRef(shells);
+	shellsRef.current = shells;
+	const activeIdRef = useRef(activeId);
+	activeIdRef.current = activeId;
+	// Per-shell scrollback + a streaming decoder (chunk boundaries can split
+	// multibyte UTF-8; a fresh decode per chunk would corrupt them).
+	const scrollbackRef = useRef(new Map<string, { text: string; decoder: TextDecoder }>());
 
 	// Close a shell without awaiting the caller's flow; the failure is logged,
 	// not surfaced — the runtime reaps shells on VM sleep regardless.
@@ -50,9 +85,16 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 		});
 	};
 
+	const appendScrollback = (shellId: string, text: string) => {
+		const map = scrollbackRef.current;
+		const entry = map.get(shellId) ?? { text: "", decoder: new TextDecoder() };
+		entry.text = (entry.text + text).slice(-MAX_SCROLLBACK_CHARS);
+		map.set(shellId, entry);
+	};
+
 	const flushWrites = () => {
 		flushTimerRef.current = undefined;
-		const shellId = shellIdRef.current;
+		const shellId = activeIdRef.current;
 		const data = writeBufRef.current;
 		if (!shellId || !data) return;
 		writeBufRef.current = "";
@@ -89,37 +131,133 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 		return term;
 	};
 
+	// Show `shellId`'s scrollback in the (single) xterm instance.
+	const renderShell = (shellId: string) => {
+		const term = ensureTerm();
+		if (!term) return;
+		term.reset();
+		const text = scrollbackRef.current.get(shellId)?.text;
+		if (text) term.write(text);
+		term.focus();
+	};
+
+	const switchTo = (shellId: string) => {
+		if (shellId === activeIdRef.current) return;
+		// Drop keystrokes buffered for the previous shell.
+		writeBufRef.current = "";
+		setActiveId(shellId);
+		renderShell(shellId);
+	};
+
 	const start = async () => {
+		if (shellsRef.current.filter((s) => s.status === "live").length >= MAX_SHELLS) {
+			setStartError(new Error(`Shell limit reached (${MAX_SHELLS}) — close one first.`));
+			return;
+		}
 		setStartError(null);
-		setState({ kind: "opening" });
+		setOpening(true);
 		try {
 			const term = ensureTerm();
 			const { shellId } = await agentOsSource.openShell({
 				cols: term?.cols,
 				rows: term?.rows,
 			});
-			shellIdRef.current = shellId;
-			sessionStorage.setItem(staleShellKey(actorId), shellId);
-			setState({ kind: "live", shellId });
+			setShells((prev) => [...prev, { shellId, status: "live" }]);
+			setActiveId(shellId);
 			term?.reset();
 			term?.focus();
 		} catch (error) {
 			setStartError(error);
-			setState({ kind: "gate" });
+		} finally {
+			setOpening(false);
 		}
 	};
 
-	// A shell id left over from a previous iframe mount can't be reattached
-	// (no scrollback replay) — close it so it doesn't linger in the VM.
+	const closeOne = (shellId: string) => {
+		const entry = shellsRef.current.find((s) => s.shellId === shellId);
+		if (entry?.status === "live") closeQuietly(shellId);
+		scrollbackRef.current.delete(shellId);
+		setShells((prev) => {
+			const next = prev.filter((s) => s.shellId !== shellId);
+			if (activeIdRef.current === shellId) {
+				const fallback = next[next.length - 1]?.shellId ?? null;
+				setActiveId(fallback);
+				if (fallback) renderShell(fallback);
+				else termRef.current?.reset();
+			}
+			return next;
+		});
+	};
+
+	// Persist open shells + scrollback so a tab switch (iframe swap) can
+	// reattach. React unmount cleanup does not run when the dashboard swaps the
+	// iframe's document away, so save on pagehide.
 	useEffect(() => {
-		const stale = sessionStorage.getItem(staleShellKey(actorId));
-		if (stale) {
-			sessionStorage.removeItem(staleShellKey(actorId));
-			closeQuietly(stale);
-		}
+		const persist = () => {
+			const live = shellsRef.current.filter((s) => s.status === "live");
+			if (live.length === 0) {
+				sessionStorage.removeItem(shellsKey(actorId));
+				return;
+			}
+			const payload: PersistedShells = {
+				shells: live.map((s) => ({
+					shellId: s.shellId,
+					scrollback: scrollbackRef.current.get(s.shellId)?.text ?? "",
+				})),
+				active: activeIdRef.current,
+			};
+			try {
+				sessionStorage.setItem(shellsKey(actorId), JSON.stringify(payload));
+			} catch (error) {
+				console.warn("agentos inspector: failed to persist shells", error);
+			}
+		};
+		window.addEventListener("pagehide", persist);
+		return () => {
+			window.removeEventListener("pagehide", persist);
+			persist();
+		};
 	}, [actorId]);
 
-	// Fit-to-container, propagated to the PTY (debounced).
+	// Reattach shells from a previous mount of this tab. Liveness is probed
+	// with a resize (cheap, idempotent): a reaped shell answers with a runtime
+	// error and gets marked dead instead of silently eating keystrokes.
+	useEffect(() => {
+		const persisted = loadPersisted(actorId);
+		if (!persisted) return;
+		sessionStorage.removeItem(shellsKey(actorId));
+		for (const s of persisted.shells) {
+			appendScrollback(s.shellId, s.scrollback);
+			appendScrollback(
+				s.shellId,
+				"\r\n\x1b[2m[reattached — output while this tab was hidden was not captured]\x1b[0m\r\n",
+			);
+		}
+		setShells(persisted.shells.map((s) => ({ shellId: s.shellId, status: "live" as const })));
+		const active = persisted.active ?? persisted.shells[0]?.shellId ?? null;
+		setActiveId(active);
+		// Render after the container is visible (state update above unhides it).
+		queueMicrotask(() => {
+			if (active) renderShell(active);
+			const term = termRef.current;
+			for (const s of persisted.shells) {
+				void agentOsSource
+					.resizeShell(s.shellId, term?.cols ?? 80, term?.rows ?? 24)
+					.catch(() => {
+						appendScrollback(
+							s.shellId,
+							"\r\n\x1b[2m[shell no longer exists — the VM may have slept]\x1b[0m\r\n",
+						);
+						setShells((prev) =>
+							prev.map((e) => (e.shellId === s.shellId ? { ...e, status: "dead" } : e)),
+						);
+						if (activeIdRef.current === s.shellId) renderShell(s.shellId);
+					});
+			}
+		});
+	}, [actorId]);
+
+	// Fit-to-container, propagated to the active PTY (debounced).
 	useEffect(() => {
 		const container = containerRef.current;
 		if (!container) return;
@@ -129,7 +267,7 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 			timer = setTimeout(() => {
 				const term = termRef.current;
 				fitRef.current?.fit();
-				const shellId = shellIdRef.current;
+				const shellId = activeIdRef.current;
 				if (term && shellId) {
 					void agentOsSource.resizeShell(shellId, term.cols, term.rows).catch((error) => {
 						console.warn("agentos inspector: resizeShell failed", error);
@@ -144,66 +282,70 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 		};
 	}, []);
 
-	// Teardown: close the live shell and dispose the terminal.
+	// Dispose the xterm instance on unmount. Shells are deliberately NOT
+	// closed: they persist across tab switches and are reaped on VM sleep.
 	useEffect(() => {
 		return () => {
 			clearTimeout(flushTimerRef.current);
-			const shellId = shellIdRef.current;
-			shellIdRef.current = null;
-			if (shellId) {
-				sessionStorage.removeItem(staleShellKey(actorId));
-				closeQuietly(shellId);
-			}
 			termRef.current?.dispose();
 			termRef.current = null;
 		};
-	}, [actorId]);
+	}, []);
 
 	// Broadcast streams. `shellData`/`shellStderr` fan out to every connected
-	// client, so filter to this iframe's shell id (kept in a ref — the handlers
-	// are ref-stable).
+	// client, so keep only output for shells this iframe owns; the active one
+	// also renders live.
 	const actor = useAgentOsActor();
 	const useAgentEvent = actor.useEvent as (
 		name: string,
 		handler: (payload: unknown) => void,
 	) => void;
-	const writeShellOutput = (raw: unknown) => {
+	const onShellOutput = (raw: unknown) => {
 		const payload = raw as ShellDataPayload | undefined;
-		if (!payload?.shellId || payload.shellId !== shellIdRef.current) return;
-		termRef.current?.write(decodeActionBytes(payload.data));
+		if (!payload?.shellId) return;
+		const entry = shellsRef.current.find((s) => s.shellId === payload.shellId);
+		if (!entry) return;
+		const sb = scrollbackRef.current.get(payload.shellId) ?? {
+			text: "",
+			decoder: new TextDecoder(),
+		};
+		const text = sb.decoder.decode(decodeActionBytes(payload.data), { stream: true });
+		sb.text = (sb.text + text).slice(-MAX_SCROLLBACK_CHARS);
+		scrollbackRef.current.set(payload.shellId, sb);
+		if (payload.shellId === activeIdRef.current) termRef.current?.write(text);
 	};
-	useAgentEvent("shellData", writeShellOutput);
-	useAgentEvent("shellStderr", writeShellOutput);
+	useAgentEvent("shellData", onShellOutput);
+	useAgentEvent("shellStderr", onShellOutput);
 	useAgentEvent("shellExit", (raw) => {
 		const payload = raw as ShellExitPayload | undefined;
-		if (!payload?.shellId || payload.shellId !== shellIdRef.current) return;
-		shellIdRef.current = null;
-		sessionStorage.removeItem(staleShellKey(actorId));
-		termRef.current?.write(`\r\n\x1b[2m[shell exited with code ${payload.exitCode}]\x1b[0m\r\n`);
-		setState({ kind: "exited", code: payload.exitCode });
+		if (!payload?.shellId) return;
+		if (!shellsRef.current.some((s) => s.shellId === payload.shellId)) return;
+		const note = `\r\n\x1b[2m[shell exited with code ${payload.exitCode}]\x1b[0m\r\n`;
+		appendScrollback(payload.shellId, note);
+		setShells((prev) =>
+			prev.map((s) =>
+				s.shellId === payload.shellId
+					? { ...s, status: "exited", exitCode: payload.exitCode }
+					: s,
+			),
+		);
+		if (payload.shellId === activeIdRef.current) termRef.current?.write(note);
 	});
 	useAgentEvent("vmShutdown", (raw) => {
-		if (!shellIdRef.current) return;
-		shellIdRef.current = null;
-		sessionStorage.removeItem(staleShellKey(actorId));
+		if (!shellsRef.current.some((s) => s.status === "live")) return;
 		const reason = (raw as { reason?: string } | undefined)?.reason;
-		termRef.current?.write(`\r\n\x1b[2m[VM shut down${reason ? ` (${reason})` : ""} — shell terminated]\x1b[0m\r\n`);
-		setState({ kind: "vm-down", reason });
+		const note = `\r\n\x1b[2m[VM shut down${reason ? ` (${reason})` : ""} — shell terminated]\x1b[0m\r\n`;
+		for (const s of shellsRef.current) {
+			if (s.status === "live") appendScrollback(s.shellId, note);
+		}
+		setShells((prev) => prev.map((s) => (s.status === "live" ? { ...s, status: "dead" } : s)));
+		if (activeIdRef.current) termRef.current?.write(note);
 	});
 
-	const closeShell = () => {
-		const shellId = shellIdRef.current;
-		if (!shellId) return;
-		shellIdRef.current = null;
-		sessionStorage.removeItem(staleShellKey(actorId));
-		closeQuietly(shellId);
-		termRef.current?.write("\r\n\x1b[2m[shell closed]\x1b[0m\r\n");
-		setState({ kind: "gate" });
-	};
-
+	const hasShells = shells.length > 0;
 	return (
 		<div className="flex h-full min-h-0 flex-col">
-			{state.kind === "gate" && !termRef.current ? (
+			{!hasShells && !opening ? (
 				<AgentOsEmpty>
 					<div className="flex max-w-sm flex-col items-center gap-2">
 						<span>Interactive shell into the VM.</span>
@@ -215,45 +357,67 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 							Start shell
 						</button>
 						<span className="text-xs text-muted-foreground/70">
-							Runs sh in the VM, booting it first if it is asleep. The root filesystem is
-							in-memory and does not survive VM restarts.
+							Runs sh in the VM, booting it first if it is asleep. Shells stay open across
+							inspector tabs, but die when the VM sleeps; the root filesystem is in-memory
+							and does not survive VM restarts.
 						</span>
 						{startError ? <ActionErrorNote error={startError} className="p-0 text-left" /> : null}
 					</div>
 				</AgentOsEmpty>
 			) : (
-				<div className="flex items-center gap-2 border-b px-3 py-1.5 text-xs">
-					<StatusDot
-						color={
-							state.kind === "live" ? "green" : state.kind === "opening" ? "amber" : "muted"
-						}
-					/>
-					<span className="text-muted-foreground">
-						{state.kind === "live"
-							? "Shell running"
-							: state.kind === "opening"
-								? "Starting shell…"
-								: state.kind === "exited"
-									? `Shell exited (${state.code})`
-									: state.kind === "vm-down"
-										? "VM shut down"
-										: "Shell closed"}
-					</span>
-					{state.kind === "live" ? (
-						<span className="font-mono text-[10px] text-muted-foreground/60">
-							…{state.shellId.slice(-10)}
+				<div className="flex items-center gap-1.5 border-b px-2 py-1.5 text-xs">
+					{shells.map((s) => (
+						<span
+							key={s.shellId}
+							className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 ${
+								s.shellId === activeId ? "bg-muted text-foreground" : "text-muted-foreground"
+							}`}
+						>
+							<button
+								type="button"
+								onClick={() => switchTo(s.shellId)}
+								title={
+									s.status === "live"
+										? `Shell ${s.shellId}`
+										: s.status === "exited"
+											? `Exited with code ${s.exitCode}`
+											: "Shell no longer exists"
+								}
+								className="inline-flex items-center gap-1.5"
+							>
+								<StatusDot color={s.status === "live" ? "green" : "muted"} className="size-1.5" />
+								<span className="font-mono text-[10px]">…{s.shellId.slice(-6)}</span>
+							</button>
+							<button
+								type="button"
+								onClick={() => closeOne(s.shellId)}
+								title="Close shell"
+								aria-label="Close shell"
+								className="text-muted-foreground/50 transition-colors hover:text-foreground"
+							>
+								<svg
+									viewBox="0 0 12 12"
+									className="size-2.5"
+									fill="none"
+									stroke="currentColor"
+									strokeWidth="1.5"
+									strokeLinecap="round"
+									aria-hidden="true"
+								>
+									<path d="M3 3l6 6M9 3l-6 6" />
+								</svg>
+							</button>
+						</span>
+					))}
+					<span className="ml-auto" />
+					{startError ? (
+						<span className="text-destructive">
+							{startError instanceof Error ? startError.message : String(startError)}
 						</span>
 					) : null}
-					<span className="ml-auto" />
-					{state.kind === "live" ? (
-						<button
-							type="button"
-							onClick={closeShell}
-							className="rounded border px-2 py-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-						>
-							Close shell
-						</button>
-					) : state.kind !== "opening" ? (
+					{opening ? (
+						<span className="text-muted-foreground">Starting shell…</span>
+					) : (
 						<button
 							type="button"
 							onClick={() => void start()}
@@ -261,13 +425,12 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 						>
 							New shell
 						</button>
-					) : null}
+					)}
 				</div>
 			)}
-			{startError && termRef.current ? <ActionErrorNote error={startError} /> : null}
 			<div
 				ref={containerRef}
-				className={state.kind === "gate" && !termRef.current ? "hidden" : "min-h-0 flex-1 bg-[#0a0a0b] p-2"}
+				className={!hasShells && !opening ? "hidden" : "min-h-0 flex-1 bg-[#0a0a0b] p-2"}
 			/>
 		</div>
 	);
