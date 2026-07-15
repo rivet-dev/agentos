@@ -60,6 +60,10 @@
       "title": "Introduction",
       "description": "Run coding agents inside isolated VMs with full filesystem, process, and network control."
     },
+    "/docs/docs/inspector": {
+      "title": "Inspector",
+      "description": "Watch and drive a live VM from the Rivet dashboard: transcript, terminal, filesystem, processes, and system tabs."
+    },
     "/docs/docs/js-runtime": {
       "title": "JavaScript Runtime",
       "description": "How agentOS runs guest JavaScript: native V8 acceleration, low memory overhead, and Node.js compatibility."
@@ -164,18 +168,6 @@
       "title": "Pi",
       "description": "Run the Pi coding agent inside a VM with extensions and custom configuration."
     },
-    "/docs/docs/custom-software/building-wasm": {
-      "title": "Building Binaries",
-      "description": "Compile WASM command binaries for agentOS from source in the secure-exec registry."
-    },
-    "/docs/docs/custom-software/definition": {
-      "title": "Software Definition",
-      "description": "The software-package definition for custom commands and agents in an agentOS VM: a package is a packed .aospkg (or a package directory), declared with defineSoftware({ packagePath })."
-    },
-    "/docs/docs/custom-software/publishing": {
-      "title": "Publishing Packages",
-      "description": "Build, publish, and consume agentOS packages — locally, from npm, or from your own repo."
-    },
     "/docs/docs/architecture/agent-sdk-snapshots": {
       "title": "Agent SDK Snapshots",
       "description": "How an agent's SDK is evaluated once per sidecar into a V8 heap snapshot and reused across sessions instead of re-imported on every createSession: the bundle, the userland snapshot, the process-wide cache, pre-warm, per-session restore, isolation, and the snapshot-safety rules an SDK must follow."
@@ -215,6 +207,18 @@
     "/docs/docs/architecture/sessions-persistence": {
       "title": "Sessions & Persistence",
       "description": "How agentOS, ACP, RivetKit actors, and durable session persistence fit together."
+    },
+    "/docs/docs/custom-software/building-wasm": {
+      "title": "Building Binaries",
+      "description": "Compile WASM command binaries for agentOS from source in the secure-exec registry."
+    },
+    "/docs/docs/custom-software/definition": {
+      "title": "Software Definition",
+      "description": "The software-package definition for custom commands and agents in an agentOS VM: a package is a packed .aospkg (or a package directory), declared with defineSoftware({ packagePath })."
+    },
+    "/docs/docs/custom-software/publishing": {
+      "title": "Publishing Packages",
+      "description": "Build, publish, and consume agentOS packages — locally, from npm, or from your own repo."
     }
   }
 }

@@ -3,6 +3,8 @@ title: "Debugging"
 description: "Capture agent logs and runtime (sidecar) logs to diagnose sessions, tool calls, and crashes."
 ---
 
+Before reaching for logs, open the [inspector](/docs/inspector): it shows the live transcript, pending permission requests (the most common reason an agent looks stuck), the process tree, and a shell into the VM.
+
 Two log streams help diagnose what's happening inside a VM: the **agent's** own output and the **runtime (sidecar)** logs.
 
 ## Agent logs (`onAgentStderr`)

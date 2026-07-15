@@ -733,7 +733,7 @@ const orchestrationFeatures = [
 	{ icon: Users, title: 'Multiplayer', description: 'Humans and agents share one live session.', docsHref: '/docs/multiplayer' },
 	{ icon: ListChecks, title: 'Durable sessions', description: 'Pause, resume, and replay every run with durable state.', docsHref: '/docs/sessions' },
 	{ icon: Workflow, title: 'Workflows', description: 'Multi-step workflows survive restarts and resume where they stopped.', docsHref: '/docs/workflows' },
-	{ icon: Activity, title: 'Observability', description: 'Every event and tool call streams back to your code.', docsHref: '/docs/sessions#stream-responses' },
+	{ icon: Activity, title: 'Observability', description: 'Watch the transcript, terminal, filesystem, and processes of a live VM. Every event also streams to your code.', docsHref: '/docs/inspector' },
 ];
 
 const OrchestrationSection = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => (
