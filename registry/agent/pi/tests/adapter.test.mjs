@@ -6,7 +6,9 @@ import { resolve as resolvePath } from "node:path";
 // testing; newSession needs the real Pi SDK, so these drive the translation /
 // lifecycle logic directly with a mock ACP connection + a fake session.
 const packageDir = resolvePath(import.meta.dirname, "..");
-const { PiSdkAgent } = await import(resolvePath(packageDir, "dist", "adapter.js"));
+const { PiSdkAgent, buildDefaultResourceLoaderOptions } = await import(
+	resolvePath(packageDir, "dist", "adapter.js")
+);
 
 function makeConn(overrides = {}) {
 	return {
@@ -25,6 +27,31 @@ function fakeSession(overrides = {}) {
 		...overrides,
 	};
 }
+
+// ── Fix #1650: appended system prompt text must not be treated as a path ──
+test("pi #1650: DefaultResourceLoader receives appended prompt via override, not path source", () => {
+	const appendSystemPrompt = "# agentOS\n\n".repeat(200);
+	const extensionFactory = () => {};
+	const options = buildDefaultResourceLoaderOptions({
+		cwd: "/home/agentos/workspace",
+		agentDir: "/home/agentos/.pi/agent",
+		extensionFactories: [extensionFactory],
+		appendSystemPrompt,
+	});
+
+	assert.equal(
+		Object.hasOwn(options, "appendSystemPrompt"),
+		false,
+		"long prompt text must not be passed to Pi's path-probing appendSystemPrompt option",
+	);
+	assert.equal(typeof options.appendSystemPromptOverride, "function");
+	assert.deepEqual(options.appendSystemPromptOverride(["from-file"]), [
+		"from-file",
+		appendSystemPrompt,
+	]);
+	assert.deepEqual(options.extensionFactories, [extensionFactory]);
+	assert.equal(options.noExtensions, true);
+});
 
 // ── Fix #3: editSnapshots is cleared each turn (no unbounded leak) ──
 test("pi #3: prompt() clears leaked edit snapshots from a prior aborted turn", async () => {
