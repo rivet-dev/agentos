@@ -296,4 +296,13 @@ export const agentOsSource = {
 	// ── Process control (processes tab) ───────────────────────────────────
 	killProcess: (pid: number) => callAction("killProcess", [pid]),
 	stopProcess: (pid: number) => callAction("stopProcess", [pid]),
+
+	// ── Shell / PTY (terminal tab) ─────────────────────────────────────────
+	// Output arrives on the `shellData`/`shellStderr`/`shellExit` broadcasts.
+	openShell: (options: { cols?: number; rows?: number; command?: string; cwd?: string }) =>
+		callAction<{ shellId: string }>("openShell", [options]),
+	writeShell: (shellId: string, data: string) => callAction("writeShell", [shellId, data]),
+	resizeShell: (shellId: string, cols: number, rows: number) =>
+		callAction("resizeShell", [shellId, cols, rows]),
+	closeShell: (shellId: string) => callAction("closeShell", [shellId]),
 };

@@ -356,6 +356,12 @@ const AGENTOS_INSPECTOR_CONFIG = {
 			icon: "comments",
 		},
 		{
+			id: "terminal",
+			label: "Terminal",
+			source: INSPECTOR_TABS_ASSET_DIR,
+			icon: "terminal",
+		},
+		{
 			id: "filesystem",
 			label: "Filesystem",
 			source: INSPECTOR_TABS_ASSET_DIR,

@@ -64,6 +64,20 @@ export interface ProcessExitPayload {
 	exitCode: number;
 }
 
+// ── Shell / terminal ──────────────────────────────────────────────────
+/** Live `shellData`/`shellStderr` broadcast payload mirror. `data` is
+ * Uint8Array-shaped but encoding-dependent — normalize with
+ * `decodeActionBytes`. */
+export interface ShellDataPayload {
+	shellId: string;
+	data: unknown;
+}
+/** Live `shellExit` broadcast payload mirror. */
+export interface ShellExitPayload {
+	shellId: string;
+	exitCode: number;
+}
+
 // ── Filesystem ────────────────────────────────────────────────────────
 /** Raw `readdirRecursive` entry. */
 export interface DirEntry {

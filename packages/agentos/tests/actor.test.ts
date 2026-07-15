@@ -429,6 +429,7 @@ describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
 		}));
 
 		expect(calls.map((call) => call.name).sort()).toEqual([
+			"closeShell",
 			"createSession",
 			"getSessionEvents",
 			"killProcess",
@@ -436,13 +437,16 @@ describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
 			"listPersistedSessions",
 			"listProcesses",
 			"listSoftware",
+			"openShell",
 			"processTree",
 			"readFile",
 			"readdirEntries",
+			"resizeShell",
 			"respondPermission",
 			"sendPrompt",
 			"stat",
 			"stopProcess",
+			"writeShell",
 		]);
 		for (const call of calls) {
 			expect(declared.has(call.name), `${call.name} is declared`).toBe(true);
@@ -453,6 +457,29 @@ describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
 		expect(calls.find((call) => call.name === "getSessionEvents")?.args).toBe(
 			"sessionId",
 		);
+	});
+
+	test("inspector tab registry matches the actor tab config", () => {
+		// Tab ids live in two places that must agree: the iframe app's TABS
+		// registry (main.tsx) and the actor's inspector config (actor.ts). A tab
+		// registered in only one renders "Unknown inspector tab" or never appears.
+		const mainSource = readFileSync(
+			join(repoRoot, "packages", "agentos", "src", "inspector-tabs", "main.tsx"),
+			"utf8",
+		);
+		const actorSource = readFileSync(
+			join(repoRoot, "packages", "agentos", "src", "actor.ts"),
+			"utf8",
+		);
+		// TABS entries are the only top-of-file `\t<id>: () =>` lines in main.tsx.
+		const registryIds = [...mainSource.matchAll(/^\t([a-zA-Z]+): \(\) =>$/gm)].map(
+			(match) => match[1],
+		);
+		const configIds = [...actorSource.matchAll(/\bid: "([a-zA-Z]+)",\s*\n\s*label:/g)].map(
+			(match) => match[1],
+		);
+		expect(registryIds.length).toBeGreaterThan(0);
+		expect([...configIds].sort()).toEqual([...registryIds].sort());
 	});
 
 	test("buildConfigJson keeps software descriptors pointed at package roots", () => {
