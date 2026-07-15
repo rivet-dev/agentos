@@ -63,7 +63,12 @@ function FileTreeItem({
 				</button>
 				<button
 					type="button"
-					onClick={() => (expandable ? setOpen((v) => !v) : entry.dir ? undefined : onSelect(entry))}
+					onClick={() => {
+						if (expandable) setOpen((v) => !v);
+						// Always report the click: the parent moves the path bar to the
+						// clicked location so folder actions target it.
+						onSelect(entry);
+					}}
 					className={cn(
 						"flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-sm",
 						isSelected ? "bg-muted text-foreground" : "hover:bg-muted/50",
@@ -292,6 +297,12 @@ function FileViewer({
 
 /** Normalize a user-typed root: ensure a single leading slash, collapse
  * repeated slashes, and drop a trailing slash (except for root itself). */
+/** Parent directory of a path ("/" for top-level entries). */
+function parentDir(path: string): string {
+	const idx = path.lastIndexOf("/");
+	return idx <= 0 ? "/" : path.slice(0, idx);
+}
+
 function normalizeRoot(input: string): string {
 	let s = input.trim();
 	if (s === "") return "/";
@@ -377,6 +388,10 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 	const refreshTree = () =>
 		queryClient.invalidateQueries({ queryKey: ["agent-os", actorId, "dir"] });
 
+	// Folder actions target the location shown in the path bar, which follows
+	// tree clicks (a folder moves it there; a file moves it to its parent).
+	const currentDir = normalizeRoot(draft);
+
 	const createFolder = async () => {
 		const name = newFolderDraft?.trim();
 		if (!name) {
@@ -385,7 +400,7 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 		}
 		setTreeError(null);
 		try {
-			await agentOsSource.mkdir(name.startsWith("/") ? name : joinRoot(root, name));
+			await agentOsSource.mkdir(name.startsWith("/") ? name : joinRoot(currentDir, name));
 			setNewFolderDraft(null);
 			await refreshTree();
 		} catch (error) {
@@ -397,7 +412,7 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 		setTreeError(null);
 		try {
 			const bytes = new Uint8Array(await file.arrayBuffer());
-			await agentOsSource.writeFile(joinRoot(root, file.name), bytes);
+			await agentOsSource.writeFile(joinRoot(currentDir, file.name), bytes);
 			await refreshTree();
 		} catch (error) {
 			setTreeError(error);
@@ -414,13 +429,13 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 						<RefreshIcon className="size-3.5" />
 					</IconButton>
 					<IconButton
-						title={`New folder under ${root}`}
+						title={`New folder under ${currentDir}`}
 						onClick={() => setNewFolderDraft((v) => (v === null ? "" : null))}
 					>
 						<FolderPlusIcon className="size-3.5" />
 					</IconButton>
 					<IconButton
-						title={`Upload a file into ${root}`}
+						title={`Upload a file into ${currentDir}`}
 						onClick={() => uploadInputRef.current?.click()}
 					>
 						<UploadIcon className="size-3.5" />
@@ -468,7 +483,7 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 							spellCheck={false}
 							autoFocus
 							aria-label="New folder name"
-							placeholder={`folder name (created under ${root})`}
+							placeholder={`folder name (created under ${currentDir})`}
 							className="w-full rounded border bg-background px-2 py-1 font-mono text-xs focus:outline-none"
 						/>
 					</div>
@@ -500,7 +515,14 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 								entry={entry}
 								depth={0}
 								selectedPath={selectedPath}
-								onSelect={(e) => setSelectedPath(e.path)}
+								onSelect={(e) => {
+									if (e.dir) {
+										setDraft(e.path);
+									} else {
+										setSelectedPath(e.path);
+										setDraft(parentDir(e.path));
+									}
+								}}
 							/>
 						))
 					)}
