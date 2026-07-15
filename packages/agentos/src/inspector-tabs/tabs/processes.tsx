@@ -1,9 +1,10 @@
-import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { ActionErrorNote, AgentOsEmpty, relativeTime, StatusDot } from "../common";
 import { useAgentOsActor } from "../lib/rivet";
-import { agentOsSource, decodeActionBytes, healthQueryOptions } from "../lib/source";
+import { agentOsSource, decodeActionBytes } from "../lib/source";
 import type { KernelProcessInfo, ProcessExitPayload, ProcessOutputPayload, ProcessTreeNode } from "../lib/types";
+import { VmBootGate } from "../vm-boot-gate";
 import { ScrollArea } from "../ui/scroll-area";
 import React from "react";
 
@@ -265,31 +266,15 @@ function ProcessesLoaded({ actorId }: { actorId: string }) {
 }
 
 export function ProcessesTabConnected({ actorId }: { actorId: string }) {
-	// Boot guard: `processTree` boots a sleeping VM. When the (optional) health
-	// action reports the VM asleep, hold the query behind an explicit button so
-	// merely opening the tab never wakes anything. Runtimes without the health
-	// action skip the guard and behave as before.
-	const health = useQuery(healthQueryOptions(actorId));
-	const [loadAnyway, setLoadAnyway] = useState(false);
-	if (health.data && !health.data.booted && !loadAnyway) {
-		return (
-			<AgentOsEmpty>
-				<div className="flex flex-col items-center gap-2">
-					<span>VM not booted — there are no processes to list.</span>
-					<button
-						type="button"
-						onClick={() => setLoadAnyway(true)}
-						className="rounded-md border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-					>
-						Boot the VM and list processes
-					</button>
-				</div>
-			</AgentOsEmpty>
-		);
-	}
 	return (
-		<div className="flex h-full flex-col">
-			<ProcessesLoaded actorId={actorId} />
-		</div>
+		<VmBootGate
+			actorId={actorId}
+			note="VM not booted — there are no processes to list."
+			actionLabel="Boot the VM and list processes"
+		>
+			<div className="flex h-full flex-col">
+				<ProcessesLoaded actorId={actorId} />
+			</div>
+		</VmBootGate>
 	);
 }

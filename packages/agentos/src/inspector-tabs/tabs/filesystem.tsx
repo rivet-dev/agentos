@@ -5,6 +5,7 @@ import { cn } from "../lib/cn";
 import { agentOsSource } from "../lib/source";
 import type { FsEntry } from "../lib/types";
 import { ScrollArea } from "../ui/scroll-area";
+import { VmBootGate } from "../vm-boot-gate";
 import React from "react";
 
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/i;
@@ -269,6 +270,20 @@ function normalizeRoot(input: string): string {
 const joinRoot = (root: string, name: string) => (root === "/" ? `/${name}` : `${root}/${name}`);
 
 export function FilesystemTabConnected({ actorId }: { actorId: string }) {
+	// The root filesystem is in-memory and served by the VM's kernel: a
+	// sleeping VM has no file tree, and listing would boot it. Gate first.
+	return (
+		<VmBootGate
+			actorId={actorId}
+			note="VM not booted — the root filesystem is in-memory, so there are no files until it boots."
+			actionLabel="Boot the VM and browse files"
+		>
+			<FilesystemLoaded actorId={actorId} />
+		</VmBootGate>
+	);
+}
+
+function FilesystemLoaded({ actorId }: { actorId: string }) {
 	// `root` drives the listing/refetch; `draft` tracks keystrokes locally so
 	// typing never refetches. `root` is committed 500ms after typing stops (or
 	// immediately on Enter) so we don't refetch on every keystroke.

@@ -10,6 +10,7 @@ import type { MountInfo, SignedPreviewUrl, SoftwareBundle } from "../lib/types";
 import { Badge } from "../ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { ScrollArea } from "../ui/scroll-area";
+import { VmBootGate } from "../vm-boot-gate";
 import React from "react";
 
 function SoftwareRow({ bundle }: { bundle: SoftwareBundle }) {
@@ -213,6 +214,21 @@ function SectionHeader({ children }: { children: string }) {
 }
 
 export function SystemTabConnected({ actorId }: { actorId: string }) {
+	// `listSoftware` enumerates commands via the VM and `listMounts` dispatches
+	// through the same boot-on-demand lane, so opening the tab would wake a
+	// sleeping VM. Gate first.
+	return (
+		<VmBootGate
+			actorId={actorId}
+			note="VM not booted — software and mounts are enumerated by the running VM."
+			actionLabel="Boot the VM and show system info"
+		>
+			<SystemLoaded actorId={actorId} />
+		</VmBootGate>
+	);
+}
+
+function SystemLoaded({ actorId }: { actorId: string }) {
 	const [software, mounts] = useSuspenseQueries({
 		queries: [
 			agentOsSource.softwareQueryOptions(actorId),
