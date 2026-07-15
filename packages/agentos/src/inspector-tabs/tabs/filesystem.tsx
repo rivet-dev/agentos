@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { AgentOsEmpty, ChevronRight, FileGlyph, formatBytes, relativeTime } from "../common";
+import { ActionErrorNote, AgentOsEmpty, ChevronRight, FileGlyph, formatBytes, relativeTime } from "../common";
 import { cn } from "../lib/cn";
 import { agentOsSource } from "../lib/source";
 import type { FsEntry } from "../lib/types";
@@ -85,7 +85,7 @@ function FileViewer({ actorId, path }: { actorId: string; path: string | null })
 		agentOsSource.fileContentQueryOptions(actorId, path),
 	);
 	if (!path) return <AgentOsEmpty>Select a file to view its contents.</AgentOsEmpty>;
-	if (error) return <AgentOsEmpty>Failed to read {path}: {(error as Error).message}</AgentOsEmpty>;
+	if (error) return <ActionErrorNote error={error} className="items-center justify-center text-center" />;
 	if (!data || isFetching) return <AgentOsEmpty>Loading {path}…</AgentOsEmpty>;
 	return (
 		<div className="flex h-full flex-col">
@@ -168,13 +168,20 @@ export function FilesystemTabConnected({ actorId }: { actorId: string }) {
 					{rootsQuery.isLoading ? (
 						<AgentOsEmpty>Loading {root}…</AgentOsEmpty>
 					) : rootsQuery.error ? (
-						<AgentOsEmpty>
-							Failed to list {root}: {(rootsQuery.error as Error).message}
-						</AgentOsEmpty>
+						<ActionErrorNote error={rootsQuery.error} />
 					) : notADir ? (
 						<AgentOsEmpty>Not a directory, or does not exist: {root}</AgentOsEmpty>
 					) : roots.length === 0 ? (
-						<AgentOsEmpty>Empty directory.</AgentOsEmpty>
+						<AgentOsEmpty>
+							<span>
+								Empty directory.
+								<br />
+								<span className="text-xs text-muted-foreground/70">
+									The VM root filesystem is in-memory — files from previous VM boots do not
+									survive restarts.
+								</span>
+							</span>
+						</AgentOsEmpty>
 					) : (
 						roots.map((entry) => (
 							<FileTreeItem

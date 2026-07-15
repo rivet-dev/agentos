@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { type ActionErrorLayer, isInspectorActionError } from "./lib/actor-client";
 import { cn } from "./lib/cn";
 import React, { useState } from "react";
 
@@ -7,6 +8,52 @@ export function AgentOsEmpty({ children }: { children: ReactNode }) {
 	return (
 		<div className="flex h-full flex-1 items-center justify-center p-8 text-center text-sm text-muted-foreground">
 			{children}
+		</div>
+	);
+}
+
+const LAYER_LABEL: Record<ActionErrorLayer, string> = {
+	gateway: "Gateway unreachable",
+	auth: "Not authorized",
+	contract: "Not supported by this runtime",
+	runtime: "Runtime error",
+	timeout: "Timed out",
+};
+
+/** "This runtime doesn't expose X" empty state for contract-layer failures —
+ * the graceful-degradation path for actors built against other runtimes. */
+export function UnsupportedAction({ action, className }: { action?: string; className?: string }) {
+	return (
+		<div className={cn("flex h-full flex-1 flex-col items-center justify-center gap-1 p-8 text-center", className)}>
+			<span className="text-sm text-muted-foreground">Not supported by this runtime</span>
+			{action ? (
+				<span className="font-mono text-xs text-muted-foreground/70">
+					the actor does not expose <span className="font-semibold">{action}</span>
+				</span>
+			) : null}
+		</div>
+	);
+}
+
+/** Compact inline error note: layer label + message + hint. Used by inline
+ * (non-suspense) error paths; the suspense path renders via TabBoundary. */
+export function ActionErrorNote({ error, className }: { error: unknown; className?: string }) {
+	if (isInspectorActionError(error) && error.layer === "contract") {
+		return <UnsupportedAction action={error.action} className={className} />;
+	}
+	const layer = isInspectorActionError(error) ? error.layer : undefined;
+	const message = error instanceof Error ? error.message : String(error);
+	const hint = isInspectorActionError(error) ? error.hint : undefined;
+	return (
+		<div className={cn("flex flex-col gap-1 p-4 text-sm", className)}>
+			<div className="flex items-center gap-2">
+				<StatusDot color={layer === "timeout" || layer === "gateway" ? "amber" : "red"} />
+				<span className="font-medium text-destructive">
+					{layer ? LAYER_LABEL[layer] : "Error"}
+				</span>
+			</div>
+			<div className="text-muted-foreground">{message}</div>
+			{hint ? <div className="text-xs text-muted-foreground/70">{hint}</div> : null}
 		</div>
 	);
 }

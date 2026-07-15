@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { lazy, type ComponentType, StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { tabIdFromUrl } from "./lib/actor-client";
+import { isInspectorActionError, tabIdFromUrl } from "./lib/actor-client";
 import { RivetProvider } from "./lib/rivet";
 import { TabBoundary } from "./tab-boundary";
+import { VmStatusStrip } from "./vm-status-strip";
 import React from "react";
 
 import "./styles.css";
@@ -28,8 +29,18 @@ const queryClient = new QueryClient({
 		queries: {
 			// VM-backed actions (listProcesses/readdir/readFile/stat) time out on
 			// the FIRST call after the actor's VM hibernates and cold-wakes;
-			// retry so the query recovers once the VM is warm.
-			retry: 3,
+			// retry so the query recovers once the VM is warm. Contract/auth
+			// failures are permanent for this actor — retrying only delays the
+			// error UI by the full backoff, so fail those immediately.
+			retry: (failureCount, error) => {
+				if (
+					isInspectorActionError(error) &&
+					(error.layer === "contract" || error.layer === "auth")
+				) {
+					return false;
+				}
+				return failureCount < 3;
+			},
 			retryDelay: (attempt) => Math.min(1500 * 2 ** attempt, 8000),
 			refetchOnWindowFocus: false,
 			staleTime: 5_000,
@@ -66,12 +77,18 @@ function App() {
 	const Tab = lazy(loader);
 	// RivetProvider owns the shared rivetkit client (typed `useActor` + the
 	// `callAction` transport). One boundary catches both the code-split chunk
-	// load and the tab's useSuspenseQuery data load.
+	// load and the tab's useSuspenseQuery data load. The status strip sits
+	// outside the boundary so a broken tab still shows VM health.
 	return (
 		<RivetProvider actorId={auth.actorId} authToken={auth.authToken}>
-			<TabBoundary>
-				<Tab actorId={auth.actorId} />
-			</TabBoundary>
+			<div className="flex h-full min-h-0 flex-col">
+				<VmStatusStrip actorId={auth.actorId} />
+				<div className="min-h-0 flex-1">
+					<TabBoundary>
+						<Tab actorId={auth.actorId} />
+					</TabBoundary>
+				</div>
+			</div>
 		</RivetProvider>
 	);
 }

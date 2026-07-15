@@ -86,8 +86,9 @@ export interface PersistedSessionRecord {
 	agentType: string;
 	createdAt: number;
 	/** VM-liveness activity status: "running" = loaded in the VM, "idle" =
-	 * persisted but hibernated (resumable). */
-	status: "running" | "idle";
+	 * persisted but hibernated (resumable). Absent on runtimes whose records
+	 * carry no status — liveness then comes from `listSessions` (lib/health.ts). */
+	status?: "running" | "idle";
 }
 export interface JsonRpcNotification {
 	jsonrpc: "2.0";
@@ -114,4 +115,36 @@ export type TranscriptEvent = { seq: number } & (
 	| { kind: "user" | "assistant" | "thinking"; text: string }
 	| { kind: "tool"; tool: string; status?: string }
 	| { kind: "raw"; label: string; json: unknown }
+	| { kind: "error"; text: string }
 );
+
+// ── Runtime health (optional `getRuntimeHealth` action; see lib/health.ts) ─
+export interface RuntimeLimitWarning {
+	ts: number;
+	limit: string;
+	category: string;
+	observed: number;
+	capacity: number;
+	fillPercent: number;
+}
+export interface RuntimeAgentExit {
+	ts: number;
+	sessionId: string;
+	agentType: string;
+	exitCode: number | null;
+	restart: string;
+	restartCount: number;
+}
+export interface RuntimeHealth {
+	booted: boolean;
+	sessions: number | null;
+	sidecar: { state: string; activeVmCount: number } | null;
+	warnings: RuntimeLimitWarning[];
+	agentExits: RuntimeAgentExit[];
+	stderrTail: { ts: number; line: string }[];
+}
+
+/** Live `vmShutdown` broadcast payload mirror (Rust owns broadcasts). */
+export interface VmShutdownPayload {
+	reason?: "sleep" | "destroy" | "error" | string;
+}

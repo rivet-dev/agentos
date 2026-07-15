@@ -212,4 +212,15 @@ export const agentOsSource = {
 					mapTranscriptEvent,
 				),
 		}),
+
+	// ── Composer actions (transcript tab) ─────────────────────────────────
+	// Imperative (not queries): the composer drives the agent. Streamed output
+	// arrives on the existing `sessionEvent` subscription; `sendPrompt` resolves
+	// when the turn completes.
+	sendPrompt: (sessionId: string, text: string) =>
+		callAction<{ text?: string }>("sendPrompt", [sessionId, text]),
+	// Older runtimes return the sessionId string; the rivetkit wrapper returns
+	// `{ sessionId }` — callers normalize.
+	createSession: (agentType: string, options: { env?: Record<string, string> }) =>
+		callAction<string | { sessionId: string }>("createSession", [agentType, options]),
 };
