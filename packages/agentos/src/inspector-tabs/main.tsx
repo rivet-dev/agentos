@@ -25,6 +25,14 @@ const TABS: Record<string, () => Promise<{ default: ComponentType<{ actorId: str
 		import("./tabs/system").then((m) => ({ default: m.SystemTabConnected })),
 };
 
+// Hosts vendor built copies of this bundle and pin their tab-id config at
+// server start, so ids that existed in older configs must keep rendering.
+// Software and Mounts merged into System; route their ids there.
+const LEGACY_TAB_ALIASES: Record<string, string> = {
+	software: "system",
+	mounts: "system",
+};
+
 const queryClient = new QueryClient({
 	defaultOptions: {
 		queries: {
@@ -66,7 +74,7 @@ function App() {
 	}, []);
 
 	const tabId = tabIdFromUrl();
-	const loader = tabId ? TABS[tabId] : undefined;
+	const loader = tabId ? TABS[LEGACY_TAB_ALIASES[tabId] ?? tabId] : undefined;
 
 	if (!loader) {
 		return <div style={{ padding: 16 }}>Unknown inspector tab: {String(tabId)}</div>;
