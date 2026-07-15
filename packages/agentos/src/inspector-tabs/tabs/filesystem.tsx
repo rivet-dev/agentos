@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	ActionErrorNote,
 	AgentOsEmpty,
+	AgentOsWordmark,
 	CheckIcon,
 	ChevronRight,
 	DownloadIcon,
@@ -154,7 +155,15 @@ function FileViewer({
 		};
 	}, [imageUrl]);
 
-	if (!path) return <AgentOsEmpty>Select a file to view its contents.</AgentOsEmpty>;
+	if (!path)
+		return (
+			<AgentOsEmpty>
+				<div className="flex flex-col items-center gap-5">
+					<AgentOsWordmark className="w-44" />
+					<span>Select a file to view its contents.</span>
+				</div>
+			</AgentOsEmpty>
+		);
 	if (error) return <ActionErrorNote error={error} className="items-center justify-center text-center" />;
 	if (!data || isFetching) return <AgentOsEmpty>Loading {path}…</AgentOsEmpty>;
 

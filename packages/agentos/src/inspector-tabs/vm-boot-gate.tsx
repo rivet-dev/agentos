@@ -5,7 +5,7 @@
 // while health is still loading) skip the gate and behave as before.
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
-import { AgentOsEmpty } from "./common";
+import { AgentOsEmpty, AgentOsWordmark } from "./common";
 import { healthQueryOptions } from "./lib/source";
 import React from "react";
 
@@ -28,6 +28,7 @@ export function VmBootGate({
 		return (
 			<AgentOsEmpty>
 				<div className="flex max-w-sm flex-col items-center gap-2">
+					<AgentOsWordmark className="mb-3 w-44" />
 					<span>{note}</span>
 					<button
 						type="button"

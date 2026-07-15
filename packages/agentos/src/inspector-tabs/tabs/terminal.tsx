@@ -16,7 +16,15 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
-import { ActionErrorNote, AgentOsEmpty, IconButton, PlusIcon, relativeTime, StatusDot } from "../common";
+import {
+	ActionErrorNote,
+	AgentOsEmpty,
+	AgentOsWordmark,
+	IconButton,
+	PlusIcon,
+	relativeTime,
+	StatusDot,
+} from "../common";
 import { cn } from "../lib/cn";
 import { useAgentOsActor } from "../lib/rivet";
 import { agentOsSource, decodeActionBytes } from "../lib/source";
@@ -464,6 +472,7 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 				{!hasShells && !opening ? (
 					<AgentOsEmpty>
 						<div className="flex max-w-sm flex-col items-center gap-2">
+							<AgentOsWordmark className="mb-3 w-44" />
 							<span>Interactive shell into the VM.</span>
 							<button
 								type="button"
