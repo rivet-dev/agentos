@@ -1,8 +1,9 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { dehydrate, hydrate, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { lazy, type ComponentType, StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { isInspectorActionError, tabIdFromUrl } from "./lib/actor-client";
 import { RivetProvider } from "./lib/rivet";
+import { ShellOutputCapture } from "./lib/shell-capture";
 import { PermissionPrompts } from "./permission-prompts";
 import { TabBoundary } from "./tab-boundary";
 import React from "react";
@@ -62,6 +63,42 @@ const queryClient = new QueryClient({
 	},
 });
 
+// The dashboard swaps this iframe out on every tab switch, so each switch is
+// a full document boot. Carry the query cache across in sessionStorage: the
+// next document renders every tab from cached data instantly (no loading
+// states) and refetches in the background (5s staleTime). Excluded keys:
+// `file` bodies hold Uint8Arrays (huge and not JSON-safe) and `live-sessions`
+// holds a Set — both re-fetch quickly and neither survives JSON.
+const QUERY_CACHE_KEY = "agentos-inspector:query-cache";
+const QUERY_CACHE_EXCLUDED_KINDS = new Set(["file", "live-sessions"]);
+const QUERY_CACHE_MAX_BYTES = 3 * 1024 * 1024;
+try {
+	const raw = sessionStorage.getItem(QUERY_CACHE_KEY);
+	if (raw) hydrate(queryClient, JSON.parse(raw));
+} catch (error) {
+	console.warn("agentos inspector: failed to restore query cache", error);
+}
+window.addEventListener("pagehide", () => {
+	try {
+		const state = dehydrate(queryClient, {
+			shouldDehydrateQuery: (query) =>
+				query.state.status === "success" &&
+				!QUERY_CACHE_EXCLUDED_KINDS.has(String(query.queryKey[2])),
+		});
+		const raw = JSON.stringify(state);
+		// sessionStorage shares a ~5MB origin budget with the shell scrollback.
+		if (raw.length > QUERY_CACHE_MAX_BYTES) {
+			console.warn(
+				`agentos inspector: query cache too large to persist (${raw.length} chars)`,
+			);
+			return;
+		}
+		sessionStorage.setItem(QUERY_CACHE_KEY, raw);
+	} catch (error) {
+		console.warn("agentos inspector: failed to persist query cache", error);
+	}
+});
+
 function App() {
 	const [auth, setAuthState] = useState<{ actorId: string; authToken: string }>();
 
@@ -79,7 +116,8 @@ function App() {
 	}, []);
 
 	const tabId = tabIdFromUrl();
-	const loader = tabId ? TABS[LEGACY_TAB_ALIASES[tabId] ?? tabId] : undefined;
+	const resolvedTabId = tabId ? (LEGACY_TAB_ALIASES[tabId] ?? tabId) : undefined;
+	const loader = resolvedTabId ? TABS[resolvedTabId] : undefined;
 
 	if (!loader) {
 		return <div style={{ padding: 16 }}>Unknown inspector tab: {String(tabId)}</div>;
@@ -101,6 +139,10 @@ function App() {
 				    approval must stay answerable from every tab even when the tab
 				    body itself is broken. */}
 				<PermissionPrompts actorId={auth.actorId} />
+				{/* Every non-terminal document keeps recording shell output into
+				    the shared store, so switching back to the terminal loses
+				    nothing (the terminal itself owns the store while mounted). */}
+				{resolvedTabId !== "terminal" ? <ShellOutputCapture actorId={auth.actorId} /> : null}
 				<div className="min-h-0 flex-1">
 					<TabBoundary>
 						<Tab actorId={auth.actorId} />

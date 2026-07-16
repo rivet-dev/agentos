@@ -265,6 +265,8 @@ function TurnInFlight() {
 // env (sent only to this actor).
 const LS_AGENT_TYPE = "agentos-inspector:composer-agent-type";
 const LS_ENV_JSON = "agentos-inspector:composer-env";
+// Selected-session persistence across the per-tab iframe swap.
+const transcriptStateKey = (actorId: string) => `agentos-inspector:transcript:${actorId}`;
 const DEFAULT_ENV_JSON = JSON.stringify(
 	{
 		ANTHROPIC_API_KEY: "",
@@ -501,9 +503,34 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 	const queryClient = useQueryClient();
 	// undefined = no explicit choice (default to the newest session); null =
 	// explicitly composing a new session. Without the distinction, once any
-	// session exists the UI can never start another one.
-	const [selected, setSelected] = useState<string | null | undefined>(undefined);
-	const sessionId = selected === undefined ? (sessions[0]?.sessionId ?? null) : selected;
+	// session exists the UI can never start another one. The choice survives
+	// tab switches (the dashboard swaps the iframe per tab).
+	const [selected, setSelected] = useState<string | null | undefined>(() => {
+		try {
+			const raw = sessionStorage.getItem(transcriptStateKey(actorId));
+			if (!raw) return undefined;
+			const parsed = JSON.parse(raw) as { selected?: unknown };
+			return parsed.selected === null || typeof parsed.selected === "string"
+				? parsed.selected
+				: undefined;
+		} catch {
+			return undefined;
+		}
+	});
+	useEffect(() => {
+		try {
+			if (selected === undefined) sessionStorage.removeItem(transcriptStateKey(actorId));
+			else sessionStorage.setItem(transcriptStateKey(actorId), JSON.stringify({ selected }));
+		} catch (error) {
+			console.warn("agentos inspector: failed to persist transcript state", error);
+		}
+	}, [actorId, selected]);
+	// A restored id whose session no longer exists falls back to the newest.
+	const sessionId =
+		selected === undefined ||
+		(typeof selected === "string" && !sessions.some((s) => s.sessionId === selected))
+			? (sessions[0]?.sessionId ?? null)
+			: selected;
 	// Liveness: cross-reference listSessions (records carry no status on the
 	// current runtime); fall back to the record's own status where it exists.
 	const { data: liveIds } = useQuery(liveSessionsQueryOptions(actorId));

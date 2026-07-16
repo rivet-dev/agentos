@@ -34,14 +34,20 @@ function FileTreeItem({
 	depth,
 	selectedPath,
 	onSelect,
+	openPaths,
+	onToggle,
 }: {
 	actorId: string;
 	entry: FsEntry;
 	depth: number;
 	selectedPath: string | null;
 	onSelect: (e: FsEntry) => void;
+	/** Expansion lives in the parent (persisted): it must survive the per-tab
+	 * iframe swap, which unmounts this whole tree. */
+	openPaths: ReadonlySet<string>;
+	onToggle: (path: string) => void;
 }) {
-	const [open, setOpen] = useState(false);
+	const open = openPaths.has(entry.path);
 	const isSelected = entry.path === selectedPath;
 	const expandable = entry.dir && !entry.virtual;
 	const childrenQuery = useQuery(
@@ -53,7 +59,7 @@ function FileTreeItem({
 			<div className="flex items-center gap-1" style={{ paddingLeft: `${depth * 12}px` }}>
 				<button
 					type="button"
-					onClick={() => expandable && setOpen((v) => !v)}
+					onClick={() => expandable && onToggle(entry.path)}
 					className={cn(
 						"flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted/50",
 						!expandable && "pointer-events-none opacity-0",
@@ -65,7 +71,7 @@ function FileTreeItem({
 				<button
 					type="button"
 					onClick={() => {
-						if (expandable) setOpen((v) => !v);
+						if (expandable) onToggle(entry.path);
 						// Always report the click: the parent moves the path bar to the
 						// clicked location so folder actions target it.
 						onSelect(entry);
@@ -103,6 +109,8 @@ function FileTreeItem({
 							depth={depth + 1}
 							selectedPath={selectedPath}
 							onSelect={onSelect}
+							openPaths={openPaths}
+							onToggle={onToggle}
 						/>
 					))
 				: null}
@@ -332,24 +340,38 @@ export function FilesystemTabConnected({ actorId }: { actorId: string }) {
 }
 
 // Browsing state survives tab switches: the dashboard swaps the iframe per
-// tab, so the root path and open file persist per actor (same pattern as the
-// terminal's shells).
+// tab, so the root path, open file, and expanded directories persist per
+// actor (same pattern as the terminal's shells).
 const fsStateKey = (actorId: string) => `agentos-inspector:fs:${actorId}`;
+// Expansion is bounded so a long browsing session cannot bloat the payload;
+// oldest-expanded entries drop first (Set iteration is insertion-ordered).
+const MAX_PERSISTED_OPEN_DIRS = 200;
 
-function loadFsState(actorId: string): { root: string; selectedPath: string | null } {
+function loadFsState(actorId: string): {
+	root: string;
+	selectedPath: string | null;
+	openPaths: string[];
+} {
 	try {
 		const raw = sessionStorage.getItem(fsStateKey(actorId));
 		if (raw) {
-			const parsed = JSON.parse(raw) as { root?: unknown; selectedPath?: unknown };
+			const parsed = JSON.parse(raw) as {
+				root?: unknown;
+				selectedPath?: unknown;
+				openPaths?: unknown;
+			};
 			return {
 				root: typeof parsed.root === "string" ? parsed.root : "/",
 				selectedPath: typeof parsed.selectedPath === "string" ? parsed.selectedPath : null,
+				openPaths: Array.isArray(parsed.openPaths)
+					? parsed.openPaths.filter((p): p is string => typeof p === "string")
+					: [],
 			};
 		}
 	} catch {
 		// Malformed storage falls back to defaults.
 	}
-	return { root: "/", selectedPath: null };
+	return { root: "/", selectedPath: null, openPaths: [] };
 }
 
 function FilesystemLoaded({ actorId }: { actorId: string }) {
@@ -360,13 +382,32 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 	const [root, setRoot] = useState(initial.root);
 	const [draft, setDraft] = useState(initial.root);
 	const [selectedPath, setSelectedPath] = useState<string | null>(initial.selectedPath);
+	const [openPaths, setOpenPaths] = useState<ReadonlySet<string>>(
+		() => new Set(initial.openPaths),
+	);
+	const toggleOpen = (path: string) =>
+		setOpenPaths((prev) => {
+			const next = new Set(prev);
+			if (next.has(path)) next.delete(path);
+			else {
+				next.add(path);
+				if (next.size > MAX_PERSISTED_OPEN_DIRS) {
+					const oldest = next.values().next().value;
+					if (oldest !== undefined) next.delete(oldest);
+				}
+			}
+			return next;
+		});
 	useEffect(() => {
 		try {
-			sessionStorage.setItem(fsStateKey(actorId), JSON.stringify({ root, selectedPath }));
+			sessionStorage.setItem(
+				fsStateKey(actorId),
+				JSON.stringify({ root, selectedPath, openPaths: [...openPaths] }),
+			);
 		} catch (error) {
 			console.warn("agentos inspector: failed to persist filesystem state", error);
 		}
-	}, [actorId, root, selectedPath]);
+	}, [actorId, root, selectedPath, openPaths]);
 	const [newFolderDraft, setNewFolderDraft] = useState<string | null>(null);
 	const [treeError, setTreeError] = useState<unknown>(null);
 	const uploadInputRef = useRef<HTMLInputElement>(null);
@@ -535,6 +576,8 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 										setDraft(parentDir(e.path));
 									}
 								}}
+								openPaths={openPaths}
+								onToggle={toggleOpen}
 							/>
 						))
 					)}
