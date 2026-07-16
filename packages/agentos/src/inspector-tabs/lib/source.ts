@@ -250,6 +250,26 @@ export const agentOsSource = {
 				// gateway just to preview it. Past the limit, skip the read until
 				// the viewer's explicit "Load anyway".
 				const stat = await callAction<VirtualStat>("stat", [p]);
+				// Device/fifo/socket nodes (/dev/stdout, …) are streams: reading
+				// them fails or hangs, so never try. Regular files and symlinks
+				// (followed by readFile) proceed.
+				const fileType = (stat.mode ?? 0) & 0o170000;
+				if (
+					fileType === 0o020000 || // character device
+					fileType === 0o060000 || // block device
+					fileType === 0o010000 || // fifo
+					fileType === 0o140000 // socket
+				) {
+					return {
+						path: p,
+						sizeBytes: stat.size,
+						mtimeMs: stat.mtimeMs,
+						text: null,
+						bytes: null,
+						oversize: false,
+						special: true,
+					};
+				}
 				if (!force && stat.size > MAX_PREVIEW_BYTES) {
 					return {
 						path: p,

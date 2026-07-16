@@ -130,6 +130,8 @@ export interface ReaddirEntry {
 }
 /** Raw `stat` shape (subset we use). */
 export interface VirtualStat {
+	/** POSIX mode bits (file type in the top nibble). */
+	mode: number;
 	size: number;
 	mtimeMs: number;
 	isDirectory: boolean;
@@ -144,6 +146,8 @@ export interface FileContent {
 	bytes: Uint8Array | null;
 	/** True when the file exceeded the preview limit and was not read. */
 	oversize: boolean;
+	/** True for device/fifo/socket nodes — streams with no readable contents. */
+	special?: boolean;
 }
 
 // ── Mounts ────────────────────────────────────────────────────────────

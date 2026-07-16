@@ -260,7 +260,11 @@ function FileViewer({
 			</div>
 			{mutationError ? <ActionErrorNote error={mutationError} className="border-b py-2" /> : null}
 			<ScrollArea className="min-h-0 flex-1">
-				{data.oversize ? (
+				{data.special ? (
+					<div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
+						Device or stream — no readable contents.
+					</div>
+				) : data.oversize ? (
 					<div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
 						<span>
 							Large file ({formatBytes(data.sizeBytes)}) — preview skipped to avoid dragging it
@@ -509,7 +513,12 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 					) : notADir ? (
 						<AgentOsEmpty>Not a directory, or does not exist: {root}</AgentOsEmpty>
 					) : roots.length === 0 ? (
-						<AgentOsEmpty>Empty directory.</AgentOsEmpty>
+						<AgentOsEmpty>
+							<div className="flex flex-col items-center gap-2">
+								<FileGlyph dir className="size-8 text-muted-foreground/40" />
+								<span>Empty directory.</span>
+							</div>
+						</AgentOsEmpty>
 					) : (
 						roots.map((entry) => (
 							<FileTreeItem
