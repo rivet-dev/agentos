@@ -31,6 +31,13 @@ const LEGACY_TAB_ALIASES: Record<string, string> = {
 	processes: "system",
 };
 
+// Theme comes from the dashboard via the iframe URL; the tokens and all
+// `dark:` variants key off this class. Absent param = dark (today's default).
+document.documentElement.classList.toggle(
+	"dark",
+	new URLSearchParams(window.location.search).get("theme") !== "light",
+);
+
 const queryClient = new QueryClient({
 	defaultOptions: {
 		queries: {
