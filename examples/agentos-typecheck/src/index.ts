@@ -5,6 +5,7 @@
  * run: the actor delegates VM operations to the AgentOS core SDK and sidecar.
  */
 
+import pi from "@agentos-software/pi";
 import {
 	type AgentOSConfigInput,
 	type AgentOsEvents,
@@ -20,7 +21,6 @@ import {
 	setup,
 } from "@rivet-dev/agentos";
 import { createClient } from "@rivet-dev/agentos/client";
-import pi from "@agentos-software/pi";
 
 const mount: NodeModulesMountConfig = nodeModulesMount(
 	"/abs/host/node_modules",
@@ -39,16 +39,27 @@ const config: AgentOSConfigInput = {
 		defaultExpiresInSeconds: 3600,
 		maxExpiresInSeconds: 86_400,
 	},
-	onSessionEvent: async (sessionId, event) => {
-		console.log(sessionId, event.method);
+	onSessionEvent: async (c, sessionId, event) => {
+		console.log(c.actorId, sessionId, event.method);
 	},
-	onPermissionRequest: async (sessionId, request) => {
-		console.log(sessionId, request.permissionId);
+	onPermissionRequest: async (c, sessionId, request) => {
+		console.log(c.actorId, sessionId, request.permissionId);
 	},
 };
 
 const vm = agentOS(config);
-const registry = setup({ use: { vm } });
+const inputVm = agentOS<
+	undefined,
+	undefined,
+	undefined,
+	undefined,
+	{ workspace: string }
+>({
+	onCreate: (_c, input) => {
+		console.log(input.workspace);
+	},
+});
+const registry = setup({ use: { vm, inputVm } });
 const client = createClient<typeof registry>({
 	endpoint: "http://localhost:6420",
 });
@@ -80,6 +91,9 @@ const cron: SerializableCronJobOptions = {
 
 async function main(): Promise<void> {
 	const handle = client.vm.getOrCreate("my-agent");
+	await client.inputVm.create("input-agent", {
+		input: { workspace: "/work" },
+	});
 
 	await handle.createSession("pi", { cwd: "/work" });
 	await handle.sendPrompt("session-1", "List the files in /work.");

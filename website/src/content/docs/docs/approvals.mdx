@@ -45,7 +45,7 @@ Reply options for `respondPermission`:
 
 The `onPermissionRequest` hook runs server-side for every permission request before it reaches any client. Useful for fully automated pipelines.
 
-- **Signature**: `onPermissionRequest: async (sessionId, request) => { ... }`.
+- **Signature**: `onPermissionRequest: async (c, sessionId, request) => { ... }`.
 - **Inspect**: `request.permissionId`, `request.description`, and `request.params`.
 - **Anything not handled** in the hook is forwarded to the client via the `permissionRequest` event.
 

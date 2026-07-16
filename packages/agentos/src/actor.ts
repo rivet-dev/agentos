@@ -229,12 +229,14 @@ export interface VmFetchResponse {
 	body: Uint8Array;
 }
 
-interface AgentOsEventHooks {
+export interface AgentOsEventHooks<TContext = AnyContext> {
 	onSessionEvent?: (
+		c: TContext,
 		sessionId: string,
 		event: JsonRpcNotification,
 	) => void | Promise<void>;
 	onPermissionRequest?: (
+		c: TContext,
 		sessionId: string,
 		request: PermissionRequest,
 	) => void | Promise<void>;
@@ -513,7 +515,7 @@ export function createAgentOsActions(
 					)
 					.then(async () => {
 						c.broadcast("sessionEvent", { sessionId, event: serialized });
-						await hooks.onSessionEvent?.(sessionId, serialized);
+						await hooks.onSessionEvent?.(c, sessionId, serialized);
 					});
 				c.waitUntil(
 					task.catch((error) =>
@@ -530,7 +532,7 @@ export function createAgentOsActions(
 				if (hooks.onPermissionRequest) {
 					c.waitUntil(
 						Promise.resolve()
-							.then(() => hooks.onPermissionRequest?.(sessionId, request))
+							.then(() => hooks.onPermissionRequest?.(c, sessionId, request))
 							.catch((error) =>
 								c.log.error({
 									msg: "agent-os permission hook failed",
@@ -654,7 +656,7 @@ export type AgentOsActorDefinition<TConnParams = undefined> = ActorDefinition<
 	AgentOsActions
 >;
 
-export interface AgentOsActorExtras extends AgentOsOptions, AgentOsEventHooks {
+export interface AgentOsActorExtras extends AgentOsOptions {
 	preview?: {
 		defaultExpiresInSeconds?: number;
 		maxExpiresInSeconds?: number;
@@ -693,7 +695,19 @@ export type AgentOsActorConfigInput<
 	>,
 	"db"
 > &
-	AgentOsActorExtras;
+	AgentOsActorExtras &
+	AgentOsEventHooks<
+		ActorContext<
+			TState,
+			TConnParams,
+			TConnState,
+			TVars,
+			TInput,
+			ActorDb,
+			TEvents,
+			TQueues
+		>
+	>;
 
 const agentOsOptionKeys = [
 	"software",
@@ -726,9 +740,9 @@ function splitConfig(
 		}
 	}
 	const onSessionEvent =
-		actorConfig.onSessionEvent as AgentOsEventHooks["onSessionEvent"];
+		actorConfig.onSessionEvent as AgentOsEventHooks<AnyContext>["onSessionEvent"];
 	const onPermissionRequest =
-		actorConfig.onPermissionRequest as AgentOsEventHooks["onPermissionRequest"];
+		actorConfig.onPermissionRequest as AgentOsEventHooks<AnyContext>["onPermissionRequest"];
 	const preview = actorConfig.preview as AgentOsActorExtras["preview"];
 	delete actorConfig.onSessionEvent;
 	delete actorConfig.onPermissionRequest;

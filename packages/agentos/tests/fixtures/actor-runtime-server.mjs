@@ -5,12 +5,16 @@ import { event } from "rivetkit";
 const vm = agentOS({
 	defaultSoftware: false,
 	permissions: allowAll,
-	createState: () => ({ wakeCount: 0 }),
+	createState: (_c, input) => ({
+		wakeCount: 0,
+		creationInput: input ?? null,
+	}),
 	events: {
 		customLifecycle: event(),
 	},
 	actions: {
 		echo: (_c, value) => value,
+		getCreationInput: (c) => c.state.creationInput,
 		getWakeCount: (c) => c.state.wakeCount,
 		sleepActor: (c) => c.sleep(),
 		inspectAgentOsStorage: async (c) => {

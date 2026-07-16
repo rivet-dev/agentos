@@ -32,6 +32,7 @@ export {
 	type AgentOsActions,
 	type AgentOsActorConfigInput,
 	type AgentOsActorExtras,
+	type AgentOsEventHooks,
 	createAgentOS,
 	createAgentOS as agentOS,
 	createAgentOsActions,

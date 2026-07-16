@@ -23,6 +23,8 @@ We recommend using [Rivet Actors](https://rivet.dev/docs/actors) because they pr
 
 `agentOS()` returns an ordinary TypeScript Rivet actor definition. Its config accepts the core VM options together with normal actor state, actions, events, queues, connection types, and lifecycle hooks such as `onBeforeConnect`. AgentOS actions and events are merged in automatically; their names are reserved so they cannot be accidentally shadowed. The actor creates the core SDK VM on wake and disposes it on sleep.
 
+Creation input is inferred from the actor definition and is passed through normal client creation options: `client.vm.create("key", { input })`. The same input reaches `createState(c, input)` and `onCreate(c, input)`.
+
 ## Install
 
 ```bash

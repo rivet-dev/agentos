@@ -271,6 +271,21 @@ function actorHandle(endpoint: string, key: string) {
 	return (client as any).vm.getOrCreate(key);
 }
 
+async function createActorHandle(
+	endpoint: string,
+	key: string,
+	input: unknown,
+) {
+	const client = createClient<never>({
+		endpoint,
+		token: TOKEN,
+		namespace: NAMESPACE,
+		poolName: POOL_NAME,
+		disableMetadataLookup: true,
+	} as never);
+	return await (client as any).vm.create(key, { input });
+}
+
 function bytes(value: unknown): Uint8Array {
 	if (value instanceof Uint8Array) return value;
 	if (
@@ -290,9 +305,14 @@ describe.skipIf(!RUN_E2E)("AgentOS real Rivet actor", () => {
 		let runtime: RuntimeHandle | undefined;
 		try {
 			runtime = await startRuntime(storagePath);
-			let handle = actorHandle(runtime.endpoint, actorKey);
+			let handle = await createActorHandle(runtime.endpoint, actorKey, {
+				workspace: "actor-input",
+			});
 
 			expect(await handle.echo("custom-action-ok")).toBe("custom-action-ok");
+			expect(await handle.getCreationInput()).toEqual({
+				workspace: "actor-input",
+			});
 			expect(await handle.getWakeCount()).toBe(1);
 			await handle.mkdir("/persist");
 			await handle.writeFile("/persist/message.txt", "survives sleep");
@@ -330,6 +350,9 @@ describe.skipIf(!RUN_E2E)("AgentOS real Rivet actor", () => {
 			await runtime.stop();
 			runtime = await startRuntime(storagePath, restartPort);
 			handle = actorHandle(runtime.endpoint, actorKey);
+			expect(await handle.getCreationInput()).toEqual({
+				workspace: "actor-input",
+			});
 			expect(
 				new TextDecoder().decode(
 					bytes(await handle.readFile("/persist/message.txt")),
