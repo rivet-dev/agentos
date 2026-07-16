@@ -2,10 +2,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // AgentOS-owned crates published to crates.io in dependency order. Crates with
-// `publish = false` stay out of this list; the RivetKit native-plugin ABI crate
-// is published by the rivet repo.
+// `publish = false` stay out of this list.
 export const RUST_CRATE_ORDER = [
 	"agentos-build-support",
+	"agentos-actor-uds-client",
 	"agentos-bridge",
 	"agentos-runtime",
 	"agentos-vfs-core",

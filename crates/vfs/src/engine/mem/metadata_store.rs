@@ -6,6 +6,7 @@ use crate::engine::types::{
     DEFAULT_CHUNK_SIZE, MAX_SYMLINK_DEPTH,
 };
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
@@ -14,7 +15,7 @@ pub struct InMemoryMetadataStore {
     state: Arc<Mutex<State>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataDump {
     pub next_ino: u64,
     pub inodes: BTreeMap<u64, InodeMeta>,

@@ -6,6 +6,20 @@ import {
 } from "../src/sandbox.js";
 
 describe("AgentOsOptions validation", () => {
+	test("accepts a declarative sidecar-native root", () => {
+		expect(
+			agentOsOptionsSchema.safeParse({
+				rootFilesystem: {
+					type: "native",
+					plugin: {
+						id: "chunked_actor_sqlite",
+						config: { path: "/tmp/actor.sock" },
+					},
+				},
+			}).success,
+		).toBe(true);
+	});
+
 	test("rejects unknown top-level options before booting a VM", async () => {
 		await expect(
 			AgentOs.create({
@@ -55,15 +69,13 @@ describe("AgentOsOptions validation", () => {
 			},
 		} as never;
 
-		const options = await resolveSandboxOptions(
-			{
-				sandbox: {
-					provider: {
-						start: async () => client,
-					},
+		const options = await resolveSandboxOptions({
+			sandbox: {
+				provider: {
+					start: async () => client,
 				},
-			} as never,
-		);
+			},
+		} as never);
 		expect(options).not.toHaveProperty("sandbox");
 		expect(options.mounts?.[0]?.path).toBe("/mnt/sandbox");
 		expect(options.toolKits?.[0]?.name).toBe("sandbox");
@@ -89,39 +101,33 @@ describe("AgentOsOptions validation", () => {
 	test("rejects removed sandbox mount and binding toggles", async () => {
 		const client = { baseUrl: "http://127.0.0.1:1234" } as never;
 		await expect(
-			resolveSandboxOptions(
-				{
-					sandbox: {
-						client,
-						mount: false,
-					} as never,
+			resolveSandboxOptions({
+				sandbox: {
+					client,
+					mount: false,
 				} as never,
-			),
+			} as never),
 		).rejects.toThrow(/sandbox\.mount has been removed/);
 
 		await expect(
-			resolveSandboxOptions(
-				{
-					sandbox: {
-						client,
-						bindings: false,
-					} as never,
+			resolveSandboxOptions({
+				sandbox: {
+					client,
+					bindings: false,
 				} as never,
-			),
+			} as never),
 		).rejects.toThrow(/sandbox\.bindings has been removed/);
 	});
 
 	test("rejects old sandbox path option names", async () => {
 		const client = { baseUrl: "http://127.0.0.1:1234" } as never;
 		await expect(
-			resolveSandboxOptions(
-				{
-					sandbox: {
-						client,
-						basePath: "/app",
-					} as never,
+			resolveSandboxOptions({
+				sandbox: {
+					client,
+					basePath: "/app",
 				} as never,
-			),
+			} as never),
 		).rejects.toThrow(/sandbox\.basePath has been removed/);
 	});
 });

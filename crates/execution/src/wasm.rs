@@ -187,9 +187,9 @@ pub struct WasmExecutionLimits {
     /// Linear-memory cap in bytes, validated against the module's declared
     /// initial/maximum memory before execution.
     pub max_memory_bytes: Option<u64>,
-    /// Stack cap in bytes. Validated from the typed wire value so bad config
-    /// fails closed; runtime V8 stack-limit enforcement is a follow-up — see
-    /// [`resolve_wasm_stack_limit_bytes`].
+    /// Stack cap in bytes. Until the V8 runner exposes an enforceable per-module
+    /// stack lever, any configured value fails closed rather than silently using
+    /// V8's unrelated default stack bound.
     pub max_stack_bytes: Option<u64>,
     /// Maximum executable image bytes accepted for initial and replacement
     /// modules. The trusted runner needs the typed value for fexecve preads.
@@ -1193,9 +1193,9 @@ impl WasmExecutionEngine {
         }
         let frozen_time_ms = frozen_time_ms();
         validate_module_limits(&resolved_module, &request)?;
-        // Surfaces a typed error for a malformed stack byte budget instead of
-        // silently dropping it. Runtime V8 stack-limit enforcement is tracked
-        // separately; for now this validation prevents accepting an invalid cap.
+        // Fail closed when a stack byte budget is configured. The V8 runner does
+        // not yet expose a per-module stack lever, so accepting the value would
+        // claim to enforce a policy that the runtime actually ignores.
         wasm_stack_limit_bytes(&request)?;
         let execution_timeout = resolve_wasm_execution_timeout(&request)?;
         let import_cache = self
@@ -4078,11 +4078,9 @@ fn resolve_wasm_execution_timeout(
     Ok(request.limits.max_fuel.map(Duration::from_millis))
 }
 
-/// Resolve and validate the per-execution WASM stack cap from the typed wire
-/// limit. Runtime V8 stack-limit enforcement still needs a stack lever on the
-/// V8 session and is tracked as a follow-up; for now an out-of-range value is
-/// rejected up front so a misconfiguration surfaces instead of being silently
-/// dropped.
+/// Resolve the per-execution WASM stack cap from the typed wire limit. The V8
+/// runner currently has no enforceable per-module stack lever, so every configured
+/// value fails closed with a typed error that names the requested bound.
 fn resolve_wasm_stack_limit_bytes(
     request: &StartWasmExecutionRequest,
 ) -> Result<Option<u64>, WasmExecutionError> {
@@ -4090,7 +4088,10 @@ fn resolve_wasm_stack_limit_bytes(
         Some(0) => Err(WasmExecutionError::InvalidLimit(String::from(
             "wasm max stack bytes must be greater than zero",
         ))),
-        other => Ok(other),
+        Some(limit) => Err(WasmExecutionError::InvalidLimit(format!(
+            "configured wasm max stack byte limit {limit} cannot be enforced by the V8 runner"
+        ))),
+        None => Ok(None),
     }
 }
 
@@ -4266,9 +4267,8 @@ fn validate_module_limits(
     resolved_module: &ResolvedWasmModule,
     request: &StartWasmExecutionRequest,
 ) -> Result<(), WasmExecutionError> {
-    // Read and validate the wire stack cap on every execution. Runtime stack
-    // enforcement is a follow-up, but a bad value still fails closed instead of
-    // being written to an env var.
+    // Read the wire stack cap on every execution and fail closed when configured;
+    // the V8 runner cannot currently enforce a per-module stack byte bound.
     let _stack_limit = resolve_wasm_stack_limit_bytes(request)?;
 
     let Some(memory_limit) = wasm_memory_limit_bytes(request)? else {
@@ -4761,10 +4761,11 @@ mod tests {
             Some(65_536),
             "memory must come from the typed wire limit, not AGENTOS_WASM_MAX_MEMORY_BYTES"
         );
-        assert_eq!(
-            resolve_wasm_stack_limit_bytes(&request).expect("stack limit"),
-            Some(131_072),
-            "stack must come from the typed wire limit (retiring the dead AGENTOS_WASM_MAX_STACK_BYTES knob)"
+        let stack_error = resolve_wasm_stack_limit_bytes(&request)
+            .expect_err("an unenforceable stack limit must fail closed");
+        assert!(
+            stack_error.to_string().contains("131072"),
+            "the typed error must name the configured stack limit: {stack_error}"
         );
         assert_eq!(
             resolve_wasm_prewarm_timeout(&request).expect("prewarm timeout"),

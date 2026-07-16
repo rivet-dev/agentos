@@ -38,7 +38,7 @@ struct MemEntry {
 }
 
 /// Minimal in-memory implementation of the `js_bridge` mount operation
-/// contract (the same op set `crates/agentos-actor-plugin/src/persistence.rs`
+/// contract (the same op set used by sidecar-native root plugins
 /// services from actor SQLite).
 #[derive(Default)]
 struct MemBridgeFs {
@@ -82,7 +82,7 @@ impl MemBridgeFs {
         let size = entry.content.len() as u64;
         // Permission-only `mode` (no S_IFMT file-type bits) with the entry
         // type carried by the `isDirectory` / `isSymbolicLink` booleans — the
-        // exact stat shape `crates/agentos-actor-plugin/src/persistence.rs`
+        // exact stat shape the sidecar-native mount contract
         // `stat_json` produces. The sidecar must normalize this, not require
         // every bridge backend to encode type bits into `mode`.
         json!({
@@ -420,7 +420,7 @@ fn mem_bridge_callback(fs: Arc<MemBridgeFs>) -> SidecarJsBridgeCallback {
 
 /// Boot a VM whose ROOT filesystem is a js_bridge mount (the actor-plugin
 /// shape) plus the coreutils command package, mirroring
-/// `crates/agentos-actor-plugin/src/vm.rs` `build_config`.
+/// the native root VM configuration path.
 async fn new_bridge_root_vm() -> Option<AgentOs> {
     common::ensure_sidecar_env();
     let package_dir = common::coreutils_package_dir()?;

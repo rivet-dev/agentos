@@ -44,14 +44,21 @@ impl AcpHost for NodeChildAcpHost {
         let entrypoint = request
             .entrypoint
             .ok_or_else(|| AcpCoreError::InvalidState("missing agent entrypoint".into()))?;
+        if entrypoint != "/opt/agentos/bin/echo" {
+            return Err(AcpCoreError::InvalidState(format!(
+                "unexpected projected agent entrypoint: {entrypoint}"
+            )));
+        }
         let mut command = Command::new("node");
         command
-            .arg(&entrypoint)
+            // This native host stands in for the executor's projected command
+            // resolver; the guest-visible path above maps to the real fixture.
+            .arg(echo_agent_path())
             .args(&request.args)
             .envs(&request.env)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::inherit());
         if let Some(cwd) = &request.cwd {
             command.current_dir(cwd);
         }
@@ -149,7 +156,7 @@ impl AcpHost for NodeChildAcpHost {
         let manifest = serde_json::json!({
             "name": "echo",
             "agent": {
-                "acpEntrypoint": echo_agent_path().to_string_lossy(),
+                "acpEntrypoint": "echo",
             },
         });
         serde_json::to_vec(&manifest)

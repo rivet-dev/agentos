@@ -7,6 +7,7 @@
 	],
 	"globalPassThroughEnv": ["CARGO_TARGET_DIR"],
 	"globalDependencies": [
+		"crates/actor-uds-client/protocol/**",
 		"crates/sidecar-protocol/protocol/**",
 		"packages/build-tools/scripts/compile-sidecar-protocol.mjs"
 	],
@@ -55,9 +56,6 @@
 				"package.json"
 			],
 			"outputs": ["dist/**", "commands/**"]
-		},
-		"@rivet-dev/agentos-plugin#build": {
-			"cache": false
 		}
 	}
 }

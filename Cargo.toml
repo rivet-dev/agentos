@@ -2,12 +2,12 @@
 resolver = "2"
 exclude = ["software"]
 members = [
+    "crates/actor-uds-client",
     "crates/agentos-protocol",
     "crates/agentos-sidecar-core",
     "crates/agentos-sidecar",
     "crates/agentos-sidecar-browser",
     "crates/client",
-    "crates/agentos-actor-plugin",
     "crates/bridge",
     "crates/build-support",
     "crates/execution",
@@ -32,7 +32,6 @@ default-members = [
     "crates/agentos-sidecar-core",
     "crates/agentos-sidecar",
     "crates/client",
-    "crates/agentos-actor-plugin",
     "crates/bridge",
     "crates/build-support",
     "crates/execution",
@@ -58,6 +57,7 @@ repository = "https://github.com/rivet-dev/agent-os"
 # AgentOS crates are published as a lock-step chain and are self-contained in
 # this workspace.
 [workspace.dependencies]
+agentos-actor-uds-client = { path = "crates/actor-uds-client", version = "0.0.1" }
 agentos-bridge = { path = "crates/bridge", version = "0.0.1" }
 agentos-build-support = { path = "crates/build-support", version = "0.0.1" }
 agentos-execution = { path = "crates/execution", version = "0.0.1" }

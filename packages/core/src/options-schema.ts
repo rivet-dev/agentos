@@ -179,7 +179,7 @@ const rootLowerInputSchema = z.union([
 		.strict(),
 ]);
 
-export const rootFilesystemConfigSchema = z
+const overlayRootFilesystemConfigSchema = z
 	.object({
 		type: z.literal("overlay").optional(),
 		mode: z.enum(["ephemeral", "read-only"]).optional(),
@@ -194,6 +194,19 @@ const nativeMountPluginSchema = z
 		config: z.unknown().optional(),
 	})
 	.strict();
+
+const nativeRootFilesystemConfigSchema = z
+	.object({
+		type: z.literal("native"),
+		plugin: nativeMountPluginSchema,
+		readOnly: z.boolean().optional(),
+	})
+	.strict();
+
+export const rootFilesystemConfigSchema = z.union([
+	overlayRootFilesystemConfigSchema,
+	nativeRootFilesystemConfigSchema,
+]);
 
 const plainMountConfigSchema = z
 	.object({
@@ -285,10 +298,8 @@ export const toolKitSchema = z
 /**
  * Shared AgentOsOptions field schemas.
  *
- * Core uses the full object. The Rivet/native actor composes a narrower
- * native-safe subset in `packages/agentos/src/config.ts`; keep that subset and
- * `crates/agentos-actor-plugin/src/config.rs::AgentOsConfigJson` aligned when
- * adding options that cross the native boundary.
+ * Core and the TypeScript Rivet actor both use the full object. Runtime-owned
+ * behavior is serialized by AgentOs.create() into the sidecar VM config.
  */
 export const agentOsOptionFieldSchemas = {
 	software: z.array(z.unknown()).optional(),

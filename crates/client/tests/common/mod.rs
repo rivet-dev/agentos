@@ -1,6 +1,7 @@
 //! Shared e2e helpers: resolve/point at the real `agentos-sidecar` binary and build VMs.
 //!
-//! Resolve order for the binary: `AGENTOS_SIDECAR_BIN`, else `<workspace>/target/debug/agentos-sidecar`.
+//! Resolve order for the binary: `AGENTOS_SIDECAR_BIN`, then `CARGO_TARGET_DIR`, else
+//! `<workspace>/target/debug/agentos-sidecar`.
 //! Build it first with `cargo build -p agentos-sidecar`.
 
 #![allow(dead_code)]
@@ -25,8 +26,19 @@ fn test_node_modules_dir() -> PathBuf {
 pub fn ensure_sidecar_env() {
     INIT.call_once(|| {
         if std::env::var("AGENTOS_SIDECAR_BIN").is_err() {
-            let bin = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../target/debug/agentos-sidecar");
+            let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+                .map(PathBuf::from)
+                .map(|path| {
+                    if path.is_absolute() {
+                        path
+                    } else {
+                        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                            .join("../..")
+                            .join(path)
+                    }
+                })
+                .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target"));
+            let bin = target_dir.join("debug/agentos-sidecar");
             // `std::env::set_var` is `unsafe` in the Rust 2024 edition (process-global mutation that
             // can race other threads reading the environment). This runs once, single-threaded, under
             // `Once::call_once` before any VM is created. The `allow` keeps it warning-free on the

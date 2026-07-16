@@ -323,8 +323,6 @@ const FS_ALLOW: &[&str] = &[
     // it never handles guest paths at runtime.
     "crates/vfs/src/package_format/mod.rs",
     "crates/vfs/src/package_format/pack.rs",
-    // Host plugin configuration reads trusted package manifests before a VM exists.
-    "crates/agentos-actor-plugin/src/config.rs",
     // ACP trace output is an operator-selected host diagnostic sink.
     "crates/agentos-sidecar/src/acp_extension.rs",
     // Tar-backed read-only VFS: mmaps the trusted, client-configured package
@@ -384,6 +382,9 @@ const NET_ALLOW: &[&str] = &[
     "crates/execution/src/v8_runtime.rs",
     // client spawns + connects to the sidecar helper
     "crates/sidecar-client/src/transport.rs",
+    // Authenticated local transport from the sidecar to the owning actor's
+    // SQLite UDS endpoint. This is local IPC, not external network egress.
+    "crates/actor-uds-client/src/lib.rs",
 ];
 
 /// process: OS subprocess creation.

@@ -899,7 +899,7 @@ fn current_thread_resource_usage() -> Result<ThreadResourceUsageSnapshot, String
 // string for guest compatibility, pinned to the OpenSSL release vendored by the
 // sidecar (openssl-sys 300.6.0+3.6.2). The browser executor reports the same
 // constant so both runtimes present an identical identity.
-const EMULATED_OPENSSL_VERSION: &str = "3.6.3";
+pub const EMULATED_OPENSSL_VERSION: &str = "3.6.3";
 
 fn set_object_string_property<'s>(
     scope: &mut v8::HandleScope<'s>,

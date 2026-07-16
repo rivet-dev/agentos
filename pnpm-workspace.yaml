@@ -1,7 +1,6 @@
 packages:
   - packages/agentos-sandbox
   - packages/agentos
-  - packages/agentos-plugin
   - packages/agentos-toolchain
   - packages/browser
   - packages/build-tools
@@ -55,8 +54,8 @@ onlyBuiltDependencies:
 # pinned once here and referenced everywhere via `catalog:rivetkit`.
 catalogs:
   rivetkit:
-    rivetkit: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
-    '@rivetkit/react': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
+    rivetkit: 0.0.0-sqlite-uds.4e59a38
+    '@rivetkit/react': 0.0.0-sqlite-uds.4e59a38
 
 overrides:
   '@rivetkit/rivetkit-wasm': 2.3.2

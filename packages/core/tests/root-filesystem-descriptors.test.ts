@@ -19,6 +19,23 @@ function toExpectedSidecarEntry(entry: FilesystemEntry) {
 }
 
 describe("sidecar root filesystem descriptors", () => {
+	test("uses an empty overlay descriptor when the root is sidecar-native", () => {
+		expect(
+			serializeRootFilesystemForSidecar({
+				type: "native",
+				plugin: {
+					id: "chunked_actor_sqlite",
+					config: { path: "/tmp/actor.sock" },
+				},
+			}),
+		).toEqual({
+			mode: "ephemeral",
+			disableDefaultBaseLayer: true,
+			lowers: [],
+			bootstrapEntries: [],
+		});
+	});
+
 	test("serializes explicit lowers and bootstrap snapshots without changing the host config shape", () => {
 		const configLower = createSnapshotExport([
 			{

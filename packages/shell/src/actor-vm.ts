@@ -1,16 +1,14 @@
 // Actor-backed shell VM (the `--actor` flag): drives the exact same shell
 // surface as the in-process `AgentOs` core client, but through the RivetKit
-// agentOS actor (rivet engine + envoy + dylib actor plugin + sidecar).
+// agentOS actor (Rivet engine + envoy + AgentOS sidecar).
 //
-// Bootstrap mirrors `packages/agentos/tests/actor.test.ts`: spawn a runtime
-// server child (engine auto-spawned by the native registry), upsert a "normal"
-// runner config for the envoy pool, wait for envoy registration, then talk to
-// the actor through `createClient`. Requires the `r6` sibling checkout (the
-// native registry builder is imported from its rivetkit-typescript source),
-// exactly like the actor e2e test.
+// The launcher starts the engine binary bundled with RivetKit, registers an
+// envoy, and exposes the actor through the ordinary client API. Owning both
+// child handles ensures `dispose()` cannot leak Rivet's normally persistent
+// development engine.
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -26,6 +24,44 @@ const require_ = createRequire(import.meta.url);
 const NAMESPACE = "default";
 const TOKEN = "dev";
 const POOL_NAME = "agentos-shell";
+const MAX_CAPTURED_LOG_BYTES = 1024 * 1024;
+
+function resolveEngineBinary(): string {
+	const rivetkitRequire = createRequire(require_.resolve("rivetkit"));
+	return (
+		rivetkitRequire("@rivetkit/engine-cli") as { getEnginePath(): string }
+	).getEnginePath();
+}
+
+function appendBounded(current: string, chunk: Buffer): string {
+	const combined = current + chunk.toString();
+	return combined.length <= MAX_CAPTURED_LOG_BYTES
+		? combined
+		: combined.slice(combined.length - MAX_CAPTURED_LOG_BYTES);
+}
+
+async function stopChildProcess(
+	processChild: ChildProcess,
+	timeoutMs = 5_000,
+): Promise<void> {
+	if (processChild.exitCode !== null) return;
+	processChild.kill("SIGINT");
+	await new Promise<void>((resolveExit) => {
+		const timeout = setTimeout(() => {
+			if (processChild.exitCode === null) processChild.kill("SIGKILL");
+			resolveExit();
+		}, timeoutMs);
+		if (processChild.exitCode !== null) {
+			clearTimeout(timeout);
+			resolveExit();
+			return;
+		}
+		processChild.once("exit", () => {
+			clearTimeout(timeout);
+			resolveExit();
+		});
+	});
+}
 
 export interface ActorShellVmOptions {
 	software: SoftwareInput[];
@@ -73,26 +109,6 @@ export interface ShellVmHandle {
 	dispose(): Promise<void>;
 }
 
-function r6Root(): string {
-	return process.env.AGENTOS_R6_ROOT ?? resolve(workspaceRoot, "..", "r6");
-}
-
-function resolveEngineBinary(): string | undefined {
-	if (process.env.RIVET_ENGINE_BINARY) return process.env.RIVET_ENGINE_BINARY;
-	const r6Engine = join(r6Root(), "target", "debug", "rivet-engine");
-	if (existsSync(r6Engine)) return r6Engine;
-	try {
-		const pkgJson = require_.resolve(
-			"@rivetkit/engine-cli-linux-x64-musl/package.json",
-		);
-		const candidate = join(dirname(pkgJson), "rivet-engine");
-		if (existsSync(candidate)) return candidate;
-	} catch {
-		// platform package not installed; serve() reports binary_unavailable.
-	}
-	return undefined;
-}
-
 async function getFreePort(): Promise<number> {
 	return await new Promise((resolvePort, reject) => {
 		const server = createServer();
@@ -118,6 +134,7 @@ async function waitForHealth(
 	timeoutMs: number,
 ): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
+	let lastError: unknown;
 	while (Date.now() < deadline) {
 		if (child.exitCode !== null) {
 			throw new Error(
@@ -127,11 +144,13 @@ async function waitForHealth(
 		try {
 			const response = await fetch(`${endpoint}/health`);
 			if (response.ok) return;
-		} catch {}
+		} catch (error) {
+			lastError = error;
+		}
 		await new Promise((r) => setTimeout(r, 300));
 	}
 	throw new Error(
-		`timed out waiting for engine health at ${endpoint}\n${logs()}`,
+		`timed out waiting for engine health at ${endpoint}: ${String(lastError)}\n${logs()}`,
 	);
 }
 
@@ -206,25 +225,7 @@ function toBytes(data: unknown): Uint8Array {
 export async function createActorShellVm(
 	options: ActorShellVmOptions,
 ): Promise<ShellVmHandle> {
-	const r6 = r6Root();
-	const r6RivetkitPackageRoot = join(
-		r6,
-		"rivetkit-typescript",
-		"packages",
-		"rivetkit",
-	);
-	const tsxLoaderPath = join(
-		r6RivetkitPackageRoot,
-		"node_modules",
-		"tsx",
-		"dist",
-		"loader.mjs",
-	);
-	if (!existsSync(tsxLoaderPath)) {
-		throw new Error(
-			`--actor requires the r6 sibling checkout with rivetkit-typescript deps installed (missing ${tsxLoaderPath}); set AGENTOS_R6_ROOT to override`,
-		);
-	}
+	const tsxLoaderPath = require_.resolve("tsx");
 
 	// Dev convenience: prefer the workspace debug sidecar/plugin builds when the
 	// platform npm packages are not installed.
@@ -242,14 +243,51 @@ export async function createActorShellVm(
 
 	const enginePort = await getFreePort();
 	const endpoint = `http://127.0.0.1:${enginePort}`;
-	const engineBinary = resolveEngineBinary();
-	const serverPath = join(__dirname, "actor-server.ts");
+	const compiledServerPath = join(__dirname, "actor-server.js");
+	const serverPath = existsSync(compiledServerPath)
+		? compiledServerPath
+		: join(__dirname, "actor-server.ts");
+	const storagePath = mkdtempSync(join(tmpdir(), "agentos-shell-actor-"));
+	const engineDbPath = join(storagePath, "var/engine/db");
+	mkdirSync(engineDbPath, { recursive: true });
 	const logs = { stdout: "", stderr: "" };
+	const debugLogs = process.env.AGENTOS_SHELL_ACTOR_DEBUG === "1";
+	const engine = spawn(resolveEngineBinary(), ["start"], {
+		cwd: workspaceRoot,
+		env: {
+			...process.env,
+			RIVETKIT_STORAGE_PATH: storagePath,
+			RIVET__GUARD__HOST: "127.0.0.1",
+			RIVET__GUARD__PORT: String(enginePort),
+			RIVET__API_PEER__HOST: "127.0.0.1",
+			RIVET__API_PEER__PORT: String(enginePort + 1),
+			RIVET__METRICS__HOST: "127.0.0.1",
+			RIVET__METRICS__PORT: String(enginePort + 10),
+			RIVET__FILE_SYSTEM__PATH: engineDbPath,
+		},
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	engine.stdout?.on("data", (chunk: Buffer) => {
+		logs.stdout = appendBounded(logs.stdout, chunk);
+		if (debugLogs) process.stderr.write(`[actor-engine] ${chunk}`);
+	});
+	engine.stderr?.on("data", (chunk: Buffer) => {
+		logs.stderr = appendBounded(logs.stderr, chunk);
+		if (debugLogs) process.stderr.write(`[actor-engine] ${chunk}`);
+	});
+	const childLogs = () => [logs.stdout, logs.stderr].filter(Boolean).join("\n");
+	try {
+		await waitForHealth(endpoint, engine, childLogs, 60_000);
+	} catch (error) {
+		await stopChildProcess(engine);
+		rmSync(storagePath, { recursive: true, force: true });
+		throw error;
+	}
 	const child = spawn(
 		process.execPath,
 		["--import", tsxLoaderPath, serverPath],
 		{
-			cwd: r6RivetkitPackageRoot,
+			cwd: workspaceRoot,
 			env: {
 				...process.env,
 				RIVET_TOKEN: TOKEN,
@@ -262,33 +300,30 @@ export async function createActorShellVm(
 					defaultSoftware: options.defaultSoftware,
 					...(options.limits ? { limits: options.limits } : {}),
 				}),
-				AGENTOS_R6_ROOT: r6,
-				...(engineBinary ? { RIVET_ENGINE_BINARY: engineBinary } : {}),
-				RIVET_RUN_ENGINE_HOST: "127.0.0.1",
-				RIVET_RUN_ENGINE_PORT: String(enginePort),
-				ESBK_TSCONFIG_PATH: join(r6RivetkitPackageRoot, "tsconfig.json"),
-				TSX_TSCONFIG_PATH: join(r6RivetkitPackageRoot, "tsconfig.json"),
-				RIVETKIT_STORAGE_PATH: mkdtempSync(
-					join(tmpdir(), "agentos-shell-actor-"),
-				),
+				RIVETKIT_ENGINE_SPAWN: "never",
+				RIVETKIT_STORAGE_PATH: storagePath,
 			},
 			stdio: ["ignore", "pipe", "pipe"],
 		},
 	);
-	const debugLogs = process.env.AGENTOS_SHELL_ACTOR_DEBUG === "1";
-	child.stdout?.on("data", (chunk) => {
-		logs.stdout += chunk.toString();
+	child.stdout?.on("data", (chunk: Buffer) => {
+		logs.stdout = appendBounded(logs.stdout, chunk);
 		if (debugLogs) process.stderr.write(`[actor-server] ${chunk}`);
 	});
-	child.stderr?.on("data", (chunk) => {
-		logs.stderr += chunk.toString();
+	child.stderr?.on("data", (chunk: Buffer) => {
+		logs.stderr = appendBounded(logs.stderr, chunk);
 		if (debugLogs) process.stderr.write(`[actor-server] ${chunk}`);
 	});
-	const childLogs = () => [logs.stdout, logs.stderr].filter(Boolean).join("\n");
 
-	await waitForHealth(endpoint, child, childLogs, 60_000);
-	await upsertRunnerConfig(endpoint);
-	await waitForEnvoy(endpoint, child, childLogs, 30_000);
+	try {
+		await upsertRunnerConfig(endpoint);
+		await waitForEnvoy(endpoint, child, childLogs, 30_000);
+	} catch (error) {
+		await stopChildProcess(child);
+		await stopChildProcess(engine);
+		rmSync(storagePath, { recursive: true, force: true });
+		throw error;
+	}
 
 	const client = createClient<never>({
 		endpoint,
@@ -297,7 +332,6 @@ export async function createActorShellVm(
 		poolName: POOL_NAME,
 		disableMetadataLookup: true,
 	} as never);
-	// biome-ignore lint/suspicious/noExplicitAny: untyped registry handle; the action surface mirrors AgentOsActions.
 	const handle = (client as any).vm.getOrCreate(`shell-${process.pid}`);
 	const conn = handle.connect();
 
@@ -442,20 +476,14 @@ export async function createActorShellVm(
 		async dispose() {
 			try {
 				conn.dispose?.();
-			} catch {}
-			if (child.exitCode === null) {
-				child.kill("SIGINT");
-				await new Promise<void>((resolveExit) => {
-					const timeout = setTimeout(() => {
-						if (child.exitCode === null) child.kill("SIGKILL");
-						resolveExit();
-					}, 5_000);
-					child.once("exit", () => {
-						clearTimeout(timeout);
-						resolveExit();
-					});
-				});
+			} catch (error) {
+				process.stderr.write(
+					`actor connection dispose failed: ${String(error)}\n`,
+				);
 			}
+			await stopChildProcess(child);
+			await stopChildProcess(engine);
+			rmSync(storagePath, { recursive: true, force: true });
 		},
 	};
 }

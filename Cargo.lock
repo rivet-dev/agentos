@@ -50,28 +50,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "agentos-actor-plugin"
+name = "agentos-actor-uds-client"
 version = "0.0.1"
 dependencies = [
- "agentos-client",
- "agentos-vfs-core",
  "anyhow",
- "base64 0.22.1",
- "bytes",
- "chrono",
- "ciborium",
- "futures",
- "http 1.4.2",
- "rivet-actor-plugin-abi",
- "rusqlite",
+ "rivet-vbare-compiler",
  "serde",
- "serde_bytes",
- "serde_json",
+ "serde_bare",
+ "tempfile",
+ "thiserror",
  "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "uuid",
+ "vbare",
 ]
 
 [[package]]
@@ -164,6 +153,7 @@ version = "0.0.1"
 dependencies = [
  "aes",
  "aes-gcm",
+ "agentos-actor-uds-client",
  "agentos-bridge",
  "agentos-execution",
  "agentos-kernel",
@@ -205,6 +195,7 @@ dependencies = [
  "shlex 1.3.0",
  "socket2 0.6.4",
  "tar",
+ "tempfile",
  "tokio",
  "tokio-rustls 0.26.4",
  "tracing",
@@ -212,6 +203,7 @@ dependencies = [
  "ureq",
  "url",
  "v8",
+ "vbare",
  "wat",
 ]
 
@@ -3165,18 +3157,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rivet-actor-plugin-abi"
-version = "2.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "482a4eb394807ff71045199ed94082539ef333f9e0f86b256f68889cb713f9fd"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "ciborium",
- "serde",
-]
-
-[[package]]
 name = "rivet-vbare-compiler"
 version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3480,16 +3460,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51c55386eed0f1ae957b091dc2ca8122f287b60c79c774cbe3d5f2b69fded660"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "serde_bytes"
-version = "0.11.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5d440709e79d88e51ac01c4b72fc6cb7314017bb7da9eeff678aa94c10e3ea8"
-dependencies = [
- "serde",
- "serde_core",
 ]
 
 [[package]]

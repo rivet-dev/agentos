@@ -14,6 +14,7 @@ name = "agentos-native-sidecar"
 path = "src/main.rs"
 
 [dependencies]
+agentos-actor-uds-client = { workspace = true }
 agentos-bridge = { workspace = true }
 agentos-kernel = { workspace = true }
 agentos-sidecar-protocol = { workspace = true }
@@ -57,6 +58,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 rustix = { version = "1", features = ["fs", "net"] }
 scrypt = "0.11"
 serde = { version = "1.0", features = ["derive"] }
+serde_bare = "0.5"
 serde_json = "1.0"
 sha1 = "0.10"
 sha2 = "0.10"
@@ -71,7 +73,8 @@ vfs = { workspace = true }
 
 [dev-dependencies]
 command-fds = "0.3"
-serde_bare = "0.5"
 tar = "0.4"
+tempfile = "3"
+vbare.workspace = true
 wat = "1.0"
 v8 = "130"

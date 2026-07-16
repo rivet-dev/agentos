@@ -4,7 +4,7 @@ How agentOS persists data and manages sleep/wake cycles.
 
 <Note>These internal architecture docs are mostly generated and maintained by LLMs, then reviewed by humans. They are intentionally verbose; use your preferred LLM to ask focused questions about the architecture as needed.</Note>
 
-agentOS automatically persists the `/home/agentos` filesystem and session transcripts (with sequence numbers for replay) across sleep/wake, sleeping after a configurable grace period (15 minutes by default) and waking automatically when a client connects or a cron job triggers.
+agentOS automatically persists the `/home/agentos` filesystem and session transcripts (with sequence numbers for replay) across sleep/wake, sleeping after a configurable grace period (15 minutes by default) and waking automatically when a client connects.
 
 ## What persists across sleep
 
@@ -14,7 +14,7 @@ agentOS automatically persists the `/home/agentos` filesystem and session transc
 | Session records | SQLite (`agent_os_sessions`) | Yes |
 | Session event history | SQLite (`agent_os_session_events`) | Yes |
 | Preview URL tokens | SQLite (`agent_os_preview_tokens`) | Yes |
-| Cron job definitions | Actor state | Yes |
+| Cron job definitions | VM memory | No |
 | Running processes | VM kernel | No |
 | Active shells | VM kernel | No |
 | In-memory mounts | VM memory | No |
@@ -49,7 +49,7 @@ New client connects ──> Actor wakes ──> VM boots ──> Filesystem rest
 | Action timeout | 15 minutes | Maximum time for any single action |
 | Sleep grace period | 15 minutes | Time before sleeping after all activity stops |
 
-These are set internally by the `agentOS()` factory and cannot be overridden per-call.
+These defaults can be tightened through the actor's `options` config.
 
 ## Sleep vs destroy
 
@@ -72,21 +72,24 @@ When the actor wakes up, the VM boots and the filesystem is restored from SQLite
 
 ## Persisted tables schema
 
-### `agent_os_fs_entries`
+### `agentos_vfs_metadata`
 
-Stores the virtual filesystem.
+Stores a compact BARE metadata snapshot for each filesystem namespace.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `path` | TEXT PRIMARY KEY | File or directory path |
-| `is_directory` | INTEGER | 1 for directory, 0 for file |
-| `content` | BLOB | File content |
-| `mode` | INTEGER | POSIX mode bits |
-| `size` | INTEGER | File size in bytes |
-| `atime_ms` | INTEGER | Access time (ms) |
-| `mtime_ms` | INTEGER | Modification time (ms) |
-| `ctime_ms` | INTEGER | Change time (ms) |
-| `birthtime_ms` | INTEGER | Birth time (ms) |
+| `namespace` | TEXT PRIMARY KEY | Filesystem namespace |
+| `dump` | BLOB | Encoded inode and directory metadata |
+
+### `agentos_vfs_blocks`
+
+Stores chunked file contents. The sidecar reads and writes both VFS tables directly over the authenticated actor SQLite Unix socket; filesystem data does not cross the TypeScript actor layer.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `namespace` | TEXT | Filesystem namespace |
+| `block_key` | TEXT | Content-addressed chunk key |
+| `content` | BLOB | Chunk bytes |
 
 ### `agent_os_sessions`
 
@@ -96,8 +99,6 @@ Stores session metadata.
 |--------|------|-------------|
 | `session_id` | TEXT PRIMARY KEY | Unique session identifier |
 | `agent_type` | TEXT | Agent type (e.g. "pi") |
-| `capabilities` | TEXT (JSON) | Agent capabilities |
-| `agent_info` | TEXT (JSON) | Agent metadata |
 | `created_at` | INTEGER | Creation timestamp (ms) |
 
 ### `agent_os_session_events`

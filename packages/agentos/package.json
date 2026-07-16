@@ -1,7 +1,7 @@
 {
 	"name": "@rivet-dev/agentos",
 	"version": "0.0.1",
-	"description": "Agent OS actor for RivetKit - thin TS forwarder that loads the native actor plugin via RivetKit's native-plugin ABI.",
+	"description": "A native TypeScript RivetKit actor backed by the AgentOS core SDK and sidecar.",
 	"license": "Apache-2.0",
 	"keywords": [
 		"rivetkit",
@@ -51,13 +51,12 @@
 		"build:actor": "tsup src/index.ts src/client.ts src/react.ts",
 		"build:tabs": "vite build --config vite.tabs.config.ts",
 		"check-types": "tsc --noEmit",
-		"test": "vitest run"
+		"test": "vitest run",
+		"test:e2e": "cargo build --manifest-path ../../Cargo.toml -p agentos-sidecar && pnpm --filter @rivet-dev/agentos-runtime-core build && pnpm --filter @agentos-software/manifest build && pnpm --filter @agentos-software/common... build && pnpm --filter @rivet-dev/agentos-core build && pnpm build && AGENTOS_ACTOR_E2E=1 vitest run tests/actor.e2e.test.ts --fileParallelism=false"
 	},
 	"dependencies": {
 		"@agentos-software/common": "workspace:*",
 		"@rivet-dev/agentos-core": "workspace:*",
-		"@rivet-dev/agentos-plugin": "workspace:*",
-		"@rivet-dev/agentos-sidecar": "workspace:*",
 		"@rivetkit/react": "catalog:rivetkit",
 		"rivetkit": "catalog:rivetkit",
 		"zod": "^4.1.11"

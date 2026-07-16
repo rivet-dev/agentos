@@ -7,11 +7,11 @@ settings:
 catalogs:
   rivetkit:
     '@rivetkit/react':
-      specifier: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
-      version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
+      specifier: 0.0.0-sqlite-uds.4e59a38
+      version: 0.0.0-sqlite-uds.4e59a38
     rivetkit:
-      specifier: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
-      version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
+      specifier: 0.0.0-sqlite-uds.4e59a38
+      version: 0.0.0-sqlite-uds.4e59a38
 
 overrides:
   '@rivet-dev/agentos-core': workspace:*
@@ -106,7 +106,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -131,7 +131,7 @@ importers:
         version: link:../../packages/agentos
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -171,7 +171,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -220,7 +220,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -269,7 +269,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -312,7 +312,7 @@ importers:
         version: link:../../packages/agentos
       '@rivetkit/react':
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(ws@8.21.0(bufferutil@4.1.0))
       '@xterm/addon-fit':
         specifier: ^0.10.0
         version: 0.10.0(@xterm/xterm@5.5.0)
@@ -327,7 +327,7 @@ importers:
         version: 19.2.7(react@19.2.7)
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
     devDependencies:
       '@types/react':
         specifier: ^19.0.0
@@ -367,7 +367,7 @@ importers:
         version: link:../../packages/agentos
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -410,7 +410,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -459,7 +459,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -508,7 +508,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -557,7 +557,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -606,7 +606,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -655,7 +655,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -704,7 +704,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -753,7 +753,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -802,7 +802,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -851,7 +851,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -900,7 +900,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -949,7 +949,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -998,7 +998,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1047,7 +1047,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1096,7 +1096,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1145,7 +1145,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1194,7 +1194,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1243,7 +1243,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1298,7 +1298,7 @@ importers:
         version: 18.3.1(react@18.3.1)
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1350,7 +1350,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1399,7 +1399,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1448,7 +1448,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1497,7 +1497,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1546,7 +1546,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1595,7 +1595,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1644,7 +1644,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1693,7 +1693,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1742,7 +1742,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1791,7 +1791,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1840,7 +1840,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1889,7 +1889,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1938,7 +1938,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1987,7 +1987,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -2036,7 +2036,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -2085,7 +2085,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -2143,7 +2143,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -2195,7 +2195,7 @@ importers:
         version: 4.12.9
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -2244,7 +2244,7 @@ importers:
         version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -2270,18 +2270,12 @@ importers:
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
-      '@rivet-dev/agentos-plugin':
-        specifier: workspace:*
-        version: link:../agentos-plugin
-      '@rivet-dev/agentos-sidecar':
-        specifier: workspace:*
-        version: link:../sidecar-binary
       '@rivetkit/react':
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(ws@8.21.0(bufferutil@4.1.0))
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -2343,8 +2337,6 @@ importers:
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.15)
-
-  packages/agentos-plugin: {}
 
   packages/agentos-sandbox:
     dependencies:
@@ -2897,7 +2889,7 @@ importers:
         version: 14.0.3
       rivetkit:
         specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+        version: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
     devDependencies:
       '@types/node':
         specifier: ^22.19.3
@@ -5461,106 +5453,120 @@ packages:
       '@types/react':
         optional: true
 
+  '@rivet-dev/agent-os-core@0.1.1':
+    resolution: {integrity: sha512-Uw5jr+gUXDY7TDUFqlypjGe1BD2KL9kTHPNo/f1iNS1R+l9IWuvT+FF/MXsLOEkc3fB06OPVu2ZvUuNwp9MpLQ==}
+
+  '@rivet-dev/agent-os-posix@0.1.0':
+    resolution: {integrity: sha512-NIrI7cCb9x6jdmzRPPx7dAeXoTF/YCqf93ydEzYFA2zshIelLW9Rp5KtgP/2hM6fP0ly4+vVnOeavxJW0wYtcA==}
+
+  '@rivet-dev/agent-os-python@0.1.0':
+    resolution: {integrity: sha512-1tH1beMf1ceSpicQKwN/a6h+NmJrmfuT4GStiRDZmvN/UWfZhkxuy7HR5VPTQpE/feUZJ01FdtBS3Em/Qoxb2Q==}
+    peerDependencies:
+      pyodide: '>=0.28.0'
+    peerDependenciesMeta:
+      pyodide:
+        optional: true
+
   '@rivetkit/bare-ts@0.6.2':
     resolution: {integrity: sha512-3qndQUQXLdwafMEqfhz24hUtDPcsf1Bu3q52Kb8MqeH8JUh3h6R4HYW3ZJXiQsLcyYyFM68PuIwlLRlg1xDEpg==}
     engines: {node: ^14.18.0 || >=16.0.0}
 
-  '@rivetkit/engine-cli-darwin-arm64@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-kPzGTfdIIR5qAZpZDDRXC3OtGd8Jh/dZb/Pbmd03k/2DT12ILUHmI2DZg829icylExSSmhfRVjUSYsjRw8rmug==}
+  '@rivetkit/engine-cli-darwin-arm64@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-ZT+wqmQzLznezyYVTzRHckWbp7F4yOG3ZCCON+ErdnWd84A4mwJMYXZPIObGD2OVSxmNhWqXO1ocNTKwDsIllw==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [darwin]
 
-  '@rivetkit/engine-cli-darwin-x64@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-0rJcsIttFzycpR4J/ciECjPk+KzlVFeJwTPobhG9anWHycq8GpCuQx9ipgBA++01tZYo/x7kEfSU+dNdrxqsEA==}
+  '@rivetkit/engine-cli-darwin-x64@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-PgiKyvhciN17C7RjyB9J9ApVkCTJmdyaRZnsSmy0xdbNY12uKrhH2mNcaQAPV+7/QB4HB4TjVgD1wT+PCCGiQg==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [darwin]
 
-  '@rivetkit/engine-cli-linux-arm64-musl@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-jXh2SgMHm/JPwVGOlFSO1NGMy7/2t4lNwU/iSwX4CN1px9Nrr4Ud8n0FY58VHcU4Ppv1tWAdWEWsOlF5EZlr8Q==}
+  '@rivetkit/engine-cli-linux-arm64-musl@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-2FZhrpzYfNIId3Tn0wpz1klcoKZjf2NBzGkmdxGQKY0kh7XynBsZxUnqyHJVFAkfLSSW+1t8E6PLTMSfPHIKXQ==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [linux]
 
-  '@rivetkit/engine-cli-linux-x64-musl@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-pDBkdi5la//sp7Uq1KXDR4eXbwO0l/HmQCnosbgWHWz8OBL62RcueeYWQt181Gl7VIsINm1QB7mihUcbcECVxw==}
+  '@rivetkit/engine-cli-linux-x64-musl@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-iw3v07nBtc1+qiQxl/g3HPT9UPOJUidvOYixPpxtydaRqh465/6pYy8cTzQOhEKBodBD3drsaB+6GJwDLy8CMA==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [linux]
 
-  '@rivetkit/engine-cli@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-7fq+rJt5+bujGV+Q0esDY3OJrzRUhEpYd2EV0oVUI+pcIRyYJMx2y7KrMUucqTFOr77O/NDlmSGTfD4cStRfrg==}
+  '@rivetkit/engine-cli@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-5WYBHyO4Yudb2RuVbbp2srb/XDbEAdTihxUj/aUerahalR3KiNDo5zpUZpfhhoAQrjPQTVTN9Nan/RVloVpFRg==}
     engines: {node: '>= 20.0.0'}
 
-  '@rivetkit/engine-envoy-protocol@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-2u0MPsYLMSuwaX0amz52kZX4wsh3PmbczjPb4AoSk1hCbycf1IN3Vkj3RR87ZwMTlLYKkcpgq8fHPlxoPSkftQ==}
+  '@rivetkit/engine-envoy-protocol@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-asUWA8E+fyD1RLQ5wH6KhCTNZ3laAqqS2bZQkcMQS8mQn/9BVl+sfCm/yM3hLK7lH7WT616sJhcP86EktZCLsA==}
 
-  '@rivetkit/framework-base@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-513zdVQgSYQeQ3nXu5RTjVxvwhpAcfn6bKXpcb9XLFli+wux07oTcszo6HCsqfeChEO19LAXWysWbEDMzwYU3g==}
+  '@rivetkit/framework-base@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-s4yFjZZbcPXA++VfS5n1FgEohSG2gJec/svlmV2zko3Q4iqMip7g4/6DIU+5wsD1EkCwKE2dmuYdn0ML9sTtbQ==}
 
   '@rivetkit/on-change@6.0.1':
     resolution: {integrity: sha512-QBN/KRBXLJdCgN4gBTL3XAc/zKm58atSnieXWMOyFSPmo6F1/yIVV/LTRdvAktfCttrGx7W6c32i/lwqCHWnsQ==}
     engines: {node: '>=20'}
 
-  '@rivetkit/react@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-7iHF3wGl4y2S+v700QgXEqBOjtJr/5AZ20qfD5rwE3dtBY8H5Smw4FllJTxBuUrdzHjZ2L7C8LyGALWi/5e1NQ==}
+  '@rivetkit/react@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-O2DWeQ7RvisfhVV0s5BOy/+BSSRrthS8ntVqFcDAhSiXKex6iUQSflhA4mkfcVW4/XWOzLmf2tNYPxEul/hKhw==}
     peerDependencies:
       react: ^18 || ^19
       react-dom: ^18 || ^19
 
-  '@rivetkit/rivetkit-napi-darwin-arm64@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-TQPCk1U2Z7otH9ehV7NEEksRT/hzEsLyMaA7ZpkMKxOr8bBNWkES7U+YY5fc7mLFdWR/N15iN7SU0koxJE7PjA==}
+  '@rivetkit/rivetkit-napi-darwin-arm64@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-sH/wB5IvlDQ7lktL7lk/1h5K8/Rxm/UYyY8GKGOdPzgIhBK7RNE194vhlLLgjWCU2P5eTo/uG8U5n7Shw1VoBA==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [darwin]
 
-  '@rivetkit/rivetkit-napi-darwin-x64@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-wAuJIR0efIcpaQQvWgniZ0qOy6x5+/V+/agACJhQVSjj7P29kY0piEBKLKDtP0M4gTd6GGzBAe5oNY0t785/0w==}
+  '@rivetkit/rivetkit-napi-darwin-x64@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-E8Lt44QIOjzNnrFDWALpIFn3p593l57Y7z5mmY4oK0xScJlw8hL6jn0ISvCA1BRd0wPTy5/fwCUxGAivhhVJAg==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [darwin]
 
-  '@rivetkit/rivetkit-napi-linux-arm64-gnu@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-A+kuGvc9RJjUflPVHbHPkQSH4xyjasbVMNRfq2ISdaJ/CnNcmrexJ4F+5Mm2VPz61gxNjkSoyk8tPupz07CZnw==}
+  '@rivetkit/rivetkit-napi-linux-arm64-gnu@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-xdFAuc0s8tj6p63zeY/IoS0JKtnmTh6RyOauy+8cptTzGDUXcQnuzQU28YjPJ535je7aGIlJYfSXhL/rd4kmZA==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [linux]
 
-  '@rivetkit/rivetkit-napi-linux-arm64-musl@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-jo7WcmJ7hjWpi/8DUlWu1x2JtHfEAiY21QdNy5VZ23Dtg/pzKzDAn4m6myPB/s8MS+nAOiJcruWTH16qMHAeWw==}
+  '@rivetkit/rivetkit-napi-linux-arm64-musl@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-W6gTRHX1Sx9Oi2KoPpEN1fENEkF/dqvpc5OqNJErCcW8M2WCB/0BU/c7nHsP54ZLzS0kcZtaQov6qw0Nt2eaWA==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [linux]
 
-  '@rivetkit/rivetkit-napi-linux-x64-gnu@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-hcHO0FkMQITQ3taSJ0084DVDRysOep3eBzv8cwgA0qJhIzzd5EF+4qo4QO4woEdnDYCGMBJZLByYyEPFY3WSOQ==}
+  '@rivetkit/rivetkit-napi-linux-x64-gnu@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-BY8SZke/5iHh35rFrkJ+GkmMelezHaIrClxjpZ6a3Yfu4owAfOUCOSTHZttYAoba4EdnCpB8aTQ2SimtvNN77g==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [linux]
 
-  '@rivetkit/rivetkit-napi-linux-x64-musl@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-Xx8DWZwdWBZdkqSbR7UdPR1nrZH53tK4r0kSM9Y670GGwgBHg3mesaYshPs/B0XzEFVybF5vS/0ToIi97T/LIw==}
+  '@rivetkit/rivetkit-napi-linux-x64-musl@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-rxtzRH2hpaz8hx6F1GIIM7f0FpDzyBKNtmusDQswmYajkm/Hfxl9ha2bleHg6EFtNVAr8gQ9cHAZcAv583bAJw==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [linux]
 
-  '@rivetkit/rivetkit-napi@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-uSBQFnTSuh+YMjdRR34KAS7QJQpkVXNleNdzLoCic1XdRyIh13KvuX3+JR3bbk3S32euM7ZeScy3kve8c3nuyA==}
+  '@rivetkit/rivetkit-napi@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-0SibmwqUugIfgRdwuG45+SvjMLzk5Bim/cViOtnt2FrucNB1E/YeC7QD4MxMi/Z+z+M/A33dljUst70C2f5uVA==}
     engines: {node: '>= 20.0.0'}
 
   '@rivetkit/rivetkit-wasm@2.3.2':
     resolution: {integrity: sha512-HNBzh6uQFi4ZYL0tHAZ6nrYKoGCfa+kObLCwdS+/ZzGePV7WGUl20Do1bHjBtnVgp9UwzQu+lka8kFwKfqm6WA==}
 
-  '@rivetkit/traces@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-4yXOCC2rPncF/aNBhW4KU6CF56Bo9Sslidj311eY0iGqCxRBpQhI57Y5eX8Ho5DNXmVTobjP6USxeWp6Oymmvg==}
+  '@rivetkit/traces@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-4d9Kodk7H0frBHNTmzJBXkOGKGgn5eU+A9XTmOTsoHIpPqK5AUrbJ35P2mQHQmzoU+WoHUumvey0Ze8UOKIy/Q==}
     engines: {node: '>=18.0.0'}
 
-  '@rivetkit/virtual-websocket@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-Rd3MdziVAS4Ut/dqcLfN9pMCRLOSqK7n/AunWtI6Xr72y+0jh7gwFVYmZRJGyGamnfJFTKTQnbnhg+KGkyu+wg==}
+  '@rivetkit/virtual-websocket@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-U6C9jSf4VaQGEZTROFZHLsfCUci8No4ofBV6muzqmAKTiq6NN7mLE5V0muc0LTUx5dFpcX9hATJW1FSZVpnbYw==}
 
-  '@rivetkit/workflow-engine@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
-    resolution: {integrity: sha512-Nh+tlQT9FoBsznHfRujeT/hlgj/4k4d3M7+0ogZpCmPhuwim0cjiog6fL18bfehr7BPobvSH0SInqLvF3kPPWA==}
+  '@rivetkit/workflow-engine@0.0.0-sqlite-uds.4e59a38':
+    resolution: {integrity: sha512-TUe2ZEg2D8yCNZTr+F6eeMp2uK2VAybYHhMj1IQUOuWwSyamBD8o5UFkqO12nYcE+52a7NwfHwhHEov8riVb1w==}
     engines: {node: '>=18.0.0'}
 
   '@rolldown/pluginutils@1.0.0-beta.27':
@@ -5722,6 +5728,35 @@ packages:
   '@sandbox-agent/cli@0.4.2':
     resolution: {integrity: sha512-trO//ypJBSt5xkewuol9LOykvDgHwUXq8R+yQVS+0CmpN3lYUtewHkb+At9RVGRhDMmJZY2oasaXDnhfurQ33w==}
     hasBin: true
+
+  '@secure-exec/core@0.2.1':
+    resolution: {integrity: sha512-HsnUv6gClpMA1BBRmX86j30TKTZtgJC/fO1tVavr7IpM2zNKbHU8LgSlBd7mv2SNy02ImTmU/GnQ3aYB4NSbEg==}
+
+  '@secure-exec/nodejs@0.2.1':
+    resolution: {integrity: sha512-UJMJqVFxexlHJV0Q9nWURvrz6GElj8673DDOOFln6FHR6JS+9SaSU3eISrN158DuNC3SFi4rgjb/scKnK4YOYQ==}
+
+  '@secure-exec/v8-darwin-arm64@0.2.1':
+    resolution: {integrity: sha512-gEWhMHzUpLwzuBNAD0lVkZXE8wFlWMLp4IOZ+56FYwOW/C+m07cYxuW4TjHyPqZ+vPm3IkoaMqqH5yT9VhjX/Q==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@secure-exec/v8-darwin-x64@0.2.1':
+    resolution: {integrity: sha512-H2Z5K+Cq+fn/kxjGvhJzepnNFWG6qNdyhZybVWGr5bAAZoSz/Qkad4WnXcurWU+880tKDtnf19LHBXrg7zewNQ==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@secure-exec/v8-linux-arm64-gnu@0.2.1':
+    resolution: {integrity: sha512-14subGhVV/gW35mYYm7Gv1Keeex7PxIgQfoKji/JH7wYyDuarP6kgaES0nJw+JXVkxEVud52c+kbcIjIggqCEw==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@secure-exec/v8-linux-x64-gnu@0.2.1':
+    resolution: {integrity: sha512-Az4s+vUf+78vWtsC7rTn/jQc6WKJafAdt2YpEjB4Gnu+sX+FFTIst1hRV4gJonbRyJdy6SW+OQ6DZatmwczorQ==}
+    cpu: [x64]
+    os: [linux]
+
+  '@secure-exec/v8@0.2.1':
+    resolution: {integrity: sha512-ye/seCqzvyMGnvyP+AO7RkVMR/lE3x9m0D2PfmiAXA457R78ZmOFmZ6v+JlJG2vv3LM30KsSXTUhwpG+Teh0hw==}
 
   '@silvia-odwyer/photon-node@0.3.4':
     resolution: {integrity: sha512-bnly4BKB3KDTFxrUIcgCLbaeVVS8lrAkri1pEzskpmxu9MdfGQTy8b8EgcD83ywD3RPMsIulY8xJH5Awa+t9fA==}
@@ -6523,6 +6558,9 @@ packages:
   cipher-base@1.0.7:
     resolution: {integrity: sha512-Mz9QMT5fJe7bKI7MH31UilT5cEK5EHHRCccw/YRFsRY47AuNgaV6HY3rscp0/I4Q+tTW/5zoqpSeRRI54TkDWA==}
     engines: {node: '>= 0.10'}
+
+  cjs-module-lexer@2.2.0:
+    resolution: {integrity: sha512-4bHTS2YuzUvtoLjdy+98ykbNB5jS0+07EvFNXerqZQJ89F7DI6ET7OQo/HJuW6K0aVsKA9hj9/RVb2kQVOrPDQ==}
 
   class-variance-authority@0.7.1:
     resolution: {integrity: sha512-Ka+9Trutv7G8M6WT6SeiRWz792K5qEqIGEGzXKhAE6xOWAY6pPH8U+9IY3oCMv6kqTmLsv7Xh/2w2RigkePMsg==}
@@ -8386,8 +8424,8 @@ packages:
     resolution: {integrity: sha512-5Di9UC0+8h1L6ZD2d7awM7E/T4uA1fJRlx6zk/NvdCCVEoAnFqvHmCuNeIKoCeIixBX/q8uM+6ycDvF8woqosA==}
     engines: {node: '>= 0.8'}
 
-  rivetkit@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0:
-    resolution: {integrity: sha512-3kXHTXMv6u/P29xul+8YnqCmkhyj3TYJxl1f40yyjWqbrxhAPR7qoW+mDY3NTIMX6xpXuiqnR9gp9pSPiM4s0A==}
+  rivetkit@0.0.0-sqlite-uds.4e59a38:
+    resolution: {integrity: sha512-cZnF3JMeMFirZISiYtZHGrpBPuFXN52A0ctEoM5zON2g7g17x4N3z+sNJOqaUenPL9f73Sv8YPU97UMdeDiZWQ==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       drizzle-kit: ^0.31.2
@@ -8470,6 +8508,9 @@ packages:
 
   scheduler@0.27.0:
     resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
+
+  secure-exec@0.2.1:
+    resolution: {integrity: sha512-oaQDzTPDSCOckYC8G0PimIqzEVxY6sYEvcx0fMGsRR/Wl4wkFVHaZgQ3kc2DHWysV6WHWt5g1AXc/6seafO2XQ==}
 
   secure-json-parse@4.1.0:
     resolution: {integrity: sha512-l4KnYfEyqYJxDwlNVyRfO2E4NTHfMKAWdUuA8J0yve2Dz/E/PdBepY03RvyJpssIpRFwJoCD55wA+mEDs6ByWA==}
@@ -9041,6 +9082,10 @@ packages:
   web-streams-polyfill@4.0.0-beta.3:
     resolution: {integrity: sha512-QW95TCTaHmsYfHDybGMwO5IJIM93I/6vTRk+daHTWFPhwh+C8Cg7j7XyKrwrj8Ib6vYXe0ocYNrmzY4xAAN6ug==}
     engines: {node: '>= 14'}
+
+  web-streams-polyfill@4.3.0:
+    resolution: {integrity: sha512-/Gnggvj9oSrEvJbDyyPtAnxBt5fGQM2iWOKQNu7ie1OxDgK40iZpyV3TKaRiEzVj1oA1UxKnEy9XPXh6PW3eVw==}
+    engines: {node: '>= 8'}
 
   webidl-conversions@3.0.1:
     resolution: {integrity: sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==}
@@ -11251,36 +11296,59 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
 
+  '@rivet-dev/agent-os-core@0.1.1(pyodide@0.28.3(bufferutil@4.1.0))':
+    dependencies:
+      '@rivet-dev/agent-os-posix': 0.1.0
+      '@rivet-dev/agent-os-python': 0.1.0(pyodide@0.28.3(bufferutil@4.1.0))
+      '@secure-exec/core': 0.2.1
+      '@secure-exec/nodejs': 0.2.1
+      '@secure-exec/v8': 0.2.1
+      croner: 10.0.1
+      long-timeout: 0.1.1
+      secure-exec: 0.2.1
+    transitivePeerDependencies:
+      - pyodide
+
+  '@rivet-dev/agent-os-posix@0.1.0':
+    dependencies:
+      '@secure-exec/core': 0.2.1
+
+  '@rivet-dev/agent-os-python@0.1.0(pyodide@0.28.3(bufferutil@4.1.0))':
+    dependencies:
+      '@secure-exec/core': 0.2.1
+    optionalDependencies:
+      pyodide: 0.28.3(bufferutil@4.1.0)
+
   '@rivetkit/bare-ts@0.6.2': {}
 
-  '@rivetkit/engine-cli-darwin-arm64@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
+  '@rivetkit/engine-cli-darwin-arm64@0.0.0-sqlite-uds.4e59a38':
     optional: true
 
-  '@rivetkit/engine-cli-darwin-x64@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
+  '@rivetkit/engine-cli-darwin-x64@0.0.0-sqlite-uds.4e59a38':
     optional: true
 
-  '@rivetkit/engine-cli-linux-arm64-musl@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
+  '@rivetkit/engine-cli-linux-arm64-musl@0.0.0-sqlite-uds.4e59a38':
     optional: true
 
-  '@rivetkit/engine-cli-linux-x64-musl@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
+  '@rivetkit/engine-cli-linux-x64-musl@0.0.0-sqlite-uds.4e59a38':
     optional: true
 
-  '@rivetkit/engine-cli@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
+  '@rivetkit/engine-cli@0.0.0-sqlite-uds.4e59a38':
     optionalDependencies:
-      '@rivetkit/engine-cli-darwin-arm64': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
-      '@rivetkit/engine-cli-darwin-x64': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
-      '@rivetkit/engine-cli-linux-arm64-musl': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
-      '@rivetkit/engine-cli-linux-x64-musl': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
+      '@rivetkit/engine-cli-darwin-arm64': 0.0.0-sqlite-uds.4e59a38
+      '@rivetkit/engine-cli-darwin-x64': 0.0.0-sqlite-uds.4e59a38
+      '@rivetkit/engine-cli-linux-arm64-musl': 0.0.0-sqlite-uds.4e59a38
+      '@rivetkit/engine-cli-linux-x64-musl': 0.0.0-sqlite-uds.4e59a38
 
-  '@rivetkit/engine-envoy-protocol@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
+  '@rivetkit/engine-envoy-protocol@0.0.0-sqlite-uds.4e59a38':
     dependencies:
       '@rivetkit/bare-ts': 0.6.2
 
-  '@rivetkit/framework-base@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))':
+  '@rivetkit/framework-base@0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))':
     dependencies:
       '@tanstack/store': 0.7.7
       fast-deep-equal: 3.1.3
-      rivetkit: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+      rivetkit: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
     transitivePeerDependencies:
       - '@aws-sdk/client-rds-data'
       - '@cloudflare/workers-types'
@@ -11311,19 +11379,20 @@ snapshots:
       - pg
       - postgres
       - prisma
+      - pyodide
       - sql.js
       - sqlite3
       - ws
 
   '@rivetkit/on-change@6.0.1': {}
 
-  '@rivetkit/react@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(ws@8.21.0(bufferutil@4.1.0))':
+  '@rivetkit/react@0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(ws@8.21.0(bufferutil@4.1.0))':
     dependencies:
-      '@rivetkit/framework-base': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+      '@rivetkit/framework-base': 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
       '@tanstack/react-store': 0.7.7(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
-      rivetkit: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0))
+      rivetkit: 0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0))
     transitivePeerDependencies:
       - '@aws-sdk/client-rds-data'
       - '@cloudflare/workers-types'
@@ -11354,52 +11423,53 @@ snapshots:
       - pg
       - postgres
       - prisma
+      - pyodide
       - sql.js
       - sqlite3
       - ws
 
-  '@rivetkit/rivetkit-napi-darwin-arm64@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
+  '@rivetkit/rivetkit-napi-darwin-arm64@0.0.0-sqlite-uds.4e59a38':
     optional: true
 
-  '@rivetkit/rivetkit-napi-darwin-x64@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
+  '@rivetkit/rivetkit-napi-darwin-x64@0.0.0-sqlite-uds.4e59a38':
     optional: true
 
-  '@rivetkit/rivetkit-napi-linux-arm64-gnu@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
+  '@rivetkit/rivetkit-napi-linux-arm64-gnu@0.0.0-sqlite-uds.4e59a38':
     optional: true
 
-  '@rivetkit/rivetkit-napi-linux-arm64-musl@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
+  '@rivetkit/rivetkit-napi-linux-arm64-musl@0.0.0-sqlite-uds.4e59a38':
     optional: true
 
-  '@rivetkit/rivetkit-napi-linux-x64-gnu@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
+  '@rivetkit/rivetkit-napi-linux-x64-gnu@0.0.0-sqlite-uds.4e59a38':
     optional: true
 
-  '@rivetkit/rivetkit-napi-linux-x64-musl@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
+  '@rivetkit/rivetkit-napi-linux-x64-musl@0.0.0-sqlite-uds.4e59a38':
     optional: true
 
-  '@rivetkit/rivetkit-napi@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
+  '@rivetkit/rivetkit-napi@0.0.0-sqlite-uds.4e59a38':
     dependencies:
       '@napi-rs/cli': 2.18.4
-      '@rivetkit/engine-envoy-protocol': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
+      '@rivetkit/engine-envoy-protocol': 0.0.0-sqlite-uds.4e59a38
     optionalDependencies:
-      '@rivetkit/rivetkit-napi-darwin-arm64': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
-      '@rivetkit/rivetkit-napi-darwin-x64': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
-      '@rivetkit/rivetkit-napi-linux-arm64-gnu': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
-      '@rivetkit/rivetkit-napi-linux-arm64-musl': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
-      '@rivetkit/rivetkit-napi-linux-x64-gnu': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
-      '@rivetkit/rivetkit-napi-linux-x64-musl': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
+      '@rivetkit/rivetkit-napi-darwin-arm64': 0.0.0-sqlite-uds.4e59a38
+      '@rivetkit/rivetkit-napi-darwin-x64': 0.0.0-sqlite-uds.4e59a38
+      '@rivetkit/rivetkit-napi-linux-arm64-gnu': 0.0.0-sqlite-uds.4e59a38
+      '@rivetkit/rivetkit-napi-linux-arm64-musl': 0.0.0-sqlite-uds.4e59a38
+      '@rivetkit/rivetkit-napi-linux-x64-gnu': 0.0.0-sqlite-uds.4e59a38
+      '@rivetkit/rivetkit-napi-linux-x64-musl': 0.0.0-sqlite-uds.4e59a38
 
   '@rivetkit/rivetkit-wasm@2.3.2': {}
 
-  '@rivetkit/traces@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
+  '@rivetkit/traces@0.0.0-sqlite-uds.4e59a38':
     dependencies:
       '@rivetkit/bare-ts': 0.6.2
       cbor-x: 1.6.4
       fdb-tuple: 1.0.0
       vbare: 0.0.4
 
-  '@rivetkit/virtual-websocket@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0': {}
+  '@rivetkit/virtual-websocket@0.0.0-sqlite-uds.4e59a38': {}
 
-  '@rivetkit/workflow-engine@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0':
+  '@rivetkit/workflow-engine@0.0.0-sqlite-uds.4e59a38':
     dependencies:
       '@rivetkit/bare-ts': 0.6.2
       cbor-x: 1.6.4
@@ -11511,6 +11581,42 @@ snapshots:
       '@sandbox-agent/cli-linux-x64': 0.4.2
       '@sandbox-agent/cli-win32-x64': 0.4.2
     optional: true
+
+  '@secure-exec/core@0.2.1':
+    dependencies:
+      better-sqlite3: 12.8.0
+
+  '@secure-exec/nodejs@0.2.1':
+    dependencies:
+      '@secure-exec/core': 0.2.1
+      '@secure-exec/v8': 0.2.1
+      cbor-x: 1.6.4
+      cjs-module-lexer: 2.2.0
+      es-module-lexer: 1.7.0
+      esbuild: 0.27.4
+      node-stdlib-browser: 1.3.1
+      web-streams-polyfill: 4.3.0
+
+  '@secure-exec/v8-darwin-arm64@0.2.1':
+    optional: true
+
+  '@secure-exec/v8-darwin-x64@0.2.1':
+    optional: true
+
+  '@secure-exec/v8-linux-arm64-gnu@0.2.1':
+    optional: true
+
+  '@secure-exec/v8-linux-x64-gnu@0.2.1':
+    optional: true
+
+  '@secure-exec/v8@0.2.1':
+    dependencies:
+      cbor-x: 1.6.4
+    optionalDependencies:
+      '@secure-exec/v8-darwin-arm64': 0.2.1
+      '@secure-exec/v8-darwin-x64': 0.2.1
+      '@secure-exec/v8-linux-arm64-gnu': 0.2.1
+      '@secure-exec/v8-linux-x64-gnu': 0.2.1
 
   '@silvia-odwyer/photon-node@0.3.4': {}
 
@@ -12530,6 +12636,8 @@ snapshots:
       inherits: 2.0.4
       safe-buffer: 5.2.1
       to-buffer: 1.2.2
+
+  cjs-module-lexer@2.2.0: {}
 
   class-variance-authority@0.7.1:
     dependencies:
@@ -14445,18 +14553,19 @@ snapshots:
       hash-base: 3.1.2
       inherits: 2.0.4
 
-  rivetkit@0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.21.0(bufferutil@4.1.0)):
+  rivetkit@0.0.0-sqlite-uds.4e59a38(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(pyodide@0.28.3(bufferutil@4.1.0))(ws@8.21.0(bufferutil@4.1.0)):
     dependencies:
       '@hono/zod-openapi': 1.4.0(hono@4.12.9)(zod@4.3.6)
+      '@rivet-dev/agent-os-core': 0.1.1(pyodide@0.28.3(bufferutil@4.1.0))
       '@rivetkit/bare-ts': 0.6.2
-      '@rivetkit/engine-cli': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
-      '@rivetkit/engine-envoy-protocol': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
+      '@rivetkit/engine-cli': 0.0.0-sqlite-uds.4e59a38
+      '@rivetkit/engine-envoy-protocol': 0.0.0-sqlite-uds.4e59a38
       '@rivetkit/on-change': 6.0.1
-      '@rivetkit/rivetkit-napi': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
+      '@rivetkit/rivetkit-napi': 0.0.0-sqlite-uds.4e59a38
       '@rivetkit/rivetkit-wasm': 2.3.2
-      '@rivetkit/traces': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
-      '@rivetkit/virtual-websocket': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
-      '@rivetkit/workflow-engine': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
+      '@rivetkit/traces': 0.0.0-sqlite-uds.4e59a38
+      '@rivetkit/virtual-websocket': 0.0.0-sqlite-uds.4e59a38
+      '@rivetkit/workflow-engine': 0.0.0-sqlite-uds.4e59a38
       cbor-x: 1.6.4
       drizzle-orm: 0.44.7(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)
       hono: 4.12.9
@@ -14496,6 +14605,7 @@ snapshots:
       - pg
       - postgres
       - prisma
+      - pyodide
       - sql.js
       - sqlite3
 
@@ -14578,6 +14688,11 @@ snapshots:
       loose-envify: 1.4.0
 
   scheduler@0.27.0: {}
+
+  secure-exec@0.2.1:
+    dependencies:
+      '@secure-exec/core': 0.2.1
+      '@secure-exec/nodejs': 0.2.1
 
   secure-json-parse@4.1.0: {}
 
@@ -15200,6 +15315,8 @@ snapshots:
   web-streams-polyfill@3.3.3: {}
 
   web-streams-polyfill@4.0.0-beta.3: {}
+
+  web-streams-polyfill@4.3.0: {}
 
   webidl-conversions@3.0.1: {}
 

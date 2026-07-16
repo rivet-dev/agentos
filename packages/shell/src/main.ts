@@ -40,10 +40,10 @@ import jq from "@agentos-software/jq";
 import ripgrep from "@agentos-software/ripgrep";
 import sed from "@agentos-software/sed";
 import sqlite3 from "@agentos-software/sqlite3";
-import vim from "@agentos-software/vim";
 import tar from "@agentos-software/tar";
 import tree from "@agentos-software/tree";
 import unzip from "@agentos-software/unzip";
+import vim from "@agentos-software/vim";
 import wget from "@agentos-software/wget";
 import yq from "@agentos-software/yq";
 import zip from "@agentos-software/zip";
@@ -247,7 +247,7 @@ function parseCli(argv: string[]): CliOptions {
 		.addOption(
 			new Option(
 				"--actor",
-				"run through the RivetKit agentOS actor (engine + dylib plugin) instead of the in-process core client",
+				"run through the RivetKit AgentOS actor instead of the in-process core client",
 			).default(false),
 		)
 		.option(

@@ -18,11 +18,11 @@ The `s3` plugin config also accepts `credentials` (`{ accessKeyId, secretAccessK
 
 Mount a Google Drive folder with the built-in `google_drive` plugin.
 
-Use the built-in `memory` plugin for an ephemeral mounted directory in the native RivetKit `agentOS()` actor.
+Use the built-in `memory` plugin for an ephemeral mounted directory in the RivetKit `agentOS()` actor.
 
-Use `mountFs()` for a callback-backed JS filesystem driver. The driver must live in the same JS process as the `AgentOs` instance, such as direct core usage or a custom RivetKit actor that owns an `AgentOs` instance. `mountFs()` works on a running VM too — it returns a promise that resolves once the mount is visible to guest code, and rejects if delivery to the runtime fails.
+Use `mountFs()` for a callback-backed JS filesystem driver. The driver must live in the same JS process as the `AgentOs` instance. This includes direct core usage and the TypeScript `agentOS()` actor. `mountFs()` works on a running VM too — it returns a promise that resolves once the mount is visible to guest code, and rejects if delivery to the runtime fails.
 
-The native `agentOS()` actor cannot accept `{ driver }` mounts in config because JS callback objects are not serializable across the native plugin boundary. Use `plugin` mounts there.
+The actor's durable root is handled separately: the sidecar connects directly to Rivet's actor SQLite UDS, so root filesystem reads and writes never pass through JavaScript.
 
 ## File operations
 

@@ -126,42 +126,28 @@ jobs:
         run: |
           set -euo pipefail
           sidecar_out="target/sidecar-artifacts/${{ matrix.platform }}"
-          plugin_out="target/plugin-artifacts/${{ matrix.platform }}"
-          mkdir -p "$sidecar_out" "$plugin_out"
+          mkdir -p "$sidecar_out"
           cid=$(docker create agentos-linux-${{ matrix.platform }})
           docker cp "$cid:/artifacts/agentos-sidecar" "$sidecar_out/agentos-sidecar"
           docker cp "$cid:/artifacts/agentos-native-sidecar" "$sidecar_out/agentos-native-sidecar"
-          docker cp "$cid:/artifacts/libagentos_actor_plugin.so" "$plugin_out/libagentos_actor_plugin.so"
           docker rm "$cid"
           test -f "$sidecar_out/agentos-sidecar"
           test -f "$sidecar_out/agentos-native-sidecar"
-          test -f "$plugin_out/libagentos_actor_plugin.so"
           echo "sidecar_dir=$sidecar_out" >> "$GITHUB_OUTPUT"
-          echo "plugin_dir=$plugin_out" >> "$GITHUB_OUTPUT"
       - name: Check glibc floor
         run: |
           scripts/ci/check-linux-glibc-floor.sh \
             "${{ steps.extract.outputs.sidecar_dir }}/agentos-sidecar" \
-            "${{ steps.extract.outputs.sidecar_dir }}/agentos-native-sidecar" \
-            "${{ steps.extract.outputs.plugin_dir }}/libagentos_actor_plugin.so"
+            "${{ steps.extract.outputs.sidecar_dir }}/agentos-native-sidecar"
       - name: Smoke-run binaries in old Linux containers
         run: |
           scripts/ci/smoke-linux-artifacts.sh binary \
             "${{ steps.extract.outputs.sidecar_dir }}/agentos-sidecar" \
             "${{ steps.extract.outputs.sidecar_dir }}/agentos-native-sidecar"
-      - name: Smoke-run plugin in old Linux containers
-        run: |
-          scripts/ci/smoke-linux-artifacts.sh shared-library \
-            "${{ steps.extract.outputs.plugin_dir }}/libagentos_actor_plugin.so"
       - uses: actions/upload-artifact@v4
         with:
           name: sidecar-${{ matrix.platform }}
           path: ${{ steps.extract.outputs.sidecar_dir }}
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        with:
-          name: plugin-${{ matrix.platform }}
-          path: ${{ steps.extract.outputs.plugin_dir }}
           if-no-files-found: error
 
   build-sidecar-darwin:
@@ -214,16 +200,13 @@ jobs:
         run: |
           set -euo pipefail
           sidecar_out="target/sidecar-artifacts/${{ matrix.platform }}"
-          plugin_out="target/plugin-artifacts/${{ matrix.platform }}"
-          mkdir -p "$sidecar_out" "$plugin_out"
+          mkdir -p "$sidecar_out"
           cid=$(docker create agentos-darwin-${{ matrix.platform }})
           docker cp "$cid:/artifacts/agentos-sidecar" "$sidecar_out/agentos-sidecar"
           docker cp "$cid:/artifacts/agentos-native-sidecar" "$sidecar_out/agentos-native-sidecar"
-          docker cp "$cid:/artifacts/libagentos_actor_plugin.dylib" "$plugin_out/libagentos_actor_plugin.dylib"
           docker rm "$cid"
           test -f "$sidecar_out/agentos-sidecar"
           test -f "$sidecar_out/agentos-native-sidecar"
-          test -f "$plugin_out/libagentos_actor_plugin.dylib"
           case "${{ matrix.platform }}" in
             darwin-x64) expected_arch="x86_64" ;;
             darwin-arm64) expected_arch="arm64" ;;
@@ -231,16 +214,10 @@ jobs:
           esac
           file "$sidecar_out/agentos-sidecar" | grep -F "$expected_arch"
           file "$sidecar_out/agentos-native-sidecar" | grep -F "$expected_arch"
-          file "$plugin_out/libagentos_actor_plugin.dylib" | grep -F "$expected_arch"
       - uses: actions/upload-artifact@v4
         with:
           name: sidecar-${{ matrix.platform }}
           path: target/sidecar-artifacts/${{ matrix.platform }}
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        with:
-          name: plugin-${{ matrix.platform }}
-          path: target/plugin-artifacts/${{ matrix.platform }}
           if-no-files-found: error
 
   publish-npm:
@@ -266,10 +243,6 @@ jobs:
         with:
           pattern: sidecar-*
           path: artifacts
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: plugin-*
-          path: artifacts
       - name: Place sidecar binaries into platform packages
         run: |
           set -euo pipefail
@@ -287,20 +260,6 @@ jobs:
             cp "$runtime_bin" "${runtime_dest}/agentos-native-sidecar"
             chmod +x "${runtime_dest}/agentos-native-sidecar"
           done
-      - name: Place plugin cdylib into platform packages
-        run: |
-          set -euo pipefail
-          for p in $SIDECAR_PLATFORMS; do
-            case "$p" in
-              darwin-*) lib_name="libagentos_actor_plugin.dylib" ;;
-              *) lib_name="libagentos_actor_plugin.so" ;;
-            esac
-            lib="artifacts/plugin-${p}/${lib_name}"
-            dest="packages/agentos-plugin/npm/${p}"
-            test -f "$lib"
-            test -d "$dest"
-            cp "$lib" "${dest}/${lib_name}"
-          done
       - name: Bump package versions for build
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
@@ -314,7 +273,6 @@ jobs:
           # Browser support is retained in-tree but intentionally disabled until
           # it has a reactor/security design independent of the native sidecar.
           npx turbo build \
-            --filter='!@rivet-dev/agentos-plugin' \
             --filter='!@rivet-dev/agentos-browser' \
             --filter='!@rivet-dev/agentos-runtime-browser' \
             --filter='!@rivet-dev/agentos-playground' \

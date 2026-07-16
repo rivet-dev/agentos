@@ -1,422 +1,917 @@
-/**
- * Rust-backed `agentOS(...)` definition.
- *
- * Produces an `ActorDefinition` whose `nativeFactoryBuilder` constructs a
- * native-actor-plugin factory through `runtime.createNativePluginFactory(...)`
- * (NAPI → `dlopen` of the agent-os actor plugin cdylib, the inverse of the
- * generic host loader). All lifecycle, state, and action dispatch live in the
- * Rust plugin (`crates/agentos-actor-plugin`). This JS shim only validates
- * configuration, resolves the plugin + sidecar binaries, and hands the opaque
- * config envelope across the bridge — it owns no agent-os runtime logic.
- */
-
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import common from "@agentos-software/common";
-import { OPT_AGENTOS_ROOT } from "@rivet-dev/agentos-core";
-import { getSidecarPath } from "@rivet-dev/agentos-sidecar";
+import crypto from "node:crypto";
+import { posix as posixPath } from "node:path";
 import {
+	AgentOs,
+	type AgentOsOptions,
+	type CronJobInfo,
+	type JsonRpcNotification,
+	type PermissionReply,
+	type PermissionRequest,
+} from "@rivet-dev/agentos-core";
+import {
+	type Actions,
+	type ActorConfigInput,
+	type ActorContext,
 	type ActorDefinition,
-	type ActorFactoryHandle,
 	actor,
-	type CoreRuntime,
-	type DatabaseProvider,
-	type NapiNativePluginOptions,
-	type RawAccess,
+	event,
+	type Type,
 } from "rivetkit";
-import {
-	type AgentOsActorConfig,
-	type AgentOsActorConfigInput,
-	agentOsActorConfigSchema,
-	nativeAgentOsOptionsSchema,
-} from "./config.js";
-import type { AgentOsActions } from "./generated/actor-actions.generated.js";
-import { getPluginPath } from "./plugin-binary.js";
-import type { AgentOsActorState, AgentOsActorVars } from "./types.js";
+import { type DatabaseProvider, db, type RawAccess } from "rivetkit/db";
+import type {
+	AgentCrashedPayload,
+	AgentOsEvents,
+	CronEventPayload,
+	PermissionRequestPayload,
+	PersistedSessionEvent,
+	PersistedSessionRecord,
+	ProcessExitPayload,
+	ProcessOutputPayload,
+	SerializableCronJobInfo,
+	SerializableCronJobOptions,
+	SessionEventPayload,
+	ShellDataPayload,
+	ShellExitPayload,
+	VmBootedPayload,
+	VmShutdownPayload,
+} from "./types.js";
 
-/**
- * Build the JSON envelope the Rust plugin consumes. The Rust deserializer
- * uses `deny_unknown_fields`, so the envelope must stay in lock-step with
- * `crates/agentos-actor-plugin/src/config.rs::AgentOsConfigJson`.
- *
- * Software threading: each software ref is flattened (meta packages such as
- * `common` are arrays of refs), normalized to a package dir, and forwarded as
- * `{ dir }` so the sidecar owns the `/opt/agentos` projection. Agent configs
- * are derived from each package's `agentos-package.json`, mirroring
- * `packages/core/src/agent-os.ts`.
- */
-interface NativeMountLike {
-	path: string;
-	plugin: {
-		id: string;
-		config?: unknown;
-	};
-	readOnly?: boolean;
+const DEFAULT_ACTION_TIMEOUT_MS = 15 * 60_000;
+const DEFAULT_SLEEP_GRACE_PERIOD_MS = 15 * 60_000;
+const DEFAULT_PREVIEW_TTL_SECONDS = 3_600;
+const MAX_PREVIEW_TTL_SECONDS = 86_400;
+const ACTOR_SQLITE_CHUNK_SIZE = 512 * 1024;
+const ACTOR_SQLITE_INLINE_THRESHOLD = 64 * 1024;
+const ROOT_NAMESPACE = "agentos-root";
+
+type BuiltInEvents = {
+	[K in keyof AgentOsEvents]: Type<AgentOsEvents[K]>;
+};
+
+const builtInEvents: BuiltInEvents = {
+	sessionEvent: event<SessionEventPayload>(),
+	permissionRequest: event<PermissionRequestPayload>(),
+	vmBooted: event<VmBootedPayload>(),
+	vmShutdown: event<VmShutdownPayload>(),
+	processOutput: event<ProcessOutputPayload>(),
+	processExit: event<ProcessExitPayload>(),
+	shellData: event<ShellDataPayload>(),
+	cronEvent: event<CronEventPayload>(),
+	agentCrashed: event<AgentCrashedPayload>(),
+	shellStderr: event<ShellDataPayload>(),
+	shellExit: event<ShellExitPayload>(),
+};
+type ActorDb = DatabaseProvider<RawAccess>;
+type EventSchemaConfig = Record<string, any>;
+type QueueSchemaConfig = Record<string, any>;
+type AnyContext = ActorContext<any, any, any, any, any, ActorDb, any, any>;
+
+interface RuntimeState {
+	vm: Promise<AgentOs> | null;
+	sessions: Set<string>;
+	sessionHolds: Map<string, () => void>;
 }
 
-interface NormalizedPackageRef {
-	path: string;
-}
+const runtimes = new Map<string, RuntimeState>();
 
-/**
- * A native `host_dir` mount of a host `node_modules` directory at
- * `/root/node_modules`, the serializable form `agentOS({ options: { mounts } })`
- * accepts across the NAPI boundary.
- */
-export interface NodeModulesMountConfig {
-	path: "/root/node_modules";
-	plugin: { id: "host_dir"; config: { hostPath: string; readOnly: boolean } };
-	readOnly: boolean;
-}
-
-/**
- * Mount a host `node_modules` directory into the VM at `/root/node_modules`.
- *
- * This is the explicit, mount-based replacement for the removed `moduleAccessCwd`
- * mechanism: the VM module resolver reads the mounted tree through the kernel
- * VFS, so the caller supplies exactly the `node_modules` directory whose
- * packages should resolve in the guest.
- *
- * @param hostNodeModulesDir Absolute host path to a `node_modules` directory.
- * @param opts.readOnly Defaults to `true`; the mount is read-only.
- */
-export function nodeModulesMount(
-	hostNodeModulesDir: string,
-	opts?: { readOnly?: boolean },
-): NodeModulesMountConfig {
-	const readOnly = opts?.readOnly ?? true;
-	return {
-		path: "/root/node_modules",
-		plugin: {
-			id: "host_dir",
-			config: { hostPath: hostNodeModulesDir, readOnly },
-		},
-		readOnly,
-	};
-}
-
-function toRecord(value: unknown): Record<string, unknown> {
-	return value && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: {};
-}
-
-function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
-	// Single package reference: `packagePath` (packed `.aospkg` file, or a
-	// transition package dir); a raw string is shorthand for the same path.
-	if (typeof value === "string") {
-		return { path: value };
+function runtimeFor(c: AnyContext): RuntimeState {
+	let runtime = runtimes.get(c.actorId);
+	if (!runtime) {
+		runtime = { vm: null, sessions: new Set(), sessionHolds: new Map() };
+		runtimes.set(c.actorId, runtime);
 	}
-	const record = toRecord(value);
-	if (typeof record.packagePath === "string") {
-		return { path: record.packagePath };
-	}
-	// Recognizably-legacy shapes fail loudly instead of silently dropping the
-	// package from the VM.
-	for (const legacy of ["packageTar", "packageDir", "commandDir", "dir"]) {
-		if (typeof record[legacy] === "string") {
+	return runtime;
+}
+
+async function ensureVm(
+	c: AnyContext,
+	options?: AgentOsOptions,
+): Promise<AgentOs> {
+	const runtime = runtimeFor(c);
+	if (runtime.vm !== null) return runtime.vm;
+
+	const startedAt = Date.now();
+	runtime.vm = (async () => {
+		const actorUds = (
+			c as AnyContext & {
+				actorUds(): Promise<{ path: string; token: string }>;
+			}
+		).actorUds;
+		if (typeof actorUds !== "function") {
 			throw new Error(
-				`agentOS package ref uses removed field "${legacy}"; packages are referenced ` +
-					"by a single `packagePath` — rebuild @agentos-software/* dependencies or pass { packagePath }",
+				"AgentOS actors require a RivetKit runtime with experimental actor UDS support",
 			);
 		}
-	}
-	return undefined;
-}
-
-function normalizedPackageRefs(software: unknown[]): NormalizedPackageRef[] {
-	const refs: NormalizedPackageRef[] = [];
-	const seen = new Set<string>();
-	for (const entry of software.flat()) {
-		const ref = normalizePackageRef(entry);
-		if (!ref || seen.has(ref.path)) continue;
-		seen.add(ref.path);
-		refs.push(ref);
-	}
-	return refs;
-}
-
-export function buildConfigJson<TConnParams>(
-	parsed: AgentOsActorConfig<TConnParams>,
-): string {
-	const options = nativeAgentOsOptionsSchema.parse(
-		parsed.options ?? {},
-	) as Record<string, unknown>;
-	const softwareInput = Array.isArray(options.software) ? options.software : [];
-	const defaultSoftwareEnabled = options.defaultSoftware !== false;
-	const packageRefs = normalizedPackageRefs(
-		defaultSoftwareEnabled ? [common, ...softwareInput] : softwareInput,
-	);
-	const packages = packageRefs.map((ref) => ({ packagePath: ref.path }));
-	const mounts = serializeNativeMounts(options.mounts);
-	const sidecar = serializeSidecar(options.sidecar);
-	return JSON.stringify({
-		// The actor forwards ONLY package dirs; the sidecar resolves each agent from
-		// the projected `/opt/agentos/<name>/current/agentos-package.json` (no
-		// client-side adapter-entrypoint resolution — see root CLAUDE.md).
-		packages,
-		packagesMountAt: OPT_AGENTOS_ROOT,
-		additionalInstructions: options.additionalInstructions,
-		loopbackExemptPorts: options.loopbackExemptPorts,
-		allowedNodeBuiltins: options.allowedNodeBuiltins,
-		permissions: options.permissions,
-		rootFilesystem: options.rootFilesystem,
-		mounts,
-		limits: options.limits,
-		sidecar,
-	});
-}
-
-function serializeNativeMounts(input: unknown): NativeMountLike[] | undefined {
-	if (input == null) return undefined;
-	if (!Array.isArray(input)) {
-		throw new Error("agentOS() options.mounts must be an array");
-	}
-	return input.map((mount, index) => {
-		if (!mount || typeof mount !== "object") {
-			throw new Error(`agentOS() options.mounts[${index}] must be an object`);
-		}
-		const record = mount as Record<string, unknown>;
-		if (record.driver !== undefined) {
-			throw new Error(
-				"agentOS() only supports Native mounts across the NAPI boundary; Plain mounts with driver callbacks are not serializable",
-			);
-		}
-		if (record.filesystem !== undefined) {
-			throw new Error(
-				"agentOS() only supports Native mounts across the NAPI boundary; Overlay mounts are not serializable",
-			);
-		}
-		const plugin = record.plugin;
-		if (
-			typeof record.path !== "string" ||
-			!plugin ||
-			typeof plugin !== "object" ||
-			typeof (plugin as Record<string, unknown>).id !== "string"
-		) {
-			throw new Error(
-				`agentOS() options.mounts[${index}] must be a Native mount with { path, plugin: { id, config? } }`,
-			);
-		}
-		return {
-			path: record.path,
-			plugin: {
-				id: (plugin as Record<string, unknown>).id as string,
-				config: (plugin as Record<string, unknown>).config,
+		const { path, token } = await actorUds.call(c);
+		const vm = await AgentOs.create({
+			...options,
+			onAgentExit: (event) => {
+				c.broadcast("agentCrashed", { sessionId: event.sessionId, event });
+				options?.onAgentExit?.(event);
 			},
-			readOnly:
-				typeof record.readOnly === "boolean" ? record.readOnly : undefined,
-		};
-	});
+			rootFilesystem: {
+				type: "native",
+				plugin: {
+					id: "chunked_actor_sqlite",
+					config: {
+						path,
+						token,
+						namespace: ROOT_NAMESPACE,
+						chunkSize: ACTOR_SQLITE_CHUNK_SIZE,
+						inlineThreshold: ACTOR_SQLITE_INLINE_THRESHOLD,
+					},
+				},
+			},
+		});
+		vm.onCronEvent((cronEvent) => {
+			c.broadcast("cronEvent", {
+				event: {
+					...cronEvent,
+					time: cronEvent.time.getTime(),
+					...(cronEvent.type === "cron:error"
+						? { error: cronEvent.error.message }
+						: {}),
+				},
+			});
+		});
+		c.broadcast("vmBooted", {});
+		c.log.info({
+			msg: "agent-os vm booted",
+			bootDurationMs: Date.now() - startedAt,
+		});
+		return vm;
+	})();
+
+	try {
+		return await runtime.vm;
+	} catch (error) {
+		runtime.vm = null;
+		throw error;
+	}
 }
 
-function serializeSidecar(input: unknown): { pool?: string } | undefined {
-	if (input == null) return undefined;
-	if (!input || typeof input !== "object") {
-		throw new Error("agentOS() options.sidecar must be an object");
+async function disposeVm(c: AnyContext, reason: "sleep" | "destroy" | "error") {
+	const runtime = runtimes.get(c.actorId);
+	if (!runtime) return;
+	const vm = runtime.vm;
+	runtimes.delete(c.actorId);
+	for (const release of runtime.sessionHolds.values()) release();
+	if (vm) await (await vm).dispose();
+	c.broadcast("vmShutdown", { reason });
+}
+
+async function migrateAgentOsTables(database: RawAccess): Promise<void> {
+	await database.execute(`
+		CREATE TABLE IF NOT EXISTS agent_os_preview_tokens (
+			token TEXT PRIMARY KEY,
+			port INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_agent_os_preview_tokens_expires_at
+			ON agent_os_preview_tokens(expires_at);
+		CREATE TABLE IF NOT EXISTS agent_os_sessions (
+			session_id TEXT PRIMARY KEY,
+			agent_type TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS agent_os_session_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			seq INTEGER NOT NULL,
+			event TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (session_id) REFERENCES agent_os_sessions(session_id) ON DELETE CASCADE
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_os_session_events_session_seq
+			ON agent_os_session_events(session_id, seq);
+	`);
+}
+
+function serializeCronJob(job: CronJobInfo): SerializableCronJobInfo {
+	if (job.action.type === "callback") {
+		throw new TypeError("callback cron actions are not serializable");
 	}
-	const record = input as Record<string, unknown>;
-	if (record.kind === "explicit" || record.handle !== undefined) {
-		throw new Error(
-			"agentOS() only supports sidecar shared pool configuration across the NAPI boundary; explicit sidecar handles are not serializable",
+	return {
+		id: job.id,
+		schedule: job.schedule,
+		action:
+			job.action.type === "session"
+				? {
+						type: "session",
+						agentType: job.action.agentType,
+						prompt: job.action.prompt,
+						cwd: job.action.options?.cwd,
+					}
+				: {
+						type: "exec",
+						command: job.action.command,
+						args: job.action.args,
+					},
+		overlap: job.overlap,
+		lastRun: job.lastRun?.toISOString(),
+		nextRun: job.nextRun?.toISOString(),
+		runCount: job.runCount,
+		running: job.running,
+	};
+}
+
+export interface VmFetchOptions {
+	method?: string;
+	headers?: Record<string, string>;
+	body?: string | Uint8Array;
+}
+
+export interface VmFetchResponse {
+	status: number;
+	statusText: string;
+	headers: Record<string, string>;
+	body: Uint8Array;
+}
+
+interface AgentOsEventHooks {
+	onSessionEvent?: (
+		sessionId: string,
+		event: JsonRpcNotification,
+	) => void | Promise<void>;
+	onPermissionRequest?: (
+		sessionId: string,
+		request: PermissionRequest,
+	) => void | Promise<void>;
+}
+
+export function createAgentOsActions(
+	options?: AgentOsOptions,
+	hooks: AgentOsEventHooks = {},
+	preview: AgentOsActorExtras["preview"] = {},
+) {
+	const defaultPreviewTtlSeconds =
+		preview.defaultExpiresInSeconds ?? DEFAULT_PREVIEW_TTL_SECONDS;
+	const maxPreviewTtlSeconds =
+		preview.maxExpiresInSeconds ?? MAX_PREVIEW_TTL_SECONDS;
+	if (
+		!Number.isFinite(defaultPreviewTtlSeconds) ||
+		defaultPreviewTtlSeconds <= 0 ||
+		!Number.isFinite(maxPreviewTtlSeconds) ||
+		maxPreviewTtlSeconds <= 0 ||
+		defaultPreviewTtlSeconds > maxPreviewTtlSeconds
+	) {
+		throw new RangeError(
+			"preview expiry bounds must be positive and the default cannot exceed the maximum",
 		);
 	}
-	if (record.kind !== undefined && record.kind !== "shared") {
-		throw new Error('agentOS() options.sidecar.kind must be "shared"');
-	}
-	return typeof record.pool === "string" ? { pool: record.pool } : {};
-}
-
-function buildNativeFactoryBuilder<TConnParams>(
-	parsed: AgentOsActorConfig<TConnParams>,
-	actorOptions: Record<string, unknown>,
-): (runtime: CoreRuntime) => ActorFactoryHandle {
-	return (runtime) => {
-		if (runtime.kind !== "napi") {
-			throw new Error(
-				`agentOS() is only supported on the native NAPI runtime (current runtime kind: ${runtime.kind})`,
+	return {
+		readFile: async (c: AnyContext, ...args: Parameters<AgentOs["readFile"]>) =>
+			(await ensureVm(c, options)).readFile(...args),
+		writeFile: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["writeFile"]>
+		) => (await ensureVm(c, options)).writeFile(...args),
+		readFiles: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["readFiles"]>
+		) => (await ensureVm(c, options)).readFiles(...args),
+		writeFiles: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["writeFiles"]>
+		) => (await ensureVm(c, options)).writeFiles(...args),
+		stat: async (c: AnyContext, ...args: Parameters<AgentOs["stat"]>) =>
+			(await ensureVm(c, options)).stat(...args),
+		mkdir: async (c: AnyContext, ...args: Parameters<AgentOs["mkdir"]>) =>
+			(await ensureVm(c, options)).mkdir(...args),
+		readdir: async (c: AnyContext, ...args: Parameters<AgentOs["readdir"]>) =>
+			(await ensureVm(c, options)).readdir(...args),
+		readdirEntries: async (c: AnyContext, path: string) => {
+			const vm = await ensureVm(c, options);
+			const names = await vm.readdir(path);
+			return Promise.all(
+				names.map(async (name) => {
+					const stat = await vm.stat(posixPath.join(path, name));
+					return {
+						name,
+						isDirectory: stat.isDirectory,
+						isSymbolicLink: stat.isSymbolicLink,
+					};
+				}),
 			);
-		}
-		if (!runtime.createNativePluginFactory) {
-			throw new Error(
-				"runtime.createNativePluginFactory is not implemented on the active CoreRuntime",
+		},
+		readdirRecursive: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["readdirRecursive"]>
+		) => (await ensureVm(c, options)).readdirRecursive(...args),
+		exists: async (c: AnyContext, ...args: Parameters<AgentOs["exists"]>) =>
+			(await ensureVm(c, options)).exists(...args),
+		move: async (c: AnyContext, ...args: Parameters<AgentOs["move"]>) =>
+			(await ensureVm(c, options)).move(...args),
+		deleteFile: async (c: AnyContext, ...args: Parameters<AgentOs["delete"]>) =>
+			(await ensureVm(c, options)).delete(...args),
+		exec: async (c: AnyContext, ...args: Parameters<AgentOs["exec"]>) =>
+			(await ensureVm(c, options)).exec(...args),
+		spawn: async (
+			c: AnyContext,
+			command: string,
+			args: string[],
+			spawnOptions?: Omit<
+				NonNullable<Parameters<AgentOs["spawn"]>[2]>,
+				"onStdout" | "onStderr"
+			>,
+		) => {
+			const vm = await ensureVm(c, options);
+			const process = vm.spawn(command, args, {
+				...spawnOptions,
+				onStdout: (data) =>
+					c.broadcast("processOutput", {
+						pid: process.pid,
+						stream: "stdout",
+						data,
+					}),
+				onStderr: (data) =>
+					c.broadcast("processOutput", {
+						pid: process.pid,
+						stream: "stderr",
+						data,
+					}),
+			});
+			void c
+				.keepAwake(
+					vm.waitProcess(process.pid).then((exitCode) => {
+						c.broadcast("processExit", { pid: process.pid, exitCode });
+						return exitCode;
+					}),
+				)
+				.catch((error) =>
+					c.log.error({
+						msg: "agent-os process wait failed",
+						pid: process.pid,
+						error,
+					}),
+				);
+			return process;
+		},
+		waitProcess: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["waitProcess"]>
+		) => (await ensureVm(c, options)).waitProcess(...args),
+		killProcess: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["killProcess"]>
+		) => (await ensureVm(c, options)).killProcess(...args),
+		stopProcess: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["stopProcess"]>
+		) => (await ensureVm(c, options)).stopProcess(...args),
+		listProcesses: async (c: AnyContext) =>
+			(await ensureVm(c, options)).listProcesses(),
+		allProcesses: async (c: AnyContext) =>
+			(await ensureVm(c, options)).allProcesses(),
+		processTree: async (c: AnyContext) =>
+			(await ensureVm(c, options)).processTree(),
+		getProcess: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["getProcess"]>
+		) => (await ensureVm(c, options)).getProcess(...args),
+		writeProcessStdin: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["writeProcessStdin"]>
+		) => (await ensureVm(c, options)).writeProcessStdin(...args),
+		closeProcessStdin: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["closeProcessStdin"]>
+		) => (await ensureVm(c, options)).closeProcessStdin(...args),
+		openShell: async (
+			c: AnyContext,
+			shellOptions?: Omit<
+				NonNullable<Parameters<AgentOs["openShell"]>[0]>,
+				"onStderr"
+			>,
+		) => {
+			const vm = await ensureVm(c, options);
+			const shell = vm.openShell({
+				...shellOptions,
+				onStderr: (data) =>
+					c.broadcast("shellStderr", { shellId: shell.shellId, data }),
+			});
+			vm.onShellData(shell.shellId, (data) =>
+				c.broadcast("shellData", { shellId: shell.shellId, data }),
 			);
-		}
-		const options: NapiNativePluginOptions = {
-			// Resolve the prebuilt agent-os actor plugin cdylib; RivetKit `dlopen`s
-			// it through the generic native-plugin ABI.
-			pluginPath: getPluginPath(),
-			// Opaque config envelope the plugin parses (config.rs::AgentOsConfigJson).
-			configJson: buildConfigJson(parsed),
-			// RivetKit's native-plugin bridge owns the runtime ActorConfig for
-			// cdylib actors, so forward the merged per-actor lifecycle options too.
-			actorOptions,
-			// Resolve the prebuilt sidecar binary from the npm package so the plugin
-			// spawns the bundled binary rather than relying on `agentos-sidecar`
-			// being on PATH.
-			sidecarPath: getSidecarPath(),
-			// Custom inspector tabs. The native-plugin path bypasses the normal
-			// actor-config assembly (`buildActorConfig`/`inspectorTabs`), so the
-			// tabs MUST ride on the plugin options: the Rust NAPI binding
-			// `from_native_plugin` forwards `inspectorTabs` into the actor config so
-			// the dashboard serves `/inspector/custom-tabs/<id>/` and advertises them
-			// in `tab-config`. (Setting `actor({ inspector })` alone does nothing for
-			// native-plugin actors.)
-			inspectorTabs: AGENTOS_INSPECTOR_CONFIG.tabs,
-		} as NapiNativePluginOptions & {
-			actorOptions?: Record<string, unknown>;
-			inspectorTabs: typeof AGENTOS_INSPECTOR_CONFIG.tabs;
-		};
-		return runtime.createNativePluginFactory(options);
+			void c
+				.keepAwake(
+					vm.waitShell(shell.shellId).then((exitCode) => {
+						c.broadcast("shellExit", { shellId: shell.shellId, exitCode });
+						return exitCode;
+					}),
+				)
+				.catch((error) =>
+					c.log.error({
+						msg: "agent-os shell wait failed",
+						shellId: shell.shellId,
+						error,
+					}),
+				);
+			return shell;
+		},
+		writeShell: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["writeShell"]>
+		) => (await ensureVm(c, options)).writeShell(...args),
+		resizeShell: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["resizeShell"]>
+		) => (await ensureVm(c, options)).resizeShell(...args),
+		closeShell: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["closeShell"]>
+		) => (await ensureVm(c, options)).closeShell(...args),
+		waitShell: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["waitShell"]>
+		) => (await ensureVm(c, options)).waitShell(...args),
+		vmFetch: async (
+			c: AnyContext,
+			port: number,
+			url: string,
+			requestOptions?: VmFetchOptions,
+		): Promise<VmFetchResponse> => {
+			const vm = await ensureVm(c, options);
+			const body =
+				requestOptions?.body instanceof Uint8Array
+					? Buffer.from(requestOptions.body)
+					: requestOptions?.body;
+			const response = await vm.fetch(
+				port,
+				new Request(url, {
+					method: requestOptions?.method ?? "GET",
+					headers: requestOptions?.headers,
+					body,
+				}),
+			);
+			const headers: Record<string, string> = {};
+			response.headers.forEach((value, key) => {
+				headers[key] = value;
+			});
+			return {
+				status: response.status,
+				statusText: response.statusText,
+				headers,
+				body: new Uint8Array(await response.arrayBuffer()),
+			};
+		},
+		scheduleCron: async (
+			c: AnyContext,
+			cronOptions: SerializableCronJobOptions,
+		) => {
+			const job = (await ensureVm(c, options)).scheduleCron(
+				cronOptions as Parameters<AgentOs["scheduleCron"]>[0],
+			);
+			return { id: job.id };
+		},
+		listCronJobs: async (c: AnyContext) =>
+			(await ensureVm(c, options)).listCronJobs().map(serializeCronJob),
+		cancelCronJob: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["cancelCronJob"]>
+		) => (await ensureVm(c, options)).cancelCronJob(...args),
+		listAgents: async (c: AnyContext) =>
+			(await ensureVm(c, options)).listAgents(),
+		createSession: async (
+			c: AnyContext,
+			...args: Parameters<AgentOs["createSession"]>
+		) => {
+			const vm = await ensureVm(c, options);
+			const { sessionId } = await vm.createSession(...args);
+			const runtime = runtimeFor(c);
+			runtime.sessions.add(sessionId);
+			const sessionHold = new Promise<void>((resolve) => {
+				runtime.sessionHolds.set(sessionId, resolve);
+			});
+			void c.keepAwake(sessionHold).catch((error) =>
+				c.log.error({
+					msg: "agent-os session hold failed",
+					sessionId,
+					error,
+				}),
+			);
+			await c.db.execute(
+				"INSERT OR REPLACE INTO agent_os_sessions (session_id, agent_type, created_at) VALUES (?, ?, ?)",
+				sessionId,
+				String(args[0]),
+				Date.now(),
+			);
+			let seq = 0;
+			vm.onSessionEvent(sessionId, (notification: JsonRpcNotification) => {
+				const serialized = JSON.parse(
+					JSON.stringify(notification),
+				) as JsonRpcNotification;
+				seq += 1;
+				const task = c.db
+					.execute(
+						"INSERT INTO agent_os_session_events (session_id, seq, event, created_at) VALUES (?, ?, ?, ?)",
+						sessionId,
+						seq,
+						JSON.stringify(serialized),
+						Date.now(),
+					)
+					.then(async () => {
+						c.broadcast("sessionEvent", { sessionId, event: serialized });
+						await hooks.onSessionEvent?.(sessionId, serialized);
+					});
+				c.waitUntil(
+					task.catch((error) =>
+						c.log.error({
+							msg: "agent-os session event persistence failed",
+							sessionId,
+							error,
+						}),
+					),
+				);
+			});
+			vm.onPermissionRequest(sessionId, (request: PermissionRequest) => {
+				c.broadcast("permissionRequest", { sessionId, request });
+				if (hooks.onPermissionRequest) {
+					c.waitUntil(
+						Promise.resolve()
+							.then(() => hooks.onPermissionRequest?.(sessionId, request))
+							.catch((error) =>
+								c.log.error({
+									msg: "agent-os permission hook failed",
+									sessionId,
+									error,
+								}),
+							),
+					);
+				}
+			});
+			return sessionId;
+		},
+		sendPrompt: async (c: AnyContext, sessionId: string, text: string) => {
+			const promise = (await ensureVm(c, options)).prompt(sessionId, text);
+			return c.keepAwake(promise);
+		},
+		closeSession: async (c: AnyContext, sessionId: string) => {
+			const vm = await ensureVm(c, options);
+			vm.closeSession(sessionId);
+			const runtime = runtimeFor(c);
+			runtime.sessions.delete(sessionId);
+			runtime.sessionHolds.get(sessionId)?.();
+			runtime.sessionHolds.delete(sessionId);
+		},
+		respondPermission: async (
+			c: AnyContext,
+			sessionId: string,
+			permissionId: string,
+			reply: PermissionReply,
+		) =>
+			(await ensureVm(c, options)).respondPermission(
+				sessionId,
+				permissionId,
+				reply,
+			),
+		listPersistedSessions: async (
+			c: AnyContext,
+		): Promise<PersistedSessionRecord[]> => {
+			const rows = await c.db.execute<{
+				session_id: string;
+				agent_type: string;
+				created_at: number;
+			}>(
+				"SELECT session_id, agent_type, created_at FROM agent_os_sessions ORDER BY created_at DESC",
+			);
+			return rows.map((row) => ({
+				sessionId: row.session_id,
+				agentType: row.agent_type,
+				createdAt: row.created_at,
+				status: runtimeFor(c).sessions.has(row.session_id) ? "running" : "idle",
+			}));
+		},
+		getSessionEvents: async (
+			c: AnyContext,
+			sessionId: string,
+		): Promise<PersistedSessionEvent[]> => {
+			const rows = await c.db.execute<{
+				seq: number;
+				event: string;
+				created_at: number;
+			}>(
+				"SELECT seq, event, created_at FROM agent_os_session_events WHERE session_id = ? ORDER BY seq",
+				sessionId,
+			);
+			return rows.map((row) => ({
+				sessionId,
+				seq: row.seq,
+				event: JSON.parse(row.event),
+				createdAt: row.created_at,
+			}));
+		},
+		createSignedPreviewUrl: async (
+			c: AnyContext,
+			port: number,
+			ttlSeconds = defaultPreviewTtlSeconds,
+		) => {
+			if (!Number.isInteger(port) || port < 1 || port > 65_535)
+				throw new RangeError("port must be an integer between 1 and 65535");
+			if (
+				!Number.isFinite(ttlSeconds) ||
+				ttlSeconds <= 0 ||
+				ttlSeconds > maxPreviewTtlSeconds
+			)
+				throw new RangeError(
+					`ttlSeconds must be between 0 and ${maxPreviewTtlSeconds}`,
+				);
+			const token = crypto.randomBytes(24).toString("hex");
+			const createdAt = Date.now();
+			const expiresAt = createdAt + ttlSeconds * 1_000;
+			await c.db.execute(
+				"INSERT INTO agent_os_preview_tokens (token, port, created_at, expires_at) VALUES (?, ?, ?, ?)",
+				token,
+				port,
+				createdAt,
+				expiresAt,
+			);
+			return { path: `/fetch/${token}`, token, port, expiresAt };
+		},
+		expireSignedPreviewUrl: async (c: AnyContext, token: string) => {
+			await c.db.execute(
+				"DELETE FROM agent_os_preview_tokens WHERE token = ?",
+				token,
+			);
+		},
+		listMounts: async () => options?.mounts ?? [],
+		listSoftware: async (c: AnyContext) =>
+			(await ensureVm(c, options)).providedCommands(),
 	};
 }
 
-/**
- * Type alias for the `agentOS(...)` return type. Events are not typed at the TS
- * surface because the Rust plugin owns the broadcast set, but the ACTIONS are
- * typed via {@link AgentOsActions} — generated from the Rust dispatch contract
- * table in `crates/agentos-actor-plugin/src/actions/contract_surface.rs`.
- * That is what gives `createClient<typeof registry>()` a fully-typed handle
- * (e.g. `handle.exec()` returns `ExecResult`, not `unknown`).
- */
-export type AgentOsActorDefinition<TConnParams> = ActorDefinition<
-	AgentOsActorState,
+export type AgentOsActions = ReturnType<typeof createAgentOsActions>;
+export type AgentOsActorDefinition<TConnParams = undefined> = ActorDefinition<
+	undefined,
 	TConnParams,
 	undefined,
-	AgentOsActorVars,
 	undefined,
-	DatabaseProvider<RawAccess>,
-	Record<never, never>,
+	undefined,
+	ActorDb,
+	BuiltInEvents,
 	Record<never, never>,
 	AgentOsActions
 >;
 
-// One hour — far past any normal agent turn, connection setup, or idle gap, but
-// still a finite bound (never `0`/Infinity) per the limits-and-observability
-// policy. Agent turns routinely run minutes; the stock RivetKit defaults
-// (actionTimeout 60s, on{Before,}ConnectTimeout 5s, sleepTimeout 30s) cut them
-// off mid-flight and broke live `sessionEvent` streaming with
-// "actor websocket connection setup timed out after 5000 ms".
-const ACTOR_NEVER_HIT_MS = 60 * 60 * 1000;
-// 512 MiB — large prompts/results stream as single actor messages; the stock
-// 64 KiB incoming / 1 MiB outgoing caps truncate real agent payloads.
-const ACTOR_NEVER_HIT_MESSAGE_BYTES = 512 * 1024 * 1024;
-
-/**
- * Never-hit-by-normal-use defaults for the AgentOS actor. Every value is a high
- * but finite bound so a long multi-step agent turn, a slow connection setup, a
- * large prompt/result, and live `sessionEvent` streaming all complete without
- * tripping a RivetKit actor default. Callers can still override any single knob
- * via `actorOptions` (their value wins over these defaults).
- */
-export const DEFAULT_AGENTOS_ACTOR_OPTIONS = {
-	// Connection/setup lifecycle (stock 5s each) — the websocket setup path that
-	// was timing out at 5000ms and dropping all streamed events.
-	onBeforeConnectTimeout: ACTOR_NEVER_HIT_MS,
-	onConnectTimeout: ACTOR_NEVER_HIT_MS,
-	createVarsTimeout: ACTOR_NEVER_HIT_MS,
-	createConnStateTimeout: ACTOR_NEVER_HIT_MS,
-	onMigrateTimeout: ACTOR_NEVER_HIT_MS,
-	// Action/RPC lifecycle (stock 60s) — long multi-step prompt turns.
-	actionTimeout: ACTOR_NEVER_HIT_MS,
-	// Idle/keepalive — don't reap a live session or sleep mid-turn (stock
-	// connectionLivenessTimeout 2.5s, sleepTimeout 30s). The liveness *interval*
-	// (ping cadence) is intentionally left at its small default.
-	connectionLivenessTimeout: ACTOR_NEVER_HIT_MS,
-	sleepTimeout: ACTOR_NEVER_HIT_MS,
-	// Payload sizes — large prompts/results. `maxQueueMessageSize` is the
-	// per-actor message cap (stock 64 KiB); the transport-level
-	// max{Incoming,Outgoing}MessageSize live on the registry/setup config (see
-	// AGENTOS_REGISTRY_MESSAGE_SIZE_DEFAULTS), not on per-actor options.
-	maxQueueSize: 1_000_000,
-	maxQueueMessageSize: ACTOR_NEVER_HIT_MESSAGE_BYTES,
-} as const;
-
-// Absolute path to the built inspector-tabs app (the shared Vite bundle). All
-// custom tabs share this one `source` dir; the app routes on the
-// `/inspector/custom-tabs/<id>/` URL segment. Resolves from both `src/` (tsx dev
-// / the demo) and the published `dist/`, since `assets/` sits at the package
-// root in both layouts.
-const INSPECTOR_TABS_ASSET_DIR = join(
-	dirname(fileURLToPath(import.meta.url)),
-	"..",
-	"assets",
-	"inspector-tabs-app",
-);
-
-// Custom inspector tabs shipped by agent-os. Ids MUST match the `TABS` registry
-// in `src/inspector-tabs/main.tsx`. The built-in rivetkit tabs are hidden so the
-// dashboard shows only the agent-os tabs.
-const AGENTOS_INSPECTOR_CONFIG = {
-	tabs: [
-		{
-			id: "transcript",
-			label: "Transcript",
-			source: INSPECTOR_TABS_ASSET_DIR,
-			icon: "comments",
-		},
-		{
-			id: "filesystem",
-			label: "Filesystem",
-			source: INSPECTOR_TABS_ASSET_DIR,
-			icon: "folder-tree",
-		},
-		{
-			id: "processes",
-			label: "Processes",
-			source: INSPECTOR_TABS_ASSET_DIR,
-			icon: "microchip",
-		},
-		{
-			id: "software",
-			label: "Software",
-			source: INSPECTOR_TABS_ASSET_DIR,
-			icon: "box-archive",
-		},
-		{
-			id: "mounts",
-			label: "Mounts",
-			source: INSPECTOR_TABS_ASSET_DIR,
-			icon: "hard-drive",
-		},
-		...["workflow", "database", "state", "queue", "connections", "console"].map(
-			(id) => ({ id, hidden: true as const }),
-		),
-	],
-};
-
-export function createAgentOS<TConnParams = undefined>(
-	config: AgentOsActorConfigInput<TConnParams>,
-): AgentOsActorDefinition<TConnParams> {
-	const parsed = agentOsActorConfigSchema.parse(
-		config,
-	) as AgentOsActorConfig<TConnParams>;
-
-	// Construct a minimal definition through the existing actor() helper, then
-	// attach the Rust factory builder marker. The actions block stays empty
-	// because no JS-side action ever runs: the engine driver branches on
-	// `nativeFactoryBuilder` before reaching the JS dispatch path.
-	const userActorOptions = (
-		parsed as { actorOptions?: Record<string, unknown> }
-	).actorOptions;
-	// High never-hit defaults, with any caller-supplied option winning.
-	const actorOptions = {
-		...DEFAULT_AGENTOS_ACTOR_OPTIONS,
-		...(userActorOptions ?? {}),
+export interface AgentOsActorExtras extends AgentOsOptions, AgentOsEventHooks {
+	preview?: {
+		defaultExpiresInSeconds?: number;
+		maxExpiresInSeconds?: number;
 	};
-	const definition = actor({
-		actions: {},
-		options: actorOptions,
-		// Register the custom agent-os inspector tabs (and hide the built-in
-		// rivetkit tabs) so the dashboard renders the agent-os UI. Without this
-		// the shipped tab assets are never surfaced.
-		inspector: AGENTOS_INSPECTOR_CONFIG,
-	} as Parameters<
-		typeof actor
-	>[0]) as unknown as AgentOsActorDefinition<TConnParams>;
-	definition.nativeFactoryBuilder = buildNativeFactoryBuilder(
-		parsed,
-		actorOptions,
-	);
-	return definition;
+}
+
+export type AgentOsActorConfigInput<
+	TState = undefined,
+	TConnParams = undefined,
+	TConnState = undefined,
+	TVars = undefined,
+	TInput = undefined,
+	TEvents extends EventSchemaConfig = Record<never, never>,
+	TQueues extends QueueSchemaConfig = Record<never, never>,
+	TUserActions extends Actions<
+		TState,
+		TConnParams,
+		TConnState,
+		TVars,
+		TInput,
+		ActorDb,
+		TEvents,
+		TQueues
+	> = Record<never, never>,
+> = Omit<
+	ActorConfigInput<
+		TState,
+		TConnParams,
+		TConnState,
+		TVars,
+		TInput,
+		ActorDb,
+		TEvents,
+		TQueues,
+		TUserActions
+	>,
+	"db"
+> &
+	AgentOsActorExtras;
+
+const agentOsOptionKeys = [
+	"software",
+	"defaultSoftware",
+	"loopbackExemptPorts",
+	"allowedNodeBuiltins",
+	"highResolutionTime",
+	"rootFilesystem",
+	"mounts",
+	"additionalInstructions",
+	"scheduleDriver",
+	"toolKits",
+	"permissions",
+	"sidecar",
+	"limits",
+	"onAgentStderr",
+	"onAgentExit",
+	"onLimitWarning",
+] as const satisfies readonly (keyof AgentOsOptions)[];
+
+function splitConfig(
+	config: AgentOsActorConfigInput<any, any, any, any, any, any, any, any>,
+) {
+	const actorConfig = { ...config } as Record<string, unknown>;
+	const agentOsOptions: AgentOsOptions = {};
+	for (const key of agentOsOptionKeys) {
+		if (key in actorConfig) {
+			(agentOsOptions as Record<string, unknown>)[key] = actorConfig[key];
+			delete actorConfig[key];
+		}
+	}
+	const onSessionEvent =
+		actorConfig.onSessionEvent as AgentOsEventHooks["onSessionEvent"];
+	const onPermissionRequest =
+		actorConfig.onPermissionRequest as AgentOsEventHooks["onPermissionRequest"];
+	const preview = actorConfig.preview as AgentOsActorExtras["preview"];
+	delete actorConfig.onSessionEvent;
+	delete actorConfig.onPermissionRequest;
+	delete actorConfig.preview;
+	return {
+		actorConfig,
+		agentOsOptions,
+		hooks: { onSessionEvent, onPermissionRequest },
+		preview,
+	};
+}
+
+function assertNoReservedKeys(
+	kind: string,
+	custom: object | undefined,
+	builtIns: object,
+) {
+	for (const key of Object.keys(custom ?? {})) {
+		if (key in builtIns)
+			throw new Error(`agentOS() ${kind} name is reserved: ${key}`);
+	}
+}
+
+export function createAgentOS<
+	TState = undefined,
+	TConnParams = undefined,
+	TConnState = undefined,
+	TVars = undefined,
+	TInput = undefined,
+	TEvents extends EventSchemaConfig = Record<never, never>,
+	TQueues extends QueueSchemaConfig = Record<never, never>,
+	TUserActions extends Actions<
+		TState,
+		TConnParams,
+		TConnState,
+		TVars,
+		TInput,
+		ActorDb,
+		TEvents,
+		TQueues
+	> = Record<never, never>,
+>(
+	config: AgentOsActorConfigInput<
+		TState,
+		TConnParams,
+		TConnState,
+		TVars,
+		TInput,
+		TEvents,
+		TQueues,
+		TUserActions
+	> = {} as AgentOsActorConfigInput<
+		TState,
+		TConnParams,
+		TConnState,
+		TVars,
+		TInput,
+		TEvents,
+		TQueues,
+		TUserActions
+	>,
+): ActorDefinition<
+	TState,
+	TConnParams,
+	TConnState,
+	TVars,
+	TInput,
+	ActorDb,
+	TEvents & BuiltInEvents,
+	TQueues,
+	TUserActions & AgentOsActions
+> {
+	const split = splitConfig(config);
+	const actorConfig = split.actorConfig as Omit<
+		typeof config,
+		keyof AgentOsActorExtras
+	>;
+	const { agentOsOptions, hooks, preview } = split;
+	if (agentOsOptions.rootFilesystem) {
+		throw new Error(
+			"agentOS() owns rootFilesystem so it can persist directly through the actor SQLite UDS; use mounts for additional filesystems",
+		);
+	}
+	const actions = createAgentOsActions(agentOsOptions, hooks, preview);
+	assertNoReservedKeys("action", actorConfig.actions, actions);
+	assertNoReservedKeys("event", actorConfig.events, builtInEvents);
+
+	const userOnWake = actorConfig.onWake;
+	const userOnSleep = actorConfig.onSleep;
+	const userOnDestroy = actorConfig.onDestroy;
+	const userOnRequest = actorConfig.onRequest;
+	const userOnBeforeConnect = actorConfig.onBeforeConnect;
+
+	return actor({
+		...actorConfig,
+		options: {
+			actionTimeout: DEFAULT_ACTION_TIMEOUT_MS,
+			sleepGracePeriod: DEFAULT_SLEEP_GRACE_PERIOD_MS,
+			...actorConfig.options,
+		},
+		db: db({ onMigrate: migrateAgentOsTables }),
+		events: { ...(actorConfig.events ?? {}), ...builtInEvents },
+		actions: { ...(actorConfig.actions ?? {}), ...actions },
+		onBeforeConnect: async (
+			c: Parameters<NonNullable<typeof userOnBeforeConnect>>[0],
+			params: Parameters<NonNullable<typeof userOnBeforeConnect>>[1],
+		) => {
+			if (c.request && new URL(c.request.url).pathname.startsWith("/fetch/")) {
+				return;
+			}
+			await userOnBeforeConnect?.(c, params);
+		},
+		onWake: async (c: AnyContext) => {
+			try {
+				await ensureVm(c as AnyContext, agentOsOptions);
+				await userOnWake?.(c);
+			} catch (error) {
+				await disposeVm(c as AnyContext, "error");
+				throw error;
+			}
+		},
+		onSleep: async (c: AnyContext) => {
+			try {
+				await userOnSleep?.(c);
+			} finally {
+				await disposeVm(c as AnyContext, "sleep");
+			}
+		},
+		onDestroy: async (c: AnyContext) => {
+			try {
+				await userOnDestroy?.(c);
+			} finally {
+				await disposeVm(c as AnyContext, "destroy");
+			}
+		},
+		onRequest: async (c: AnyContext, request: Request) => {
+			const url = new URL(request.url);
+			const match = url.pathname.match(/^\/fetch\/([a-f0-9]{48})(\/.*)?$/);
+			if (!match) {
+				const response = await userOnRequest?.(c as never, request);
+				return response ?? new Response("Not Found", { status: 404 });
+			}
+			if (request.method === "OPTIONS")
+				return new Response(null, {
+					status: 204,
+					headers: {
+						"access-control-allow-origin": "*",
+						"access-control-allow-methods":
+							"GET, POST, PUT, PATCH, DELETE, OPTIONS",
+						"access-control-allow-headers": "*",
+					},
+				});
+			const rows = await c.db.execute<{ port: number }>(
+				"SELECT port FROM agent_os_preview_tokens WHERE token = ? AND expires_at > ?",
+				match[1],
+				Date.now(),
+			);
+			if (!rows[0])
+				return new Response("Preview URL expired or invalid", { status: 403 });
+			const target = new URL(request.url);
+			target.pathname = match[2] ?? "/";
+			const vm = await ensureVm(c as AnyContext, agentOsOptions);
+			const response = await vm.fetch(
+				rows[0].port,
+				new Request(target, request),
+			);
+			const headers = new Headers(response.headers);
+			headers.set("access-control-allow-origin", "*");
+			return new Response(response.body, {
+				status: response.status,
+				statusText: response.statusText,
+				headers,
+			});
+		},
+	} as any) as ActorDefinition<
+		TState,
+		TConnParams,
+		TConnState,
+		TVars,
+		TInput,
+		ActorDb,
+		TEvents & BuiltInEvents,
+		TQueues,
+		TUserActions & AgentOsActions
+	>;
 }

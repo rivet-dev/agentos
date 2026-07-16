@@ -63,12 +63,6 @@ test("builds platform map for the agent-os sidecar meta package", () => {
 			"@rivet-dev/agentos-sidecar-linux-arm64-gnu",
 			"@rivet-dev/agentos-sidecar-linux-x64-gnu",
 		]);
-		assert.deepEqual(metaMap.get("@rivet-dev/agentos"), [
-			"@rivet-dev/agentos-plugin-darwin-arm64",
-			"@rivet-dev/agentos-plugin-darwin-x64",
-			"@rivet-dev/agentos-plugin-linux-arm64-gnu",
-			"@rivet-dev/agentos-plugin-linux-x64-gnu",
-		]);
 		assert.deepEqual(metaMap.get("@rivet-dev/agentos-runtime-sidecar"), [
 			"@rivet-dev/agentos-runtime-sidecar-darwin-arm64",
 			"@rivet-dev/agentos-runtime-sidecar-darwin-x64",

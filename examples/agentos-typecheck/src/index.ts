@@ -1,8 +1,8 @@
 /**
  * Type-checking example for `@rivet-dev/agentos`.
  *
- * This file exercises the public native actor package surface. It is not meant
- * to run: the actual action dispatch lives in the Rust native actor plugin.
+ * This file exercises the public actor package surface. It is not meant to
+ * run: the actor delegates VM operations to the AgentOS core SDK and sidecar.
  */
 
 import {

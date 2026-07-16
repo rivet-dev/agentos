@@ -156,7 +156,12 @@ export interface AgentRegistryEntry {
 	adapterEntrypoint: string;
 }
 
-import type { AgentType } from "./types.js";
+import {
+	OPT_AGENTOS_ROOT,
+	type PackageRef,
+	type SoftwarePackageRef,
+	tryReadAgentosPackageManifest,
+} from "./agentos-package.js";
 import { getBaseEnvironment } from "./base-filesystem.js";
 import { CronManager } from "./cron/cron-manager.js";
 import type { ScheduleDriver } from "./cron/schedule-driver.js";
@@ -168,6 +173,7 @@ import type {
 	CronJobInfo,
 	CronJobOptions,
 } from "./cron/types.js";
+import { resolveDefaultSoftware } from "./default-software.js";
 import {
 	type FilesystemEntry,
 	snapshotVirtualFilesystem,
@@ -185,14 +191,7 @@ import {
 	type RootSnapshotExport,
 	type SnapshotLayerHandle,
 } from "./layers.js";
-import { type SoftwareInput, type SoftwareRoot } from "./packages.js";
-import {
-	OPT_AGENTOS_ROOT,
-	type PackageRef,
-	type SoftwarePackageRef,
-	tryReadAgentosPackageManifest,
-} from "./agentos-package.js";
-import { resolveDefaultSoftware } from "./default-software.js";
+import type { SoftwareInput, SoftwareRoot } from "./packages.js";
 import type { PermissionTier } from "./runtime.js";
 import { allowAll, createNodeHostNetworkAdapter } from "./runtime-compat.js";
 import {
@@ -228,6 +227,7 @@ import {
 	type SidecarSessionState,
 	serializeRootFilesystemForSidecar,
 } from "./sidecar/rpc-client.js";
+import type { AgentType } from "./types.js";
 
 export interface AgentOsSharedSidecarOptions {
 	pool?: string;
@@ -335,12 +335,23 @@ export type RootLowerInput =
 	| { kind: "bundled-base-filesystem" }
 	| RootSnapshotExport;
 
-export interface RootFilesystemConfig {
+export interface OverlayRootFilesystemConfig {
 	type?: "overlay";
 	mode?: OverlayFilesystemMode;
 	disableDefaultBaseLayer?: boolean;
 	lowers?: RootLowerInput[];
 }
+
+/** Declarative sidecar-native root filesystem. */
+export interface NativeRootFilesystemConfig {
+	type: "native";
+	plugin: NativeMountPluginDescriptor;
+	readOnly?: boolean;
+}
+
+export type RootFilesystemConfig =
+	| OverlayRootFilesystemConfig
+	| NativeRootFilesystemConfig;
 
 /**
  * Compatibility path for arbitrary caller-supplied filesystems.
@@ -555,9 +566,8 @@ export type LimitWarningHandler = (warning: LimitWarning) => void;
  * Public core VM options.
  *
  * Keep this interface in sync with
- * `packages/core/src/options-schema.ts::agentOsOptionsSchema`. The Rivet
- * native actor intentionally accepts only a subset via
- * `packages/agentos/src/config.ts::nativeAgentOsOptionsSchema`.
+ * `packages/core/src/options-schema.ts::agentOsOptionsSchema`. The TypeScript
+ * Rivet actor accepts this surface directly alongside ordinary actor options.
  */
 export interface AgentOsOptions {
 	/**
@@ -1310,7 +1320,7 @@ function collectConfiguredLowerPaths(
 ): Set<string> {
 	const paths = new Set<string>();
 
-	for (const lower of config?.lowers ?? []) {
+	for (const lower of config?.type === "native" ? [] : (config?.lowers ?? [])) {
 		if (lower.kind !== "snapshot-export") {
 			continue;
 		}
@@ -1326,7 +1336,7 @@ function findBootstrapSeedEntry(
 	config: RootFilesystemConfig | undefined,
 	path: string,
 ): FilesystemEntry | undefined {
-	for (const lower of config?.lowers ?? []) {
+	for (const lower of config?.type === "native" ? [] : (config?.lowers ?? [])) {
 		if (lower.kind !== "snapshot-export") {
 			continue;
 		}
@@ -1349,6 +1359,9 @@ function createKernelBootstrapLower(
 	config: RootFilesystemConfig | undefined,
 	extraEntries: FilesystemEntry[] = [],
 ): RootSnapshotExport | null {
+	if (config?.type === "native") {
+		return null;
+	}
 	const includesBundledBaseLayer = !(config?.disableDefaultBaseLayer ?? false);
 	const existingPaths = collectConfiguredLowerPaths(config);
 	const entries: FilesystemEntry[] = [
@@ -2767,6 +2780,17 @@ export class AgentOs {
 					limits: options?.limits,
 					loopbackExemptPorts: options?.loopbackExemptPorts ?? [],
 					bootstrapCommands,
+					...(options?.rootFilesystem?.type === "native"
+						? {
+								nativeRoot: {
+									plugin: {
+										id: options.rootFilesystem.plugin.id,
+										config: options.rootFilesystem.plugin.config ?? {},
+									},
+									readOnly: options.rootFilesystem.readOnly ?? false,
+								},
+							}
+						: {}),
 					// 0.3: the Node builtin allow-list moved from configureVm to
 					// VM creation. `undefined` => engine default allow-list;
 					// `[]` => deny all; `[..]` => exactly those. Platform and
@@ -2855,12 +2879,14 @@ export class AgentOs {
 					// shared across VMs; disposing this VM must not kill the process.
 					ownsClient: false,
 				});
-				await bootstrapLiveBootstrapDirectories(
-					client,
-					session,
-					nativeVm,
-					options?.rootFilesystem,
-				);
+				if (options?.rootFilesystem?.type !== "native") {
+					await bootstrapLiveBootstrapDirectories(
+						client,
+						session,
+						nativeVm,
+						options?.rootFilesystem,
+					);
+				}
 
 				kernel = rootBridge as unknown as Kernel;
 				const snapshotClient = client;

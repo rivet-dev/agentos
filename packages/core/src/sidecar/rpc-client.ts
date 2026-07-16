@@ -64,7 +64,9 @@ function formatStructuredSidecarDetail(
 	if (entries.length === 0) {
 		return "";
 	}
-	return entries.map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(" ");
+	return entries
+		.map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+		.join(" ");
 }
 
 function logStructuredSidecarEvent(
@@ -995,40 +997,40 @@ export class NativeSidecarKernelProxy {
 			}
 			return parsed;
 		};
-			const writeForegroundInput = async (
-				proc: ManagedProcess,
-				data: string | Uint8Array,
-			) => {
+		const writeForegroundInput = async (
+			proc: ManagedProcess,
+			data: string | Uint8Array,
+		) => {
 			if (typeof data === "string") {
 				for (const character of data) {
 					await proc.writeStdin(character);
 				}
 				return;
 			}
-				for (const byte of data) {
-					await proc.writeStdin(new Uint8Array([byte]));
+			for (const byte of data) {
+				await proc.writeStdin(new Uint8Array([byte]));
+			}
+		};
+		const appendSyntheticInput = (input: string) => {
+			for (const character of input) {
+				if (character === "\u0004") {
+					continue;
 				}
-			};
-			const appendSyntheticInput = (input: string) => {
-				for (const character of input) {
-					if (character === "\u0004") {
-						continue;
+				if (character === "\b" || character === "\u007f") {
+					if (bufferedInput.length > 0) {
+						bufferedInput = bufferedInput.slice(0, -1);
+						emitSyntheticTerminal("\b \b");
 					}
-					if (character === "\b" || character === "\u007f") {
-						if (bufferedInput.length > 0) {
-							bufferedInput = bufferedInput.slice(0, -1);
-							emitSyntheticTerminal("\b \b");
-						}
-						continue;
-					}
-					bufferedInput += character;
-					if (character === "\n") {
-						emitSyntheticTerminal("\n");
-					} else if (character >= " ") {
-						emitSyntheticTerminal(character);
-					}
+					continue;
 				}
-			};
+				bufferedInput += character;
+				if (character === "\n") {
+					emitSyntheticTerminal("\n");
+				} else if (character >= " ") {
+					emitSyntheticTerminal(character);
+				}
+			}
+		};
 
 		let onData: ((data: Uint8Array) => void) | null = null;
 		terminalHandlers.add((data) => onData?.(data));
@@ -1039,30 +1041,30 @@ export class NativeSidecarKernelProxy {
 			schedulePrompt(0);
 			return {
 				pid: syntheticPid,
-					async write(data) {
-						if (syntheticExitCode !== null) {
-							return;
-						}
+				async write(data) {
+					if (syntheticExitCode !== null) {
+						return;
+					}
 					if (activeForegroundProcess) {
 						const rawText =
 							typeof data === "string"
 								? data
 								: Buffer.from(data).toString("utf8");
-							if (rawText.includes("\u0003")) {
-								const [beforeInterrupt] = rawText.split("\u0003");
-								if (beforeInterrupt) {
-									await writeForegroundInput(
-										activeForegroundProcess,
-										beforeInterrupt,
-									);
-								}
-								emitSyntheticTerminal("^C\n");
-								activeForegroundProcess.kill(2);
-								return;
+						if (rawText.includes("\u0003")) {
+							const [beforeInterrupt] = rawText.split("\u0003");
+							if (beforeInterrupt) {
+								await writeForegroundInput(
+									activeForegroundProcess,
+									beforeInterrupt,
+								);
 							}
-							await writeForegroundInput(activeForegroundProcess, data);
+							emitSyntheticTerminal("^C\n");
+							activeForegroundProcess.kill(2);
 							return;
 						}
+						await writeForegroundInput(activeForegroundProcess, data);
+						return;
+					}
 					const rawText =
 						typeof data === "string"
 							? data
@@ -1086,20 +1088,20 @@ export class NativeSidecarKernelProxy {
 						finishSyntheticShell(0);
 						return;
 					}
-						appendSyntheticInput(
-							text.replace(/\r\n/g, "\n").replace(/\r/g, "\n"),
-						);
-						while (true) {
-							const newlineIndex = bufferedInput.indexOf("\n");
-							if (newlineIndex < 0) {
-								break;
+					appendSyntheticInput(
+						text.replace(/\r\n/g, "\n").replace(/\r/g, "\n"),
+					);
+					while (true) {
+						const newlineIndex = bufferedInput.indexOf("\n");
+						if (newlineIndex < 0) {
+							break;
 						}
-							const line = bufferedInput
-								.slice(0, newlineIndex)
-								.replace(/\r$/, "");
-							bufferedInput = bufferedInput.slice(newlineIndex + 1);
-							const nextCommand = bufferedCommand
-								? `${bufferedCommand}\n${line}`
+						const line = bufferedInput
+							.slice(0, newlineIndex)
+							.replace(/\r$/, "");
+						bufferedInput = bufferedInput.slice(newlineIndex + 1);
+						const nextCommand = bufferedCommand
+							? `${bufferedCommand}\n${line}`
 							: line;
 						if (commandNeedsContinuation(nextCommand)) {
 							bufferedCommand = nextCommand;
@@ -1461,7 +1463,11 @@ export class NativeSidecarKernelProxy {
 		return this.dispatchWrite(
 			path,
 			(mount, relativePath) =>
-				this.removePathLocal(mount.fs, relativePath, options?.recursive ?? false),
+				this.removePathLocal(
+					mount.fs,
+					relativePath,
+					options?.recursive ?? false,
+				),
 			() =>
 				this.client.removePath(this.session, this.vm, path, {
 					recursive: options?.recursive ?? false,
@@ -3184,6 +3190,14 @@ export function serializeRootFilesystemForSidecar(
 	config?: RootFilesystemConfig,
 	bootstrapLower?: RootSnapshotExport | null,
 ): SidecarRootFilesystemDescriptor {
+	if (config?.type === "native") {
+		return {
+			mode: "ephemeral",
+			disableDefaultBaseLayer: true,
+			lowers: [],
+			bootstrapEntries: [],
+		};
+	}
 	const lowerInputs = [
 		...(config?.lowers ?? []),
 		...(bootstrapLower ? [bootstrapLower] : []),

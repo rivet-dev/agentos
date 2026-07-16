@@ -56,5 +56,5 @@ export function useAgentOsActor() {
 	return ctx.bundle.useActor({
 		name: INSPECTOR_ACTOR_NAME,
 		id: ctx.actorId,
-	});
+	} as unknown as Parameters<typeof ctx.bundle.useActor>[0]);
 }

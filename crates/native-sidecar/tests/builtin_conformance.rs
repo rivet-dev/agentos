@@ -1756,14 +1756,6 @@ fn run_guest_script(case_name: &str, script: &str) -> Value {
     run_guest_probe(case_name, &cwd, &entrypoint)
 }
 
-fn current_openssl_version() -> String {
-    openssl::version::version()
-        .split_whitespace()
-        .nth(1)
-        .unwrap_or_else(openssl::version::version)
-        .to_string()
-}
-
 fn process_runtime_stats_are_live_impl() {
     let cwd = temp_dir("process-runtime-stats");
     let entrypoint = cwd.join("entry.mjs");
@@ -1855,7 +1847,7 @@ console.log(JSON.stringify({
     );
     assert_eq!(
         guest["versions"]["openssl"],
-        Value::String(current_openssl_version())
+        Value::String(agentos_execution::EMULATED_OPENSSL_VERSION.to_owned())
     );
 }
 

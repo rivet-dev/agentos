@@ -119,21 +119,8 @@ shell *args:
 			pnpm --dir "$r6_root" --filter 'rivetkit...' build
 		fi
 	fi
-	cargo_packages=(-p agentos-sidecar)
-	if [[ "$actor_mode" == true ]]; then
-		cargo_packages+=(-p agentos-actor-plugin)
-	fi
-	CARGO_TARGET_DIR="$PWD/target" cargo build "${cargo_packages[@]}"
-	actor_env=()
-	if [[ "$actor_mode" == true ]]; then
-		case "$(uname -s)" in
-			Darwin) plugin_name=libagentos_actor_plugin.dylib ;;
-			Linux) plugin_name=libagentos_actor_plugin.so ;;
-			*) plugin_name=agentos_actor_plugin.dll ;;
-		esac
-		actor_env+=(AGENTOS_PLUGIN_BIN="$PWD/target/debug/$plugin_name")
-	fi
-	env "${actor_env[@]}" \
+	CARGO_TARGET_DIR="$PWD/target" cargo build -p agentos-sidecar
+	env \
 		AGENTOS_SIDECAR_BIN="$PWD/target/debug/agentos-sidecar" \
 		NODE_OPTIONS="--no-deprecation ${NODE_OPTIONS:-}" \
 		pnpm --filter @rivet-dev/agentos-shell exec tsx src/main.ts "$@"

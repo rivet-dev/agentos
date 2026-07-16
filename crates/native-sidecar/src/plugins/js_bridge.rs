@@ -336,7 +336,7 @@ const S_IFREG: u32 = 0o100000;
 const S_IFLNK: u32 = 0o120000;
 
 impl JsBridgeVirtualStat {
-    /// Bridge backends (e.g. the actor plugin's durable-storage fs) may send
+    /// Bridge backends (e.g. a callback-backed durable-storage fs) may send
     /// permission-only `mode` values and carry the entry type in the
     /// `isDirectory` / `isSymbolicLink` booleans. Guest-facing consumers
     /// (WASI filestat, Node `Stats.isFile()`) derive the type from `S_IFMT`

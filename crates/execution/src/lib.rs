@@ -18,6 +18,7 @@ pub mod python;
 pub mod wasm;
 
 pub use agentos_bridge::GuestRuntime;
+pub use agentos_v8_runtime::bridge::EMULATED_OPENSSL_VERSION;
 pub use agentos_v8_runtime::execution::GuestModuleReader;
 pub use javascript::{
     record_sync_bridge_request_enqueued, record_sync_bridge_request_observed,

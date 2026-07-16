@@ -47,7 +47,7 @@ serde = "1"
 	}
 });
 
-test("bumpPackageJsons injects agent-os sidecar, runtime sidecar, and plugin platform optional dependencies", async () => {
+test("bumpPackageJsons injects sidecar platform optional dependencies", async () => {
 	const repoRoot = await mkdtemp(join(tmpdir(), "agentos-version-test-"));
 	try {
 		await writeJson(repoRoot, "package.json", {
@@ -62,7 +62,6 @@ test("bumpPackageJsons injects agent-os sidecar, runtime sidecar, and plugin pla
 				"  - packages/*",
 				"  - packages/sidecar-binary/npm/*",
 				"  - packages/runtime-sidecar/npm/*",
-				"  - packages/agentos-plugin/npm/*",
 				"",
 			].join("\n"),
 		);
@@ -78,10 +77,6 @@ test("bumpPackageJsons injects agent-os sidecar, runtime sidecar, and plugin pla
 			...DEFAULT_SIDECAR_PLATFORMS.map((platform) => [
 				`packages/runtime-sidecar/npm/${platform}`,
 				`@rivet-dev/agentos-runtime-sidecar-${platform}`,
-			]),
-			...DEFAULT_SIDECAR_PLATFORMS.map((platform) => [
-				`packages/agentos-plugin/npm/${platform}`,
-				`@rivet-dev/agentos-plugin-${platform}`,
 			]),
 		]) {
 			await writeJson(repoRoot, join(rel, "package.json"), {
@@ -124,18 +119,6 @@ test("bumpPackageJsons injects agent-os sidecar, runtime sidecar, and plugin pla
 			),
 		);
 
-		const agentosManifest = JSON.parse(
-			await readFile(join(repoRoot, "packages/agentos/package.json"), "utf8"),
-		);
-		assert.deepEqual(
-			agentosManifest.optionalDependencies,
-			Object.fromEntries(
-				DEFAULT_SIDECAR_PLATFORMS.map((platform) => [
-					`@rivet-dev/agentos-plugin-${platform}`,
-					"0.3.0",
-				]).sort(),
-			),
-		);
 	} finally {
 		await rm(repoRoot, { recursive: true, force: true });
 	}

@@ -1,0 +1,118 @@
+# This schema is the client-side copy of Rivet's actor UDS protocol v1.
+# The actor and sidecar intentionally ship in lockstep with no compatibility shim.
+
+type ClientHello struct {
+	token: str
+}
+
+type HelloOk struct {
+	maxFrameBytes: u32
+}
+
+type HelloRejectUnauthorized void
+type HelloRejectUnsupportedVersion struct {
+	minVersion: u16
+	maxVersion: u16
+}
+
+type ServerHello union {
+	HelloOk |
+	HelloRejectUnauthorized |
+	HelloRejectUnsupportedVersion
+}
+
+type SqlNull void
+type SqlInteger i64
+type SqlReal f64
+type SqlText str
+type SqlBlob data
+
+type SqlValue union {
+	SqlNull |
+	SqlInteger |
+	SqlReal |
+	SqlText |
+	SqlBlob
+}
+
+type SqlRow list<SqlValue>
+
+type SqliteExec struct {
+	script: str
+}
+
+type SqliteQuery struct {
+	sql: str
+	params: list<SqlValue>
+}
+
+type RequestPayload union {
+	SqliteExec |
+	SqliteQuery
+}
+
+type Request struct {
+	requestId: u32
+	leaseKey: optional<str>
+	payload: RequestPayload
+}
+
+type ClientFrame union {
+	Request
+}
+
+type SqliteExecOk void
+type SqliteQueryOk struct {
+	columns: list<str>
+	rows: list<SqlRow>
+	changes: i64
+	lastInsertRowId: optional<i64>
+}
+
+type SqlError struct {
+	code: i32
+	statementIndex: u32
+	message: str
+}
+
+type EndpointClosed void
+type QueueFull struct {
+	limit: str
+	capacity: u32
+}
+
+type TxnOpenAtEnd void
+type LeaseExpired void
+type ResponseTooLarge void
+
+type ResponsePayload union {
+	SqliteExecOk |
+	SqliteQueryOk |
+	SqlError |
+	EndpointClosed |
+	QueueFull |
+	TxnOpenAtEnd |
+	LeaseExpired |
+	ResponseTooLarge
+}
+
+type Response struct {
+	requestId: u32
+	payload: ResponsePayload
+}
+
+type FrameTooLarge void
+type MalformedFrame void
+type GoAwayReason union {
+	FrameTooLarge |
+	MalformedFrame
+}
+
+type GoAway struct {
+	reason: GoAwayReason
+}
+
+type ServerFrame union {
+	Response |
+	GoAway
+}

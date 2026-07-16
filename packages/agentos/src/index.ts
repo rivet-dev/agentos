@@ -1,77 +1,45 @@
-// Rust-backed agent-os actor surface (native actor plugin / cdylib).
-//
-// Only the `agentOS()` definition function, the config schema, the
-// `nodeModulesMount` helper, the plugin-path resolver, and the public domain
-// types are exported. All actor lifecycle + action dispatch live in the Rust
-// plugin (`crates/agentos-actor-plugin`), loaded by RivetKit via the generic
-// native-plugin ABI.
-
-import type {
-	AgentOsOptions,
-	JsonRpcNotification,
-	PermissionRequest,
-} from "@rivet-dev/agentos-core";
 import { setup as rivetkitSetup } from "rivetkit";
-import { type AgentOsActorDefinition, createAgentOS } from "./actor.js";
-import type {
-	AgentOsActorConfigInput,
-	NativeAgentOsOptions,
-} from "./config.js";
 
-// 512 MiB — large agent prompts/results cross the actor websocket transport as
-// single messages; RivetKit's registry-level defaults (maxIncomingMessageSize
-// 64 KiB, maxOutgoingMessageSize 1 MiB) truncate real payloads. Still a finite
-// bound per the limits-and-observability policy.
 const AGENTOS_REGISTRY_MESSAGE_SIZE_DEFAULT = 512 * 1024 * 1024;
 
 /**
- * `setup()` wrapper that defaults the registry transport message-size caps to
- * never-hit-by-normal-use values for AgentOS apps, mirroring the per-actor crank
- * in `DEFAULT_AGENTOS_ACTOR_OPTIONS`. Any caller-supplied value wins, so an app
- * can still tighten the bound when it wants one.
+ * RivetKit setup with the direct actor SQLite UDS enabled. The UDS is consumed
+ * by the AgentOS sidecar; filesystem SQL never crosses the JavaScript layer.
  */
 export const setup: typeof rivetkitSetup = ((
 	input: Parameters<typeof rivetkitSetup>[0],
 ) =>
 	rivetkitSetup({
+		...input,
 		maxIncomingMessageSize: AGENTOS_REGISTRY_MESSAGE_SIZE_DEFAULT,
 		maxOutgoingMessageSize: AGENTOS_REGISTRY_MESSAGE_SIZE_DEFAULT,
-		...input,
-	})) as typeof rivetkitSetup;
+		experimentalActorUds: true,
+	} as Parameters<typeof rivetkitSetup>[0])) as typeof rivetkitSetup;
 
-// Re-export the software-definition helper so custom agents/tools/commands can
-// be defined without importing @rivet-dev/agentos-core directly.
-export { defineSoftware } from "@rivet-dev/agentos-core";
-export {
-	buildConfigJson,
-	type NodeModulesMountConfig,
-	nodeModulesMount,
-} from "./actor.js";
-export {
-	type AgentOsActorConfig,
-	type AgentOsActorConfigInput,
-	agentOsActorConfigSchema,
-	type NativeAgentOsOptions,
-	nativeAgentOsOptionsSchema,
-} from "./config.js";
 export type {
-	AgentOsActions,
+	AgentOsOptions,
 	CreateSessionOptions,
 	DirEntry,
-	ReadFileResult,
-	ScheduledCronJob,
-	SignedPreviewUrl,
-	SpawnedProcess,
-	VmFetchOptions,
-	VmFetchResponse,
-	WriteFileResult,
-} from "./generated/actor-actions.generated.js";
-export { getPluginPath } from "./plugin-binary.js";
+	NodeModulesMountConfig,
+	PromptResult,
+} from "@rivet-dev/agentos-core";
+export { defineSoftware, nodeModulesMount } from "@rivet-dev/agentos-core";
+export type {
+	AgentOsActorConfigInput as AgentOSActorConfigInput,
+	AgentOsActorConfigInput as AgentOSConfigInput,
+} from "./actor.js";
+export {
+	type AgentOsActions,
+	type AgentOsActorConfigInput,
+	type AgentOsActorExtras,
+	createAgentOS,
+	createAgentOS as agentOS,
+	createAgentOsActions,
+	type VmFetchOptions,
+	type VmFetchResponse,
+} from "./actor.js";
 export type {
 	AgentCrashedPayload,
-	AgentOsActionContext,
-	AgentOsActorState,
-	AgentOsActorVars,
 	AgentOsEvents,
 	CronEventPayload,
 	PermissionRequestPayload,
@@ -79,7 +47,6 @@ export type {
 	PersistedSessionRecord,
 	ProcessExitPayload,
 	ProcessOutputPayload,
-	PromptResult,
 	SerializableCronAction,
 	SerializableCronEvent,
 	SerializableCronJobInfo,
@@ -90,46 +57,3 @@ export type {
 	VmBootedPayload,
 	VmShutdownPayload,
 } from "./types.js";
-
-export type AgentOSActorConfigInput<TConnParams = undefined> =
-	NativeAgentOsOptions & Omit<AgentOsActorConfigInput<TConnParams>, "options">;
-
-export type AgentOSConfigInput<TConnParams = undefined> = AgentOsOptions & {
-	preview?: AgentOsActorConfigInput<TConnParams>["preview"];
-	actorOptions?: AgentOsActorConfigInput<TConnParams>["actorOptions"];
-	onBeforeConnect?: AgentOsActorConfigInput<TConnParams>["onBeforeConnect"];
-	onSessionEvent?: (
-		sessionId: string,
-		event: JsonRpcNotification,
-	) => void | Promise<void>;
-	onPermissionRequest?: (
-		sessionId: string,
-		request: PermissionRequest,
-	) => void | Promise<void>;
-};
-
-export function agentOS<TConnParams = undefined>(
-	config: AgentOSConfigInput<TConnParams> = {},
-): AgentOsActorDefinition<TConnParams> {
-	const {
-		preview,
-		actorOptions,
-		onBeforeConnect,
-		onSessionEvent,
-		onPermissionRequest,
-		...options
-	} = config;
-
-	return createAgentOS({
-		options,
-		actorOptions,
-		preview,
-		onBeforeConnect,
-		onSessionEvent: onSessionEvent
-			? (_ctx, sessionId, event) => onSessionEvent(sessionId, event)
-			: undefined,
-		onPermissionRequest: onPermissionRequest
-			? (_ctx, sessionId, request) => onPermissionRequest(sessionId, request)
-			: undefined,
-	} as AgentOsActorConfigInput<TConnParams>);
-}
