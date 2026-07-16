@@ -9,6 +9,7 @@ import {
 	IconButton,
 	PlusIcon,
 	relativeTime,
+	SearchIcon,
 	StatusDot,
 } from "../common";
 import { isInspectorActionError } from "../lib/actor-client";
@@ -585,6 +586,17 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 	// The "+" button creates the session right away (boots the VM if asleep)
 	// instead of arming a compose-first flow that only created on send.
 	const [creatingSession, setCreatingSession] = useState(false);
+	// Sidebar id search, mirroring the dashboard's actor-list search.
+	const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
+	const [sessionSearch, setSessionSearch] = useState("");
+	const sessionQuery = sessionSearch.trim().toLowerCase();
+	const visibleSessions = sessionQuery
+		? sessions.filter(
+				(s) =>
+					s.sessionId.toLowerCase().includes(sessionQuery) ||
+					s.agentType.toLowerCase().includes(sessionQuery),
+			)
+		: sessions;
 	const [createError, setCreateError] = useState<unknown>(null);
 	const createSessionNow = async () => {
 		if (creatingSession) return;
@@ -637,22 +649,58 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 							return liveCount > 0 ? ` · ${liveCount} live` : "";
 						})()}
 					</span>
+					<span className="ml-auto" />
+					<IconButton
+						title="Search sessions by id"
+						onClick={() =>
+							setSessionSearchOpen((open) => {
+								if (open) setSessionSearch("");
+								return !open;
+							})
+						}
+						className="mr-1"
+					>
+						<SearchIcon className="size-3.5" />
+					</IconButton>
 					<IconButton
 						title={creatingSession ? "Creating session…" : "New session"}
 						onClick={() => void createSessionNow()}
 						disabled={creatingSession}
-						className="ml-auto"
 					>
 						<PlusIcon className="size-3.5" />
 					</IconButton>
 				</div>
+				{sessionSearchOpen ? (
+					<div className="px-3 pb-1.5">
+						<input
+							value={sessionSearch}
+							onChange={(e) => setSessionSearch(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === "Escape") {
+									setSessionSearch("");
+									setSessionSearchOpen(false);
+								}
+							}}
+							spellCheck={false}
+							autoFocus
+							aria-label="Search sessions"
+							placeholder="session id or agent"
+							className="w-full rounded border bg-background px-2 py-1 font-mono text-xs focus:outline-none"
+						/>
+					</div>
+				) : null}
 				{createError ? <ActionErrorNote error={createError} className="border-b py-2" /> : null}
 				{sessions.length === 0 ? (
 					<AgentOsEmpty>No sessions yet.</AgentOsEmpty>
 				) : (
 					<ScrollArea className="min-h-0 flex-1">
 						<div className="p-1.5">
-							{sessions.map((s) => (
+							{visibleSessions.length === 0 ? (
+								<div className="px-2 py-3 text-center text-xs text-muted-foreground">
+									No sessions match.
+								</div>
+							) : null}
+							{visibleSessions.map((s) => (
 								<div
 									key={s.sessionId}
 									role="button"
