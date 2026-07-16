@@ -237,7 +237,7 @@ export function SystemTabConnected({ actorId }: { actorId: string }) {
 	return (
 		<VmBootGate
 			actorId={actorId}
-			note="VM not booted — processes, software, and mounts are enumerated by the running VM."
+			note="VM not booted."
 			actionLabel="Boot the VM and show system info"
 		>
 			<SystemLoaded actorId={actorId} />
@@ -271,16 +271,15 @@ function SystemLoaded({ actorId }: { actorId: string }) {
 				<SectionHeader right={<VmStatusBadges actorId={actorId} />}>Overview</SectionHeader>
 				{/* Inside-the-VM facts only: actor identity (id, key, runner) lives
 				    in the dashboard's own Metadata tab. */}
-				<div className="grid grid-cols-2 gap-x-8 gap-y-2 border-b px-4 py-3 text-xs sm:grid-cols-3">
+				<div className="grid grid-cols-2 gap-x-8 gap-y-2 border-b px-4 py-3 text-xs sm:grid-cols-4">
 					<OverviewField label="Live sessions">
 						{sessions == null ? "—" : String(sessions)}
 					</OverviewField>
-					<OverviewField label="Processes">
-						{`${processCounts.running} running / ${processCounts.total}`}
+					<OverviewField label="Running processes">
+						{`${processCounts.running} of ${processCounts.total}`}
 					</OverviewField>
-					<OverviewField label="Software / mounts">
-						{`${software.data.length} / ${mounts.data.length}`}
-					</OverviewField>
+					<OverviewField label="Software packages">{String(software.data.length)}</OverviewField>
+					<OverviewField label="Mounts">{String(mounts.data.length)}</OverviewField>
 				</div>
 			</section>
 			<section>

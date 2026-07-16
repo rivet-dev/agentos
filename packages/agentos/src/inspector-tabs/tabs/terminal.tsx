@@ -481,11 +481,6 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 							>
 								Start shell
 							</button>
-							<span className="text-xs text-muted-foreground/70">
-								Runs sh in the VM, booting it first if it is asleep. Shells stay open across
-								inspector tabs, but die when the VM sleeps. Files under mounts persist across
-								restarts; the rest of the filesystem resets.
-							</span>
 							{startError ? (
 								<ActionErrorNote error={startError} className="p-0 text-left" />
 							) : null}

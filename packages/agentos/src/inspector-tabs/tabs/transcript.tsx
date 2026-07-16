@@ -719,14 +719,7 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 					<AgentOsEmpty>
 						<div className="flex flex-col items-center gap-5">
 							<AgentOsWordmark className="w-44" />
-							<span>
-								No session selected — press + or send a prompt below to start one.
-								<br />
-								<span className="text-xs text-muted-foreground/70">
-									Sessions, transcripts, and files under mounts persist; the rest of the
-									filesystem resets when the VM restarts.
-								</span>
-							</span>
+							<span>No session selected — press + or send a prompt below to start one.</span>
 						</div>
 					</AgentOsEmpty>
 				) : (

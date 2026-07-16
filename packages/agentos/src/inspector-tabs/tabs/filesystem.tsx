@@ -317,7 +317,7 @@ export function FilesystemTabConnected({ actorId }: { actorId: string }) {
 	return (
 		<VmBootGate
 			actorId={actorId}
-			note="VM not booted — the root filesystem is in-memory, so there are no files until it boots."
+			note="VM not booted."
 			actionLabel="Boot the VM and browse files"
 		>
 			<FilesystemLoaded actorId={actorId} />
@@ -507,16 +507,7 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 					) : notADir ? (
 						<AgentOsEmpty>Not a directory, or does not exist: {root}</AgentOsEmpty>
 					) : roots.length === 0 ? (
-						<AgentOsEmpty>
-							<span>
-								Empty directory.
-								<br />
-								<span className="text-xs text-muted-foreground/70">
-									Files under mounts persist across VM restarts; unmounted paths live in an
-									in-memory overlay that resets.
-								</span>
-							</span>
-						</AgentOsEmpty>
+						<AgentOsEmpty>Empty directory.</AgentOsEmpty>
 					) : (
 						roots.map((entry) => (
 							<FileTreeItem
