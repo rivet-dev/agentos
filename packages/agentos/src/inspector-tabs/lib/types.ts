@@ -4,6 +4,8 @@
 // ── Software ──────────────────────────────────────────────────────────
 export interface SoftwareBundle {
 	name: string;
+	/** Package basename ("coreutils", "claude-code") — keys the logo lookup. */
+	slug: string;
 	version: string;
 	source: "rivet-dev" | "user";
 	binaries: string[]; // command names the package ships (from SoftwareInfo.commands)

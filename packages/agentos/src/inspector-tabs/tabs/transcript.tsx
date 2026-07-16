@@ -647,10 +647,10 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 					</IconButton>
 				</div>
 				{createError ? <ActionErrorNote error={createError} className="border-b py-2" /> : null}
-				<ScrollArea className="min-h-0 flex-1">
-					{sessions.length === 0 ? (
-						<AgentOsEmpty>No sessions yet.</AgentOsEmpty>
-					) : (
+				{sessions.length === 0 ? (
+					<AgentOsEmpty>No sessions yet.</AgentOsEmpty>
+				) : (
+					<ScrollArea className="min-h-0 flex-1">
 						<div className="p-1.5">
 							{sessions.map((s) => (
 								<div
@@ -706,8 +706,8 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 								</div>
 							))}
 						</div>
-					)}
-				</ScrollArea>
+					</ScrollArea>
+				)}
 			</div>
 			<div className="relative flex min-h-0 flex-1 flex-col">
 				{/* VM trouble chips float over the thread's top-right corner;
@@ -723,23 +723,26 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 								No session selected — press + or send a prompt below to start one.
 								<br />
 								<span className="text-xs text-muted-foreground/70">
-									Sessions and their transcripts persist, but the VM's root filesystem is
-									in-memory: files do not survive VM restarts.
+									Sessions, transcripts, and files under mounts persist; the rest of the
+									filesystem resets when the VM restarts.
 								</span>
 							</span>
 						</div>
 					</AgentOsEmpty>
 				) : (
 					<>
-						<ScrollArea className="min-h-0 flex-1">
-							{events.length === 0 && !turnActive ? (
-								<AgentOsEmpty>
-									<div className="flex flex-col items-center gap-5">
-										<AgentOsWordmark className="w-44" />
-										<span>No activity yet — send a prompt below.</span>
-									</div>
-								</AgentOsEmpty>
-							) : (
+						{/* The empty state lives OUTSIDE the ScrollArea: the Radix
+						    viewport wrapper breaks the h-full chain, which pinned the
+						    watermark to the top instead of centering it. */}
+						{events.length === 0 && !turnActive ? (
+							<AgentOsEmpty>
+								<div className="flex flex-col items-center gap-5">
+									<AgentOsWordmark className="w-44" />
+									<span>No activity yet — send a prompt below.</span>
+								</div>
+							</AgentOsEmpty>
+						) : (
+							<ScrollArea className="min-h-0 flex-1">
 								<div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
 									{events.map((e) => (
 										<TranscriptEventView key={e.key} event={e} />
@@ -747,8 +750,8 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 									{turnActive ? <TurnInFlight /> : null}
 									<ScrollAnchor count={backfill.length + live.length} />
 								</div>
-							)}
-						</ScrollArea>
+							</ScrollArea>
+						)}
 					</>
 				)}
 				<Composer

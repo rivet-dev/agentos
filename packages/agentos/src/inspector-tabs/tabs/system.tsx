@@ -10,6 +10,7 @@ import { agentOsSource, healthQueryOptions } from "../lib/source";
 import type { MountInfo, SignedPreviewUrl, SoftwareBundle } from "../lib/types";
 import { Badge } from "../ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
+import { SOFTWARE_LOGOS } from "../software-logos";
 import { ScrollArea } from "../ui/scroll-area";
 import { VmBootGate } from "../vm-boot-gate";
 import { VmStatusBadges } from "../vm-status-badges";
@@ -19,6 +20,7 @@ import React from "react";
 function SoftwareRow({ bundle }: { bundle: SoftwareBundle }) {
 	const [open, setOpen] = useState(false);
 	const hasBinaries = bundle.binaries.length > 0;
+	const logo = SOFTWARE_LOGOS[bundle.slug];
 
 	return (
 		<Collapsible open={open} onOpenChange={setOpen} className="border-none">
@@ -33,6 +35,17 @@ function SoftwareRow({ bundle }: { bundle: SoftwareBundle }) {
 						!hasBinaries && "opacity-0",
 					)}
 				/>
+				{/* Logos are drawn for the light registry site, so they sit on a
+				    light chip; packages without one get a letter avatar. */}
+				<span className="flex size-6 shrink-0 items-center justify-center overflow-hidden rounded border bg-white/90">
+					{logo ? (
+						<img src={logo} alt="" className="size-4" />
+					) : (
+						<span className="text-[11px] font-medium text-black/60">
+							{bundle.slug.charAt(0)}
+						</span>
+					)}
+				</span>
 				<span className="flex-1 truncate font-mono text-sm">{bundle.name}</span>
 				{hasBinaries ? (
 					<span className="text-[11px] tabular-nums text-muted-foreground/70">

@@ -502,8 +502,8 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 								Empty directory.
 								<br />
 								<span className="text-xs text-muted-foreground/70">
-									The VM root filesystem is in-memory — files from previous VM boots do not
-									survive restarts.
+									Files under mounts persist across VM restarts; unmounted paths live in an
+									in-memory overlay that resets.
 								</span>
 							</span>
 						</AgentOsEmpty>

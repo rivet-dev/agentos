@@ -392,10 +392,10 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 						</IconButton>
 					) : null}
 				</div>
-				<ScrollArea className="min-h-0 flex-1">
-					{!hasShells ? (
-						<AgentOsEmpty>No shells yet.</AgentOsEmpty>
-					) : (
+				{!hasShells ? (
+					<AgentOsEmpty>No shells yet.</AgentOsEmpty>
+				) : (
+					<ScrollArea className="min-h-0 flex-1">
 						<div className="p-1.5">
 							{shells.map((s) => (
 								<div
@@ -460,8 +460,8 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 								</div>
 							))}
 						</div>
-					)}
-				</ScrollArea>
+					</ScrollArea>
+				)}
 			</div>
 			<div className="relative flex min-h-0 flex-1 flex-col">
 				{/* VM trouble chips float over the top-right corner; nothing renders
@@ -483,8 +483,8 @@ export function TerminalTabConnected({ actorId }: { actorId: string }) {
 							</button>
 							<span className="text-xs text-muted-foreground/70">
 								Runs sh in the VM, booting it first if it is asleep. Shells stay open across
-								inspector tabs, but die when the VM sleeps; the root filesystem is in-memory
-								and does not survive VM restarts.
+								inspector tabs, but die when the VM sleeps. Files under mounts persist across
+								restarts; the rest of the filesystem resets.
 							</span>
 							{startError ? (
 								<ActionErrorNote error={startError} className="p-0 text-left" />

@@ -41,6 +41,7 @@ function softwareInfoToBundle(info: SoftwareInfo): SoftwareBundle {
 			: "user";
 	return {
 		name: `${name} · ${info.kind}`,
+		slug: (pkg.split("/").filter(Boolean).pop() ?? pkg).toLowerCase(),
 		version: info.version ?? "—",
 		source,
 		binaries: info.commands ?? [],
