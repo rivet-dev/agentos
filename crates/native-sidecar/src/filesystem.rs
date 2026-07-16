@@ -1073,7 +1073,7 @@ impl ProcessModuleFsReader<'_> {
     }
 
     fn mapped_host_path(&self, guest_path: &str) -> Option<MappedRuntimeHostPath> {
-        mapped_runtime_host_path_for_read(self.process, guest_path)
+        mapped_runtime_host_path_for_read(self.kernel, self.process, guest_path)
     }
 
     fn materialize_mapped_path(
@@ -1430,7 +1430,12 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 javascript_sync_rpc_arg_u32_optional(&request.args, 2, "filesystem open mode")?;
             record_fs_sync_subphase(request.method.as_str(), "parse", phase_start);
             let phase_start = Instant::now();
-            match mapped_runtime_host_path(process, path, mapped_host_open_is_writable(flags)) {
+            match mapped_runtime_host_path(
+                kernel,
+                process,
+                path,
+                mapped_host_open_is_writable(flags),
+            ) {
                 Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
                     record_fs_sync_subphase(
                         request.method.as_str(),
@@ -1734,7 +1739,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             )?;
             let path = path.as_str();
             let encoding = javascript_sync_rpc_encoding(&request.args);
-            if let Some(mapped_host) = mapped_runtime_host_path_for_read(process, path) {
+            if let Some(mapped_host) = mapped_runtime_host_path_for_read(kernel, process, path) {
                 materialize_mapped_host_path_from_kernel(kernel, kernel_pid, path, &mapped_host)?;
                 let opened = open_mapped_runtime_beneath(
                     &mapped_host,
@@ -1779,7 +1784,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             } else {
                 javascript_sync_rpc_bytes_arg(&request.args, 1, "filesystem writeFile contents")?
             };
-            match mapped_runtime_host_path(process, path, true) {
+            match mapped_runtime_host_path(kernel, process, path, true) {
                 Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
                     let opened = open_mapped_runtime_beneath(
                         &mapped_host,
@@ -1820,7 +1825,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             let path =
                 javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem stat path")?;
             let path = path.as_str();
-            if let Some(mapped_host) = mapped_runtime_host_path_for_read(process, path) {
+            if let Some(mapped_host) = mapped_runtime_host_path_for_read(kernel, process, path) {
                 materialize_mapped_host_path_from_kernel(kernel, kernel_pid, path, &mapped_host)?;
                 let opened = open_mapped_runtime_beneath(
                     &mapped_host,
@@ -1846,7 +1851,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             let path =
                 javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem lstat path")?;
             let path = path.as_str();
-            if let Some(mapped_host) = mapped_runtime_host_path_for_read(process, path) {
+            if let Some(mapped_host) = mapped_runtime_host_path_for_read(kernel, process, path) {
                 materialize_mapped_host_path_from_kernel(kernel, kernel_pid, path, &mapped_host)?;
                 let metadata = mapped_runtime_symlink_metadata(&mapped_host, "fs.lstat")?;
                 return Ok(metadata.to_value());
@@ -1869,7 +1874,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             let path = path.as_str();
             let recursive =
                 javascript_sync_rpc_option_bool(&request.args, 1, "recursive").unwrap_or(false);
-            match mapped_runtime_host_path(process, path, true) {
+            match mapped_runtime_host_path(kernel, process, path, true) {
                 Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
                     if mapped_runtime_relative_path(&mapped_host)? == Path::new(".") {
                         create_mapped_runtime_root_directory(&mapped_host, recursive)?;
@@ -1916,7 +1921,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     "EINVAL: invalid filesystem access mode {mode:o}"
                 )));
             }
-            if let Some(mapped_host) = mapped_runtime_host_path_for_read(process, path) {
+            if let Some(mapped_host) = mapped_runtime_host_path_for_read(kernel, process, path) {
                 materialize_mapped_host_path_from_kernel(kernel, kernel_pid, path, &mapped_host)?;
                 let opened = open_mapped_runtime_beneath(
                     &mapped_host,
@@ -1959,8 +1964,8 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 "filesystem copyFile destination",
             )?;
             let destination = destination.as_str();
-            let source_host = mapped_runtime_host_path(process, source, false);
-            let destination_host = mapped_runtime_host_path(process, destination, true);
+            let source_host = mapped_runtime_host_path(kernel, process, source, false);
+            let destination_host = mapped_runtime_host_path(kernel, process, destination, true);
             if matches!(destination_host, Some(MappedRuntimeHostAccess::ReadOnly(_))) {
                 return Err(read_only_mapped_runtime_host_path_error(destination));
             }
@@ -2053,7 +2058,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             let path =
                 javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem exists path")?;
             let path = path.as_str();
-            if let Some(mapped_host) = mapped_runtime_host_path_for_read(process, path) {
+            if let Some(mapped_host) = mapped_runtime_host_path_for_read(kernel, process, path) {
                 materialize_mapped_host_path_from_kernel(kernel, kernel_pid, path, &mapped_host)?;
                 let exists = match open_mapped_runtime_beneath(
                     &mapped_host,
@@ -2079,7 +2084,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 "filesystem readlink path",
             )?;
             let path = path.as_str();
-            if let Some(mapped_host) = mapped_runtime_host_path_for_read(process, path) {
+            if let Some(mapped_host) = mapped_runtime_host_path_for_read(kernel, process, path) {
                 materialize_mapped_host_path_from_kernel(kernel, kernel_pid, path, &mapped_host)?;
                 let target = read_mapped_runtime_link(&mapped_host, path, "fs.readlink")?;
                 return Ok(Value::String(target.to_string_lossy().into_owned()));
@@ -2095,7 +2100,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             let link_path =
                 javascript_sync_rpc_path_arg(process, &request.args, 1, "filesystem symlink path")?;
             let link_path = link_path.as_str();
-            match mapped_runtime_host_path(process, link_path, true) {
+            match mapped_runtime_host_path(kernel, process, link_path, true) {
                 Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
                     ensure_mapped_runtime_parent_dirs(&mapped_host, "fs.symlink")?;
                     let parent = open_mapped_runtime_parent_beneath(&mapped_host, "fs.symlink")?;
@@ -2147,8 +2152,8 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 "filesystem rename destination",
             )?;
             let destination = destination.as_str();
-            let source_host = mapped_runtime_host_path(process, source, true);
-            let destination_host = mapped_runtime_host_path(process, destination, true);
+            let source_host = mapped_runtime_host_path(kernel, process, source, true);
+            let destination_host = mapped_runtime_host_path(kernel, process, destination, true);
             if matches!(source_host, Some(MappedRuntimeHostAccess::ReadOnly(_))) {
                 return Err(read_only_mapped_runtime_host_path_error(source));
             }
@@ -2170,7 +2175,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             let path =
                 javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem rmdir path")?;
             let path = path.as_str();
-            match mapped_runtime_host_path(process, path, true) {
+            match mapped_runtime_host_path(kernel, process, path, true) {
                 Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
                     let parent = open_mapped_runtime_parent_beneath(&mapped_host, "fs.rmdir")?;
                     let host_path = parent.host_path.join(&parent.child_name);
@@ -2206,7 +2211,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             let path =
                 javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem unlink path")?;
             let path = path.as_str();
-            match mapped_runtime_host_path(process, path, true) {
+            match mapped_runtime_host_path(kernel, process, path, true) {
                 Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
                     // Mapped paths are a merged view of the process shadow and
                     // kernel VFS. A file created by WASM exists only in the
@@ -2261,7 +2266,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 javascript_sync_rpc_path_arg(process, &request.args, 0, "filesystem chmod path")?;
             let path = path.as_str();
             let mode = javascript_sync_rpc_arg_u32(&request.args, 1, "filesystem chmod mode")?;
-            match mapped_runtime_host_path(process, path, true) {
+            match mapped_runtime_host_path(kernel, process, path, true) {
                 Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
                     materialize_mapped_host_path_from_kernel(
                         kernel,
@@ -2343,7 +2348,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     return Ok(Value::Null);
                 }
             }
-            match mapped_runtime_host_path(process, path, true) {
+            match mapped_runtime_host_path(kernel, process, path, true) {
                 Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
                     let mapped_host_exists = if mapped_runtime_host_path_exists(&mapped_host)? {
                         true
@@ -2667,6 +2672,7 @@ fn javascript_sync_rpc_host_stat_value(metadata: &fs::Metadata) -> Value {
 }
 
 fn mapped_runtime_host_path(
+    kernel: &SidecarKernel,
     process: &ActiveProcess,
     guest_path: &str,
     writable: bool,
@@ -2712,6 +2718,18 @@ fn mapped_runtime_host_path(
             continue;
         }
         if guest_root == "/" && !normalized.starts_with('/') {
+            continue;
+        }
+        if guest_root == "/"
+            && kernel.mounted_filesystems().iter().any(|mount| {
+                mount.path != "/"
+                    && (normalized == mount.path
+                        || normalized.starts_with(&format!("{}/", mount.path)))
+            })
+        {
+            // The root mapping is only a process-shadow fallback. A non-root
+            // kernel mount is authoritative unless a more-specific host mapping
+            // matched earlier in this loop.
             continue;
         }
 
@@ -2793,10 +2811,11 @@ fn mapped_runtime_host_path(
 }
 
 fn mapped_runtime_host_path_for_read(
+    kernel: &SidecarKernel,
     process: &ActiveProcess,
     guest_path: &str,
 ) -> Option<MappedRuntimeHostPath> {
-    match mapped_runtime_host_path(process, guest_path, false) {
+    match mapped_runtime_host_path(kernel, process, guest_path, false) {
         Some(MappedRuntimeHostAccess::Writable(mapped_host))
         | Some(MappedRuntimeHostAccess::ReadOnly(mapped_host)) => Some(mapped_host),
         None => None,
@@ -4102,7 +4121,7 @@ pub(crate) fn service_javascript_fs_readdir_entries(
     path: &str,
 ) -> Result<BTreeMap<String, bool>, SidecarError> {
     if let Some(MappedRuntimeHostAccess::Writable(mapped_host)) =
-        mapped_runtime_host_path(process, path, false)
+        mapped_runtime_host_path(kernel, process, path, false)
     {
         let mut typed: BTreeMap<String, bool> = BTreeMap::new();
         match open_mapped_runtime_beneath(

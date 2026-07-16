@@ -76,6 +76,10 @@ mod python;
 
 use agentos_vm_config as vm_config;
 
+use crate::bindings::{
+    format_binding_failure_output, is_binding_command, normalized_binding_command_name,
+    resolve_binding_command, BindingCommandResolution,
+};
 use crate::filesystem::{
     handle_python_vfs_rpc_request as filesystem_handle_python_vfs_rpc_request,
     service_javascript_fs_read_sync_rpc, service_javascript_fs_readdir_raw_sync_rpc,
@@ -109,35 +113,30 @@ use crate::state::{
     ActiveHttp2Session, ActiveHttp2Stream, ActiveHttpServer, ActiveMappedHostFd, ActiveProcess,
     ActiveRealIntervalTimer, ActiveSqliteDatabase, ActiveSqliteStatement, ActiveTcpListener,
     ActiveTcpSocket, ActiveTlsState, ActiveUdpSocket, ActiveUnixListener, ActiveUnixSocket,
-    AsyncCompletionReceiver, AsyncCompletionSender, BridgeError, ExitedProcessSnapshot,
-    GuestUnixAddress, GuestUnixAddressRegistry, GuestUnixAddressRegistryEntry,
-    GuestUnixConnectionState, HostNetTransferDescription, HostNetTransferDescriptionRegistry,
-    Http2BridgeEvent, Http2ResponseSender, Http2RuntimeSnapshot, Http2SessionCommand,
-    Http2SessionSnapshot, Http2SocketSnapshot, JavascriptHttpLoopbackTarget,
-    JavascriptSocketEventPusher, JavascriptSocketFamily, JavascriptSocketPathContext,
-    JavascriptTcpListenerEvent, JavascriptTcpSocketEvent, JavascriptTlsBridgeOptions,
-    JavascriptTlsClientHello, JavascriptTlsDataValue, JavascriptTlsMaterial, JavascriptUdpFamily,
-    JavascriptUdpSocketEvent, JavascriptUnixListenerEvent, KernelSocketReadinessEvent,
-    KernelSocketReadinessRegistry, KernelSocketReadinessTarget, NativeCapabilityKey,
-    NativePlainSocketCommand, NativeTlsCommand, NativeUdpCommand, NativeUdpSendPayload,
-    NativeUdpSocketOption, NetworkResourceCounts, PendingChildProcessSync,
-    PendingChildProcessSyncCompletion, PendingHttpRequest, PendingJavascriptNetConnect,
-    PendingJavascriptNetConnectState, PendingKernelStdin, PendingPythonTcpConnect,
-    PendingTcpSocket, PendingUnixConnectionGuard, PendingUnixSocket, PlainSocketWritePayload,
-    ProcNetEntry, ProcessEventEnvelope, PythonHostSocket, PythonSocketConnectCompletion,
-    PythonTcpReadBuffer, QueuedHttp2Command, QueuedHttp2Event, ReactorIoLimits,
-    ResolvedChildProcessExecution, ResolvedTcpConnectAddr, ShadowNodeType,
+    AsyncCompletionReceiver, AsyncCompletionSender, BindingExecution, BridgeError,
+    ExitedProcessSnapshot, GuestUnixAddress, GuestUnixAddressRegistry,
+    GuestUnixAddressRegistryEntry, GuestUnixConnectionState, HostNetTransferDescription,
+    HostNetTransferDescriptionRegistry, Http2BridgeEvent, Http2ResponseSender,
+    Http2RuntimeSnapshot, Http2SessionCommand, Http2SessionSnapshot, Http2SocketSnapshot,
+    JavascriptHttpLoopbackTarget, JavascriptSocketEventPusher, JavascriptSocketFamily,
+    JavascriptSocketPathContext, JavascriptTcpListenerEvent, JavascriptTcpSocketEvent,
+    JavascriptTlsBridgeOptions, JavascriptTlsClientHello, JavascriptTlsDataValue,
+    JavascriptTlsMaterial, JavascriptUdpFamily, JavascriptUdpSocketEvent,
+    JavascriptUnixListenerEvent, KernelSocketReadinessEvent, KernelSocketReadinessRegistry,
+    KernelSocketReadinessTarget, NativeCapabilityKey, NativePlainSocketCommand, NativeTlsCommand,
+    NativeUdpCommand, NativeUdpSendPayload, NativeUdpSocketOption, NetworkResourceCounts,
+    PendingChildProcessSync, PendingChildProcessSyncCompletion, PendingHttpRequest,
+    PendingJavascriptNetConnect, PendingJavascriptNetConnectState, PendingKernelStdin,
+    PendingPythonTcpConnect, PendingTcpSocket, PendingUnixConnectionGuard, PendingUnixSocket,
+    PlainSocketWritePayload, ProcNetEntry, ProcessEventEnvelope, PythonHostSocket,
+    PythonSocketConnectCompletion, PythonTcpReadBuffer, QueuedHttp2Command, QueuedHttp2Event,
+    ReactorIoLimits, ResolvedChildProcessExecution, ResolvedTcpConnectAddr, ShadowNodeType,
     ShadowSyncInventoryEntry, SharedBridge, SharedSidecarRequestClient, SidecarKernel,
-    SocketQueryKind, TlsWritePayload, BindingExecution, VmDnsConfig, VmListenPolicy,
-    VmPendingByteBudget, VmState, DEFAULT_JAVASCRIPT_NET_BACKLOG, EXECUTION_DRIVER_NAME,
+    SocketQueryKind, TlsWritePayload, VmDnsConfig, VmListenPolicy, VmPendingByteBudget, VmState,
+    BINDING_DRIVER_NAME, DEFAULT_JAVASCRIPT_NET_BACKLOG, EXECUTION_DRIVER_NAME,
     EXECUTION_SANDBOX_ROOT_ENV, JAVASCRIPT_COMMAND, LOOPBACK_EXEMPT_PORTS_ENV,
-    MAPPED_HOST_FD_START, PYTHON_COMMAND, BINDING_DRIVER_NAME,
-    VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY, WASM_COMMAND, WASM_EXEC_COMMIT_RPC_ENV,
-    WASM_STDIO_SYNC_RPC_ENV,
-};
-use crate::bindings::{
-    format_binding_failure_output, is_binding_command, normalized_binding_command_name,
-    resolve_binding_command, BindingCommandResolution,
+    MAPPED_HOST_FD_START, PYTHON_COMMAND, VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY, WASM_COMMAND,
+    WASM_EXEC_COMMIT_RPC_ENV, WASM_STDIO_SYNC_RPC_ENV,
 };
 use crate::wire::{ProtocolFrame as WireProtocolFrame, WireFrameCodec};
 use crate::{DispatchResult, NativeSidecar, NativeSidecarBridge, SidecarError};

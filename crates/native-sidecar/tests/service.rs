@@ -41,11 +41,11 @@ mod protocol {
     pub use agentos_sidecar_protocol::protocol::*;
 }
 #[allow(dead_code)]
-#[path = "../src/state.rs"]
-mod state;
-#[allow(dead_code)]
 #[path = "../src/bindings.rs"]
 mod bindings;
+#[allow(dead_code)]
+#[path = "../src/state.rs"]
+mod state;
 #[allow(dead_code)]
 #[path = "../src/vm.rs"]
 mod vm;
@@ -111,8 +111,8 @@ mod service {
         use crate::state::{
             ActiveCipherSession, ActiveDiffieHellmanSession, ActiveEcdhSession, ActiveExecution,
             ActiveExecutionEvent, ActiveProcess, ActiveSqliteDatabase, ActiveSqliteStatement,
-            ActiveTcpListener, ActiveUdpSocket, PendingHttpRequest, ProcessEventEnvelope,
-            SidecarKernel, BindingExecution, VmPendingByteBudget, EXECUTION_SANDBOX_ROOT_ENV,
+            ActiveTcpListener, ActiveUdpSocket, BindingExecution, PendingHttpRequest,
+            ProcessEventEnvelope, SidecarKernel, VmPendingByteBudget, EXECUTION_SANDBOX_ROOT_ENV,
             JAVASCRIPT_COMMAND, LOOPBACK_EXEMPT_PORTS_ENV, PYTHON_COMMAND,
             VM_DNS_SERVERS_METADATA_KEY, VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY,
             VM_LISTEN_PORT_MAX_METADATA_KEY, VM_LISTEN_PORT_MIN_METADATA_KEY, WASM_COMMAND,
@@ -13589,7 +13589,10 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
 
             let (bindings_before, command_paths_before) = {
                 let vm = sidecar.vms.get(&vm_id).expect("configured vm");
-                assert_eq!(vm.bindings.len(), crate::bindings::MAX_REGISTERED_BINDING_COLLECTIONS);
+                assert_eq!(
+                    vm.bindings.len(),
+                    crate::bindings::MAX_REGISTERED_BINDING_COLLECTIONS
+                );
                 (vm.bindings.clone(), vm.command_guest_paths.clone())
             };
 

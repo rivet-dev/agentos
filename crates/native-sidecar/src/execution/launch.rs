@@ -116,7 +116,8 @@ fn resolve_command_execution(
     let args = apply_shell_cwd_prefix(command, args.to_vec(), &guest_cwd);
 
     if is_binding_command(vm, command) {
-        let command = normalized_binding_command_name(command).unwrap_or_else(|| command.to_owned());
+        let command =
+            normalized_binding_command_name(command).unwrap_or_else(|| command.to_owned());
         return Ok(ResolvedChildProcessExecution {
             command: command.clone(),
             process_args: std::iter::once(command.clone())
@@ -3065,8 +3066,8 @@ mod kernel_poll_sync_rpc_tests {
     use super::{
         parse_kernel_poll_args, parse_kernel_stdin_read_args,
         service_javascript_kernel_poll_sync_rpc, ActiveExecution, ActiveExecutionEvent,
-        ActiveProcess, JavascriptSyncRpcRequest, KernelPollFdResponse, SidecarKernel,
-        BindingExecution, EXECUTION_DRIVER_NAME, JAVASCRIPT_COMMAND,
+        ActiveProcess, BindingExecution, JavascriptSyncRpcRequest, KernelPollFdResponse,
+        SidecarKernel, EXECUTION_DRIVER_NAME, JAVASCRIPT_COMMAND,
     };
     use agentos_kernel::command_registry::CommandDriver;
     use agentos_kernel::kernel::{KernelVmConfig, SpawnOptions};

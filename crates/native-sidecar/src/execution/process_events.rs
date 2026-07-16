@@ -194,7 +194,9 @@ pub(super) fn spawn_binding_process_events(request: BindingProcessEventRequest) 
                                 }
                             }
                             Ok(_) => (
-                                format_binding_failure_output("unexpected sidecar binding response"),
+                                format_binding_failure_output(
+                                    "unexpected sidecar binding response",
+                                ),
                                 1,
                                 false,
                             ),

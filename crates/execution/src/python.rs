@@ -1543,6 +1543,10 @@ fn build_python_internal_env(
         internal_env.insert(PYTHON_PREWARM_ONLY_ENV.to_string(), String::from("1"));
     } else {
         internal_env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
+        internal_env.insert(
+            String::from("AGENTOS_FORWARD_KERNEL_STDIN_RPC"),
+            String::from("1"),
+        );
         internal_env.remove(PYTHON_PREWARM_ONLY_ENV);
     }
     if let Some(file_path) = &request.file_path {

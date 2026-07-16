@@ -448,14 +448,23 @@ fn legacy_limits_config(
         max_fetch_response_bytes: legacy_u64(metadata, "limits.http.max_fetch_response_bytes"),
     };
     let bindings = agentos_vm_config::BindingLimitsConfig {
-        default_binding_timeout_ms: legacy_u64(metadata, "limits.bindings.default_binding_timeout_ms"),
+        default_binding_timeout_ms: legacy_u64(
+            metadata,
+            "limits.bindings.default_binding_timeout_ms",
+        ),
         max_binding_timeout_ms: legacy_u64(metadata, "limits.bindings.max_binding_timeout_ms"),
-        max_registered_collections: legacy_u64(metadata, "limits.bindings.max_registered_collections"),
+        max_registered_collections: legacy_u64(
+            metadata,
+            "limits.bindings.max_registered_collections",
+        ),
         max_registered_bindings_per_vm: legacy_u64(
             metadata,
             "limits.bindings.max_registered_bindings_per_vm",
         ),
-        max_bindings_per_collection: legacy_u64(metadata, "limits.bindings.max_bindings_per_collection"),
+        max_bindings_per_collection: legacy_u64(
+            metadata,
+            "limits.bindings.max_bindings_per_collection",
+        ),
         max_binding_schema_bytes: legacy_u64(metadata, "limits.bindings.max_binding_schema_bytes"),
         max_examples_per_binding: legacy_u64(metadata, "limits.bindings.max_examples_per_binding"),
         max_binding_example_input_bytes: legacy_u64(

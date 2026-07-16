@@ -807,9 +807,10 @@ impl VmLimitsConfig {
             )?;
         }
         if let Some(bindings) = &self.bindings {
-            if let (Some(default), Some(max)) =
-                (bindings.default_binding_timeout_ms, bindings.max_binding_timeout_ms)
-            {
+            if let (Some(default), Some(max)) = (
+                bindings.default_binding_timeout_ms,
+                bindings.max_binding_timeout_ms,
+            ) {
                 if default > max {
                     return Err(VmConfigError::new(
                         "limits.bindings.defaultBindingTimeoutMs must be <= limits.bindings.maxBindingTimeoutMs",

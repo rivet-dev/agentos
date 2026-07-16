@@ -1278,6 +1278,103 @@ pub(super) struct AppliedPosixSpawnFileActions {
     closed_guest_fds: Vec<u32>,
 }
 
+/// Python's V8 runner issues stdio bridge calls with the POSIX fd numbers
+/// 0/1/2 directly. Unlike the WASM runner, it does not consume the
+/// guest-to-kernel fd mapping emitted by posix_spawn file actions. Install the
+/// mapped descriptions at their canonical stdio numbers before Pyodide starts
+/// so pipes and redirections observe the same descriptors as the guest.
+fn materialize_python_stdio_mappings(
+    kernel: &mut SidecarKernel,
+    pid: u32,
+    applied: &AppliedPosixSpawnFileActions,
+) -> Result<(), SidecarError> {
+    for guest_fd in 0..=2 {
+        if let Some(source_fd) = applied
+            .fd_mappings
+            .iter()
+            .find_map(|mapping| (mapping[0] == guest_fd).then_some(mapping[1]))
+        {
+            if source_fd != guest_fd {
+                kernel
+                    .fd_dup2(EXECUTION_DRIVER_NAME, pid, source_fd, guest_fd)
+                    .map_err(kernel_error)?;
+            }
+        } else if applied.closed_guest_fds.contains(&guest_fd) {
+            if let Err(error) = kernel.fd_close(EXECUTION_DRIVER_NAME, pid, guest_fd) {
+                if error.code() != "EBADF" {
+                    return Err(kernel_error(error));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod python_stdio_mapping_tests {
+    use super::*;
+    use agentos_kernel::command_registry::CommandDriver;
+    use agentos_kernel::kernel::{KernelVmConfig, SpawnOptions};
+    use agentos_kernel::mount_table::MountTable;
+    use agentos_kernel::permissions::Permissions;
+    use agentos_kernel::vfs::MemoryFileSystem;
+
+    #[test]
+    fn materializes_guest_fd_mappings_at_canonical_fds() {
+        let mut config = KernelVmConfig::new("vm-python-stdio-mappings");
+        config.permissions = Permissions::allow_all();
+        let mut kernel = SidecarKernel::new(MountTable::new(MemoryFileSystem::new()), config);
+        kernel
+            .register_driver(CommandDriver::new(EXECUTION_DRIVER_NAME, [WASM_COMMAND]))
+            .unwrap();
+        let process = kernel
+            .spawn_process(
+                WASM_COMMAND,
+                Vec::new(),
+                SpawnOptions {
+                    requester_driver: Some(String::from(EXECUTION_DRIVER_NAME)),
+                    ..SpawnOptions::default()
+                },
+            )
+            .unwrap();
+        let (read_fd, write_fd) = kernel
+            .open_pipe(EXECUTION_DRIVER_NAME, process.pid())
+            .unwrap();
+        kernel
+            .fd_write(
+                EXECUTION_DRIVER_NAME,
+                process.pid(),
+                write_fd,
+                b"python-stdin",
+            )
+            .unwrap();
+
+        materialize_python_stdio_mappings(
+            &mut kernel,
+            process.pid(),
+            &AppliedPosixSpawnFileActions {
+                fd_mappings: vec![[0, read_fd]],
+                closed_guest_fds: vec![1],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            kernel
+                .fd_read(EXECUTION_DRIVER_NAME, process.pid(), 0, 64)
+                .unwrap(),
+            b"python-stdin"
+        );
+        assert_eq!(
+            kernel
+                .fd_path(EXECUTION_DRIVER_NAME, process.pid(), 1)
+                .expect_err("closed stdout must remain closed")
+                .code(),
+            "EBADF"
+        );
+    }
+}
+
 pub(super) struct PreparedPosixSpawnFd {
     fd: u32,
     fd_flags: u32,
@@ -3686,6 +3783,13 @@ where
                             .descriptions
                             .iter()
                             .any(|description| description.guest_fds.contains(&0)));
+                if resolved.runtime == GuestRuntimeKind::Python {
+                    materialize_python_stdio_mappings(
+                        &mut vm.kernel,
+                        kernel_pid,
+                        &applied_spawn_actions,
+                    )?;
+                }
                 apply_spawn_session_or_rollback(
                     &mut vm.kernel,
                     &kernel_handle,
@@ -5136,6 +5240,13 @@ where
                             .descriptions
                             .iter()
                             .any(|description| description.guest_fds.contains(&0)));
+                if resolved.runtime == GuestRuntimeKind::Python {
+                    materialize_python_stdio_mappings(
+                        &mut vm.kernel,
+                        kernel_pid,
+                        &applied_spawn_actions,
+                    )?;
+                }
                 apply_spawn_session_or_rollback(
                     &mut vm.kernel,
                     &kernel_handle,

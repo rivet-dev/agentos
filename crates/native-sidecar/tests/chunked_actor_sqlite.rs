@@ -8,6 +8,15 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use vbare::OwnedVersionedData;
 
+// The included plugin only needs the mount context's runtime handle. Keep the
+// integration test independent from the full native-sidecar service graph.
+mod bridge {
+    pub struct MountPluginContext<B> {
+        pub runtime_context: agentos_runtime::RuntimeContext,
+        pub marker: std::marker::PhantomData<B>,
+    }
+}
+
 #[allow(dead_code)]
 mod subject {
     include!("../src/plugins/chunked_actor_sqlite.rs");

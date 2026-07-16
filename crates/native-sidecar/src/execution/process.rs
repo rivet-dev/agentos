@@ -60,9 +60,11 @@ impl ActiveProcess {
         let pending_stdin_bytes_limit = limits.process.pending_stdin_bytes;
         let pending_event_bytes_limit = limits.process.pending_event_bytes;
         if let ActiveExecution::Binding(binding) = &execution {
-            binding.pending_event_count_limit
+            binding
+                .pending_event_count_limit
                 .store(pending_event_count_limit, Ordering::Release);
-            binding.pending_event_bytes_limit
+            binding
+                .pending_event_bytes_limit
                 .store(pending_event_bytes_limit, Ordering::Release);
         }
         Self {
@@ -1323,17 +1325,10 @@ impl ActiveExecution {
             Self::Javascript(execution) => execution
                 .write_stdin(chunk)
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Python(execution) => execution
-                .write_stdin(chunk)
-                .map_err(|error| SidecarError::Execution(error.to_string())),
-            // Sidecar wasm always runs with kernel-managed stdio
-            // (AGENTOS_WASI_STDIO_SYNC_RPC=1): the guest reads fd 0 via
-            // `__kernel_stdin_read`, so skip the V8 `stdin` stream event —
-            // it is never consumed and would flood the session's deferred
-            // message queue while the guest blocks in a sync read.
-            Self::Wasm(execution) => execution
-                .write_stdin_kernel_only(chunk)
-                .map_err(|error| SidecarError::Execution(error.to_string())),
+            // Sidecar Python and WASM read fd 0 from the sidecar kernel pipe.
+            // Their in-process stdin bridges are bypassed in this mode, so
+            // duplicating input into those bridges only fills an unread buffer.
+            Self::Python(_) | Self::Wasm(_) => Ok(()),
             Self::Binding(_) => Ok(()),
         }
     }

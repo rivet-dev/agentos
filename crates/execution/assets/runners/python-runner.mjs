@@ -24,6 +24,7 @@ const PYTHON_WARMUP_METRICS_PREFIX = '__AGENTOS_PYTHON_WARMUP_METRICS__:';
 const PYTHON_PRELOAD_PACKAGES_ENV = 'AGENTOS_PYTHON_PRELOAD_PACKAGES';
 const PYTHON_VFS_RPC_REQUEST_FD_ENV = 'AGENTOS_PYTHON_VFS_RPC_REQUEST_FD';
 const PYTHON_VFS_RPC_RESPONSE_FD_ENV = 'AGENTOS_PYTHON_VFS_RPC_RESPONSE_FD';
+const FORWARD_KERNEL_STDIN_RPC_ENV = 'AGENTOS_FORWARD_KERNEL_STDIN_RPC';
 const PYTHON_RUNTIME_ENV_NAMES = ['HOME', 'USER', 'LOGNAME', 'SHELL', 'PWD', 'TMPDIR', 'PATH'];
 const INTERNAL_ENV = globalThis.__agentOSPythonInternalEnv ?? Object.create(null);
 const ALLOW_PROCESS_BINDINGS = readRunnerEnv('AGENTOS_ALLOW_PROCESS_BINDINGS') === '1';
@@ -83,10 +84,12 @@ const bridgePythonRpc =
     ? globalThis._pythonRpc
     : null;
 const bridgePythonStdinRead =
+  readRunnerEnv(FORWARD_KERNEL_STDIN_RPC_ENV) !== '1' &&
   canCallBridgeSync(globalThis._pythonStdinRead)
     ? globalThis._pythonStdinRead
     : null;
-const bridgeKernelStdinRead = globalThis._kernelStdinRead ?? null;
+const bridgeKernelStdinRead =
+  globalThis._kernelStdinReadRaw ?? globalThis._kernelStdinRead ?? null;
 const bridgeLoadFileSync =
   canCallBridgeSync(globalThis._loadFileSync)
     ? globalThis._loadFileSync
