@@ -9,7 +9,7 @@ import {
 	describeIf,
 	hasWasmBinaries,
 	type Kernel,
-} from '@agentos/test-harness';
+} from '@rivet-dev/agentos-test-harness';
 
 function shellQuote(value: string): string {
 	return `'${value.replaceAll("'", `'\\''`)}'`;

@@ -30,7 +30,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
-import { createWasmVmRuntime } from "@agentos/test-harness";
+import { createWasmVmRuntime } from "@rivet-dev/agentos-test-harness";
 import {
 	allowAll,
 	C_BUILD_DIR,
@@ -39,8 +39,8 @@ import {
 	createKernel,
 	describeIf,
 	itIf,
-} from "@agentos/test-harness";
-import type { Kernel } from "@agentos/test-harness";
+} from "@rivet-dev/agentos-test-harness";
+import type { Kernel } from "@rivet-dev/agentos-test-harness";
 
 const WGET_COMMAND_DIRS = [C_BUILD_DIR, COMMANDS_DIR].filter((dir) =>
 	existsSync(dir),

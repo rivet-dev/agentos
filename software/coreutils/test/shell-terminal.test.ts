@@ -7,10 +7,10 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { TerminalHarness } from '@agentos/test-harness';
-import { createWasmVmRuntime } from '@agentos/test-harness';
-import { COMMANDS_DIR, createKernel, describeIf, hasWasmBinaries } from '@agentos/test-harness';
-import type { Kernel } from '@agentos/test-harness';
+import { TerminalHarness } from '@rivet-dev/agentos-test-harness';
+import { createWasmVmRuntime } from '@rivet-dev/agentos-test-harness';
+import { COMMANDS_DIR, createKernel, describeIf, hasWasmBinaries } from '@rivet-dev/agentos-test-harness';
+import type { Kernel } from '@rivet-dev/agentos-test-harness';
 
 /** brush-shell interactive prompt (captured empirically). */
 const PROMPT = "sh-0.4$ ";

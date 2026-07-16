@@ -23,8 +23,8 @@ import {
   createWasmVmRuntime,
   describeIf,
   itIf,
-} from '@agentos/test-harness';
-import type { Kernel } from '@agentos/test-harness';
+} from '@rivet-dev/agentos-test-harness';
+import type { Kernel } from '@rivet-dev/agentos-test-harness';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';

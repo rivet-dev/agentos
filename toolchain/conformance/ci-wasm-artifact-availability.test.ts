@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { COMMANDS_DIR, itIf } from '@agentos/test-harness';
+import { COMMANDS_DIR, itIf } from '@rivet-dev/agentos-test-harness';
 
 const REQUIRED_ARTIFACTS = [
   {

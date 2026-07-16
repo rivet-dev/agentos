@@ -1,5 +1,5 @@
 {
-  "name": "@agentos/test-harness",
+  "name": "@rivet-dev/agentos-test-harness",
   "version": "0.0.0",
   "private": true,
   "type": "module",

@@ -14,9 +14,9 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, it, expect, afterEach } from 'vitest';
-import { createWasmVmRuntime } from '@agentos/test-harness';
-import { COMMANDS_DIR, createKernel, describeIf, hasWasmBinaries, NodeFileSystem } from '@agentos/test-harness';
-import type { Kernel } from '@agentos/test-harness';
+import { createWasmVmRuntime } from '@rivet-dev/agentos-test-harness';
+import { COMMANDS_DIR, createKernel, describeIf, hasWasmBinaries, NodeFileSystem } from '@rivet-dev/agentos-test-harness';
+import type { Kernel } from '@rivet-dev/agentos-test-harness';
 
 let tempRoot: string | undefined;
 

@@ -10,9 +10,9 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { createWasmVmRuntime } from '@agentos/test-harness';
-import { C_BUILD_DIR, COMMANDS_DIR, createKernel, describeIf, hasCWasmBinaries } from '@agentos/test-harness';
-import type { Kernel } from '@agentos/test-harness';
+import { createWasmVmRuntime } from '@rivet-dev/agentos-test-harness';
+import { C_BUILD_DIR, COMMANDS_DIR, createKernel, describeIf, hasCWasmBinaries } from '@rivet-dev/agentos-test-harness';
+import type { Kernel } from '@rivet-dev/agentos-test-harness';
 
 // Minimal in-memory VFS for kernel tests
 class SimpleVFS {

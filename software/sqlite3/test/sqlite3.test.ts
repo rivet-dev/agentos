@@ -14,14 +14,14 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { createWasmVmRuntime } from '@agentos/test-harness';
+import { createWasmVmRuntime } from '@rivet-dev/agentos-test-harness';
 import {
   C_BUILD_DIR,
   COMMANDS_DIR,
   createKernel,
   describeIf,
-} from '@agentos/test-harness';
-import type { Kernel } from '@agentos/test-harness';
+} from '@rivet-dev/agentos-test-harness';
+import type { Kernel } from '@rivet-dev/agentos-test-harness';
 
 const SQLITE3_COMMAND_DIRS = [C_BUILD_DIR, COMMANDS_DIR].filter((dir) =>
   existsSync(dir)

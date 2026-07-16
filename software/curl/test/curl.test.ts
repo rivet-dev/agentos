@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
-import { createWasmVmRuntime } from '@agentos/test-harness';
+import { createWasmVmRuntime } from '@rivet-dev/agentos-test-harness';
 import {
   allowAll,
   C_BUILD_DIR,
@@ -23,8 +23,8 @@ import {
   hasCWasmBinaries,
   hasWasmBinaries,
   itIf,
-} from '@agentos/test-harness';
-import type { Kernel } from '@agentos/test-harness';
+} from '@rivet-dev/agentos-test-harness';
+import type { Kernel } from '@rivet-dev/agentos-test-harness';
 import {
   createServer as createHttpServer,
   type IncomingMessage,

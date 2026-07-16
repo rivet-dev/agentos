@@ -8,8 +8,8 @@ import {
 	createKernel,
 	createWasmVmRuntime,
 	describeIf,
-} from "@agentos/test-harness";
-import type { Kernel } from "@agentos/test-harness";
+} from "@rivet-dev/agentos-test-harness";
+import type { Kernel } from "@rivet-dev/agentos-test-harness";
 import { afterEach, expect, it } from "vitest";
 
 const SED_COMMAND_DIR = fileURLToPath(new URL("../bin", import.meta.url));

@@ -8,7 +8,7 @@ import {
 	describeIf,
 	hasWasmBinaries,
 	type Kernel,
-} from "@agentos/test-harness";
+} from "@rivet-dev/agentos-test-harness";
 
 const signalExitCode: Record<string, number> = {
 	SIGTERM: 143,

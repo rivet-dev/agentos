@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
 import { spawn, spawnSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createWasmVmRuntime } from '@agentos/test-harness';
+import { createWasmVmRuntime } from '@rivet-dev/agentos-test-harness';
 import {
   allowAll,
   COMMANDS_DIR,
@@ -20,8 +20,8 @@ import {
   createKernel,
   describeIf,
   hasWasmBinaries,
-} from '@agentos/test-harness';
-import type { Kernel } from '@agentos/test-harness';
+} from '@rivet-dev/agentos-test-harness';
+import type { Kernel } from '@rivet-dev/agentos-test-harness';
 
 vi.setConfig({ testTimeout: 30_000 });
 

@@ -9,6 +9,9 @@ ACP/session layer, AgentOS client APIs, docs, and publish machinery. The
 - Keep AgentOS product versions pinned at `0.0.1` in committed files. Release
   workflows apply real versions transiently with `scripts/publish`; never commit
   release-version rewrites.
+- AgentOS-owned npm packages must use the `@rivet-dev/agentos-*` namespace.
+  Registry software packages must use `@agentos-software/*`. Never introduce
+  packages under `@agentos/*`.
 - Call guest environments VMs, not sandboxes, except when referring to a package
   or public API that already uses the word.
 - The protocol has no backward compatibility guarantee. Client, sidecar, and

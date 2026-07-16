@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { Server as SshServer, utils as sshUtils } from 'ssh2';
 import type { Connection } from 'ssh2';
-import { createWasmVmRuntime } from '@agentos/test-harness';
+import { createWasmVmRuntime } from '@rivet-dev/agentos-test-harness';
 import {
   allowAll,
   C_BUILD_DIR,
@@ -28,8 +28,8 @@ import {
   describeIf,
   hasWasmBinaries,
   hasCWasmBinaries,
-} from '@agentos/test-harness';
-import type { Kernel } from '@agentos/test-harness';
+} from '@rivet-dev/agentos-test-harness';
+import type { Kernel } from '@rivet-dev/agentos-test-harness';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 

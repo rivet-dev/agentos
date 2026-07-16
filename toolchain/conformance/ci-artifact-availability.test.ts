@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { COMMANDS_DIR, C_BUILD_DIR, itIf } from '@agentos/test-harness';
+import { COMMANDS_DIR, C_BUILD_DIR, itIf } from '@rivet-dev/agentos-test-harness';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
