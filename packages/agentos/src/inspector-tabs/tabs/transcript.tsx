@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+	ActionErrorNote,
 	AgentOsEmpty,
 	AgentOsWordmark,
 	ChevronRight,
@@ -271,6 +272,20 @@ const DEFAULT_ENV_JSON = JSON.stringify(
 	null,
 	2,
 );
+
+// The composer's lazy create path and the sidebar's "+" button build sessions
+// from the same localStorage-backed defaults, so both produce the same thing.
+function newSessionDefaults(): { agentType: string; env: Record<string, string> } {
+	const agentType = (localStorage.getItem(LS_AGENT_TYPE) ?? "opencode").trim() || "opencode";
+	const raw = localStorage.getItem(LS_ENV_JSON) ?? DEFAULT_ENV_JSON;
+	let env: Record<string, string>;
+	try {
+		env = JSON.parse(raw) as Record<string, string>;
+	} catch (error) {
+		throw new Error(`Session env is not valid JSON: ${(error as Error).message}`);
+	}
+	return { agentType, env };
+}
 
 function Composer({
 	actorId,
@@ -567,6 +582,24 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 			queryKey: agentOsSource.sessionsQueryOptions(actorId).queryKey,
 		});
 	};
+	// The "+" button creates the session right away (boots the VM if asleep)
+	// instead of arming a compose-first flow that only created on send.
+	const [creatingSession, setCreatingSession] = useState(false);
+	const [createError, setCreateError] = useState<unknown>(null);
+	const createSessionNow = async () => {
+		if (creatingSession) return;
+		setCreatingSession(true);
+		setCreateError(null);
+		try {
+			const { agentType, env } = newSessionDefaults();
+			const raw = await agentOsSource.createSession(agentType, { env });
+			handleSessionCreated(typeof raw === "string" ? raw : raw.sessionId);
+		} catch (error) {
+			setCreateError(error);
+		} finally {
+			setCreatingSession(false);
+		}
+	};
 	const [turnActive, setTurnActive] = useState(false);
 	// Close ends the live agent process; the persisted transcript stays. Errors
 	// (e.g. the session is idle, nothing to close) land in the thread.
@@ -604,17 +637,16 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 							return liveCount > 0 ? ` · ${liveCount} live` : "";
 						})()}
 					</span>
-					{/* Always visible: hiding it after click made the button seem to
-					    vanish. Composing state just disables it. */}
 					<IconButton
-						title={sessionId !== null ? "New session" : "Already composing a new session"}
-						onClick={() => setSelected(null)}
-						disabled={sessionId === null}
+						title={creatingSession ? "Creating session…" : "New session"}
+						onClick={() => void createSessionNow()}
+						disabled={creatingSession}
 						className="ml-auto"
 					>
 						<PlusIcon className="size-3.5" />
 					</IconButton>
 				</div>
+				{createError ? <ActionErrorNote error={createError} className="border-b py-2" /> : null}
 				<ScrollArea className="min-h-0 flex-1">
 					{sessions.length === 0 ? (
 						<AgentOsEmpty>No sessions yet.</AgentOsEmpty>
@@ -688,7 +720,7 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 						<div className="flex flex-col items-center gap-5">
 							<AgentOsWordmark className="w-44" />
 							<span>
-								No session selected — send a prompt below to start one.
+								No session selected — press + or send a prompt below to start one.
 								<br />
 								<span className="text-xs text-muted-foreground/70">
 									Sessions and their transcripts persist, but the VM's root filesystem is
