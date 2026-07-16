@@ -26,7 +26,6 @@ export {
 	AF_INET,
 	AF_UNIX,
 	allowAll,
-	createInMemoryFileSystem,
 	createKernel,
 	createNodeHostNetworkAdapter,
 	createNodeRuntime,
@@ -38,4 +37,5 @@ export {
 	SOCK_STREAM,
 	WASMVM_COMMANDS,
 } from "../runtime-compat.js";
+export { createInMemoryFileSystem } from "@rivet-dev/agentos-runtime-core/test-runtime";
 export { TerminalHarness } from "./terminal-harness.js";

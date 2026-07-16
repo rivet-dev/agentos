@@ -39,7 +39,6 @@ export {
 	allowAllFs,
 	allowAllNetwork,
 	createDefaultNetworkAdapter,
-	createInMemoryFileSystem,
 	createKernel,
 	createNodeDriver,
 	createNodeHostCommandExecutor,

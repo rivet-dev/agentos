@@ -1,3 +1,5 @@
+// AGENTOS_BROWSER_SUPPORT_DISABLED: retained for reference, but AgentOS is native-only.
+/*
 export type {
 	BrowserDriverOptions,
 	BrowserRuntimeSystemOptions,
@@ -75,3 +77,7 @@ export {
 } from "./converged-sync-bridge-handler.js";
 export type { ConvergedSidecarRequestTransport } from "./converged-sync-bridge-handler.js";
 export type { ConvergedSyncResponse } from "./converged-fs-bridge.js";
+*/
+
+// Keep this file a module while exposing no browser entrypoint.
+export {};

@@ -11,6 +11,7 @@ import {
 	type SidecarSpawnOptions,
 	type VirtualDirEntry,
 } from "@rivet-dev/agentos-runtime-core";
+import { createInMemoryFileSystem } from "@rivet-dev/agentos-runtime-core/test-runtime";
 import { hasNativeBaselineWasm, supportsWasmLayer } from "./layers.js";
 import type { BenchmarkOp, CommandBenchmarkOp } from "./layers.js";
 
@@ -105,6 +106,7 @@ export interface SidecarBinaryProvenance {
 
 export async function createBenchVm(options: BenchVmOptions = {}): Promise<BenchVm> {
 	const runtime = await NodeRuntime.create({
+		filesystem: createInMemoryFileSystem(),
 		permissions: {
 			fs: "allow",
 			network: "allow",

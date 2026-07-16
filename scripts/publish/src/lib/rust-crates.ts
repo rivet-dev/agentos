@@ -19,7 +19,6 @@ export const RUST_CRATE_ORDER = [
 	"agentos-sidecar-client",
 	"agentos-native-sidecar",
 	"agentos-protocol",
-	"agentos-sidecar-core",
 	"agentos-client",
 	"agentos-sidecar",
 ] as const;

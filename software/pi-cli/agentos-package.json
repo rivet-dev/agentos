@@ -1,7 +1,7 @@
 {
   "name": "pi-cli",
   "agent": {
-    "acpEntrypoint": "pi-acp",
+    "acpEntrypoint": "agentos-pi-acp",
     "env": {
       "PI_ACP_PI_COMMAND": "pi"
     }

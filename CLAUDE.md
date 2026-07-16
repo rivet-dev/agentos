@@ -21,6 +21,11 @@ ACP/session layer, AgentOS client APIs, docs, and publish machinery. The
   shimmed public surface.
 - Keep root `package.json` scripts limited to Turbo orchestration; repo-specific
   commands belong in `justfile` recipes or scoped package scripts.
+- AgentOS targets native Linux/container execution. Browser support is not
+  needed or supported here: browser sources may remain as dormant reference
+  code, but their entrypoints must stay disabled and they must not enter default
+  builds, CI, publication, or behavioral-parity requirements without a
+  separately approved design.
 
 ## Security Model
 
@@ -163,9 +168,9 @@ custom host-syscall imports. Treat that target as **native POSIX**;
 - Signal delivery must use the bounded/coalesced session broker and must never
   spawn an OS thread per delivered signal. Embedded V8, standalone WASM, and
   Python must share sidecar reactor capabilities rather than own parallel
-  networking implementations. Browser runtime sources remain in-tree but are
-  disabled from default builds, CI, and publication until a separate design is
-  approved.
+  networking implementations. Browser runtime sources remain in-tree only as
+  dormant reference code; browser entrypoints and support remain disabled until
+  a separate design is approved.
 - The architecture and migration contract are specified in
   `docs/design/unified-sidecar-runtime.md`.
 

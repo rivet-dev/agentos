@@ -2,10 +2,9 @@
 //!
 //! The base prompt is no longer baked into a guest file (`/etc/agentos/instructions.md` is gone);
 //! the Agent OS client passes create-time additions and generated tool docs to the wrapper sidecar,
-//! which assembles them with the base prompt and injects the result into the launched adapter's argv
-//! (`--append-system-prompt` for `pi`). This test resolves a tiny mock ACP adapter through the real
-//! module-access path, launches a `pi` session, and asserts the adapter actually observed the
-//! injected prompt in `process.argv`.
+//! which assembles them with the base prompt and passes the result through the adapter-neutral
+//! launch environment. This test resolves a tiny mock ACP adapter through the real module-access
+//! path, launches a `pi` session, and asserts the adapter actually observed the injected prompt.
 
 mod common;
 
@@ -21,9 +20,8 @@ use agentos_client::{AgentOs, CreateSessionOptions};
 use serde_json::json;
 use uuid::Uuid;
 
-/// A mock ACP adapter that answers `initialize` / `session/new` and echoes its own `process.argv`
-/// (minus `node` + script path) in the initialize `agentInfo.argv` so the test can read it from the
-/// session's agent info without depending on guest-to-kernel file sync timing.
+/// A mock ACP adapter that answers `initialize` / `session/new` and echoes the generic system-prompt
+/// environment value in `agentInfo` so the test can read it without guest filesystem timing.
 const MOCK_ACP_ADAPTER: &str = r#"
 let buffer = "";
 process.stdin.resume();
@@ -42,7 +40,7 @@ process.stdin.on("data", (chunk) => {
       case "initialize":
         result = {
           protocolVersion: 1,
-          agentInfo: { name: "mock-acp", version: "1.0.0", argv: process.argv.slice(2) },
+          agentInfo: { name: "mock-acp", version: "1.0.0", systemPrompt: process.env.ACP_APPEND_SYSTEM_PROMPT || null },
         };
         break;
       case "session/new":
@@ -64,7 +62,7 @@ setInterval(() => {}, 1000);
 const ADDITIONAL_MARKER: &str = "rust-client-extra-instructions";
 
 /// Allow-all permissions so the mock adapter can spawn, read its module-access bin, and write the
-/// argv probe file.
+/// prompt probe.
 fn allow_all_permissions() -> Permissions {
     Permissions {
         fs: Some(FsPermissions::Mode(PermissionMode::Allow)),
@@ -103,22 +101,22 @@ fn write_mock_pi_adapter(module_root: &std::path::Path) -> std::path::PathBuf {
     package_dir
 }
 
-async fn launch_pi_session_and_read_argv(options: CreateSessionOptions) -> Vec<String> {
-    launch_pi_session_with_tools_and_read_argv(options, Vec::new()).await
+async fn launch_pi_session_and_read_prompt(options: CreateSessionOptions) -> String {
+    launch_pi_session_with_tools_and_read_prompt(options, Vec::new()).await
 }
 
-async fn launch_pi_session_with_tools_and_read_argv(
+async fn launch_pi_session_with_tools_and_read_prompt(
     options: CreateSessionOptions,
     bindings: Vec<Bindings>,
-) -> Vec<String> {
+) -> String {
     let module_access_dir =
         std::env::temp_dir().join(format!("agentos-client-os-instructions-{}", Uuid::new_v4()));
     let package_dir = write_mock_pi_adapter(&module_access_dir);
 
-    let argv = run_session(&module_access_dir, &package_dir, options, bindings).await;
+    let prompt = run_session(&module_access_dir, &package_dir, options, bindings).await;
 
     std::fs::remove_dir_all(&module_access_dir).ok();
-    argv
+    prompt
 }
 
 async fn run_session(
@@ -126,7 +124,7 @@ async fn run_session(
     package_dir: &Path,
     options: CreateSessionOptions,
     bindings: Vec<Bindings>,
-) -> Vec<String> {
+) -> String {
     let os = AgentOs::create(AgentOsConfig {
         mounts: vec![node_modules_mount(
             module_access_dir
@@ -155,27 +153,15 @@ async fn run_session(
     let agent_info = os
         .get_session_agent_info(&session.session_id)
         .expect("mock adapter should report agent info");
-    let argv: Vec<String> = serde_json::from_value(
-        agent_info
-            .extra
-            .get("argv")
-            .cloned()
-            .expect("mock adapter should echo argv in agentInfo"),
-    )
-    .expect("argv probe is a JSON string array");
+    let prompt = agent_info
+        .extra
+        .get("systemPrompt")
+        .and_then(serde_json::Value::as_str)
+        .expect("mock adapter should echo the system prompt in agentInfo")
+        .to_string();
 
     os.shutdown().await.expect("shutdown VM");
-    argv
-}
-
-fn injected_prompt(argv: &[String]) -> &str {
-    let idx = argv
-        .iter()
-        .position(|arg| arg == "--append-system-prompt")
-        .unwrap_or_else(|| panic!("argv should contain --append-system-prompt, got {argv:?}"));
-    argv.get(idx + 1)
-        .unwrap_or_else(|| panic!("--append-system-prompt should be followed by a value: {argv:?}"))
-        .as_str()
+    prompt
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -187,13 +173,12 @@ async fn create_session_injects_assembled_system_prompt() {
     }
     common::ensure_sidecar_env();
 
-    let argv = launch_pi_session_and_read_argv(CreateSessionOptions {
+    let prompt = launch_pi_session_and_read_prompt(CreateSessionOptions {
         additional_instructions: Some(ADDITIONAL_MARKER.to_string()),
         ..Default::default()
     })
     .await;
 
-    let prompt = injected_prompt(&argv);
     assert!(
         prompt.contains("# agentOS"),
         "base OS instructions are injected: {prompt:?}"
@@ -213,7 +198,7 @@ async fn create_session_injects_binding_reference_from_client_config() {
     }
     common::ensure_sidecar_env();
 
-    let argv = launch_pi_session_with_tools_and_read_argv(
+    let prompt = launch_pi_session_with_tools_and_read_prompt(
         CreateSessionOptions::default(),
         vec![Bindings {
             name: "weather".to_string(),
@@ -235,7 +220,6 @@ async fn create_session_injects_binding_reference_from_client_config() {
     )
     .await;
 
-    let prompt = injected_prompt(&argv);
     assert!(
         prompt.contains("## Available Host Bindings"),
         "client-generated tool reference is injected: {prompt:?}"
@@ -255,7 +239,7 @@ async fn create_session_skip_os_instructions_drops_base_but_keeps_additional() {
     }
     common::ensure_sidecar_env();
 
-    let argv = launch_pi_session_and_read_argv(CreateSessionOptions {
+    let prompt = launch_pi_session_and_read_prompt(CreateSessionOptions {
         skip_os_instructions: true,
         additional_instructions: Some(ADDITIONAL_MARKER.to_string()),
         env: BTreeMap::new(),
@@ -263,7 +247,6 @@ async fn create_session_skip_os_instructions_drops_base_but_keeps_additional() {
     })
     .await;
 
-    let prompt = injected_prompt(&argv);
     assert!(
         !prompt.contains("# agentOS"),
         "skip_os_instructions drops the base prompt: {prompt:?}"

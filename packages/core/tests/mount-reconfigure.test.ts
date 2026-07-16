@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createInMemoryFileSystem } from "../src/runtime-compat.js";
+import { createInMemoryFileSystem } from "../src/test/runtime.js";
 import { NativeSidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 
 // Regression coverage for post-boot mountFs delivery to the native sidecar:

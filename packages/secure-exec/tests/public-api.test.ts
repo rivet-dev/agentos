@@ -10,7 +10,6 @@ import {
 	allowAllFs as coreAllowAllFs,
 	allowAllNetwork as coreAllowAllNetwork,
 	createDefaultNetworkAdapter as coreCreateDefaultNetworkAdapter,
-	createInMemoryFileSystem as coreCreateInMemoryFileSystem,
 	createKernel as coreCreateKernel,
 	createNodeDriver as coreCreateNodeDriver,
 	createNodeHostCommandExecutor as coreCreateNodeHostCommandExecutor,
@@ -66,9 +65,6 @@ describe("secure-exec", () => {
 			coreCreateNodeRuntimeDriverFactory,
 		);
 		expect(secureExec.createKernel).toBe(coreCreateKernel);
-		expect(secureExec.createInMemoryFileSystem).toBe(
-			coreCreateInMemoryFileSystem,
-		);
 		expect(secureExec.allowAll).toBe(coreAllowAll);
 		expect(secureExec.allowAllFs).toBe(coreAllowAllFs);
 		expect(secureExec.allowAllNetwork).toBe(coreAllowAllNetwork);
@@ -120,5 +116,9 @@ describe("secure-exec", () => {
 
 		await expect(importDeferred("secure-exec/browser")).rejects.toThrow();
 		await expect(importDeferred("secure-exec/python")).rejects.toThrow();
+	});
+
+	it("does not expose an in-memory filesystem factory", () => {
+		expect(secureExec).not.toHaveProperty("createInMemoryFileSystem");
 	});
 });

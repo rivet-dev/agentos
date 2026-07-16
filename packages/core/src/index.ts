@@ -29,7 +29,6 @@ export {
 	bindingsSchema,
 } from "./options-schema.js";
 export {
-	createInMemoryLayerStore,
 	createSnapshotExport,
 } from "./layers.js";
 export { defineSoftware } from "./packages.js";
@@ -43,7 +42,7 @@ export {
 	isAcpTimeoutErrorData,
 	isUnknownSessionErrorData,
 } from "./json-rpc.js";
-export { createInMemoryFileSystem, KernelError } from "./runtime-compat.js";
+export { KernelError } from "./runtime-compat.js";
 export type {
 	ExecOptions,
 	ExecResult,

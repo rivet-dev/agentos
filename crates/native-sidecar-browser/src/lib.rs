@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+// AGENTOS_BROWSER_SUPPORT_DISABLED: retained for reference, but AgentOS is native-only.
+/*
 //! Browser-side sidecar scaffold for the secure-exec runtime migration.
 
 mod service;
@@ -119,3 +121,4 @@ pub fn scaffold() -> BrowserSidecarScaffold {
         guest_worker_owner_thread: "main",
     }
 }
+*/

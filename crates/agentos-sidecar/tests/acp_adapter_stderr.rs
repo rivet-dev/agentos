@@ -117,6 +117,36 @@ fn adapter_stderr_and_exit_surface_to_caller() {
         message.contains("exited with code 1"),
         "expected adapter-exit diagnostic to surface to caller, got: {message}"
     );
+    assert!(
+        message.contains("live session route was evicted")
+            && message.contains("restore explicitly"),
+        "adapter exits must be terminal and must not trigger an implicit restart: {message}"
+    );
+
+    let retry = dispatch_acp(
+        &mut sidecar,
+        7,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        AcpRequest::AcpSessionRequest(AcpSessionRequest {
+            session_id: String::from("adapter-session"),
+            method: String::from("session/prompt"),
+            params: Some(String::from(
+                r#"{"prompt":[{"type":"text","text":"do not replay"}]}"#,
+            )),
+        }),
+    );
+    let AcpResponse::AcpErrorResponse(retry) = retry else {
+        panic!("terminal adapter exit must evict the route, got: {retry:?}");
+    };
+    assert!(
+        retry
+            .message
+            .contains("unknown ACP session adapter-session"),
+        "a retry must require explicit restoration instead of replay: {}",
+        retry.message
+    );
 }
 
 /// Adapter that handshakes correctly, then on `session/prompt` writes a

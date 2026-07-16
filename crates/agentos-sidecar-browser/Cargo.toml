@@ -19,7 +19,7 @@ crate-type = ["cdylib", "rlib"]
 # (native: tokio/mio + native agentos-native-sidecar). Real ACP logic comes from a
 # future host-free agentos-sidecar-core.
 agentos-protocol = { workspace = true }
-agentos-sidecar-core = { workspace = true }
+agentos-sidecar-core = { path = "../agentos-sidecar-core" }
 agentos-bridge = { workspace = true }
 agentos-native-sidecar-browser = { workspace = true }
 

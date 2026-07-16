@@ -62,6 +62,7 @@ process.stdin.on('data', (chunk) => {
               name: 'mock-adapter',
               version: '1.0',
               contextPaths: process.env.OPENCODE_CONTEXTPATHS || null,
+              systemPrompt: process.env.ACP_APPEND_SYSTEM_PROMPT || null,
               argv: process.argv.slice(2),
             },
           };
@@ -109,16 +110,12 @@ describe("createSession OS instructions integration", () => {
 		}
 	});
 
-	test("createSession with PI passes --append-system-prompt in spawn args", async () => {
+	test("createSession passes the assembled prompt through the adapter-neutral contract", async () => {
 		const { sessionId } = await vm.createSession("pi");
 		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
-			argv?: string[];
+			systemPrompt?: string;
 		};
-		const argv = agentInfo.argv ?? [];
-
-		expect(argv).toContain("--append-system-prompt");
-		const argIdx = argv.indexOf("--append-system-prompt");
-		const instructionsArg = argv[argIdx + 1];
+		const instructionsArg = agentInfo.systemPrompt ?? "";
 		expect(instructionsArg).toBeTruthy();
 		expect(instructionsArg.length).toBeGreaterThan(0);
 		// The sidecar injects the embedded base prompt, not a guest-read file.
@@ -127,26 +124,17 @@ describe("createSession OS instructions integration", () => {
 		vm.closeSession(sessionId);
 	});
 
-	test("createSession with OpenCode passes the sidecar-materialized prompt path in OPENCODE_CONTEXTPATHS", async () => {
+	test("createSession leaves OpenCode compatibility translation to its launcher", async () => {
 		const { sessionId } = await vm.createSession("opencode");
 
 		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
 			contextPaths?: string;
+			systemPrompt?: string;
 			argv?: string[];
 		};
-		const contextPaths = JSON.parse(agentInfo.contextPaths as string);
 		expect(agentInfo.argv ?? []).not.toContain("acp");
-		// The base prompt is injected through a sidecar-materialized file, not the old baked path.
-		expect(contextPaths).toContain("/tmp/agentos-system-prompt.md");
-		expect(contextPaths).not.toContain("/etc/agentos/instructions.md");
-		// Default opencode repo-relative markers are still present.
-		expect(contextPaths).toContain("CLAUDE.md");
-		expect(contextPaths).toContain("opencode.md");
-
-		// The materialized prompt file holds the base prompt text.
-		const promptData = await vm.readFile("/tmp/agentos-system-prompt.md");
-		const promptText = new TextDecoder().decode(promptData);
-		expect(promptText).toContain("# agentOS");
+		expect(agentInfo.systemPrompt).toContain("# agentOS");
+		expect(agentInfo.contextPaths).toBeNull();
 
 		// No .agent-os/ directory created in cwd
 		const agentOsDirExists = await vm.exists("/home/agentos/.agent-os");
@@ -160,11 +148,9 @@ describe("createSession OS instructions integration", () => {
 			skipOsInstructions: true,
 		});
 		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
-			argv?: string[];
+			systemPrompt?: string;
 		};
-		const argv = agentInfo.argv ?? [];
-
-		expect(argv).not.toContain("--append-system-prompt");
+		expect(agentInfo.systemPrompt).toBeNull();
 
 		vm.closeSession(sessionId);
 	});
@@ -177,13 +163,9 @@ describe("createSession OS instructions integration", () => {
 			additionalInstructions: additionalText,
 		});
 		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
-			argv?: string[];
+			systemPrompt?: string;
 		};
-		const argv = agentInfo.argv ?? [];
-
-		const argIdx = argv.indexOf("--append-system-prompt");
-		expect(argIdx).toBeGreaterThan(-1);
-		const instructionsArg = argv[argIdx + 1];
+		const instructionsArg = agentInfo.systemPrompt ?? "";
 		expect(instructionsArg).toContain(additionalText);
 		expect(instructionsArg).not.toContain("# agentOS");
 
@@ -211,13 +193,9 @@ describe("createSession OS instructions integration", () => {
 			additionalInstructions: additionalText,
 		});
 		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
-			argv?: string[];
+			systemPrompt?: string;
 		};
-		const argv = agentInfo.argv ?? [];
-
-		const argIdx = argv.indexOf("--append-system-prompt");
-		expect(argIdx).toBeGreaterThan(-1);
-		const instructionsArg = argv[argIdx + 1];
+		const instructionsArg = agentInfo.systemPrompt ?? "";
 		expect(instructionsArg).toContain(additionalText);
 
 		vm.closeSession(sessionId);
@@ -235,13 +213,9 @@ describe("createSession OS instructions integration", () => {
 
 		const { sessionId } = await vm.createSession("pi");
 		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
-			argv?: string[];
+			systemPrompt?: string;
 		};
-		const argv = agentInfo.argv ?? [];
-
-		const argIdx = argv.indexOf("--append-system-prompt");
-		expect(argIdx).toBeGreaterThan(-1);
-		const instructionsArg = argv[argIdx + 1];
+		const instructionsArg = agentInfo.systemPrompt ?? "";
 		expect(instructionsArg).toContain(vmLevelInstructions);
 
 		vm.closeSession(sessionId);

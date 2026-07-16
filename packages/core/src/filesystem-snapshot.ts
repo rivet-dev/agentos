@@ -1,8 +1,5 @@
 import * as posixPath from "node:path/posix";
-import {
-	createInMemoryFileSystem,
-	type VirtualFileSystem,
-} from "./runtime-compat.js";
+import type { VirtualFileSystem } from "./runtime-compat.js";
 
 export interface FilesystemEntry {
 	path: string;
@@ -13,10 +10,6 @@ export interface FilesystemEntry {
 	content?: string;
 	encoding?: "utf8" | "base64";
 	target?: string;
-}
-
-function parseMode(mode: string): number {
-	return Number.parseInt(mode, 8);
 }
 
 export function sortFilesystemEntries(
@@ -34,67 +27,6 @@ export function sortFilesystemEntries(
 
 		return a.path.localeCompare(b.path);
 	});
-}
-
-async function applyDirectory(
-	filesystem: VirtualFileSystem,
-	entry: FilesystemEntry,
-): Promise<void> {
-	if (entry.path !== "/") {
-		await filesystem.mkdir(entry.path, { recursive: true });
-	}
-	await filesystem.chmod(entry.path, parseMode(entry.mode));
-	await filesystem.chown(entry.path, entry.uid, entry.gid);
-}
-
-async function applyFile(
-	filesystem: VirtualFileSystem,
-	entry: FilesystemEntry,
-): Promise<void> {
-	const content = entry.content ?? "";
-	await filesystem.writeFile(
-		entry.path,
-		entry.encoding === "base64" ? Buffer.from(content, "base64") : content,
-	);
-	await filesystem.chmod(entry.path, parseMode(entry.mode));
-	await filesystem.chown(entry.path, entry.uid, entry.gid);
-}
-
-async function applySymlink(
-	filesystem: VirtualFileSystem,
-	entry: FilesystemEntry,
-): Promise<void> {
-	if (!entry.target) {
-		throw new Error(`Missing symlink target for ${entry.path}`);
-	}
-	await filesystem.symlink(entry.target, entry.path);
-}
-
-export async function createFilesystemFromEntries(
-	entries: FilesystemEntry[],
-): Promise<VirtualFileSystem> {
-	const filesystem = createInMemoryFileSystem();
-	const sortedEntries = sortFilesystemEntries(entries);
-
-	for (const entry of sortedEntries) {
-		if (entry.type === "directory") {
-			await applyDirectory(filesystem, entry);
-		}
-	}
-
-	for (const entry of sortedEntries) {
-		if (entry.type === "file") {
-			await applyFile(filesystem, entry);
-		}
-	}
-
-	for (const entry of sortedEntries) {
-		if (entry.type === "symlink") {
-			await applySymlink(filesystem, entry);
-		}
-	}
-
-	return filesystem;
 }
 
 function toModeString(mode: number): string {

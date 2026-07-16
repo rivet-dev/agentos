@@ -62,6 +62,7 @@ for (let i = 0; i < argv.length; i++) {
 		i++;
 	}
 }
+appendSystemPrompt ??= process.env.ACP_APPEND_SYSTEM_PROMPT;
 
 const claudeSdkRuntimePromise = loadPatchedClaudeSdkRuntime();
 const traceAdapterMessages =

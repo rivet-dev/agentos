@@ -5,12 +5,12 @@ import { nodeModulesMount } from "@rivet-dev/agentos-core";
 import { generateText, stepCountIs, tool } from "ai";
 import {
 	allowAll,
-	createInMemoryFileSystem,
 	createKernel,
 	createNodeDriver,
 	createNodeRuntime,
 	createNodeRuntimeDriverFactory,
 } from "@rivet-dev/agentos-core/internal/runtime-compat";
+import { createInMemoryFileSystem } from "@rivet-dev/agentos-core/test/runtime";
 import { z } from "zod";
 
 const filesystem = createInMemoryFileSystem();

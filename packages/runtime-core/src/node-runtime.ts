@@ -28,11 +28,11 @@ import type {
 	KernelBootTiming,
 	Permissions,
 	VirtualDirEntry,
+	VirtualFileSystem,
 } from "./test-runtime.js";
 import type { JsRuntimeConfig } from "./generated/JsRuntimeConfig.js";
 import type { SidecarProcess } from "./sidecar-process.js";
 import {
-	createInMemoryFileSystem,
 	createKernel,
 	createNodeRuntime,
 	createWasmVmRuntime,
@@ -137,6 +137,12 @@ const DEFAULT_PERMISSIONS: Permissions = {
  * `crates/vm-config/src/lib.rs::CreateVmConfig`.
  */
 export interface NodeRuntimeCreateOptions {
+	/**
+	 * Caller-owned filesystem used only by this low-level compatibility runtime.
+	 * AgentOS clients do not create a TypeScript filesystem implicitly; normal
+	 * product code should use the sidecar-owned VFS through `AgentOs`.
+	 */
+	filesystem: VirtualFileSystem;
 	/** Environment variables visible to guest processes. */
 	env?: Record<string, string>;
 	/** Initial working directory for guest processes. Defaults to `/workspace`. */
@@ -579,7 +585,7 @@ export class NodeRuntime {
 	 * shell and Node runtimes, and waits for the VM to report ready.
 	 */
 	static async create(
-		options: NodeRuntimeCreateOptions = {},
+		options: NodeRuntimeCreateOptions,
 	): Promise<NodeRuntime> {
 		options = parseNodeRuntimeCreateOptions(options);
 		const commandsDir = resolveNodeRuntimeCommandsDir(options.commandsDir);
@@ -588,7 +594,7 @@ export class NodeRuntime {
 		// boot so they are part of the root filesystem snapshot the guest sees
 		// (e.g. projected npm packages or fixtures). The host filesystem is
 		// never exposed; only these bytes are copied in.
-		const filesystem = createInMemoryFileSystem();
+		const filesystem = options.filesystem;
 		if (options.files) {
 			for (const [filePath, content] of Object.entries(options.files)) {
 				await filesystem.writeFile(filePath, content);

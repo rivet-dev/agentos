@@ -14,6 +14,7 @@ const CAPTURED_ENV_KEYS = [
 	"CLAUDE_CODE_SIMPLE_SHELL_EXEC",
 	"CLAUDE_CODE_SWAP_STDIO",
 	"SHELL",
+	"ACP_APPEND_SYSTEM_PROMPT",
 	"OPENCODE_CONTEXTPATHS",
 ] as const;
 
@@ -110,22 +111,22 @@ async function inspectLaunch(
 }
 
 describe("agent launch args and env", () => {
-	test("Pi SDK injects the system prompt flag", async () => {
+	test("Pi SDK receives the adapter-neutral system prompt contract", async () => {
 		// The pre-packed pi-sdk adapter embeds the SDK, so (unlike the CLI adapter)
 		// it does NOT need a resolved `PI_ACP_PI_COMMAND` pi binary.
 		const agentInfo = await inspectLaunch("pi");
 
-		expect(agentInfo.argv).toContain("--append-system-prompt");
+		expect(agentInfo.env?.ACP_APPEND_SYSTEM_PROMPT).toContain("# agentOS");
 	});
 
-	test("Pi CLI injects the system prompt flag and resolved pi binary", async () => {
+	test("Pi CLI receives the system prompt contract and resolved pi binary", async () => {
 		// pi-cli is still the legacy two-package CLI adapter that spawns the pi CLI
 		// via PI_ACP_PI_COMMAND.
 		const agentInfo = await inspectLaunch("pi-cli", {
 			env: { PI_ACP_PI_COMMAND: "pi" },
 		});
 
-		expect(agentInfo.argv).toContain("--append-system-prompt");
+		expect(agentInfo.env?.ACP_APPEND_SYSTEM_PROMPT).toContain("# agentOS");
 		// The {name,dir} model projects the pi CLI onto $PATH as /opt/agentos/bin/pi,
 		// so pi-cli points PI_ACP_PI_COMMAND at the projected command name (not a host
 		// node_modules path like the old @mariozechner/pi-coding-agent entry).
@@ -145,7 +146,7 @@ describe("agent launch args and env", () => {
 			},
 		});
 
-		expect(agentInfo.argv).toContain("--append-system-prompt");
+		expect(agentInfo.env?.ACP_APPEND_SYSTEM_PROMPT).toContain("# agentOS");
 		expect(agentInfo.env).toMatchObject({
 			CLAUDE_CODE_DISABLE_CWD_PERSIST: "1",
 			CLAUDE_CODE_DISABLE_DEV_NULL_REDIRECT: "1",
@@ -157,18 +158,12 @@ describe("agent launch args and env", () => {
 		});
 	});
 
-	test("OpenCode passes instruction paths through OPENCODE_CONTEXTPATHS", async () => {
+	test("OpenCode receives the adapter-neutral system prompt contract", async () => {
 		const agentInfo = await inspectLaunch("opencode");
-		const contextPaths = JSON.parse(
-			agentInfo.env?.OPENCODE_CONTEXTPATHS ?? "[]",
-		) as string[];
 
 		expect(agentInfo.argv ?? []).not.toContain("--append-system-prompt");
-		// The base prompt is injected through a sidecar-materialized file plus the default opencode
-		// repo-relative markers, not the old baked /etc/agentos path.
-		expect(contextPaths).toContain("/tmp/agentos-system-prompt.md");
-		expect(contextPaths).not.toContain("/etc/agentos/instructions.md");
-		expect(contextPaths).toContain("CLAUDE.md");
+		expect(agentInfo.env?.ACP_APPEND_SYSTEM_PROMPT).toContain("# agentOS");
+		expect(agentInfo.env?.OPENCODE_CONTEXTPATHS).toBeNull();
 	});
 
 });

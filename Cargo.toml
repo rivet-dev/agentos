@@ -1,10 +1,9 @@
 [workspace]
 resolver = "2"
-exclude = ["software"]
+exclude = ["software", "crates/agentos-sidecar-core"]
 members = [
     "crates/actor-uds-client",
     "crates/agentos-protocol",
-    "crates/agentos-sidecar-core",
     "crates/agentos-sidecar",
     "crates/agentos-sidecar-browser",
     "crates/client",
@@ -29,7 +28,6 @@ members = [
 # workspace commands so dormant browser code cannot block native CI.
 default-members = [
     "crates/agentos-protocol",
-    "crates/agentos-sidecar-core",
     "crates/agentos-sidecar",
     "crates/client",
     "crates/bridge",
@@ -69,7 +67,6 @@ agentos-native-sidecar-core = { path = "crates/native-sidecar-core", version = "
 agentos-runtime = { path = "crates/runtime", version = "0.0.1" }
 agentos-protocol = { path = "crates/agentos-protocol", version = "0.0.1" }
 agentos-sidecar-client = { path = "crates/sidecar-client", version = "0.0.1" }
-agentos-sidecar-core = { path = "crates/agentos-sidecar-core", version = "0.0.1" }
 agentos-sidecar = { path = "crates/agentos-sidecar", version = "0.0.1" }
 agentos-sidecar-browser = { path = "crates/agentos-sidecar-browser", version = "0.0.1" }
 agentos-sidecar-protocol = { path = "crates/sidecar-protocol", version = "0.0.1" }

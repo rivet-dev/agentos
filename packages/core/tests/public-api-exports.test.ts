@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import * as publicApi from "../src/index.js";
 import {
 	AgentOs,
 	AgentOsSidecar,
@@ -11,8 +12,6 @@ import {
 	agentOsLimitsSchema,
 	agentOsOptionsSchema,
 	createHostDirBackend,
-	createInMemoryFileSystem,
-	createInMemoryLayerStore,
 	createSnapshotExport,
 	defineSoftware,
 	isPackageDescriptor,
@@ -50,6 +49,10 @@ import {
 } from "../src/index.js";
 
 describe("root public API exports", () => {
+	test("does not expose client-owned in-memory filesystem factories", () => {
+		expect(publicApi).not.toHaveProperty("createInMemoryFileSystem");
+		expect(publicApi).not.toHaveProperty("createInMemoryLayerStore");
+	});
 	test("re-exports the main public value surface from the root entrypoint", () => {
 		expect(AgentOs).toBeTypeOf("function");
 		expect(AgentOsSidecar).toBeTypeOf("function");
@@ -97,9 +100,7 @@ describe("root public API exports", () => {
 		expect(parseAgentOsOptions({ defaultSoftware: false })).toEqual({
 			defaultSoftware: false,
 		});
-		expect(createInMemoryFileSystem).toBeTypeOf("function");
 		expect(KernelError).toBeTypeOf("function");
-		expect(createInMemoryLayerStore).toBeTypeOf("function");
 		expect(createSnapshotExport).toBeTypeOf("function");
 		// Package dirs are the public software descriptor.
 		expect(defineSoftware("/opt/pkg")).toBe("/opt/pkg");

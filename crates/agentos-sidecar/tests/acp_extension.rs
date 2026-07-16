@@ -127,11 +127,9 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
             .expect("agent info should be present"),
     )
     .expect("agent info json");
-    let args = agent_info["args"].as_array().expect("args array");
-    assert_eq!(args[0], "--append-system-prompt");
-    assert!(args[1]
+    assert!(agent_info["systemPrompt"]
         .as_str()
-        .expect("prompt arg")
+        .expect("system prompt env")
         .contains("extra guidance"));
     assert!(created
         .config_options
@@ -888,7 +886,7 @@ for await (const line of lines) {
         protocolVersion: message.params.protocolVersion,
         agentInfo: {
           name: "mock-acp-adapter",
-          args: process.argv.slice(2),
+          systemPrompt: process.env.ACP_APPEND_SYSTEM_PROMPT || null,
         },
         configOptions: []
       }

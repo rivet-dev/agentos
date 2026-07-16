@@ -6,6 +6,7 @@
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"bin": {
+		"agentos-pi-acp": "./dist/adapter.js",
 		"pi-acp": "./node_modules/pi-acp/dist/index.js",
 		"pi": "./node_modules/@mariozechner/pi-coding-agent/dist/cli.js"
 	},
@@ -23,7 +24,7 @@
 		"agentos-package.json"
 	],
 	"scripts": {
-		"build": "tsc && rm -rf dist/package dist/package.tar && agentos-toolchain pack . --out dist/package --agent pi-acp --prune-native",
+		"build": "tsc && rm -rf dist/package dist/package.tar && agentos-toolchain pack . --out dist/package --agent agentos-pi-acp --prune-native",
 		"check-types": "tsc --noEmit",
 		"test": "vitest run test/ --passWithNoTests"
 	},

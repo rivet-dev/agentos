@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+// AGENTOS_BROWSER_SUPPORT_DISABLED: retained for reference, but AgentOS is native-only.
+/*
 //! Agent OS browser sidecar wrapper.
 
 #[cfg(target_arch = "wasm32")]
@@ -239,3 +241,4 @@ mod tests {
         }
     }
 }
+*/

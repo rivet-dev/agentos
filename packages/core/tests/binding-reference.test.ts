@@ -7,7 +7,7 @@ import {
 } from "./helpers/projected-agent-package.js";
 
 /**
- * Mock ACP adapter that answers initialize/session/new and echoes its launch argv in agentInfo so
+ * Mock ACP adapter that answers initialize/session/new and echoes its launch environment in agentInfo so
  * the test can assert the sidecar-injected system prompt.
  */
 const MOCK_ACP_ADAPTER = `
@@ -28,7 +28,7 @@ process.stdin.on('data', (chunk) => {
       let result;
       switch (msg.method) {
         case 'initialize':
-          result = { protocolVersion: 1, agentInfo: { name: 'mock-adapter', version: '1.0', argv: process.argv.slice(2) } };
+          result = { protocolVersion: 1, agentInfo: { name: 'mock-adapter', version: '1.0', systemPrompt: process.env.ACP_APPEND_SYSTEM_PROMPT || null } };
           break;
         case 'session/new':
           result = { sessionId: 'mock-session-1' };
@@ -107,13 +107,9 @@ describe("binding reference registration", () => {
 	test("createSession injects the registered binding reference into the system prompt", async () => {
 		const { sessionId } = await vm.createSession("pi");
 		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
-			argv?: string[];
+			systemPrompt?: string;
 		};
-		const argv = agentInfo.argv ?? [];
-
-		const argIndex = argv.indexOf("--append-system-prompt");
-		expect(argIndex).toBeGreaterThan(-1);
-		const prompt = argv[argIndex + 1];
+		const prompt = agentInfo.systemPrompt ?? "";
 		expect(prompt).toContain("## Available Host Bindings");
 		expect(prompt).toContain("`agentos-math add --a <number> --b <number>`");
 		expect(prompt).toContain("### math");

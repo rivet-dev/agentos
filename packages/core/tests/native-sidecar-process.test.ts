@@ -18,12 +18,12 @@ import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createHostDirBackend } from "../src/host-dir-mount.js";
 import {
-	createInMemoryFileSystem,
 	createKernel,
 	createNodeRuntime,
 	NodeFileSystem,
 	createWasmVmRuntime,
 } from "../src/runtime-compat.js";
+import { createInMemoryFileSystem } from "../src/test/runtime.js";
 import {
 	NativeSidecarKernelProxy,
 	NativeSidecarProcessClient,

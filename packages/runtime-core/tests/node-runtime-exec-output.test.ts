@@ -1,11 +1,14 @@
 import { describe, expect, test } from "vitest";
 import { NodeRuntime } from "../src/index.js";
+import { createInMemoryFileSystem } from "../src/test-runtime.js";
 
 describe("NodeRuntime execCommand output capture", () => {
 	test(
 		"captures complete stdout when a fast process exits immediately",
 		async () => {
-			const runtime = await NodeRuntime.create();
+			const runtime = await NodeRuntime.create({
+				filesystem: createInMemoryFileSystem(),
+			});
 			const expected = "x".repeat(64 * 1024);
 			const script = [
 				'const fs = require("node:fs");',

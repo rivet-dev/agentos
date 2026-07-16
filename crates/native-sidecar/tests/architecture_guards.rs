@@ -409,7 +409,6 @@ const PROCESS_ALLOW: &[&str] = &[
 const ENV_ALLOW: &[&str] = &[
     "crates/sidecar-client/src/transport.rs",
     "crates/client/src/sidecar.rs",
-    "crates/agentos-actor-plugin/src/lib.rs",
     "crates/agentos-sidecar/src/acp_extension.rs",
     "crates/agentos-sidecar/src/main.rs",
     "crates/execution/src/host_node.rs",
@@ -657,6 +656,85 @@ fn generic_runtime_layers_do_not_depend_on_product_or_acp_layers() {
         violations.is_empty(),
         "generic runtime layers depend on product/ACP layers:\n{}",
         violations.join("\n")
+    );
+}
+
+#[test]
+fn shared_acp_runtime_has_no_adapter_name_policy() {
+    let root = repo_root();
+    let source = std::fs::read_to_string(root.join("crates/agentos-sidecar/src/acp_extension.rs"))
+        .expect("read native ACP extension");
+    let production = source.split("#[cfg(test)]").next().unwrap_or(&source);
+    for adapter_name in [
+        "\"claude\"",
+        "\"codex\"",
+        "\"opencode\"",
+        "\"pi\"",
+        "\"pi-cli\"",
+    ] {
+        assert!(
+            !production.contains(adapter_name),
+            "shared ACP runtime must not branch on adapter name {adapter_name}; put launch compatibility in the AgentOS-owned package launcher"
+        );
+    }
+    assert!(
+        production.contains("ACP_APPEND_SYSTEM_PROMPT_ENV"),
+        "shared ACP runtime must use the adapter-neutral package-launch contract"
+    );
+}
+
+#[test]
+fn typescript_sdk_does_not_ship_a_competing_in_memory_vfs() {
+    let root = repo_root();
+    for relative_path in [
+        "packages/core/src/runtime-compat.ts",
+        "packages/core/src/index.ts",
+        "packages/core/src/layers.ts",
+        "packages/runtime-core/src/node-runtime.ts",
+    ] {
+        let source = std::fs::read_to_string(root.join(relative_path))
+            .unwrap_or_else(|error| panic!("read {relative_path}: {error}"));
+        assert!(
+            !source.contains("createInMemoryFileSystem")
+                && !source.contains("class InMemoryFileSystem")
+                && !source.contains("createInMemoryLayerStore"),
+            "production TypeScript SDK must not implement or export an in-memory VFS: {relative_path}"
+        );
+    }
+    assert!(
+        root.join("packages/runtime-core/src/test-runtime.ts")
+            .is_file(),
+        "the explicit test-only VFS callback fixture must remain available"
+    );
+    let low_level_runtime =
+        std::fs::read_to_string(root.join("packages/runtime-core/src/node-runtime.ts"))
+            .expect("read low-level Node runtime");
+    assert!(
+        low_level_runtime.contains("filesystem: VirtualFileSystem")
+            && low_level_runtime.contains("const filesystem = options.filesystem"),
+        "the low-level compatibility runtime must require a caller-owned filesystem instead of creating a TypeScript default"
+    );
+}
+
+#[test]
+fn rust_client_transport_routes_live_events_without_history() {
+    let root = repo_root();
+    let source = std::fs::read_to_string(root.join("crates/sidecar-client/src/transport.rs"))
+        .expect("read Rust sidecar transport");
+    for obsolete in [
+        "WireEventLog",
+        "route_sequence",
+        "global_sequence",
+        "provisional_process",
+    ] {
+        assert!(
+            !source.contains(obsolete),
+            "client transport must not retain replay/history state ({obsolete})"
+        );
+    }
+    assert!(
+        source.contains("broadcast::channel(EVENT_CHANNEL_CAPACITY)"),
+        "client transport must retain only bounded live event fan-out"
     );
 }
 
@@ -1217,6 +1295,7 @@ fn standalone_wasm_wait_has_no_recurring_adapter_poll() {
 fn browser_sources_are_retained_but_disabled_from_native_build_and_publish_gates() {
     let root = repo_root();
     for relative_path in [
+        "crates/agentos-sidecar-core/src",
         "crates/agentos-sidecar-browser/src",
         "crates/native-sidecar-browser/src",
         "packages/browser/src",
@@ -1228,8 +1307,48 @@ fn browser_sources_are_retained_but_disabled_from_native_build_and_publish_gates
         );
     }
 
+    for relative_path in [
+        "crates/agentos-sidecar-browser/src/lib.rs",
+        "crates/native-sidecar-browser/src/lib.rs",
+        "packages/browser/src/index.ts",
+        "packages/runtime-browser/src/index.ts",
+    ] {
+        let source = std::fs::read_to_string(root.join(relative_path))
+            .unwrap_or_else(|error| panic!("read {relative_path}: {error}"));
+        assert!(
+            source.contains("AGENTOS_BROWSER_SUPPORT_DISABLED"),
+            "browser public entrypoint must remain disabled: {relative_path}"
+        );
+        assert!(
+            source.lines().any(|line| line.trim() == "/*"),
+            "browser public entrypoint source must remain commented out: {relative_path}"
+        );
+        if relative_path.ends_with(".rs") {
+            assert!(
+                source.trim_end().ends_with("*/"),
+                "disabled Rust browser entrypoint must contain no active items after its retained source: {relative_path}"
+            );
+        } else {
+            assert!(
+                source.trim_end().ends_with("export {};"),
+                "disabled TypeScript browser entrypoint must expose only an empty module: {relative_path}"
+            );
+        }
+    }
+
     let workspace =
         std::fs::read_to_string(root.join("Cargo.toml")).expect("read workspace Cargo.toml");
+    assert!(
+        workspace.contains("exclude = [\"software\", \"crates/agentos-sidecar-core\"]"),
+        "the obsolete browser-only ACP state machine must remain outside the native workspace"
+    );
+    let obsolete_core =
+        std::fs::read_to_string(root.join("crates/agentos-sidecar-core/Cargo.toml"))
+            .expect("read obsolete browser-only ACP core manifest");
+    assert!(
+        obsolete_core.contains("publish = false"),
+        "the obsolete browser-only ACP state machine must not be publishable"
+    );
     let default_members = workspace
         .split("default-members = [")
         .nth(1)

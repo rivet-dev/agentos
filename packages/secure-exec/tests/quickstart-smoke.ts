@@ -1,12 +1,12 @@
 import {
 	allowAll,
-	createInMemoryFileSystem,
 	createNodeDriver,
 	createNodeHostCommandExecutor,
 	createNodeRuntimeDriverFactory,
 	NodeRuntime,
 	type NodeRuntimeOptions,
 } from "secure-exec";
+import { createInMemoryFileSystem } from "@rivet-dev/agentos-core/test/runtime";
 
 export function createQuickstartOptions(): NodeRuntimeOptions {
 	const filesystem = createInMemoryFileSystem();

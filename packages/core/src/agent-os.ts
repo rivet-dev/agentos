@@ -497,25 +497,15 @@ function defaultAgentStderrHandler(event: AgentStderrEvent): void {
 }
 
 /**
- * Auto-restart outcome reported on an {@link AgentExitEvent}. Mirrors the
- * sidecar's `AcpAgentExitedEvent.restart` strings:
- * - `"restarted"` — the adapter was respawned and the session was natively
- *   re-attached under the same session id; the session stays usable.
- * - `"unsupported"` — the adapter does not advertise a native resume
- *   capability (`loadSession`/`resume`); the session was evicted.
- * - `"failed"` — the respawn or re-attach errored; the session was evicted.
- * - `"exhausted"` — the per-session restart budget was already spent; evicted.
+ * Restart disposition reported on an {@link AgentExitEvent}. AgentOS never
+ * respawns an adapter or replays an interrupted request implicitly.
  */
-export type AgentRestartOutcome =
-	| "restarted"
-	| "unsupported"
-	| "failed"
-	| "exhausted";
+export type AgentRestartOutcome = "not_attempted";
 
 /**
  * An unexpected ACP adapter process exit — a crash from the host's
  * perspective (any spontaneous exit without `closeSession()`, including exit
- * code 0) — plus the sidecar's bounded auto-restart outcome.
+ * code 0). The live route is evicted and must be restored explicitly.
  */
 export interface AgentExitEvent {
 	sessionId: string;
@@ -525,11 +515,11 @@ export interface AgentExitEvent {
 	pid: number | null;
 	/** Adapter exit code; `null` when the exit was observed indirectly. */
 	exitCode: number | null;
-	/** Auto-restart outcome; only `"restarted"` leaves the session usable. */
+	/** Always `"not_attempted"`; AgentOS does not restart adapters implicitly. */
 	restart: AgentRestartOutcome;
-	/** Restarts consumed for this session so far. */
+	/** Always zero. */
 	restartCount: number;
-	/** Per-session restart budget. */
+	/** Always zero. */
 	maxRestarts: number;
 }
 
@@ -537,7 +527,7 @@ export type AgentExitHandler = (event: AgentExitEvent) => void;
 
 function defaultAgentExitHandler(event: AgentExitEvent): void {
 	process.stderr.write(
-		`[agentos] agent adapter exited unexpectedly: session=${event.sessionId} agent=${event.agentType} exitCode=${event.exitCode ?? "unknown"} restart=${event.restart} (${event.restartCount}/${event.maxRestarts})\n`,
+		`[agentos] agent adapter exited unexpectedly: session=${event.sessionId} agent=${event.agentType} exitCode=${event.exitCode ?? "unknown"}; restore explicitly before retrying\n`,
 	);
 }
 
@@ -632,11 +622,9 @@ export interface AgentOsOptions {
 	onAgentStderr?: AgentStderrHandler;
 	/**
 	 * Called when the ACP adapter process behind a session exits without
-	 * `closeSession()` — i.e. an adapter crash. The sidecar auto-restarts the
-	 * adapter (bounded per session, natively re-attaching the same session id)
-	 * and reports the outcome on the event; only `restart === "restarted"`
-	 * leaves the session usable. Defaults to writing a warning line to
-	 * `process.stderr`.
+	 * `closeSession()` — i.e. an adapter crash. The sidecar evicts the live
+	 * route and never retries the adapter or interrupted request implicitly.
+	 * Defaults to writing a warning line to `process.stderr`.
 	 */
 	onAgentExit?: AgentExitHandler;
 	/**
@@ -4055,19 +4043,15 @@ export class AgentOs {
 	}
 
 	private _unsupportedConfigResponse(
-		agentType: string,
+		_agentType: string,
 		category: string,
 	): JsonRpcResponse {
-		const message =
-			agentType === "opencode" && category === "model"
-				? "OpenCode reports available models, but model switching must be configured before createSession() because ACP session/set_config_option is not implemented."
-				: `The ${category} config option is read-only for ${agentType} sessions.`;
 		return {
 			jsonrpc: "2.0",
 			id: null,
 			error: {
 				code: -32601,
-				message,
+				message: `The ${category} config option is read-only for this session.`,
 			},
 		};
 	}

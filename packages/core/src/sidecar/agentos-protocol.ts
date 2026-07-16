@@ -781,14 +781,10 @@ export function writeAcpAgentStderrEvent(bc: bare.ByteCursor, x: AcpAgentStderrE
 /**
  * Emitted when the ACP adapter process exits without an explicit close_session —
  * a crash from the host's perspective (any spontaneous exit, including code 0).
- * `restart` reports the sidecar's bounded auto-restart outcome:
- *   "restarted"   — adapter respawned and the session was natively re-attached
- *                   (session/load | session/resume) under the same sessionId;
- *                   the session stays live.
- *   "unsupported" — the respawned adapter does not advertise a native resume
- *                   capability; the session record was evicted.
- *   "failed"      — the respawn or the native re-attach errored; evicted.
- *   "exhausted"   — maxRestarts was already spent for this session; evicted.
+ * `restart` is "not_attempted": the sidecar never respawns an adapter or
+ * replays an interrupted request implicitly. `restartCount` and `maxRestarts`
+ * are therefore both zero. Explicit session restoration is a separate caller
+ * operation.
  * `exitCode` is absent when the exit was observed indirectly (e.g. a write to
  * the adapter's stdin failed because the process was already gone).
  */

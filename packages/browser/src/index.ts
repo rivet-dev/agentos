@@ -1,3 +1,5 @@
+// AGENTOS_BROWSER_SUPPORT_DISABLED: retained for reference, but AgentOS is native-only.
+/*
 // @rivet-dev/agentos-browser — converged browser runtime for Agent OS.
 //
 // The browser runtime is @rivet-dev/agentos-runtime-browser's CONVERGED stack (worker,
@@ -53,3 +55,7 @@ export type { AgentOsConvergedSidecarOptions } from "./converged-sidecar.js";
 export { createAgentOsConvergedSidecar } from "./converged-sidecar.js";
 export type { ConvergedExecutionHostBridge } from "./converged-execution-host-bridge.js";
 export { createConvergedExecutionHostBridge } from "./converged-execution-host-bridge.js";
+*/
+
+// Keep this file a module while exposing no browser entrypoint.
+export {};

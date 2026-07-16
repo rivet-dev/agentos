@@ -771,6 +771,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn event_before_response_is_delivered_without_transport_history() {
+        let transport = Arc::new(test_transport());
+        let mut events = transport.subscribe_wire_events();
+        let (response_tx, response_rx) = oneshot::channel();
+        transport
+            .register_pending_request(7, response_tx)
+            .expect("register pending request");
+        let ownership = wire::OwnershipScope::ConnectionOwnership(wire::ConnectionOwnership {
+            connection_id: "conn-1".to_string(),
+        });
+
+        transport
+            .handle_wire_frame(wire::ProtocolFrame::EventFrame(wire::EventFrame {
+                schema: wire::protocol_schema(),
+                ownership: ownership.clone(),
+                payload: wire::EventPayload::StructuredEvent(wire::StructuredEvent {
+                    name: "process_started_before_reply".to_string(),
+                    detail: std::collections::HashMap::new(),
+                }),
+            }))
+            .await;
+        transport
+            .handle_wire_frame(wire::ProtocolFrame::ResponseFrame(wire::ResponseFrame {
+                schema: wire::protocol_schema(),
+                request_id: 7,
+                ownership,
+                payload: wire::ResponsePayload::ExtEnvelope(wire::ExtEnvelope {
+                    namespace: "test".to_string(),
+                    payload: Vec::new(),
+                }),
+            }))
+            .await;
+
+        let (_, event) = events.recv().await.expect("live event");
+        assert!(matches!(
+            event,
+            wire::EventPayload::StructuredEvent(wire::StructuredEvent { name, .. })
+                if name == "process_started_before_reply"
+        ));
+        assert!(matches!(
+            response_rx.await.expect("response"),
+            wire::ResponsePayload::ExtEnvelope(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn bounded_event_fanout_reports_lag_instead_of_retaining_history() {
+        let (event_tx, mut events) = broadcast::channel(2);
+        for index in 0..3 {
+            event_tx
+                .send((
+                    wire::OwnershipScope::ConnectionOwnership(wire::ConnectionOwnership {
+                        connection_id: "conn-1".to_string(),
+                    }),
+                    wire::EventPayload::StructuredEvent(wire::StructuredEvent {
+                        name: format!("event-{index}"),
+                        detail: std::collections::HashMap::new(),
+                    }),
+                ))
+                .expect("active receiver");
+        }
+
+        assert!(matches!(
+            events.recv().await,
+            Err(broadcast::error::RecvError::Lagged(1))
+        ));
+    }
+
+    #[tokio::test]
     async fn silence_watchdog_fails_pending_requests_after_sustained_silence() {
         let transport = Arc::new(test_transport());
         let (tx, rx) = oneshot::channel();

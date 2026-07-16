@@ -115,6 +115,10 @@ const bindingDefinitionSchema = z
  */
 export const nodeRuntimeCreateOptionsSchema = z
 	.object({
+		filesystem: z.custom<NodeRuntimeCreateOptions["filesystem"]>(
+			(value: unknown) => typeof value === "object" && value !== null,
+			{ message: "Expected caller-owned VirtualFileSystem object" },
+		),
 		env: z.record(z.string(), z.string()).optional(),
 		cwd: z.string().optional(),
 		permissions: nodeRuntimePermissionsSchema.optional(),
@@ -145,7 +149,7 @@ export const nodeRuntimeCreateOptionsSchema = z
 	.strict() as z.ZodType<NodeRuntimeCreateOptions>;
 
 export function parseNodeRuntimeCreateOptions(
-	options: NodeRuntimeCreateOptions = {},
+	options: NodeRuntimeCreateOptions,
 ): NodeRuntimeCreateOptions {
 	return nodeRuntimeCreateOptionsSchema.parse(options);
 }

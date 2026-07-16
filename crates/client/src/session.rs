@@ -83,14 +83,11 @@ pub type AgentExitSubscription = (AgentExitStream, Subscription);
 
 /// An unexpected ACP adapter process exit — a crash from the host's
 /// perspective (any spontaneous exit without `close_session`, including exit
-/// code 0) — plus the sidecar's bounded auto-restart outcome. Mirrors the wire
+/// code 0). Mirrors the wire
 /// `AcpAgentExitedEvent` and the TS `AgentExitEvent`.
 ///
-/// `restart` is one of `"restarted"` (adapter respawned and the session
-/// natively re-attached under the same id; still usable), `"unsupported"`
-/// (adapter lacks `loadSession`/`resume`; session evicted), `"failed"`
-/// (respawn/re-attach errored; evicted), or `"exhausted"` (restart budget
-/// spent; evicted).
+/// `restart` is always `"not_attempted"`: AgentOS evicts the live route and
+/// never respawns the adapter or replays the interrupted request implicitly.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentExitEvent {
     #[serde(rename = "sessionId")]
@@ -673,12 +670,8 @@ fn sync_session_state(entry: &SessionEntry, state: &SessionStateResponse) {
 
 /// Synthesize the unsupported-config JSON-RPC error response (`-32601`). Mirrors
 /// `_unsupportedConfigResponse`.
-fn unsupported_config_response(agent_type: &str, category: &str) -> JsonRpcResponse {
-    let message = if agent_type == "opencode" && category == "model" {
-        "OpenCode reports available models, but model switching must be configured before createSession() because ACP session/set_config_option is not implemented.".to_string()
-    } else {
-        format!("The {category} config option is read-only for {agent_type} sessions.")
-    };
+fn unsupported_config_response(_agent_type: &str, category: &str) -> JsonRpcResponse {
+    let message = format!("The {category} config option is read-only for this session.");
     JsonRpcResponse {
         jsonrpc: "2.0".to_string(),
         id: Some(JsonRpcId::Null),
@@ -1838,9 +1831,9 @@ impl AgentOs {
     }
 
     /// Subscribe to unexpected adapter process exits (crashes) for a session,
-    /// including the sidecar's bounded auto-restart outcome. Only events
-    /// emitted after subscription are delivered; only `restart == "restarted"`
-    /// leaves the session usable. Mirrors the TS `onAgentExit` option.
+    /// after the sidecar has evicted the terminal live route. Only events
+    /// emitted after subscription are delivered. Mirrors the TS `onAgentExit`
+    /// option.
     pub fn on_agent_exit(
         &self,
         session_id: &str,

@@ -11,6 +11,7 @@ import {
 	type NodeRuntimeBootTiming,
 	type NodeRuntimeCreateOptions,
 } from "@rivet-dev/agentos-runtime-core";
+import { createInMemoryFileSystem } from "@rivet-dev/agentos-runtime-core/test-runtime";
 
 function numList(envVar: string, fallback: number[]): number[] {
 	const raw = process.env[envVar];
@@ -69,7 +70,10 @@ export const SCENARIOS: BenchScenario[] = (
 export async function createBenchRuntime(
 	options: Pick<NodeRuntimeCreateOptions, "sidecar" | "onBootTiming"> = {},
 ): Promise<NodeRuntime> {
-	return NodeRuntime.create(options);
+	return NodeRuntime.create({
+		...options,
+		filesystem: createInMemoryFileSystem(),
+	});
 }
 
 export function createBenchSidecar(): SidecarProcess {

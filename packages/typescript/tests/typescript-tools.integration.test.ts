@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import { createTypeScriptTools } from "@rivet-dev/agentos-typescript";
 import {
 	allowAllFs,
-	createInMemoryFileSystem,
 	createKernel,
 	createNodeDriver,
 	createNodeRuntime,
@@ -11,6 +10,7 @@ import {
 	nodeModulesMount,
 	type NodeRuntimeDriverFactory,
 } from "@rivet-dev/agentos-core/internal/runtime-compat";
+import { createInMemoryFileSystem } from "@rivet-dev/agentos-core/test/runtime";
 import { describe, expect, it } from "vitest";
 
 const workspaceRoot = resolve(

@@ -1,6 +1,28 @@
 #!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+
 process.env.OPENCODE_DISABLE_CONFIG_DEP_INSTALL ??= "1";
 process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI ??= "1";
+
+const agentOsPrompt = process.env.ACP_APPEND_SYSTEM_PROMPT;
+if (agentOsPrompt && !process.env.OPENCODE_CONTEXTPATHS) {
+	const promptPath = "/tmp/agentos-system-prompt.md";
+	writeFileSync(promptPath, agentOsPrompt);
+	process.env.OPENCODE_CONTEXTPATHS = JSON.stringify([
+		".github/copilot-instructions.md",
+		".cursorrules",
+		".cursor/rules/",
+		"CLAUDE.md",
+		"CLAUDE.local.md",
+		"opencode.md",
+		"opencode.local.md",
+		"OpenCode.md",
+		"OpenCode.local.md",
+		"OPENCODE.md",
+		"OPENCODE.local.md",
+		promptPath,
+	]);
+}
 
 // @ts-expect-error Generated at build time by scripts/build-opencode-acp.mjs.
 const { AcpCommand } = (await import("./opencode-acp/acp.js")) as {

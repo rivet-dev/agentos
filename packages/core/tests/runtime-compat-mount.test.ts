@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
-	createInMemoryFileSystem,
 	createKernel,
 	type Kernel,
 } from "../src/runtime-compat.js";
+import { createInMemoryFileSystem } from "../src/test/runtime.js";
 
 describe("runtime-compat mountFs bookkeeping", () => {
 	let kernel: Kernel | undefined;
