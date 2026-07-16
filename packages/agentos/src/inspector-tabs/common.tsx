@@ -230,6 +230,14 @@ export function PlusIcon({ className }: { className?: string }) {
 	);
 }
 
+export function ArrowLeftIcon({ className }: { className?: string }) {
+	return (
+		<svg className={className} {...iconProps}>
+			<path d="M13 8H3M7 4L3 8l4 4" />
+		</svg>
+	);
+}
+
 export function RefreshIcon({ className }: { className?: string }) {
 	return (
 		<svg className={className} {...iconProps}>

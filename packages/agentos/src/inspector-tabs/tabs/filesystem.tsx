@@ -4,6 +4,7 @@ import {
 	ActionErrorNote,
 	AgentOsEmpty,
 	AgentOsWordmark,
+	ArrowLeftIcon,
 	CheckIcon,
 	ChevronRight,
 	DownloadIcon,
@@ -91,13 +92,10 @@ function FileTreeItem({
 					) : null}
 				</button>
 			</div>
-			{expandable && open ? (
-				childrenQuery.isLoading ? (
-					<div className="py-1 text-xs text-muted-foreground" style={{ paddingLeft: `${(depth + 1) * 12 + 28}px` }}>
-						loading…
-					</div>
-				) : (
-					(childrenQuery.data ?? []).map((child) => (
+			{/* No loading row: most directories list in well under a frame, so a
+			    transient "loading…" reads as a glitch. Children simply appear. */}
+			{expandable && open
+				? (childrenQuery.data ?? []).map((child) => (
 						<FileTreeItem
 							key={child.path}
 							actorId={actorId}
@@ -107,8 +105,7 @@ function FileTreeItem({
 							onSelect={onSelect}
 						/>
 					))
-				)
-			) : null}
+				: null}
 		</div>
 	);
 }
@@ -452,8 +449,21 @@ function FilesystemLoaded({ actorId }: { actorId: string }) {
 					/>
 				</div>
 				{/* The browsing root gets its own bar: sharing the header row with
-				    the action icons left it truncated and cramped. */}
-				<div className="border-b px-3 pb-1.5">
+				    the action icons left it truncated and cramped. Clicking into a
+				    folder moves the bar there, so the arrow walks back up. */}
+				<div className="flex items-center gap-1 border-b px-3 pb-1.5">
+					<IconButton
+						title={currentDir === "/" ? "Already at the root" : `Up to ${parentDir(currentDir)}`}
+						disabled={currentDir === "/"}
+						onClick={() => {
+							const up = parentDir(currentDir);
+							setDraft(up);
+							setRoot((cur) => (up !== cur ? up : cur));
+						}}
+						className="size-5"
+					>
+						<ArrowLeftIcon className="size-3.5" />
+					</IconButton>
 					<input
 						value={draft}
 						onChange={(e) => setDraft(e.target.value)}
