@@ -103,7 +103,7 @@ function classifyActionError(action: string, error: unknown): InspectorActionErr
 			"runtime",
 			action,
 			`${action} failed inside the actor runtime.`,
-			"The VM runtime likely crashed (e.g. sidecar exit) — restart the actor or server and check server logs.",
+			"The engine masks the underlying error. Common causes: the agent adapter timed out while booting (retry — a warm VM answers faster) or the sidecar exited. The server log has the raw error.",
 		);
 	}
 	if (error instanceof TypeError || /fetch failed|failed to fetch|networkerror/i.test(message)) {

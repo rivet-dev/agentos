@@ -27,7 +27,11 @@ use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use serde_json::{json, Map, Value};
 use tokio::sync::Mutex;
 
-const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
+// Cold adapter boot must parse and execute the whole adapter bundle inside the
+// guest before it can answer `initialize`; large adapters (opencode ~11MB)
+// measure 8-11s on a loaded dev machine, so 10s made bootstrap a coin flip.
+// The 10s stall watchdog below still surfaces slow boots as breadcrumbs.
+const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(60);
 const SESSION_NEW_TIMEOUT: Duration = Duration::from_secs(30);
 const SESSION_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 // While an ACP request is in flight the stdio loop is inside the extension
@@ -1808,7 +1812,8 @@ async fn send_json_rpc_request(
                 });
             }
             return Err(SidecarError::InvalidState(format!(
-                "timed out waiting for ACP response id={response_id}; {cancel_status}"
+                "timed out waiting for ACP response id={response_id}; adapter did not answer {method} within the {}s limit; {cancel_status}",
+                timeout.as_secs()
             )));
         }
         let remaining = deadline.saturating_duration_since(now);
@@ -3260,7 +3265,7 @@ mod tests {
 
     #[test]
     fn request_timeout_uses_acp_method_overrides() {
-        assert_eq!(request_timeout("initialize"), Duration::from_secs(10));
+        assert_eq!(request_timeout("initialize"), Duration::from_secs(60));
         assert_eq!(request_timeout("session/new"), Duration::from_secs(30));
         assert_eq!(request_timeout("session/prompt"), Duration::from_secs(600));
         assert_eq!(
